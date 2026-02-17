@@ -12,6 +12,8 @@ import qualified Patch.IPS as IPS
 import qualified Patch.BPS as BPS
 import qualified Patch.UPS as UPS
 import qualified Patch.VCDIFF as VCDIFF
+import qualified Patch.APS as APS
+import qualified Patch.RUP as RUP
 
 import qualified Data.ByteString as BS
 import Control.Monad (when)
@@ -43,7 +45,7 @@ main = execParser opts >>= \case
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF)")
+            <> progDesc "Apply, undo, create, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP)")
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -117,6 +119,8 @@ doApply force verbose patchFile target mOut = do
       FmtBPS    -> doApplyBPS force verbose patchBs target mOut
       FmtUPS    -> doApplyUPS force verbose patchBs target mOut
       FmtVCDIFF -> doApplyVCDIFF force verbose patchBs target mOut
+      FmtAPS    -> doApplyAPS verbose patchBs target mOut
+      FmtRUP    -> doApplyRUP verbose patchBs target mOut
 
 doApplyPPF :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
 doApplyPPF _force verbose patchBs target mOut = do
@@ -212,6 +216,24 @@ doApplyVCDIFF _force verbose patchBs target mOut = do
           BS.writeFile (fromMaybe target mOut) result
           putStrLn ("applied " ++ show total ++ " windows")
 
+doApplyAPS :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
+doApplyAPS _verbose patchBs target mOut = do
+  actual <- resolveOutput target mOut
+  case APS.parseAPS patchBs of
+    Left err -> die err
+    Right patch -> do
+      n <- APS.applyAPS patch actual
+      putStrLn ("applied " ++ show n ++ " records")
+
+doApplyRUP :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
+doApplyRUP _verbose patchBs target mOut = do
+  actual <- resolveOutput target mOut
+  case RUP.parseRUP patchBs of
+    Left err -> die err
+    Right patch -> do
+      n <- RUP.applyRUP patch actual
+      putStrLn ("applied " ++ show n ++ " records")
+
 ----------------------------------------------------------------------------
 -- Undo
 ----------------------------------------------------------------------------
@@ -300,6 +322,12 @@ doInfo patchFile = do
       FmtVCDIFF -> case VCDIFF.parseVCDIFF patchBs of
         Left err -> die err
         Right p  -> putStr (VCDIFF.vcdiffInfo p)
+      FmtAPS -> case APS.parseAPS patchBs of
+        Left err -> die err
+        Right p  -> putStr (APS.apsInfo p)
+      FmtRUP -> case RUP.parseRUP patchBs of
+        Left err -> die err
+        Right p  -> putStr (RUP.rupInfo p)
 
 ----------------------------------------------------------------------------
 -- Helpers

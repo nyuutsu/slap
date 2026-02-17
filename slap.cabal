@@ -4,7 +4,8 @@ version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
   Auto-detects patch format from magic bytes and applies.  Supports
-  PPF, IPS (including IPS32 and EBP), BPS, UPS, and VCDIFF/xdelta3.
+  PPF, IPS (including IPS32 and EBP), BPS, UPS, VCDIFF/xdelta3,
+  APS (N64 and GBA), and RUP/NINJA2.
 
 license:       MIT
 license-file:  LICENSE
@@ -17,10 +18,12 @@ executable slap
   default-language: GHC2024
   ghc-options:      -Wall -O2
   other-modules:
-      Patch.Binary
+      Patch.APS
+    , Patch.Binary
     , Patch.BPS
     , Patch.Detect
     , Patch.IPS
+    , Patch.RUP
     , Patch.Types
     , Patch.UPS
     , Patch.VCDIFF

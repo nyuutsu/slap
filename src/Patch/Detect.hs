@@ -16,6 +16,9 @@ detectFormat bs
   | magic4 == "BPS1"          = Just FmtBPS
   | magic4 == "UPS1"          = Just FmtUPS
   | BS.take 3 magic4 == "\xd6\xc3\xc4" = Just FmtVCDIFF
+  | magic5 == "APS10"         = Just FmtAPS   -- APS N64
+  | magic4 == "APS1"          = Just FmtAPS   -- APS GBA (magic is "APS1" + first byte of source size)
+  | BS.length bs >= 7 && BS.take 7 bs == "NINJA2\0" = Just FmtRUP
   | otherwise                 = Nothing
   where
     magic4 = BS.take 4 bs
