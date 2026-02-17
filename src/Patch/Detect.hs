@@ -10,10 +10,11 @@ import Patch.Types (PatchFormat(..))
 detectFormat :: ByteString -> Maybe PatchFormat
 detectFormat bs
   | BS.length bs < 4    = Nothing
-  | magic4 == "PPF1"    = Just FmtPPF
-  | magic4 == "PPF2"    = Just FmtPPF
-  | magic4 == "PPF3"    = Just FmtPPF
-  | magic4 == "PPF4"    = Just FmtPPF
-  | otherwise            = Nothing
+  | BS.take 3 magic4 == "PPF" = Just FmtPPF
+  | magic5 == "PATCH"         = Just FmtIPS
+  | magic4 == "IPS3"          = Just FmtIPS   -- IPS32: magic "IPS32"
+  | magic4 == "BPS1"          = Just FmtBPS
+  | otherwise                 = Nothing
   where
     magic4 = BS.take 4 bs
+    magic5 = BS.take 5 bs
