@@ -4,13 +4,19 @@ version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
   Auto-detects patch format from magic bytes and applies.  Supports
-  PPF, IPS (including IPS32 and EBP), BPS, UPS, VCDIFF/xdelta3,
-  APS (N64 and GBA), and RUP/NINJA2.
+  PPF (1/2/3 + Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
+  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff, GDIFF, and
+  xdelta1.
 
 license:       MIT
 license-file:  LICENSE
 author:        nyuu
 build-type:    Simple
+
+flag bsdiff
+  description: Native BSDiff support via bzlib (requires libbz2)
+  default:     True
+  manual:      True
 
 executable slap
   main-is:          Main.hs
@@ -21,12 +27,16 @@ executable slap
       Patch.APS
     , Patch.Binary
     , Patch.BPS
+    , Patch.BSDiff
     , Patch.Detect
+    , Patch.Explain
+    , Patch.GDIFF
     , Patch.IPS
     , Patch.RUP
     , Patch.Types
     , Patch.UPS
     , Patch.VCDIFF
+    , Patch.XDelta1
     , Patch.PPF.Apply
     , Patch.PPF.Create
     , Patch.PPF.Info
@@ -38,3 +48,9 @@ executable slap
     , bytestring           >= 0.11
     , directory             >= 1.3
     , optparse-applicative  >= 0.16
+    , process              >= 1.6
+    , zlib                 >= 0.6
+
+  if flag(bsdiff)
+    build-depends: bzlib >= 0.5
+    cpp-options:   -DBSDIFF_NATIVE

@@ -7,6 +7,7 @@ module Patch.Binary
   , getWord16BE
   , getWord24BE
   , getWord32BE
+  , getInt64BE
     -- * Variable-length integers
   , getByuuVarint
   , getVcdiffVarint
@@ -68,6 +69,12 @@ getWord32BE :: Int -> ByteString -> Word32
 getWord32BE off bs =
   let b i = fromIntegral (BS.index bs (off + i)) :: Word32
   in (b 0 `shiftL` 24) .|. (b 1 `shiftL` 16) .|. (b 2 `shiftL` 8) .|. b 3
+
+getInt64BE :: Int -> ByteString -> Int64
+getInt64BE off bs =
+  let b i = fromIntegral (BS.index bs (off + i)) :: Int64
+  in (b 0 `shiftL` 56) .|. (b 1 `shiftL` 48) .|. (b 2 `shiftL` 40) .|. (b 3 `shiftL` 32)
+     .|. (b 4 `shiftL` 24) .|. (b 5 `shiftL` 16) .|. (b 6 `shiftL` 8) .|. b 7
 
 ----------------------------------------------------------------------------
 -- Variable-length integers

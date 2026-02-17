@@ -1,0 +1,379 @@
+module Patch.Explain
+  ( explainPPF
+  , explainIPS
+  , explainBPS
+  , explainUPS
+  , explainVCDIFF
+  , explainAPS
+  , explainRUP
+  , explainBSDiff
+  , explainGDIFF
+  , explainXDelta1
+  ) where
+
+import qualified Patch.PPF.Types as PPF
+import qualified Patch.IPS as IPS
+import qualified Patch.BPS as BPS
+import qualified Patch.UPS as UPS
+import qualified Patch.APS as APS
+import qualified Patch.RUP as RUP
+import qualified Patch.VCDIFF as VCDIFF
+import qualified Patch.BSDiff as BSDiff
+import qualified Patch.GDIFF as GDIFF
+import qualified Patch.XDelta1 as XDelta1
+
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString (ByteString)
+import Data.Int (Int64)
+import Data.Word (Word8, Word32, Word64)
+import Numeric (showHex)
+
+----------------------------------------------------------------------------
+-- PPF
+----------------------------------------------------------------------------
+
+explainPPF :: PPF.Patch -> String
+explainPPF p = unlines $
+  [ "format:      PPF" ++ show (PPF.patchVersion p)
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showPPFRecord [1..] (PPF.patchRecords p)
+    ++ [summary]
+  where
+    nRecs = length (PPF.patchRecords p)
+    totalBytes = sum (map (BS.length . PPF.recData) (PPF.patchRecords p))
+    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+
+showPPFRecord :: Int -> PPF.Record -> String
+showPPFRecord n r =
+  padNum n ++ "  " ++ cmdStr ++ padR 10 (show (BS.length (PPF.recData r)) ++ " B")
+  ++ "  at 0x" ++ padHex 6 (PPF.recOffset r)
+  ++ undoStr
+  ++ "\n" ++ hexDump (PPF.recData r)
+  where
+    cmdStr = case PPF.recCmd r of
+      PPF.Replace -> "Write  "
+      PPF.Append  -> "Append "
+    undoStr = case PPF.recUndo r of
+      Nothing -> ""
+      Just _  -> "  (undo data)"
+
+----------------------------------------------------------------------------
+-- IPS
+----------------------------------------------------------------------------
+
+explainIPS :: IPS.IPSPatch -> String
+explainIPS p = unlines $
+  [ "format:      " ++ case IPS.ipsVariant p of
+      IPS.StandardIPS -> case IPS.ipsEBPMeta p of
+        Nothing -> "IPS"
+        Just _  -> "IPS (EBP)"
+      IPS.IPS32       -> "IPS32"
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showIPSRecord [1..] (IPS.ipsRecords p)
+    ++ [truncStr, summary]
+  where
+    nRecs = length (IPS.ipsRecords p)
+    totalBytes = sum (map ipsRecSize (IPS.ipsRecords p))
+    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+    truncStr = case IPS.ipsTruncate p of
+      Nothing -> ""
+      Just sz -> "truncate to " ++ show sz ++ " bytes"
+
+showIPSRecord :: Int -> IPS.IPSRecord -> String
+showIPSRecord n (IPS.IPSRecord off dat) =
+  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
+  ++ "  at 0x" ++ padHex 6 off
+  ++ "\n" ++ hexDump dat
+showIPSRecord n (IPS.IPSRecordRLE off count val) =
+  padNum n ++ "  Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val :: Int64)
+  ++ "  at 0x" ++ padHex 6 off ++ "  (RLE)"
+
+ipsRecSize :: IPS.IPSRecord -> Int
+ipsRecSize (IPS.IPSRecord _ d)       = BS.length d
+ipsRecSize (IPS.IPSRecordRLE _ c _)  = c
+
+----------------------------------------------------------------------------
+-- BPS
+----------------------------------------------------------------------------
+
+explainBPS :: BPS.BPSPatch -> String
+explainBPS p = unlines $
+  [ "format:      BPS"
+  , "source size: " ++ show (BPS.bpsSourceSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsSourceCRC p) ++ ")"
+  , "target size: " ++ show (BPS.bpsTargetSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsTargetCRC p) ++ ")"
+  , ""
+  ] ++ snd (foldl showBPSAction (0 :: Int64, []) (zip [1..] (BPS.bpsActions p)))
+    ++ [summary]
+  where
+    nActs = length (BPS.bpsActions p)
+    summary = show nActs ++ " actions, " ++ show (BPS.bpsTargetSize p) ++ " bytes total output"
+
+showBPSAction :: (Int64, [String]) -> (Int, BPS.BPSAction) -> (Int64, [String])
+showBPSAction (outPos, acc) (n, act) = case act of
+  BPS.SourceRead len ->
+    let s = padNum n ++ "  SourceRead " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+    in (outPos + fromIntegral len, acc ++ [s])
+  BPS.TargetRead dat ->
+    let len = BS.length dat
+        s = padNum n ++ "  TargetRead " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+            ++ "\n" ++ hexDump dat
+    in (outPos + fromIntegral len, acc ++ [s])
+  BPS.SourceCopy len delta ->
+    let s = padNum n ++ "  SourceCopy " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+            ++ "  (delta " ++ showSigned delta ++ ")"
+    in (outPos + fromIntegral len, acc ++ [s])
+  BPS.TargetCopy len delta ->
+    let s = padNum n ++ "  TargetCopy " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+            ++ "  (delta " ++ showSigned delta ++ ")"
+    in (outPos + fromIntegral len, acc ++ [s])
+
+----------------------------------------------------------------------------
+-- UPS
+----------------------------------------------------------------------------
+
+explainUPS :: UPS.UPSPatch -> String
+explainUPS p = unlines $
+  [ "format:      UPS"
+  , "source size: " ++ show (UPS.upsSourceSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsSourceCRC p) ++ ")"
+  , "target size: " ++ show (UPS.upsTargetSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsTargetCRC p) ++ ")"
+  , ""
+  ] ++ snd (foldl showUPSBlock (0 :: Int64, []) (zip [1..] (UPS.upsBlocks p)))
+    ++ [summary]
+  where
+    nBlocks = length (UPS.upsBlocks p)
+    summary = show nBlocks ++ " blocks"
+
+showUPSBlock :: (Int64, [String]) -> (Int, UPS.UPSBlock) -> (Int64, [String])
+showUPSBlock (pos, acc) (n, UPS.UPSBlock skip xd) =
+  let xorOff = pos + skip
+      len    = BS.length xd
+      s = padNum n ++ "  XOR  " ++ padR 10 (show len ++ " B")
+          ++ "  at 0x" ++ padHex 6 xorOff
+          ++ "  (skip " ++ show skip ++ ")"
+      nextPos = xorOff + fromIntegral len
+  in (nextPos, acc ++ [s])
+
+----------------------------------------------------------------------------
+-- VCDIFF
+----------------------------------------------------------------------------
+
+explainVCDIFF :: VCDIFF.VCDIFFPatch -> String
+explainVCDIFF p = unlines $
+  [ "format:      VCDIFF" ++ if VCDIFF.vcdVersion (VCDIFF.vcdHeader p) == 0x53
+                              then " (xdelta3)" else ""
+  , "windows:     " ++ show nWins
+  , "target size: " ++ show totalTgt
+  , ""
+  ] ++ concatMap showVCDIFFWindow (zip [1..] (VCDIFF.vcdWindows p))
+    ++ [show nWins ++ " windows, " ++ show totalTgt ++ " bytes total output"]
+  where
+    nWins = length (VCDIFF.vcdWindows p)
+    totalTgt = sum (map VCDIFF.vcdTargetLen (VCDIFF.vcdWindows p))
+
+showVCDIFFWindow :: (Int, VCDIFF.VCDIFFWindow) -> [String]
+showVCDIFFWindow (n, w) =
+  [ "window " ++ show n ++ ":"
+  , "  target size:    " ++ show (VCDIFF.vcdTargetLen w)
+  , "  source segment: " ++ show (VCDIFF.vcdSourceLen w) ++ " bytes at 0x"
+    ++ padHex 6 (VCDIFF.vcdSourcePos w)
+  , "  add/run data:   " ++ show (BS.length (VCDIFF.vcdAddRunData w)) ++ " bytes"
+  , "  instructions:   " ++ show (BS.length (VCDIFF.vcdInstructions w)) ++ " bytes"
+  , "  addresses:      " ++ show (BS.length (VCDIFF.vcdAddresses w)) ++ " bytes"
+  , adlerStr
+  , ""
+  ]
+  where
+    adlerStr = case VCDIFF.vcdAdler32 w of
+      Nothing -> ""
+      Just a  -> "  adler32:        0x" ++ padHex 8 (fromIntegral a :: Int64)
+
+----------------------------------------------------------------------------
+-- APS
+----------------------------------------------------------------------------
+
+explainAPS :: APS.APSPatch -> String
+explainAPS (APS.APSPatch variant) = case variant of
+  APS.APSN64 _hdr recs -> unlines $
+    [ "format:      APS (N64)"
+    , "records:     " ++ show (length recs)
+    , ""
+    ] ++ zipWith showN64Record [1..] recs
+      ++ [show (length recs) ++ " records"]
+  APS.APSGBA hdr recs -> unlines $
+    [ "format:      APS (GBA)"
+    , "source size: " ++ show (APS.gbaSourceSize hdr)
+    , "target size: " ++ show (APS.gbaTargetSize hdr)
+    , ""
+    ] ++ zipWith showGBARecord [1..] recs
+      ++ [show (length recs) ++ " blocks"]
+
+showN64Record :: Int -> APS.APSN64Record -> String
+showN64Record n (APS.APSN64Normal off dat) =
+  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
+  ++ "  at 0x" ++ padHex 6 off
+  ++ "\n" ++ hexDump dat
+showN64Record n (APS.APSN64RLE off val count) =
+  padNum n ++ "  Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val :: Int64)
+  ++ "  at 0x" ++ padHex 6 off ++ "  (RLE)"
+
+showGBARecord :: Int -> APS.APSGBARecord -> String
+showGBARecord n r =
+  padNum n ++ "  XOR block  65536 B  at 0x" ++ padHex 6 (fromIntegral (APS.gbaOffset r) :: Int64)
+  ++ "  (src CRC16 " ++ padHex 4 (fromIntegral (APS.gbaSourceCRC r) :: Int64)
+  ++ ", tgt CRC16 " ++ padHex 4 (fromIntegral (APS.gbaTargetCRC r) :: Int64) ++ ")"
+
+----------------------------------------------------------------------------
+-- RUP
+----------------------------------------------------------------------------
+
+explainRUP :: RUP.RUPPatch -> String
+explainRUP p = unlines $
+  [ "format:      RUP (NINJA2)"
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showRUPRecord [1..] (RUP.rupRecords p)
+    ++ [show nRecs ++ " records"]
+  where
+    nRecs = length (RUP.rupRecords p)
+
+showRUPRecord :: Int -> RUP.RUPRecord -> String
+showRUPRecord n (RUP.RUPRecord off xd) =
+  padNum n ++ "  XOR  " ++ padR 10 (show (BS.length xd) ++ " B")
+  ++ "  at 0x" ++ padHex 6 off
+
+----------------------------------------------------------------------------
+-- GDIFF
+----------------------------------------------------------------------------
+
+explainGDIFF :: GDIFF.GDiffPatch -> String
+explainGDIFF p = unlines $
+  [ "format:      GDIFF (W3C)"
+  , "commands:    " ++ show nCmds
+  , ""
+  ] ++ snd (foldl showGDIFFCmd (0 :: Int64, []) (zip [1..] (GDIFF.gdiffCmds p)))
+    ++ [show nCmds ++ " commands"]
+  where
+    nCmds = length (GDIFF.gdiffCmds p)
+
+showGDIFFCmd :: (Int64, [String]) -> (Int, GDIFF.GDiffCmd) -> (Int64, [String])
+showGDIFFCmd (outPos, acc) (n, cmd) = case cmd of
+  GDIFF.GDiffData dat ->
+    let len = BS.length dat
+        s = padNum n ++ "  DATA  " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+            ++ "\n" ++ hexDump dat
+    in (outPos + fromIntegral len, acc ++ [s])
+  GDIFF.GDiffCopy off len ->
+    let s = padNum n ++ "  COPY  " ++ padR 10 (show len ++ " B")
+            ++ "  at output 0x" ++ padHex 6 outPos
+            ++ "  (source 0x" ++ padHex 6 off ++ ")"
+    in (outPos + len, acc ++ [s])
+
+----------------------------------------------------------------------------
+-- BSDiff
+----------------------------------------------------------------------------
+
+explainBSDiff :: BSDiff.BSDiffPatch -> String
+explainBSDiff p = unlines $
+  [ "format:      BSDiff (BSDIFF40)"
+  , "new size:    " ++ show (BSDiff.bsdNewSize p)
+  , "ctrl block:  " ++ show (BSDiff.bsdCtrlSize p) ++ " bytes (compressed)"
+  , "diff block:  " ++ show (BSDiff.bsdDiffSize p) ++ " bytes (compressed)"
+  , ""
+  ] ++ if null (BSDiff.bsdControls p)
+       then ["(control data not decoded)"]
+       else zipWith showBSDiffCtrl [1..] (BSDiff.bsdControls p)
+         ++ [show (length (BSDiff.bsdControls p)) ++ " control tuples"]
+
+showBSDiffCtrl :: Int -> BSDiff.BSDiffControl -> String
+showBSDiffCtrl n ctrl =
+  padNum n ++ "  add " ++ padR 10 (show (BSDiff.ctrlAdd ctrl) ++ " B")
+  ++ "  copy " ++ padR 10 (show (BSDiff.ctrlCopy ctrl) ++ " B")
+  ++ "  seek " ++ showSigned (BSDiff.ctrlSeek ctrl)
+
+----------------------------------------------------------------------------
+-- XDelta1
+----------------------------------------------------------------------------
+
+explainXDelta1 :: XDelta1.XDelta1Patch -> String
+explainXDelta1 p = unlines $
+  [ "format:      xdelta1"
+  , "from:        " ++ BS8.unpack (XDelta1.xd1FromName p)
+  , "to:          " ++ BS8.unpack (XDelta1.xd1ToName p)
+  , "target size: " ++ show (XDelta1.xd1ToLen p)
+  , "sources:     " ++ show (length (XDelta1.xd1Sources p))
+  , ""
+  ] ++ zipWith showXD1Source [0..] (XDelta1.xd1Sources p)
+    ++ ["", "instructions: " ++ show nInsts, ""]
+    ++ zipWith showXD1Inst [1..] (XDelta1.xd1Instructions p)
+    ++ [show nInsts ++ " instructions, " ++ show (XDelta1.xd1ToLen p) ++ " bytes total output"]
+  where
+    nInsts = length (XDelta1.xd1Instructions p)
+
+showXD1Source :: Int -> XDelta1.XD1Source -> String
+showXD1Source n s =
+  "  [" ++ show n ++ "] " ++ BS8.unpack (XDelta1.xd1SrcName s)
+  ++ (if XDelta1.xd1SrcIsData s then " (data)" else " (file)")
+  ++ (if XDelta1.xd1SrcSequential s then " seq" else "")
+  ++ "  " ++ show (XDelta1.xd1SrcLen s) ++ " bytes"
+
+showXD1Inst :: Int -> XDelta1.XD1Instruction -> String
+showXD1Inst n inst =
+  padNum n ++ "  Copy  " ++ padR 10 (show (XDelta1.xd1InstLength inst) ++ " B")
+  ++ "  from source " ++ show (XDelta1.xd1InstIndex inst)
+  ++ "  at 0x" ++ padHex 6 (XDelta1.xd1InstOffset inst)
+
+----------------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------------
+
+padNum :: Int -> String
+padNum n =
+  let s = show n
+  in replicate (4 - length s) ' ' ++ s
+
+padR :: Int -> String -> String
+padR w s = s ++ replicate (w - length s) ' '
+
+padHex :: Int -> Int64 -> String
+padHex w val =
+  let s = showHex (fromIntegral val :: Word64) ""
+  in replicate (w - length s) '0' ++ s
+
+showCRC :: Word32 -> String
+showCRC w =
+  let s = showHex w ""
+  in replicate (8 - length s) '0' ++ s
+
+showSigned :: Int64 -> String
+showSigned v
+  | v >= 0    = "+0x" ++ padHex 6 v
+  | otherwise = "-0x" ++ padHex 6 (abs v)
+
+hexDump :: ByteString -> String
+hexDump bs
+  | BS.null bs = ""
+  | otherwise =
+      let maxBytes = 64
+          toShow = BS.take maxBytes bs
+          rows = chunksOf 16 (BS.unpack toShow)
+          formatted = map formatRow rows
+          ellipsis = if BS.length bs > maxBytes then ["      ..."] else []
+      in unlines (map ("      " ++) (formatted ++ ellipsis))
+
+formatRow :: [Word8] -> String
+formatRow bs =
+  let hexParts = map (\b -> padHex 2 (fromIntegral b :: Int64)) bs
+      (left, right) = splitAt 8 hexParts
+  in unwords left ++ "  " ++ unwords right
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs = let (a, b) = splitAt n xs in a : chunksOf n b

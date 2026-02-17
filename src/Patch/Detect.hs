@@ -6,10 +6,10 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Patch.Types (PatchFormat(..))
 
--- | Detect patch format from magic bytes at the start of the file.
+-- | Detect patch format from the first few bytes (magic).
 detectFormat :: ByteString -> Maybe PatchFormat
 detectFormat bs
-  | BS.length bs < 4    = Nothing
+  | BS.length bs < 4 = Nothing
   | BS.take 3 magic4 == "PPF" = Just FmtPPF
   | magic5 == "PATCH"         = Just FmtIPS
   | magic4 == "IPS3"          = Just FmtIPS   -- IPS32: magic "IPS32"
@@ -19,6 +19,10 @@ detectFormat bs
   | magic5 == "APS10"         = Just FmtAPS   -- APS N64
   | magic4 == "APS1"          = Just FmtAPS   -- APS GBA (magic is "APS1" + first byte of source size)
   | BS.length bs >= 7 && BS.take 7 bs == "NINJA2\0" = Just FmtRUP
+  | BS.length bs >= 8 && BS.take 8 bs == "BSDIFF40" = Just FmtBSDiff
+  | magic4 == "\xd1\xff\xd1\xff" = Just FmtGDIFF
+  | BS.length bs >= 8 && BS.take 4 bs == "%XDZ" = Just FmtXDelta1
+  | BS.length bs >= 7 && BS.take 7 bs == "%XDELTA" = Just FmtXDelta1
   | otherwise                 = Nothing
   where
     magic4 = BS.take 4 bs

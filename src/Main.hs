@@ -14,6 +14,10 @@ import qualified Patch.UPS as UPS
 import qualified Patch.VCDIFF as VCDIFF
 import qualified Patch.APS as APS
 import qualified Patch.RUP as RUP
+import qualified Patch.BSDiff as BSDiff
+import qualified Patch.GDIFF as GDIFF
+import qualified Patch.XDelta1 as XDelta1
+import qualified Patch.Explain as Explain
 
 import qualified Data.ByteString as BS
 import Control.Monad (when)
@@ -22,7 +26,7 @@ import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Numeric (showHex)
 import Options.Applicative
-import System.Directory (copyFile, doesFileExist)
+import System.Directory (copyFile, doesFileExist, renameFile)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 
@@ -34,6 +38,7 @@ data Command
   | Undo   Bool FilePath FilePath (Maybe FilePath)       -- verbose, patch, target, output
   | Create CreateFormat FilePath FilePath FilePath String Bool Bool
   | Info    FilePath
+  | Explain FilePath
 
 main :: IO ()
 main = execParser opts >>= \case
@@ -41,11 +46,12 @@ main = execParser opts >>= \case
   Undo  verb pf tgt mOut       -> doUndo verb pf tgt mOut
   Create fmt o m out d u v     -> doCreate fmt o m out d u v
   Info  pf                     -> doInfo pf
+  Explain pf                   -> doExplain pf
 
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP)")
+            <> progDesc "Apply, undo, create, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff, GDIFF, xdelta1)")
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -53,7 +59,12 @@ commandParser = subparser
  <> command "undo"   (info (undoParser   <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
  <> command "create" (info (createParser <**> helper) (progDesc "Create a patch from two files"))
  <> command "info"   (info (patchInfoParser <**> helper) (progDesc "Display patch information"))
+ <> command "explain" (info (explainParser <**> helper) (progDesc "Detailed record-by-record patch description"))
   )
+
+explainParser :: Parser Command
+explainParser = Explain
+  <$> argument str (metavar "PATCH" <> help "Patch file to explain")
 
 applyParser :: Parser Command
 applyParser = Apply
@@ -114,13 +125,16 @@ doApply force verbose patchFile target mOut = do
   case detectFormat patchBs of
     Nothing  -> die ("unknown patch format: " ++ patchFile)
     Just fmt -> case fmt of
-      FmtPPF    -> doApplyPPF force verbose patchBs target mOut
-      FmtIPS    -> doApplyIPS verbose patchBs target mOut
-      FmtBPS    -> doApplyBPS force verbose patchBs target mOut
-      FmtUPS    -> doApplyUPS force verbose patchBs target mOut
-      FmtVCDIFF -> doApplyVCDIFF force verbose patchBs target mOut
-      FmtAPS    -> doApplyAPS verbose patchBs target mOut
-      FmtRUP    -> doApplyRUP verbose patchBs target mOut
+      FmtPPF     -> doApplyPPF force verbose patchBs target mOut
+      FmtIPS     -> doApplyIPS verbose patchBs target mOut
+      FmtBPS     -> doApplyBPS force verbose patchBs target mOut
+      FmtUPS     -> doApplyUPS force verbose patchBs target mOut
+      FmtVCDIFF  -> doApplyVCDIFF force verbose patchBs target mOut
+      FmtAPS     -> doApplyAPS verbose patchBs target mOut
+      FmtRUP     -> doApplyRUP verbose patchBs target mOut
+      FmtBSDiff  -> doApplyBSDiff verbose patchFile patchBs target mOut
+      FmtGDIFF   -> doApplyGDIFF verbose patchBs target mOut
+      FmtXDelta1 -> doApplyXDelta1 verbose patchBs target mOut
 
 doApplyPPF :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
 doApplyPPF _force verbose patchBs target mOut = do
@@ -234,6 +248,59 @@ doApplyRUP _verbose patchBs target mOut = do
       n <- RUP.applyRUP patch actual
       putStrLn ("applied " ++ show n ++ " records")
 
+doApplyGDIFF :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
+doApplyGDIFF _verbose patchBs target mOut = do
+  case GDIFF.parseGDIFF patchBs of
+    Left err -> die err
+    Right patch -> do
+      source <- BS.readFile target
+      case GDIFF.applyGDIFF patch source of
+        Left err -> die err
+        Right result -> do
+          BS.writeFile (fromMaybe target mOut) result
+          putStrLn ("applied " ++ show (length (GDIFF.gdiffCmds patch)) ++ " commands")
+
+doApplyBSDiff :: Bool -> FilePath -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
+doApplyBSDiff _verbose patchFile patchBs target mOut = do
+  case BSDiff.parseBSDiff patchBs of
+    Left err -> die err
+    Right patch -> do
+      source <- BS.readFile target
+      case BSDiff.applyBSDiff patch source of
+        Right result -> do
+          BS.writeFile (fromMaybe target mOut) result
+          putStrLn ("applied " ++ show (length (BSDiff.bsdControls patch)) ++ " control tuples")
+        Left _ -> do
+          -- Native apply not available, try external bspatch
+          let outFile = fromMaybe target mOut
+          if outFile == target
+            then do
+              -- In-place: bspatch needs separate input/output
+              let tmpFile = target ++ ".slap.tmp"
+              r <- BSDiff.tryExternalBspatch patchFile target tmpFile
+              case r of
+                Right () -> do
+                  renameFile tmpFile target
+                  putStrLn "applied bsdiff (external bspatch)"
+                Left err -> die err
+            else do
+              r <- BSDiff.tryExternalBspatch patchFile target outFile
+              case r of
+                Right () -> putStrLn "applied bsdiff (external bspatch)"
+                Left err -> die err
+
+doApplyXDelta1 :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
+doApplyXDelta1 _verbose patchBs target mOut = do
+  case XDelta1.parseXDelta1 patchBs of
+    Left err -> die err
+    Right patch -> do
+      source <- BS.readFile target
+      case XDelta1.applyXDelta1 patch source of
+        Left err -> die err
+        Right result -> do
+          BS.writeFile (fromMaybe target mOut) result
+          putStrLn ("applied " ++ show (length (XDelta1.xd1Instructions patch)) ++ " instructions")
+
 ----------------------------------------------------------------------------
 -- Undo
 ----------------------------------------------------------------------------
@@ -328,6 +395,56 @@ doInfo patchFile = do
       FmtRUP -> case RUP.parseRUP patchBs of
         Left err -> die err
         Right p  -> putStr (RUP.rupInfo p)
+      FmtBSDiff -> case BSDiff.parseBSDiff patchBs of
+        Left err -> die err
+        Right p  -> putStr (BSDiff.bsdiffInfo p)
+      FmtGDIFF -> case GDIFF.parseGDIFF patchBs of
+        Left err -> die err
+        Right p  -> putStr (GDIFF.gdiffInfo p)
+      FmtXDelta1 -> case XDelta1.parseXDelta1 patchBs of
+        Left err -> die err
+        Right p  -> putStr (XDelta1.xdelta1Info p)
+
+----------------------------------------------------------------------------
+-- Explain
+----------------------------------------------------------------------------
+
+doExplain :: FilePath -> IO ()
+doExplain patchFile = do
+  patchBs <- BS.readFile patchFile
+  case detectFormat patchBs of
+    Nothing -> die ("unknown patch format: " ++ patchFile)
+    Just fmt -> case fmt of
+      FmtPPF -> case PPF.parsePatch patchBs of
+        Left err -> die (showPPFError err)
+        Right p  -> putStr (Explain.explainPPF p)
+      FmtIPS -> case IPS.parseIPS patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainIPS p)
+      FmtBPS -> case BPS.parseBPS patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainBPS p)
+      FmtUPS -> case UPS.parseUPS patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainUPS p)
+      FmtVCDIFF -> case VCDIFF.parseVCDIFF patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainVCDIFF p)
+      FmtAPS -> case APS.parseAPS patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainAPS p)
+      FmtRUP -> case RUP.parseRUP patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainRUP p)
+      FmtBSDiff -> case BSDiff.parseBSDiff patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainBSDiff p)
+      FmtGDIFF -> case GDIFF.parseGDIFF patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainGDIFF p)
+      FmtXDelta1 -> case XDelta1.parseXDelta1 patchBs of
+        Left err -> die err
+        Right p  -> putStr (Explain.explainXDelta1 p)
 
 ----------------------------------------------------------------------------
 -- Helpers
