@@ -4,7 +4,7 @@ version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
   Auto-detects patch format from magic bytes and applies.  Supports
-  PPF, IPS (including IPS32 and EBP), and BPS.
+  PPF, IPS (including IPS32 and EBP), BPS, UPS, and VCDIFF/xdelta3.
 
 license:       MIT
 license-file:  LICENSE
@@ -22,6 +22,8 @@ executable slap
     , Patch.Detect
     , Patch.IPS
     , Patch.Types
+    , Patch.UPS
+    , Patch.VCDIFF
     , Patch.PPF.Apply
     , Patch.PPF.Create
     , Patch.PPF.Info

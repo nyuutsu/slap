@@ -9,6 +9,7 @@ module Patch.Binary
   , getWord32BE
     -- * Variable-length integers
   , getByuuVarint
+  , getVcdiffVarint
     -- * Builders
   , putWord32LE
   , putByuuVarint
@@ -88,6 +89,18 @@ getByuuVarint off bs = go off 0 1
          then (acc', i - off + 1)
          else let shift' = shift `shiftL` 7
               in go (i + 1) (acc' + shift') shift'
+
+-- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
+-- Returns (value, bytes consumed).
+getVcdiffVarint :: Int -> ByteString -> (Int64, Int)
+getVcdiffVarint off bs = go off 0
+  where
+    go i acc =
+      let byte = BS.index bs i
+          acc' = (acc `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
+      in if testBit byte 7
+         then go (i + 1) acc'
+         else (acc', i - off + 1)
 
 ----------------------------------------------------------------------------
 -- Builders

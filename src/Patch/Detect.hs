@@ -14,6 +14,8 @@ detectFormat bs
   | magic5 == "PATCH"         = Just FmtIPS
   | magic4 == "IPS3"          = Just FmtIPS   -- IPS32: magic "IPS32"
   | magic4 == "BPS1"          = Just FmtBPS
+  | magic4 == "UPS1"          = Just FmtUPS
+  | BS.take 3 magic4 == "\xd6\xc3\xc4" = Just FmtVCDIFF
   | otherwise                 = Nothing
   where
     magic4 = BS.take 4 bs
