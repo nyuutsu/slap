@@ -1,10 +1,9 @@
-# Tetris — Rosy Retrospection v1.2
-# Real-world BDF + UPS pair. BDF shares BSDIFF40 magic with bsdiff.
-# Both patches produce identical targets — cross-validated.
+# Tetris (World) — Rosy Retrospection v1.2
+# Real-world BDF + UPS from the same mod. Cross-validation: gold.
 
-base:   homework/Tetris (World) (Rev 1).gb
+base:   test/data/tetris/base.gb
 sha256: 6c846c7974d8367d2902b5df8ebf38c37b18fdbb4950d73697692706d571f9cb
 desc:   tetris rosy retrospection (real-world BDF + UPS)
 
-BDF      | homework/rosy_retrospection_v1.2-patch/rosy_retrospection.bdf | gold | Rosy Retrospection v1.2; cross-validated with UPS
-UPS      | homework/rosy_retrospection_v1.2-patch/rosy_retrospection.ups | gold | Rosy Retrospection v1.2; cross-validated with BDF
+BDF      | test/data/tetris/rosy-retrospection.bdf | gold | Rosy Retrospection v1.2; cross-validated with UPS
+UPS      | test/data/tetris/rosy-retrospection.ups | gold | Rosy Retrospection v1.2; cross-validated with BDF

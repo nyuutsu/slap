@@ -178,7 +178,7 @@ applyGBARecs source (APSGBARecord off _ _ xorDat : rest) = do
       padBlock = if BS.length srcBlock < blockSize
                  then srcBlock <> BS.replicate (blockSize - BS.length srcBlock) 0
                  else srcBlock
-      newBlock = BS.pack (zipWith xor (BS.unpack padBlock) (BS.unpack xorDat))
+      newBlock = BS.packZipWith xor padBlock xorDat
       after = BS.drop (blockOff + blockSize) source
       result = before <> newBlock <> after
   applyGBARecs result rest

@@ -2,9 +2,9 @@
 
 module Main (main) where
 
-import Patch.Types
+import Patch.Types (PatchFormat(..))
 import Patch.Detect (detectFormat)
-import Patch.Binary (crc32)
+import Patch.Binary (crc32, putWord16BE)
 import Patch.Format (showCRC, padHex)
 import qualified Patch.PPF.Types as PPF
 import qualified Patch.PPF.Parse as PPF
@@ -26,18 +26,55 @@ import qualified Patch.Explain as Explain
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder
+import Data.Bits (shiftR, (.&.))
 import Data.Int (Int64)
-import Control.Monad (when)
+import Control.Monad (when, forM_)
 import Data.Char (toLower)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Options.Applicative
-import System.Directory (copyFile, doesFileExist, removeFile, renameFile)
+import System.Directory (copyFile, doesFileExist, removeFile)
 import System.Exit (exitFailure)
-import System.IO (hPutStrLn, stderr)
+import System.FilePath (replaceExtension)
+import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
+
+----------------------------------------------------------------------------
+-- Types
+----------------------------------------------------------------------------
 
 data CreateFormat = CfmtBPS | CfmtIPS | CfmtIPS32 | CfmtUPS | CfmtPPF3 | CfmtPMSR
   deriving (Show, Eq)
+
+-- | Strategy for applying a patch to a target.
+data ApplyStrategy
+  = InPlace (FilePath -> IO ())
+    -- ^ Seek-and-write into a mutable file.
+  | InMemory
+      (BS.ByteString -> IO (Either String BS.ByteString))
+      (Maybe Word32)  -- source CRC (checked before apply)
+      (Maybe Word32)  -- target CRC (checked after apply)
+    -- ^ Delta: takes source bytes, returns target bytes.
+
+-- | Strategy for undoing a patch.
+data UndoStrategy
+  = UndoInPlace (FilePath -> IO (Either String Int))
+  | UndoInMemory (BS.ByteString -> BS.ByteString)
+
+-- | A parsed patch with all operations pre-bound as closures.
+-- The only dispatch point is 'parseSome'; every consumer works
+-- through these fields, never inspecting the underlying format.
+data SomePatch = SomePatch
+  { spFormat         :: String
+  , spInfo           :: String
+  , spExplain        :: String
+  , spIsDifferential :: Bool
+  , spApply          :: ApplyStrategy
+  , spUndo           :: Maybe UndoStrategy
+  , spVerboseLines   :: [String]
+  , spRecordCount    :: Int
+  , spRecordUnit     :: String
+  , spDirectConvert  :: CreateFormat -> Maybe (Either String BS.ByteString)
+  }
 
 data Command
   = CmdApply
@@ -70,6 +107,10 @@ data Command
       }
   | CmdInfo    { cmdPatch :: FilePath }
   | CmdExplain { cmdPatch :: FilePath }
+
+----------------------------------------------------------------------------
+-- CLI
+----------------------------------------------------------------------------
 
 main :: IO ()
 main = execParser opts >>= \case
@@ -161,54 +202,243 @@ patchInfoParser = CmdInfo
   <$> argument str (metavar "PATCH" <> help "Patch file to inspect")
 
 ----------------------------------------------------------------------------
--- Unified parse/info/explain dispatch
+-- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
--- | Parse any supported patch format into SomePatch.
 parseSome :: BS.ByteString -> Either String SomePatch
 parseSome bs = case detectFormat bs of
-  Nothing     -> Left "unknown patch format"
+  Nothing -> Left "unknown patch format"
+
   Just FmtPPF -> case PPF.parsePatch bs of
     Left err -> Left (showPPFError err)
-    Right p  -> Right (SomePPF p)
-  Just FmtIPS     -> SomeIPS     <$> IPS.parseIPS bs
-  Just FmtBPS     -> SomeBPS     <$> BPS.parseBPS bs
-  Just FmtUPS     -> SomeUPS     <$> UPS.parseUPS bs
-  Just FmtVCDIFF  -> SomeVCDIFF  <$> VCDIFF.parseVCDIFF bs
-  Just FmtAPS     -> SomeAPS     <$> APS.parseAPS bs
-  Just FmtRUP     -> SomeRUP     <$> RUP.parseRUP bs
-  Just FmtBSDiff  -> SomeBSDiff  <$> BSDiff.parseBSDiff bs
-  Just FmtGDIFF   -> SomeGDIFF   <$> GDIFF.parseGDIFF bs
-  Just FmtXDelta1 -> SomeXDelta1 <$> XDelta1.parseXDelta1 bs
-  Just FmtPMSR    -> SomePMSR    <$> PMSR.parsePMSR bs
+    Right p  ->
+      let recs = PPF.patchRecords p
+      in Right SomePatch
+        { spFormat         = "PPF"
+        , spInfo           = PPF.showInfo p
+        , spExplain        = Explain.explainPPF p
+        , spIsDifferential = False
+        , spApply          = InPlace $ \fp -> do
+            (warnings, _) <- PPF.applyPatch p fp
+            mapM_ (hPutStrLn stderr) warnings
+        , spUndo           = Just (UndoInPlace $ PPF.undoPatch p)
+        , spVerboseLines   = numbered recs $ \r ->
+            "Write " ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
+            ++ padHex 8 (PPF.recOffset r)
+        , spRecordCount    = length recs
+        , spRecordUnit     = "records"
+        , spDirectConvert  = const Nothing
+        }
 
--- | Human-readable summary of any parsed patch.
-someInfo :: SomePatch -> String
-someInfo (SomePPF p)     = PPF.showInfo p
-someInfo (SomeIPS p)     = IPS.ipsInfo p
-someInfo (SomeBPS p)     = BPS.bpsInfo p
-someInfo (SomeUPS p)     = UPS.upsInfo p
-someInfo (SomeVCDIFF p)  = VCDIFF.vcdiffInfo p
-someInfo (SomeAPS p)     = APS.apsInfo p
-someInfo (SomeRUP p)     = RUP.rupInfo p
-someInfo (SomeBSDiff p)  = BSDiff.bsdiffInfo p
-someInfo (SomeGDIFF p)   = GDIFF.gdiffInfo p
-someInfo (SomeXDelta1 p) = XDelta1.xdelta1Info p
-someInfo (SomePMSR p)    = PMSR.pmsrInfo p
+  Just FmtIPS -> do
+    p <- IPS.parseIPS bs
+    let recs = IPS.ipsRecords p
+        (name, direct) = case (IPS.ipsVariant p, IPS.ipsEBPMeta p) of
+          (IPS.StandardIPS, Nothing) -> ("IPS", \case
+            CfmtIPS32 -> Just (ipsToIPS32 p)
+            _         -> Nothing)
+          (IPS.StandardIPS, Just _) -> ("EBP", const Nothing)
+          (IPS.IPS32, _) -> ("IPS32", \case
+            CfmtIPS -> Just (ips32ToIPS p)
+            _       -> Nothing)
+    Right SomePatch
+      { spFormat         = name
+      , spInfo           = IPS.ipsInfo p
+      , spExplain        = Explain.explainIPS p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> IPS.applyIPS p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered recs describeIPS
+      , spRecordCount    = length recs
+      , spRecordUnit     = "records"
+      , spDirectConvert  = direct
+      }
 
--- | Record-by-record explanation of any parsed patch.
-someExplain :: SomePatch -> String
-someExplain (SomePPF p)     = Explain.explainPPF p
-someExplain (SomeIPS p)     = Explain.explainIPS p
-someExplain (SomeBPS p)     = Explain.explainBPS p
-someExplain (SomeUPS p)     = Explain.explainUPS p
-someExplain (SomeVCDIFF p)  = Explain.explainVCDIFF p
-someExplain (SomeAPS p)     = Explain.explainAPS p
-someExplain (SomeRUP p)     = Explain.explainRUP p
-someExplain (SomeBSDiff p)  = Explain.explainBSDiff p
-someExplain (SomeGDIFF p)   = Explain.explainGDIFF p
-someExplain (SomeXDelta1 p) = Explain.explainXDelta1 p
-someExplain (SomePMSR p)    = Explain.explainPMSR p
+  Just FmtBPS -> do
+    p <- BPS.parseBPS bs
+    let acts = BPS.bpsActions p
+    Right SomePatch
+      { spFormat         = "BPS"
+      , spInfo           = BPS.bpsInfo p
+      , spExplain        = Explain.explainBPS p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> pure (BPS.applyBPS p source))
+          (Just (BPS.bpsSourceCRC p))
+          (Just (BPS.bpsTargetCRC p))
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered acts describeBPS
+      , spRecordCount    = length acts
+      , spRecordUnit     = "actions"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtUPS -> do
+    p <- UPS.parseUPS bs
+    let blks = UPS.upsBlocks p
+    Right SomePatch
+      { spFormat         = "UPS"
+      , spInfo           = UPS.upsInfo p
+      , spExplain        = Explain.explainUPS p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> pure (Right (UPS.applyUPS p source)))
+          (Just (UPS.upsSourceCRC p))
+          (Just (UPS.upsTargetCRC p))
+      , spUndo           = Just (UndoInMemory $ UPS.applyUPS p)
+      , spVerboseLines   = numbered blks $ \b ->
+          "XOR " ++ show (BS.length (UPS.upsXorData b))
+          ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"
+      , spRecordCount    = length blks
+      , spRecordUnit     = "blocks"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtVCDIFF -> do
+    p <- VCDIFF.parseVCDIFF bs
+    let wins = VCDIFF.vcdWindows p
+    Right SomePatch
+      { spFormat         = "VCDIFF"
+      , spInfo           = VCDIFF.vcdiffInfo p
+      , spExplain        = Explain.explainVCDIFF p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> pure (VCDIFF.applyVCDIFF p source))
+          Nothing Nothing
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered wins $ \w ->
+          "Window " ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"
+      , spRecordCount    = length wins
+      , spRecordUnit     = "windows"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtAPS -> do
+    p <- APS.parseAPS bs
+    let cnt = case p of
+          APS.APSPatch (APS.APSN64 _ recs) -> length recs
+          APS.APSPatch (APS.APSGBA _ recs) -> length recs
+    Right SomePatch
+      { spFormat         = "APS"
+      , spInfo           = APS.apsInfo p
+      , spExplain        = Explain.explainAPS p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> APS.applyAPS p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = []
+      , spRecordCount    = cnt
+      , spRecordUnit     = "records"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtRUP -> do
+    p <- RUP.parseRUP bs
+    Right SomePatch
+      { spFormat         = "RUP"
+      , spInfo           = RUP.rupInfo p
+      , spExplain        = Explain.explainRUP p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> RUP.applyRUP p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = []
+      , spRecordCount    = length (RUP.rupRecords p)
+      , spRecordUnit     = "records"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtBSDiff -> do
+    p <- BSDiff.parseBSDiff bs
+    Right SomePatch
+      { spFormat         = "BSDiff"
+      , spInfo           = BSDiff.bsdiffInfo p
+      , spExplain        = Explain.explainBSDiff p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> case BSDiff.applyBSDiff p source of
+            Right r  -> pure (Right r)
+            Left _   -> bsdiffFallback bs source)
+          Nothing Nothing
+      , spUndo           = Nothing
+      , spVerboseLines   = []
+      , spRecordCount    = length (BSDiff.bsdControls p)
+      , spRecordUnit     = "control tuples"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtGDIFF -> do
+    p <- GDIFF.parseGDIFF bs
+    Right SomePatch
+      { spFormat         = "GDIFF"
+      , spInfo           = GDIFF.gdiffInfo p
+      , spExplain        = Explain.explainGDIFF p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> pure (GDIFF.applyGDIFF p source))
+          Nothing Nothing
+      , spUndo           = Nothing
+      , spVerboseLines   = []
+      , spRecordCount    = length (GDIFF.gdiffCmds p)
+      , spRecordUnit     = "commands"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtXDelta1 -> do
+    p <- XDelta1.parseXDelta1 bs
+    Right SomePatch
+      { spFormat         = "xdelta1"
+      , spInfo           = XDelta1.xdelta1Info p
+      , spExplain        = Explain.explainXDelta1 p
+      , spIsDifferential = True
+      , spApply          = InMemory
+          (\source -> pure (XDelta1.applyXDelta1 p source))
+          Nothing Nothing
+      , spUndo           = Nothing
+      , spVerboseLines   = []
+      , spRecordCount    = length (XDelta1.xd1Instructions p)
+      , spRecordUnit     = "instructions"
+      , spDirectConvert  = const Nothing
+      }
+
+  Just FmtPMSR -> do
+    p <- PMSR.parsePMSR bs
+    let recs = PMSR.pmsrRecords p
+    Right SomePatch
+      { spFormat         = "PMSR"
+      , spInfo           = PMSR.pmsrInfo p
+      , spExplain        = Explain.explainPMSR p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> PMSR.applyPMSR p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered recs $ \r ->
+          "Write " ++ show (BS.length (PMSR.pmsrData r)) ++ " bytes at 0x"
+          ++ padHex 8 (PMSR.pmsrOffset r)
+      , spRecordCount    = length recs
+      , spRecordUnit     = "records"
+      , spDirectConvert  = const Nothing
+      }
+
+-- | External bspatch fallback: write patch+source to temp files, call bspatch.
+bsdiffFallback :: BS.ByteString -> BS.ByteString -> IO (Either String BS.ByteString)
+bsdiffFallback patchBs sourceBs = do
+  (tmpPatch, h1) <- openBinaryTempFile "/tmp" "slap-patch.tmp"
+  hClose h1
+  (tmpSrc, h2) <- openBinaryTempFile "/tmp" "slap-src.tmp"
+  hClose h2
+  (tmpOut, h3) <- openBinaryTempFile "/tmp" "slap-out.tmp"
+  hClose h3
+  BS.writeFile tmpPatch patchBs
+  BS.writeFile tmpSrc sourceBs
+  r <- BSDiff.tryExternalBspatch tmpPatch tmpSrc tmpOut
+  removeFile tmpPatch
+  removeFile tmpSrc
+  case r of
+    Right () -> do
+      result <- BS.readFile tmpOut
+      removeFile tmpOut
+      pure (Right result)
+    Left err -> do
+      removeFile tmpOut
+      pure (Left err)
 
 ----------------------------------------------------------------------------
 -- Info & Explain
@@ -219,14 +449,14 @@ doInfo patchFile = do
   patchBs <- BS.readFile patchFile
   case parseSome patchBs of
     Left err -> die err
-    Right p  -> putStr (someInfo p)
+    Right sp -> putStr (spInfo sp)
 
 doExplain :: FilePath -> IO ()
 doExplain patchFile = do
   patchBs <- BS.readFile patchFile
   case parseSome patchBs of
     Left err -> die err
-    Right p  -> putStr (someExplain p)
+    Right sp -> putStr (spExplain sp)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -237,145 +467,29 @@ doApply cmd = do
   patchBs <- BS.readFile (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
-    Right p  -> someApply cmd patchBs p
-
-someApply :: Command -> BS.ByteString -> SomePatch -> IO ()
-
-someApply cmd _patchBs (SomePPF patch) = do
-  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-  let recs = PPF.patchRecords patch
-      total = length recs
-  when (cmdVerbose cmd) $ mapM_ (\(i, r) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Write "
-      ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
-      ++ padHex 8 (PPF.recOffset r)))
-    (zip [(1::Int)..] recs)
-  (warnings, n) <- PPF.applyPatch patch actual
-  mapM_ (hPutStrLn stderr) warnings
-  putStrLn ("applied " ++ show n ++ " records")
-
-someApply cmd _patchBs (SomeIPS patch) = do
-  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-  let recs = IPS.ipsRecords patch
-      total = length recs
-  when (cmdVerbose cmd) $ mapM_ (\(i, r) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeIPS r))
-    (zip [(1::Int)..] recs)
-  n <- IPS.applyIPS patch actual
-  putStrLn ("applied " ++ show n ++ " records")
-
-someApply cmd _patchBs (SomeBPS patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  let srcCRC = crc32 source
-  checkCRC (cmdForce cmd) "source" (BPS.bpsSourceCRC patch) srcCRC
-  let acts = BPS.bpsActions patch
-      total = length acts
-  when (cmdVerbose cmd) $ mapM_ (\(i, a) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeBPS a))
-    (zip [(1::Int)..] acts)
-  case BPS.applyBPS patch source of
-    Left err -> die err
-    Right result -> do
-      let tgtCRC = crc32 result
-      when (tgtCRC /= BPS.bpsTargetCRC patch) $
-        warn ("target CRC mismatch after apply (expected "
-              ++ fmtCRC (BPS.bpsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn ("applied " ++ show total ++ " actions")
-
-someApply cmd _patchBs (SomeUPS patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  let srcCRC = crc32 source
-  checkCRC (cmdForce cmd) "source" (UPS.upsSourceCRC patch) srcCRC
-  let blks = UPS.upsBlocks patch
-      total = length blks
-  when (cmdVerbose cmd) $ mapM_ (\(i, b) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] XOR "
-      ++ show (BS.length (UPS.upsXorData b)) ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"))
-    (zip [(1::Int)..] blks)
-  let result = UPS.applyUPS patch source
-      tgtCRC = crc32 result
-  when (tgtCRC /= UPS.upsTargetCRC patch) $
-    warn ("target CRC mismatch after apply (expected "
-          ++ fmtCRC (UPS.upsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
-  BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-  putStrLn ("applied " ++ show total ++ " blocks")
-
-someApply cmd _patchBs (SomeVCDIFF patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  let wins = VCDIFF.vcdWindows patch
-      total = length wins
-  when (cmdVerbose cmd) $ mapM_ (\(i, w) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Window "
-      ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"))
-    (zip [(1::Int)..] wins)
-  case VCDIFF.applyVCDIFF patch source of
-    Left err -> die err
-    Right result -> do
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn ("applied " ++ show total ++ " windows")
-
-someApply cmd _patchBs (SomeAPS patch) = do
-  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-  n <- APS.applyAPS patch actual
-  putStrLn ("applied " ++ show n ++ " records")
-
-someApply cmd _patchBs (SomeRUP patch) = do
-  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-  n <- RUP.applyRUP patch actual
-  putStrLn ("applied " ++ show n ++ " records")
-
-someApply cmd _patchBs (SomeBSDiff patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  case BSDiff.applyBSDiff patch source of
-    Right result -> do
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn ("applied " ++ show (length (BSDiff.bsdControls patch)) ++ " control tuples")
-    Left _ -> do
-      let target = cmdTarget cmd
-          outFile = fromMaybe target (cmdOutput cmd)
-      if outFile == target
-        then do
-          let tmpFile = target ++ ".slap.tmp"
-          r <- BSDiff.tryExternalBspatch (cmdPatch cmd) target tmpFile
-          case r of
-            Right () -> do
-              renameFile tmpFile target
-              putStrLn "applied bsdiff (external bspatch)"
+    Right sp -> do
+      when (cmdVerbose cmd) $
+        mapM_ (hPutStrLn stderr) (spVerboseLines sp)
+      case spApply sp of
+        InPlace f -> do
+          actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+          f actual
+          putStrLn ("applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp)
+        InMemory apply srcCRC tgtCRC -> do
+          source <- BS.readFile (cmdTarget cmd)
+          forM_ srcCRC $ \expected ->
+            checkCRC (cmdForce cmd) "source" expected (crc32 source)
+          result <- apply source
+          case result of
             Left err -> die err
-        else do
-          r <- BSDiff.tryExternalBspatch (cmdPatch cmd) target outFile
-          case r of
-            Right () -> putStrLn "applied bsdiff (external bspatch)"
-            Left err -> die err
-
-someApply cmd _patchBs (SomeGDIFF patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  case GDIFF.applyGDIFF patch source of
-    Left err -> die err
-    Right result -> do
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn ("applied " ++ show (length (GDIFF.gdiffCmds patch)) ++ " commands")
-
-someApply cmd _patchBs (SomeXDelta1 patch) = do
-  source <- BS.readFile (cmdTarget cmd)
-  case XDelta1.applyXDelta1 patch source of
-    Left err -> die err
-    Right result -> do
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn ("applied " ++ show (length (XDelta1.xd1Instructions patch)) ++ " instructions")
-
-someApply cmd _patchBs (SomePMSR patch) = do
-  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-  let recs = PMSR.pmsrRecords patch
-      total = length recs
-  when (cmdVerbose cmd) $ mapM_ (\(i, r) ->
-    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Write "
-      ++ show (BS.length (PMSR.pmsrData r)) ++ " bytes at 0x"
-      ++ padHex 8 (PMSR.pmsrOffset r)))
-    (zip [(1::Int)..] recs)
-  n <- PMSR.applyPMSR patch actual
-  putStrLn ("applied " ++ show n ++ " records")
+            Right target -> do
+              forM_ tgtCRC $ \expected -> do
+                let actual = crc32 target
+                when (actual /= expected) $
+                  warn ("target CRC mismatch after apply (expected "
+                        ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
+              BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) target
+              putStrLn ("applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp)
 
 ----------------------------------------------------------------------------
 -- Undo
@@ -386,18 +500,19 @@ doUndo cmd = do
   patchBs <- BS.readFile (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
-    Right (SomePPF patch) -> do
-      actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-      result <- PPF.undoPatch patch actual
-      case result of
-        Left err -> die err
-        Right n  -> putStrLn ("reverted " ++ show n ++ " records")
-    Right (SomeUPS patch) -> do
-      modified <- BS.readFile (cmdTarget cmd)
-      let result = UPS.applyUPS patch modified
-      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
-      putStrLn "reverted (UPS self-inverse)"
-    Right _ -> die "undo not supported for this format"
+    Right sp -> case spUndo sp of
+      Nothing -> die "undo not supported for this format"
+      Just (UndoInPlace f) -> do
+        actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+        result <- f actual
+        case result of
+          Left err -> die err
+          Right n  -> putStrLn ("reverted " ++ show n ++ " records")
+      Just (UndoInMemory f) -> do
+        modified <- BS.readFile (cmdTarget cmd)
+        let result = f modified
+        BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+        putStrLn "reverted (UPS self-inverse)"
 
 ----------------------------------------------------------------------------
 -- Create
@@ -455,51 +570,79 @@ doConvert cmd = do
   patchBs <- BS.readFile (cmdConvPatch cmd)
   case parseSome patchBs of
     Left err -> die err
-    Right parsed -> do
-      let outFile = fromMaybe (replaceExt (cmdConvPatch cmd) (fmtExt (cmdConvTo cmd))) (cmdConvOutput cmd)
-      -- Try direct conversion first
-      case tryDirect parsed (cmdConvTo cmd) of
+    Right sp -> do
+      let outFile = fromMaybe (replaceExtension (cmdConvPatch cmd) (fmtExt (cmdConvTo cmd))) (cmdConvOutput cmd)
+      case spDirectConvert sp (cmdConvTo cmd) of
         Just (Right result) -> do
           BS.writeFile outFile result
           putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Just (Left err) -> die err
         Nothing -> do
-          -- Need --with for apply-then-create
           sourcePath <- case cmdConvWith cmd of
             Just s  -> pure s
-            Nothing -> die (needWithMsg parsed)
+            Nothing -> die (needWithMsg sp)
           sourceBs <- BS.readFile sourcePath
-          targetBs <- applyToMemory parsed patchBs sourcePath sourceBs
-          result <- createFromMemory (cmdConvTo cmd) sourceBs targetBs
-          BS.writeFile outFile result
-          putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
+          targetBs <- applyForConvert sp sourceBs
+          case createFromMemory (cmdConvTo cmd) sourceBs targetBs of
+            Left err -> die err
+            Right result -> do
+              BS.writeFile outFile result
+              putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
 
--- | Try direct conversion without needing the source ROM.
--- Returns Nothing if direct conversion is not possible.
-tryDirect :: SomePatch -> CreateFormat -> Maybe (Either String BS.ByteString)
--- IPS → IPS32: widen offsets
-tryDirect (SomeIPS patch) CfmtIPS32
-  | IPS.ipsVariant patch == IPS.StandardIPS =
-      Just (ipsToIPS32 patch)
--- IPS32 → IPS: narrow offsets (may fail)
-tryDirect (SomeIPS patch) CfmtIPS
-  | IPS.ipsVariant patch == IPS.IPS32 =
-      Just (ips32ToIPS patch)
-tryDirect _ _ = Nothing
+-- | Apply a parsed patch to source bytes, returning target bytes (for convert).
+applyForConvert :: SomePatch -> BS.ByteString -> IO BS.ByteString
+applyForConvert sp sourceBs = case spApply sp of
+  InMemory apply _ _ -> do
+    result <- apply sourceBs
+    case result of
+      Left err -> die err
+      Right r  -> pure r
+  InPlace f -> applyViaTemp sourceBs f
 
--- | Convert IPS → IPS32 by re-encoding with 4-byte offsets.
+-- | Apply a file-handle patch via a temp file and read back the result.
+applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
+applyViaTemp sourceBs apply = do
+  (tmp, h) <- openBinaryTempFile "/tmp" "slap.tmp"
+  hClose h
+  BS.writeFile tmp sourceBs
+  apply tmp
+  result <- BS.readFile tmp
+  removeFile tmp
+  pure result
+
+-- | Create a patch from source and target bytes.
+createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> Either String BS.ByteString
+createFromMemory CfmtBPS  src tgt = Right (BPS.createBPS src tgt)
+createFromMemory CfmtUPS  src tgt = Right (UPS.createUPS src tgt)
+createFromMemory CfmtPMSR src tgt = Right (PMSR.createPMSR src tgt)
+createFromMemory CfmtIPS  src tgt = IPS.createIPS src tgt
+createFromMemory CfmtIPS32 src tgt = IPS.createIPS32 src tgt
+createFromMemory CfmtPPF3 src tgt = Right (PPF.createPatchPure src tgt "converted patch" False False)
+
+-- | Error message when --with is required but not provided.
+needWithMsg :: SomePatch -> String
+needWithMsg sp = "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
+  ++ name ++ " " ++ reason ++ " \8212 the original ROM is needed\nto reconstruct the target file for re-encoding."
+  where
+    name = spFormat sp
+    reason
+      | spIsDifferential sp = "stores differential data, not raw bytes"
+      | otherwise           = "applies in-place to the target file"
+
+----------------------------------------------------------------------------
+-- IPS conversion helpers
+----------------------------------------------------------------------------
+
 ipsToIPS32 :: IPS.IPSPatch -> Either String BS.ByteString
 ipsToIPS32 patch = Right $ BL.toStrict $ toLazyByteString $
     byteString "IPS32"
     <> foldMap (encodeIPSRecordWith 4) (IPS.ipsRecords patch)
     <> byteString "EEOF"
 
--- | Convert IPS32 → IPS by re-encoding with 3-byte offsets.
--- Fails if any offset exceeds 0xFFFFFF.
 ips32ToIPS :: IPS.IPSPatch -> Either String BS.ByteString
 ips32ToIPS patch
   | any (exceedsIPS . ipsRecOff) (IPS.ipsRecords patch) =
-      Left "IPS32 patch has offsets > 0xFFFFFF — cannot convert to standard IPS"
+      Left "IPS32 patch has offsets > 0xFFFFFF \8212 cannot convert to standard IPS"
   | otherwise = Right $ BL.toStrict $ toLazyByteString $
       byteString "PATCH"
       <> foldMap (encodeIPSRecordWith 3) (IPS.ipsRecords patch)
@@ -507,147 +650,37 @@ ips32ToIPS patch
   where
     exceedsIPS off = off > 0xFFFFFF
 
--- | Get the offset from an IPS record.
 ipsRecOff :: IPS.IPSRecord -> Int64
 ipsRecOff (IPS.IPSRecord off _)      = off
 ipsRecOff (IPS.IPSRecordRLE off _ _) = off
 
--- | Encode an IPS record with the given offset width (3 or 4 bytes).
 encodeIPSRecordWith :: Int -> IPS.IPSRecord -> Builder
 encodeIPSRecordWith offWidth (IPS.IPSRecord off dat) =
   encodeOff offWidth off
   <> if BS.length dat >= 3 && BS.all (== BS.index dat 0) dat
-     then word8 0 <> word8 0 <> w16be (BS.length dat) <> word8 (BS.index dat 0)
-     else w16be (BS.length dat) <> byteString dat
+     then word8 0 <> word8 0 <> putWord16BE (BS.length dat) <> word8 (BS.index dat 0)
+     else putWord16BE (BS.length dat) <> byteString dat
 encodeIPSRecordWith offWidth (IPS.IPSRecordRLE off count val) =
   encodeOff offWidth off
   <> word8 0 <> word8 0
-  <> w16be count
+  <> putWord16BE count
   <> word8 val
 
 encodeOff :: Int -> Int64 -> Builder
 encodeOff 3 off =
-  word8 (fromIntegral (off `div` 0x10000))
-  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (off `mod` 0x100))
+  word8 (fromIntegral (off `shiftR` 16))
+  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (off .&. 0xFF))
 encodeOff _ off =
-  word8 (fromIntegral (off `div` 0x1000000))
-  <> word8 (fromIntegral ((off `div` 0x10000) `mod` 0x100))
-  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (off `mod` 0x100))
+  word8 (fromIntegral (off `shiftR` 24))
+  <> word8 (fromIntegral ((off `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (off .&. 0xFF))
 
-w16be :: Int -> Builder
-w16be n = word8 (fromIntegral ((n `div` 0x100) `mod` 0x100))
-       <> word8 (fromIntegral (n `mod` 0x100))
+----------------------------------------------------------------------------
+-- Format metadata
+----------------------------------------------------------------------------
 
--- | Apply a parsed patch to source data, returning the target ByteString.
--- For file-handle formats (IPS, PPF, APS, RUP, PMSR), writes to a temp file.
-applyToMemory :: SomePatch -> BS.ByteString -> FilePath -> BS.ByteString -> IO BS.ByteString
-applyToMemory (SomeBPS patch) _patchBs _sourcePath sourceBs =
-  case BPS.applyBPS patch sourceBs of
-    Left err -> die err
-    Right r  -> pure r
-applyToMemory (SomeUPS patch) _patchBs _sourcePath sourceBs =
-  pure (UPS.applyUPS patch sourceBs)
-applyToMemory (SomeVCDIFF patch) _patchBs _sourcePath sourceBs =
-  case VCDIFF.applyVCDIFF patch sourceBs of
-    Left err -> die err
-    Right r  -> pure r
-applyToMemory (SomeBSDiff patch) patchBs _sourcePath sourceBs =
-  case BSDiff.applyBSDiff patch sourceBs of
-    Right r  -> pure r
-    Left _   -> do
-      -- Fallback: external bspatch
-      let tmpPatch = "/tmp/slap-conv-patch.tmp"
-          tmpSrc   = "/tmp/slap-conv-src.tmp"
-          tmpOut   = "/tmp/slap-conv-out.tmp"
-      BS.writeFile tmpPatch patchBs
-      BS.writeFile tmpSrc sourceBs
-      r <- BSDiff.tryExternalBspatch tmpPatch tmpSrc tmpOut
-      removeFile tmpPatch
-      removeFile tmpSrc
-      case r of
-        Right () -> do
-          result <- BS.readFile tmpOut
-          removeFile tmpOut
-          pure result
-        Left err -> die err
-applyToMemory (SomeGDIFF patch) _patchBs _sourcePath sourceBs =
-  case GDIFF.applyGDIFF patch sourceBs of
-    Left err -> die err
-    Right r  -> pure r
-applyToMemory (SomeXDelta1 patch) _patchBs _sourcePath sourceBs =
-  case XDelta1.applyXDelta1 patch sourceBs of
-    Left err -> die err
-    Right r  -> pure r
--- File-handle formats: write source to temp, apply in-place, read back
-applyToMemory (SomeIPS patch) _patchBs _sourcePath sourceBs = applyViaTemp sourceBs $ \tmp ->
-  IPS.applyIPS patch tmp >> pure ()
-applyToMemory (SomePPF patch) _patchBs _sourcePath sourceBs = applyViaTemp sourceBs $ \tmp -> do
-  (warnings, _) <- PPF.applyPatch patch tmp
-  mapM_ (hPutStrLn stderr) warnings
-applyToMemory (SomeAPS patch) _patchBs _sourcePath sourceBs = applyViaTemp sourceBs $ \tmp ->
-  APS.applyAPS patch tmp >> pure ()
-applyToMemory (SomeRUP patch) _patchBs _sourcePath sourceBs = applyViaTemp sourceBs $ \tmp ->
-  RUP.applyRUP patch tmp >> pure ()
-applyToMemory (SomePMSR patch) _patchBs _sourcePath sourceBs = applyViaTemp sourceBs $ \tmp ->
-  PMSR.applyPMSR patch tmp >> pure ()
-
--- | Apply a file-handle-based patch via a temp file and read back the result.
-applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
-applyViaTemp sourceBs apply = do
-  let tmp = "/tmp/slap-convert.tmp"
-  BS.writeFile tmp sourceBs
-  apply tmp
-  result <- BS.readFile tmp
-  removeFile tmp
-  pure result
-
--- | Create a patch from source and target in memory, returning the patch bytes.
-createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> IO BS.ByteString
-createFromMemory CfmtBPS  src tgt = pure (BPS.createBPS src tgt)
-createFromMemory CfmtUPS  src tgt = pure (UPS.createUPS src tgt)
-createFromMemory CfmtPMSR src tgt = pure (PMSR.createPMSR src tgt)
-createFromMemory CfmtIPS  src tgt = case IPS.createIPS src tgt of
-  Left err -> die err
-  Right r  -> pure r
-createFromMemory CfmtIPS32 src tgt = case IPS.createIPS32 src tgt of
-  Left err -> die err
-  Right r  -> pure r
-createFromMemory CfmtPPF3 src tgt =
-  pure (PPF.createPatchPure src tgt "converted patch" False False)
-
--- | Error message when --with is required but not provided.
-needWithMsg :: SomePatch -> String
-needWithMsg p = "converting from " ++ srcFmt ++ " requires the original ROM (--with SOURCE)\n"
-  ++ reason
-  where
-    (srcFmt, reason) = case p of
-      SomeBPS _     -> ("BPS",     "BPS stores differential data, not raw bytes — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeUPS _     -> ("UPS",     "UPS stores XOR differences — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeVCDIFF _  -> ("VCDIFF",  "VCDIFF stores delta-encoded data — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeBSDiff _  -> ("BSDiff",  "BSDiff stores differential data — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeGDIFF _   -> ("GDIFF",   "GDIFF stores copy/data commands referencing the source — the original ROM\nis needed to reconstruct the target file for re-encoding.")
-      SomeXDelta1 _ -> ("xdelta1", "xdelta1 stores delta-encoded data — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomePPF _     -> ("PPF",     "PPF applies in-place to the target file — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeIPS _     -> ("IPS",     "IPS applies in-place to the target file — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeAPS _     -> ("APS",     "APS applies in-place to the target file — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomeRUP _     -> ("RUP",     "RUP applies in-place to the target file — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-      SomePMSR _    -> ("PMSR",    "PMSR applies in-place to the target file — the original ROM is needed\nto reconstruct the target file for re-encoding.")
-
--- | Replace the file extension, or append if no extension.
-replaceExt :: FilePath -> String -> FilePath
-replaceExt path ext =
-  let base = dropExtension path
-  in base ++ ext
-
-dropExtension :: FilePath -> FilePath
-dropExtension path =
-  let name = reverse path
-      (_, rest) = break (== '.') name
-  in if null rest then path else reverse (drop 1 rest)
-
--- | File extension for a CreateFormat.
 fmtExt :: CreateFormat -> String
 fmtExt CfmtBPS  = ".bps"
 fmtExt CfmtIPS  = ".ips"
@@ -656,7 +689,6 @@ fmtExt CfmtUPS  = ".ups"
 fmtExt CfmtPPF3 = ".ppf"
 fmtExt CfmtPMSR = ".pmsr"
 
--- | Human-readable name for a CreateFormat.
 fmtName :: CreateFormat -> String
 fmtName CfmtBPS  = "BPS"
 fmtName CfmtIPS  = "IPS"
@@ -667,6 +699,7 @@ fmtName CfmtPMSR = "PMSR"
 
 ----------------------------------------------------------------------------
 -- Helpers
+----------------------------------------------------------------------------
 
 resolveOutput :: FilePath -> Maybe FilePath -> IO FilePath
 resolveOutput target Nothing    = pure target
@@ -689,7 +722,7 @@ fmtCRC :: Word32 -> String
 fmtCRC w = "0x" ++ showCRC w
 
 showPPFError :: PPF.ParseError -> String
-showPPFError (PPF.BadMagic bs)        = "not a PPF file (bad magic: " ++ show bs ++ ")"
+showPPFError (PPF.BadMagic bs')       = "not a PPF file (bad magic: " ++ show bs' ++ ")"
 showPPFError (PPF.UnknownVersion v)   = "unknown PPF version byte: " ++ show v
 showPPFError (PPF.TruncatedFile msg)  = "truncated file: " ++ msg
 showPPFError (PPF.UnknownImageType v) = "unknown image type: " ++ show v
@@ -705,6 +738,13 @@ describeBPS (BPS.SourceRead len) = "SourceRead " ++ show len ++ " bytes"
 describeBPS (BPS.TargetRead dat) = "TargetRead " ++ show (BS.length dat) ++ " bytes"
 describeBPS (BPS.SourceCopy len _) = "SourceCopy " ++ show len ++ " bytes"
 describeBPS (BPS.TargetCopy len _) = "TargetCopy " ++ show len ++ " bytes"
+
+-- | Pre-render verbose lines with "[i/n]" prefixes.
+numbered :: [a] -> (a -> String) -> [String]
+numbered xs f = zipWith fmt [(1::Int)..] xs
+  where
+    total = length xs
+    fmt i x = "[" ++ show i ++ "/" ++ show total ++ "] " ++ f x
 
 warn :: String -> IO ()
 warn msg = hPutStrLn stderr ("slap: warning: " ++ msg)

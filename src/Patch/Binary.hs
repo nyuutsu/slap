@@ -12,6 +12,7 @@ module Patch.Binary
   , getByuuVarint
   , getVcdiffVarint
     -- * Builders
+  , putWord16BE
   , putWord32LE
   , putByuuVarint
     -- * CRC-32
@@ -112,6 +113,12 @@ getVcdiffVarint off bs = go off 0
 ----------------------------------------------------------------------------
 -- Builders
 ----------------------------------------------------------------------------
+
+-- | Write a 16-bit value in big-endian order.
+putWord16BE :: Int -> Builder
+putWord16BE n =
+  word8 (fromIntegral ((n `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (n .&. 0xFF))
 
 -- | Write a Word32 in little-endian order.
 putWord32LE :: Word32 -> Builder

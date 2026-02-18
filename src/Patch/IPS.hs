@@ -12,7 +12,7 @@ module Patch.IPS
   , ipsInfo
   ) where
 
-import Patch.Binary (getWord24BE, getWord32BE)
+import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
 import qualified Patch.Get as G
@@ -23,6 +23,7 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
+import Data.Bits (shiftR, (.&.))
 import Data.Word (Word8, Word32, Word64)
 import Numeric (showHex)
 import System.IO
@@ -214,9 +215,9 @@ truncMarkerIPS :: ByteString -> ByteString -> Builder
 truncMarkerIPS orig modified
   | BS.length modified < BS.length orig =
       let sz = BS.length modified
-      in word8 (fromIntegral (sz `div` 0x10000))
-         <> word8 (fromIntegral ((sz `div` 0x100) `mod` 0x100))
-         <> word8 (fromIntegral (sz `mod` 0x100))
+      in word8 (fromIntegral (sz `shiftR` 16))
+         <> word8 (fromIntegral ((sz `shiftR` 8) .&. 0xFF))
+         <> word8 (fromIntegral (sz .&. 0xFF))
   | otherwise = mempty
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
@@ -226,33 +227,28 @@ encodeIPSRecord offWidth (off, dat) =
   <> if BS.length dat >= 3 && allSame dat
      then -- RLE record: size=0, then rle_count, rle_value
        word8 0 <> word8 0
-       <> putWord16BE' (BS.length dat)
+       <> putWord16BE (BS.length dat)
        <> word8 (BS.index dat 0)
      else -- Normal record: size, data
-       putWord16BE' (BS.length dat)
+       putWord16BE (BS.length dat)
        <> byteString dat
 
 -- | Encode an offset as big-endian bytes (3 for IPS, 4 for IPS32).
 encodeOffset :: Int -> Int -> Builder
 encodeOffset 3 off =
-  word8 (fromIntegral (off `div` 0x10000))
-  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (off `mod` 0x100))
+  word8 (fromIntegral (off `shiftR` 16))
+  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (off .&. 0xFF))
 encodeOffset _ off =
-  word8 (fromIntegral (off `div` 0x1000000))
-  <> word8 (fromIntegral ((off `div` 0x10000) `mod` 0x100))
-  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (off `mod` 0x100))
+  word8 (fromIntegral (off `shiftR` 24))
+  <> word8 (fromIntegral ((off `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (off .&. 0xFF))
 
 allSame :: ByteString -> Bool
 allSame bs
   | BS.null bs = True
   | otherwise  = BS.all (== BS.index bs 0) bs
-
-putWord16BE' :: Int -> Builder
-putWord16BE' n =
-  word8 (fromIntegral ((n `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (n `mod` 0x100))
 
 -- | Diff two byte strings into IPS records (offset, data).
 -- Merges nearby differences (gap < 6 bytes) and splits at maxRecSize.

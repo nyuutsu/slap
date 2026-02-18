@@ -30,4 +30,8 @@
 - [x] APS GBA patch — FFTA ROM + FFTA_X patch provided, CRC32s verified
 - [x] PPF4 round-trip verification — Suikoden 1 disc image provided (USA + Rev 1)
 - [x] BDF test data — Tetris ROM + Rosy Retrospection patch provided, CRC32s verified
-- [ ] APS N64 type=1 (N64-specific) — need Everdrive auto-APS patch + matching .z64 ROM (see homework.md)
+- [x] APS N64 type=1 (N64-specific) — Banjo-Tooie Dextrose (1786 recs) + Paper Mario deblur (31 recs)
+- [x] PPF4 test suite — Suikoden 1 disc image + Pyriel bribe.ppf (19 records, first real-world PPF4 validation)
+- [x] IPS stress test — FE6 english translation (7639 records, 572 KB, offsets to 0x1000000)
+- [ ] xdelta3 real-world test — large VCDIFF patch (e.g., Pokemon Unbound)
+- [ ] PMSR real-world test — Star Rod .mod files are Yay0-compressed game data, not PMSR patches

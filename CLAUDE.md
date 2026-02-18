@@ -3,10 +3,12 @@
 ## What this is
 
 A multi-format ROM patching CLI. Auto-detects format from magic bytes,
-applies patches, and can round-trip create several formats. The goal is
-one tool that handles everything — IPS, BPS, UPS, PPF, VCDIFF, APS,
-RUP, BSDiff, GDIFF, xdelta1 — so you never have to hunt for a
-format-specific patcher.
+applies/undoes patches, creates patches, converts between formats, and
+provides info/explain commands for inspection. The goal is one tool
+that handles everything — IPS, IPS32, EBP, BPS, UPS, PPF (1/2/3/4),
+VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
+xdelta1, PMSR — so you never have to hunt for a format-specific
+patcher.
 
 ## Code style
 
@@ -44,16 +46,33 @@ outside the source.
 
 Each patch format gets its own module under `Patch/`. Every format
 module exports at minimum `parse` and `apply`; most also export `info`.
-Format-specific types stay in their own module — the top-level
-`Patch.Types` just holds the `PatchFormat` enum and `SomePatch` union
-for dispatch.
+Format-specific types stay in their own module — `Patch.Types` holds
+only the `PatchFormat` enum for detection.
 
-`Patch.Binary` holds shared primitives: endian readers, varint codecs,
-CRC32, and the `copyBSRange` bulk-copy helper. Anything that two or
-more format modules need goes here rather than being duplicated.
+`SomePatch` is a **closure-based existential** — a record of closures
+defined in `Main.hs`, not a sum type. `parseSome` is the single
+dispatch point: it parses raw bytes into format-specific types, then
+closes over them to produce a `SomePatch` carrying `spInfo`, `spExplain`,
+`spApply`, `spUndo`, `spDirectConvert`, etc. All consumers work through
+these fields. Adding format #12 means adding one block to `parseSome`;
+nothing else changes.
 
-`Main.hs` is purely dispatch — parse CLI args, detect format, call the
-right module. No format-specific logic lives in Main.
+Shared infrastructure:
+
+- `Patch.Binary` — Endian readers, varint codecs (byuu, VCDIFF, EDSIO),
+  CRC32, builder helpers (`putWord16BE`, `putWord32LE`, `putByuuVarint`),
+  and `copyBSRange` for bulk memcpy into output buffers.
+- `Patch.Get` — Pure position-threading parser monad over strict
+  ByteString. All format parsers use this instead of raw index arithmetic.
+- `Patch.Detect` — Magic-byte detection, returns `PatchFormat` enum.
+- `Patch.Explain` — Record-by-record textual dumps for all formats.
+- `Patch.Format` — Shared display helpers (CRC formatting, hex padding,
+  hex dumps, number alignment).
+
+`Main.hs` is CLI parsing (optparse-applicative), `parseSome` dispatch,
+and uniform command handlers. Commands: apply, undo, create, convert,
+info, explain. Apply handles two strategies (`InPlace` for file-handle
+formats, `InMemory` for delta formats) through a single code path.
 
 ## Performance
 
@@ -74,7 +93,23 @@ replicate it in every format.
 
 ## Testing
 
-No test suite yet. Testing is manual against real patch files —
-`TESTING.md` has the per-format checklist. Round-trip tests for
-creation formats (IPS, BPS, UPS, PPF3) only need two differing
-binary files.
+Suite-based test harness in `test/run.sh`. Each `.suite` file in
+`test/suites/` is a declarative manifest: header (base ROM path,
+expected SHA256) followed by pipe-delimited patch lines with format
+name, patch path, confidence level (gold/verified/untested/broken),
+and provenance.
+
+Test data lives in `test/data/` — one directory per game, base ROM
+named `base.{ext}`, patches with clean names. Current coverage:
+
+- **dm4k** — 14 formats, light diff (4 MB GBC)
+- **emerald** — 3 scenarios (heavy-diff, RLE, size-change) across 13 formats each (16 MB GBA)
+- **stadium2** — 3 scenarios across 11 formats each (64 MB N64)
+- **tetris** — BDF + UPS cross-validation (real-world, 32 KB GB)
+- **7 real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Paper Mario (APS+IPS cross-val), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
+
+Run: `cabal build && bash test/run.sh`
+Filter: `bash test/run.sh "" dm4k`
+
+84 tests total, all passing. Base ROMs are gitignored; test patches
+are committed.

@@ -1,18 +1,18 @@
-# Pokemon Stadium 2 — RLE-friendly diff (8 regions zeroed, 25% of file)
-# 64 MB N64 ROM with large contiguous zero-fills.
+# Pokemon Stadium 2 — RLE stress (25% of 16KB blocks zeroed)
+# 64 MB N64 ROM. Tests RLE-heavy data patterns at scale.
 
-base:   homework/Pokemon Stadium 2 (USA).z64
+base:   test/data/stadium2/base.z64
 sha256: 4c45b05e82c5cbe06bfcd90c2af53b18d40c83bd0fa6536752c1e9fb7e23442a
 desc:   stadium2 rle (64 MB N64, 25% zeroed)
 
-IPS32    | homework/test/stadium2/rle/patch.ips32      | verified | sips
-BPS      | homework/test/stadium2/rle/patch.bps        | verified | Flips
-UPS      | homework/test/stadium2/rle/patch.ups        | verified | Go ups
-PPF1     | homework/test/stadium2/rle/patch.ppf1.ppf   | verified | RomPatcher.js
-PPF3     | homework/test/stadium2/rle/patch.ppf        | verified | MakePPF3
-VCDIFF   | homework/test/stadium2/rle/patch.vcdiff     | verified | xdelta3 -S none
-bsdiff   | homework/test/stadium2/rle/patch.bsdiff     | verified | bsdiff
-APS-N64  | homework/test/stadium2/rle/patch.aps.aps    | verified | RomPatcher.js (type=1, cart P3E)
-RUP      | homework/test/stadium2/rle/patch.rup.rup    | verified | RomPatcher.js
-xdelta1  | homework/test/stadium2/rle/patch.xdelta1    | verified | xdelta 1.1.4
-GDIFF    | homework/test/stadium2/rle/patch.gdiff      | verified | javaxdelta
+IPS32    | test/data/stadium2/rle/patch.ips32      | verified | sips
+BPS      | test/data/stadium2/rle/patch.bps        | verified | Flips
+UPS      | test/data/stadium2/rle/patch.ups        | verified | Go ups
+PPF1     | test/data/stadium2/rle/patch.ppf1.ppf   | verified | RomPatcher.js
+PPF3     | test/data/stadium2/rle/patch.ppf        | verified | MakePPF3
+VCDIFF   | test/data/stadium2/rle/patch.vcdiff     | verified | xdelta3 -S none
+bsdiff   | test/data/stadium2/rle/patch.bsdiff     | verified | bsdiff
+APS-N64  | test/data/stadium2/rle/patch.aps.aps    | verified | RomPatcher.js (type=1, cart P3E)
+RUP      | test/data/stadium2/rle/patch.rup.rup    | verified | RomPatcher.js
+xdelta1  | test/data/stadium2/rle/patch.xdelta1    | verified | xdelta 1.1.4
+GDIFF    | test/data/stadium2/rle/patch.gdiff      | verified | javaxdelta

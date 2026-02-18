@@ -1,8 +1,8 @@
 # Kirby's Dream Land 2 DX v1.2
 # Real-world BPS patch. Size change: 512 KB -> 1 MB (doubled).
 
-base:   homework/Kirby's Dream Land 2 (USA, Europe) (SGB Enhanced).gb
+base:   test/data/kirby-dl2/base.gb
 sha256: 49b984961d0595fe6387a5e419dba5a848da28bbde0bd4476c4e824af8779747
 desc:   kirby DL2 DX (real-world BPS, size change 512K->1M)
 
-BPS      | homework/Kirby's Dream Land 2 DX v1.2/Kirby's Dream Land 2 DX v1.2.bps | gold | Kirby's Dream Land 2 DX v1.2 by JPokemon Patchmaker
+BPS      | test/data/kirby-dl2/kirby-dl2-dx.bps | gold | Kirby's Dream Land 2 DX v1.2 by JPokemon Patchmaker

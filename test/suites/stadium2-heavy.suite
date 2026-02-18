@@ -1,18 +1,18 @@
 # Pokemon Stadium 2 — heavy diff (40% of 16KB blocks XOR'd with PRNG)
 # 64 MB N64 ROM. Exercises >16 MB handling (no standard IPS).
 
-base:   homework/Pokemon Stadium 2 (USA).z64
+base:   test/data/stadium2/base.z64
 sha256: 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a
 desc:   stadium2 heavy-diff (64 MB N64, 40% changed)
 
-IPS32    | homework/test/stadium2/heavy-diff/patch.ips32      | verified | sips
-BPS      | homework/test/stadium2/heavy-diff/patch.bps        | verified | Flips
-UPS      | homework/test/stadium2/heavy-diff/patch.ups        | verified | Go ups
-PPF1     | homework/test/stadium2/heavy-diff/patch.ppf1.ppf   | verified | RomPatcher.js
-PPF3     | homework/test/stadium2/heavy-diff/patch.ppf        | verified | MakePPF3
-VCDIFF   | homework/test/stadium2/heavy-diff/patch.vcdiff     | verified | xdelta3 -S none
-bsdiff   | homework/test/stadium2/heavy-diff/patch.bsdiff     | verified | bsdiff
-APS-N64  | homework/test/stadium2/heavy-diff/patch.aps.aps    | verified | RomPatcher.js (type=1, cart P3E)
-RUP      | homework/test/stadium2/heavy-diff/patch.rup.rup    | verified | RomPatcher.js
-xdelta1  | homework/test/stadium2/heavy-diff/patch.xdelta1    | verified | xdelta 1.1.4
-GDIFF    | homework/test/stadium2/heavy-diff/patch.gdiff      | verified | javaxdelta
+IPS32    | test/data/stadium2/heavy-diff/patch.ips32      | verified | sips
+BPS      | test/data/stadium2/heavy-diff/patch.bps        | verified | Flips
+UPS      | test/data/stadium2/heavy-diff/patch.ups        | verified | Go ups
+PPF1     | test/data/stadium2/heavy-diff/patch.ppf1.ppf   | verified | RomPatcher.js
+PPF3     | test/data/stadium2/heavy-diff/patch.ppf        | verified | MakePPF3
+VCDIFF   | test/data/stadium2/heavy-diff/patch.vcdiff     | verified | xdelta3 -S none
+bsdiff   | test/data/stadium2/heavy-diff/patch.bsdiff     | verified | bsdiff
+APS-N64  | test/data/stadium2/heavy-diff/patch.aps.aps    | verified | RomPatcher.js (type=1, cart P3E)
+RUP      | test/data/stadium2/heavy-diff/patch.rup.rup    | verified | RomPatcher.js
+xdelta1  | test/data/stadium2/heavy-diff/patch.xdelta1    | verified | xdelta 1.1.4
+GDIFF    | test/data/stadium2/heavy-diff/patch.gdiff      | verified | javaxdelta

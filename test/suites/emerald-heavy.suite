@@ -1,20 +1,20 @@
 # Pokemon Emerald — heavy diff (40% of 16KB blocks XOR'd with PRNG)
 # Generated test. 16 MB GBA ROM exercises large-file handling.
 
-base:   homework/Pokemon - Emerald Version (USA, Europe).gba
+base:   test/data/emerald/base.gba
 sha256: 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
 desc:   emerald heavy-diff (16 MB GBA, 40% changed)
 
-IPS      | homework/test/emerald/heavy-diff/patch.ips       | verified | Flips
-IPS32    | homework/test/emerald/heavy-diff/patch.ips32      | verified | sips
-EBP      | homework/test/emerald/heavy-diff/patch.ebp.ebp    | verified | RomPatcher.js
-BPS      | homework/test/emerald/heavy-diff/patch.bps        | verified | Flips
-UPS      | homework/test/emerald/heavy-diff/patch.ups        | verified | Go ups
-PPF1     | homework/test/emerald/heavy-diff/patch.ppf1.ppf   | verified | RomPatcher.js
-PPF3     | homework/test/emerald/heavy-diff/patch.ppf        | verified | MakePPF3
-VCDIFF   | homework/test/emerald/heavy-diff/patch.vcdiff     | verified | xdelta3 -S none
-bsdiff   | homework/test/emerald/heavy-diff/patch.bsdiff     | verified | bsdiff
-APS      | homework/test/emerald/heavy-diff/patch.aps.aps    | verified | RomPatcher.js (type=0)
-RUP      | homework/test/emerald/heavy-diff/patch.rup.rup    | verified | RomPatcher.js
-xdelta1  | homework/test/emerald/heavy-diff/patch.xdelta1    | verified | xdelta 1.1.4
-GDIFF    | homework/test/emerald/heavy-diff/patch.gdiff      | verified | javaxdelta
+IPS      | test/data/emerald/heavy-diff/patch.ips       | verified | Flips
+IPS32    | test/data/emerald/heavy-diff/patch.ips32      | verified | sips
+EBP      | test/data/emerald/heavy-diff/patch.ebp.ebp    | verified | RomPatcher.js
+BPS      | test/data/emerald/heavy-diff/patch.bps        | verified | Flips
+UPS      | test/data/emerald/heavy-diff/patch.ups        | verified | Go ups
+PPF1     | test/data/emerald/heavy-diff/patch.ppf1.ppf   | verified | RomPatcher.js
+PPF3     | test/data/emerald/heavy-diff/patch.ppf        | verified | MakePPF3
+VCDIFF   | test/data/emerald/heavy-diff/patch.vcdiff     | verified | xdelta3 -S none
+bsdiff   | test/data/emerald/heavy-diff/patch.bsdiff     | verified | bsdiff
+APS      | test/data/emerald/heavy-diff/patch.aps.aps    | verified | RomPatcher.js (type=0)
+RUP      | test/data/emerald/heavy-diff/patch.rup.rup    | verified | RomPatcher.js
+xdelta1  | test/data/emerald/heavy-diff/patch.xdelta1    | verified | xdelta 1.1.4
+GDIFF    | test/data/emerald/heavy-diff/patch.gdiff      | verified | javaxdelta

@@ -2,9 +2,9 @@
 # Two independent patch formats (APS N64 type=1 + IPS) that produce the
 # same target. Cross-validation makes these gold confidence.
 
-base:   homework/Paper Mario (USA).z64
+base:   test/data/paper-mario/base.z64
 sha256: d8459c173d27f0834eca511a60f604e2aed17560da154cdda3a411de56345089
 desc:   paper mario deblur (real-world APS-N64 + IPS, cross-validated)
 
-APS-N64  | homework/n64 deblur/n64 ntsc deblur patches for nointro/Paper Mario (USA).aps | gold | N64 NTSC deblur (nointro set); cross-validated with IPS
-IPS      | homework/n64 deblur/CRC-Filenames_IPS_no-AA/65EEE53A.ips                      | gold | N64 deblur IPS (CRC-named); cross-validated with APS
+APS-N64  | test/data/paper-mario/deblur.aps | gold | N64 NTSC deblur (nointro set); cross-validated with IPS
+IPS      | test/data/paper-mario/deblur.ips | gold | N64 deblur IPS (CRC-named); cross-validated with APS

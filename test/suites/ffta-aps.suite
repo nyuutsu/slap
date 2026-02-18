@@ -1,8 +1,8 @@
 # Final Fantasy Tactics Advance — FFTA_X mod
 # Real-world APS GBA patch. 12 64KB XOR blocks.
 
-base:   homework/Final Fantasy Tactics Advance (USA).gba
+base:   test/data/ffta/base.gba
 sha256: f3667c17179d3ce1eafed9d29347eb5d71cfa49cf27db93c26ae98a88304eb06
 desc:   FFTA APS-GBA (real-world APS GBA patch)
 
-APS-GBA  | homework/FFTA_X_1.0.3.1.aps | gold | FFTA_X 1.0.3.1 mod
+APS-GBA  | test/data/ffta/ffta-x.aps | gold | FFTA_X 1.0.3.1 mod

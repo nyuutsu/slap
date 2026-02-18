@@ -24,6 +24,8 @@ import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 
+import qualified Data.IntMap.Strict as IM
+import qualified Data.IntSet as IS
 import qualified Codec.Compression.GZip as GZip
 
 ----------------------------------------------------------------------------
@@ -147,14 +149,15 @@ parseInstructions n = do
 -- | When a source has sequential=True, wire offsets are 0.
 -- Reconstruct by maintaining a running position per source.
 fixSequentialOffsets :: [XD1Source] -> [XD1Instruction] -> [XD1Instruction]
-fixSequentialOffsets sources = reverse . snd . foldl' step (positions, [])
+fixSequentialOffsets sources = reverse . snd . foldl' step (initPos, [])
   where
-    positions = replicate (length sources) (0 :: Int64)
+    seqIndices = IS.fromList [i | (i, s) <- zip [0..] sources, xd1SrcSequential s]
+    initPos    = IM.fromList [(i, 0 :: Int64) | i <- IS.toList seqIndices]
     step (pos, acc) inst =
       let idx = fromIntegral (xd1InstIndex inst) :: Int
-      in if idx < length sources && xd1SrcSequential (sources !! idx)
-         then let off = pos !! idx
-                  pos' = take idx pos ++ [off + xd1InstLength inst] ++ drop (idx + 1) pos
+      in if IS.member idx seqIndices
+         then let off  = IM.findWithDefault 0 idx pos
+                  pos' = IM.insert idx (off + xd1InstLength inst) pos
               in (pos', inst { xd1InstOffset = off } : acc)
          else (pos, inst : acc)
 
