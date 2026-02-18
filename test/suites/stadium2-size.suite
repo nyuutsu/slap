@@ -1,0 +1,13 @@
+# Pokemon Stadium 2 — size change (64 MB -> 128 MB, padded with 0x00)
+# Only formats that can represent file extension.
+
+base:   homework/Pokemon Stadium 2 (USA).z64
+sha256: 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8
+desc:   stadium2 size-change (64 MB -> 128 MB)
+
+BPS      | homework/test/stadium2/size-change/patch.bps      | verified | Flips
+UPS      | homework/test/stadium2/size-change/patch.ups       | verified | Go ups
+VCDIFF   | homework/test/stadium2/size-change/patch.vcdiff    | verified | xdelta3
+bsdiff   | homework/test/stadium2/size-change/patch.bsdiff    | verified | bsdiff
+xdelta1  | homework/test/stadium2/size-change/patch.xdelta1   | verified | xdelta 1.1.4
+GDIFF    | homework/test/stadium2/size-change/patch.gdiff     | verified | javaxdelta

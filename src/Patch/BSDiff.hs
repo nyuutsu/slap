@@ -149,7 +149,7 @@ tryExternalBspatch patchPath sourcePath outputPath = do
 
 bsdiffInfo :: BSDiffPatch -> String
 bsdiffInfo p = unlines $ filter (not . null)
-  [ "format:      BSDiff (BSDIFF40)"
+  [ "format:      BSDiff / BDF (BSDIFF40)"
   , "new size:    " ++ show (bsdNewSize p)
   , "ctrl block:  " ++ show (bsdCtrlSize p) ++ " bytes (compressed)"
   , "diff block:  " ++ show (bsdDiffSize p) ++ " bytes (compressed)"

@@ -1,0 +1,21 @@
+# Yu-Gi-Oh! Duel Monsters 4 — 4 MB GBC ROM
+# All 14 formats, small diff. The original test set.
+
+base:   test/dm4k/dm4k-base.gbc
+sha256: e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8
+desc:   dm4k (4 MB GBC, light diff)
+
+IPS      | test/dm4k/dm4k-patch.ips       | verified | Flips
+IPS32    | test/dm4k/dm4k-patch.ips32      | verified | sips (leoetlino)
+EBP      | test/dm4k/dm4k-patch.ebp        | verified | RomPatcher.js
+BPS      | test/dm4k/dm4k-patch.bps        | verified | Flips
+UPS      | test/dm4k/dm4k-patch.ups        | verified | Go ups
+PPF1     | test/dm4k/dm4k-patch.ppf1.ppf   | verified | RomPatcher.js
+PPF2     | test/dm4k/dm4k-patch.ppf2.ppf   | verified | RomPatcher.js
+PPF3     | test/dm4k/dm4k-patch.ppf        | verified | MakePPF3 (Paradox)
+VCDIFF   | test/dm4k/dm4k-patch.vcdiff     | verified | xdelta3
+bsdiff   | test/dm4k/dm4k-patch.bsdiff     | verified | bsdiff
+APS-N64  | test/dm4k/dm4k-patch.aps        | verified | RomPatcher.js (type=0)
+RUP      | test/dm4k/dm4k-patch.rup        | verified | RomPatcher.js
+xdelta1  | test/dm4k/dm4k-patch.xdelta1    | verified | xdelta 1.1.4
+GDIFF    | test/dm4k/dm4k-patch.gdiff      | verified | javaxdelta

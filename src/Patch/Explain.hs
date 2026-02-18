@@ -9,6 +9,7 @@ module Patch.Explain
   , explainBSDiff
   , explainGDIFF
   , explainXDelta1
+  , explainPMSR
   ) where
 
 import qualified Patch.PPF.Types as PPF
@@ -21,6 +22,7 @@ import qualified Patch.VCDIFF as VCDIFF
 import qualified Patch.BSDiff as BSDiff
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.XDelta1 as XDelta1
+import qualified Patch.PMSR as PMSR
 
 import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
 
@@ -281,7 +283,7 @@ showGDIFFCmd (outPos, acc) (n, cmd) = case cmd of
 
 explainBSDiff :: BSDiff.BSDiffPatch -> String
 explainBSDiff p = unlines $
-  [ "format:      BSDiff (BSDIFF40)"
+  [ "format:      BSDiff / BDF (BSDIFF40)"
   , "new size:    " ++ show (BSDiff.bsdNewSize p)
   , "ctrl block:  " ++ show (BSDiff.bsdCtrlSize p) ++ " bytes (compressed)"
   , "diff block:  " ++ show (BSDiff.bsdDiffSize p) ++ " bytes (compressed)"
@@ -328,4 +330,26 @@ showXD1Inst n inst =
   padNum n ++ "  Copy  " ++ padR 10 (show (XDelta1.xd1InstLength inst) ++ " B")
   ++ "  from source " ++ show (XDelta1.xd1InstIndex inst)
   ++ "  at 0x" ++ padHex 6 (XDelta1.xd1InstOffset inst)
+
+----------------------------------------------------------------------------
+-- PMSR
+----------------------------------------------------------------------------
+
+explainPMSR :: PMSR.PMSRPatch -> String
+explainPMSR p = unlines $
+  [ "format:      PMSR (Paper Mario Star Rod)"
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showPMSRRecord [1..] (PMSR.pmsrRecords p)
+    ++ [summary]
+  where
+    nRecs = length (PMSR.pmsrRecords p)
+    totalBytes = sum (map (BS.length . PMSR.pmsrData) (PMSR.pmsrRecords p))
+    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+
+showPMSRRecord :: Int -> PMSR.PMSRRecord -> String
+showPMSRRecord n r =
+  padNum n ++ "  Write  " ++ padR 10 (show (BS.length (PMSR.pmsrData r)) ++ " B")
+  ++ "  at 0x" ++ padHex 6 (PMSR.pmsrOffset r)
+  ++ "\n" ++ hexDump (PMSR.pmsrData r)
 

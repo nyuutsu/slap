@@ -5,8 +5,9 @@ synopsis:      Multi-format ROM patching tool
 description:
   Auto-detects patch format from magic bytes and applies.  Supports
   PPF (1/2/3 + Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
-  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff, GDIFF, and
-  xdelta1.
+  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
+  xdelta1, and PMSR.  Can create BPS, IPS, IPS32, UPS, PPF3, and
+  PMSR patches.  Converts between formats with the convert command.
 
 license:       MIT
 license-file:  LICENSE
@@ -29,6 +30,7 @@ executable slap
     , Patch.Explain
     , Patch.GDIFF
     , Patch.IPS
+    , Patch.PMSR
     , Patch.RUP
     , Patch.Types
     , Patch.UPS

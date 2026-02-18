@@ -23,6 +23,7 @@ detectFormat bs
   | magic4 == "\xd1\xff\xd1\xff" = Just FmtGDIFF
   | BS.length bs >= 8 && BS.take 4 bs == "%XDZ" = Just FmtXDelta1
   | BS.length bs >= 7 && BS.take 7 bs == "%XDELTA" = Just FmtXDelta1
+  | magic4 == "PMSR"          = Just FmtPMSR
   | otherwise                 = Nothing
   where
     magic4 = BS.take 4 bs

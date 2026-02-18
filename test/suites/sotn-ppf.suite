@@ -1,0 +1,10 @@
+# Castlevania: Symphony of the Night — English translation patch
+# Real-world PPF3 (no undo, no validation). Applies to the Japanese
+# PS1 disc image (Akumajou Dracula X, Rev 2, Track 1).
+# Tests PPF3 on a large target (~1.4 MB track).
+
+base:   homework/Akumajou Dracula X - Gekka no Yasoukyoku (Japan) (Rev 2)/Akumajou Dracula X - Gekka no Yasoukyoku (Japan) (Rev 2) (Track 1).bin
+sha256: 3e51d5dce954d2f07c778bbe9fefffbf771830083363e918a2b5233a28071ea9
+desc:   SotN english translation (real-world PPF3, PS1 disc image)
+
+PPF3     | homework/en_draculax_10/drax_eng10.ppf | gold | Dracula X english v1.0 translation patch

@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Patch.PPF.Create (createPatch) where
+module Patch.PPF.Create (createPatch, createPatchPure) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -14,6 +14,11 @@ createPatch :: FilePath -> FilePath -> String -> Bool -> Bool -> IO ByteString
 createPatch origPath modPath desc includeUndo includeValidation = do
   origBs <- BS.readFile origPath
   modBs  <- BS.readFile modPath
+  pure (createPatchPure origBs modBs desc includeUndo includeValidation)
+
+-- | Pure version of PPF3 patch creation from two byte strings.
+createPatchPure :: ByteString -> ByteString -> String -> Bool -> Bool -> ByteString
+createPatchPure origBs modBs desc includeUndo includeValidation =
   let descBytes   = padDescription desc
       valBlock    = if includeValidation && BS.length origBs > 0x9320 + 1024
                     then BS.take 1024 (BS.drop 0x9320 origBs)
@@ -21,7 +26,7 @@ createPatch origPath modPath desc includeUndo includeValidation = do
       records     = diffFiles origBs modBs
       header      = buildHeader descBytes includeValidation includeUndo valBlock
       body        = foldMap (encodeRecord includeUndo) records
-  pure (BL.toStrict (toLazyByteString (header <> body)))
+  in BL.toStrict (toLazyByteString (header <> body))
 
 -- | Pad or truncate a description to exactly 50 bytes.
 padDescription :: String -> ByteString

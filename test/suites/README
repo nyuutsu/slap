@@ -1,0 +1,38 @@
+Test Suite Manifest Format
+==========================
+
+Each .suite file defines one test scenario: a base ROM plus one or more
+patches that should all produce the same target when applied.
+
+Format
+------
+
+    # Comments start with #
+    # Blank lines are ignored
+
+    base:   path/to/base.rom
+    sha256: <expected target SHA256>
+    desc:   Human-readable description of this test scenario
+
+    # Then one line per patch:
+    # FORMAT | PATH | CONFIDENCE | PROVENANCE
+    #
+    # CONFIDENCE is one of:
+    #   gold      — real-world patch from an actual project, verified
+    #   verified  — generated or converted, SHA256-verified round-trip
+    #   untested  — present but not yet verified by slap
+    #   broken    — known broken, skipped by runner (with reason in provenance)
+    #
+    # Lines with confidence "broken" are skipped, not counted as failures.
+
+    IPS   | test/dm4k/dm4k-patch.ips | verified | Flips
+    BPS   | test/dm4k/dm4k-patch.bps | verified | Flips
+
+Paths are relative to the repository root.
+
+Adding a new test
+-----------------
+
+1. Drop the base ROM and patch file(s) somewhere under test/ or homework/
+2. Create a .suite file (or add a line to an existing one)
+3. Run test/run.sh — the runner discovers all .suite files automatically

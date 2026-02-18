@@ -8,6 +8,7 @@ module Patch.IPS
   , parseIPS
   , applyIPS
   , createIPS
+  , createIPS32
   , ipsInfo
   ) where
 
@@ -190,28 +191,37 @@ takeQuoted [] = ""
 createIPS :: ByteString -> ByteString -> Either String ByteString
 createIPS orig modified
   | BS.length modified > 0x1000000 =
-      Left "file exceeds 16 MB IPS offset limit — use BPS instead"
+      Left "file exceeds 16 MB IPS offset limit — use IPS32 or BPS instead"
   | otherwise = Right $ BL.toStrict $ toLazyByteString $
       byteString "PATCH"
-      <> foldMap encodeIPSRecord (diffToRecords orig modified)
+      <> foldMap (encodeIPSRecord 3) (diffToRecords 0xFFFF orig modified)
       <> byteString "EOF"
-      <> truncMarker
-  where
-    truncMarker
-      | BS.length modified < BS.length orig =
-          -- IPS truncation: 3-byte big-endian size after EOF
-          let sz = BS.length modified
-          in word8 (fromIntegral (sz `div` 0x10000))
-             <> word8 (fromIntegral ((sz `div` 0x100) `mod` 0x100))
-             <> word8 (fromIntegral (sz `mod` 0x100))
-      | otherwise = mempty
+      <> truncMarkerIPS orig modified
 
-encodeIPSRecord :: (Int, ByteString) -> Builder
-encodeIPSRecord (off, dat) =
-  -- 3-byte big-endian offset
-  word8 (fromIntegral (off `div` 0x10000))
-  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
-  <> word8 (fromIntegral (off `mod` 0x100))
+-- | Create an IPS32 patch by diffing two byte strings.
+-- Returns Left if the files exceed 4 GB (IPS32 offset limit).
+createIPS32 :: ByteString -> ByteString -> Either String ByteString
+createIPS32 orig modified
+  | BS.length modified > 0xFFFFFFFF =
+      Left "file exceeds 4 GB IPS32 offset limit — use BPS instead"
+  | otherwise = Right $ BL.toStrict $ toLazyByteString $
+      byteString "IPS32"
+      <> foldMap (encodeIPSRecord 4) (diffToRecords 0xFFFF orig modified)
+      <> byteString "EEOF"
+
+-- | IPS truncation marker (3-byte big-endian size after EOF).
+truncMarkerIPS :: ByteString -> ByteString -> Builder
+truncMarkerIPS orig modified
+  | BS.length modified < BS.length orig =
+      let sz = BS.length modified
+      in word8 (fromIntegral (sz `div` 0x10000))
+         <> word8 (fromIntegral ((sz `div` 0x100) `mod` 0x100))
+         <> word8 (fromIntegral (sz `mod` 0x100))
+  | otherwise = mempty
+
+encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
+encodeIPSRecord offWidth (off, dat) =
+  encodeOffset offWidth off
   -- Check for RLE: all same byte and length >= 3
   <> if BS.length dat >= 3 && allSame dat
      then -- RLE record: size=0, then rle_count, rle_value
@@ -221,6 +231,18 @@ encodeIPSRecord (off, dat) =
      else -- Normal record: size, data
        putWord16BE' (BS.length dat)
        <> byteString dat
+
+-- | Encode an offset as big-endian bytes (3 for IPS, 4 for IPS32).
+encodeOffset :: Int -> Int -> Builder
+encodeOffset 3 off =
+  word8 (fromIntegral (off `div` 0x10000))
+  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
+  <> word8 (fromIntegral (off `mod` 0x100))
+encodeOffset _ off =
+  word8 (fromIntegral (off `div` 0x1000000))
+  <> word8 (fromIntegral ((off `div` 0x10000) `mod` 0x100))
+  <> word8 (fromIntegral ((off `div` 0x100) `mod` 0x100))
+  <> word8 (fromIntegral (off `mod` 0x100))
 
 allSame :: ByteString -> Bool
 allSame bs
@@ -233,9 +255,9 @@ putWord16BE' n =
   <> word8 (fromIntegral (n `mod` 0x100))
 
 -- | Diff two byte strings into IPS records (offset, data).
--- Merges nearby differences (gap < 6 bytes) and splits at 0xFFFF.
-diffToRecords :: ByteString -> ByteString -> [(Int, ByteString)]
-diffToRecords orig modified = mergeNearby modified $ go 0
+-- Merges nearby differences (gap < 6 bytes) and splits at maxRecSize.
+diffToRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
+diffToRecords maxRecSize orig modified = mergeNearby maxRecSize modified $ go 0
   where
     minLen = min (BS.length orig) (BS.length modified)
 
@@ -262,21 +284,21 @@ diffToRecords orig modified = mergeNearby modified $ go 0
 
     splitRecord off dat
       | BS.null dat = []
-      | BS.length dat <= 0xFFFF = [(off, dat)]
+      | BS.length dat <= maxRecSize = [(off, dat)]
       | otherwise =
-          let chunk = BS.take 0xFFFF dat
-              rest  = BS.drop 0xFFFF dat
-          in (off, chunk) : splitRecord (off + 0xFFFF) rest
+          let chunk = BS.take maxRecSize dat
+              rest  = BS.drop maxRecSize dat
+          in (off, chunk) : splitRecord (off + maxRecSize) rest
 
 -- | Merge records that are within 6 bytes of each other.
 -- Uses actual bytes from the modified file to fill gaps.
-mergeNearby :: ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-mergeNearby _ [] = []
-mergeNearby _ [x] = [x]
-mergeNearby modBs ((off1, d1) : (off2, d2) : rest)
-  | gap <= 5 && mergedLen <= 0xFFFF =
-      mergeNearby modBs ((off1, merged) : rest)
-  | otherwise = (off1, d1) : mergeNearby modBs ((off2, d2) : rest)
+mergeNearby :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
+mergeNearby _ _ [] = []
+mergeNearby _ _ [x] = [x]
+mergeNearby maxRecSize modBs ((off1, d1) : (off2, d2) : rest)
+  | gap <= 5 && mergedLen <= maxRecSize =
+      mergeNearby maxRecSize modBs ((off1, merged) : rest)
+  | otherwise = (off1, d1) : mergeNearby maxRecSize modBs ((off2, d2) : rest)
   where
     end1 = off1 + BS.length d1
     gap  = off2 - end1

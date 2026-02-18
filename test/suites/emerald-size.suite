@@ -1,0 +1,13 @@
+# Pokemon Emerald — size change (16 MB -> 32 MB, padded with 0x00)
+# Only formats that can represent file extension. Tests target > source.
+
+base:   homework/Pokemon - Emerald Version (USA, Europe).gba
+sha256: 8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03
+desc:   emerald size-change (16 MB -> 32 MB)
+
+BPS      | homework/test/emerald/size-change/patch.bps      | verified | Flips
+UPS      | homework/test/emerald/size-change/patch.ups       | verified | Go ups
+VCDIFF   | homework/test/emerald/size-change/patch.vcdiff    | verified | xdelta3
+bsdiff   | homework/test/emerald/size-change/patch.bsdiff    | verified | bsdiff
+xdelta1  | homework/test/emerald/size-change/patch.xdelta1   | verified | xdelta 1.1.4
+GDIFF    | homework/test/emerald/size-change/patch.gdiff     | verified | javaxdelta
