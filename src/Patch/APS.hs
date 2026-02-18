@@ -14,13 +14,13 @@ module Patch.APS
   ) where
 
 import Patch.Binary (getWord16LE, getWord32LE)
+import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
-import Numeric (showHex)
 import System.IO
 
 ----------------------------------------------------------------------------
@@ -212,9 +212,6 @@ apsInfo (APSPatch variant) = case variant of
     fmtStr (Just 1) = "image:       Z64 (big-endian)"
     fmtStr (Just f) = "image:       unknown (" ++ show f ++ ")"
     cartStr Nothing  = ""
-    cartStr (Just c) = "cart ID:     " ++ concatMap (\b -> padH 2 (showHex b "")) (BS.unpack c)
+    cartStr (Just c) = "cart ID:     " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack c)
     countryStr Nothing  = ""
-    countryStr (Just c) = "country:     0x" ++ padH 2 (showHex c "")
-
-padH :: Int -> String -> String
-padH n s = replicate (n - length s) '0' ++ s
+    countryStr (Just c) = "country:     0x" ++ padHex 2 (fromIntegral c)

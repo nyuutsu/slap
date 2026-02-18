@@ -11,6 +11,7 @@ module Patch.UPS
   ) where
 
 import Patch.Binary (getByuuVarint, getWord32LE, putWord32LE, putByuuVarint, crc32)
+import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -19,7 +20,6 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Data.Word (Word32)
-import Numeric (showHex)
 
 data UPSBlock = UPSBlock
   { upsSkip    :: Int64       -- bytes to skip (copy from source unchanged)
@@ -202,5 +202,3 @@ xorToBlocks bs = go 0
           | BS.index bs j == 0 = (BS.pack (reverse acc), j + 1)  -- +1: consume terminator position
           | otherwise = go' (j + 1) (BS.index bs j : acc)
 
-showCRC :: Word32 -> String
-showCRC w = let s = showHex w "" in replicate (8 - length s) '0' ++ s

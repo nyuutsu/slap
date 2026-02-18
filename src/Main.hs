@@ -3,6 +3,7 @@ module Main (main) where
 import Patch.Types
 import Patch.Detect (detectFormat)
 import Patch.Binary (crc32)
+import Patch.Format (showCRC, padHex)
 import qualified Patch.PPF.Types as PPF
 import qualified Patch.PPF.Parse as PPF
 import qualified Patch.PPF.Apply as PPF
@@ -24,7 +25,6 @@ import Control.Monad (when)
 import Data.Char (toLower)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
-import Numeric (showHex)
 import Options.Applicative
 import System.Directory (copyFile, doesFileExist, renameFile)
 import System.Exit (exitFailure)
@@ -34,19 +34,38 @@ data CreateFormat = CfmtBPS | CfmtIPS | CfmtUPS | CfmtPPF3
   deriving (Show, Eq)
 
 data Command
-  = Apply  Bool Bool FilePath FilePath (Maybe FilePath)  -- force, verbose, patch, target, output
-  | Undo   Bool FilePath FilePath (Maybe FilePath)       -- verbose, patch, target, output
-  | Create CreateFormat FilePath FilePath FilePath String Bool Bool
-  | Info    FilePath
-  | Explain FilePath
+  = CmdApply
+      { cmdForce   :: Bool
+      , cmdVerbose :: Bool
+      , cmdPatch   :: FilePath
+      , cmdTarget  :: FilePath
+      , cmdOutput  :: Maybe FilePath
+      }
+  | CmdUndo
+      { cmdVerbose :: Bool
+      , cmdPatch   :: FilePath
+      , cmdTarget  :: FilePath
+      , cmdOutput  :: Maybe FilePath
+      }
+  | CmdCreate
+      { cmdCreateFmt  :: CreateFormat
+      , cmdOriginal   :: FilePath
+      , cmdModified   :: FilePath
+      , cmdCreateOut  :: FilePath
+      , cmdDesc       :: String
+      , cmdUndo       :: Bool
+      , cmdValidate   :: Bool
+      }
+  | CmdInfo    { cmdPatch :: FilePath }
+  | CmdExplain { cmdPatch :: FilePath }
 
 main :: IO ()
 main = execParser opts >>= \case
-  Apply force verb pf tgt mOut -> doApply force verb pf tgt mOut
-  Undo  verb pf tgt mOut       -> doUndo verb pf tgt mOut
-  Create fmt o m out d u v     -> doCreate fmt o m out d u v
-  Info  pf                     -> doInfo pf
-  Explain pf                   -> doExplain pf
+  cmd@CmdApply{}   -> doApply cmd
+  cmd@CmdUndo{}    -> doUndo cmd
+  cmd@CmdCreate{}  -> doCreate cmd
+  CmdInfo pf       -> doInfo pf
+  CmdExplain pf    -> doExplain pf
 
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
@@ -63,11 +82,11 @@ commandParser = subparser
   )
 
 explainParser :: Parser Command
-explainParser = Explain
+explainParser = CmdExplain
   <$> argument str (metavar "PATCH" <> help "Patch file to explain")
 
 applyParser :: Parser Command
-applyParser = Apply
+applyParser = CmdApply
   <$> forceFlag
   <*> verboseFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
@@ -83,7 +102,7 @@ verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
 undoParser :: Parser Command
-undoParser = Undo
+undoParser = CmdUndo
   <$> verboseFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
   <*> argument str (metavar "TARGET" <> help "File to restore")
@@ -91,7 +110,7 @@ undoParser = Undo
       <> help "Write restored output to FILE instead of modifying TARGET in place"))
 
 createParser :: Parser Command
-createParser = Create
+createParser = CmdCreate
   <$> option (eitherReader parseCfmt) (long "format" <> metavar "FMT" <> value CfmtBPS
       <> help "Output format: bps (default), ips, ups, ppf3")
   <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
@@ -112,339 +131,265 @@ parseCfmt s = case map toLower s of
   _      -> Left ("unknown format: " ++ s ++ " (expected bps, ips, ups, ppf3)")
 
 patchInfoParser :: Parser Command
-patchInfoParser = Info
+patchInfoParser = CmdInfo
   <$> argument str (metavar "PATCH" <> help "Patch file to inspect")
 
 ----------------------------------------------------------------------------
--- Apply
+-- Unified parse/info/explain dispatch
 ----------------------------------------------------------------------------
 
-doApply :: Bool -> Bool -> FilePath -> FilePath -> Maybe FilePath -> IO ()
-doApply force verbose patchFile target mOut = do
-  patchBs <- BS.readFile patchFile
-  case detectFormat patchBs of
-    Nothing  -> die ("unknown patch format: " ++ patchFile)
-    Just fmt -> case fmt of
-      FmtPPF     -> doApplyPPF force verbose patchBs target mOut
-      FmtIPS     -> doApplyIPS verbose patchBs target mOut
-      FmtBPS     -> doApplyBPS force verbose patchBs target mOut
-      FmtUPS     -> doApplyUPS force verbose patchBs target mOut
-      FmtVCDIFF  -> doApplyVCDIFF force verbose patchBs target mOut
-      FmtAPS     -> doApplyAPS verbose patchBs target mOut
-      FmtRUP     -> doApplyRUP verbose patchBs target mOut
-      FmtBSDiff  -> doApplyBSDiff verbose patchFile patchBs target mOut
-      FmtGDIFF   -> doApplyGDIFF verbose patchBs target mOut
-      FmtXDelta1 -> doApplyXDelta1 verbose patchBs target mOut
+-- | Parse any supported patch format into SomePatch.
+parseSome :: BS.ByteString -> Either String SomePatch
+parseSome bs = case detectFormat bs of
+  Nothing     -> Left "unknown patch format"
+  Just FmtPPF -> case PPF.parsePatch bs of
+    Left err -> Left (showPPFError err)
+    Right p  -> Right (SomePPF p)
+  Just FmtIPS     -> SomeIPS     <$> IPS.parseIPS bs
+  Just FmtBPS     -> SomeBPS     <$> BPS.parseBPS bs
+  Just FmtUPS     -> SomeUPS     <$> UPS.parseUPS bs
+  Just FmtVCDIFF  -> SomeVCDIFF  <$> VCDIFF.parseVCDIFF bs
+  Just FmtAPS     -> SomeAPS     <$> APS.parseAPS bs
+  Just FmtRUP     -> SomeRUP     <$> RUP.parseRUP bs
+  Just FmtBSDiff  -> SomeBSDiff  <$> BSDiff.parseBSDiff bs
+  Just FmtGDIFF   -> SomeGDIFF   <$> GDIFF.parseGDIFF bs
+  Just FmtXDelta1 -> SomeXDelta1 <$> XDelta1.parseXDelta1 bs
 
-doApplyPPF :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyPPF _force verbose patchBs target mOut = do
-  actual <- resolveOutput target mOut
-  case PPF.parsePatch patchBs of
-    Left err -> die (showPPFError err)
-    Right patch -> do
-      let recs = PPF.patchRecords patch
-          total = length recs
-      when verbose $ mapM_ (\(i, r) ->
-        hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Write "
-          ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
-          ++ showHex (fromIntegral (PPF.recOffset r) :: Word32) ""))
-        (zip [(1::Int)..] recs)
-      (warnings, n) <- PPF.applyPatch patch actual
-      mapM_ (hPutStrLn stderr) warnings
-      putStrLn ("applied " ++ show n ++ " records")
+-- | Human-readable summary of any parsed patch.
+someInfo :: SomePatch -> String
+someInfo (SomePPF p)     = PPF.showInfo p
+someInfo (SomeIPS p)     = IPS.ipsInfo p
+someInfo (SomeBPS p)     = BPS.bpsInfo p
+someInfo (SomeUPS p)     = UPS.upsInfo p
+someInfo (SomeVCDIFF p)  = VCDIFF.vcdiffInfo p
+someInfo (SomeAPS p)     = APS.apsInfo p
+someInfo (SomeRUP p)     = RUP.rupInfo p
+someInfo (SomeBSDiff p)  = BSDiff.bsdiffInfo p
+someInfo (SomeGDIFF p)   = GDIFF.gdiffInfo p
+someInfo (SomeXDelta1 p) = XDelta1.xdelta1Info p
 
-doApplyIPS :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyIPS verbose patchBs target mOut = do
-  actual <- resolveOutput target mOut
-  case IPS.parseIPS patchBs of
-    Left err -> die err
-    Right patch -> do
-      let recs = IPS.ipsRecords patch
-          total = length recs
-      when verbose $ mapM_ (\(i, r) ->
-        hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeIPS r))
-        (zip [(1::Int)..] recs)
-      n <- IPS.applyIPS patch actual
-      putStrLn ("applied " ++ show n ++ " records")
-
-doApplyBPS :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyBPS force verbose patchBs target mOut = do
-  case BPS.parseBPS patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      let srcCRC = crc32 source
-      checkCRC force "source" (BPS.bpsSourceCRC patch) srcCRC
-      let acts = BPS.bpsActions patch
-          total = length acts
-      when verbose $ mapM_ (\(i, a) ->
-        hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeBPS a))
-        (zip [(1::Int)..] acts)
-      case BPS.applyBPS patch source of
-        Left err -> die err
-        Right result -> do
-          let tgtCRC = crc32 result
-          when (tgtCRC /= BPS.bpsTargetCRC patch) $
-            warn ("target CRC mismatch after apply (expected "
-                  ++ fmtCRC (BPS.bpsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
-          BS.writeFile (fromMaybe target mOut) result
-          putStrLn ("applied " ++ show total ++ " actions")
-
-doApplyUPS :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyUPS force verbose patchBs target mOut = do
-  case UPS.parseUPS patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      let srcCRC = crc32 source
-      checkCRC force "source" (UPS.upsSourceCRC patch) srcCRC
-      let blks = UPS.upsBlocks patch
-          total = length blks
-      when verbose $ mapM_ (\(i, b) ->
-        hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] XOR "
-          ++ show (BS.length (UPS.upsXorData b)) ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"))
-        (zip [(1::Int)..] blks)
-      let result = UPS.applyUPS patch source
-      let tgtCRC = crc32 result
-      when (tgtCRC /= UPS.upsTargetCRC patch) $
-        warn ("target CRC mismatch after apply (expected "
-              ++ fmtCRC (UPS.upsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
-      BS.writeFile (fromMaybe target mOut) result
-      putStrLn ("applied " ++ show total ++ " blocks")
-
-doApplyVCDIFF :: Bool -> Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyVCDIFF _force verbose patchBs target mOut = do
-  case VCDIFF.parseVCDIFF patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      let wins = VCDIFF.vcdWindows patch
-          total = length wins
-      when verbose $ mapM_ (\(i, w) ->
-        hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Window "
-          ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"))
-        (zip [(1::Int)..] wins)
-      case VCDIFF.applyVCDIFF patch source of
-        Left err -> die err
-        Right result -> do
-          BS.writeFile (fromMaybe target mOut) result
-          putStrLn ("applied " ++ show total ++ " windows")
-
-doApplyAPS :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyAPS _verbose patchBs target mOut = do
-  actual <- resolveOutput target mOut
-  case APS.parseAPS patchBs of
-    Left err -> die err
-    Right patch -> do
-      n <- APS.applyAPS patch actual
-      putStrLn ("applied " ++ show n ++ " records")
-
-doApplyRUP :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyRUP _verbose patchBs target mOut = do
-  actual <- resolveOutput target mOut
-  case RUP.parseRUP patchBs of
-    Left err -> die err
-    Right patch -> do
-      n <- RUP.applyRUP patch actual
-      putStrLn ("applied " ++ show n ++ " records")
-
-doApplyGDIFF :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyGDIFF _verbose patchBs target mOut = do
-  case GDIFF.parseGDIFF patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      case GDIFF.applyGDIFF patch source of
-        Left err -> die err
-        Right result -> do
-          BS.writeFile (fromMaybe target mOut) result
-          putStrLn ("applied " ++ show (length (GDIFF.gdiffCmds patch)) ++ " commands")
-
-doApplyBSDiff :: Bool -> FilePath -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyBSDiff _verbose patchFile patchBs target mOut = do
-  case BSDiff.parseBSDiff patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      case BSDiff.applyBSDiff patch source of
-        Right result -> do
-          BS.writeFile (fromMaybe target mOut) result
-          putStrLn ("applied " ++ show (length (BSDiff.bsdControls patch)) ++ " control tuples")
-        Left _ -> do
-          -- Native apply not available, try external bspatch
-          let outFile = fromMaybe target mOut
-          if outFile == target
-            then do
-              -- In-place: bspatch needs separate input/output
-              let tmpFile = target ++ ".slap.tmp"
-              r <- BSDiff.tryExternalBspatch patchFile target tmpFile
-              case r of
-                Right () -> do
-                  renameFile tmpFile target
-                  putStrLn "applied bsdiff (external bspatch)"
-                Left err -> die err
-            else do
-              r <- BSDiff.tryExternalBspatch patchFile target outFile
-              case r of
-                Right () -> putStrLn "applied bsdiff (external bspatch)"
-                Left err -> die err
-
-doApplyXDelta1 :: Bool -> BS.ByteString -> FilePath -> Maybe FilePath -> IO ()
-doApplyXDelta1 _verbose patchBs target mOut = do
-  case XDelta1.parseXDelta1 patchBs of
-    Left err -> die err
-    Right patch -> do
-      source <- BS.readFile target
-      case XDelta1.applyXDelta1 patch source of
-        Left err -> die err
-        Right result -> do
-          BS.writeFile (fromMaybe target mOut) result
-          putStrLn ("applied " ++ show (length (XDelta1.xd1Instructions patch)) ++ " instructions")
+-- | Record-by-record explanation of any parsed patch.
+someExplain :: SomePatch -> String
+someExplain (SomePPF p)     = Explain.explainPPF p
+someExplain (SomeIPS p)     = Explain.explainIPS p
+someExplain (SomeBPS p)     = Explain.explainBPS p
+someExplain (SomeUPS p)     = Explain.explainUPS p
+someExplain (SomeVCDIFF p)  = Explain.explainVCDIFF p
+someExplain (SomeAPS p)     = Explain.explainAPS p
+someExplain (SomeRUP p)     = Explain.explainRUP p
+someExplain (SomeBSDiff p)  = Explain.explainBSDiff p
+someExplain (SomeGDIFF p)   = Explain.explainGDIFF p
+someExplain (SomeXDelta1 p) = Explain.explainXDelta1 p
 
 ----------------------------------------------------------------------------
--- Undo
-----------------------------------------------------------------------------
-
-doUndo :: Bool -> FilePath -> FilePath -> Maybe FilePath -> IO ()
-doUndo _verbose patchFile target mOut = do
-  patchBs <- BS.readFile patchFile
-  case detectFormat patchBs of
-    Nothing  -> die ("unknown patch format: " ++ patchFile)
-    Just fmt -> case fmt of
-      FmtPPF -> do
-        actual <- resolveOutput target mOut
-        case PPF.parsePatch patchBs of
-          Left err -> die (showPPFError err)
-          Right patch -> do
-            result <- PPF.undoPatch patch actual
-            case result of
-              Left err -> die err
-              Right n  -> putStrLn ("reverted " ++ show n ++ " records")
-      FmtUPS -> do
-        case UPS.parseUPS patchBs of
-          Left err -> die err
-          Right patch -> do
-            -- UPS is self-inverting: apply patch to target to get source back.
-            modified <- BS.readFile target
-            let result = UPS.applyUPS patch modified
-            BS.writeFile (fromMaybe target mOut) result
-            putStrLn ("reverted (UPS self-inverse)")
-      _ -> die ("undo not supported for " ++ show fmt ++ " format")
-
-----------------------------------------------------------------------------
--- Create
-----------------------------------------------------------------------------
-
-doCreate :: CreateFormat -> FilePath -> FilePath -> FilePath -> String -> Bool -> Bool -> IO ()
-doCreate fmt orig modified out desc undo val = case fmt of
-  CfmtPPF3 -> do
-    patchBs <- PPF.createPatch orig modified desc undo val
-    BS.writeFile out patchBs
-    case PPF.parsePatch patchBs of
-      Left _      -> putStrLn ("wrote " ++ out)
-      Right patch -> putStrLn ("wrote " ++ out ++ " (" ++ show (length (PPF.patchRecords patch)) ++ " records)")
-  CfmtIPS -> do
-    origBs <- BS.readFile orig
-    modBs  <- BS.readFile modified
-    case IPS.createIPS origBs modBs of
-      Left err -> die err
-      Right patchBs -> do
-        BS.writeFile out patchBs
-        putStrLn ("wrote " ++ out)
-  CfmtBPS -> do
-    origBs <- BS.readFile orig
-    modBs  <- BS.readFile modified
-    let patchBs = BPS.createBPS origBs modBs
-    BS.writeFile out patchBs
-    putStrLn ("wrote " ++ out)
-  CfmtUPS -> do
-    origBs <- BS.readFile orig
-    modBs  <- BS.readFile modified
-    let patchBs = UPS.createUPS origBs modBs
-    BS.writeFile out patchBs
-    putStrLn ("wrote " ++ out)
-
-----------------------------------------------------------------------------
--- Info
+-- Info & Explain
 ----------------------------------------------------------------------------
 
 doInfo :: FilePath -> IO ()
 doInfo patchFile = do
   patchBs <- BS.readFile patchFile
-  case detectFormat patchBs of
-    Nothing -> die ("unknown patch format: " ++ patchFile)
-    Just fmt -> case fmt of
-      FmtPPF -> case PPF.parsePatch patchBs of
-        Left err -> die (showPPFError err)
-        Right p  -> putStr (PPF.showInfo p)
-      FmtIPS -> case IPS.parseIPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (IPS.ipsInfo p)
-      FmtBPS -> case BPS.parseBPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (BPS.bpsInfo p)
-      FmtUPS -> case UPS.parseUPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (UPS.upsInfo p)
-      FmtVCDIFF -> case VCDIFF.parseVCDIFF patchBs of
-        Left err -> die err
-        Right p  -> putStr (VCDIFF.vcdiffInfo p)
-      FmtAPS -> case APS.parseAPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (APS.apsInfo p)
-      FmtRUP -> case RUP.parseRUP patchBs of
-        Left err -> die err
-        Right p  -> putStr (RUP.rupInfo p)
-      FmtBSDiff -> case BSDiff.parseBSDiff patchBs of
-        Left err -> die err
-        Right p  -> putStr (BSDiff.bsdiffInfo p)
-      FmtGDIFF -> case GDIFF.parseGDIFF patchBs of
-        Left err -> die err
-        Right p  -> putStr (GDIFF.gdiffInfo p)
-      FmtXDelta1 -> case XDelta1.parseXDelta1 patchBs of
-        Left err -> die err
-        Right p  -> putStr (XDelta1.xdelta1Info p)
-
-----------------------------------------------------------------------------
--- Explain
-----------------------------------------------------------------------------
+  case parseSome patchBs of
+    Left err -> die err
+    Right p  -> putStr (someInfo p)
 
 doExplain :: FilePath -> IO ()
 doExplain patchFile = do
   patchBs <- BS.readFile patchFile
-  case detectFormat patchBs of
-    Nothing -> die ("unknown patch format: " ++ patchFile)
-    Just fmt -> case fmt of
-      FmtPPF -> case PPF.parsePatch patchBs of
-        Left err -> die (showPPFError err)
-        Right p  -> putStr (Explain.explainPPF p)
-      FmtIPS -> case IPS.parseIPS patchBs of
+  case parseSome patchBs of
+    Left err -> die err
+    Right p  -> putStr (someExplain p)
+
+----------------------------------------------------------------------------
+-- Apply
+----------------------------------------------------------------------------
+
+doApply :: Command -> IO ()
+doApply cmd = do
+  patchBs <- BS.readFile (cmdPatch cmd)
+  case parseSome patchBs of
+    Left err -> die err
+    Right p  -> someApply cmd patchBs p
+
+someApply :: Command -> BS.ByteString -> SomePatch -> IO ()
+
+someApply cmd _patchBs (SomePPF patch) = do
+  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+  let recs = PPF.patchRecords patch
+      total = length recs
+  when (cmdVerbose cmd) $ mapM_ (\(i, r) ->
+    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Write "
+      ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
+      ++ padHex 8 (PPF.recOffset r)))
+    (zip [(1::Int)..] recs)
+  (warnings, n) <- PPF.applyPatch patch actual
+  mapM_ (hPutStrLn stderr) warnings
+  putStrLn ("applied " ++ show n ++ " records")
+
+someApply cmd _patchBs (SomeIPS patch) = do
+  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+  let recs = IPS.ipsRecords patch
+      total = length recs
+  when (cmdVerbose cmd) $ mapM_ (\(i, r) ->
+    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeIPS r))
+    (zip [(1::Int)..] recs)
+  n <- IPS.applyIPS patch actual
+  putStrLn ("applied " ++ show n ++ " records")
+
+someApply cmd _patchBs (SomeBPS patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  let srcCRC = crc32 source
+  checkCRC (cmdForce cmd) "source" (BPS.bpsSourceCRC patch) srcCRC
+  let acts = BPS.bpsActions patch
+      total = length acts
+  when (cmdVerbose cmd) $ mapM_ (\(i, a) ->
+    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] " ++ describeBPS a))
+    (zip [(1::Int)..] acts)
+  case BPS.applyBPS patch source of
+    Left err -> die err
+    Right result -> do
+      let tgtCRC = crc32 result
+      when (tgtCRC /= BPS.bpsTargetCRC patch) $
+        warn ("target CRC mismatch after apply (expected "
+              ++ fmtCRC (BPS.bpsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn ("applied " ++ show total ++ " actions")
+
+someApply cmd _patchBs (SomeUPS patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  let srcCRC = crc32 source
+  checkCRC (cmdForce cmd) "source" (UPS.upsSourceCRC patch) srcCRC
+  let blks = UPS.upsBlocks patch
+      total = length blks
+  when (cmdVerbose cmd) $ mapM_ (\(i, b) ->
+    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] XOR "
+      ++ show (BS.length (UPS.upsXorData b)) ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"))
+    (zip [(1::Int)..] blks)
+  let result = UPS.applyUPS patch source
+      tgtCRC = crc32 result
+  when (tgtCRC /= UPS.upsTargetCRC patch) $
+    warn ("target CRC mismatch after apply (expected "
+          ++ fmtCRC (UPS.upsTargetCRC patch) ++ ", got " ++ fmtCRC tgtCRC ++ ")")
+  BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+  putStrLn ("applied " ++ show total ++ " blocks")
+
+someApply cmd _patchBs (SomeVCDIFF patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  let wins = VCDIFF.vcdWindows patch
+      total = length wins
+  when (cmdVerbose cmd) $ mapM_ (\(i, w) ->
+    hPutStrLn stderr ("[" ++ show i ++ "/" ++ show total ++ "] Window "
+      ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"))
+    (zip [(1::Int)..] wins)
+  case VCDIFF.applyVCDIFF patch source of
+    Left err -> die err
+    Right result -> do
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn ("applied " ++ show total ++ " windows")
+
+someApply cmd _patchBs (SomeAPS patch) = do
+  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+  n <- APS.applyAPS patch actual
+  putStrLn ("applied " ++ show n ++ " records")
+
+someApply cmd _patchBs (SomeRUP patch) = do
+  actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+  n <- RUP.applyRUP patch actual
+  putStrLn ("applied " ++ show n ++ " records")
+
+someApply cmd _patchBs (SomeBSDiff patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  case BSDiff.applyBSDiff patch source of
+    Right result -> do
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn ("applied " ++ show (length (BSDiff.bsdControls patch)) ++ " control tuples")
+    Left _ -> do
+      let target = cmdTarget cmd
+          outFile = fromMaybe target (cmdOutput cmd)
+      if outFile == target
+        then do
+          let tmpFile = target ++ ".slap.tmp"
+          r <- BSDiff.tryExternalBspatch (cmdPatch cmd) target tmpFile
+          case r of
+            Right () -> do
+              renameFile tmpFile target
+              putStrLn "applied bsdiff (external bspatch)"
+            Left err -> die err
+        else do
+          r <- BSDiff.tryExternalBspatch (cmdPatch cmd) target outFile
+          case r of
+            Right () -> putStrLn "applied bsdiff (external bspatch)"
+            Left err -> die err
+
+someApply cmd _patchBs (SomeGDIFF patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  case GDIFF.applyGDIFF patch source of
+    Left err -> die err
+    Right result -> do
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn ("applied " ++ show (length (GDIFF.gdiffCmds patch)) ++ " commands")
+
+someApply cmd _patchBs (SomeXDelta1 patch) = do
+  source <- BS.readFile (cmdTarget cmd)
+  case XDelta1.applyXDelta1 patch source of
+    Left err -> die err
+    Right result -> do
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn ("applied " ++ show (length (XDelta1.xd1Instructions patch)) ++ " instructions")
+
+----------------------------------------------------------------------------
+-- Undo
+----------------------------------------------------------------------------
+
+doUndo :: Command -> IO ()
+doUndo cmd = do
+  patchBs <- BS.readFile (cmdPatch cmd)
+  case parseSome patchBs of
+    Left err -> die err
+    Right (SomePPF patch) -> do
+      actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+      result <- PPF.undoPatch patch actual
+      case result of
         Left err -> die err
-        Right p  -> putStr (Explain.explainIPS p)
-      FmtBPS -> case BPS.parseBPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainBPS p)
-      FmtUPS -> case UPS.parseUPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainUPS p)
-      FmtVCDIFF -> case VCDIFF.parseVCDIFF patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainVCDIFF p)
-      FmtAPS -> case APS.parseAPS patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainAPS p)
-      FmtRUP -> case RUP.parseRUP patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainRUP p)
-      FmtBSDiff -> case BSDiff.parseBSDiff patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainBSDiff p)
-      FmtGDIFF -> case GDIFF.parseGDIFF patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainGDIFF p)
-      FmtXDelta1 -> case XDelta1.parseXDelta1 patchBs of
-        Left err -> die err
-        Right p  -> putStr (Explain.explainXDelta1 p)
+        Right n  -> putStrLn ("reverted " ++ show n ++ " records")
+    Right (SomeUPS patch) -> do
+      modified <- BS.readFile (cmdTarget cmd)
+      let result = UPS.applyUPS patch modified
+      BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+      putStrLn "reverted (UPS self-inverse)"
+    Right _ -> die "undo not supported for this format"
+
+----------------------------------------------------------------------------
+-- Create
+----------------------------------------------------------------------------
+
+doCreate :: Command -> IO ()
+doCreate cmd = case cmdCreateFmt cmd of
+  CfmtPPF3 -> do
+    patchBs <- PPF.createPatch (cmdOriginal cmd) (cmdModified cmd) (cmdDesc cmd) (cmdUndo cmd) (cmdValidate cmd)
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    case PPF.parsePatch patchBs of
+      Left _      -> putStrLn ("wrote " ++ cmdCreateOut cmd)
+      Right patch -> putStrLn ("wrote " ++ cmdCreateOut cmd ++ " (" ++ show (length (PPF.patchRecords patch)) ++ " records)")
+  CfmtIPS -> do
+    origBs <- BS.readFile (cmdOriginal cmd)
+    modBs  <- BS.readFile (cmdModified cmd)
+    case IPS.createIPS origBs modBs of
+      Left err -> die err
+      Right patchBs -> do
+        BS.writeFile (cmdCreateOut cmd) patchBs
+        putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtBPS -> do
+    origBs <- BS.readFile (cmdOriginal cmd)
+    modBs  <- BS.readFile (cmdModified cmd)
+    let patchBs = BPS.createBPS origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtUPS -> do
+    origBs <- BS.readFile (cmdOriginal cmd)
+    modBs  <- BS.readFile (cmdModified cmd)
+    let patchBs = UPS.createUPS origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -468,10 +413,7 @@ checkCRC force label expected actual
                      ++ ")\n  use --force to apply anyway")
 
 fmtCRC :: Word32 -> String
-fmtCRC w = "0x" ++ padHex 8 (showHex w "")
-
-padHex :: Int -> String -> String
-padHex n s = replicate (n - length s) '0' ++ s
+fmtCRC w = "0x" ++ showCRC w
 
 showPPFError :: PPF.ParseError -> String
 showPPFError (PPF.BadMagic bs)        = "not a PPF file (bad magic: " ++ show bs ++ ")"
@@ -481,9 +423,9 @@ showPPFError (PPF.UnknownImageType v) = "unknown image type: " ++ show v
 
 describeIPS :: IPS.IPSRecord -> String
 describeIPS (IPS.IPSRecord off dat) =
-  "Write " ++ show (BS.length dat) ++ " bytes at 0x" ++ showHex (fromIntegral off :: Word32) ""
+  "Write " ++ show (BS.length dat) ++ " bytes at 0x" ++ padHex 6 off
 describeIPS (IPS.IPSRecordRLE off count val) =
-  "Fill " ++ show count ++ " x 0x" ++ showHex val "" ++ " at 0x" ++ showHex (fromIntegral off :: Word32) ""
+  "Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val) ++ " at 0x" ++ padHex 6 off
 
 describeBPS :: BPS.BPSAction -> String
 describeBPS (BPS.SourceRead len) = "SourceRead " ++ show len ++ " bytes"

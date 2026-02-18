@@ -11,6 +11,7 @@ module Patch.BPS
   ) where
 
 import Patch.Binary (getByuuVarint, getWord32LE, putWord32LE, putByuuVarint, crc32, copyBSRange)
+import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -20,7 +21,6 @@ import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), shiftL, shiftR, (.|.), testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
-import Numeric (showHex)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
@@ -232,5 +232,3 @@ bpsDiff orig modified = go 0
       | BS.index orig i /= BS.index modified i = diffEnd (i + 1)
       | otherwise = i
 
-showCRC :: Word32 -> String
-showCRC w = let s = showHex w "" in replicate (8 - length s) '0' ++ s

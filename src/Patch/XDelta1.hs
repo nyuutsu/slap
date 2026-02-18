@@ -11,6 +11,7 @@ module Patch.XDelta1
   ) where
 
 import Patch.Binary (getWord32BE, copyBSRange)
+import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -21,7 +22,6 @@ import Data.Bits ((.&.), (.|.), shiftL, shiftR, testBit)
 import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
-import Numeric (showHex)
 
 import qualified Codec.Compression.GZip as GZip
 
@@ -243,7 +243,7 @@ xdelta1Info p = unlines $ filter (not . null)
   , "data seg:    " ++ show (BS.length (xd1DataSeg p)) ++ " bytes"
   ]
   where
-    md5Hex = concatMap (\b -> padH 2 (showHex b "")) . BS.unpack
+    md5Hex = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack
     srcLines = unlines
       [ "  [" ++ show i ++ "] " ++ BS8.unpack (xd1SrcName s)
         ++ (if xd1SrcIsData s then " (data)" else " (file)")
@@ -251,5 +251,3 @@ xdelta1Info p = unlines $ filter (not . null)
         ++ "  " ++ show (xd1SrcLen s) ++ " bytes"
       | (i, s) <- zip [(0::Int)..] (xd1Sources p) ]
 
-padH :: Int -> String -> String
-padH n s = replicate (n - length s) '0' ++ s

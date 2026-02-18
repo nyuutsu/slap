@@ -10,12 +10,13 @@ module Patch.RUP
   , rupInfo
   ) where
 
+import Patch.Format (padHex)
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Control.Monad (when)
-import Numeric (showHex)
 import System.IO
 
 ----------------------------------------------------------------------------
@@ -236,11 +237,9 @@ rupInfo p = unlines $ filter (not . null)
 
     md5Str _ Nothing = ""
     md5Str label (Just md5) =
-      label ++ ":  " ++ concatMap (\b -> padH 2 (showHex b "")) (BS.unpack md5)
+      label ++ ":  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack md5)
 
     overflowStr = case rupOverflow p of
       Nothing -> ""
       Just d  -> "overflow:    " ++ show (BS.length d) ++ " bytes"
 
-padH :: Int -> String -> String
-padH n s = replicate (n - length s) '0' ++ s
