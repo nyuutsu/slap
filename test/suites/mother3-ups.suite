@@ -1,0 +1,8 @@
+# Mother 3 (Japan) — English fan translation v1.3
+# UPS stress test: 57919 blocks, 32 MB GBA ROM. Largest UPS patch in the suite.
+
+base:   test/data/mother3/base.gba
+sha256: d610f46a04d0317cd2fbc2b03730409ecae7e25704073b73ed816ec227cbbef7
+desc:   Mother 3 english translation (real-world UPS, 57919 blocks)
+
+UPS      | test/data/mother3/mother3.ups | gold | Mother 3 fan translation v1.3; 57919 blocks

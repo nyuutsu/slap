@@ -106,10 +106,10 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **emerald** — 3 scenarios (heavy-diff, RLE, size-change) across 13 formats each (16 MB GBA)
 - **stadium2** — 3 scenarios across 11 formats each (64 MB N64)
 - **tetris** — BDF + UPS cross-validation (real-world, 32 KB GB)
-- **7 real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Paper Mario (APS+IPS cross-val), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
+- **8 real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), Paper Mario (APS+IPS cross-val), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
 
 Run: `cabal build && bash test/run.sh`
 Filter: `bash test/run.sh "" dm4k`
 
-84 tests total, all passing. Base ROMs are gitignored; test patches
+85 tests total, all passing. Base ROMs are gitignored; test patches
 are committed.
