@@ -115,8 +115,14 @@ applyBlocks (UPSBlock skip xorBytes : rest) source pos =
       extraXor = if skipEnd + xorLen > BS.length source
                  then byteString (BS.drop (BS.length source - skipEnd) xorBytes)
                  else mempty
-  in unchanged <> byteString xored <> extraXor
-     <> applyBlocks rest source (skipEnd + xorLen)
+      -- The terminator position: in the UPS XOR stream, each non-zero run
+      -- is followed by a zero (matching byte). Copy it from source unchanged.
+      termPos = skipEnd + xorLen
+      termByte = if termPos < BS.length source
+                 then byteString (BS.singleton (BS.index source termPos))
+                 else mempty
+  in unchanged <> byteString xored <> extraXor <> termByte
+     <> applyBlocks rest source (termPos + 1)
 
 -- | Human-readable summary of a UPS patch.
 upsInfo :: UPSPatch -> String

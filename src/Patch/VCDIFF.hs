@@ -76,7 +76,7 @@ defaultCodeTable = listArray (0, 255) $
   --   sizes 4..18: COPY s mode, Noop
   ++ [(VcdCopy s m, VcdNoop) | m <- [0..8], s <- 0 : [4..18]]
   -- 163-234: ADD 1..4, COPY 4..6, modes 0..5  → 72 entries
-  ++ [(VcdAdd a, VcdCopy c m) | a <- [1..4], m <- [0..5], c <- [4..6]]
+  ++ [(VcdAdd a, VcdCopy c m) | m <- [0..5], a <- [1..4], c <- [4..6]]
   -- 235-246: ADD 1..4, COPY 4, modes 6..8  → 12 entries
   ++ [(VcdAdd a, VcdCopy 4 m) | a <- [1..4], m <- [6..8]]
   -- 247-255: COPY 4, ADD 1, modes 0..8  → 9 entries
@@ -233,15 +233,27 @@ parseOneWindow isXd3 pos bs
       -- 5. addresses length
       let (addrLen, n7) = getVcdiffVarint pos7 bs
           pos8 = pos7 + n7
-      -- xdelta3 Adler32 checksum (follows the three length fields if bit 2 of deltaInd is set)
-      let (adler, pos9)
-            | isXd3 && testBit deltaInd 2 && pos8 + 4 <= BS.length bs =
-                (Just (getWord32BE pos8 bs), pos8 + 4)
-            | otherwise = (Nothing, pos8)
+      -- Check for secondary compression (not yet supported)
+      if testBit deltaInd 0 || testBit deltaInd 1
+            || (not isXd3 && testBit deltaInd 2)
+        then Left "secondary compression in VCDIFF data sections is not supported"
+        else pure ()
+      -- Compute where data sections start by working backwards from deltaEnd.
+      -- This handles xdelta3 Adler32 checksums robustly: xdelta3 writes 4 bytes
+      -- of Adler32 after the length fields (even in version 0 mode, sometimes
+      -- without setting any flag), so we compute the data start position from
+      -- the known end instead of guessing what's between lengths and data.
+      let dataStart = fromIntegral deltaEnd
+                      - fromIntegral addRunLen
+                      - fromIntegral instLen
+                      - fromIntegral addrLen
+          adler = if dataStart == pos8 + 4
+                  then Just (getWord32BE pos8 bs)
+                  else Nothing
       -- Slice the three data streams
-      let addRunData = BS.take (fromIntegral addRunLen) (BS.drop pos9 bs)
-          instData   = BS.take (fromIntegral instLen) (BS.drop (pos9 + fromIntegral addRunLen) bs)
-          addrData   = BS.take (fromIntegral addrLen) (BS.drop (pos9 + fromIntegral addRunLen + fromIntegral instLen) bs)
+      let addRunData = BS.take (fromIntegral addRunLen) (BS.drop dataStart bs)
+          instData   = BS.take (fromIntegral instLen) (BS.drop (dataStart + fromIntegral addRunLen) bs)
+          addrData   = BS.take (fromIntegral addrLen) (BS.drop (dataStart + fromIntegral addRunLen + fromIntegral instLen) bs)
       Right ( VCDIFFWindow
               { vcdWinIndicator = winInd
               , vcdSourceLen    = srcLen
@@ -371,6 +383,18 @@ applyWindow source outPtr globalOutRef totalTgtLen win = do
             executeInst inst2
             loop
   loop
+
+  -- Fill remaining target bytes from source (implicit copy).
+  -- xdelta3 and other VCDIFF decoders fill any remaining target bytes
+  -- from the corresponding source positions after instructions are exhausted.
+  wOut <- readIORef winOutRef
+  if hasSource && wOut < tgtLen
+    then mapM_ (\i -> do
+      let srcIdx = srcSegOff + wOut + i
+      b <- if srcIdx < BS.length source then pure (BS.index source srcIdx) else pure 0
+      pokeByteOff outPtr (globalOut + wOut + i) b
+      ) [0..tgtLen - wOut - 1]
+    else pure ()
 
   writeIORef globalOutRef (globalOut + tgtLen)
 
