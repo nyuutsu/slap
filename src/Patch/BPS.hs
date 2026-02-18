@@ -10,7 +10,8 @@ module Patch.BPS
   , bpsInfo
   ) where
 
-import Patch.Binary (getByuuVarint, getWord32LE, putWord32LE, putByuuVarint, crc32, copyBSRange)
+import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32, copyBSRange)
+import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd)
 import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
@@ -55,17 +56,11 @@ parseBPS bs
         then Left ("patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
         else pure ()
-      let (srcSize, n1) = getByuuVarint 4 bs
-          (tgtSize, n2) = getByuuVarint (4 + n1) bs
-          (metaLen, n3) = getByuuVarint (4 + n1 + n2) bs
-          metaOff       = 4 + n1 + n2 + n3
-          meta          = BS.take (fromIntegral metaLen) (BS.drop metaOff bs)
-          actionsStart  = metaOff + fromIntegral metaLen
-          actionsEnd    = BS.length bs - 12  -- 3 * CRC32
-          actionsBs     = BS.take (actionsEnd - actionsStart) (BS.drop actionsStart bs)
-          actions       = parseActions actionsBs
-          srcCRC        = getWord32LE (BS.length bs - 12) bs
-          tgtCRC        = getWord32LE (BS.length bs - 8) bs
+      let srcCRC = getWord32LE (BS.length bs - 12) bs
+          tgtCRC = getWord32LE (BS.length bs - 8)  bs
+          -- Parse body between magic and footer using Get monad
+          bodyBs = BS.take (BS.length bs - 16) (BS.drop 4 bs)
+      (srcSize, tgtSize, meta, actions) <- runGet parseBPSBody bodyBs
       Right BPSPatch
         { bpsSourceSize = srcSize
         , bpsTargetSize = tgtSize
@@ -76,27 +71,31 @@ parseBPS bs
         , bpsPatchCRC   = storedPatchCRC
         }
 
-parseActions :: ByteString -> [BPSAction]
-parseActions bs = go 0
-  where
-    go pos
-      | pos >= BS.length bs = []
-      | otherwise =
-          let (raw, n) = getByuuVarint pos bs
-              cmd      = raw .&. 3
-              len      = fromIntegral (shiftR raw 2) + 1
-              pos'     = pos + n
-          in case cmd of
-               0 -> SourceRead len : go pos'
-               1 -> let dat = BS.take len (BS.drop pos' bs)
-                    in TargetRead dat : go (pos' + len)
-               2 -> let (rawOff, n2) = getByuuVarint pos' bs
-                        signedOff = decodeSignedVarint rawOff
-                    in SourceCopy len signedOff : go (pos' + n2)
-               3 -> let (rawOff, n2) = getByuuVarint pos' bs
-                        signedOff = decodeSignedVarint rawOff
-                    in TargetCopy len signedOff : go (pos' + n2)
-               _ -> go pos'  -- impossible, but satisfy exhaustiveness
+parseBPSBody :: Get (Int64, Int64, ByteString, [BPSAction])
+parseBPSBody = do
+  srcSize <- byuuVarint
+  tgtSize <- byuuVarint
+  metaLen <- fromIntegral <$> byuuVarint
+  meta    <- getBytes metaLen
+  actions <- parseActions
+  pure (srcSize, tgtSize, meta, actions)
+
+parseActions :: Get [BPSAction]
+parseActions = do
+  done <- atEnd
+  if done then pure []
+  else do
+    raw <- byuuVarint
+    let cmd = raw .&. 3
+        len = fromIntegral (shiftR raw 2) + 1
+    action <- case cmd of
+      0 -> pure (SourceRead len)
+      1 -> TargetRead <$> getBytes len
+      2 -> SourceCopy len . decodeSignedVarint <$> byuuVarint
+      3 -> TargetCopy len . decodeSignedVarint <$> byuuVarint
+      _ -> pure (SourceRead len)  -- impossible
+    rest <- parseActions
+    pure (action : rest)
 
 -- Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64

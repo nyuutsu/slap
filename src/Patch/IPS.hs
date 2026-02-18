@@ -11,7 +11,10 @@ module Patch.IPS
   , ipsInfo
   ) where
 
-import Patch.Binary (getWord16BE, getWord24BE, getWord32BE)
+import Patch.Binary (getWord24BE, getWord32BE)
+import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
+                  remaining)
+import qualified Patch.Get as G
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -41,49 +44,63 @@ data IPSPatch = IPSPatch
 -- | Parse an IPS or IPS32 patch from raw bytes.
 parseIPS :: ByteString -> Either String IPSPatch
 parseIPS bs
-  | BS.take 5 bs == "PATCH" = parseWith StandardIPS 3 0x454F46 5 bs   -- EOF = "EOF"
-  | BS.take 5 bs == "IPS32" = parseWith IPS32       4 0x45454F46 5 bs -- EEOF = "EEOF"
+  | BS.take 5 bs == "PATCH" = runGet (skip 5 >> parseRecords StandardIPS 3 0x454F46) bs
+  | BS.take 5 bs == "IPS32" = runGet (skip 5 >> parseRecords IPS32 4 0x45454F46) bs
   | otherwise = Left "not an IPS file (bad magic)"
 
-parseWith :: IPSVariant -> Int -> Word32 -> Int -> ByteString -> Either String IPSPatch
-parseWith variant offWidth eofMarker start bs = go start []
+parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
+parseRecords variant offWidth eofMarker = go []
   where
-    readOff pos
-      | offWidth == 3 = fromIntegral (getWord24BE pos bs)
-      | otherwise     = fromIntegral (getWord32BE pos bs)
+    -- Peek at the next offWidth bytes to check for EOF marker without consuming
+    peekEOF :: Get Bool
+    peekEOF = do
+      avail <- remaining
+      if avail < offWidth then pure True
+      else do
+        pos <- getPosition
+        input <- getInput
+        pure $ if offWidth == 3
+               then getWord24BE pos input == eofMarker
+               else getWord32BE pos input == eofMarker
 
-    atEOF pos
-      | pos + offWidth > BS.length bs = True
-      | offWidth == 3 = getWord24BE pos bs == eofMarker
-      | otherwise     = getWord32BE pos bs == eofMarker
+    readOff :: Get Int64
+    readOff
+      | offWidth == 3 = fromIntegral <$> G.word24BE
+      | otherwise     = fromIntegral <$> G.word32BE
 
-    go pos acc
-      | pos >= BS.length bs = Right (finish pos acc)
-      | atEOF pos           = Right (finish (pos + offWidth) acc)
-      | pos + offWidth + 2 > BS.length bs = Left "truncated IPS record"
-      | otherwise =
-          let off  = readOff pos
-              size = fromIntegral (getWord16BE (pos + offWidth) bs) :: Int
-          in if size == 0
-             then -- RLE record
-               if pos + offWidth + 4 > BS.length bs
-               then Left "truncated IPS RLE record"
-               else let rleCount = fromIntegral (getWord16BE (pos + offWidth + 2) bs) :: Int
-                        rleVal   = BS.index bs (pos + offWidth + 4)
-                    in go (pos + offWidth + 5) (IPSRecordRLE off rleCount rleVal : acc)
-             else -- Normal record
-               let dat = BS.take size (BS.drop (pos + offWidth + 2) bs)
-               in go (pos + offWidth + 2 + size) (IPSRecord off dat : acc)
+    go acc = do
+      eof <- peekEOF
+      if eof
+        then do
+          avail <- remaining
+          if avail >= offWidth then skip offWidth else pure ()
+          finish acc
+        else do
+          off  <- readOff
+          size <- fromIntegral <$> G.word16BE :: Get Int
+          if size == 0
+            then do  -- RLE record
+              rleCount <- fromIntegral <$> G.word16BE
+              rleVal   <- getByte
+              go (IPSRecordRLE off rleCount rleVal : acc)
+            else do  -- Normal record
+              dat <- getBytes size
+              go (IPSRecord off dat : acc)
 
-    finish pos acc =
-      let remaining = BS.drop pos bs
-          len = BS.length remaining
-      in if len > 0 && BS.index remaining 0 == 0x7B  -- '{' → EBP JSON metadata
-         then IPSPatch variant (reverse acc) Nothing (Just remaining)
-         else let trunc = if len >= 3
-                          then Just (fromIntegral (getWord24BE pos bs))
-                          else Nothing
-              in IPSPatch variant (reverse acc) trunc Nothing
+    finish acc = do
+      avail <- remaining
+      if avail > 0
+        then do
+          pos <- getPosition
+          input <- getInput
+          let rest = BS.drop pos input
+          if BS.index rest 0 == 0x7B  -- '{' → EBP JSON metadata
+            then pure (IPSPatch variant (reverse acc) Nothing (Just rest))
+            else let trunc = if avail >= 3
+                             then Just (fromIntegral (getWord24BE pos input))
+                             else Nothing
+                 in pure (IPSPatch variant (reverse acc) trunc Nothing)
+        else pure (IPSPatch variant (reverse acc) Nothing Nothing)
 
 -- | Apply an IPS patch to a target file (seek-and-write).
 applyIPS :: IPSPatch -> FilePath -> IO Int

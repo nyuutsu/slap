@@ -10,7 +10,8 @@ module Patch.UPS
   , upsInfo
   ) where
 
-import Patch.Binary (getByuuVarint, getWord32LE, putWord32LE, putByuuVarint, crc32)
+import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32)
+import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd)
 import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
@@ -49,14 +50,11 @@ parseUPS bs
         then Left ("patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
         else pure ()
-      let (srcSize, n1) = getByuuVarint 4 bs
-          (tgtSize, n2) = getByuuVarint (4 + n1) bs
-          blocksStart   = 4 + n1 + n2
-          blocksEnd     = BS.length bs - 12  -- 3 * CRC32
-          blocksBs      = BS.take (blocksEnd - blocksStart) (BS.drop blocksStart bs)
-          blocks        = parseBlocks blocksBs
-          srcCRC        = getWord32LE (BS.length bs - 12) bs
-          tgtCRC        = getWord32LE (BS.length bs - 8)  bs
+      let srcCRC = getWord32LE (BS.length bs - 12) bs
+          tgtCRC = getWord32LE (BS.length bs - 8)  bs
+          -- Parse body between magic and footer
+          bodyBs = BS.take (BS.length bs - 16) (BS.drop 4 bs)
+      (srcSize, tgtSize, blocks) <- runGet parseUPSBody bodyBs
       Right UPSPatch
         { upsSourceSize = srcSize
         , upsTargetSize = tgtSize
@@ -66,23 +64,29 @@ parseUPS bs
         , upsPatchCRC   = storedPatchCRC
         }
 
-parseBlocks :: ByteString -> [UPSBlock]
-parseBlocks bs = go 0
-  where
-    go pos
-      | pos >= BS.length bs = []
-      | otherwise =
-          let (skip, n) = getByuuVarint pos bs
-              (xorBytes, consumed) = collectXor (pos + n)
-          in UPSBlock skip xorBytes : go (pos + n + consumed)
+parseUPSBody :: Get (Int64, Int64, [UPSBlock])
+parseUPSBody = do
+  srcSize <- byuuVarint
+  tgtSize <- byuuVarint
+  blocks  <- parseBlocks
+  pure (srcSize, tgtSize, blocks)
 
-    -- Collect nonzero XOR bytes until 0x00 terminator (which is consumed but not included).
-    collectXor pos = go' pos []
-      where
-        go' i acc
-          | i >= BS.length bs = (BS.pack (reverse acc), i - pos)
-          | BS.index bs i == 0x00 = (BS.pack (reverse acc), i - pos + 1)  -- +1 for the terminator
-          | otherwise = go' (i + 1) (BS.index bs i : acc)
+parseBlocks :: Get [UPSBlock]
+parseBlocks = do
+  done <- atEnd
+  if done then pure []
+  else do
+    skipN <- byuuVarint
+    xorBytes <- collectXor []
+    rest <- parseBlocks
+    pure (UPSBlock skipN xorBytes : rest)
+  where
+    -- Collect nonzero XOR bytes until 0x00 terminator
+    collectXor acc = do
+      b <- getByte
+      if b == 0x00
+        then pure (BS.pack (reverse acc))
+        else collectXor (b : acc)
 
 -- | Apply a UPS patch to source, producing target.
 -- The caller is responsible for checksum validation.

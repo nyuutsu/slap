@@ -9,7 +9,8 @@ module Patch.GDIFF
   , gdiffInfo
   ) where
 
-import Patch.Binary (getWord16BE, getWord32BE, getInt64BE, copyBSRange)
+import Patch.Binary (copyBSRange)
+import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE, failGet)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -40,76 +41,64 @@ parseGDIFF bs
   | BS.length bs < 5 = Left "too short for GDIFF header"
   | BS.take 4 bs /= "\xd1\xff\xd1\xff" = Left "not a GDIFF file (bad magic)"
   | BS.index bs 4 /= 4 = Left ("unsupported GDIFF version: " ++ show (BS.index bs 4))
-  | otherwise = parseCmds 5 []
+  | otherwise = runGet (do { _ <- getBytes 5; parseCmds [] }) bs
   where
-    parseCmds pos acc
-      | pos >= BS.length bs = Left "GDIFF: unexpected end of file (no EOF command)"
-      | otherwise =
-          let cmd = BS.index bs pos
-          in case cmd of
-            0 -> Right (GDiffPatch (reverse acc))
+    parseCmds acc = do
+      cmd <- getByte
+      case cmd of
+        0 -> pure (GDiffPatch (reverse acc))
 
-            -- DATA: inline, opcode IS the length (1-246 bytes)
-            _ | cmd <= 246 ->
-                let len = fromIntegral cmd
-                    dat = BS.take len (BS.drop (pos + 1) bs)
-                in parseCmds (pos + 1 + len) (GDiffData dat : acc)
+        -- DATA: opcode IS the length (1-246 bytes)
+        _ | cmd <= 246 -> do
+              dat <- getBytes (fromIntegral cmd)
+              parseCmds (GDiffData dat : acc)
 
-            -- DATA with ushort length
-            247 ->
-                let len = fromIntegral (getWord16BE (pos + 1) bs)
-                    dat = BS.take len (BS.drop (pos + 3) bs)
-                in parseCmds (pos + 3 + len) (GDiffData dat : acc)
+        -- DATA with ushort length
+        247 -> do len <- fromIntegral <$> word16BE
+                  dat <- getBytes len
+                  parseCmds (GDiffData dat : acc)
 
-            -- DATA with int length
-            248 ->
-                let len = fromIntegral (getWord32BE (pos + 1) bs) :: Int
-                    dat = BS.take len (BS.drop (pos + 5) bs)
-                in parseCmds (pos + 5 + len) (GDiffData dat : acc)
+        -- DATA with int length
+        248 -> do len <- fromIntegral <$> word32BE
+                  dat <- getBytes len
+                  parseCmds (GDiffData dat : acc)
 
-            -- COPY ushort offset, ubyte length
-            249 ->
-                let off = fromIntegral (getWord16BE (pos + 1) bs)
-                    len = fromIntegral (BS.index bs (pos + 3))
-                in parseCmds (pos + 4) (GDiffCopy off len : acc)
+        -- COPY ushort offset, ubyte length
+        249 -> do off <- fromIntegral <$> word16BE
+                  len <- fromIntegral <$> getByte
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY ushort offset, ushort length
-            250 ->
-                let off = fromIntegral (getWord16BE (pos + 1) bs)
-                    len = fromIntegral (getWord16BE (pos + 3) bs)
-                in parseCmds (pos + 5) (GDiffCopy off len : acc)
+        -- COPY ushort offset, ushort length
+        250 -> do off <- fromIntegral <$> word16BE
+                  len <- fromIntegral <$> word16BE
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY ushort offset, int length
-            251 ->
-                let off = fromIntegral (getWord16BE (pos + 1) bs)
-                    len = fromIntegral (getWord32BE (pos + 3) bs)
-                in parseCmds (pos + 7) (GDiffCopy off len : acc)
+        -- COPY ushort offset, int length
+        251 -> do off <- fromIntegral <$> word16BE
+                  len <- fromIntegral <$> word32BE
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY int offset, ubyte length
-            252 ->
-                let off = fromIntegral (getWord32BE (pos + 1) bs)
-                    len = fromIntegral (BS.index bs (pos + 5))
-                in parseCmds (pos + 6) (GDiffCopy off len : acc)
+        -- COPY int offset, ubyte length
+        252 -> do off <- fromIntegral <$> word32BE
+                  len <- fromIntegral <$> getByte
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY int offset, ushort length
-            253 ->
-                let off = fromIntegral (getWord32BE (pos + 1) bs)
-                    len = fromIntegral (getWord16BE (pos + 5) bs)
-                in parseCmds (pos + 7) (GDiffCopy off len : acc)
+        -- COPY int offset, ushort length
+        253 -> do off <- fromIntegral <$> word32BE
+                  len <- fromIntegral <$> word16BE
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY int offset, int length
-            254 ->
-                let off = fromIntegral (getWord32BE (pos + 1) bs)
-                    len = fromIntegral (getWord32BE (pos + 5) bs)
-                in parseCmds (pos + 9) (GDiffCopy off len : acc)
+        -- COPY int offset, int length
+        254 -> do off <- fromIntegral <$> word32BE
+                  len <- fromIntegral <$> word32BE
+                  parseCmds (GDiffCopy off len : acc)
 
-            -- COPY long offset, int length
-            255 ->
-                let off = getInt64BE (pos + 1) bs
-                    len = fromIntegral (getWord32BE (pos + 9) bs)
-                in parseCmds (pos + 13) (GDiffCopy off len : acc)
+        -- COPY long offset, int length
+        255 -> do off <- int64BE
+                  len <- fromIntegral <$> word32BE
+                  parseCmds (GDiffCopy off len : acc)
 
-            _ -> Left ("GDIFF: unknown command: " ++ show cmd)
+        _ -> failGet ("GDIFF: unknown command: " ++ show cmd)
 
 ----------------------------------------------------------------------------
 -- Apply

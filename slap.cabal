@@ -28,6 +28,7 @@ executable slap
     , Patch.Binary
     , Patch.BPS
     , Patch.Format
+    , Patch.Get
     , Patch.BSDiff
     , Patch.Detect
     , Patch.Explain

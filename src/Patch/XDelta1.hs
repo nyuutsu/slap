@@ -11,6 +11,7 @@ module Patch.XDelta1
   ) where
 
 import Patch.Binary (getWord32BE, copyBSRange)
+import Patch.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -18,7 +19,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Internal (unsafeCreate)
-import Data.Bits ((.&.), (.|.), shiftL, shiftR, testBit)
+import Data.Bits ((.&.), shiftR, testBit)
 import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
@@ -52,22 +53,6 @@ data XD1Instruction = XD1Instruction
   , xd1InstOffset :: Int64
   , xd1InstLength :: Int64
   } deriving (Show)
-
-----------------------------------------------------------------------------
--- EDSIO variable-length unsigned int (LEB128-like)
--- 7 bits per byte, LSB first, high bit = continuation
-----------------------------------------------------------------------------
-
-getEdsioVarint :: Int -> ByteString -> (Int64, Int)
-getEdsioVarint off bs = go off 0 0
-  where
-    go i acc shift =
-      let byte = BS.index bs i
-          val = fromIntegral (byte .&. 0x7F) :: Int64
-          acc' = acc .|. (val `shiftL` shift)
-      in if testBit byte 7
-         then go (i + 1) acc' (shift + 7)
-         else (acc', i - off + 1)
 
 ----------------------------------------------------------------------------
 -- Parsing
@@ -123,68 +108,41 @@ parseControl :: ByteString -> ByteString -> ByteString -> ByteString
              -> Either String XDelta1Patch
 parseControl ctrl dataSeg fromName toName
   | BS.length ctrl < 28 = Left "xdelta1: control segment too short"
-  | otherwise =
-      -- Type tag (uint32 BE) + allocation (uint32 BE, deprecated) = 8 bytes
-      let pos0 = 8
+  | otherwise = runGet parseCtrl ctrl
+  where
+    parseCtrl :: Get XDelta1Patch
+    parseCtrl = do
+      skip 8  -- type tag + allocation (deprecated)
+      toMD5 <- getBytes 16
+      toLen <- edsioVarint
+      skip 1  -- has_data boolean
+      srcCount <- fromIntegral <$> edsioVarint
+      sources <- parseSources srcCount
+      instCount <- fromIntegral <$> edsioVarint
+      insts <- parseInstructions instCount
+      let fixedInsts = fixSequentialOffsets sources insts
+      pure (XDelta1Patch fromName toName toMD5 toLen sources fixedInsts dataSeg)
 
-          -- to_md5: 16 bytes
-          toMD5 = BS.take 16 (BS.drop pos0 ctrl)
-          pos1 = pos0 + 16
+parseSources :: Int -> Get [XD1Source]
+parseSources 0 = pure []
+parseSources n = do
+  nameLen <- fromIntegral <$> edsioVarint
+  name <- getBytes nameLen
+  md5 <- getBytes 16
+  len <- edsioVarint
+  isdata <- (/= 0) <$> getByte
+  sequential <- (/= 0) <$> getByte
+  rest <- parseSources (n - 1)
+  pure (XD1Source name md5 len isdata sequential : rest)
 
-          -- to_len: varint
-          (toLen, n1) = getEdsioVarint pos1 ctrl
-          pos2 = pos1 + n1
-
-          -- has_data: 1 byte boolean
-          pos3 = pos2 + 1
-
-          -- source_info array: varint count, then entries
-          (srcCount, n2) = getEdsioVarint pos3 ctrl
-          pos4 = pos3 + n2
-          (sources, pos5) = parseSources (fromIntegral srcCount) pos4 ctrl
-
-          -- instruction array: varint count, then entries
-          (instCount, n3) = getEdsioVarint pos5 ctrl
-          pos6 = pos5 + n3
-          (insts, _) = parseInstructions (fromIntegral instCount) pos6 ctrl
-
-          -- Reconstruct sequential source offsets
-          fixedInsts = fixSequentialOffsets sources insts
-
-      in Right (XDelta1Patch fromName toName toMD5 toLen sources fixedInsts dataSeg)
-
-parseSources :: Int -> Int -> ByteString -> ([XD1Source], Int)
-parseSources 0 pos _ = ([], pos)
-parseSources n pos bs =
-  let -- name: string = varint length + bytes
-      (nameLen, n1) = getEdsioVarint pos bs
-      pos1 = pos + n1
-      name = BS.take (fromIntegral nameLen) (BS.drop pos1 bs)
-      pos2 = pos1 + fromIntegral nameLen
-      -- md5: 16 bytes
-      md5 = BS.take 16 (BS.drop pos2 bs)
-      pos3 = pos2 + 16
-      -- len: varint
-      (len, n2) = getEdsioVarint pos3 bs
-      pos4 = pos3 + n2
-      -- isdata: 1 byte boolean
-      isdata = BS.index bs pos4 /= 0
-      -- sequential: 1 byte boolean
-      sequential = BS.index bs (pos4 + 1) /= 0
-      pos5 = pos4 + 2
-      src = XD1Source name md5 len isdata sequential
-      (rest, posEnd) = parseSources (n - 1) pos5 bs
-  in (src : rest, posEnd)
-
-parseInstructions :: Int -> Int -> ByteString -> ([XD1Instruction], Int)
-parseInstructions 0 pos _ = ([], pos)
-parseInstructions n pos bs =
-  let (idx, n1) = getEdsioVarint pos bs
-      (off, n2) = getEdsioVarint (pos + n1) bs
-      (len, n3) = getEdsioVarint (pos + n1 + n2) bs
-      inst = XD1Instruction idx off len
-      (rest, posEnd) = parseInstructions (n - 1) (pos + n1 + n2 + n3) bs
-  in (inst : rest, posEnd)
+parseInstructions :: Int -> Get [XD1Instruction]
+parseInstructions 0 = pure []
+parseInstructions n = do
+  idx <- edsioVarint
+  off <- edsioVarint
+  len <- edsioVarint
+  rest <- parseInstructions (n - 1)
+  pure (XD1Instruction idx off len : rest)
 
 -- | When a source has sequential=True, wire offsets are 0.
 -- Reconstruct by maintaining a running position per source.

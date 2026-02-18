@@ -10,13 +10,16 @@ module Patch.VCDIFF
   , vcdiffInfo
   ) where
 
-import Patch.Binary (getVcdiffVarint, getWord32BE, copyBSRange)
+import Patch.Binary (getVcdiffVarint, copyBSRange)
+import Patch.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
+                  atEnd, vcdiffVarint, word32BE, failGet)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Array (Array, listArray, (!))
 import Data.Bits (testBit)
+import Control.Monad (when)
 import Data.IORef
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
@@ -162,111 +165,91 @@ parseVCDIFF :: ByteString -> Either String VCDIFFPatch
 parseVCDIFF bs
   | BS.length bs < 5 = Left "too short for VCDIFF header"
   | BS.take 3 bs /= "\xd6\xc3\xc4" = Left "not a VCDIFF file (bad magic)"
-  | otherwise = do
-      let version = BS.index bs 3
-      if version /= 0 && version /= 0x53
-        then Left ("unsupported VCDIFF version: " ++ show version)
-        else pure ()
-      let hdrIndicator = BS.index bs 4
-          hasCompressor = testBit hdrIndicator 0
+  | otherwise = runGet parseHeader bs
+  where
+    parseHeader = do
+      skip 3  -- magic
+      version <- getByte
+      when (version /= 0 && version /= 0x53) $
+        failGet ("unsupported VCDIFF version: " ++ show version)
+      hdrIndicator <- getByte
+      let hasCompressor = testBit hdrIndicator 0
           hasCodeTable  = testBit hdrIndicator 1
-      let (compId, pos1) = if hasCompressor && BS.length bs > 5
-            then (Just (BS.index bs 5), 6)
-            else (Nothing, 5)
+      compId <- if hasCompressor
+        then Just <$> getByte
+        else pure Nothing
       -- Skip optional code table
-      let pos2 = if hasCodeTable && pos1 < BS.length bs
-            then let (tableLen, n) = getVcdiffVarint pos1 bs
-                 in pos1 + n + fromIntegral tableLen
-            else pos1
+      when hasCodeTable $ do
+        tableLen <- fromIntegral <$> vcdiffVarint
+        skip tableLen
       -- Skip optional application data (xdelta3 extension)
-      let pos3 = if testBit hdrIndicator 2 && pos2 < BS.length bs
-            then let (appLen, n) = getVcdiffVarint pos2 bs
-                 in pos2 + n + fromIntegral appLen
-            else pos2
-      if hasCodeTable
-        then Left "custom code tables are not supported"
-        else pure ()
+      when (testBit hdrIndicator 2) $ do
+        appLen <- fromIntegral <$> vcdiffVarint
+        skip appLen
+      when hasCodeTable $
+        failGet "custom code tables are not supported"
       let hdr = VCDIFFHeader version compId hasCodeTable
-      case parseWindows (version == 0x53) pos3 bs of
-        Left err   -> Left err
-        Right wins -> Right (VCDIFFPatch hdr wins)
+      wins <- parseWindows (version == 0x53)
+      pure (VCDIFFPatch hdr wins)
 
-parseWindows :: Bool -> Int -> ByteString -> Either String [VCDIFFWindow]
-parseWindows isXd3 pos bs
-  | pos >= BS.length bs = Right []
-  | otherwise = do
-      (win, nextPos) <- parseOneWindow isXd3 pos bs
-      rest <- parseWindows isXd3 nextPos bs
-      Right (win : rest)
+    parseWindows isXd3 = do
+      done <- atEnd
+      if done then pure []
+      else do
+        win <- parseOneWindow isXd3
+        rest <- parseWindows isXd3
+        pure (win : rest)
 
-parseOneWindow :: Bool -> Int -> ByteString -> Either String (VCDIFFWindow, Int)
-parseOneWindow isXd3 pos bs
-  | pos >= BS.length bs = Left "unexpected end of VCDIFF data"
-  | otherwise = do
-      let winInd = BS.index bs pos
-          hasSource = testBit winInd 0 || testBit winInd 1
-          pos1 = pos + 1
-      -- Source/target segment
-      let (srcLen, srcPos_, pos2)
-            | hasSource =
-                let (sl, n1) = getVcdiffVarint pos1 bs
-                    (sp, n2) = getVcdiffVarint (pos1 + n1) bs
-                in (sl, sp, pos1 + n1 + n2)
-            | otherwise = (0, 0, pos1)
+    parseOneWindow isXd3 = do
+      winInd <- getByte
+      let hasSource = testBit winInd 0 || testBit winInd 1
+      (srcLen, srcPos_) <- if hasSource
+        then (,) <$> vcdiffVarint <*> vcdiffVarint
+        else pure (0, 0)
       -- Delta encoding length
-      let (deltaLen, n3) = getVcdiffVarint pos2 bs
-          pos3 = pos2 + n3
-          deltaEnd   = pos3 + fromIntegral deltaLen
+      deltaLen <- vcdiffVarint
+      deltaStart <- getPosition
+      let deltaEnd = deltaStart + fromIntegral deltaLen
       -- Inside the delta body:
-      -- 1. target window length
-      let (targetSz, n4) = getVcdiffVarint pos3 bs
-          pos4 = pos3 + n4
-      -- 2. delta indicator byte
-      let deltaInd = BS.index bs pos4
-          pos5 = pos4 + 1
-      -- 3. add/run data length
-      let (addRunLen, n5) = getVcdiffVarint pos5 bs
-          pos6 = pos5 + n5
-      -- 4. instructions length
-      let (instLen, n6) = getVcdiffVarint pos6 bs
-          pos7 = pos6 + n6
-      -- 5. addresses length
-      let (addrLen, n7) = getVcdiffVarint pos7 bs
-          pos8 = pos7 + n7
-      -- Check for secondary compression (not yet supported)
-      if testBit deltaInd 0 || testBit deltaInd 1
-            || (not isXd3 && testBit deltaInd 2)
-        then Left "secondary compression in VCDIFF data sections is not supported"
-        else pure ()
+      targetSz  <- vcdiffVarint
+      deltaInd  <- getByte
+      addRunLen <- vcdiffVarint
+      instLen   <- vcdiffVarint
+      addrLen   <- vcdiffVarint
+      -- Check for secondary compression
+      when (testBit deltaInd 0 || testBit deltaInd 1
+            || (not isXd3 && testBit deltaInd 2)) $
+        failGet "secondary compression in VCDIFF data sections is not supported"
       -- Compute where data sections start by working backwards from deltaEnd.
       -- This handles xdelta3 Adler32 checksums robustly: xdelta3 writes 4 bytes
       -- of Adler32 after the length fields (even in version 0 mode, sometimes
       -- without setting any flag), so we compute the data start position from
       -- the known end instead of guessing what's between lengths and data.
-      let dataStart = fromIntegral deltaEnd
+      afterLengths <- getPosition
+      let dataStart = deltaEnd
                       - fromIntegral addRunLen
                       - fromIntegral instLen
                       - fromIntegral addrLen
-          adler = if dataStart == pos8 + 4
-                  then Just (getWord32BE pos8 bs)
-                  else Nothing
-      -- Slice the three data streams
-      let addRunData = BS.take (fromIntegral addRunLen) (BS.drop dataStart bs)
-          instData   = BS.take (fromIntegral instLen) (BS.drop (dataStart + fromIntegral addRunLen) bs)
-          addrData   = BS.take (fromIntegral addrLen) (BS.drop (dataStart + fromIntegral addRunLen + fromIntegral instLen) bs)
-      Right ( VCDIFFWindow
-              { vcdWinIndicator = winInd
-              , vcdSourceLen    = srcLen
-              , vcdSourcePos    = srcPos_
-              , vcdTargetLen    = targetSz
-              , vcdDeltaInd     = deltaInd
-              , vcdAdler32      = adler
-              , vcdAddRunData   = addRunData
-              , vcdInstructions = instData
-              , vcdAddresses    = addrData
-              }
-            , deltaEnd
-            )
+      adler <- if dataStart == afterLengths + 4
+        then Just <$> word32BE
+        else pure Nothing
+      -- Jump to data start and slice the three data streams
+      setPosition dataStart
+      addRunData <- getBytes (fromIntegral addRunLen)
+      instData   <- getBytes (fromIntegral instLen)
+      addrData   <- getBytes (fromIntegral addrLen)
+      setPosition deltaEnd
+      pure VCDIFFWindow
+        { vcdWinIndicator = winInd
+        , vcdSourceLen    = srcLen
+        , vcdSourcePos    = srcPos_
+        , vcdTargetLen    = targetSz
+        , vcdDeltaInd     = deltaInd
+        , vcdAdler32      = adler
+        , vcdAddRunData   = addRunData
+        , vcdInstructions = instData
+        , vcdAddresses    = addrData
+        }
 
 ----------------------------------------------------------------------------
 -- Apply

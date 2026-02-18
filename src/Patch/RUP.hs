@@ -10,6 +10,7 @@ module Patch.RUP
   , rupInfo
   ) where
 
+import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -54,31 +55,20 @@ data RUPRecord = RUPRecord
 -- VLV: Variable Length Value (1-byte length prefix, then N LE bytes)
 ----------------------------------------------------------------------------
 
-getPackedInt :: Int -> ByteString -> (Int64, Int)
-getPackedInt pos bs =
-  let n = fromIntegral (BS.index bs pos) :: Int
-      val = foldl (\acc i ->
-        acc + fromIntegral (BS.index bs (pos + 1 + i)) * (256 ^ i)) 0 [0..n-1]
-  in (val, 1 + n)
+packedInt :: Get Int64
+packedInt = do
+  n <- fromIntegral <$> getByte
+  bytes <- getBytes n
+  pure $ foldl' (\acc i ->
+    acc + fromIntegral (BS.index bytes i) * (256 ^ i)) 0 [0..n-1]
 
-getPackedBS :: Int -> ByteString -> (ByteString, Int)
-getPackedBS pos bs =
-  let (len, n) = getPackedInt pos bs
-      dat = BS.take (fromIntegral len) (BS.drop (pos + n) bs)
-  in (dat, n + fromIntegral len)
+packedBS :: Get ByteString
+packedBS = do
+  len <- fromIntegral <$> packedInt
+  getBytes len
 
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes): NINJA2 format
---   0x000-0x006: "NINJA2\0"
---   0x007:       text encoding
---   0x008-0x05B: author (84 bytes)
---   0x05C-0x066: version (11 bytes)
---   0x067-0x166: title (256 bytes)
---   0x167-0x196: genre (48 bytes)
---   0x197-0x1C6: language (48 bytes)
---   0x1C7-0x1CE: date (8 bytes)
---   0x1CF-0x3CE: web (512 bytes)
---   0x3CF-0x7FF: description (1073 bytes)
 ----------------------------------------------------------------------------
 
 headerSize :: Int
@@ -113,65 +103,56 @@ parseRUP bs
   | BS.length bs < 7 = Left "too short for RUP header"
   | BS.take 7 bs /= "NINJA2\0" = Left "not a RUP file (bad magic)"
   | BS.length bs < headerSize = Left "truncated RUP header"
-  | otherwise =
-      let meta = parseFixedHeader bs
-          p = parseCommands headerSize bs (emptyPatch meta)
-      in Right p { rupRecords = reverse (rupRecords p) }
+  | otherwise = runGet parseRUP' bs
   where
+    parseRUP' :: Get RUPPatch
+    parseRUP' = do
+      hdr <- getBytes headerSize
+      let meta = parseFixedHeader hdr
+      p <- parseCommands (emptyPatch meta)
+      pure p { rupRecords = reverse (rupRecords p) }
+
     emptyPatch m = RUPPatch m [] Nothing Nothing Nothing 0 0
 
-parseCommands :: Int -> ByteString -> RUPPatch -> RUPPatch
-parseCommands pos bs patch
-  | pos >= BS.length bs = patch
-  | otherwise =
-      let code = BS.index bs pos
-      in case code of
-        0x01 -> parseFileCmd (pos + 1) bs patch
-        0x02 -> parseXorRecord (pos + 1) bs patch
-        0x00 -> patch  -- END marker
-        _    -> patch  -- unknown, stop
+parseCommands :: RUPPatch -> Get RUPPatch
+parseCommands patch = do
+  done <- atEnd
+  if done then pure patch
+  else do
+    code <- getByte
+    case code of
+      0x01 -> parseFileCmd patch >>= parseCommands
+      0x02 -> parseXorRecord patch >>= parseCommands
+      0x00 -> pure patch  -- END marker
+      _    -> pure patch  -- unknown, stop
 
 -- | Command 0x01: OPEN_NEW_FILE
---   VLV filename, 1 byte ROM type, VLV srcSize, VLV tgtSize,
---   16 bytes srcMD5, 16 bytes tgtMD5,
---   optional overflow if srcSize != tgtSize
-parseFileCmd :: Int -> ByteString -> RUPPatch -> RUPPatch
-parseFileCmd pos bs patch
-  | pos >= BS.length bs = patch
-  | otherwise =
-      let (_filename, n1) = getPackedBS pos bs
-          -- romType = BS.index bs (pos + n1)
-          p2 = pos + n1 + 1  -- skip ROM type byte
-          (srcSz, n2) = getPackedInt p2 bs
-          (tgtSz, n3) = getPackedInt (p2 + n2) bs
-          md5Start = p2 + n2 + n3
-          srcMD5 = BS.take 16 (BS.drop md5Start bs)
-          tgtMD5 = BS.take 16 (BS.drop (md5Start + 16) bs)
-          afterMD5 = md5Start + 32
-          -- Overflow: if sizes differ, read 1-byte type + VLV data
-          (nextPos, overflow)
-            | srcSz /= tgtSz && afterMD5 < BS.length bs =
-                let (_overflowType, n4) = (BS.index bs afterMD5, 1)
-                    (dat, n5) = getPackedBS (afterMD5 + n4) bs
-                in (afterMD5 + n4 + n5, Just dat)
-            | otherwise = (afterMD5, Nothing)
-      in parseCommands nextPos bs
-           (patch { rupSourceMD5 = Just srcMD5
-                  , rupTargetMD5 = Just tgtMD5
-                  , rupSourceSz  = srcSz
-                  , rupTargetSz  = tgtSz
-                  , rupOverflow  = overflow
-                  })
+parseFileCmd :: RUPPatch -> Get RUPPatch
+parseFileCmd patch = do
+  _filename <- packedBS
+  skip 1  -- ROM type byte
+  srcSz <- packedInt
+  tgtSz <- packedInt
+  srcMD5 <- getBytes 16
+  tgtMD5 <- getBytes 16
+  overflow <- if srcSz /= tgtSz
+    then do
+      skip 1  -- overflow type byte
+      Just <$> packedBS
+    else pure Nothing
+  pure patch { rupSourceMD5 = Just srcMD5
+             , rupTargetMD5 = Just tgtMD5
+             , rupSourceSz  = srcSz
+             , rupTargetSz  = tgtSz
+             , rupOverflow  = overflow
+             }
 
 -- | Command 0x02: XOR record
---   VLV offset, VLV+data xorBytes
-parseXorRecord :: Int -> ByteString -> RUPPatch -> RUPPatch
-parseXorRecord pos bs patch =
-  let (off, n1) = getPackedInt pos bs
-      (xorDat, n2) = getPackedBS (pos + n1) bs
-      rec = RUPRecord off xorDat
-  in parseCommands (pos + n1 + n2) bs
-       (patch { rupRecords = rec : rupRecords patch })
+parseXorRecord :: RUPPatch -> Get RUPPatch
+parseXorRecord patch = do
+  off <- packedInt
+  xorDat <- packedBS
+  pure patch { rupRecords = RUPRecord off xorDat : rupRecords patch }
 
 ----------------------------------------------------------------------------
 -- Apply

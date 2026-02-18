@@ -13,7 +13,7 @@ module Patch.APS
   , apsInfo
   ) where
 
-import Patch.Binary (getWord16LE, getWord32LE)
+import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word16LE, word32LE)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -69,75 +69,77 @@ data APSPatch = APSPatch APSVariant
 parseAPS :: ByteString -> Either String APSPatch
 parseAPS bs
   | BS.length bs < 5 = Left "too short for APS header"
-  | BS.take 5 bs == "APS10" = parseN64 bs
-  | BS.take 4 bs == "APS1" = parseGBA bs
+  | BS.take 5 bs == "APS10" = runGet parseN64 bs
+  | BS.take 4 bs == "APS1" = runGet parseGBA bs
   | otherwise = Left "not an APS file (bad magic)"
 
-parseN64 :: ByteString -> Either String APSPatch
-parseN64 bs = do
-  let ptype = BS.index bs 5
-      -- encoding = BS.index bs 6  -- always 0
-      desc = BS.take 50 (BS.drop 7 bs)
+parseN64 :: Get APSPatch
+parseN64 = do
+  skip 5  -- "APS10"
+  ptype <- getByte
+  skip 1  -- encoding (always 0)
+  desc <- getBytes 50
   case ptype of
     0 -> do  -- Simple patch
-      if BS.length bs < 61
-        then Left "truncated APS N64 simple header"
-        else do
-          let destSize = getWord32LE 57 bs
-              recs = parseN64Records 61 bs
-          Right $ APSPatch $ APSN64
-            (APSN64Header ptype desc Nothing Nothing Nothing Nothing destSize)
-            recs
+      destSize <- word32LE
+      recs <- parseN64Records
+      pure $ APSPatch $ APSN64
+        (APSN64Header ptype desc Nothing Nothing Nothing Nothing destSize)
+        recs
     1 -> do  -- N64-specific
-      if BS.length bs < 78
-        then Left "truncated APS N64 header"
-        else do
-          let imgFmt   = BS.index bs 57
-              cartId   = BS.take 2 (BS.drop 58 bs)
-              country  = BS.index bs 60
-              crcVal   = BS.take 8 (BS.drop 61 bs)
-              destSize = getWord32LE 74 bs
-              recs     = parseN64Records 78 bs
-          Right $ APSPatch $ APSN64
-            (APSN64Header ptype desc (Just imgFmt) (Just cartId)
-                          (Just country) (Just crcVal) destSize)
-            recs
-    _ -> Left ("unknown APS N64 patch type: " ++ show ptype)
+      imgFmt  <- getByte
+      cartId  <- getBytes 2
+      country <- getByte
+      crcVal  <- getBytes 8
+      skip 5  -- padding (bytes 69-73)
+      destSize <- word32LE
+      recs <- parseN64Records
+      pure $ APSPatch $ APSN64
+        (APSN64Header ptype desc (Just imgFmt) (Just cartId)
+                      (Just country) (Just crcVal) destSize)
+        recs
+    _ -> fail ("unknown APS N64 patch type: " ++ show ptype)
 
-parseN64Records :: Int -> ByteString -> [APSN64Record]
-parseN64Records pos bs
-  | pos + 5 > BS.length bs = []
-  | otherwise =
-      let off = fromIntegral (getWord32LE pos bs) :: Int64
-          len = BS.index bs (pos + 4)
-      in if len == 0 && pos + 7 <= BS.length bs
-         then -- RLE record
-           let val   = BS.index bs (pos + 5)
-               count = BS.index bs (pos + 6)
-           in APSN64RLE off val count : parseN64Records (pos + 7) bs
-         else -- Normal record
-           let dat = BS.take (fromIntegral len) (BS.drop (pos + 5) bs)
-           in APSN64Normal off dat : parseN64Records (pos + 5 + fromIntegral len) bs
-
-parseGBA :: ByteString -> Either String APSPatch
-parseGBA bs = do
-  if BS.length bs < 12
-    then Left "truncated APS GBA header"
+parseN64Records :: Get [APSN64Record]
+parseN64Records = do
+  done <- atEnd
+  if done then pure []
+  else do
+    avail <- remaining
+    if avail < 5 then pure []
     else do
-      let srcSize = getWord32LE 4 bs
-          tgtSize = getWord32LE 8 bs
-          recs    = parseGBARecords 12 bs
-      Right $ APSPatch $ APSGBA (APSGBAHeader srcSize tgtSize) recs
+      off <- fromIntegral <$> word32LE
+      len <- getByte
+      if len == 0
+        then do  -- RLE record
+          val   <- getByte
+          count <- getByte
+          rest <- parseN64Records
+          pure (APSN64RLE off val count : rest)
+        else do  -- Normal record
+          dat <- getBytes (fromIntegral len)
+          rest <- parseN64Records
+          pure (APSN64Normal off dat : rest)
 
-parseGBARecords :: Int -> ByteString -> [APSGBARecord]
-parseGBARecords pos bs
-  | pos + 65544 > BS.length bs = []
-  | otherwise =
-      let off    = getWord32LE pos bs
-          srcCrc = getWord16LE (pos + 4) bs
-          tgtCrc = getWord16LE (pos + 6) bs
-          xorDat = BS.take 65536 (BS.drop (pos + 8) bs)
-      in APSGBARecord off srcCrc tgtCrc xorDat : parseGBARecords (pos + 65544) bs
+parseGBA :: Get APSPatch
+parseGBA = do
+  skip 4  -- "APS1"
+  srcSize <- word32LE
+  tgtSize <- word32LE
+  recs <- parseGBARecords
+  pure $ APSPatch $ APSGBA (APSGBAHeader srcSize tgtSize) recs
+
+parseGBARecords :: Get [APSGBARecord]
+parseGBARecords = do
+  avail <- remaining
+  if avail < 65544 then pure []
+  else do
+    off    <- word32LE
+    srcCrc <- word16LE
+    tgtCrc <- word16LE
+    xorDat <- getBytes 65536
+    rest   <- parseGBARecords
+    pure (APSGBARecord off srcCrc tgtCrc xorDat : rest)
 
 ----------------------------------------------------------------------------
 -- Apply
