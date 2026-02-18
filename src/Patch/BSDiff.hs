@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
@@ -11,22 +10,19 @@ module Patch.BSDiff
   , bsdiffInfo
   ) where
 
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import Data.Bits ((.&.), (.|.), shiftL, testBit)
-import Data.Int (Int64)
-import System.Directory (findExecutable)
-import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
-
-#ifdef BSDIFF_NATIVE
 import qualified Codec.Compression.BZip as BZip
 import qualified Data.ByteString.Lazy as BL
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
+import Data.Bits ((.&.), (.|.), shiftL, testBit)
+import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
-#endif
+import System.Directory (findExecutable)
+import System.Exit (ExitCode(..))
+import System.Process (readProcessWithExitCode)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -36,9 +32,9 @@ data BSDiffPatch = BSDiffPatch
   { bsdCtrlSize  :: Int64       -- compressed control block size
   , bsdDiffSize  :: Int64       -- compressed diff block size
   , bsdNewSize   :: Int64       -- target file size
-  , bsdControls  :: [BSDiffControl]  -- decoded control tuples (empty without bzlib)
-  , bsdDiffData  :: ByteString       -- decompressed diff stream (empty without bzlib)
-  , bsdExtraData :: ByteString       -- decompressed extra stream (empty without bzlib)
+  , bsdControls  :: [BSDiffControl]
+  , bsdDiffData  :: ByteString  -- decompressed diff stream
+  , bsdExtraData :: ByteString  -- decompressed extra stream
   } deriving (Show)
 
 data BSDiffControl = BSDiffControl
@@ -72,26 +68,22 @@ parseBSDiff bs
   | BS.length bs < 32 = Left "too short for bsdiff header"
   | BS.take 8 bs /= "BSDIFF40" = Left "not a bsdiff file (bad magic)"
   | ctrlSz < 0 || diffSz < 0 || newSz < 0 = Left "negative size in bsdiff header"
-  | otherwise = parseBSDiffBody ctrlSz diffSz newSz bs
+  | otherwise =
+      let ctrlOff  = 32
+          diffOff  = 32 + fromIntegral ctrlSz
+          extraOff = diffOff + fromIntegral diffSz
+          ctrlCompressed  = BS.take (fromIntegral ctrlSz) (BS.drop ctrlOff bs)
+          diffCompressed  = BS.take (fromIntegral diffSz) (BS.drop diffOff bs)
+          extraCompressed = BS.drop extraOff bs
+          ctrlData  = BL.toStrict $ BZip.decompress $ BL.fromStrict ctrlCompressed
+          diffData  = BL.toStrict $ BZip.decompress $ BL.fromStrict diffCompressed
+          extraData = BL.toStrict $ BZip.decompress $ BL.fromStrict extraCompressed
+          controls  = parseControls ctrlData
+      in Right (BSDiffPatch ctrlSz diffSz newSz controls diffData extraData)
   where
     ctrlSz = getOffT 8 bs
     diffSz = getOffT 16 bs
     newSz  = getOffT 24 bs
-
-#ifdef BSDIFF_NATIVE
-parseBSDiffBody :: Int64 -> Int64 -> Int64 -> ByteString -> Either String BSDiffPatch
-parseBSDiffBody ctrlSz diffSz newSz bs =
-  let ctrlOff  = 32
-      diffOff  = 32 + fromIntegral ctrlSz
-      extraOff = diffOff + fromIntegral diffSz
-      ctrlCompressed  = BS.take (fromIntegral ctrlSz) (BS.drop ctrlOff bs)
-      diffCompressed  = BS.take (fromIntegral diffSz) (BS.drop diffOff bs)
-      extraCompressed = BS.drop extraOff bs
-      ctrlData  = BL.toStrict $ BZip.decompress $ BL.fromStrict ctrlCompressed
-      diffData  = BL.toStrict $ BZip.decompress $ BL.fromStrict diffCompressed
-      extraData = BL.toStrict $ BZip.decompress $ BL.fromStrict extraCompressed
-      controls  = parseControls ctrlData
-  in Right (BSDiffPatch ctrlSz diffSz newSz controls diffData extraData)
 
 parseControls :: ByteString -> [BSDiffControl]
 parseControls bs
@@ -99,22 +91,16 @@ parseControls bs
   | otherwise =
       BSDiffControl (getOffT 0 bs) (getOffT 8 bs) (getOffT 16 bs)
         : parseControls (BS.drop 24 bs)
-#else
-parseBSDiffBody :: Int64 -> Int64 -> Int64 -> ByteString -> Either String BSDiffPatch
-parseBSDiffBody ctrlSz diffSz newSz _bs =
-  Right (BSDiffPatch ctrlSz diffSz newSz [] BS.empty BS.empty)
-#endif
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
 applyBSDiff :: BSDiffPatch -> ByteString -> Either String ByteString
-#ifdef BSDIFF_NATIVE
 applyBSDiff patch _source
   | bsdNewSize patch == 0 = Right BS.empty
 applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
-    go ptr 0 0 0 0 (bsdControls patch)
+  go ptr 0 0 0 0 (bsdControls patch)
   where
     sz     = fromIntegral (bsdNewSize patch)
     srcLen = BS.length source
@@ -139,10 +125,6 @@ applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
           (BS.index extraBs (eOff + i) :: Word8)) [0..cpLen-1]
       go ptr (dOff + addLen) (eOff + cpLen)
         (oPos + addLen + sk) (nPos + addLen + cpLen) rest
-#else
-applyBSDiff _patch _source =
-  Left "bsdiff native apply not available (compile with -f bsdiff for bzlib support)"
-#endif
 
 ----------------------------------------------------------------------------
 -- External fallback
@@ -153,7 +135,7 @@ tryExternalBspatch :: FilePath -> FilePath -> FilePath -> IO (Either String ())
 tryExternalBspatch patchPath sourcePath outputPath = do
   mBspatch <- findExecutable "bspatch"
   case mBspatch of
-    Nothing -> pure (Left "bspatch not found on PATH; compile with -f bsdiff for native support")
+    Nothing -> pure (Left "bspatch not found on PATH")
     Just _ -> do
       (ec, _out, err) <- readProcessWithExitCode "bspatch"
         [sourcePath, outputPath, patchPath] ""
