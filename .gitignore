@@ -3,3 +3,25 @@ dist-newstyle/
 *.o
 *.dyn_hi
 *.dyn_o
+
+# Large ROM files (test ROMs placed by user)
+*.z64
+*.gba
+*.sfc
+*.smc
+*.nds
+*.gb
+*.bin
+*.iso
+*.img
+*.cue
+
+# User-provided test material staging area
+Suikoden*/
+zelda-*/
+dx-btusc/
+rosy_retrospection*/
+Final Fantasy*
+FFTA_*
+Banjo-Tooie*
+Tetris*
