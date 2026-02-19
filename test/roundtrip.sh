@@ -126,19 +126,18 @@ test_undo_created() {
   fi
 }
 
-# test_convert <label> <base> <patch> <target_sha> <to_fmt> [--with]
+# test_convert <label> <base> <patch> <target_sha> <to_fmt> [extra_args...]
 # Converts patch to target format, applies converted, verifies SHA256.
 test_convert() {
   local label="$1" base="$2" patch="$3" target_sha="$4" to_fmt="$5"
-  local with_source="${6:-}"
+  shift 5
   local name="convert-to-$to_fmt ($label)"
   local converted; converted=$(mktmp)
   local result; result=$(mktmp)
 
   local convert_args=("$patch" "--to" "$to_fmt" "-o" "$converted")
-  if [ -n "$with_source" ]; then
-    convert_args+=("--with" "$with_source")
-  fi
+  # Remaining args passed through (--with, --no-undo, --no-validate, etc.)
+  convert_args+=("$@")
 
   if ! "$SLAP" convert "${convert_args[@]}" >/dev/null 2>&1; then
     bad "$name" "convert failed"
@@ -227,6 +226,14 @@ run_dm4k() {
 
   # Convert: IPS32 → IPS (direct)
   test_convert "dm4k ips32→ips" "$base" "$REPO/test/data/dm4k/patch.ips32" "$target_sha" ips
+
+  # Direct overlay conversions (no --with needed)
+  test_convert "dm4k ppf→ips" "$base" "$REPO/test/data/dm4k/patch.ppf" "$target_sha" ips
+  test_convert "dm4k ips→ppf3 (no-undo)" "$base" "$REPO/test/data/dm4k/patch.ips" "$target_sha" ppf3 --no-undo --no-validate
+  test_convert "dm4k ips→ninja1" "$base" "$REPO/test/data/dm4k/patch.ips" "$target_sha" ninja1
+  test_convert "dm4k ips→pmsr" "$base" "$REPO/test/data/dm4k/patch.ips" "$target_sha" pmsr
+  test_convert "dm4k ips→ips32 (overlay)" "$base" "$REPO/test/data/dm4k/patch.ips" "$target_sha" ips32
+  test_convert "dm4k ppf→ppf3 (with-val)" "$base" "$REPO/test/data/dm4k/patch.ppf" "$target_sha" ppf3
 
   # Smoke: info + explain on BPS
   test_smoke "dm4k bps" "$bps"

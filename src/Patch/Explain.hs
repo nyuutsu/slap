@@ -10,6 +10,8 @@ module Patch.Explain
   , explainGDIFF
   , explainXDelta1
   , explainPMSR
+  , explainDPS
+  , explainNINJA1
   ) where
 
 import qualified Patch.PPF.Types as PPF
@@ -23,6 +25,8 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PMSR as PMSR
+import qualified Patch.DPS as DPS
+import qualified Patch.NINJA1 as NINJA1
 
 import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
 
@@ -37,7 +41,7 @@ import Data.Int (Int64)
 
 explainPPF :: PPF.Patch -> String
 explainPPF p = unlines $
-  [ "format:      PPF" ++ show (PPF.patchVersion p)
+  [ "format:      " ++ ppfVerStr (PPF.patchVersion p)
   , "records:     " ++ show nRecs
   , ""
   ] ++ zipWith showPPFRecord [1..] (PPF.patchRecords p)
@@ -46,6 +50,12 @@ explainPPF p = unlines $
     nRecs = length (PPF.patchRecords p)
     totalBytes = sum (map (BS.length . PPF.recData) (PPF.patchRecords p))
     summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+
+ppfVerStr :: PPF.Version -> String
+ppfVerStr PPF.PPF1 = "PPF1"
+ppfVerStr PPF.PPF2 = "PPF2"
+ppfVerStr PPF.PPF3 = "PPF3"
+ppfVerStr PPF.PPF4 = "PPF \"4\" (Pyriel internal format)"
 
 showPPFRecord :: Int -> PPF.Record -> String
 showPPFRecord n r =
@@ -352,4 +362,61 @@ showPMSRRecord n r =
   padNum n ++ "  Write  " ++ padR 10 (show (BS.length (PMSR.pmsrData r)) ++ " B")
   ++ "  at 0x" ++ padHex 6 (PMSR.pmsrOffset r)
   ++ "\n" ++ hexDump (PMSR.pmsrData r)
+
+----------------------------------------------------------------------------
+-- DPS
+----------------------------------------------------------------------------
+
+explainDPS :: DPS.DPSPatch -> String
+explainDPS p = unlines $
+  [ "format:      DPS (Deufeufeu Patching System)"
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showDPSRecord [1..] (DPS.dpsRecords p)
+    ++ [summary]
+  where
+    nRecs = length (DPS.dpsRecords p)
+    totalBytes = sum (map recBytes (DPS.dpsRecords p))
+    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+    recBytes r = case DPS.dpsRecPayload r of
+      DPS.PayloadData dat    -> BS.length dat
+      DPS.PayloadCopy _ len  -> fromIntegral len
+
+showDPSRecord :: Int -> DPS.DPSRecord -> String
+showDPSRecord n r = case DPS.dpsRecPayload r of
+  DPS.PayloadData dat ->
+    padNum n ++ "  Data   " ++ padR 10 (show (BS.length dat) ++ " B")
+    ++ "  at 0x" ++ padHex 6 (DPS.dpsRecOutOffset r)
+    ++ "\n" ++ hexDump dat
+  DPS.PayloadCopy srcOff len ->
+    padNum n ++ "  Copy   " ++ padR 10 (show len ++ " B")
+    ++ "  at 0x" ++ padHex 6 (DPS.dpsRecOutOffset r)
+    ++ "  (source 0x" ++ padHex 6 srcOff ++ ")"
+
+----------------------------------------------------------------------------
+-- NINJA1
+----------------------------------------------------------------------------
+
+explainNINJA1 :: NINJA1.NINJA1Patch -> String
+explainNINJA1 p = unlines $
+  [ "format:      NINJA1 (" ++ subFmtStr ++ ")"
+  , "records:     " ++ show nRecs
+  , ""
+  ] ++ zipWith showN1Record [1..] (NINJA1.n1Records p)
+    ++ [summary]
+  where
+    nRecs = length (NINJA1.n1Records p)
+    subFmtStr = case NINJA1.n1SubFormat p of
+      NINJA1.N1Binary  -> "binary"
+      NINJA1.N1BinaryZ -> "binary, compressed"
+      NINJA1.N1Text    -> "text"
+      NINJA1.N1TextZ   -> "text, compressed"
+    totalBytes = sum (map (BS.length . NINJA1.n1RecData) (NINJA1.n1Records p))
+    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
+
+showN1Record :: Int -> NINJA1.NINJA1Record -> String
+showN1Record n (NINJA1.NINJA1Record off dat) =
+  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
+  ++ "  at 0x" ++ padHex 6 off
+  ++ "\n" ++ hexDump dat
 

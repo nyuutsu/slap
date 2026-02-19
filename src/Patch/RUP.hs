@@ -7,16 +7,21 @@ module Patch.RUP
   , RUPRecord(..)
   , parseRUP
   , applyRUP
+  , createRUP
   , rupInfo
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd)
+import Patch.Binary (diffHunks)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
-import Data.Bits (xor)
+import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
+import Data.Bits (xor, (.&.), shiftR)
 import Data.Int (Int64)
+import Data.Word (Word8)
 import Control.Monad (when)
 import System.IO
 
@@ -223,4 +228,63 @@ rupInfo p = unlines $ filter (not . null)
     overflowStr = case rupOverflow p of
       Nothing -> ""
       Just d  -> "overflow:    " ++ show (BS.length d) ++ " bytes"
+
+----------------------------------------------------------------------------
+-- Create
+----------------------------------------------------------------------------
+
+-- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
+-- XOR-based records with VLV encoding; handles size changes via overflow.
+createRUP :: ByteString -> ByteString -> ByteString
+createRUP old new = BL.toStrict $ toLazyByteString $
+    byteString "NINJA2\0"                -- magic (7 bytes)
+    <> word8 0                           -- ROM type: raw
+    <> byteString (BS.replicate (headerSize - 8) 0)  -- rest of 2048-byte header
+    <> word8 0x01                        -- OPEN_NEW_FILE command
+    <> putVLV 0                          -- filename length (empty)
+    <> word8 0                           -- ROM type byte
+    <> putVLV (fromIntegral (BS.length old))   -- source size
+    <> putVLV (fromIntegral (BS.length new))   -- target size
+    <> byteString (BS.replicate 16 0)    -- source MD5 (unknown)
+    <> byteString (BS.replicate 16 0)    -- target MD5 (unknown)
+    <> overflowPart
+    <> foldMap encodeXorRec xorHunks
+    <> word8 0x00                        -- END command
+  where
+    -- XOR hunks over the shared region
+    minLen = min (BS.length old) (BS.length new)
+    oldTrim = BS.take minLen old
+    newTrim = BS.take minLen new
+    -- diffHunks finds changed regions; we then XOR old and new at those positions
+    xorHunks = map toXor (diffHunks oldTrim newTrim)
+    toXor (off, newDat) =
+      let oldDat = BS.take (BS.length newDat) (BS.drop off oldTrim)
+      in (off, BS.packZipWith xor oldDat newDat)
+
+    -- Overflow: if new is longer, emit the extra bytes
+    overflowPart
+      | BS.length new > BS.length old =
+          let extra = BS.drop (BS.length old) new
+          in word8 0  -- overflow type
+             <> putVLV (fromIntegral (BS.length extra))
+             <> byteString extra
+      | otherwise = mempty
+
+encodeXorRec :: (Int, ByteString) -> Builder
+encodeXorRec (off, dat) =
+    word8 0x02                                -- XOR command
+    <> putVLV (fromIntegral off)              -- offset
+    <> putVLV (fromIntegral (BS.length dat))  -- length
+    <> byteString dat                         -- XOR data (from diffHunks, these are new bytes not XOR)
+
+-- | VLV: 1-byte length prefix, then N bytes little-endian.
+putVLV :: Int64 -> Builder
+putVLV 0 = word8 1 <> word8 0
+putVLV n =
+  let bytes = vlvBytes n
+  in word8 (fromIntegral (length bytes)) <> foldMap word8 bytes
+
+vlvBytes :: Int64 -> [Word8]
+vlvBytes 0 = []
+vlvBytes n = fromIntegral (n .&. 0xFF) : vlvBytes (n `shiftR` 8)
 

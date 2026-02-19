@@ -285,6 +285,9 @@ run_undo_errors() {
 run_convert_errors() {
   [[ -z "$FILTER" || "convert" == *"$FILTER"* ]] || return 0
   local bps_patch="$REPO/test/data/dm4k/patch.bps"
+  local ips_patch="$REPO/test/data/dm4k/patch.ips"
+  local ips32_patch="$REPO/test/data/dm4k/patch.ips32"
+  local ppf_patch="$REPO/test/data/dm4k/patch.ppf"
   [ -f "$bps_patch" ] || { skp "convert" "patch not found"; return; }
 
   echo "--- convert error paths ---"
@@ -292,6 +295,46 @@ run_convert_errors() {
   # BPS → IPS without --with should fail (needs source ROM)
   expect_fail "convert BPS→IPS without --with" "requires the original ROM" \
     "$SLAP" convert "$bps_patch" --to ips
+
+  # IPS → BPS without --with should fail (delta target)
+  expect_fail "convert IPS→BPS without --with" "requires source" \
+    "$SLAP" convert "$ips_patch" --to bps
+
+  # IPS → APS-N64 without --with should fail (no dest_size)
+  expect_fail "convert IPS→APS-N64 without --with" "requires target file size" \
+    "$SLAP" convert "$ips_patch" --to aps-n64
+
+  # IPS → PPF3 with undo (default) should fail (no undo data)
+  expect_fail "convert IPS→PPF3 wants undo" "no undo data" \
+    "$SLAP" convert "$ips_patch" --to ppf3 --no-validate
+
+  # IPS → PPF3 with validate (default) should fail (no validation block)
+  expect_fail "convert IPS→PPF3 wants validate" "no validation block" \
+    "$SLAP" convert "$ips_patch" --to ppf3 --no-undo
+
+  # IPS → PPF3 --no-undo --no-validate should succeed
+  local out; out=$(mktmp)
+  expect_ok "convert IPS→PPF3 (no-undo no-validate)" "converted" \
+    "$SLAP" convert "$ips_patch" --to ppf3 --no-undo --no-validate -o "$out"
+
+  # PPF (with undo+val) → IPS should emit info-loss notes
+  out=$(mktmp)
+  local conv_out
+  conv_out=$("$SLAP" convert "$ppf_patch" --to ips -o "$out" 2>&1)
+  if echo "$conv_out" | grep -q "dropping.*CRC32\|dropping.*undo\|dropping.*description\|dropping.*validation"; then
+    ok "convert PPF→IPS emits info-loss notes"
+  else
+    bad "convert PPF→IPS emits info-loss notes" "no info-loss notes in: $conv_out"
+  fi
+
+  # Large-offset IPS32 → IPS should fail (offsets > 0xFFFFFF)
+  local big_ips32="$REPO/test/data/stadium2/heavy-diff/patch.ips32"
+  if [ -f "$big_ips32" ]; then
+    expect_fail "convert IPS32→IPS (large offsets)" "offsets > 16 MB" \
+      "$SLAP" convert "$big_ips32" --to ips
+  else
+    skp "convert IPS32→IPS (large offsets)" "stadium2 test data not found"
+  fi
 
   echo ""
 }

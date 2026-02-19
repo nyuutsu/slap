@@ -7,6 +7,7 @@ module Patch.PMSR
   , parsePMSR
   , applyPMSR
   , createPMSR
+  , encodePMSR
   , pmsrInfo
   ) where
 
@@ -88,13 +89,15 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
 
 -- | Create a PMSR patch by diffing two byte strings.
 createPMSR :: ByteString -> ByteString -> ByteString
-createPMSR orig modified = BL.toStrict $ toLazyByteString $
+createPMSR orig modified = encodePMSR (diffToRecordsPMSR orig modified)
+
+-- | Encode pre-diffed records as a PMSR patch.
+encodePMSR :: [(Int, ByteString)] -> ByteString
+encodePMSR recs = BL.toStrict $ toLazyByteString $
     byteString "PMSR"
     <> word32BE (fromIntegral (length recs))
     <> foldMap encodeRec recs
   where
-    recs = diffToRecordsPMSR orig modified
-
     encodeRec (off, dat) =
       word32BE (fromIntegral off)
       <> word32BE (fromIntegral (BS.length dat))

@@ -15,10 +15,17 @@ module Patch.Binary
   , putWord16BE
   , putWord32LE
   , putByuuVarint
-    -- * CRC-32
+    -- * CRC-32 / CRC-16
   , crc32
+  , crc16
     -- * Bulk memory operations
   , copyBSRange
+    -- * Diff
+  , diffHunks
+    -- * Additional builders
+  , putWord16LE
+  , putWord32BE
+  , putInt64BE
   ) where
 
 import Data.ByteString (ByteString)
@@ -168,6 +175,87 @@ copyBSRange _   _      _   _      len | len <= 0 = pure ()
 copyBSRange dst dstOff src srcOff len =
   BSU.unsafeUseAsCStringLen src $ \(srcPtr, _) ->
     copyBytes (dst `plusPtr` dstOff) (castPtr srcPtr `plusPtr` srcOff) len
+
+----------------------------------------------------------------------------
+-- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)
+----------------------------------------------------------------------------
+
+crc16 :: ByteString -> Word16
+crc16 = BS.foldl' step 0
+  where
+    step :: Word16 -> Word8 -> Word16
+    step crc byte =
+      let idx = fromIntegral ((crc `xor` fromIntegral byte) .&. 0xFF)
+      in (crc `shiftR` 8) `xor` (crc16Table ! idx)
+
+crc16Table :: Array Word16 Word16
+crc16Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
+  where
+    mkEntry :: Word16 -> Word16
+    mkEntry n = iterate step n !! 8
+    step :: Word16 -> Word16
+    step c
+      | testBit c 0 = (c `shiftR` 1) `xor` 0xA001
+      | otherwise    = c `shiftR` 1
+
+----------------------------------------------------------------------------
+-- Diff
+----------------------------------------------------------------------------
+
+-- | Find contiguous regions where two ByteStrings differ.
+-- Merges nearby hunks (gap <= 5 bytes) to reduce record count.
+-- Returns [(offset, changedBytes)] from the second ByteString.
+diffHunks :: ByteString -> ByteString -> [(Int, ByteString)]
+diffHunks old new = merge (go 0)
+  where
+    minLen = min (BS.length old) (BS.length new)
+    go i
+      | i >= minLen = []
+      | BS.index old i == BS.index new i = go (i + 1)
+      | otherwise =
+          let end = findEnd (i + 1)
+          in (i, BS.take (end - i) (BS.drop i new)) : go end
+    findEnd j
+      | j >= minLen = minLen
+      | BS.index old j /= BS.index new j = findEnd (j + 1)
+      | otherwise = j
+    merge [] = []
+    merge [x] = [x]
+    merge ((o1,d1):(o2,d2):rest)
+      | o2 - o1 - BS.length d1 <= 5 =
+          let merged = BS.take (o2 + BS.length d2 - o1) (BS.drop o1 new)
+          in merge ((o1, merged) : rest)
+      | otherwise = (o1,d1) : merge ((o2,d2):rest)
+
+----------------------------------------------------------------------------
+-- Additional builders
+----------------------------------------------------------------------------
+
+-- | Write a Word16 in little-endian order.
+putWord16LE :: Word16 -> Builder
+putWord16LE w =
+  word8 (fromIntegral (w .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
+
+-- | Write a Word32 in big-endian order.
+putWord32BE :: Word32 -> Builder
+putWord32BE w =
+  word8 (fromIntegral (w `shiftR` 24))
+  <> word8 (fromIntegral ((w `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (w .&. 0xFF))
+
+-- | Write an Int64 in big-endian order.
+putInt64BE :: Int64 -> Builder
+putInt64BE w =
+  word8 (fromIntegral (w `shiftR` 56))
+  <> word8 (fromIntegral ((w `shiftR` 48) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 40) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 32) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 24) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (w .&. 0xFF))
 
 crc32Table :: Array Word32 Word32
 crc32Table = listArray (0, 255) [mkEntry i | i <- [0..255]]

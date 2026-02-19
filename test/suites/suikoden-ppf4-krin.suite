@@ -1,0 +1,8 @@
+# Suikoden (USA) — Pyriel PPF4 escape talisman Krin bugfix
+# Real-world PPF4 patch: 1 record, 1 byte.
+
+base:   test/data/suikoden/base.bin
+sha256: 80b0334c78d69d5416075f69635ceaaee243eedb62dbb06a08bae96012f49c47
+desc:   suikoden escape talisman Krin fix (real-world PPF4)
+
+PPF4     | test/data/suikoden/escape_talisman_krin.ppf | gold | Pyriel GS1 Patch escape talisman (Krin)

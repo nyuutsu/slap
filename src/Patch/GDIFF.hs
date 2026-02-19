@@ -6,14 +6,17 @@ module Patch.GDIFF
   , GDiffCmd(..)
   , parseGDIFF
   , applyGDIFF
+  , createGDIFF
   , gdiffInfo
   ) where
 
-import Patch.Binary (copyBSRange)
+import Patch.Binary (copyBSRange, diffHunks, putWord16BE, putWord32BE, putInt64BE)
 import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Int (Int64)
 import Data.Word (Word8)
@@ -148,3 +151,62 @@ gdiffInfo p = unlines $ filter (not . null)
     nCopy = length [() | GDiffCopy _ _ <- cmds]
     dataBytes = sum [BS.length d | GDiffData d <- cmds]
     totalOut = sum (map cmdOutSize cmds)
+
+----------------------------------------------------------------------------
+-- Create
+----------------------------------------------------------------------------
+
+-- | Create a GDIFF patch from original and modified ByteStrings.
+-- Unchanged regions become COPY commands; changed regions become DATA commands.
+createGDIFF :: ByteString -> ByteString -> ByteString
+createGDIFF old new = BL.toStrict $ toLazyByteString $
+    byteString "\xd1\xff\xd1\xff"   -- magic
+    <> word8 4                       -- version
+    <> buildCmds 0 (diffHunks old new)
+    <> word8 0                       -- EOF command
+  where
+    minLen = min (BS.length old) (BS.length new)
+    buildCmds pos [] =
+      -- trailing unchanged region
+      if pos < minLen then encodeCopy (fromIntegral pos) (fromIntegral (minLen - pos))
+      else mempty
+    buildCmds pos ((off, dat) : rest) =
+      let gap = off - pos
+          copyPart = if gap > 0 then encodeCopy (fromIntegral pos) (fromIntegral gap) else mempty
+          dataPart = encodeData dat
+      in copyPart <> dataPart <> buildCmds (off + BS.length dat) rest
+
+-- | Encode a DATA command, splitting into chunks if > 2^31.
+encodeData :: ByteString -> Builder
+encodeData dat
+  | BS.null dat = mempty
+  | len <= 246  = word8 (fromIntegral len) <> byteString dat
+  | len <= 0xFFFF = word8 247 <> putWord16BE len <> byteString dat
+  | otherwise     = word8 248 <> putWord32BE (fromIntegral len) <> byteString dat
+  where len = BS.length dat
+
+-- | Encode a COPY command with optimal opcode selection.
+encodeCopy :: Int64 -> Int64 -> Builder
+encodeCopy off len
+  -- COPY ushort,ubyte (249)
+  | off <= 0xFFFF && len <= 0xFF =
+      word8 249 <> putWord16BE (fromIntegral off) <> word8 (fromIntegral len)
+  -- COPY ushort,ushort (250)
+  | off <= 0xFFFF && len <= 0xFFFF =
+      word8 250 <> putWord16BE (fromIntegral off) <> putWord16BE (fromIntegral len)
+  -- COPY ushort,int (251)
+  | off <= 0xFFFF =
+      word8 251 <> putWord16BE (fromIntegral off) <> putWord32BE (fromIntegral len)
+  -- COPY int,ubyte (252)
+  | off <= 0xFFFFFFFF && len <= 0xFF =
+      word8 252 <> putWord32BE (fromIntegral off) <> word8 (fromIntegral len)
+  -- COPY int,ushort (253)
+  | off <= 0xFFFFFFFF && len <= 0xFFFF =
+      word8 253 <> putWord32BE (fromIntegral off) <> putWord16BE (fromIntegral len)
+  -- COPY int,int (254)
+  | off <= 0xFFFFFFFF =
+      word8 254 <> putWord32BE (fromIntegral off) <> putWord32BE (fromIntegral len)
+  -- COPY long,int (255)
+  | otherwise =
+      word8 255 <> putInt64BE off <> putWord32BE (fromIntegral len)
+

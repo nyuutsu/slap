@@ -10,14 +10,21 @@ module Patch.APS
   , APSGBARecord(..)
   , parseAPS
   , applyAPS
+  , createAPSN64
+  , createAPSGBA
+  , encodeAPSN64
   , apsInfo
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word16LE, word32LE)
+import Patch.Binary (crc16, putWord32LE, putWord16LE, diffHunks)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
@@ -69,9 +76,31 @@ data APSPatch = APSPatch APSVariant
 parseAPS :: ByteString -> Either String APSPatch
 parseAPS bs
   | BS.length bs < 5 = Left "too short for APS header"
-  | BS.take 5 bs == "APS10" = runGet parseN64 bs
+  -- APS N64 and APS GBA: two unrelated formats by different authors who both
+  -- thought "APS" was a good name.  N64 magic is "APS10" (5 ASCII bytes, probably
+  -- "version 1.0"); GBA magic is "APS1" (4 bytes) followed by a LE u32 source size.
+  -- The '0' in "APS10" is ASCII 0x30, not a null byte — so a collision requires the
+  -- source size's low byte to land on exactly 0x30 (size mod 256 == 48).  Unusual
+  -- for stock ROMs, but trimmed/hacked ROMs can be any size, and without this guard
+  -- the N64 parser happily eats the GBA data as variable-length records and applies
+  -- garbage writes at arbitrary offsets.  No checksums, no sentinel, no diagnostic.
+  -- Disambiguate via two structural properties unique to GBA:
+  --   1. File is exactly 12 + N*65544 bytes (12-byte header, fixed-size records)
+  --   2. Every record's offset is 64KB-aligned (low 2 bytes of each LE u32 are 0x00)
+  -- An N64 file would need the right file size (~1/65544) AND every record-position
+  -- offset to land on 00 00 (~1/65536 each).  For even one record that's ~1 in 4
+  -- billion; for two or more it's beyond the heat death of the universe.
+  | BS.take 5 bs == "APS10", not (gbaStructure bs) = runGet parseN64 bs
   | BS.take 4 bs == "APS1" = runGet parseGBA bs
   | otherwise = Left "not an APS file (bad magic)"
+  where
+    gbaStructure b =
+      let payload = BS.length b - 12
+          nRecs   = payload `div` 65544
+      in payload >= 65544 && payload `mod` 65544 == 0
+         && all (\i -> let pos = 12 + i * 65544
+                       in BS.index b pos == 0 && BS.index b (pos + 1) == 0)
+                [0 .. nRecs - 1]
 
 parseN64 :: Get APSPatch
 parseN64 = do
@@ -217,3 +246,85 @@ apsInfo (APSPatch variant) = case variant of
     cartStr (Just c) = "cart ID:     " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack c)
     countryStr Nothing  = ""
     countryStr (Just c) = "country:     0x" ++ padHex 2 (fromIntegral c)
+
+----------------------------------------------------------------------------
+-- Create APS N64 (simple type, raw overwrite records, max 255 bytes each)
+----------------------------------------------------------------------------
+
+createAPSN64 :: ByteString -> ByteString -> ByteString
+createAPSN64 old new =
+  encodeAPSN64 (diffHunks old new) (fromIntegral (BS.length new)) (replicate 50 ' ')
+
+-- | Encode pre-diffed records as an APS N64 patch.
+-- Records are split at 255 bytes internally.
+encodeAPSN64 :: [(Int, ByteString)] -> Word32 -> String -> ByteString
+encodeAPSN64 recs destSize desc = BL.toStrict $ toLazyByteString $
+    byteString "APS10"             -- magic
+    <> word8 0                     -- patch type: simple
+    <> word8 0                     -- encoding: not used
+    <> byteString descBytes        -- 50-byte description
+    <> putWord32LE destSize        -- dest size
+    <> foldMap encodeN64Rec (splitLong recs)
+  where
+    descBytes = let bs = BS8.pack (take 50 desc)
+                in bs <> BS.replicate (50 - BS.length bs) 0x20
+
+-- | Split hunks longer than 255 bytes into multiple records.
+splitLong :: [(Int, ByteString)] -> [(Int, ByteString)]
+splitLong = concatMap split1
+  where
+    split1 (off, dat)
+      | BS.length dat <= 255 = [(off, dat)]
+      | otherwise =
+          let (chunk, rest) = BS.splitAt 255 dat
+          in (off, chunk) : split1 (off + 255, rest)
+
+encodeN64Rec :: (Int, ByteString) -> Builder
+encodeN64Rec (off, dat) =
+    putWord32LE (fromIntegral off :: Word32)
+    <> word8 (fromIntegral (BS.length dat))
+    <> byteString dat
+
+----------------------------------------------------------------------------
+-- Create APS GBA (64KB XOR blocks with CRC16)
+----------------------------------------------------------------------------
+
+createAPSGBA :: ByteString -> ByteString -> ByteString
+createAPSGBA old new = BL.toStrict $ toLazyByteString $
+    byteString "APS1"
+    <> putWord32LE (fromIntegral (BS.length old) :: Word32)
+    <> putWord32LE (fromIntegral (BS.length new) :: Word32)
+    <> foldMap (encodeGBABlock old new) changedBlocks
+  where
+    blockSize = 65536
+    nBlocks = max (blocksOf old) (blocksOf new)
+    blocksOf bs = (BS.length bs + blockSize - 1) `div` blockSize
+    changedBlocks = filter hasChanges [0 .. nBlocks - 1]
+    hasChanges i =
+      let off = i * blockSize
+          srcBlk = padBlock (safeSlice off blockSize old)
+          tgtBlk = padBlock (safeSlice off blockSize new)
+      in srcBlk /= tgtBlk
+    padBlock bs
+      | BS.length bs >= blockSize = BS.take blockSize bs
+      | otherwise = bs <> BS.replicate (blockSize - BS.length bs) 0
+
+encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
+encodeGBABlock old new i =
+    putWord32LE (fromIntegral off :: Word32)
+    <> putWord16LE (crc16 srcBlk)
+    <> putWord16LE (crc16 tgtBlk)
+    <> byteString xorDat
+  where
+    off = i * 65536
+    srcBlk = padTo 65536 (safeSlice off 65536 old)
+    tgtBlk = padTo 65536 (safeSlice off 65536 new)
+    xorDat = BS.packZipWith xor srcBlk tgtBlk
+    padTo n bs
+      | BS.length bs >= n = BS.take n bs
+      | otherwise = bs <> BS.replicate (n - BS.length bs) 0
+
+safeSlice :: Int -> Int -> ByteString -> ByteString
+safeSlice off len bs
+  | off >= BS.length bs = BS.empty
+  | otherwise = BS.take len (BS.drop off bs)

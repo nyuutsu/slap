@@ -4,12 +4,13 @@ version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
   Auto-detects patch format from magic bytes and applies.  Supports
-  PPF (1/2/3 + Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
-  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
-  xdelta1, and PMSR (with Yay0 decompression for Star Rod .mod files).
-  Can create BPS, IPS, IPS32, UPS, PPF3, and PMSR patches.  Converts
-  between formats with the convert command.  Transparently unwraps
-  ZIP/RAR/7z archives containing patches.
+  PPF (1/2/3 + "4"/Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
+  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, NINJA1 (binary/text/gzip),
+  DPS, BSDiff/BDF, GDIFF, xdelta1, and PMSR (with Yay0 decompression
+  for Star Rod .mod files).  Can create BPS, IPS, IPS32, EBP, UPS,
+  PPF3, PMSR, NINJA1, DPS, RUP, APS (N64/GBA), and GDIFF patches.
+  Converts between formats with the convert command.  Transparently
+  unwraps ZIP/RAR/7z archives containing patches.
 
 license:       MIT
 license-file:  LICENSE
@@ -26,7 +27,9 @@ executable slap
     , Patch.APS
     , Patch.Binary
     , Patch.BPS
+    , Patch.DPS
     , Patch.Format
+    , Patch.NINJA1
     , Patch.Get
     , Patch.BSDiff
     , Patch.Detect

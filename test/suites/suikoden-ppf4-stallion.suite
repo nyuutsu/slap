@@ -1,0 +1,8 @@
+# Suikoden (USA) — Pyriel PPF4 escape talisman Stallion bugfix
+# Real-world PPF4 patch: 1 record, 1 byte.
+
+base:   test/data/suikoden/base.bin
+sha256: 139efe7f2843c8b57f71d24d08623810b097ca5b720dfa9f50cd3d382c24ae76
+desc:   suikoden escape talisman Stallion fix (real-world PPF4)
+
+PPF4     | test/data/suikoden/escape_talisman_stallion.ppf | gold | Pyriel GS1 Patch escape talisman (Stallion)

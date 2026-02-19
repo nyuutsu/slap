@@ -5,7 +5,7 @@ module Main (main) where
 import Patch.Archive (detectArchive, unwrapArchive)
 import Patch.Types (PatchFormat(..))
 import Patch.Detect (detectFormat)
-import Patch.Binary (crc32, putWord16BE)
+import Patch.Binary (crc32)
 import Patch.Format (showCRC, padHex)
 import qualified Patch.PPF.Types as PPF
 import qualified Patch.PPF.Parse as PPF
@@ -22,14 +22,14 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PMSR as PMSR
+import qualified Patch.DPS as DPS
+import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.Explain as Explain
 
 import qualified Patch.Yay0 as Yay0
 
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BL
-import Data.ByteString.Builder
-import Data.Bits (shiftR, (.&.))
+import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
@@ -46,8 +46,30 @@ import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 -- Types
 ----------------------------------------------------------------------------
 
-data CreateFormat = CfmtBPS | CfmtIPS | CfmtIPS32 | CfmtUPS | CfmtPPF3 | CfmtPMSR
+data CreateFormat
+  = CfmtBPS | CfmtIPS | CfmtIPS32 | CfmtEBP | CfmtUPS | CfmtPPF3 | CfmtPMSR
+  | CfmtNINJA1 | CfmtDPS | CfmtRUP | CfmtAPSN64 | CfmtAPSGBA | CfmtGDIFF
   deriving (Show, Eq)
+
+-- | Overlay record: offset + replacement bytes.
+data OverlayRecord = OverlayRecord Int64 BS.ByteString
+
+-- | Everything an overlay source carries beyond raw records.
+data OverlaySource = OverlaySource
+  { osName        :: String
+  , osRecords     :: [OverlayRecord]
+  , osDescription :: Maybe BS.ByteString   -- 50-byte PPF/APS desc, or raw EBP JSON
+  , osValidation  :: Maybe BS.ByteString   -- 1024-byte validation block (PPF2/PPF3)
+  , osUndoRecs    :: Maybe [(Int64, BS.ByteString, BS.ByteString)]
+      -- (off, new, old) triples — PPF3 with undo only
+  , osFileSize    :: Maybe Word32          -- PPF2 patchFileSize
+  , osDestSize    :: Maybe Word32          -- APS N64 dest_size
+  , osSourceCRC   :: Maybe Word32          -- NINJA1 CRC32
+  , osSourceMD5   :: Maybe BS.ByteString   -- NINJA1 MD5 (16 bytes)
+  , osSourceSHA1  :: Maybe BS.ByteString   -- NINJA1 SHA1 (20 bytes)
+  , osTruncate    :: Maybe Int64           -- IPS truncation marker
+  , osEBPMeta     :: Maybe BS.ByteString   -- raw EBP JSON (for EBP→EBP)
+  }
 
 -- | Strategy for applying a patch to a target.
 data ApplyStrategy
@@ -78,7 +100,7 @@ data SomePatch = SomePatch
   , spWarnings       :: [String]
   , spRecordCount    :: Int
   , spRecordUnit     :: String
-  , spDirectConvert  :: CreateFormat -> Maybe (Either String BS.ByteString)
+  , spDirectConvert  :: Maybe OverlaySource
   }
 
 data Command
@@ -111,11 +133,14 @@ data Command
       , cmdValidate   :: Bool
       }
   | CmdConvert
-      { cmdConvPatch  :: FilePath
-      , cmdConvTo     :: CreateFormat
-      , cmdConvOutput :: Maybe FilePath
-      , cmdConvWith   :: Maybe FilePath
-      , cmdRaw        :: Bool
+      { cmdConvPatch     :: FilePath
+      , cmdConvTo        :: CreateFormat
+      , cmdConvOutput    :: Maybe FilePath
+      , cmdConvWith      :: Maybe FilePath
+      , cmdRaw           :: Bool
+      , cmdConvDesc      :: String
+      , cmdConvUndo      :: Bool
+      , cmdConvValidate  :: Bool
       }
   | CmdInfo    { cmdPatch :: FilePath }
   | CmdExplain { cmdPatch :: FilePath }
@@ -206,13 +231,13 @@ undoParser = CmdUndo
 createParser :: Parser Command
 createParser = CmdCreate
   <$> option (eitherReader parseCfmt) (long "format" <> metavar "FMT" <> value CfmtBPS
-      <> help "Output format: bps (default), ips, ips32, ups, ppf3, pmsr")
+      <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
   <*> rawFlag
   <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
-  <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value "ppf patch"
-      <> help "Patch description (PPF3 only, max 50 chars)")
+  <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
+      <> help "Patch description (PPF3/EBP)")
   <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
 
@@ -220,23 +245,37 @@ convertParser :: Parser Command
 convertParser = CmdConvert
   <$> argument str (metavar "PATCH" <> help "Patch file to convert")
   <*> option (eitherReader parseCfmt) (long "to" <> short 't' <> metavar "FMT"
-      <> help "Target format: bps, ips, ips32, ups, ppf3, pmsr")
+      <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
   <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
       <> help "Output file (default: replace input extension)"))
   <*> optional (option str (long "with" <> metavar "SOURCE"
       <> help "Source ROM (required for differential formats)"))
   <*> rawFlag
+  <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
+      <> help "Patch description (PPF3/EBP)")
+  <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
+  <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
-  "bps"   -> Right CfmtBPS
-  "ips"   -> Right CfmtIPS
-  "ips32" -> Right CfmtIPS32
-  "ups"   -> Right CfmtUPS
-  "ppf3"  -> Right CfmtPPF3
-  "ppf"   -> Right CfmtPPF3
-  "pmsr"  -> Right CfmtPMSR
-  _       -> Left ("unknown format: " ++ s ++ " (expected bps, ips, ips32, ups, ppf3, pmsr)")
+  "bps"     -> Right CfmtBPS
+  "ips"     -> Right CfmtIPS
+  "ips32"   -> Right CfmtIPS32
+  "ebp"     -> Right CfmtEBP
+  "ups"     -> Right CfmtUPS
+  "ppf3"    -> Right CfmtPPF3
+  "ppf"     -> Right CfmtPPF3
+  "pmsr"    -> Right CfmtPMSR
+  "ninja1"  -> Right CfmtNINJA1
+  "dps"     -> Right CfmtDPS
+  "rup"     -> Right CfmtRUP
+  "ninja2"  -> Right CfmtRUP
+  "aps-n64" -> Right CfmtAPSN64
+  "apsn64"  -> Right CfmtAPSN64
+  "aps-gba" -> Right CfmtAPSGBA
+  "apsgba"  -> Right CfmtAPSGBA
+  "gdiff"   -> Right CfmtGDIFF
+  _ -> Left ("unknown format: " ++ s ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
 
 patchInfoParser :: Parser Command
 patchInfoParser = CmdInfo
@@ -282,6 +321,33 @@ parseSome bs = case detectFormat bs of
             , spInfo    = replaceFirst "PMSR" "PMSR/Yay0" (spInfo sp)
             , spExplain = replaceFirst "PMSR" "PMSR/Yay0" (spExplain sp)
             }
+    -- DPS: no magic bytes, heuristic detection
+    | DPS.isDPS bs -> case DPS.parseDPS bs of
+        Left err -> Left err
+        Right p  ->
+          let recs = DPS.dpsRecords p
+          in Right SomePatch
+            { spFormat         = "DPS"
+            , spInfo           = DPS.dpsInfo p
+            , spExplain        = Explain.explainDPS p
+            , spIsDifferential = True
+            , spApply          = InMemory
+                (\source -> pure (DPS.applyDPS p source))
+                Nothing Nothing
+            , spUndo           = Nothing
+            , spVerboseLines   = numbered recs $ \r -> case DPS.dpsRecPayload r of
+                DPS.PayloadData dat ->
+                  "Write " ++ show (BS.length dat) ++ " bytes at 0x"
+                  ++ padHex 8 (DPS.dpsRecOutOffset r)
+                DPS.PayloadCopy srcOff len ->
+                  "Copy " ++ show len ++ " bytes from 0x"
+                  ++ padHex 8 srcOff ++ " to 0x"
+                  ++ padHex 8 (DPS.dpsRecOutOffset r)
+            , spWarnings       = ["empty patch (0 records)" | null recs]
+            , spRecordCount    = length recs
+            , spRecordUnit     = "records"
+            , spDirectConvert  = Nothing
+            }
     | otherwise -> Left "unknown patch format"
 
   Just FmtPPF -> case PPF.parsePatch bs of
@@ -303,20 +369,16 @@ parseSome bs = case detectFormat bs of
         , spWarnings       = ["empty patch (0 records)" | null recs]
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
-        , spDirectConvert  = const Nothing
+        , spDirectConvert  = Just (extractPPF p)
         }
 
   Just FmtIPS -> do
     p <- IPS.parseIPS bs
     let recs = IPS.ipsRecords p
-        (name, direct) = case (IPS.ipsVariant p, IPS.ipsEBPMeta p) of
-          (IPS.StandardIPS, Nothing) -> ("IPS", \case
-            CfmtIPS32 -> Just (ipsToIPS32 p)
-            _         -> Nothing)
-          (IPS.StandardIPS, Just _) -> ("EBP", const Nothing)
-          (IPS.IPS32, _) -> ("IPS32", \case
-            CfmtIPS -> Just (ips32ToIPS p)
-            _       -> Nothing)
+        name = case (IPS.ipsVariant p, IPS.ipsEBPMeta p) of
+          (IPS.StandardIPS, Nothing) -> "IPS"
+          (IPS.StandardIPS, Just _)  -> "EBP"
+          (IPS.IPS32, _)             -> "IPS32"
         warns = concat
           [ ["no EOF marker (patch may be truncated)" | not (IPS.ipsCleanEOF p)]
           , ["empty patch (0 records)" | null recs]
@@ -332,7 +394,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = warns
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
-      , spDirectConvert  = direct
+      , spDirectConvert  = Just (extractIPS name p)
       }
 
   Just FmtBPS -> do
@@ -352,7 +414,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 actions)" | null acts]
       , spRecordCount    = length acts
       , spRecordUnit     = "actions"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtUPS -> do
@@ -374,7 +436,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 blocks)" | null blks]
       , spRecordCount    = length blks
       , spRecordUnit     = "blocks"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtVCDIFF -> do
@@ -394,14 +456,16 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 windows)" | null wins]
       , spRecordCount    = length wins
       , spRecordUnit     = "windows"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtAPS -> do
     p <- APS.parseAPS bs
-    let cnt = case p of
-          APS.APSPatch (APS.APSN64 _ recs) -> length recs
-          APS.APSPatch (APS.APSGBA _ recs) -> length recs
+    let (cnt, overlay) = case p of
+          APS.APSPatch (APS.APSN64 hdr recs) ->
+            (length recs, Just (extractAPSN64 hdr recs))
+          APS.APSPatch (APS.APSGBA _ recs) ->
+            (length recs, Nothing)
     Right SomePatch
       { spFormat         = "APS"
       , spInfo           = APS.apsInfo p
@@ -413,7 +477,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | cnt == 0]
       , spRecordCount    = cnt
       , spRecordUnit     = "records"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = overlay
       }
 
   Just FmtRUP -> do
@@ -429,7 +493,30 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords p)]
       , spRecordCount    = length (RUP.rupRecords p)
       , spRecordUnit     = "records"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
+      }
+
+  Just FmtNINJA1 -> do
+    p <- NINJA1.parseNINJA1 bs
+    let recs = NINJA1.n1Records p
+        warns = concat
+          [ ["no EOF marker (patch may be truncated)" | not (NINJA1.n1CleanEOF p)]
+          , ["empty patch (0 records)" | null recs]
+          ]
+    Right SomePatch
+      { spFormat         = "NINJA1"
+      , spInfo           = NINJA1.ninja1Info p
+      , spExplain        = Explain.explainNINJA1 p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> NINJA1.applyNINJA1 p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered recs $ \r ->
+          "Write " ++ show (BS.length (NINJA1.n1RecData r)) ++ " bytes at 0x"
+          ++ padHex 8 (NINJA1.n1RecOffset r)
+      , spWarnings       = warns
+      , spRecordCount    = length recs
+      , spRecordUnit     = "records"
+      , spDirectConvert  = Just (extractNINJA1 p)
       }
 
   Just FmtBSDiff -> do
@@ -447,7 +534,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdControls p)]
       , spRecordCount    = length (BSDiff.bsdControls p)
       , spRecordUnit     = "control tuples"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtGDIFF -> do
@@ -465,7 +552,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCmds p)]
       , spRecordCount    = length (GDIFF.gdiffCmds p)
       , spRecordUnit     = "commands"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtXDelta1 -> do
@@ -483,7 +570,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xd1Instructions p)]
       , spRecordCount    = length (XDelta1.xd1Instructions p)
       , spRecordUnit     = "instructions"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Nothing
       }
 
   Just FmtPMSR -> do
@@ -502,7 +589,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | null recs]
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
-      , spDirectConvert  = const Nothing
+      , spDirectConvert  = Just (extractPMSR p)
       }
 
 ----------------------------------------------------------------------------
@@ -627,7 +714,8 @@ doUndo cmd = do
 doCreate :: Command -> IO ()
 doCreate cmd = case cmdCreateFmt cmd of
   CfmtPPF3 -> do
-    patchBs <- PPF.createPatch (cmdOriginal cmd) (cmdModified cmd) (cmdDesc cmd) (cmdUndo cmd) (cmdValidate cmd)
+    let desc = if null (cmdDesc cmd) then "ppf patch" else cmdDesc cmd
+    patchBs <- PPF.createPatch (cmdOriginal cmd) (cmdModified cmd) desc (cmdUndo cmd) (cmdValidate cmd)
     BS.writeFile (cmdCreateOut cmd) patchBs
     case PPF.parsePatch patchBs of
       Left _      -> putStrLn ("wrote " ++ cmdCreateOut cmd)
@@ -636,6 +724,14 @@ doCreate cmd = case cmdCreateFmt cmd of
     origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
     modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     case IPS.createIPS origBs modBs of
+      Left err -> die err
+      Right patchBs -> do
+        BS.writeFile (cmdCreateOut cmd) patchBs
+        putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtEBP -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    case IPS.createEBP origBs modBs (cmdDesc cmd) of
       Left err -> die err
       Right patchBs -> do
         BS.writeFile (cmdCreateOut cmd) patchBs
@@ -666,6 +762,42 @@ doCreate cmd = case cmdCreateFmt cmd of
     let patchBs = PMSR.createPMSR origBs modBs
     BS.writeFile (cmdCreateOut cmd) patchBs
     putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtNINJA1 -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = NINJA1.createNINJA1 origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtDPS -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = DPS.createDPS origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtRUP -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = RUP.createRUP origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtAPSN64 -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = APS.createAPSN64 origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtAPSGBA -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = APS.createAPSGBA origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
+  CfmtGDIFF -> do
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
+    let patchBs = GDIFF.createGDIFF origBs modBs
+    BS.writeFile (cmdCreateOut cmd) patchBs
+    putStrLn ("wrote " ++ cmdCreateOut cmd)
 
 ----------------------------------------------------------------------------
 -- Convert
@@ -679,20 +811,22 @@ doConvert cmd = do
     Right sp -> do
       emitWarnings sp
       let outFile = fromMaybe (replaceExtension (cmdConvPatch cmd) (fmtExt (cmdConvTo cmd))) (cmdConvOutput cmd)
-      case spDirectConvert sp (cmdConvTo cmd) of
-        Just (Right result) -> do
-          BS.writeFile outFile result
-          putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
-        Just (Left err) -> die err
-        Nothing -> do
-          sourcePath <- case cmdConvWith cmd of
-            Just s  -> pure s
-            Nothing -> die (needWithMsg sp)
+      case cmdConvWith cmd of
+        Just sourcePath -> do
+          -- --with provided: always use apply-and-recreate path
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) sourcePath
           targetBs <- applyForConvert sp sourceBs
-          case createFromMemory (cmdConvTo cmd) sourceBs targetBs of
+          case createFromMemory (cmdConvTo cmd) sourceBs targetBs (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
             Left err -> die err
             Right result -> do
+              BS.writeFile outFile result
+              putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
+        Nothing -> case spDirectConvert sp of
+          Nothing -> die (needWithMsg sp)
+          Just os -> case convertOverlay os (cmdConvTo cmd) (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
+            Left err -> die err
+            Right (result, notes) -> do
+              forM_ notes $ \n -> hPutStrLn stderr ("slap: " ++ n)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
 
@@ -718,13 +852,22 @@ applyViaTemp sourceBs apply = do
   pure result
 
 -- | Create a patch from source and target bytes.
-createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> Either String BS.ByteString
-createFromMemory CfmtBPS  src tgt = Right (BPS.createBPS src tgt)
-createFromMemory CfmtUPS  src tgt = Right (UPS.createUPS src tgt)
-createFromMemory CfmtPMSR src tgt = Right (PMSR.createPMSR src tgt)
-createFromMemory CfmtIPS  src tgt = IPS.createIPS src tgt
-createFromMemory CfmtIPS32 src tgt = IPS.createIPS32 src tgt
-createFromMemory CfmtPPF3 src tgt = Right (PPF.createPatchPure src tgt "converted patch" False False)
+createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> Bool -> Bool -> Either String BS.ByteString
+createFromMemory CfmtBPS  src tgt _ _ _ = Right (BPS.createBPS src tgt)
+createFromMemory CfmtUPS  src tgt _ _ _ = Right (UPS.createUPS src tgt)
+createFromMemory CfmtPMSR src tgt _ _ _ = Right (PMSR.createPMSR src tgt)
+createFromMemory CfmtIPS  src tgt _ _ _ = IPS.createIPS src tgt
+createFromMemory CfmtIPS32 src tgt _ _ _ = IPS.createIPS32 src tgt
+createFromMemory CfmtEBP  src tgt desc _ _ = IPS.createEBP src tgt desc
+createFromMemory CfmtPPF3 src tgt desc undo val =
+  Right (PPF.createPatchPure src tgt desc' undo val)
+  where desc' = if null desc then "converted patch" else desc
+createFromMemory CfmtNINJA1 src tgt _ _ _ = Right (NINJA1.createNINJA1 src tgt)
+createFromMemory CfmtDPS    src tgt _ _ _ = Right (DPS.createDPS src tgt)
+createFromMemory CfmtRUP    src tgt _ _ _ = Right (RUP.createRUP src tgt)
+createFromMemory CfmtAPSN64 src tgt _ _ _ = Right (APS.createAPSN64 src tgt)
+createFromMemory CfmtAPSGBA src tgt _ _ _ = Right (APS.createAPSGBA src tgt)
+createFromMemory CfmtGDIFF  src tgt _ _ _ = Right (GDIFF.createGDIFF src tgt)
 
 -- | Error message when --with is required but not provided.
 needWithMsg :: SomePatch -> String
@@ -737,72 +880,270 @@ needWithMsg sp = "converting from " ++ name ++ " requires the original ROM (--wi
       | otherwise           = "applies in-place to the target file"
 
 ----------------------------------------------------------------------------
--- IPS conversion helpers
+-- Overlay extraction
 ----------------------------------------------------------------------------
 
-ipsToIPS32 :: IPS.IPSPatch -> Either String BS.ByteString
-ipsToIPS32 patch = Right $ BL.toStrict $ toLazyByteString $
-    byteString "IPS32"
-    <> foldMap (encodeIPSRecordWith 4) (IPS.ipsRecords patch)
-    <> byteString "EEOF"
-
-ips32ToIPS :: IPS.IPSPatch -> Either String BS.ByteString
-ips32ToIPS patch
-  | any (exceedsIPS . ipsRecOff) (IPS.ipsRecords patch) =
-      Left "IPS32 patch has offsets > 0xFFFFFF \8212 cannot convert to standard IPS"
-  | otherwise = Right $ BL.toStrict $ toLazyByteString $
-      byteString "PATCH"
-      <> foldMap (encodeIPSRecordWith 3) (IPS.ipsRecords patch)
-      <> byteString "EOF"
+extractIPS :: String -> IPS.IPSPatch -> OverlaySource
+extractIPS name p = OverlaySource
+  { osName        = name
+  , osRecords     = map expandIPS (IPS.ipsRecords p)
+  , osDescription = Nothing
+  , osValidation  = Nothing
+  , osUndoRecs    = Nothing
+  , osFileSize    = Nothing
+  , osDestSize    = Nothing
+  , osSourceCRC   = Nothing
+  , osSourceMD5   = Nothing
+  , osSourceSHA1  = Nothing
+  , osTruncate    = IPS.ipsTruncate p
+  , osEBPMeta     = IPS.ipsEBPMeta p
+  }
   where
-    exceedsIPS off = off > 0xFFFFFF
+    expandIPS (IPS.IPSRecord off dat)        = OverlayRecord off dat
+    expandIPS (IPS.IPSRecordRLE off cnt val) = OverlayRecord off (BS.replicate cnt val)
 
-ipsRecOff :: IPS.IPSRecord -> Int64
-ipsRecOff (IPS.IPSRecord off _)      = off
-ipsRecOff (IPS.IPSRecordRLE off _ _) = off
+extractPPF :: PPF.Patch -> OverlaySource
+extractPPF p = OverlaySource
+  { osName        = "PPF"
+  , osRecords     = map (\r -> OverlayRecord (PPF.recOffset r) (PPF.recData r)) (PPF.patchRecords p)
+  , osDescription = Just (PPF.patchDescription p)
+  , osValidation  = fmap PPF.valBlock (PPF.patchValidation p)
+  , osUndoRecs    = if PPF.patchHasUndo p
+                    then Just [ (PPF.recOffset r, PPF.recData r, fromMaybe BS.empty (PPF.recUndo r))
+                              | r <- PPF.patchRecords p ]
+                    else Nothing
+  , osFileSize    = PPF.patchFileSize p
+  , osDestSize    = Nothing
+  , osSourceCRC   = Nothing
+  , osSourceMD5   = Nothing
+  , osSourceSHA1  = Nothing
+  , osTruncate    = Nothing
+  , osEBPMeta     = Nothing
+  }
 
-encodeIPSRecordWith :: Int -> IPS.IPSRecord -> Builder
-encodeIPSRecordWith offWidth (IPS.IPSRecord off dat) =
-  encodeOff offWidth off
-  <> if BS.length dat >= 3 && BS.all (== BS.index dat 0) dat
-     then word8 0 <> word8 0 <> putWord16BE (BS.length dat) <> word8 (BS.index dat 0)
-     else putWord16BE (BS.length dat) <> byteString dat
-encodeIPSRecordWith offWidth (IPS.IPSRecordRLE off count val) =
-  encodeOff offWidth off
-  <> word8 0 <> word8 0
-  <> putWord16BE count
-  <> word8 val
+extractNINJA1 :: NINJA1.NINJA1Patch -> OverlaySource
+extractNINJA1 p = OverlaySource
+  { osName        = "NINJA1"
+  , osRecords     = map (\r -> OverlayRecord (NINJA1.n1RecOffset r) (NINJA1.n1RecData r)) (NINJA1.n1Records p)
+  , osDescription = Nothing
+  , osValidation  = Nothing
+  , osUndoRecs    = Nothing
+  , osFileSize    = Nothing
+  , osDestSize    = Nothing
+  , osSourceCRC   = NINJA1.n1SourceCRC p
+  , osSourceMD5   = NINJA1.n1SourceMD5 p
+  , osSourceSHA1  = NINJA1.n1SourceSHA1 p
+  , osTruncate    = Nothing
+  , osEBPMeta     = Nothing
+  }
 
-encodeOff :: Int -> Int64 -> Builder
-encodeOff 3 off =
-  word8 (fromIntegral (off `shiftR` 16))
-  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (off .&. 0xFF))
-encodeOff _ off =
-  word8 (fromIntegral (off `shiftR` 24))
-  <> word8 (fromIntegral ((off `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (off .&. 0xFF))
+extractPMSR :: PMSR.PMSRPatch -> OverlaySource
+extractPMSR p = OverlaySource
+  { osName        = "PMSR"
+  , osRecords     = map (\r -> OverlayRecord (PMSR.pmsrOffset r) (PMSR.pmsrData r)) (PMSR.pmsrRecords p)
+  , osDescription = Nothing
+  , osValidation  = Nothing
+  , osUndoRecs    = Nothing
+  , osFileSize    = Nothing
+  , osDestSize    = Nothing
+  , osSourceCRC   = Nothing
+  , osSourceMD5   = Nothing
+  , osSourceSHA1  = Nothing
+  , osTruncate    = Nothing
+  , osEBPMeta     = Nothing
+  }
+
+extractAPSN64 :: APS.APSN64Header -> [APS.APSN64Record] -> OverlaySource
+extractAPSN64 hdr recs = OverlaySource
+  { osName        = "APS (N64)"
+  , osRecords     = map expandAPS recs
+  , osDescription = Just (APS.n64Description hdr)
+  , osValidation  = Nothing
+  , osUndoRecs    = Nothing
+  , osFileSize    = Nothing
+  , osDestSize    = Just (APS.n64DestSize hdr)
+  , osSourceCRC   = Nothing
+  , osSourceMD5   = Nothing
+  , osSourceSHA1  = Nothing
+  , osTruncate    = Nothing
+  , osEBPMeta     = Nothing
+  }
+  where
+    expandAPS (APS.APSN64Normal off dat)  = OverlayRecord off dat
+    expandAPS (APS.APSN64RLE off val cnt) = OverlayRecord off (BS.replicate (fromIntegral cnt) val)
+
+----------------------------------------------------------------------------
+-- Overlay conversion
+----------------------------------------------------------------------------
+
+-- | Convert overlay records to a target format without needing the source ROM.
+convertOverlay :: OverlaySource -> CreateFormat -> String -> Bool -> Bool
+               -> Either String (BS.ByteString, [String])
+convertOverlay os target desc includeUndo includeValidation =
+  let notes = overlayWarnings os target
+      intRecs = overlayToIntPairs (osRecords os)
+  in case target of
+    CfmtIPS     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeIPS (overlayToIntPairs rs) (osTruncate os), notes)
+    CfmtIPS32   -> Right (IPS.encodeIPS32 intRecs (osTruncate os), notes)
+    CfmtEBP     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeEBP (overlayToIntPairs rs) (resolveDesc desc (osEBPMeta os) (osDescription os) ""), notes)
+    CfmtPPF3    -> convertToPPF3 os desc includeUndo includeValidation notes
+    CfmtNINJA1  -> Right (NINJA1.encodeNINJA1 intRecs (osSourceCRC os) (osSourceMD5 os) (osSourceSHA1 os), notes)
+    CfmtPMSR    -> Right (PMSR.encodePMSR intRecs, notes)
+    CfmtAPSN64  -> case osDestSize os <|> osFileSize os of
+                     Just sz -> Right (APS.encodeAPSN64 intRecs sz (resolveDesc desc Nothing (osDescription os) (replicate 50 ' ')), notes)
+                     Nothing -> Left "converting to APS (N64) requires target file size\nuse --with SOURCE to compute it"
+    CfmtBPS     -> Left (fmtName CfmtBPS ++ " requires source+target diff data\nuse --with SOURCE")
+    CfmtUPS     -> Left (fmtName CfmtUPS ++ " requires source+target diff data\nuse --with SOURCE")
+    CfmtDPS     -> Left (fmtName CfmtDPS ++ " requires source+target diff data\nuse --with SOURCE")
+    CfmtRUP     -> Left (fmtName CfmtRUP ++ " requires source+target diff data\nuse --with SOURCE")
+    CfmtAPSGBA  -> Left (fmtName CfmtAPSGBA ++ " requires source+target diff data\nuse --with SOURCE")
+    CfmtGDIFF   -> Left (fmtName CfmtGDIFF ++ " requires source+target diff data\nuse --with SOURCE")
+
+-- | Convert overlay records to (Int, ByteString) pairs for module encoders.
+overlayToIntPairs :: [OverlayRecord] -> [(Int, BS.ByteString)]
+overlayToIntPairs = map (\(OverlayRecord off dat) -> (fromIntegral off, dat))
+
+-- | Check that all overlay offsets fit in 3-byte IPS range.
+checkIPSOffsets :: OverlaySource -> Either String [OverlayRecord]
+checkIPSOffsets os
+  | any (\(OverlayRecord off _) -> off > 0xFFFFFF) (osRecords os) =
+      Left "patch has offsets > 16 MB \8212 cannot convert to IPS\nuse --to ips32, or --with SOURCE to re-diff"
+  | otherwise = Right (osRecords os)
+
+-- | PPF3 conversion with undo/validate gating.
+convertToPPF3 :: OverlaySource -> String -> Bool -> Bool -> [String]
+              -> Either String (BS.ByteString, [String])
+convertToPPF3 os desc includeUndo includeValidation notes = do
+  undoTriples <- if includeUndo
+    then case osUndoRecs os of
+      Just u  -> Right (Just u)
+      Nothing -> Left "source has no undo data\nuse --no-undo, or --with SOURCE to generate it"
+    else Right Nothing
+  valBlock <- if includeValidation
+    then case osValidation os of
+      Just v  -> Right (Just v)
+      Nothing -> Left "source has no validation block\nuse --no-validate, or --with SOURCE to generate it"
+    else Right Nothing
+  let descStr = resolveDesc desc Nothing (osDescription os) "converted patch"
+      ppfRecs = splitOverlayI64 255 (map (\(OverlayRecord off dat) -> (off, dat)) (osRecords os))
+  Right (PPF.encodePPF3 ppfRecs descStr undoTriples valBlock, notes)
+
+-- | Split (Int64, ByteString) pairs so each data chunk is ≤ maxSize bytes.
+splitOverlayI64 :: Int -> [(Int64, BS.ByteString)] -> [(Int64, BS.ByteString)]
+splitOverlayI64 maxSize = concatMap split1
+  where
+    split1 (off, dat)
+      | BS.length dat <= maxSize = [(off, dat)]
+      | otherwise =
+          let (h, t) = BS.splitAt maxSize dat
+          in (off, h) : split1 (off + fromIntegral maxSize, t)
+
+----------------------------------------------------------------------------
+-- Overlay helpers
+----------------------------------------------------------------------------
+
+-- | Resolve a description string from CLI flag, source metadata, or default.
+resolveDesc :: String -> Maybe BS.ByteString -> Maybe BS.ByteString -> String -> String
+resolveDesc cliDesc ebpMeta rawDesc def
+  | not (null cliDesc) = cliDesc
+  | Just meta <- ebpMeta = extractEBPDesc meta
+  | Just d <- rawDesc    = stripTrailing (BS8.unpack d)
+  | otherwise            = def
+  where
+    stripTrailing = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
+    -- Extract description from EBP JSON: {"title":"...","author":"...","description":"..."}
+    extractEBPDesc bs = case BS8.unpack bs of
+      s -> case dropWhile (/= ':') (snd (breakOn "description" s)) of
+              (':':'"':rest) -> takeWhile (/= '"') rest
+              _              -> def
+    breakOn _ [] = ("", "")
+    breakOn needle ss@(x:xs)
+      | take (length needle) ss == needle = ("", ss)
+      | otherwise = let (a, b) = breakOn needle xs in (x:a, b)
+
+-- | Emit info-loss notes for metadata the target format cannot carry.
+overlayWarnings :: OverlaySource -> CreateFormat -> [String]
+overlayWarnings os target = concat
+  [ warnCRC, warnMD5, warnSHA1, warnDesc, warnVal, warnUndo
+  , warnFileSize, warnTrunc, warnEBP
+  ]
+  where
+    warnCRC = case osSourceCRC os of
+      Just crc | target /= CfmtNINJA1, crc /= 0 ->
+        ["note: dropping source CRC32: 0x" ++ showCRC crc]
+      _ -> []
+    warnMD5 = case osSourceMD5 os of
+      Just md5 | target /= CfmtNINJA1, not (BS.all (== 0) md5) ->
+        ["note: dropping source MD5: " ++ hexBS md5]
+      _ -> []
+    warnSHA1 = case osSourceSHA1 os of
+      Just sha1 | target /= CfmtNINJA1, not (BS.all (== 0) sha1) ->
+        ["note: dropping source SHA1: " ++ hexBS sha1]
+      _ -> []
+    warnDesc = case osDescription os of
+      Just d | target `notElem` [CfmtPPF3, CfmtAPSN64, CfmtEBP]
+             , not (BS.all (\b -> b == 0x20 || b == 0) d) ->
+        ["note: dropping description: \"" ++ stripTrailing (BS8.unpack d) ++ "\""]
+      _ -> []
+    warnVal = case osValidation os of
+      Just _ | target /= CfmtPPF3 ->
+        ["note: dropping 1024-byte validation block"]
+      _ -> []
+    warnUndo = case osUndoRecs os of
+      Just u | target /= CfmtPPF3 ->
+        ["note: dropping undo data (" ++ show (length u) ++ " records)"]
+      _ -> []
+    warnFileSize = case osFileSize os of
+      Just sz | target `notElem` [CfmtPPF3, CfmtAPSN64] ->
+        ["note: dropping file size: " ++ show sz ++ " bytes"]
+      _ -> []
+    warnTrunc = case osTruncate os of
+      Just _ | target `notElem` [CfmtIPS, CfmtIPS32] ->
+        ["note: dropping truncation marker"]
+      _ -> []
+    warnEBP = case osEBPMeta os of
+      Just _ | target /= CfmtEBP ->
+        ["note: dropping EBP metadata"]
+      _ -> []
+    stripTrailing = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
+
+-- | Hex-encode a ByteString.
+hexBS :: BS.ByteString -> String
+hexBS = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack
 
 ----------------------------------------------------------------------------
 -- Format metadata
 ----------------------------------------------------------------------------
 
 fmtExt :: CreateFormat -> String
-fmtExt CfmtBPS  = ".bps"
-fmtExt CfmtIPS  = ".ips"
-fmtExt CfmtIPS32 = ".ips"
-fmtExt CfmtUPS  = ".ups"
-fmtExt CfmtPPF3 = ".ppf"
-fmtExt CfmtPMSR = ".pmsr"
+fmtExt CfmtBPS    = ".bps"
+fmtExt CfmtIPS    = ".ips"
+fmtExt CfmtIPS32  = ".ips"
+fmtExt CfmtEBP    = ".ebp"
+fmtExt CfmtUPS    = ".ups"
+fmtExt CfmtPPF3   = ".ppf"
+fmtExt CfmtPMSR   = ".pmsr"
+fmtExt CfmtNINJA1 = ".rup"
+fmtExt CfmtDPS    = ".dps"
+fmtExt CfmtRUP    = ".rup"
+fmtExt CfmtAPSN64 = ".aps"
+fmtExt CfmtAPSGBA = ".aps"
+fmtExt CfmtGDIFF  = ".gdiff"
 
 fmtName :: CreateFormat -> String
-fmtName CfmtBPS  = "BPS"
-fmtName CfmtIPS  = "IPS"
-fmtName CfmtIPS32 = "IPS32"
-fmtName CfmtUPS  = "UPS"
-fmtName CfmtPPF3 = "PPF3"
-fmtName CfmtPMSR = "PMSR"
+fmtName CfmtBPS    = "BPS"
+fmtName CfmtIPS    = "IPS"
+fmtName CfmtIPS32  = "IPS32"
+fmtName CfmtEBP    = "EBP"
+fmtName CfmtUPS    = "UPS"
+fmtName CfmtPPF3   = "PPF3"
+fmtName CfmtPMSR   = "PMSR"
+fmtName CfmtNINJA1 = "NINJA1"
+fmtName CfmtDPS    = "DPS"
+fmtName CfmtRUP    = "RUP"
+fmtName CfmtAPSN64 = "APS (N64)"
+fmtName CfmtAPSGBA = "APS (GBA)"
+fmtName CfmtGDIFF  = "GDIFF"
 
 ----------------------------------------------------------------------------
 -- Helpers

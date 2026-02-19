@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Patch.PPF.Create (createPatch, createPatchPure) where
+module Patch.PPF.Create (createPatch, createPatchPure, encodePPF3) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BC
@@ -8,6 +8,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
+import Data.Maybe (isJust)
 
 -- | Create a PPF3 patch by comparing an original file with a modified file.
 createPatch :: FilePath -> FilePath -> String -> Bool -> Bool -> IO ByteString
@@ -19,14 +20,13 @@ createPatch origPath modPath desc includeUndo includeValidation = do
 -- | Pure version of PPF3 patch creation from two byte strings.
 createPatchPure :: ByteString -> ByteString -> String -> Bool -> Bool -> ByteString
 createPatchPure origBs modBs desc includeUndo includeValidation =
-  let descBytes   = padDescription desc
-      valBlock    = if includeValidation && BS.length origBs > 0x9320 + 1024
-                    then BS.take 1024 (BS.drop 0x9320 origBs)
-                    else BS.replicate 1024 0
+  let valBlock    = if includeValidation && BS.length origBs > 0x9320 + 1024
+                    then Just (BS.take 1024 (BS.drop 0x9320 origBs))
+                    else Nothing
       records     = diffFiles origBs modBs
-      header      = buildHeader descBytes includeValidation includeUndo valBlock
-      body        = foldMap (encodeRecord includeUndo) records
-  in BL.toStrict (toLazyByteString (header <> body))
+      undoTriples = if includeUndo then Just records else Nothing
+      overlayRecs = map (\(off, new, _) -> (off, new)) records
+  in encodePPF3 overlayRecs desc undoTriples valBlock
 
 -- | Pad or truncate a description to exactly 50 bytes.
 padDescription :: String -> ByteString
@@ -90,3 +90,33 @@ diffFiles orig modified = go 0
       let count = min 255 (BS.length e)
           nulls = BS.replicate count 0
       in (off, BS.take count e, nulls) : chunkBytes (off + fromIntegral count) (BS.drop count e)
+
+----------------------------------------------------------------------------
+-- Encode from pre-built records (used by overlay conversion in Main.hs)
+----------------------------------------------------------------------------
+
+-- | Encode a PPF3 patch from pre-split overlay records.
+-- Records: [(offset, data)], each data ≤ 255 bytes.
+-- Undo triples (if provided): [(offset, new, old)], each ≤ 255 bytes.
+encodePPF3 :: [(Int64, ByteString)]
+           -> String
+           -> Maybe [(Int64, ByteString, ByteString)]
+           -> Maybe ByteString
+           -> ByteString
+encodePPF3 recs desc undoTriples valBlock =
+  let descBytes   = padDescription desc
+      hasValidate = isJust valBlock
+      hasUndo     = isJust undoTriples
+      hdr         = buildHeader descBytes hasValidate hasUndo
+                      (maybe BS.empty id valBlock)
+      body = case undoTriples of
+        Just trips -> foldMap (encodeRecord True) trips
+        Nothing    -> foldMap encodeOverlayRecord recs
+  in BL.toStrict (toLazyByteString (hdr <> body))
+
+-- | Encode an overlay record (no undo data).
+encodeOverlayRecord :: (Int64, ByteString) -> Builder
+encodeOverlayRecord (off, dat) =
+  int64LE off
+  <> word8 (fromIntegral (BS.length dat))
+  <> byteString dat

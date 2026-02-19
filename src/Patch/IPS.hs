@@ -9,6 +9,10 @@ module Patch.IPS
   , applyIPS
   , createIPS
   , createIPS32
+  , createEBP
+  , encodeIPS
+  , encodeIPS32
+  , encodeEBP
   , ipsInfo
   ) where
 
@@ -196,11 +200,11 @@ createIPS :: ByteString -> ByteString -> Either String ByteString
 createIPS orig modified
   | BS.length modified > 0x1000000 =
       Left "file exceeds 16 MB IPS offset limit — use IPS32 or BPS instead"
-  | otherwise = Right $ BL.toStrict $ toLazyByteString $
-      byteString "PATCH"
-      <> foldMap (encodeIPSRecord 3) (diffToRecords 0xFFFF orig modified)
-      <> byteString "EOF"
-      <> truncMarkerIPS orig modified
+  | otherwise =
+      let trunc = if BS.length modified < BS.length orig
+                  then Just (fromIntegral (BS.length modified))
+                  else Nothing
+      in Right (encodeIPS (diffToRecords 0xFFFF orig modified) trunc)
 
 -- | Create an IPS32 patch by diffing two byte strings.
 -- Returns Left if the files exceed 4 GB (IPS32 offset limit).
@@ -208,20 +212,7 @@ createIPS32 :: ByteString -> ByteString -> Either String ByteString
 createIPS32 orig modified
   | BS.length modified > 0xFFFFFFFF =
       Left "file exceeds 4 GB IPS32 offset limit — use BPS instead"
-  | otherwise = Right $ BL.toStrict $ toLazyByteString $
-      byteString "IPS32"
-      <> foldMap (encodeIPSRecord 4) (diffToRecords 0xFFFF orig modified)
-      <> byteString "EEOF"
-
--- | IPS truncation marker (3-byte big-endian size after EOF).
-truncMarkerIPS :: ByteString -> ByteString -> Builder
-truncMarkerIPS orig modified
-  | BS.length modified < BS.length orig =
-      let sz = BS.length modified
-      in word8 (fromIntegral (sz `shiftR` 16))
-         <> word8 (fromIntegral ((sz `shiftR` 8) .&. 0xFF))
-         <> word8 (fromIntegral (sz .&. 0xFF))
-  | otherwise = mempty
+  | otherwise = Right (encodeIPS32 (diffToRecords 0xFFFF orig modified) Nothing)
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
 encodeIPSRecord offWidth (off, dat) =
@@ -248,10 +239,61 @@ encodeOffset _ off =
   <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (off .&. 0xFF))
 
+-- | Create an EBP patch (IPS + JSON metadata after EOF).
+createEBP :: ByteString -> ByteString -> String -> Either String ByteString
+createEBP orig modified desc
+  | BS.length modified > 0x1000000 =
+      Left "file exceeds 16 MB IPS offset limit — use BPS instead"
+  | otherwise = Right (encodeEBP (diffToRecords 0xFFFF orig modified) desc)
+
 allSame :: ByteString -> Bool
 allSame bs
   | BS.null bs = True
   | otherwise  = BS.all (== BS.index bs 0) bs
+
+----------------------------------------------------------------------------
+-- Encode from pre-split records (used by overlay conversion in Main.hs)
+----------------------------------------------------------------------------
+
+-- | Encode pre-split records as an IPS patch. Records must have offsets
+-- ≤ 0xFFFFFF and data ≤ 65535 bytes each.
+encodeIPS :: [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS recs trunc = BL.toStrict $ toLazyByteString $
+  byteString "PATCH"
+  <> foldMap (encodeIPSRecord 3) recs
+  <> byteString "EOF"
+  <> maybe mempty (truncOffset 3) trunc
+
+-- | Encode pre-split records as an IPS32 patch. Records must have data
+-- ≤ 65535 bytes each.
+encodeIPS32 :: [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS32 recs trunc = BL.toStrict $ toLazyByteString $
+  byteString "IPS32"
+  <> foldMap (encodeIPSRecord 4) recs
+  <> byteString "EEOF"
+  <> maybe mempty (truncOffset 4) trunc
+
+-- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
+encodeEBP :: [(Int, ByteString)] -> String -> ByteString
+encodeEBP recs desc = BL.toStrict $ toLazyByteString $
+  byteString "PATCH"
+  <> foldMap (encodeIPSRecord 3) recs
+  <> byteString "EOF"
+  <> byteString (ebpJson desc)
+
+-- | Encode a truncation offset as a big-endian N-byte value.
+truncOffset :: Int -> Int64 -> Builder
+truncOffset w off = encodeOffset w (fromIntegral off)
+
+-- | Build EBP JSON metadata.
+ebpJson :: String -> ByteString
+ebpJson d = BS8.pack $
+  "{\"title\":\"\",\"author\":\"\",\"description\":\"" ++ escapeJson d ++ "\"}"
+  where
+    escapeJson [] = []
+    escapeJson ('"':cs)  = '\\' : '"'  : escapeJson cs
+    escapeJson ('\\':cs) = '\\' : '\\' : escapeJson cs
+    escapeJson (c:cs)    = c : escapeJson cs
 
 -- | Diff two byte strings into IPS records (offset, data).
 -- Merges nearby differences (gap < 6 bytes) and splits at maxRecSize.

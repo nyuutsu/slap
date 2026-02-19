@@ -5,10 +5,10 @@
 A multi-format ROM patching CLI. Auto-detects format from magic bytes,
 applies/undoes patches, creates patches, converts between formats, and
 provides info/explain commands for inspection. The goal is one tool
-that handles everything — IPS, IPS32, EBP, BPS, UPS, PPF (1/2/3/4),
-VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
-xdelta1, PMSR (with Yay0 decompression) — so you never have to hunt
-for a format-specific patcher.
+that handles everything — IPS, IPS32, EBP, BPS, UPS, PPF (1/2/3/"4"),
+VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, NINJA1, DPS, BSDiff/BDF,
+GDIFF, xdelta1, PMSR (with Yay0 decompression) — so you never have
+to hunt for a format-specific patcher.
 
 ## Code style
 
@@ -68,6 +68,19 @@ Shared infrastructure:
 - `Patch.Get` — Pure position-threading parser monad over strict
   ByteString. All format parsers use this instead of raw index arithmetic.
 - `Patch.Detect` — Magic-byte detection, returns `PatchFormat` enum.
+  APS is the tricky one: "APS N64" and "APS GBA" are two unrelated
+  formats by different authors who both chose the name "APS." N64 magic
+  is the 5 ASCII bytes `APS10`; GBA magic is the 4 bytes `APS1` followed
+  by a LE u32 source size — so byte 5 is data, not magic.  The `0` in
+  `APS10` is ASCII 0x30, not a null byte; a collision occurs when the
+  source size's low byte is 0x30 (trimmed/hacked ROMs can hit this).
+  Without disambiguation, the N64 parser silently eats GBA data as
+  variable-length records and applies garbage writes — no checksums,
+  no diagnostic.  `parseAPS` disambiguates by checking GBA's rigid file
+  structure (12 + N×65544 bytes, each record offset 64KB-aligned).
+  Note: "N64 format" vs "GBA format" refers to the spec variant, not
+  the target platform — N64-format patches are commonly used for GBA
+  games.
 - `Patch.Explain` — Record-by-record textual dumps for all formats.
 - `Patch.Format` — Shared display helpers (CRC formatting, hex padding,
   hex dumps, number alignment).
@@ -111,9 +124,9 @@ replicate it in every format.
 
 ## Testing
 
-Three test harnesses, 208 tests total:
+Three test harnesses, 212 tests total:
 
-**`test/run.sh`** — Apply tests (87 tests). Each `.suite` file in
+**`test/run.sh`** — Apply tests (91 tests). Each `.suite` file in
 `test/suites/` is a declarative manifest: header (base ROM path,
 expected SHA256) followed by pipe-delimited patch lines with format
 name, patch path, confidence level (gold/verified/untested/broken),
@@ -144,7 +157,7 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **stadium2** — 3 scenarios across 11 formats each (64 MB N64)
 - **tetris** — BDF + UPS cross-validation (real-world, 32 KB GB)
 - **paper-mario** — APS-N64 + IPS cross-val, 2 PMSR/Yay0 Star Rod `.mod` files
-- **7 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
+- **11 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (5 PPF4 bugfixes), FE6 (IPS stress)
 
 Run all: `cabal build && bash test/run.sh && bash test/roundtrip.sh && bash test/flags.sh`
 Filter: `bash test/run.sh "" dm4k`
