@@ -137,12 +137,13 @@ diffToRecordsPMSR orig modified = mergeNearby modified $ go 0
               rest  = BS.drop 0x100000 dat
           in (off, chunk) : splitRecord (off + 0x100000) rest
 
--- | Merge records that are within 5 bytes of each other.
+-- | Merge records that are within 8 bytes of each other.
+-- Matches Star Rod's coalescing threshold (Patcher.java: lastEnd + 8).
 mergeNearby :: ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
 mergeNearby _ [] = []
 mergeNearby _ [x] = [x]
 mergeNearby modBs ((off1, d1) : (off2, d2) : rest)
-  | gap <= 5 =
+  | gap <= 8 =
       mergeNearby modBs ((off1, merged) : rest)
   | otherwise = (off1, d1) : mergeNearby modBs ((off2, d2) : rest)
   where
