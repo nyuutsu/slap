@@ -74,6 +74,7 @@ data SomePatch = SomePatch
   , spApply          :: ApplyStrategy
   , spUndo           :: Maybe UndoStrategy
   , spVerboseLines   :: [String]
+  , spWarnings       :: [String]
   , spRecordCount    :: Int
   , spRecordUnit     :: String
   , spDirectConvert  :: CreateFormat -> Maybe (Either String BS.ByteString)
@@ -134,7 +135,7 @@ main = execParser opts >>= \case
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, convert, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff/BDF, GDIFF, xdelta1, PMSR/Yay0)")
+            <> progDesc "Apply, undo, create, convert, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff/BDF, GDIFF, xdelta1, PMSR/Yay0). Unwraps ZIP/RAR/7z archives.")
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -294,6 +295,7 @@ parseSome bs = case detectFormat bs of
         , spVerboseLines   = numbered recs $ \r ->
             "Write " ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
             ++ padHex 8 (PPF.recOffset r)
+        , spWarnings       = ["empty patch (0 records)" | null recs]
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
         , spDirectConvert  = const Nothing
@@ -310,6 +312,10 @@ parseSome bs = case detectFormat bs of
           (IPS.IPS32, _) -> ("IPS32", \case
             CfmtIPS -> Just (ips32ToIPS p)
             _       -> Nothing)
+        warns = concat
+          [ ["no EOF marker (patch may be truncated)" | not (IPS.ipsCleanEOF p)]
+          , ["empty patch (0 records)" | null recs]
+          ]
     Right SomePatch
       { spFormat         = name
       , spInfo           = IPS.ipsInfo p
@@ -318,6 +324,7 @@ parseSome bs = case detectFormat bs of
       , spApply          = InPlace $ \fp -> IPS.applyIPS p fp >> pure ()
       , spUndo           = Nothing
       , spVerboseLines   = numbered recs describeIPS
+      , spWarnings       = warns
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spDirectConvert  = direct
@@ -337,6 +344,7 @@ parseSome bs = case detectFormat bs of
           (Just (BPS.bpsTargetCRC p))
       , spUndo           = Nothing
       , spVerboseLines   = numbered acts describeBPS
+      , spWarnings       = ["empty patch (0 actions)" | null acts]
       , spRecordCount    = length acts
       , spRecordUnit     = "actions"
       , spDirectConvert  = const Nothing
@@ -358,6 +366,7 @@ parseSome bs = case detectFormat bs of
       , spVerboseLines   = numbered blks $ \b ->
           "XOR " ++ show (BS.length (UPS.upsXorData b))
           ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"
+      , spWarnings       = ["empty patch (0 blocks)" | null blks]
       , spRecordCount    = length blks
       , spRecordUnit     = "blocks"
       , spDirectConvert  = const Nothing
@@ -377,6 +386,7 @@ parseSome bs = case detectFormat bs of
       , spUndo           = Nothing
       , spVerboseLines   = numbered wins $ \w ->
           "Window " ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"
+      , spWarnings       = ["empty patch (0 windows)" | null wins]
       , spRecordCount    = length wins
       , spRecordUnit     = "windows"
       , spDirectConvert  = const Nothing
@@ -395,6 +405,7 @@ parseSome bs = case detectFormat bs of
       , spApply          = InPlace $ \fp -> APS.applyAPS p fp >> pure ()
       , spUndo           = Nothing
       , spVerboseLines   = []
+      , spWarnings       = ["empty patch (0 records)" | cnt == 0]
       , spRecordCount    = cnt
       , spRecordUnit     = "records"
       , spDirectConvert  = const Nothing
@@ -410,6 +421,7 @@ parseSome bs = case detectFormat bs of
       , spApply          = InPlace $ \fp -> RUP.applyRUP p fp >> pure ()
       , spUndo           = Nothing
       , spVerboseLines   = []
+      , spWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords p)]
       , spRecordCount    = length (RUP.rupRecords p)
       , spRecordUnit     = "records"
       , spDirectConvert  = const Nothing
@@ -429,6 +441,7 @@ parseSome bs = case detectFormat bs of
           Nothing Nothing
       , spUndo           = Nothing
       , spVerboseLines   = []
+      , spWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdControls p)]
       , spRecordCount    = length (BSDiff.bsdControls p)
       , spRecordUnit     = "control tuples"
       , spDirectConvert  = const Nothing
@@ -446,6 +459,7 @@ parseSome bs = case detectFormat bs of
           Nothing Nothing
       , spUndo           = Nothing
       , spVerboseLines   = []
+      , spWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCmds p)]
       , spRecordCount    = length (GDIFF.gdiffCmds p)
       , spRecordUnit     = "commands"
       , spDirectConvert  = const Nothing
@@ -463,6 +477,7 @@ parseSome bs = case detectFormat bs of
           Nothing Nothing
       , spUndo           = Nothing
       , spVerboseLines   = []
+      , spWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xd1Instructions p)]
       , spRecordCount    = length (XDelta1.xd1Instructions p)
       , spRecordUnit     = "instructions"
       , spDirectConvert  = const Nothing
@@ -481,6 +496,7 @@ parseSome bs = case detectFormat bs of
       , spVerboseLines   = numbered recs $ \r ->
           "Write " ++ show (BS.length (PMSR.pmsrData r)) ++ " bytes at 0x"
           ++ padHex 8 (PMSR.pmsrOffset r)
+      , spWarnings       = ["empty patch (0 records)" | null recs]
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spDirectConvert  = const Nothing
@@ -518,14 +534,18 @@ doInfo patchFile = do
   patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
-    Right sp -> putStr (spInfo sp)
+    Right sp -> do
+      putStr (spInfo sp)
+      emitWarnings sp
 
 doExplain :: FilePath -> IO ()
 doExplain patchFile = do
   patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
-    Right sp -> putStr (spExplain sp)
+    Right sp -> do
+      putStr (spExplain sp)
+      emitWarnings sp
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -537,6 +557,7 @@ doApply cmd = do
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
+      emitWarnings sp
       when (cmdVerbose cmd) $
         mapM_ (hPutStrLn stderr) (spVerboseLines sp)
 
@@ -603,19 +624,21 @@ doUndo cmd = do
   patchBs <- readUnwrap (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
-    Right sp -> case spUndo sp of
-      Nothing -> die "undo not supported for this format"
-      Just (UndoInPlace f) -> do
-        actual <- resolveOutput (cmdSource cmd) (cmdOutput cmd)
-        result <- f actual
-        case result of
-          Left err -> die err
-          Right n  -> putStrLn ("reverted " ++ show n ++ " records")
-      Just (UndoInMemory f) -> do
-        modified <- BS.readFile (cmdSource cmd)
-        let result = f modified
-        BS.writeFile (fromMaybe (cmdSource cmd) (cmdOutput cmd)) result
-        putStrLn "reverted (UPS self-inverse)"
+    Right sp -> do
+      emitWarnings sp
+      case spUndo sp of
+        Nothing -> die "undo not supported for this format"
+        Just (UndoInPlace f) -> do
+          actual <- resolveOutput (cmdSource cmd) (cmdOutput cmd)
+          result <- f actual
+          case result of
+            Left err -> die err
+            Right n  -> putStrLn ("reverted " ++ show n ++ " records")
+        Just (UndoInMemory f) -> do
+          modified <- BS.readFile (cmdSource cmd)
+          let result = f modified
+          BS.writeFile (fromMaybe (cmdSource cmd) (cmdOutput cmd)) result
+          putStrLn "reverted (UPS self-inverse)"
 
 ----------------------------------------------------------------------------
 -- Create
@@ -674,6 +697,7 @@ doConvert cmd = do
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
+      emitWarnings sp
       let outFile = fromMaybe (replaceExtension (cmdConvPatch cmd) (fmtExt (cmdConvTo cmd))) (cmdConvOutput cmd)
       case spDirectConvert sp (cmdConvTo cmd) of
         Just (Right result) -> do
@@ -862,6 +886,11 @@ replaceFirst needle replacement haystack@(x:xs)
   | take (length needle) haystack == needle =
       replacement ++ drop (length needle) haystack
   | otherwise = x : replaceFirst needle replacement xs
+
+-- | Print any warnings from a parsed patch.
+emitWarnings :: SomePatch -> IO ()
+emitWarnings sp = forM_ (spWarnings sp) $ \w ->
+  hPutStrLn stderr ("slap: warning: " ++ spFormat sp ++ ": " ++ w)
 
 warn :: String -> IO ()
 warn msg = hPutStrLn stderr ("slap: warning: " ++ msg)

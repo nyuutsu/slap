@@ -59,6 +59,9 @@ nothing else changes.
 
 Shared infrastructure:
 
+- `Patch.Archive` — ZIP/RAR/7z detection (magic bytes) and single-entry
+  extraction via external tools (`unzip`, `unrar`, `7z`). Filters chaff
+  (readmes, images, docs) to find the sole patch candidate.
 - `Patch.Binary` — Endian readers, varint codecs (byuu, VCDIFF, EDSIO),
   CRC32, builder helpers (`putWord16BE`, `putWord32LE`, `putByuuVarint`),
   and `copyBSRange` for bulk memcpy into output buffers.
@@ -70,7 +73,8 @@ Shared infrastructure:
   hex dumps, number alignment).
 
 `Patch.Yay0` — Nintendo LZSS decompression for Star Rod `.mod` files.
-Yay0-compressed PMSR is transparently decompressed in `parseSome`.
+Yay0-compressed PMSR is transparently decompressed in `parseSome`;
+info/explain output shows "PMSR/Yay0" to distinguish from raw PMSR.
 
 `Main.hs` is CLI parsing (optparse-applicative), `parseSome` dispatch,
 and uniform command handlers. Commands: apply, undo, create, convert,
@@ -79,6 +83,14 @@ source file untouched); `--in-place` / `-i` opts into destructive mode
 with automatic `.bak` backup. Apply handles two strategies (`InPlace`
 for file-handle formats, `InMemory` for delta formats) through a
 single code path.
+
+Archive unwrapping is transparent: patch files are always unwrapped
+(ZIP/RAR/7z → inner patch); source/ROM files respect `--raw` to skip
+unwrapping. `readUnwrap` and `readMaybeUnwrap` handle this in Main.hs.
+
+`SomePatch` carries `spWarnings :: [String]` for health diagnostics
+(missing EOF markers, empty patches). All command handlers emit these
+to stderr via `emitWarnings`.
 
 ## Performance
 
@@ -99,11 +111,30 @@ replicate it in every format.
 
 ## Testing
 
-Suite-based test harness in `test/run.sh`. Each `.suite` file in
+Three test harnesses, 208 tests total:
+
+**`test/run.sh`** — Apply tests (87 tests). Each `.suite` file in
 `test/suites/` is a declarative manifest: header (base ROM path,
 expected SHA256) followed by pipe-delimited patch lines with format
 name, patch path, confidence level (gold/verified/untested/broken),
-and provenance.
+and provenance. Applies each patch to the base ROM, checks SHA256.
+
+**`test/roundtrip.sh`** — Round-trip tests (66 tests). Validates
+create, undo, convert, info, and explain. Bootstraps target files
+from existing BPS patches, then round-trips through all create
+formats. Tests UPS self-inverse undo, PPF3 undo-with-create,
+IPS↔IPS32 direct conversion, and info/explain smoke tests including
+PMSR/Yay0 `.mod` files.
+
+**`test/flags.sh`** — Flag and error path tests (55 tests). Covers
+corrupt/invalid input, `--dry-run`, `--force`/CRC mismatch,
+`--in-place`/`--no-backup`, output collision, `--verbose`, undo
+error paths, convert error paths, compound flag combinations,
+PPF3 `--undo --validate`, hidden aliases (`--yolo`, `--send-it`,
+`--clobber`), patch health warnings, empty diffs (identical files),
+undo with `-o` redirect, automated archive unwrapping (ZIP),
+convert with `--with` (apply-and-recreate path), and IPS truncation
+markers.
 
 Test data lives in `test/data/` — one directory per game, base ROM
 named `base.{ext}`, patches with clean names. Current coverage:
@@ -112,10 +143,10 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **emerald** — 3 scenarios (heavy-diff, RLE, size-change) across 13 formats each (16 MB GBA)
 - **stadium2** — 3 scenarios across 11 formats each (64 MB N64)
 - **tetris** — BDF + UPS cross-validation (real-world, 32 KB GB)
-- **8 real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), Paper Mario (APS+IPS cross-val), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
+- **paper-mario** — APS-N64 + IPS cross-val, 2 PMSR/Yay0 Star Rod `.mod` files
+- **7 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (PPF4), FE6 (IPS stress)
 
-Run: `cabal build && bash test/run.sh`
+Run all: `cabal build && bash test/run.sh && bash test/roundtrip.sh && bash test/flags.sh`
 Filter: `bash test/run.sh "" dm4k`
 
-85 tests total, all passing. Base ROMs are gitignored; test patches
-are committed.
+Base ROMs are gitignored; test patches are committed.

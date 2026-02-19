@@ -6,8 +6,10 @@ description:
   Auto-detects patch format from magic bytes and applies.  Supports
   PPF (1/2/3 + Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
   VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
-  xdelta1, and PMSR.  Can create BPS, IPS, IPS32, UPS, PPF3, and
-  PMSR patches.  Converts between formats with the convert command.
+  xdelta1, and PMSR (with Yay0 decompression for Star Rod .mod files).
+  Can create BPS, IPS, IPS32, UPS, PPF3, and PMSR patches.  Converts
+  between formats with the convert command.  Transparently unwraps
+  ZIP/RAR/7z archives containing patches.
 
 license:       MIT
 license-file:  LICENSE

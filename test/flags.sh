@@ -415,6 +415,287 @@ run_aliases() {
 }
 
 ############################################################################
+# Patch health warnings
+############################################################################
+
+run_warnings() {
+  [[ -z "$FILTER" || "warnings" == *"$FILTER"* ]] || return 0
+  echo "--- patch health warnings ---"
+
+  # Truncated IPS (no EOF marker) → warning about missing EOF + empty
+  local trunc; trunc=$(mktmp)
+  printf 'PATCH\x01\x02' > "$trunc"
+  expect_ok "truncated IPS warns no EOF" "no EOF marker" "$SLAP" info "$trunc"
+  expect_ok "truncated IPS warns empty" "empty patch" "$SLAP" info "$trunc"
+
+  # Valid IPS with EOF, 0 records → warns empty but NOT about EOF
+  printf 'PATCHEOF' > "$trunc"
+  local out
+  out=$("$SLAP" info "$trunc" 2>&1)
+  if echo "$out" | grep -q "empty patch" && ! echo "$out" | grep -q "no EOF"; then
+    ok "empty IPS warns empty only (not EOF)"
+  else
+    bad "empty IPS warns empty only (not EOF)" "unexpected warning pattern: $out"
+  fi
+
+  # Normal IPS → no warnings
+  out=$("$SLAP" info "$REPO/test/data/dm4k/patch.ips" 2>&1)
+  if echo "$out" | grep -q "warning"; then
+    bad "normal IPS no warnings" "unexpected warning: $out"
+  else
+    ok "normal IPS no warnings"
+  fi
+
+  echo ""
+}
+
+############################################################################
+# Empty diff (identical files)
+############################################################################
+
+run_empty_diff() {
+  [[ -z "$FILTER" || "empty" == *"$FILTER"* ]] || return 0
+  local base="$REPO/test/data/dm4k/base.gbc"
+  [ -f "$base" ] || { skp "empty-diff" "base ROM not found"; return; }
+
+  echo "--- empty diff (identical files) ---"
+
+  # Create patches from identical files — should produce valid but empty patches
+  for fmt in bps ips ips32 ups ppf3 pmsr; do
+    local patch; patch=$(mktmp)
+    if "$SLAP" create --format "$fmt" "$base" "$base" "$patch" >/dev/null 2>&1; then
+      # Apply the empty patch — should produce identical output
+      local result; result=$(mktmp)
+      cp "$base" "$result"
+      if "$SLAP" apply "$patch" "$result" --in-place --no-backup --force >/dev/null 2>&1; then
+        local base_sha; base_sha=$(sha256sum "$base" | cut -d' ' -f1)
+        local result_sha; result_sha=$(sha256sum "$result" | cut -d' ' -f1)
+        if [ "$base_sha" = "$result_sha" ]; then
+          ok "empty-diff $fmt"
+        else
+          bad "empty-diff $fmt" "SHA256 mismatch after applying empty patch"
+        fi
+      else
+        bad "empty-diff $fmt" "apply of empty patch failed"
+      fi
+    else
+      bad "empty-diff $fmt" "create from identical files failed"
+    fi
+  done
+
+  echo ""
+}
+
+############################################################################
+# Undo with -o (output redirect)
+############################################################################
+
+run_undo_output() {
+  [[ -z "$FILTER" || "undo-output" == *"$FILTER"* ]] || return 0
+  local base="$REPO/test/data/dm4k/base.gbc"
+  local ups_patch="$REPO/test/data/dm4k/patch.ups"
+  [ -f "$base" ] || { skp "undo-output" "base ROM not found"; return; }
+
+  echo "--- undo with -o output ---"
+
+  # UPS undo with -o should write to output, not modify source
+  local work; work=$(mktmp)
+  local out; out=$(mktmp)
+  cp "$base" "$work"
+  "$SLAP" apply "$ups_patch" "$work" --in-place --no-backup --force >/dev/null 2>&1
+  local patched_sha; patched_sha=$(sha256sum "$work" | cut -d' ' -f1)
+
+  rm -f "$out"
+  "$SLAP" undo "$ups_patch" "$work" -o "$out" >/dev/null 2>&1
+  local base_sha; base_sha=$(sha256sum "$base" | cut -d' ' -f1)
+  local out_sha; out_sha=$(sha256sum "$out" | cut -d' ' -f1)
+  local work_sha; work_sha=$(sha256sum "$work" | cut -d' ' -f1)
+
+  # Output should match original base
+  if [ "$out_sha" = "$base_sha" ]; then
+    ok "undo -o produces original"
+  else
+    bad "undo -o produces original" "SHA256 mismatch"
+  fi
+
+  # Source should still be patched (not modified)
+  if [ "$work_sha" = "$patched_sha" ]; then
+    ok "undo -o leaves source untouched"
+  else
+    bad "undo -o leaves source untouched" "source was modified"
+  fi
+
+  echo ""
+}
+
+############################################################################
+# Archive unwrapping (automated)
+############################################################################
+
+run_archive() {
+  [[ -z "$FILTER" || "archive" == *"$FILTER"* ]] || return 0
+  local base="$REPO/test/data/dm4k/base.gbc"
+  local patch="$REPO/test/data/dm4k/patch.ips"
+  [ -f "$base" ] || { skp "archive" "base ROM not found"; return; }
+  command -v zip >/dev/null || { skp "archive" "zip not found"; return; }
+  command -v unzip >/dev/null || { skp "archive" "unzip not found"; return; }
+
+  echo "--- archive unwrapping ---"
+
+  # Create a ZIP containing the patch
+  local zipfile; zipfile=$(mktmp).zip
+  TMPFILES+=("$zipfile")
+  (cd "$(dirname "$patch")" && zip -j "$zipfile" "$(basename "$patch")") >/dev/null 2>&1
+
+  # Apply ZIP-wrapped patch
+  local result; result=$(mktmp)
+  cp "$base" "$result"
+  if "$SLAP" apply "$zipfile" "$result" --in-place --no-backup >/dev/null 2>&1; then
+    # Compare against direct apply
+    local direct; direct=$(mktmp)
+    cp "$base" "$direct"
+    "$SLAP" apply "$patch" "$direct" --in-place --no-backup >/dev/null 2>&1
+    local zip_sha; zip_sha=$(sha256sum "$result" | cut -d' ' -f1)
+    local direct_sha; direct_sha=$(sha256sum "$direct" | cut -d' ' -f1)
+    if [ "$zip_sha" = "$direct_sha" ]; then
+      ok "apply ZIP-wrapped patch"
+    else
+      bad "apply ZIP-wrapped patch" "SHA256 mismatch vs direct apply"
+    fi
+  else
+    bad "apply ZIP-wrapped patch" "apply failed"
+  fi
+
+  # Info on ZIP-wrapped patch should work
+  expect_ok "info ZIP-wrapped" "IPS" "$SLAP" info "$zipfile"
+
+  # Explain on ZIP-wrapped patch should work
+  expect_ok "explain ZIP-wrapped" "IPS" "$SLAP" explain "$zipfile"
+
+  # ZIP with patch + chaff (readme) → extracts patch
+  local chaffzip; chaffzip=$(mktmp).zip
+  TMPFILES+=("$chaffzip")
+  local readme; readme=$(mktmp).txt
+  TMPFILES+=("$readme")
+  echo "README" > "$readme"
+  (cd "$(dirname "$patch")" && zip -j "$chaffzip" "$(basename "$patch")" "$readme") >/dev/null 2>&1
+  expect_ok "ZIP with chaff filters readme" "IPS" "$SLAP" info "$chaffzip"
+
+  # ZIP with 2 patches → ambiguous error
+  local patch2="$REPO/test/data/dm4k/patch.bps"
+  local multizip; multizip=$(mktmp).zip
+  TMPFILES+=("$multizip")
+  (cd "$(dirname "$patch")" && zip -j "$multizip" "$(basename "$patch")" "$(basename "$patch2")") >/dev/null 2>&1
+  expect_fail "multi-entry ZIP fails" "candidate files" "$SLAP" info "$multizip"
+
+  echo ""
+}
+
+############################################################################
+# Convert with --with (apply-and-recreate path)
+############################################################################
+
+run_convert_with() {
+  [[ -z "$FILTER" || "convert-with" == *"$FILTER"* ]] || return 0
+  local base="$REPO/test/data/dm4k/base.gbc"
+  local bps_patch="$REPO/test/data/dm4k/patch.bps"
+  [ -f "$base" ] || { skp "convert-with" "base ROM not found"; return; }
+
+  echo "--- convert with --with ---"
+
+  # Bootstrap target for SHA256 reference
+  local target; target=$(mktmp)
+  cp "$base" "$target"
+  "$SLAP" apply "$bps_patch" "$target" --in-place --no-backup >/dev/null 2>&1
+  local target_sha; target_sha=$(sha256sum "$target" | cut -d' ' -f1)
+
+  # BPS → IPS via --with
+  for to_fmt in ips ips32 ups ppf3 pmsr; do
+    local converted; converted=$(mktmp)
+    local result; result=$(mktmp)
+    if "$SLAP" convert "$bps_patch" --to "$to_fmt" -o "$converted" --with "$base" >/dev/null 2>&1; then
+      cp "$base" "$result"
+      if "$SLAP" apply "$converted" "$result" --in-place --no-backup --force >/dev/null 2>&1; then
+        local got_sha; got_sha=$(sha256sum "$result" | cut -d' ' -f1)
+        if [ "$got_sha" = "$target_sha" ]; then
+          ok "convert BPS→$to_fmt via --with"
+        else
+          bad "convert BPS→$to_fmt via --with" "SHA256 mismatch"
+        fi
+      else
+        bad "convert BPS→$to_fmt via --with" "apply of converted patch failed"
+      fi
+    else
+      bad "convert BPS→$to_fmt via --with" "convert failed"
+    fi
+  done
+
+  # IPS → BPS via --with (InPlace → InMemory direction)
+  local ips_patch="$REPO/test/data/dm4k/patch.ips"
+  local converted; converted=$(mktmp)
+  local result; result=$(mktmp)
+  if "$SLAP" convert "$ips_patch" --to bps -o "$converted" --with "$base" >/dev/null 2>&1; then
+    cp "$base" "$result"
+    if "$SLAP" apply "$converted" "$result" --in-place --no-backup --force >/dev/null 2>&1; then
+      local got_sha; got_sha=$(sha256sum "$result" | cut -d' ' -f1)
+      if [ "$got_sha" = "$target_sha" ]; then
+        ok "convert IPS→BPS via --with"
+      else
+        bad "convert IPS→BPS via --with" "SHA256 mismatch"
+      fi
+    else
+      bad "convert IPS→BPS via --with" "apply failed"
+    fi
+  else
+    bad "convert IPS→BPS via --with" "convert failed"
+  fi
+
+  echo ""
+}
+
+############################################################################
+# IPS truncation marker
+############################################################################
+
+run_ips_truncate() {
+  [[ -z "$FILTER" || "truncate" == *"$FILTER"* ]] || return 0
+  local base="$REPO/test/data/dm4k/base.gbc"
+  [ -f "$base" ] || { skp "truncate" "base ROM not found"; return; }
+
+  echo "--- IPS truncation marker ---"
+
+  # Create a smaller modified file (truncated)
+  local small; small=$(mktmp)
+  dd if="$base" of="$small" bs=1 count=65536 2>/dev/null
+
+  # Create IPS from base → truncated (should include truncation marker)
+  local patch; patch=$(mktmp)
+  if "$SLAP" create --format ips "$base" "$small" "$patch" >/dev/null 2>&1; then
+    # Info should show truncation
+    expect_ok "IPS truncation in info" "truncate" "$SLAP" info "$patch"
+
+    # Apply should produce the truncated file
+    local result; result=$(mktmp)
+    cp "$base" "$result"
+    if "$SLAP" apply "$patch" "$result" --in-place --no-backup --force >/dev/null 2>&1; then
+      local small_sha; small_sha=$(sha256sum "$small" | cut -d' ' -f1)
+      local result_sha; result_sha=$(sha256sum "$result" | cut -d' ' -f1)
+      if [ "$result_sha" = "$small_sha" ]; then
+        ok "IPS truncation apply correct"
+      else
+        bad "IPS truncation apply correct" "SHA256 mismatch"
+      fi
+    else
+      bad "IPS truncation apply correct" "apply failed"
+    fi
+  else
+    bad "IPS truncation" "create failed"
+  fi
+
+  echo ""
+}
+
+############################################################################
 # Main
 ############################################################################
 
@@ -433,6 +714,12 @@ run_convert_errors
 run_compound
 run_create_flags
 run_aliases
+run_warnings
+run_empty_diff
+run_undo_output
+run_archive
+run_convert_with
+run_ips_truncate
 
 echo "passed: $pass  failed: $fail  skipped: $skip"
 [ "$fail" -eq 0 ] || exit 1

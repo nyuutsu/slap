@@ -41,6 +41,7 @@ data IPSPatch = IPSPatch
   , ipsRecords   :: [IPSRecord]
   , ipsTruncate  :: Maybe Int64
   , ipsEBPMeta   :: Maybe ByteString  -- raw JSON metadata (EBP format)
+  , ipsCleanEOF  :: Bool              -- True if proper EOF/EEOF marker was found
   } deriving (Show)
 
 -- | Parse an IPS or IPS32 patch from raw bytes.
@@ -53,15 +54,17 @@ parseIPS bs
 parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
 parseRecords variant offWidth eofMarker = go []
   where
-    -- Peek at the next offWidth bytes to check for EOF marker without consuming
-    peekEOF :: Get Bool
+    -- Peek at the next offWidth bytes to check for EOF marker without consuming.
+    -- Returns: Nothing = not enough bytes (truncated), Just True = EOF found,
+    -- Just False = not EOF (more records).
+    peekEOF :: Get (Maybe Bool)
     peekEOF = do
       avail <- remaining
-      if avail < offWidth then pure True
+      if avail < offWidth then pure Nothing
       else do
         pos <- getPosition
         input <- getInput
-        pure $ if offWidth == 3
+        pure $ Just $ if offWidth == 3
                then getWord24BE pos input == eofMarker
                else getWord32BE pos input == eofMarker
 
@@ -72,12 +75,12 @@ parseRecords variant offWidth eofMarker = go []
 
     go acc = do
       eof <- peekEOF
-      if eof
-        then do
-          avail <- remaining
-          if avail >= offWidth then skip offWidth else pure ()
-          finish acc
-        else do
+      case eof of
+        Nothing -> finish acc False       -- ran out of bytes, no EOF marker
+        Just True -> do
+          skip offWidth
+          finish acc True                 -- proper EOF marker found
+        Just False -> do
           off  <- readOff
           size <- fromIntegral <$> G.word16BE :: Get Int
           if size == 0
@@ -89,7 +92,7 @@ parseRecords variant offWidth eofMarker = go []
               dat <- getBytes size
               go (IPSRecord off dat : acc)
 
-    finish acc = do
+    finish acc clean = do
       avail <- remaining
       if avail > 0
         then do
@@ -97,12 +100,12 @@ parseRecords variant offWidth eofMarker = go []
           input <- getInput
           let rest = BS.drop pos input
           if BS.index rest 0 == 0x7B  -- '{' → EBP JSON metadata
-            then pure (IPSPatch variant (reverse acc) Nothing (Just rest))
+            then pure (IPSPatch variant (reverse acc) Nothing (Just rest) clean)
             else let trunc = if avail >= 3
                              then Just (fromIntegral (getWord24BE pos input))
                              else Nothing
-                 in pure (IPSPatch variant (reverse acc) trunc Nothing)
-        else pure (IPSPatch variant (reverse acc) Nothing Nothing)
+                 in pure (IPSPatch variant (reverse acc) trunc Nothing clean)
+        else pure (IPSPatch variant (reverse acc) Nothing Nothing clean)
 
 -- | Apply an IPS patch to a target file (seek-and-write).
 applyIPS :: IPSPatch -> FilePath -> IO Int
