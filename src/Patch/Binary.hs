@@ -89,26 +89,32 @@ getInt64BE off bs =
 getByuuVarint :: Int -> ByteString -> (Int64, Int)
 getByuuVarint off bs = go off 0 1
   where
-    go i acc shift =
-      let byte = BS.index bs i
-          val  = fromIntegral (byte .&. 0x7F) :: Int64
-          acc' = acc + val * shift
-      in if testBit byte 7
-         then (acc', i - off + 1)
-         else let shift' = shift `shiftL` 7
-              in go (i + 1) (acc' + shift') shift'
+    len = BS.length bs
+    go i acc shift
+      | i >= len  = (acc, i - off)  -- unterminated; return partial to avoid crash
+      | otherwise =
+          let byte = BS.index bs i
+              val  = fromIntegral (byte .&. 0x7F) :: Int64
+              acc' = acc + val * shift
+          in if testBit byte 7
+             then (acc', i - off + 1)
+             else let shift' = shift `shiftL` 7
+                  in go (i + 1) (acc' + shift') shift'
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
 getVcdiffVarint :: Int -> ByteString -> (Int64, Int)
 getVcdiffVarint off bs = go off 0
   where
-    go i acc =
-      let byte = BS.index bs i
-          acc' = (acc `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
-      in if testBit byte 7
-         then go (i + 1) acc'
-         else (acc', i - off + 1)
+    len = BS.length bs
+    go i acc
+      | i >= len  = (acc, i - off)  -- unterminated; return partial to avoid crash
+      | otherwise =
+          let byte = BS.index bs i
+              acc' = (acc `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
+          in if testBit byte 7
+             then go (i + 1) acc'
+             else (acc', i - off + 1)
 
 ----------------------------------------------------------------------------
 -- Builders

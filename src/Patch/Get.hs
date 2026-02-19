@@ -128,8 +128,12 @@ liftRead width f = Get $ \bs pos ->
 
 liftReadV :: (Int -> ByteString -> (a, Int)) -> Get a
 liftReadV f = Get $ \bs pos ->
-  let (val, consumed) = f pos bs
-  in Right (val, pos + consumed)
+  if pos >= BS.length bs
+  then Left ("liftReadV: read past end at offset " ++ show pos)
+  else let (val, consumed) = f pos bs
+       in if pos + consumed > BS.length bs
+          then Left ("liftReadV: varint overran buffer at offset " ++ show pos)
+          else Right (val, pos + consumed)
 
 word16LE :: Get Word16
 word16LE = liftRead 2 getWord16LE

@@ -37,7 +37,7 @@ import Data.Word (Word32)
 import Options.Applicative
 import System.Directory (copyFile, doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
-import System.FilePath (replaceExtension, takeBaseName, takeExtension)
+import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 ----------------------------------------------------------------------------
@@ -767,10 +767,7 @@ fmtName CfmtPMSR = "PMSR"
 -- "game.gbc" + "translation.ips" → "game [translation].gbc"
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
-  let patchBase = takeBaseName patchPath
-      sourceExt = takeExtension sourcePath
-      sourceBase = take (length sourcePath - length sourceExt) sourcePath
-  in sourceBase ++ " [" ++ patchBase ++ "]" ++ sourceExt
+  dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
 
 resolveOutput :: FilePath -> Maybe FilePath -> IO FilePath
 resolveOutput source Nothing    = pure source
