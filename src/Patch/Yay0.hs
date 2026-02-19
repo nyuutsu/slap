@@ -2,23 +2,17 @@
 
 -- | Yay0 (Nintendo LZSS) decompression.
 --
--- Star Rod's .mod files use Yay0 to compress PMSR patch data.
--- The uncompressed payload is a standard PMSR patch (offset+data records).
--- This module handles transparent decompression so slap can apply
--- both raw .mod (PMSR magic) and compressed .mod (Yay0 magic) files.
---
--- Format:
---   Header (16 bytes):
---     0x00: "Yay0" magic
---     0x04: decompressed size (u32 BE)
---     0x08: link table offset (u32 BE)
---     0x0C: chunk data offset (u32 BE)
---   Three interleaved streams:
---     Command bitstream (starts at 0x10)
---     Link table (u16 BE entries at link offset)
---     Chunk/literal data (at chunk offset)
---   Bit=1: copy literal byte from chunk stream
---   Bit=0: back-reference via link entry (count + distance)
+-- Format (16-byte header):
+--   0x00: "Yay0" magic
+--   0x04: decompressed size (u32 BE)
+--   0x08: link table offset (u32 BE)
+--   0x0C: chunk data offset (u32 BE)
+-- Three interleaved streams after the header:
+--   Command bitstream (starts at 0x10)
+--   Link table (u16 BE entries at link offset)
+--   Chunk/literal data (at chunk offset)
+-- Bit=1: copy literal byte from chunk stream
+-- Bit=0: back-reference via link entry (count + distance)
 
 module Patch.Yay0 (isYay0, decompressYay0) where
 

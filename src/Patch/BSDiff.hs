@@ -6,7 +6,6 @@ module Patch.BSDiff
   , BSDiffControl(..)
   , parseBSDiff
   , applyBSDiff
-  , tryExternalBspatch
   , bsdiffInfo
   ) where
 
@@ -17,12 +16,10 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
+import Patch.Binary (copyBSRange)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
-import System.Directory (findExecutable)
-import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -119,29 +116,10 @@ applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
                 then BS.index source (oPos + i) else 0
             d = BS.index diffBs (dOff + i)
         pokeByteOff ptr (nPos + i) (s + d :: Word8)) [0..addLen-1]
-      -- Copy: target[nPos+addLen+i] = extra[eOff+i]
-      mapM_ (\i ->
-        pokeByteOff ptr (nPos + addLen + i)
-          (BS.index extraBs (eOff + i) :: Word8)) [0..cpLen-1]
+      -- Copy: target[nPos+addLen..] = extra[eOff..]
+      copyBSRange ptr (nPos + addLen) extraBs eOff cpLen
       go ptr (dOff + addLen) (eOff + cpLen)
         (oPos + addLen + sk) (nPos + addLen + cpLen) rest
-
-----------------------------------------------------------------------------
--- External fallback
-----------------------------------------------------------------------------
-
--- | Try to apply a bsdiff patch using external bspatch command.
-tryExternalBspatch :: FilePath -> FilePath -> FilePath -> IO (Either String ())
-tryExternalBspatch patchPath sourcePath outputPath = do
-  mBspatch <- findExecutable "bspatch"
-  case mBspatch of
-    Nothing -> pure (Left "bspatch not found on PATH")
-    Just _ -> do
-      (ec, _out, err) <- readProcessWithExitCode "bspatch"
-        [sourcePath, outputPath, patchPath] ""
-      pure $ case ec of
-        ExitSuccess   -> Right ()
-        ExitFailure n -> Left ("bspatch exited with code " ++ show n ++ ": " ++ err)
 
 ----------------------------------------------------------------------------
 -- Info

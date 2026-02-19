@@ -36,6 +36,7 @@ import Data.Char (toLower)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Options.Applicative
+import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
@@ -135,7 +136,11 @@ main = execParser opts >>= \case
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, convert, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff/BDF, GDIFF, xdelta1, PMSR/Yay0). Unwraps ZIP/RAR/7z archives.")
+            <> progDesc "Apply, undo, create, convert, and inspect ROM patches. Format is auto-detected."
+            <> footerDoc (Just (vcat
+                [ pretty ("Quick start:  slap apply PATCH ROM" :: String)
+                , pretty ("              slap apply patch.bps game.rom -o patched.rom" :: String)
+                ])))
 
 commandParser :: Parser Command
 commandParser = subparser
@@ -435,9 +440,7 @@ parseSome bs = case detectFormat bs of
       , spExplain        = Explain.explainBSDiff p
       , spIsDifferential = True
       , spApply          = InMemory
-          (\source -> case BSDiff.applyBSDiff p source of
-            Right r  -> pure (Right r)
-            Left _   -> bsdiffFallback bs source)
+          (\source -> pure (BSDiff.applyBSDiff p source))
           Nothing Nothing
       , spUndo           = Nothing
       , spVerboseLines   = []
@@ -501,29 +504,6 @@ parseSome bs = case detectFormat bs of
       , spRecordUnit     = "records"
       , spDirectConvert  = const Nothing
       }
-
--- | External bspatch fallback: write patch+source to temp files, call bspatch.
-bsdiffFallback :: BS.ByteString -> BS.ByteString -> IO (Either String BS.ByteString)
-bsdiffFallback patchBs sourceBs = do
-  (tmpPatch, h1) <- openBinaryTempFile "/tmp" "slap-patch.tmp"
-  hClose h1
-  (tmpSrc, h2) <- openBinaryTempFile "/tmp" "slap-src.tmp"
-  hClose h2
-  (tmpOut, h3) <- openBinaryTempFile "/tmp" "slap-out.tmp"
-  hClose h3
-  BS.writeFile tmpPatch patchBs
-  BS.writeFile tmpSrc sourceBs
-  r <- BSDiff.tryExternalBspatch tmpPatch tmpSrc tmpOut
-  removeFile tmpPatch
-  removeFile tmpSrc
-  case r of
-    Right () -> do
-      result <- BS.readFile tmpOut
-      removeFile tmpOut
-      pure (Right result)
-    Left err -> do
-      removeFile tmpOut
-      pure (Left err)
 
 ----------------------------------------------------------------------------
 -- Info & Explain

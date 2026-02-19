@@ -28,6 +28,7 @@ import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.List (mapAccumL)
 import Data.Int (Int64)
 
 ----------------------------------------------------------------------------
@@ -106,34 +107,34 @@ explainBPS p = unlines $
   , "source size: " ++ show (BPS.bpsSourceSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsSourceCRC p) ++ ")"
   , "target size: " ++ show (BPS.bpsTargetSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsTargetCRC p) ++ ")"
   , ""
-  ] ++ reverse (snd (foldl' showBPSAction (0 :: Int64, []) (zip [1..] (BPS.bpsActions p))))
+  ] ++ snd (mapAccumL showBPSAction 0 (zip [1..] (BPS.bpsActions p)))
     ++ [summary]
   where
     nActs = length (BPS.bpsActions p)
     summary = show nActs ++ " actions, " ++ show (BPS.bpsTargetSize p) ++ " bytes total output"
 
-showBPSAction :: (Int64, [String]) -> (Int, BPS.BPSAction) -> (Int64, [String])
-showBPSAction (outPos, acc) (n, act) = case act of
+showBPSAction :: Int64 -> (Int, BPS.BPSAction) -> (Int64, String)
+showBPSAction outPos (n, act) = case act of
   BPS.SourceRead len ->
-    let s = padNum n ++ "  SourceRead " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-    in (outPos + fromIntegral len, s : acc)
+    ( outPos + fromIntegral len
+    , padNum n ++ "  SourceRead " ++ padR 10 (show len ++ " B")
+      ++ "  at output 0x" ++ padHex 6 outPos )
   BPS.TargetRead dat ->
     let len = BS.length dat
-        s = padNum n ++ "  TargetRead " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-            ++ "\n" ++ hexDump dat
-    in (outPos + fromIntegral len, s : acc)
+    in ( outPos + fromIntegral len
+       , padNum n ++ "  TargetRead " ++ padR 10 (show len ++ " B")
+         ++ "  at output 0x" ++ padHex 6 outPos
+         ++ "\n" ++ hexDump dat )
   BPS.SourceCopy len delta ->
-    let s = padNum n ++ "  SourceCopy " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-            ++ "  (delta " ++ showSigned delta ++ ")"
-    in (outPos + fromIntegral len, s : acc)
+    ( outPos + fromIntegral len
+    , padNum n ++ "  SourceCopy " ++ padR 10 (show len ++ " B")
+      ++ "  at output 0x" ++ padHex 6 outPos
+      ++ "  (delta " ++ showSigned delta ++ ")" )
   BPS.TargetCopy len delta ->
-    let s = padNum n ++ "  TargetCopy " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-            ++ "  (delta " ++ showSigned delta ++ ")"
-    in (outPos + fromIntegral len, s : acc)
+    ( outPos + fromIntegral len
+    , padNum n ++ "  TargetCopy " ++ padR 10 (show len ++ " B")
+      ++ "  at output 0x" ++ padHex 6 outPos
+      ++ "  (delta " ++ showSigned delta ++ ")" )
 
 ----------------------------------------------------------------------------
 -- UPS
@@ -145,21 +146,20 @@ explainUPS p = unlines $
   , "source size: " ++ show (UPS.upsSourceSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsSourceCRC p) ++ ")"
   , "target size: " ++ show (UPS.upsTargetSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsTargetCRC p) ++ ")"
   , ""
-  ] ++ reverse (snd (foldl' showUPSBlock (0 :: Int64, []) (zip [1..] (UPS.upsBlocks p))))
+  ] ++ snd (mapAccumL showUPSBlock 0 (zip [1..] (UPS.upsBlocks p)))
     ++ [summary]
   where
     nBlocks = length (UPS.upsBlocks p)
     summary = show nBlocks ++ " blocks"
 
-showUPSBlock :: (Int64, [String]) -> (Int, UPS.UPSBlock) -> (Int64, [String])
-showUPSBlock (pos, acc) (n, UPS.UPSBlock skip xd) =
+showUPSBlock :: Int64 -> (Int, UPS.UPSBlock) -> (Int64, String)
+showUPSBlock pos (n, UPS.UPSBlock skip xd) =
   let xorOff = pos + skip
       len    = BS.length xd
-      s = padNum n ++ "  XOR  " ++ padR 10 (show len ++ " B")
-          ++ "  at 0x" ++ padHex 6 xorOff
-          ++ "  (skip " ++ show skip ++ ")"
-      nextPos = xorOff + fromIntegral len
-  in (nextPos, s : acc)
+  in ( xorOff + fromIntegral len
+     , padNum n ++ "  XOR  " ++ padR 10 (show len ++ " B")
+       ++ "  at 0x" ++ padHex 6 xorOff
+       ++ "  (skip " ++ show skip ++ ")" )
 
 ----------------------------------------------------------------------------
 -- VCDIFF
@@ -258,24 +258,24 @@ explainGDIFF p = unlines $
   [ "format:      GDIFF (W3C)"
   , "commands:    " ++ show nCmds
   , ""
-  ] ++ reverse (snd (foldl' showGDIFFCmd (0 :: Int64, []) (zip [1..] (GDIFF.gdiffCmds p))))
+  ] ++ snd (mapAccumL showGDIFFCmd 0 (zip [1..] (GDIFF.gdiffCmds p)))
     ++ [show nCmds ++ " commands"]
   where
     nCmds = length (GDIFF.gdiffCmds p)
 
-showGDIFFCmd :: (Int64, [String]) -> (Int, GDIFF.GDiffCmd) -> (Int64, [String])
-showGDIFFCmd (outPos, acc) (n, cmd) = case cmd of
+showGDIFFCmd :: Int64 -> (Int, GDIFF.GDiffCmd) -> (Int64, String)
+showGDIFFCmd outPos (n, cmd) = case cmd of
   GDIFF.GDiffData dat ->
     let len = BS.length dat
-        s = padNum n ++ "  DATA  " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-            ++ "\n" ++ hexDump dat
-    in (outPos + fromIntegral len, s : acc)
+    in ( outPos + fromIntegral len
+       , padNum n ++ "  DATA  " ++ padR 10 (show len ++ " B")
+         ++ "  at output 0x" ++ padHex 6 outPos
+         ++ "\n" ++ hexDump dat )
   GDIFF.GDiffCopy off len ->
-    let s = padNum n ++ "  COPY  " ++ padR 10 (show len ++ " B")
-            ++ "  at output 0x" ++ padHex 6 outPos
-            ++ "  (source 0x" ++ padHex 6 off ++ ")"
-    in (outPos + len, s : acc)
+    ( outPos + len
+    , padNum n ++ "  COPY  " ++ padR 10 (show len ++ " B")
+      ++ "  at output 0x" ++ padHex 6 outPos
+      ++ "  (source 0x" ++ padHex 6 off ++ ")" )
 
 ----------------------------------------------------------------------------
 -- BSDiff

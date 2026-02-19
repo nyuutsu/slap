@@ -10,7 +10,7 @@ module Patch.GDIFF
   ) where
 
 import Patch.Binary (copyBSRange)
-import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE, failGet)
+import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -98,7 +98,11 @@ parseGDIFF bs
                   len <- fromIntegral <$> word32BE
                   parseCmds (GDiffCopy off len : acc)
 
-        _ -> failGet ("GDIFF: unknown command: " ++ show cmd)
+        _ -> error "unreachable"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
+
+cmdOutSize :: GDiffCmd -> Int64
+cmdOutSize (GDiffData d)    = fromIntegral (BS.length d)
+cmdOutSize (GDiffCopy _ len) = len
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -110,11 +114,7 @@ applyGDIFF patch source
   | otherwise = Right $ unsafeCreate (fromIntegral totalSize) $ \ptr ->
       go ptr 0 (gdiffCmds patch)
   where
-    totalSize = sum [cmdOutSize c | c <- gdiffCmds patch] :: Int64
-
-    cmdOutSize :: GDiffCmd -> Int64
-    cmdOutSize (GDiffData d) = fromIntegral (BS.length d)
-    cmdOutSize (GDiffCopy _ len) = len
+    totalSize = sum (map cmdOutSize (gdiffCmds patch))
 
     go :: Ptr Word8 -> Int -> [GDiffCmd] -> IO ()
     go _ptr _pos [] = pure ()
@@ -147,6 +147,4 @@ gdiffInfo p = unlines $ filter (not . null)
     nData = length [() | GDiffData _ <- cmds]
     nCopy = length [() | GDiffCopy _ _ <- cmds]
     dataBytes = sum [BS.length d | GDiffData d <- cmds]
-    totalOut = sum $ map cmdOutSize cmds
-    cmdOutSize (GDiffData d) = fromIntegral (BS.length d) :: Int64
-    cmdOutSize (GDiffCopy _ l) = l
+    totalOut = sum (map cmdOutSize cmds)

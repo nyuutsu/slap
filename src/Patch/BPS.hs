@@ -93,7 +93,7 @@ parseActions = do
       1 -> TargetRead <$> getBytes len
       2 -> SourceCopy len . decodeSignedVarint <$> byuuVarint
       3 -> TargetCopy len . decodeSignedVarint <$> byuuVarint
-      _ -> pure (SourceRead len)  -- impossible
+      _ -> error "unreachable"  -- (.&. 3) is always 0-3; GHC can't see this
     rest <- parseActions
     pure (action : rest)
 

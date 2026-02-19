@@ -9,7 +9,7 @@ module Patch.Archive
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char (toLower)
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, isSuffixOf)
 import System.Directory (findExecutable, createDirectoryIfMissing,
                          removeDirectoryRecursive, removeFile, doesFileExist)
 import System.Exit (ExitCode(..))
@@ -57,14 +57,11 @@ fmtStr Archive7z  = "7z"
 -- | Is this entry a candidate (not chaff, not a directory)?
 isCandidate :: String -> Bool
 isCandidate name
-  | hasSuffix "/" name = False
+  | "/" `isSuffixOf` name = False
   | ext `elem` chaffExts = False
   | otherwise            = True
   where
     ext = map toLower (takeExtension name)
-
-hasSuffix :: String -> String -> Bool
-hasSuffix suffix str = drop (length str - length suffix) str == suffix
 
 chaffExts :: [String]
 chaffExts =
