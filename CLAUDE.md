@@ -7,8 +7,8 @@ applies/undoes patches, creates patches, converts between formats, and
 provides info/explain commands for inspection. The goal is one tool
 that handles everything — IPS, IPS32, EBP, BPS, UPS, PPF (1/2/3/4),
 VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, BSDiff/BDF, GDIFF,
-xdelta1, PMSR — so you never have to hunt for a format-specific
-patcher.
+xdelta1, PMSR (with Yay0 decompression) — so you never have to hunt
+for a format-specific patcher.
 
 ## Code style
 
@@ -69,10 +69,16 @@ Shared infrastructure:
 - `Patch.Format` — Shared display helpers (CRC formatting, hex padding,
   hex dumps, number alignment).
 
+`Patch.Yay0` — Nintendo LZSS decompression for Star Rod `.mod` files.
+Yay0-compressed PMSR is transparently decompressed in `parseSome`.
+
 `Main.hs` is CLI parsing (optparse-applicative), `parseSome` dispatch,
 and uniform command handlers. Commands: apply, undo, create, convert,
-info, explain. Apply handles two strategies (`InPlace` for file-handle
-formats, `InMemory` for delta formats) through a single code path.
+info, explain. Apply is safe by default (writes to derived output name,
+source file untouched); `--in-place` / `-i` opts into destructive mode
+with automatic `.bak` backup. Apply handles two strategies (`InPlace`
+for file-handle formats, `InMemory` for delta formats) through a
+single code path.
 
 ## Performance
 

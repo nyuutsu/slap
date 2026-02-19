@@ -106,7 +106,7 @@ run_suite() {
     local tmp
     tmp=$(mktemp)
     cp "$base_path" "$tmp"
-    if "$SLAP" apply "$patch_path" "$tmp" >/dev/null 2>&1; then
+    if "$SLAP" apply "$patch_path" "$tmp" --in-place --no-backup >/dev/null 2>&1; then
       local got_sha
       got_sha=$(sha256sum "$tmp" | cut -d' ' -f1)
       if [ "$got_sha" = "$sha256" ]; then

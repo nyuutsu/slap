@@ -38,8 +38,9 @@ data PMSRPatch = PMSRPatch
 ----------------------------------------------------------------------------
 
 -- | Parse a PMSR patch from raw bytes.
--- Format: 4 bytes "PMSR" magic, uint32LE record count,
--- then for each record: uint32LE offset, uint32LE length, then data bytes.
+-- Format: 4 bytes "PMSR" magic, uint32BE record count,
+-- then for each record: uint32BE offset, uint32BE length, then data bytes.
+-- Star Rod (Java) uses big-endian — this is the authoritative producer.
 parsePMSR :: ByteString -> Either String PMSRPatch
 parsePMSR bs
   | BS.length bs < 4 = Left "too short for PMSR header"
@@ -49,15 +50,15 @@ parsePMSR bs
 parsePMSR' :: Get PMSRPatch
 parsePMSR' = do
   skip 4  -- magic
-  count <- fromIntegral <$> G.word32LE
+  count <- fromIntegral <$> G.word32BE
   recs  <- parseRecords count []
   pure (PMSRPatch recs)
 
 parseRecords :: Int -> [PMSRRecord] -> Get [PMSRRecord]
 parseRecords 0 acc = pure (reverse acc)
 parseRecords n acc = do
-  off <- fromIntegral <$> G.word32LE
-  len <- fromIntegral <$> G.word32LE
+  off <- fromIntegral <$> G.word32BE
+  len <- fromIntegral <$> G.word32BE
   avail <- remaining
   if len > avail
     then fail ("PMSR record needs " ++ show len ++ " bytes but only "
@@ -89,14 +90,14 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
 createPMSR :: ByteString -> ByteString -> ByteString
 createPMSR orig modified = BL.toStrict $ toLazyByteString $
     byteString "PMSR"
-    <> word32LE (fromIntegral (length recs))
+    <> word32BE (fromIntegral (length recs))
     <> foldMap encodeRec recs
   where
     recs = diffToRecordsPMSR orig modified
 
     encodeRec (off, dat) =
-      word32LE (fromIntegral off)
-      <> word32LE (fromIntegral (BS.length dat))
+      word32BE (fromIntegral off)
+      <> word32BE (fromIntegral (BS.length dat))
       <> byteString dat
 
 -- | Diff two byte strings into PMSR records.
@@ -127,7 +128,7 @@ diffToRecordsPMSR orig modified = mergeNearby modified $ go 0
       | i >= BS.length modified = []
       | otherwise = splitRecord i (BS.drop i modified)
 
-    -- PMSR uses uint32LE for length, so 4 GB max per record; use 1 MB chunks
+    -- PMSR uses uint32BE for length, so 4 GB max per record; use 1 MB chunks
     splitRecord off dat
       | BS.null dat = []
       | BS.length dat <= 0x100000 = [(off, dat)]

@@ -24,6 +24,7 @@ src/
     APS.hs                 219 lines   APS N64 (type 0+1) + GBA: parse, apply, info
     RUP.hs                 226 lines   RUP/NINJA2: parse, apply, info
     PMSR.hs                176 lines   Paper Mario Star Rod: parse, apply, create, info
+    Yay0.hs                 96 lines   Nintendo LZSS decompression for Star Rod .mod files
     PPF/
       Types.hs              66 lines   PPF types (Patch, Record, Version, ParseError)
       Parse.hs             166 lines   PPF 1/2/3/4 parser

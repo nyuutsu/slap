@@ -12,7 +12,7 @@
 ## New Formats
 
 - [x] BDF (Binary Delta Format) — shares `BSDIFF40` magic with bsdiff; same binary format, no separate module needed. Detected and applied as BSDiff
-- [x] PMSR (Paper Mario Star Rod) — simple offset+data format. Parse, apply, create, info, explain
+- [x] PMSR (Paper Mario Star Rod) — simple offset+data format. Parse, apply, create, info, explain. Yay0-compressed .mod files transparently decompressed
 - [ ] Git binary diff (`git diff --binary` output)
 - [ ] Unified diff / GNU patch format
 - [ ] HDiffPatch — https://github.com/sisong/HDiffPatch
@@ -34,4 +34,4 @@
 - [x] PPF4 test suite — Suikoden 1 disc image + Pyriel bribe.ppf (19 records, first real-world PPF4 validation)
 - [x] IPS stress test — FE6 english translation (7639 records, 572 KB, offsets to 0x1000000)
 - [ ] xdelta3 real-world test — large VCDIFF patch (e.g., Pokemon Unbound)
-- [ ] PMSR real-world test — Star Rod .mod files are Yay0-compressed game data, not PMSR patches
+- [x] PMSR real-world test — Yay0-compressed .mod files from Star Rod parse successfully (14521 and 6256 records)

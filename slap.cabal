@@ -36,6 +36,7 @@ executable slap
     , Patch.UPS
     , Patch.VCDIFF
     , Patch.XDelta1
+    , Patch.Yay0
     , Patch.PPF.Apply
     , Patch.PPF.Create
     , Patch.PPF.Info

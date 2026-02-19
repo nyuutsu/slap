@@ -23,19 +23,21 @@ import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PMSR as PMSR
 import qualified Patch.Explain as Explain
 
+import qualified Patch.Yay0 as Yay0
+
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder
 import Data.Bits (shiftR, (.&.))
 import Data.Int (Int64)
-import Control.Monad (when, forM_)
+import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Options.Applicative
 import System.Directory (copyFile, doesFileExist, removeFile)
-import System.Exit (exitFailure)
-import System.FilePath (replaceExtension)
+import System.Exit (exitFailure, exitSuccess)
+import System.FilePath (replaceExtension, takeBaseName, takeExtension)
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 ----------------------------------------------------------------------------
@@ -80,14 +82,17 @@ data Command
   = CmdApply
       { cmdForce   :: Bool
       , cmdVerbose :: Bool
+      , cmdInPlace :: Bool
+      , cmdBackup  :: Bool
+      , cmdDryRun  :: Bool
       , cmdPatch   :: FilePath
-      , cmdTarget  :: FilePath
+      , cmdSource  :: FilePath
       , cmdOutput  :: Maybe FilePath
       }
   | CmdUndo
       { cmdVerbose :: Bool
       , cmdPatch   :: FilePath
-      , cmdTarget  :: FilePath
+      , cmdSource  :: FilePath
       , cmdOutput  :: Maybe FilePath
       }
   | CmdCreate
@@ -124,11 +129,11 @@ main = execParser opts >>= \case
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
-            <> progDesc "Apply, undo, create, convert, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff/BDF, GDIFF, xdelta1, PMSR)")
+            <> progDesc "Apply, undo, create, convert, and inspect ROM patches (IPS, BPS, UPS, PPF, VCDIFF, APS, RUP, BSDiff/BDF, GDIFF, xdelta1, PMSR/Yay0)")
 
 commandParser :: Parser Command
 commandParser = subparser
-  ( command "apply"   (info (applyParser   <**> helper) (progDesc "Apply a patch to a target file"))
+  ( command "apply"   (info (applyParser   <**> helper) (progDesc "Apply a patch (safe by default; use -i for in-place)"))
  <> command "undo"    (info (undoParser    <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
  <> command "create"  (info (createParser  <**> helper) (progDesc "Create a patch from two files"))
  <> command "convert" (info (convertParser <**> helper) (progDesc "Convert a patch to a different format"))
@@ -144,25 +149,43 @@ applyParser :: Parser Command
 applyParser = CmdApply
   <$> forceFlag
   <*> verboseFlag
+  <*> inPlaceFlag
+  <*> backupFlag
+  <*> dryRunFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
-  <*> argument str (metavar "TARGET" <> help "File to patch")
-  <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
-      <> help "Write patched output to FILE instead of modifying TARGET in place"))
+  <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
+  <*> outputOpt
+  where
+    outputOpt = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
+                  <> help "Write patched output to FILE"))
+            <|> optional (argument str (metavar "OUTPUT"))
 
 forceFlag :: Parser Bool
-forceFlag = switch (long "force" <> short 'f' <> help "Apply despite checksum mismatches")
-        <|> switch (long "yolo" <> help "Alias for --force")
+forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output / ignore CRC mismatches")
+        <|> switch (long "yolo" <> hidden)
+        <|> switch (long "send-it" <> hidden)
 
 verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
+
+inPlaceFlag :: Parser Bool
+inPlaceFlag = switch (long "in-place" <> short 'i'
+                <> help "Modify SOURCE directly (destructive; creates .bak by default)")
+          <|> switch (long "clobber" <> hidden)
+
+backupFlag :: Parser Bool
+backupFlag = flag True False (long "no-backup" <> help "Don't create .bak backup with --in-place")
+
+dryRunFlag :: Parser Bool
+dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
 
 undoParser :: Parser Command
 undoParser = CmdUndo
   <$> verboseFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
-  <*> argument str (metavar "TARGET" <> help "File to restore")
+  <*> argument str (metavar "SOURCE" <> help "File to restore")
   <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
-      <> help "Write restored output to FILE instead of modifying TARGET in place"))
+      <> help "Write restored output to FILE instead of modifying SOURCE in place"))
 
 createParser :: Parser Command
 createParser = CmdCreate
@@ -207,7 +230,12 @@ patchInfoParser = CmdInfo
 
 parseSome :: BS.ByteString -> Either String SomePatch
 parseSome bs = case detectFormat bs of
-  Nothing -> Left "unknown patch format"
+  Nothing
+    -- Yay0 container: decompress and retry (Star Rod .mod files)
+    | Yay0.isYay0 bs -> case Yay0.decompressYay0 bs of
+        Left err    -> Left ("Yay0 decompression failed: " ++ err)
+        Right inner -> parseSome inner
+    | otherwise -> Left "unknown patch format"
 
   Just FmtPPF -> case PPF.parsePatch bs of
     Left err -> Left (showPPFError err)
@@ -470,16 +498,49 @@ doApply cmd = do
     Right sp -> do
       when (cmdVerbose cmd) $
         mapM_ (hPutStrLn stderr) (spVerboseLines sp)
+
+      let outputPath
+            | cmdInPlace cmd         = cmdSource cmd
+            | Just o <- cmdOutput cmd = o
+            | otherwise              = deriveOutput (cmdPatch cmd) (cmdSource cmd)
+
+      -- Dry run: report and exit
+      when (cmdDryRun cmd) $ do
+        putStrLn $ "would apply " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
+                ++ " \8594 " ++ outputPath
+        case spApply sp of
+          InMemory _ (Just expected) _ -> do
+            sourceBs <- BS.readFile (cmdSource cmd)
+            let actual = crc32 sourceBs
+            putStrLn $ "source CRC: " ++ fmtCRC actual
+              ++ if actual == expected then " \10003" else " \10007 (expected " ++ fmtCRC expected ++ ")"
+          _ -> pure ()
+        exitSuccess
+
+      -- Refuse to overwrite unless --force or --in-place
+      unless (cmdInPlace cmd || cmdForce cmd) $ do
+        exists <- doesFileExist outputPath
+        when exists $
+          die (outputPath ++ " already exists (use --force to overwrite)")
+
+      -- Backup for --in-place
+      when (cmdInPlace cmd && cmdBackup cmd) $ do
+        let bak = cmdSource cmd ++ ".bak"
+        copyFile (cmdSource cmd) bak
+        hPutStrLn stderr ("slap: backup: " ++ bak)
+
       case spApply sp of
         InPlace f -> do
-          actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
-          f actual
-          putStrLn ("applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp)
+          unless (cmdInPlace cmd) $
+            copyFile (cmdSource cmd) outputPath
+          f (if cmdInPlace cmd then cmdSource cmd else outputPath)
+          putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
+                  ++ " \8594 " ++ outputPath
         InMemory apply srcCRC tgtCRC -> do
-          source <- BS.readFile (cmdTarget cmd)
+          sourceBs <- BS.readFile (cmdSource cmd)
           forM_ srcCRC $ \expected ->
-            checkCRC (cmdForce cmd) "source" expected (crc32 source)
-          result <- apply source
+            checkCRC (cmdForce cmd) "source" expected (crc32 sourceBs)
+          result <- apply sourceBs
           case result of
             Left err -> die err
             Right target -> do
@@ -488,8 +549,9 @@ doApply cmd = do
                 when (actual /= expected) $
                   warn ("target CRC mismatch after apply (expected "
                         ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
-              BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) target
-              putStrLn ("applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp)
+              BS.writeFile outputPath target
+              putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
+                      ++ " \8594 " ++ outputPath
 
 ----------------------------------------------------------------------------
 -- Undo
@@ -503,15 +565,15 @@ doUndo cmd = do
     Right sp -> case spUndo sp of
       Nothing -> die "undo not supported for this format"
       Just (UndoInPlace f) -> do
-        actual <- resolveOutput (cmdTarget cmd) (cmdOutput cmd)
+        actual <- resolveOutput (cmdSource cmd) (cmdOutput cmd)
         result <- f actual
         case result of
           Left err -> die err
           Right n  -> putStrLn ("reverted " ++ show n ++ " records")
       Just (UndoInMemory f) -> do
-        modified <- BS.readFile (cmdTarget cmd)
+        modified <- BS.readFile (cmdSource cmd)
         let result = f modified
-        BS.writeFile (fromMaybe (cmdTarget cmd) (cmdOutput cmd)) result
+        BS.writeFile (fromMaybe (cmdSource cmd) (cmdOutput cmd)) result
         putStrLn "reverted (UPS self-inverse)"
 
 ----------------------------------------------------------------------------
@@ -701,13 +763,22 @@ fmtName CfmtPMSR = "PMSR"
 -- Helpers
 ----------------------------------------------------------------------------
 
+-- | Derive output path from patch and source names.
+-- "game.gbc" + "translation.ips" → "game [translation].gbc"
+deriveOutput :: FilePath -> FilePath -> FilePath
+deriveOutput patchPath sourcePath =
+  let patchBase = takeBaseName patchPath
+      sourceExt = takeExtension sourcePath
+      sourceBase = take (length sourcePath - length sourceExt) sourcePath
+  in sourceBase ++ " [" ++ patchBase ++ "]" ++ sourceExt
+
 resolveOutput :: FilePath -> Maybe FilePath -> IO FilePath
-resolveOutput target Nothing    = pure target
-resolveOutput target (Just out) = do
-  exists <- doesFileExist target
+resolveOutput source Nothing    = pure source
+resolveOutput source (Just out) = do
+  exists <- doesFileExist source
   if exists
-    then copyFile target out >> pure out
-    else die ("target file not found: " ++ target)
+    then copyFile source out >> pure out
+    else die ("source file not found: " ++ source)
 
 checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
 checkCRC force label expected actual
