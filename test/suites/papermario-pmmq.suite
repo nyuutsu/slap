@@ -1,0 +1,8 @@
+# Paper Mario — Master Quest Jr (real-world PMSR/Yay0 .mod file)
+# Star Rod mod, Yay0-compressed PMSR. 40 MB N64 ROM.
+
+base:   test/data/paper-mario/base.z64
+sha256: d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6
+desc:   paper-mario PMMQ Jr (PMSR/Yay0, 14521 records)
+
+PMSR/Yay0 | test/data/paper-mario/pmmq-jr.mod | verified | Star Rod (PMMQ Jr 1.5.1.2)

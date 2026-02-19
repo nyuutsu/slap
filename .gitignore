@@ -16,6 +16,9 @@ dist-newstyle/
 *.img
 *.cue
 
+# Staging folder for unsorted test material
+sort-or-integrate-what-you-need-and-dont-commit-this-folder/
+
 # User-provided test material staging area
 Suikoden*/
 zelda-*/

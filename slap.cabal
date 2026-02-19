@@ -20,7 +20,8 @@ executable slap
   default-language: GHC2024
   ghc-options:      -Wall -O2
   other-modules:
-      Patch.APS
+      Patch.Archive
+    , Patch.APS
     , Patch.Binary
     , Patch.BPS
     , Patch.Format

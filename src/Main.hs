@@ -2,6 +2,7 @@
 
 module Main (main) where
 
+import Patch.Archive (detectArchive, unwrapArchive)
 import Patch.Types (PatchFormat(..))
 import Patch.Detect (detectFormat)
 import Patch.Binary (crc32, putWord16BE)
@@ -85,18 +86,21 @@ data Command
       , cmdInPlace :: Bool
       , cmdBackup  :: Bool
       , cmdDryRun  :: Bool
+      , cmdRaw     :: Bool
       , cmdPatch   :: FilePath
       , cmdSource  :: FilePath
       , cmdOutput  :: Maybe FilePath
       }
   | CmdUndo
       { cmdVerbose :: Bool
+      , cmdRaw     :: Bool
       , cmdPatch   :: FilePath
       , cmdSource  :: FilePath
       , cmdOutput  :: Maybe FilePath
       }
   | CmdCreate
       { cmdCreateFmt  :: CreateFormat
+      , cmdRaw        :: Bool
       , cmdOriginal   :: FilePath
       , cmdModified   :: FilePath
       , cmdCreateOut  :: FilePath
@@ -109,6 +113,7 @@ data Command
       , cmdConvTo     :: CreateFormat
       , cmdConvOutput :: Maybe FilePath
       , cmdConvWith   :: Maybe FilePath
+      , cmdRaw        :: Bool
       }
   | CmdInfo    { cmdPatch :: FilePath }
   | CmdExplain { cmdPatch :: FilePath }
@@ -152,6 +157,7 @@ applyParser = CmdApply
   <*> inPlaceFlag
   <*> backupFlag
   <*> dryRunFlag
+  <*> rawFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
   <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
   <*> outputOpt
@@ -179,9 +185,13 @@ backupFlag = flag True False (long "no-backup" <> help "Don't create .bak backup
 dryRunFlag :: Parser Bool
 dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
 
+rawFlag :: Parser Bool
+rawFlag = switch (long "raw" <> help "Treat files as raw bytes (skip archive unwrapping)")
+
 undoParser :: Parser Command
 undoParser = CmdUndo
   <$> verboseFlag
+  <*> rawFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
   <*> argument str (metavar "SOURCE" <> help "File to restore")
   <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
@@ -191,6 +201,7 @@ createParser :: Parser Command
 createParser = CmdCreate
   <$> option (eitherReader parseCfmt) (long "format" <> metavar "FMT" <> value CfmtBPS
       <> help "Output format: bps (default), ips, ips32, ups, ppf3, pmsr")
+  <*> rawFlag
   <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
@@ -208,6 +219,7 @@ convertParser = CmdConvert
       <> help "Output file (default: replace input extension)"))
   <*> optional (option str (long "with" <> metavar "SOURCE"
       <> help "Source ROM (required for differential formats)"))
+  <*> rawFlag
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
@@ -225,6 +237,29 @@ patchInfoParser = CmdInfo
   <$> argument str (metavar "PATCH" <> help "Patch file to inspect")
 
 ----------------------------------------------------------------------------
+-- Archive-aware file reading
+----------------------------------------------------------------------------
+
+-- | Read a file, transparently unwrapping single-entry archives.
+readUnwrap :: FilePath -> IO BS.ByteString
+readUnwrap path = do
+  bs <- BS.readFile path
+  case detectArchive (BS.take 8 bs) of
+    Nothing -> pure bs
+    Just fmt -> do
+      result <- unwrapArchive fmt path
+      case result of
+        Left err -> die err
+        Right (inner, name) -> do
+          hPutStrLn stderr ("slap: unwrapped " ++ path ++ " \8594 " ++ name)
+          pure inner
+
+-- | Read a file, skipping unwrap if raw=True.
+readMaybeUnwrap :: Bool -> FilePath -> IO BS.ByteString
+readMaybeUnwrap True  = BS.readFile
+readMaybeUnwrap False = readUnwrap
+
+----------------------------------------------------------------------------
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
@@ -234,7 +269,13 @@ parseSome bs = case detectFormat bs of
     -- Yay0 container: decompress and retry (Star Rod .mod files)
     | Yay0.isYay0 bs -> case Yay0.decompressYay0 bs of
         Left err    -> Left ("Yay0 decompression failed: " ++ err)
-        Right inner -> parseSome inner
+        Right inner -> case parseSome inner of
+          Left err -> Left err
+          Right sp -> Right sp
+            { spFormat  = spFormat sp ++ "/Yay0"
+            , spInfo    = replaceFirst "PMSR" "PMSR/Yay0" (spInfo sp)
+            , spExplain = replaceFirst "PMSR" "PMSR/Yay0" (spExplain sp)
+            }
     | otherwise -> Left "unknown patch format"
 
   Just FmtPPF -> case PPF.parsePatch bs of
@@ -474,14 +515,14 @@ bsdiffFallback patchBs sourceBs = do
 
 doInfo :: FilePath -> IO ()
 doInfo patchFile = do
-  patchBs <- BS.readFile patchFile
+  patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
     Right sp -> putStr (spInfo sp)
 
 doExplain :: FilePath -> IO ()
 doExplain patchFile = do
-  patchBs <- BS.readFile patchFile
+  patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
     Right sp -> putStr (spExplain sp)
@@ -492,7 +533,7 @@ doExplain patchFile = do
 
 doApply :: Command -> IO ()
 doApply cmd = do
-  patchBs <- BS.readFile (cmdPatch cmd)
+  patchBs <- readUnwrap (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
@@ -510,7 +551,7 @@ doApply cmd = do
                 ++ " \8594 " ++ outputPath
         case spApply sp of
           InMemory _ (Just expected) _ -> do
-            sourceBs <- BS.readFile (cmdSource cmd)
+            sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
             let actual = crc32 sourceBs
             putStrLn $ "source CRC: " ++ fmtCRC actual
               ++ if actual == expected then " \10003" else " \10007 (expected " ++ fmtCRC expected ++ ")"
@@ -537,7 +578,7 @@ doApply cmd = do
           putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                   ++ " \8594 " ++ outputPath
         InMemory apply srcCRC tgtCRC -> do
-          sourceBs <- BS.readFile (cmdSource cmd)
+          sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
           forM_ srcCRC $ \expected ->
             checkCRC (cmdForce cmd) "source" expected (crc32 sourceBs)
           result <- apply sourceBs
@@ -559,7 +600,7 @@ doApply cmd = do
 
 doUndo :: Command -> IO ()
 doUndo cmd = do
-  patchBs <- BS.readFile (cmdPatch cmd)
+  patchBs <- readUnwrap (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
     Right sp -> case spUndo sp of
@@ -589,36 +630,36 @@ doCreate cmd = case cmdCreateFmt cmd of
       Left _      -> putStrLn ("wrote " ++ cmdCreateOut cmd)
       Right patch -> putStrLn ("wrote " ++ cmdCreateOut cmd ++ " (" ++ show (length (PPF.patchRecords patch)) ++ " records)")
   CfmtIPS -> do
-    origBs <- BS.readFile (cmdOriginal cmd)
-    modBs  <- BS.readFile (cmdModified cmd)
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     case IPS.createIPS origBs modBs of
       Left err -> die err
       Right patchBs -> do
         BS.writeFile (cmdCreateOut cmd) patchBs
         putStrLn ("wrote " ++ cmdCreateOut cmd)
   CfmtBPS -> do
-    origBs <- BS.readFile (cmdOriginal cmd)
-    modBs  <- BS.readFile (cmdModified cmd)
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     let patchBs = BPS.createBPS origBs modBs
     BS.writeFile (cmdCreateOut cmd) patchBs
     putStrLn ("wrote " ++ cmdCreateOut cmd)
   CfmtUPS -> do
-    origBs <- BS.readFile (cmdOriginal cmd)
-    modBs  <- BS.readFile (cmdModified cmd)
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     let patchBs = UPS.createUPS origBs modBs
     BS.writeFile (cmdCreateOut cmd) patchBs
     putStrLn ("wrote " ++ cmdCreateOut cmd)
   CfmtIPS32 -> do
-    origBs <- BS.readFile (cmdOriginal cmd)
-    modBs  <- BS.readFile (cmdModified cmd)
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     case IPS.createIPS32 origBs modBs of
       Left err -> die err
       Right patchBs -> do
         BS.writeFile (cmdCreateOut cmd) patchBs
         putStrLn ("wrote " ++ cmdCreateOut cmd)
   CfmtPMSR -> do
-    origBs <- BS.readFile (cmdOriginal cmd)
-    modBs  <- BS.readFile (cmdModified cmd)
+    origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
+    modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
     let patchBs = PMSR.createPMSR origBs modBs
     BS.writeFile (cmdCreateOut cmd) patchBs
     putStrLn ("wrote " ++ cmdCreateOut cmd)
@@ -629,7 +670,7 @@ doCreate cmd = case cmdCreateFmt cmd of
 
 doConvert :: Command -> IO ()
 doConvert cmd = do
-  patchBs <- BS.readFile (cmdConvPatch cmd)
+  patchBs <- readUnwrap (cmdConvPatch cmd)
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
@@ -643,7 +684,7 @@ doConvert cmd = do
           sourcePath <- case cmdConvWith cmd of
             Just s  -> pure s
             Nothing -> die (needWithMsg sp)
-          sourceBs <- BS.readFile sourcePath
+          sourceBs <- readMaybeUnwrap (cmdRaw cmd) sourcePath
           targetBs <- applyForConvert sp sourceBs
           case createFromMemory (cmdConvTo cmd) sourceBs targetBs of
             Left err -> die err
@@ -813,6 +854,14 @@ numbered xs f = zipWith fmt [(1::Int)..] xs
   where
     total = length xs
     fmt i x = "[" ++ show i ++ "/" ++ show total ++ "] " ++ f x
+
+-- | Replace the first occurrence of a substring.
+replaceFirst :: String -> String -> String -> String
+replaceFirst _ _ [] = []
+replaceFirst needle replacement haystack@(x:xs)
+  | take (length needle) haystack == needle =
+      replacement ++ drop (length needle) haystack
+  | otherwise = x : replaceFirst needle replacement xs
 
 warn :: String -> IO ()
 warn msg = hPutStrLn stderr ("slap: warning: " ++ msg)
