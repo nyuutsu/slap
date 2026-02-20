@@ -3,7 +3,9 @@
 #
 # SHA256 key:
 #   stadium2-heavy target: 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a
+#   stadium2-size target:  2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8
 #   emerald-heavy target:  520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
+#   emerald-size target:   8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03
 #   paper-mario pmmq target: d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6
 #   dm4k target:           e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8
 #
@@ -113,3 +115,31 @@ ips        | gdiff   | test/data/emerald/heavy-diff/patch.ips      |  |  | rejec
 bps        | ips32   | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
 ips        | bps     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --with
 bps        | bps     | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
+#
+# ============================================================================
+# Part D: size-change conversion (--with)
+# ============================================================================
+# Tests that file extension survives conversion. The source BPS patch doubles
+# the file size; the converted patch must produce the same enlarged output.
+#
+# --- stadium2-size (64→128 MB) ---
+bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:16 MB                     |  | --with
+bps        | ebp     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:16 MB                     |  | --with
+bps        | ips32   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with --no-undo --no-validate
+bps        | pmsr    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | ups     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | rup     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | aps-gba | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+# size-change create loses file extension (diffHunks only compares overlapping bytes)
+bps        | ninja1  | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
+bps        | aps-n64 | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
+bps        | dps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
+bps        | gdiff   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
+#
+# --- emerald-size (16→32 MB) ---
+bps        | ips     | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      |          | reject:16 MB                     |  | --with
+bps        | ebp     | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      |          | reject:16 MB                     |  | --with
+bps        | ips32   | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      | 8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03 | accept |  | --with
+bps        | ppf3    | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      | 8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03 | accept |  | --with --no-undo --no-validate

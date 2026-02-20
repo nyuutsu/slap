@@ -36,6 +36,16 @@ _run_convert() {
     if [[ "$result" == reject:* ]]; then
       local pattern="${result#reject:}"
       local convert_args=("$patch" "--to" "$tgt_fmt")
+      if [[ "$flags" == *"--with"* ]] && [ -n "$base_rel" ]; then
+        convert_args+=("--with" "$REPO/$base_rel")
+        local extra_flags=""
+        local f
+        for f in $flags; do
+          [ "$f" = "--with" ] && continue
+          extra_flags+=" $f"
+        done
+        flags=$(trim "$extra_flags")
+      fi
       if [ -n "$flags" ]; then
         local f
         for f in $flags; do convert_args+=("$f"); done

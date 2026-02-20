@@ -1,0 +1,65 @@
+# Cross-validation matrix — slap create → external tool apply → SHA256 verify
+# format | scenario | base | bootstrap_patch | target_sha256 | tool
+#
+# Different encoders produce bitwise-different valid patches, so we never
+# compare patch bytes. Instead: slap creates a patch, the external tool
+# applies it, and we verify the output SHA256 matches the expected target.
+#
+# SHA256 key:
+#   stadium2-heavy target:  7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a
+#   stadium2-size target:   2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8
+#   emerald-heavy target:   520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
+#   paper-mario-pp target:  b1ce80f553bc4fe1429405c5028f45e7085f34c0eb1a05f3a794fac80f18b1cd
+#
+# External tools:
+#   flips       — ~/repos/Flips/flips (Floating IPS v199)
+#   bspatch     — /usr/bin/bspatch
+#   xdelta3     — /usr/bin/xdelta3
+#   rompatcher  — ~/repos/RomPatcher[dot]js/index.js (via node)
+#
+# ============================================================================
+# Flips (IPS, BPS, UPS)
+# ============================================================================
+#
+# --- IPS (emerald, ≤16 MB offsets) ---
+ips    | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | flips
+#
+# --- BPS ---
+bps    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | flips
+bps    | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | flips
+#
+# --- UPS ---
+ups    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | flips
+ups    | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | flips
+#
+# ============================================================================
+# RomPatcher.js (EBP, PPF3, APS-N64, APS-GBA, RUP, PMSR)
+# ============================================================================
+#
+# --- EBP (emerald, ≤16 MB offsets) ---
+ebp    | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | rompatcher
+#
+# --- PPF3 (ppf alias) ---
+ppf    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | rompatcher
+#
+# --- APS-N64 (apsn64 alias) ---
+apsn64 | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | rompatcher
+#
+# --- APS-GBA (apsgba alias) ---
+apsgba | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | rompatcher
+#
+# --- RUP / NINJA2 ---
+rup    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | rompatcher
+#
+# --- PMSR (paper-mario, hardcoded ROM validation in RPJS) ---
+pmsr   | paper-mario-pp  | test/data/paper-mario/base.z64 | test/data/paper-mario/paper-parable.mod  | b1ce80f553bc4fe1429405c5028f45e7085f34c0eb1a05f3a794fac80f18b1cd | rompatcher
+#
+# ============================================================================
+# Coverage gaps
+# ============================================================================
+#
+# No external applier available:
+#   IPS32, NINJA1, DPS, GDIFF — no widely available CLI applier
+#
+# External applier exists but slap cannot create the format:
+#   BSDiff (bspatch), VCDIFF (xdelta3), xdelta1 (xdelta)
