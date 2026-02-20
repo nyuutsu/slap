@@ -1,0 +1,115 @@
+# Conversion matrix — source of truth for all convert tests
+# source | target | source_patch | base | target_sha | result | expected_warnings | flags
+#
+# SHA256 key:
+#   stadium2-heavy target: 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a
+#   emerald-heavy target:  520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
+#   paper-mario pmmq target: d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6
+#   dm4k target:           e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8
+#
+# ============================================================================
+# Part A: overlay×overlay pairwise (7 sources × 7 targets = 49 tests)
+# ============================================================================
+#
+# --- PPF3 source (stadium2, 64 MB — has description, validation, undo) ---
+ppf3       | ips     | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:offsets > 16 MB       |                                                    |
+ppf3       | ips32   | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
+ppf3       | ebp     | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:offsets > 16 MB       |                                                    |
+ppf3       | ppf3    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |                                                            |
+ppf3       | ninja1  | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
+ppf3       | pmsr    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
+ppf3       | aps-n64 | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:requires target file  |                                                    |
+#
+# --- IPS source (emerald, 16 MB — records only, no metadata) ---
+ips        | ips     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | ips32   | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | ebp     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --no-undo --no-validate
+ips        | ninja1  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | pmsr    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:requires target file  |  |
+#
+# --- IPS32 source (stadium2, 64 MB — records only) ---
+ips32      | ips     | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:offsets > 16 MB       |  |
+ips32      | ips32   | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+ips32      | ebp     | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:offsets > 16 MB       |  |
+ips32      | ppf3    | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --no-undo --no-validate
+ips32      | ninja1  | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+ips32      | pmsr    | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+ips32      | aps-n64 | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:requires target file  |  |
+#
+# --- EBP source (emerald, 16 MB — has EBP JSON metadata) ---
+ebp        | ips     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | ips32   | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | ebp     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ebp        | ppf3    | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata | --no-undo --no-validate
+ebp        | ninja1  | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | pmsr    | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | aps-n64 | test/data/emerald/heavy-diff/patch.ebp.ebp  |                                 |          | reject:requires target file  |  |
+#
+# --- APS-N64 source (stadium2, 64 MB — has description, dest_size) ---
+aps-n64    | ips     | test/data/stadium2/heavy-diff/patch.aps.aps |                                 |          | reject:offsets > 16 MB       |  |
+aps-n64    | ips32   | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
+aps-n64    | ebp     | test/data/stadium2/heavy-diff/patch.aps.aps |                                 |          | reject:offsets > 16 MB       |  |
+aps-n64    | ppf3    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --no-undo --no-validate
+aps-n64    | ninja1  | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
+aps-n64    | pmsr    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
+aps-n64    | aps-n64 | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+#
+# --- NINJA1 source (emerald, 16 MB — has sourceCRC, sourceMD5, sourceSHA1) ---
+ninja1     | ips     | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | ips32   | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | ebp     | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | ppf3    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 | --no-undo --no-validate
+ninja1     | ninja1  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ninja1     | pmsr    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | aps-n64 | test/data/emerald/heavy-diff/patch.ninja1   |                                 |          | reject:requires target file  |  |
+#
+# --- PMSR source (paper-mario, 40 MB Yay0 — records only, no metadata) ---
+pmsr       | ips     | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:offsets > 16 MB       |  |
+pmsr       | ips32   | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
+pmsr       | ebp     | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:offsets > 16 MB       |  |
+pmsr       | ppf3    | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  | --no-undo --no-validate
+pmsr       | ninja1  | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
+pmsr       | pmsr    | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
+pmsr       | aps-n64 | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:requires target file  |  |
+#
+# ============================================================================
+# Supplementary: PPF2→APS-N64 (PPF2 carries fileSize, satisfies dest_size)
+# ============================================================================
+ppf2       | aps-n64 | test/data/dm4k/patch.ppf2.ppf               | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping.*validation |
+#
+# ============================================================================
+# PPF3 default undo/validate gating
+# ============================================================================
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:no undo data          |  | --no-validate
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:no validation block   |  | --no-undo
+#
+# ============================================================================
+# Part B: non-overlay rejection (without --with)
+# ============================================================================
+#
+# Non-overlay source → overlay target
+bps        | ips     | test/data/stadium2/heavy-diff/patch.bps     |  |  | reject:requires the original ROM |  |
+ups        | ips     | test/data/stadium2/heavy-diff/patch.ups     |  |  | reject:requires the original ROM |  |
+vcdiff     | ips     | test/data/stadium2/heavy-diff/patch.vcdiff  |  |  | reject:requires the original ROM |  |
+bsdiff     | ips     | test/data/stadium2/heavy-diff/patch.bsdiff  |  |  | reject:requires the original ROM |  |
+gdiff      | ips     | test/data/stadium2/heavy-diff/patch.gdiff   |  |  | reject:requires the original ROM |  |
+xdelta1    | ips     | test/data/stadium2/heavy-diff/patch.xdelta1 |  |  | reject:requires the original ROM |  |
+rup        | ips     | test/data/stadium2/heavy-diff/patch.rup.rup |  |  | reject:requires the original ROM |  |
+aps-gba    | ips     | test/data/ffta/ffta-x.aps                   |  |  | reject:requires the original ROM |  |
+#
+# Overlay source → non-overlay target
+ips        | bps     | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+ips        | ups     | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+ips        | dps     | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+ips        | rup     | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+ips        | aps-gba | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+ips        | gdiff   | test/data/emerald/heavy-diff/patch.ips      |  |  | reject:requires source |  |
+#
+# ============================================================================
+# Part C: --with bypass
+# ============================================================================
+bps        | ips32   | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
+ips        | bps     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --with
+bps        | bps     | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with

@@ -984,7 +984,7 @@ convertOverlay os target desc includeUndo includeValidation =
       intRecs = overlayToIntPairs (osRecords os)
   in case target of
     CfmtIPS     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeIPS (overlayToIntPairs rs) (osTruncate os), notes)
-    CfmtIPS32   -> Right (IPS.encodeIPS32 intRecs (osTruncate os), notes)
+    CfmtIPS32   -> Right (IPS.encodeIPS32 (splitOverlay 0xFFFF intRecs) (osTruncate os), notes)
     CfmtEBP     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeEBP (overlayToIntPairs rs) (resolveDesc desc (osEBPMeta os) (osDescription os) ""), notes)
     CfmtPPF3    -> convertToPPF3 os desc includeUndo includeValidation notes
     CfmtNINJA1  -> Right (NINJA1.encodeNINJA1 intRecs (osSourceCRC os) (osSourceMD5 os) (osSourceSHA1 os), notes)
@@ -1037,6 +1037,16 @@ splitOverlayI64 maxSize = concatMap split1
       | otherwise =
           let (h, t) = BS.splitAt maxSize dat
           in (off, h) : split1 (off + fromIntegral maxSize, t)
+
+-- | Split (Int, ByteString) pairs so each data chunk is ≤ maxSize bytes.
+splitOverlay :: Int -> [(Int, BS.ByteString)] -> [(Int, BS.ByteString)]
+splitOverlay maxSize = concatMap split1
+  where
+    split1 (off, dat)
+      | BS.length dat <= maxSize = [(off, dat)]
+      | otherwise =
+          let (h, t) = BS.splitAt maxSize dat
+          in (off, h) : split1 (off + maxSize, t)
 
 ----------------------------------------------------------------------------
 -- Overlay helpers
