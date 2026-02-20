@@ -124,7 +124,7 @@ replicate it in every format.
 
 ## Testing
 
-Three test harnesses, 212 tests total:
+Three test harnesses, 227 tests total:
 
 **`test/run.sh`** — Apply tests (91 tests). Each `.suite` file in
 `test/suites/` is a declarative manifest: header (base ROM path,
@@ -132,14 +132,14 @@ expected SHA256) followed by pipe-delimited patch lines with format
 name, patch path, confidence level (gold/verified/untested/broken),
 and provenance. Applies each patch to the base ROM, checks SHA256.
 
-**`test/roundtrip.sh`** — Round-trip tests (66 tests). Validates
+**`test/roundtrip.sh`** — Round-trip tests (72 tests). Validates
 create, undo, convert, info, and explain. Bootstraps target files
 from existing BPS patches, then round-trips through all create
 formats. Tests UPS self-inverse undo, PPF3 undo-with-create,
 IPS↔IPS32 direct conversion, and info/explain smoke tests including
 PMSR/Yay0 `.mod` files.
 
-**`test/flags.sh`** — Flag and error path tests (55 tests). Covers
+**`test/flags.sh`** — Flag and error path tests (64 tests). Covers
 corrupt/invalid input, `--dry-run`, `--force`/CRC mismatch,
 `--in-place`/`--no-backup`, output collision, `--verbose`, undo
 error paths, convert error paths, compound flag combinations,

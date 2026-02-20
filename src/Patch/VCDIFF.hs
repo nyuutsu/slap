@@ -53,8 +53,11 @@ data VCDIFFWindow = VCDIFFWindow
   } deriving (Show)
 
 data VCDIFFPatch = VCDIFFPatch
-  { vcdHeader  :: VCDIFFHeader
-  , vcdWindows :: [VCDIFFWindow]
+  { vcdHeader    :: VCDIFFHeader
+  , vcdWindows   :: [VCDIFFWindow]
+  , vcdCodeTable :: Array Word8 CodeEntry  -- default or custom
+  , vcdNearSize  :: Int                    -- 4 by default
+  , vcdSameSize  :: Int                    -- 3 by default
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -90,33 +93,39 @@ defaultCodeTable = listArray (0, 255) $
 ----------------------------------------------------------------------------
 
 data AddrCache = AddrCache
-  { acNear     :: !(Array Int (IORef Int64))  -- 4 near slots
-  , acSame     :: !(Array Int (IORef Int64))  -- 256*3 same slots
-  , acNearNext :: !(IORef Int)                -- round-robin index
+  { acNear     :: !(Array Int (IORef Int64))
+  , acSame     :: !(Array Int (IORef Int64))
+  , acNearNext :: !(IORef Int)
+  , acNearSize :: !Int
+  , acSameSize :: !Int
   }
 
-nearSize, sameSize :: Int
-nearSize = 4
-sameSize = 3
+defaultNearSize, defaultSameSize :: Int
+defaultNearSize = 4
+defaultSameSize = 3
 
-newAddrCache :: IO AddrCache
-newAddrCache = do
-  near <- mapM (\_ -> newIORef 0) [0..nearSize-1]
-  same <- mapM (\_ -> newIORef 0) [0..sameSize*256-1]
+newAddrCache :: Int -> Int -> IO AddrCache
+newAddrCache nSz sSz = do
+  near <- mapM (\_ -> newIORef 0) [0..nSz-1]
+  same <- mapM (\_ -> newIORef 0) [0..sSz*256-1]
   nxt  <- newIORef 0
   pure AddrCache
-    { acNear     = listArray (0, nearSize-1) near
-    , acSame     = listArray (0, sameSize*256-1) same
+    { acNear     = listArray (0, max 0 nSz - 1) near
+    , acSame     = listArray (0, max 0 (sSz * 256) - 1) same
     , acNearNext = nxt
+    , acNearSize = nSz
+    , acSameSize = sSz
     }
 
 updateCache :: AddrCache -> Int64 -> IO ()
 updateCache ac addr = do
-  idx <- readIORef (acNearNext ac)
-  writeIORef (acNear ac ! idx) addr
-  writeIORef (acNearNext ac) ((idx + 1) `mod` nearSize)
-  let sameIdx = fromIntegral addr `mod` (sameSize * 256)
-  writeIORef (acSame ac ! sameIdx) addr
+  when (acNearSize ac > 0) $ do
+    idx <- readIORef (acNearNext ac)
+    writeIORef (acNear ac ! idx) addr
+    writeIORef (acNearNext ac) ((idx + 1) `mod` acNearSize ac)
+  when (acSameSize ac > 0) $ do
+    let sameIdx = fromIntegral addr `mod` (acSameSize ac * 256)
+    writeIORef (acSame ac ! sameIdx) addr
 
 -- | Decode an address given the mode, current "here" position,
 --   and a function to read from the address stream.
@@ -137,7 +146,7 @@ decodeAddr ac mode here addrPosRef addrBs
       let addr = here - v
       updateCache ac addr
       pure addr
-  | mode < nearSize + 2 = do
+  | mode < acNearSize ac + 2 = do
       -- Near mode
       pos <- readIORef addrPosRef
       let (v, n) = getVcdiffVarint pos addrBs
@@ -151,20 +160,95 @@ decodeAddr ac mode here addrPosRef addrBs
       pos <- readIORef addrPosRef
       let byte = fromIntegral (BS.index addrBs pos) :: Int
       writeIORef addrPosRef (pos + 1)
-      let sameIdx = (mode - nearSize - 2) * 256 + byte
+      let sameIdx = (mode - acNearSize ac - 2) * 256 + byte
       addr <- readIORef (acSame ac ! sameIdx)
       updateCache ac addr
       pure addr
+
+----------------------------------------------------------------------------
+-- Code table serialization (RFC 3284 §7)
+----------------------------------------------------------------------------
+
+-- Instruction type encoding: Noop=0, Add=1, Run=2, Copy=3
+instType :: VCDInst -> Word8
+instType VcdNoop       = 0
+instType (VcdAdd _)    = 1
+instType (VcdRun _)    = 2
+instType (VcdCopy _ _) = 3
+
+instSize :: VCDInst -> Word8
+instSize VcdNoop       = 0
+instSize (VcdAdd s)    = fromIntegral s
+instSize (VcdRun s)    = fromIntegral s
+instSize (VcdCopy s _) = fromIntegral s
+
+instMode :: VCDInst -> Word8
+instMode (VcdCopy _ m) = fromIntegral m
+instMode _             = 0
+
+-- | Serialize the default code table to 1536 bytes (6 × 256):
+--   types1 ++ types2 ++ sizes1 ++ sizes2 ++ modes1 ++ modes2
+serializedDefaultTable :: ByteString
+serializedDefaultTable = BS.pack $
+  map (instType . fst . (defaultCodeTable !)) [0..255]
+  ++ map (instType . snd . (defaultCodeTable !)) [0..255]
+  ++ map (instSize . fst . (defaultCodeTable !)) [0..255]
+  ++ map (instSize . snd . (defaultCodeTable !)) [0..255]
+  ++ map (instMode . fst . (defaultCodeTable !)) [0..255]
+  ++ map (instMode . snd . (defaultCodeTable !)) [0..255]
+
+deserializeCodeTable :: ByteString -> Either String (Array Word8 CodeEntry)
+deserializeCodeTable bs
+  | BS.length bs /= 1536 = Left $ "code table must be 1536 bytes, got " ++ show (BS.length bs)
+  | otherwise = do
+      entries <- mapM mkEntry [0..255]
+      pure $ listArray (0, 255) entries
+  where
+    mkEntry :: Int -> Either String CodeEntry
+    mkEntry i = (,) <$> mkInst (at i) (at (512+i)) (at (1024+i))
+                    <*> mkInst (at (256+i)) (at (768+i)) (at (1280+i))
+    at = BS.index bs
+    mkInst :: Word8 -> Word8 -> Word8 -> Either String VCDInst
+    mkInst 0 _ _ = Right VcdNoop
+    mkInst 1 s _ = Right (VcdAdd (fromIntegral s))
+    mkInst 2 s _ = Right (VcdRun (fromIntegral s))
+    mkInst 3 s m = Right (VcdCopy (fromIntegral s) (fromIntegral m))
+    mkInst t _ _ = Left ("invalid instruction type in code table: " ++ show t)
+
+-- | Decode a custom code table from the header's code table data.
+--   Format: near_size (1 byte), same_size (1 byte), then a VCDIFF delta
+--   (using default table) that transforms serializedDefaultTable into the
+--   custom table.
+decodeCustomTable :: ByteString -> Either String (Array Word8 CodeEntry, Int, Int)
+decodeCustomTable bs = do
+  when (BS.length bs < 2) $ Left "custom code table data too short"
+  let near = fromIntegral (BS.index bs 0) :: Int
+      same = fromIntegral (BS.index bs 1) :: Int
+      deltaBytes = BS.drop 2 bs
+  inner <- parseVCDIFF' False deltaBytes
+  customSerialized <- applyVCDIFF inner serializedDefaultTable
+  tbl <- deserializeCodeTable customSerialized
+  pure (tbl, near, same)
 
 ----------------------------------------------------------------------------
 -- Parsing
 ----------------------------------------------------------------------------
 
 parseVCDIFF :: ByteString -> Either String VCDIFFPatch
-parseVCDIFF bs
+parseVCDIFF = parseVCDIFF' True
+
+parseVCDIFF' :: Bool -> ByteString -> Either String VCDIFFPatch
+parseVCDIFF' allowCustom bs
   | BS.length bs < 5 = Left "too short for VCDIFF header"
   | BS.take 3 bs /= "\xd6\xc3\xc4" = Left "not a VCDIFF file (bad magic)"
-  | otherwise = runGet parseHeader bs
+  | otherwise = do
+      (mTableBytes, hdr, wins) <- runGet parseHeader bs
+      case mTableBytes of
+        Nothing -> Right (VCDIFFPatch hdr wins defaultCodeTable
+                                      defaultNearSize defaultSameSize)
+        Just tableBytes -> do
+          (tbl, near, same) <- decodeCustomTable tableBytes
+          Right (VCDIFFPatch hdr wins tbl near same)
   where
     parseHeader = do
       skip 3  -- magic
@@ -177,19 +261,20 @@ parseVCDIFF bs
       compId <- if hasCompressor
         then Just <$> getByte
         else pure Nothing
-      -- Skip optional code table
-      when hasCodeTable $ do
-        tableLen <- fromIntegral <$> vcdiffVarint
-        skip tableLen
+      mTableBytes <- if hasCodeTable
+        then do
+          when (not allowCustom) $
+            failGet "nested custom code tables are not allowed"
+          tableLen <- fromIntegral <$> vcdiffVarint
+          Just <$> getBytes tableLen
+        else pure Nothing
       -- Skip optional application data (xdelta3 extension)
       when (testBit hdrIndicator 2) $ do
         appLen <- fromIntegral <$> vcdiffVarint
         skip appLen
-      when hasCodeTable $
-        failGet "custom code tables are not supported"
       let hdr = VCDIFFHeader version compId hasCodeTable
       wins <- parseWindows (version == 0x53)
-      pure (VCDIFFPatch hdr wins)
+      pure (mTableBytes, hdr, wins)
 
     parseWindows isXd3 = do
       done <- atEnd
@@ -257,12 +342,16 @@ parseVCDIFF bs
 applyVCDIFF :: VCDIFFPatch -> ByteString -> Either String ByteString
 applyVCDIFF patch source =
   let totalSize = sum (map vcdTargetLen (vcdWindows patch))
+      ct = vcdCodeTable patch
+      nSz = vcdNearSize patch
+      sSz = vcdSameSize patch
   in Right $ unsafeCreate (fromIntegral totalSize) $ \outPtr -> do
        globalOutRef <- newIORef (0 :: Int)
-       mapM_ (applyWindow source outPtr globalOutRef (fromIntegral totalSize)) (vcdWindows patch)
+       mapM_ (applyWindow ct nSz sSz source outPtr globalOutRef (fromIntegral totalSize)) (vcdWindows patch)
 
-applyWindow :: ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
-applyWindow source outPtr globalOutRef totalTgtLen win = do
+applyWindow :: Array Word8 CodeEntry -> Int -> Int
+            -> ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
+applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
   globalOut <- readIORef globalOutRef
   let tgtLen = fromIntegral (vcdTargetLen win) :: Int
       srcSegLen = fromIntegral (vcdSourceLen win) :: Int
@@ -274,7 +363,7 @@ applyWindow source outPtr globalOutRef totalTgtLen win = do
   -- As we build target bytes, they get appended to form the full "source window + target" space.
   -- We read source bytes from the segment, and target bytes from what we've written so far.
 
-  ac <- newAddrCache
+  ac <- newAddrCache nSz sSz
   addRunPosRef <- newIORef (0 :: Int)
   instPosRef   <- newIORef (0 :: Int)
   addrPosRef   <- newIORef (0 :: Int)
@@ -360,7 +449,7 @@ applyWindow source outPtr globalOutRef totalTgtLen win = do
         case mb of
           Nothing -> pure ()
           Just code -> do
-            let (inst1, inst2) = defaultCodeTable ! code
+            let (inst1, inst2) = codeTable ! code
             executeInst inst1
             executeInst inst2
             loop
@@ -400,7 +489,9 @@ vcdiffInfo p = unlines $ filter (not . null)
       Nothing -> ""
       Just c  -> "compressor:  " ++ show c
     codeTableStr
-      | vcdHasCodeTable (vcdHeader p) = "code table:  custom"
+      | vcdHasCodeTable (vcdHeader p) =
+          "code table:  custom (near=" ++ show (vcdNearSize p)
+          ++ ", same=" ++ show (vcdSameSize p) ++ ")"
       | otherwise = ""
     totalTargetStr =
       let total = sum (map vcdTargetLen (vcdWindows p))

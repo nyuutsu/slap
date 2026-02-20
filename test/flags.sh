@@ -739,6 +739,51 @@ run_ips_truncate() {
 }
 
 ############################################################################
+# VCDIFF custom code table
+############################################################################
+
+run_custom_codetable() {
+  [[ -z "$FILTER" || "custom-codetable" == *"$FILTER"* ]] || return 0
+  echo "--- VCDIFF custom code table ---"
+
+  # Hand-crafted 42-byte VCDIFF with custom code table (RFC 3284 §7).
+  # Custom table = default entries but near_size=5, same_size=2.
+  # Inner VCDIFF is an identity delta (COPY 1536 bytes from serialized default).
+  # Outer patch: source "AABBCCDD" → target "AABBCCDDEE" (COPY 8 + ADD 2).
+  local patch; patch=$(mktmp)
+  # Outer header: magic, version=0, hdr_ind=02 (code table), table_data_len=22
+  # Code table data: near=5, same=2, then 20-byte inner VCDIFF identity delta
+  printf '\xd6\xc3\xc4\x00\x02\x16\x05\x02' > "$patch"
+  printf '\xd6\xc3\xc4\x00\x00\x01\x8c\x00\x00\x0a' >> "$patch"
+  printf '\x8c\x00\x00\x00\x03\x01\x13\x8c\x00\x00' >> "$patch"
+  # Outer window: VCD_SOURCE, src_len=8, src_pos=0, delta_len=10
+  # Delta: tgt_sz=10, delta_ind=0, add_run=2, inst=2, addr=1
+  # Data: "EE", instructions: COPY 8 mode 0 (entry 24) + ADD 2 (entry 3), addr: 0
+  printf '\x01\x08\x00\x0a\x0a\x00\x02\x02\x01\x45\x45\x18\x03\x00' >> "$patch"
+
+  local source; source=$(mktmp)
+  printf 'AABBCCDD' > "$source"
+
+  # Info should show custom code table with near=5, same=2
+  expect_ok "info custom code table" "custom (near=5, same=2)" "$SLAP" info "$patch"
+
+  # Apply should produce "AABBCCDDEE"
+  local result; result=$(mktmp)
+  if "$SLAP" apply "$patch" "$source" -o "$result" --force 2>/dev/null; then
+    local got; got=$(cat "$result")
+    if [ "$got" = "AABBCCDDEE" ]; then
+      ok "apply custom code table"
+    else
+      bad "apply custom code table" "expected 'AABBCCDDEE', got '$got'"
+    fi
+  else
+    bad "apply custom code table" "apply failed"
+  fi
+
+  echo ""
+}
+
+############################################################################
 # Main
 ############################################################################
 
@@ -763,6 +808,7 @@ run_undo_output
 run_archive
 run_convert_with
 run_ips_truncate
+run_custom_codetable
 
 echo "passed: $pass  failed: $fail  skipped: $skip"
 [ "$fail" -eq 0 ] || exit 1
