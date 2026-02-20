@@ -19,16 +19,15 @@ module Patch.Yay0 (isYay0, decompressYay0) where
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (testBit, shiftL, shiftR, (.&.), (.|.))
+import Control.Monad (forM_)
 import Data.IORef
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (poke, peekByteOff, pokeByteOff)
 
--- | Check if bytes start with Yay0 magic.
 isYay0 :: BS.ByteString -> Bool
 isYay0 bs = BS.length bs >= 16 && BS.take 4 bs == "Yay0"
 
--- | Decompress Yay0-compressed data to raw bytes.
 decompressYay0 :: BS.ByteString -> Either String BS.ByteString
 decompressYay0 bs
   | BS.length bs < 16 = Left "Yay0: truncated header"
@@ -86,7 +85,7 @@ decompressYay0 bs
                       extra <- nextChunk
                       pure (fromIntegral extra + 0x12 :: Int)
                     else pure (countField + 2)
-                  copyBack ptr out dist count 0
+                  copyBack ptr out dist count
                   writeIORef outRef (out + count)
                   loop
 
@@ -100,12 +99,9 @@ decompressYay0 bs
     linkOff    = r32 8
     chunkOff   = r32 12
 
--- | Copy bytes from earlier in the output buffer (back-reference).
 -- Must be byte-by-byte because source and destination can overlap.
-copyBack :: Ptr Word8 -> Int -> Int -> Int -> Int -> IO ()
-copyBack ptr out dist count i
-  | i >= count = pure ()
-  | otherwise = do
-      val <- peekByteOff ptr (out - dist + i) :: IO Word8
-      pokeByteOff ptr (out + i) val
-      copyBack ptr out dist count (i + 1)
+copyBack :: Ptr Word8 -> Int -> Int -> Int -> IO ()
+copyBack ptr out dist count =
+  forM_ [0..count-1] $ \i -> do
+    val <- peekByteOff ptr (out - dist + i) :: IO Word8
+    pokeByteOff ptr (out + i) val

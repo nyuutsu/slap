@@ -36,7 +36,6 @@ data UPSPatch = UPSPatch
   , upsPatchCRC   :: Word32
   } deriving (Show)
 
--- | Parse a UPS patch from raw bytes.
 parseUPS :: ByteString -> Either String UPSPatch
 parseUPS bs
   | BS.length bs < 4 = Left "too short for UPS header"
@@ -88,8 +87,7 @@ parseBlocks = do
         then pure (BS.pack (reverse acc))
         else collectXor (b : acc)
 
--- | Apply a UPS patch to source, producing target.
--- The caller is responsible for checksum validation.
+-- Caller is responsible for checksum validation.
 applyUPS :: UPSPatch -> ByteString -> ByteString
 applyUPS patch source =
   let tgtSize = fromIntegral (upsTargetSize patch)
@@ -110,11 +108,7 @@ applyBlocks (UPSBlock skip xorBytes : rest) source pos =
       unchanged = byteString (BS.take (fromIntegral skip) (BS.drop pos source))
       -- XOR the patch bytes with source bytes at skipEnd
       xorLen = BS.length xorBytes
-      xored = BS.pack
-        [ BS.index source (skipEnd + i) `xor` BS.index xorBytes i
-        | i <- [0..xorLen-1]
-        , skipEnd + i < BS.length source
-        ]
+      xored = BS.packZipWith xor (BS.take xorLen (BS.drop skipEnd source)) xorBytes
       -- Pad if XOR extends beyond source
       extraXor = if skipEnd + xorLen > BS.length source
                  then byteString (BS.drop (BS.length source - skipEnd) xorBytes)
@@ -128,7 +122,6 @@ applyBlocks (UPSBlock skip xorBytes : rest) source pos =
   in unchanged <> byteString xored <> extraXor <> termByte
      <> applyBlocks rest source (termPos + 1)
 
--- | Human-readable summary of a UPS patch.
 upsInfo :: UPSPatch -> String
 upsInfo p = unlines $ filter (not . null)
   [ "format:      UPS"
@@ -144,7 +137,6 @@ upsInfo p = unlines $ filter (not . null)
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a UPS patch by XOR-diffing two byte strings.
 createUPS :: ByteString -> ByteString -> ByteString
 createUPS orig modified =
   let srcCRC = crc32 orig

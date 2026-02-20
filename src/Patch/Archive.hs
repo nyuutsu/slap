@@ -54,7 +54,6 @@ fmtStr ArchiveZIP = "ZIP"
 fmtStr ArchiveRAR = "RAR"
 fmtStr Archive7z  = "7z"
 
--- | Is this entry a candidate (not chaff, not a directory)?
 isCandidate :: String -> Bool
 isCandidate name
   | "/" `isSuffixOf` name = False
@@ -121,7 +120,6 @@ parse7zList = map (drop 5) . filter ("Path=" `isPrefixOf`) . lines
 -- Extraction
 ----------------------------------------------------------------------------
 
--- | Extract a single entry to a temp directory, read it, clean up.
 extractEntry :: ArchiveFormat -> FilePath -> String -> IO (Either String (ByteString, String))
 extractEntry fmt archivePath entryName = do
   (tmpFile, h) <- openBinaryTempFile "/tmp" "slap-archive"

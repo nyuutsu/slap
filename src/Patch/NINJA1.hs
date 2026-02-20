@@ -24,6 +24,7 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Char (toLower)
 import Data.Int (Int64)
+import Data.Maybe (fromMaybe)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 import System.IO
@@ -288,7 +289,6 @@ romTypeName' n  = "unknown (" ++ show n ++ ")"
 -- Create (binary subformat, no hashes)
 ----------------------------------------------------------------------------
 
--- | Create a NINJA1 binary patch from original and modified ByteStrings.
 createNINJA1 :: BS.ByteString -> BS.ByteString -> BS.ByteString
 createNINJA1 old new =
   encodeNINJA1 (diffHunks old new) Nothing Nothing Nothing
@@ -302,9 +302,9 @@ encodeNINJA1 :: [(Int, BS.ByteString)]
 encodeNINJA1 recs srcCRC srcMD5 srcSHA1 = BL.toStrict $ toLazyByteString $
     byteString "NINJA1B "        -- magic + subformat
     <> word8 0                   -- ROM type: RAW
-    <> putWord32BE (maybe 0 id srcCRC)
-    <> byteString (maybe (BS.replicate 16 0) id srcMD5)
-    <> byteString (maybe (BS.replicate 20 0) id srcSHA1)
+    <> putWord32BE (fromMaybe 0 srcCRC)
+    <> byteString (fromMaybe (BS.replicate 16 0) srcMD5)
+    <> byteString (fromMaybe (BS.replicate 20 0) srcSHA1)
     <> foldMap encodeRecord recs
     <> word8 3 <> byteString "EOF"     -- EOF sentinel
 

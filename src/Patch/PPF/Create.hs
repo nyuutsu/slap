@@ -8,9 +8,8 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 
--- | Create a PPF3 patch by comparing an original file with a modified file.
 createPatch :: FilePath -> FilePath -> String -> Bool -> Bool -> IO ByteString
 createPatch origPath modPath desc includeUndo includeValidation = do
   origBs <- BS.readFile origPath
@@ -28,13 +27,11 @@ createPatchPure origBs modBs desc includeUndo includeValidation =
       overlayRecs = map (\(off, new, _) -> (off, new)) records
   in encodePPF3 overlayRecs desc undoTriples valBlock
 
--- | Pad or truncate a description to exactly 50 bytes.
 padDescription :: String -> ByteString
 padDescription s =
   let bs = BC.pack (take 50 s)
   in bs <> BS.replicate (50 - BS.length bs) 0x20
 
--- | Build the PPF3 header.
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> Builder
 buildHeader desc blockCheck hasUndo valBlock =
   byteString "PPF30"                                    -- magic + version
@@ -46,7 +43,6 @@ buildHeader desc blockCheck hasUndo valBlock =
   <> word8 0x00                                          -- dummy
   <> if blockCheck then byteString valBlock else mempty  -- 1024-byte validation block
 
--- | Encode a single patch record as a Builder.
 encodeRecord :: Bool -> (Int64, ByteString, ByteString) -> Builder
 encodeRecord hasUndo (off, new, old) =
   int64LE off
@@ -108,7 +104,7 @@ encodePPF3 recs desc undoTriples valBlock =
       hasValidate = isJust valBlock
       hasUndo     = isJust undoTriples
       hdr         = buildHeader descBytes hasValidate hasUndo
-                      (maybe BS.empty id valBlock)
+                      (fromMaybe BS.empty valBlock)
       body = case undoTriples of
         Just trips -> foldMap (encodeRecord True) trips
         Nothing    -> foldMap encodeOverlayRecord recs

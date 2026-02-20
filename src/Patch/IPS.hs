@@ -48,7 +48,6 @@ data IPSPatch = IPSPatch
   , ipsCleanEOF  :: Bool              -- True if proper EOF/EEOF marker was found
   } deriving (Show)
 
--- | Parse an IPS or IPS32 patch from raw bytes.
 parseIPS :: ByteString -> Either String IPSPatch
 parseIPS bs
   | BS.take 5 bs == "PATCH" = runGet (skip 5 >> parseRecords StandardIPS 3 0x454F46) bs
@@ -134,7 +133,6 @@ applyRecords h = go 0
           BS.hPut h (BS.replicate count val)
       go (n + 1) rs
 
--- | Human-readable summary of an IPS patch.
 ipsInfo :: IPSPatch -> String
 ipsInfo p = unlines $ filter (not . null)
   [ "format:      " ++ case ipsVariant p of
@@ -281,11 +279,9 @@ encodeEBP recs desc = BL.toStrict $ toLazyByteString $
   <> byteString "EOF"
   <> byteString (ebpJson desc)
 
--- | Encode a truncation offset as a big-endian N-byte value.
 truncOffset :: Int -> Int64 -> Builder
 truncOffset w off = encodeOffset w (fromIntegral off)
 
--- | Build EBP JSON metadata.
 ebpJson :: String -> ByteString
 ebpJson d = BS8.pack $
   "{\"title\":\"\",\"author\":\"\",\"description\":\"" ++ escapeJson d ++ "\"}"

@@ -127,13 +127,11 @@ getVcdiffVarint off bs = go off 0
 -- Builders
 ----------------------------------------------------------------------------
 
--- | Write a 16-bit value in big-endian order.
 putWord16BE :: Int -> Builder
 putWord16BE n =
   word8 (fromIntegral ((n `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (n .&. 0xFF))
 
--- | Write a Word32 in little-endian order.
 putWord32LE :: Word32 -> Builder
 putWord32LE w =
   word8 (fromIntegral (w .&. 0xFF))
@@ -231,13 +229,11 @@ diffHunks old new = merge (go 0)
 -- Additional builders
 ----------------------------------------------------------------------------
 
--- | Write a Word16 in little-endian order.
 putWord16LE :: Word16 -> Builder
 putWord16LE w =
   word8 (fromIntegral (w .&. 0xFF))
   <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
 
--- | Write a Word32 in big-endian order.
 putWord32BE :: Word32 -> Builder
 putWord32BE w =
   word8 (fromIntegral (w `shiftR` 24))
@@ -245,7 +241,6 @@ putWord32BE w =
   <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (w .&. 0xFF))
 
--- | Write an Int64 in big-endian order.
 putInt64BE :: Int64 -> Builder
 putInt64BE w =
   word8 (fromIntegral (w `shiftR` 56))

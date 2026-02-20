@@ -192,7 +192,6 @@ dpsInfo p = unlines $ filter (not . null)
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a DPS patch from original and modified ByteStrings.
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
 createDPS :: ByteString -> ByteString -> ByteString

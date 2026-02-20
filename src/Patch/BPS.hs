@@ -42,7 +42,6 @@ data BPSPatch = BPSPatch
   , bpsPatchCRC   :: Word32
   } deriving (Show)
 
--- | Parse a BPS patch from raw bytes.
 parseBPS :: ByteString -> Either String BPSPatch
 parseBPS bs
   | BS.length bs < 4 = Left "too short for BPS header"
@@ -103,7 +102,7 @@ decodeSignedVarint v =
   let magnitude = shiftR v 1
   in if testBit v 0 then negate magnitude else magnitude
 
--- | Apply a BPS patch.  The caller validates checksums; this just applies.
+-- Caller validates checksums.
 applyBPS :: BPSPatch -> ByteString -> Either String ByteString
 applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
   go ptr 0 0 0 (bpsActions patch)
@@ -144,7 +143,6 @@ applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
           pokeByteOff ptr (outPos + i) b) [0..count-1]
         go ptr (outPos + count) srcRel (tgtRel' + fromIntegral count) rest
 
--- | Human-readable summary of a BPS patch.
 bpsInfo :: BPSPatch -> String
 bpsInfo p = unlines $ filter (not . null)
   [ "format:      BPS"

@@ -156,7 +156,6 @@ gdiffInfo p = unlines $ filter (not . null)
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a GDIFF patch from original and modified ByteStrings.
 -- Unchanged regions become COPY commands; changed regions become DATA commands.
 createGDIFF :: ByteString -> ByteString -> ByteString
 createGDIFF old new = BL.toStrict $ toLazyByteString $

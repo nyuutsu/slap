@@ -121,41 +121,40 @@ updateCache ac addr = do
 -- | Decode an address given the mode, current "here" position,
 --   and a function to read from the address stream.
 decodeAddr :: AddrCache -> Int -> Int64 -> IORef Int -> ByteString -> IO Int64
-decodeAddr ac mode here addrPosRef addrBs = do
-  if mode == 0 then do
-    -- Self mode: address is varint from address stream
-    pos <- readIORef addrPosRef
-    let (v, n) = getVcdiffVarint pos addrBs
-    writeIORef addrPosRef (pos + n)
-    let addr = v
-    updateCache ac addr
-    pure addr
-  else if mode == 1 then do
-    -- Here mode: here - varint
-    pos <- readIORef addrPosRef
-    let (v, n) = getVcdiffVarint pos addrBs
-    writeIORef addrPosRef (pos + n)
-    let addr = here - v
-    updateCache ac addr
-    pure addr
-  else if mode < nearSize + 2 then do
-    -- Near mode: near[mode-2] + varint
-    pos <- readIORef addrPosRef
-    let (v, n) = getVcdiffVarint pos addrBs
-    writeIORef addrPosRef (pos + n)
-    base <- readIORef (acNear ac ! (mode - 2))
-    let addr = base + v
-    updateCache ac addr
-    pure addr
-  else do
-    -- Same mode: same[(mode - nearSize - 2) * 256 + byte]
-    pos <- readIORef addrPosRef
-    let byte = fromIntegral (BS.index addrBs pos) :: Int
-    writeIORef addrPosRef (pos + 1)
-    let sameIdx = (mode - nearSize - 2) * 256 + byte
-    addr <- readIORef (acSame ac ! sameIdx)
-    updateCache ac addr
-    pure addr
+decodeAddr ac mode here addrPosRef addrBs
+  | mode == 0 = do
+      -- Self mode
+      pos <- readIORef addrPosRef
+      let (v, n) = getVcdiffVarint pos addrBs
+      writeIORef addrPosRef (pos + n)
+      updateCache ac v
+      pure v
+  | mode == 1 = do
+      -- Here mode
+      pos <- readIORef addrPosRef
+      let (v, n) = getVcdiffVarint pos addrBs
+      writeIORef addrPosRef (pos + n)
+      let addr = here - v
+      updateCache ac addr
+      pure addr
+  | mode < nearSize + 2 = do
+      -- Near mode
+      pos <- readIORef addrPosRef
+      let (v, n) = getVcdiffVarint pos addrBs
+      writeIORef addrPosRef (pos + n)
+      base <- readIORef (acNear ac ! (mode - 2))
+      let addr = base + v
+      updateCache ac addr
+      pure addr
+  | otherwise = do
+      -- Same mode
+      pos <- readIORef addrPosRef
+      let byte = fromIntegral (BS.index addrBs pos) :: Int
+      writeIORef addrPosRef (pos + 1)
+      let sameIdx = (mode - nearSize - 2) * 256 + byte
+      addr <- readIORef (acSame ac ! sameIdx)
+      updateCache ac addr
+      pure addr
 
 ----------------------------------------------------------------------------
 -- Parsing

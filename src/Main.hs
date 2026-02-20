@@ -1047,10 +1047,9 @@ resolveDesc :: String -> Maybe BS.ByteString -> Maybe BS.ByteString -> String ->
 resolveDesc cliDesc ebpMeta rawDesc def
   | not (null cliDesc) = cliDesc
   | Just meta <- ebpMeta = extractEBPDesc meta
-  | Just d <- rawDesc    = stripTrailing (BS8.unpack d)
+  | Just d <- rawDesc    = trimNulSpace (BS8.unpack d)
   | otherwise            = def
   where
-    stripTrailing = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
     -- Extract description from EBP JSON: {"title":"...","author":"...","description":"..."}
     extractEBPDesc bs = case BS8.unpack bs of
       s -> case dropWhile (/= ':') (snd (breakOn "description" s)) of
@@ -1083,7 +1082,7 @@ overlayWarnings os target = concat
     warnDesc = case osDescription os of
       Just d | target `notElem` [CfmtPPF3, CfmtAPSN64, CfmtEBP]
              , not (BS.all (\b -> b == 0x20 || b == 0) d) ->
-        ["note: dropping description: \"" ++ stripTrailing (BS8.unpack d) ++ "\""]
+        ["note: dropping description: \"" ++ trimNulSpace (BS8.unpack d) ++ "\""]
       _ -> []
     warnVal = case osValidation os of
       Just _ | target /= CfmtPPF3 ->
@@ -1105,9 +1104,7 @@ overlayWarnings os target = concat
       Just _ | target /= CfmtEBP ->
         ["note: dropping EBP metadata"]
       _ -> []
-    stripTrailing = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
 
--- | Hex-encode a ByteString.
 hexBS :: BS.ByteString -> String
 hexBS = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack
 
@@ -1208,10 +1205,12 @@ replaceFirst needle replacement haystack@(x:xs)
       replacement ++ drop (length needle) haystack
   | otherwise = x : replaceFirst needle replacement xs
 
--- | Print any warnings from a parsed patch.
 emitWarnings :: SomePatch -> IO ()
 emitWarnings sp = forM_ (spWarnings sp) $ \w ->
   hPutStrLn stderr ("slap: warning: " ++ spFormat sp ++ ": " ++ w)
+
+trimNulSpace :: String -> String
+trimNulSpace = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
 
 warn :: String -> IO ()
 warn msg = hPutStrLn stderr ("slap: warning: " ++ msg)

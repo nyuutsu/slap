@@ -38,7 +38,6 @@ data PMSRPatch = PMSRPatch
 -- Parsing
 ----------------------------------------------------------------------------
 
--- | Parse a PMSR patch from raw bytes.
 -- Format: 4 bytes "PMSR" magic, uint32BE record count,
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
@@ -72,7 +71,6 @@ parseRecords n acc = do
 -- Apply
 ----------------------------------------------------------------------------
 
--- | Apply a PMSR patch to a target file (seek-and-write, in place).
 applyPMSR :: PMSRPatch -> FilePath -> IO Int
 applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
   go h 0 (pmsrRecords patch)
@@ -87,11 +85,9 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a PMSR patch by diffing two byte strings.
 createPMSR :: ByteString -> ByteString -> ByteString
 createPMSR orig modified = encodePMSR (diffToRecordsPMSR orig modified)
 
--- | Encode pre-diffed records as a PMSR patch.
 encodePMSR :: [(Int, ByteString)] -> ByteString
 encodePMSR recs = BL.toStrict $ toLazyByteString $
     byteString "PMSR"
@@ -159,7 +155,6 @@ mergeNearby modBs ((off1, d1) : (off2, d2) : rest)
 -- Info
 ----------------------------------------------------------------------------
 
--- | Human-readable summary of a PMSR patch.
 pmsrInfo :: PMSRPatch -> String
 pmsrInfo p = unlines $ filter (not . null)
   [ "format:      PMSR (Paper Mario Star Rod)"
