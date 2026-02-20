@@ -124,30 +124,45 @@ replicate it in every format.
 
 ## Testing
 
-Three test harnesses, 227 tests total:
+Single runner (`test/run.sh`), 431 tests, modular architecture:
 
-**`test/run.sh`** — Apply tests (91 tests). Each `.suite` file in
-`test/suites/` is a declarative manifest: header (base ROM path,
-expected SHA256) followed by pipe-delimited patch lines with format
-name, patch path, confidence level (gold/verified/untested/broken),
-and provenance. Applies each patch to the base ROM, checks SHA256.
+**`test/run.sh`** — Entry point. Discovers and sources test modules
+from `test/tests/` in numeric order. Accepts optional binary path
+and filter: `bash test/run.sh "" convert`, `bash test/run.sh "" stadium2`.
 
-**`test/roundtrip.sh`** — Round-trip tests (72 tests). Validates
-create, undo, convert, info, and explain. Bootstraps target files
-from existing BPS patches, then round-trips through all create
-formats. Tests UPS self-inverse undo, PPF3 undo-with-create,
-IPS↔IPS32 direct conversion, and info/explain smoke tests including
-PMSR/Yay0 `.mod` files.
+**`test/lib.sh`** — Shared helpers: `ok`/`bad`/`skp` counters,
+`mktmp` (supports `SLAP_TMPDIR`), `sha`, `bootstrap` (apply a patch
+to create a target file), `verify_sha`, `expect_fail`/`expect_ok`/
+`expect_success`, `matches_filter`, `strip_comments`/`trim` for
+matrix file parsing.
 
-**`test/flags.sh`** — Flag and error path tests (64 tests). Covers
-corrupt/invalid input, `--dry-run`, `--force`/CRC mismatch,
-`--in-place`/`--no-backup`, output collision, `--verbose`, undo
-error paths, convert error paths, compound flag combinations,
-PPF3 `--undo --validate`, hidden aliases (`--yolo`, `--send-it`,
-`--clobber`), patch health warnings, empty diffs (identical files),
-undo with `-o` redirect, automated archive unwrapping (ZIP),
-convert with `--with` (apply-and-recreate path), and IPS truncation
-markers.
+Test modules in `test/tests/`:
+
+- **010-apply.sh** (91 tests) — Suite-driven. Each `.suite` file in
+  `test/suites/` is a declarative manifest: base ROM path + SHA256
+  header, then pipe-delimited patch lines (format, path, confidence,
+  provenance). Applies each patch, checks SHA256.
+- **020-create.sh** (15 tests) — Matrix-driven from
+  `test/matrix/create.txt`. Bootstraps targets from BPS patches,
+  round-trips through all 13 create formats.
+- **030-convert.sh** (70 tests) — Matrix-driven from
+  `test/matrix/convert.txt`. 50 pairwise overlay conversions,
+  PPF3 undo/validate gating, non-overlay rejection, `--with` bypass.
+- **040-undo.sh** (4 tests) — Matrix-driven from
+  `test/matrix/undo.txt`. UPS self-inverse, PPF3 committed undo data.
+- **050-smoke.sh** (202 tests) — Auto-discovered. Runs `info` and
+  `explain` on every patch file in `test/data/`.
+- **060-cli.sh** (49 tests) — Procedural. Corrupt input, `--dry-run`,
+  `--force`, `--in-place`/`--no-backup`, output collision, `--verbose`,
+  undo/convert error paths, compound flags, create flags, hidden
+  aliases (`--yolo`, `--send-it`, `--clobber`), health warnings,
+  empty diffs, undo with `-o`, archive unwrapping (ZIP), IPS
+  truncation markers, VCDIFF custom code tables.
+
+Matrix files (`test/matrix/*.txt`) are pipe-delimited with comment
+support. Each row specifies source format, target format, patch path,
+optional base ROM, expected SHA256, and result disposition (`accept`,
+`reject:message`, or `skip:reason`).
 
 Test data lives in `test/data/` — one directory per game, base ROM
 named `base.{ext}`, patches with clean names. Current coverage:
@@ -159,7 +174,7 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **paper-mario** — APS-N64 + IPS cross-val, 2 PMSR/Yay0 Star Rod `.mod` files
 - **11 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (5 PPF4 bugfixes), FE6 (IPS stress)
 
-Run all: `cabal build && bash test/run.sh && bash test/roundtrip.sh && bash test/flags.sh`
+Run all: `cabal build && bash test/run.sh`
 Filter: `bash test/run.sh "" dm4k`
 
 Base ROMs are gitignored; test patches are committed.

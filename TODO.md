@@ -3,7 +3,7 @@
 ## Features
 
 - [x] **`convert` command** — Convert between patch formats
-  - Direct conversion (no ROM needed) for offset+data formats that share the same representation: IPS ↔ IPS32
+  - Overlay→overlay direct conversion (no ROM needed) for all overlay formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR)
   - Re-delta conversion (`slap convert patch.bps --to ups --with base.rom`) for formats that use different delta algorithms (BPS, UPS, bsdiff, VCDIFF, xdelta1)
   - Clear error message when user tries naked conversion on a format that requires the base ROM — explain *why* it's impossible
 
@@ -16,12 +16,9 @@
 - [ ] Git binary diff (`git diff --binary` output)
 - [ ] Unified diff / GNU patch format
 - [ ] HDiffPatch — https://github.com/sisong/HDiffPatch
-- [ ] librsync / rdiff
-- [ ] JojoDiff — https://jojodiff.sourceforge.net/
-- [ ] Courgette (Chrome update delta format)
-- [ ] Zucchini (Courgette successor)
-- [ ] Fossil delta
-- [ ] detools
+- [ ] librsync / rdiff — low priority, questionable scope (VCS/sync tool)
+- [ ] JojoDiff — https://jojodiff.sourceforge.net/ — low priority, questionable scope
+- [ ] detools — low priority, questionable scope (embedded/OTA update tool)
 
 ## Test Data Gaps
 
