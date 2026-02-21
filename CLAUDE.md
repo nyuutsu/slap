@@ -50,11 +50,11 @@ Format-specific types stay in their own module — `Patch.Types` holds
 only the `PatchFormat` enum for detection.
 
 `SomePatch` is a **closure-based existential** — a record of closures
-defined in `Main.hs`, not a sum type. `parseSome` is the single
+defined in `Patch.SomePatch`, not a sum type. `parseSome` is the single
 dispatch point: it parses raw bytes into format-specific types, then
 closes over them to produce a `SomePatch` carrying `spInfo`, `spExplain`,
 `spApply`, `spUndo`, `spDirectConvert`, etc. All consumers work through
-these fields. Adding format #12 means adding one block to `parseSome`;
+these fields. Adding a new format means adding one block to `parseSome`;
 nothing else changes.
 
 Shared infrastructure:
@@ -89,13 +89,19 @@ Shared infrastructure:
 Yay0-compressed PMSR is transparently decompressed in `parseSome`;
 info/explain output shows "PMSR/Yay0" to distinguish from raw PMSR.
 
-`Main.hs` is CLI parsing (optparse-applicative), `parseSome` dispatch,
-and uniform command handlers. Commands: apply, undo, create, convert,
-info, explain. Apply is safe by default (writes to derived output name,
-source file untouched); `--in-place` / `-i` opts into destructive mode
-with automatic `.bak` backup. Apply handles two strategies (`InPlace`
-for file-handle formats, `InMemory` for delta formats) through a
-single code path.
+`Patch.Overlay` holds the overlay conversion subsystem: `OverlaySource`,
+`OverlayRecord`, `convertOverlay`, `createFromMemory`, `overlayWarnings`,
+and the `extract*` functions that lift format-specific types into
+`OverlaySource`. `emptyOverlay` provides a default record with all
+optional fields set to `Nothing`; extract functions use record update
+syntax to set only the fields they carry.
+
+`Main.hs` is CLI parsing (optparse-applicative) and command handlers
+(apply, undo, create, convert, info, explain). Apply is safe by default
+(writes to derived output name, source file untouched); `--in-place` /
+`-i` opts into destructive mode with automatic `.bak` backup. Apply
+handles two strategies (`InPlace` for file-handle formats, `InMemory`
+for delta formats) through a single code path.
 
 Archive unwrapping is transparent: patch files are always unwrapped
 (ZIP/RAR/7z → inner patch); source/ROM files respect `--raw` to skip
@@ -118,13 +124,12 @@ semantically required.
 
 `Either String` for parse/apply errors. A proper error ADT would be
 over-engineering for a CLI tool where every error path ends in
-`hPutStrLn stderr` and `exitFailure`. The PPF module has a `ParseError`
-ADT from the early days; that's fine, but don't feel obligated to
-replicate it in every format.
+`hPutStrLn stderr` and `exitFailure`.
 
 ## Testing
 
-Single runner (`test/run.sh`), 431 tests, modular architecture:
+Single runner (`test/run.sh`), 470 integration tests + 29 QuickCheck
+properties, modular architecture:
 
 **`test/run.sh`** — Entry point. Discovers and sources test modules
 from `test/tests/` in numeric order. Accepts optional binary path
@@ -145,9 +150,15 @@ Test modules in `test/tests/`:
 - **020-create.sh** (15 tests) — Matrix-driven from
   `test/matrix/create.txt`. Bootstraps targets from BPS patches,
   round-trips through all 13 create formats.
-- **030-convert.sh** (70 tests) — Matrix-driven from
-  `test/matrix/convert.txt`. 50 pairwise overlay conversions,
-  PPF3 undo/validate gating, non-overlay rejection, `--with` bypass.
+- **025-crossval.sh** (11 tests) — Cross-validation: slap create →
+  external tool apply → SHA256 verify. 9 formats via Flips
+  (IPS/BPS/UPS) and RomPatcher.js (EBP/PPF3/APS-N64/APS-GBA/RUP/PMSR).
+- **030-convert.sh** — Matrix-driven from `test/matrix/convert.txt`.
+  Pairwise overlay conversions, PPF3 undo/validate gating, non-overlay
+  rejection, `--with` bypass, size-change rows.
+- **035-metadata.sh** — Metadata round-trip fidelity for self-conversions
+  (PPF3→PPF3, NINJA1→NINJA1, APS-N64→APS-N64, EBP→EBP). Parses
+  `slap info` output and compares specific metadata fields.
 - **040-undo.sh** (4 tests) — Matrix-driven from
   `test/matrix/undo.txt`. UPS self-inverse, PPF3 committed undo data.
 - **050-smoke.sh** (202 tests) — Auto-discovered. Runs `info` and
@@ -174,7 +185,13 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **paper-mario** — APS-N64 + IPS cross-val, 2 PMSR/Yay0 Star Rod `.mod` files
 - **11 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (5 PPF4 bugfixes), FE6 (IPS stress)
 
-Run all: `cabal build && bash test/run.sh`
+QuickCheck property tests in `test/Props.hs` (tasty + tasty-quickcheck):
+13 round-trip properties (`create → parse → apply = identity`, one per
+create format) and 16 truncation properties (truncate a valid patch to
+random length, verify parser returns `Left` without crashing). Run via
+`cabal test`.
+
+Run all: `cabal build && bash test/run.sh && cabal test`
 Filter: `bash test/run.sh "" dm4k`
 
 Base ROMs are gitignored; test patches are committed.

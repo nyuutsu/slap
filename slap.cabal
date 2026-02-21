@@ -33,6 +33,7 @@ library slap-internal
     , Patch.GDIFF
     , Patch.IPS
     , Patch.Overlay
+    , Patch.PCHTXT
     , Patch.PMSR
     , Patch.RUP
     , Patch.SomePatch

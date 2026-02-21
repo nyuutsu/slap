@@ -497,6 +497,21 @@ run_custom_codetable() {
 }
 
 ############################################################################
+# PCHTXT detection with leading single-slash comments
+############################################################################
+
+run_pchtxt_detect() {
+  matches_filter "pchtxt-detect" || return 0
+  echo "--- PCHTXT detection (single-slash comments) ---"
+
+  local patch; patch=$(mktmp)
+  printf '/ block comment\n/ another line\n@enabled\n00000000 FF\n' > "$patch"
+  expect_ok "pchtxt-detect/single-slash before directive" "PCHTXT" "$SLAP" info "$patch"
+
+  echo ""
+}
+
+############################################################################
 # Run all CLI tests
 ############################################################################
 
@@ -516,3 +531,4 @@ run_undo_output
 run_archive
 run_ips_truncate
 run_custom_codetable
+run_pchtxt_detect

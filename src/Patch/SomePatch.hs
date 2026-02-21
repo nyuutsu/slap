@@ -9,7 +9,7 @@ import Patch.Types (PatchFormat(..))
 import Patch.Detect (detectFormat)
 import Patch.Format (padHex)
 import Patch.Overlay (OverlaySource, extractIPS, extractPPF, extractNINJA1,
-                      extractPMSR, extractAPSN64)
+                      extractPMSR, extractPCHTXT, extractAPSN64)
 import qualified Patch.PPF.Types as PPF
 import qualified Patch.PPF.Parse as PPF
 import qualified Patch.PPF.Apply as PPF
@@ -24,6 +24,7 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PMSR as PMSR
+import qualified Patch.PCHTXT as PCHTXT
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.Explain as Explain
@@ -368,6 +369,26 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spDirectConvert  = Just (extractPMSR p)
+      }
+
+  Just FmtPCHTXT -> do
+    p <- PCHTXT.parsePCHTXT bs
+    let entries = concatMap PCHTXT.pchtxtBlockEntries
+                    (filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p))
+    Right SomePatch
+      { spFormat         = "PCHTXT"
+      , spInfo           = PCHTXT.pchtxtInfo p
+      , spExplain        = Explain.explainPCHTXT p
+      , spIsDifferential = False
+      , spApply          = InPlace $ \fp -> PCHTXT.applyPCHTXT p fp >> pure ()
+      , spUndo           = Nothing
+      , spVerboseLines   = numbered entries $ \e ->
+          "Write " ++ show (BS.length (PCHTXT.pchtxtData e)) ++ " bytes at 0x"
+          ++ padHex 8 (PCHTXT.pchtxtOffset e)
+      , spWarnings       = ["empty patch (0 entries)" | null entries]
+      , spRecordCount    = length entries
+      , spRecordUnit     = "entries"
+      , spDirectConvert  = Just (extractPCHTXT p)
       }
 
 ----------------------------------------------------------------------------

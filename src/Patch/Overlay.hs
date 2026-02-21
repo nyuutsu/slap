@@ -7,6 +7,7 @@ module Patch.Overlay
   , extractPPF
   , extractNINJA1
   , extractPMSR
+  , extractPCHTXT
   , extractAPSN64
   , splitOverlay
   , convertOverlay
@@ -27,6 +28,7 @@ import qualified Patch.GDIFF as GDIFF
 import qualified Patch.PMSR as PMSR
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
+import qualified Patch.PCHTXT as PCHTXT
 import Patch.Format (showCRC, padHex)
 
 import qualified Data.ByteString as BS
@@ -42,7 +44,7 @@ import Data.Word (Word32)
 
 data CreateFormat
   = CfmtBPS | CfmtIPS | CfmtIPS32 | CfmtEBP | CfmtUPS | CfmtPPF3 | CfmtPMSR
-  | CfmtNINJA1 | CfmtDPS | CfmtRUP | CfmtAPSN64 | CfmtAPSGBA | CfmtGDIFF
+  | CfmtNINJA1 | CfmtDPS | CfmtRUP | CfmtAPSN64 | CfmtAPSGBA | CfmtGDIFF | CfmtPCHTXT
   deriving (Show, Eq)
 
 -- | Overlay record: offset + replacement bytes.
@@ -105,6 +107,14 @@ extractPMSR :: PMSR.PMSRPatch -> OverlaySource
 extractPMSR p = emptyOverlay
   (map (\r -> OverlayRecord (PMSR.pmsrOffset r) (PMSR.pmsrData r)) (PMSR.pmsrRecords p))
 
+extractPCHTXT :: PCHTXT.PCHTXTPatch -> OverlaySource
+extractPCHTXT p = (emptyOverlay recs)
+  { osDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p }
+  where
+    recs = concatMap blockToRecs (filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p))
+    blockToRecs block = map (\e -> OverlayRecord (PCHTXT.pchtxtOffset e) (PCHTXT.pchtxtData e))
+                            (PCHTXT.pchtxtBlockEntries block)
+
 extractAPSN64 :: APS.APSN64Header -> [APS.APSN64Record] -> OverlaySource
 extractAPSN64 hdr recs = (emptyOverlay (map expandAPS recs))
   { osDescription = Just (APS.n64Description hdr)
@@ -135,6 +145,7 @@ convertOverlay os target desc includeUndo includeValidation =
     CfmtPPF3    -> convertToPPF3 os desc includeUndo includeValidation notes
     CfmtNINJA1  -> Right (NINJA1.encodeNINJA1 intRecs (osSourceCRC os) (osSourceMD5 os) (osSourceSHA1 os), notes)
     CfmtPMSR    -> Right (PMSR.encodePMSR intRecs, notes)
+    CfmtPCHTXT  -> Right (PCHTXT.encodePCHTXT intRecs (osDescription os), notes)
     CfmtAPSN64  -> case osDestSize os <|> osFileSize os of
                      Just sz -> Right (APS.encodeAPSN64 intRecs sz (resolveDesc desc Nothing (osDescription os) (replicate 50 ' ')), notes)
                      Nothing -> Left "converting to APS (N64) requires target file size\nuse --with SOURCE to compute it"
@@ -204,6 +215,7 @@ createFromMemory CfmtRUP    src tgt _ _ _ = Right (RUP.createRUP src tgt)
 createFromMemory CfmtAPSN64 src tgt _ _ _ = Right (APS.createAPSN64 src tgt)
 createFromMemory CfmtAPSGBA src tgt _ _ _ = Right (APS.createAPSGBA src tgt)
 createFromMemory CfmtGDIFF  src tgt _ _ _ = Right (GDIFF.createGDIFF src tgt)
+createFromMemory CfmtPCHTXT src tgt _ _ _ = Right (PCHTXT.createPCHTXT src tgt)
 
 ----------------------------------------------------------------------------
 -- Overlay helpers
@@ -251,7 +263,7 @@ overlayWarnings os target = concat
         ["note: dropping source SHA1: " ++ hexBS sha1]
       _ -> []
     warnDesc = case osDescription os of
-      Just d | target `notElem` [CfmtPPF3, CfmtAPSN64, CfmtEBP]
+      Just d | target `notElem` [CfmtPPF3, CfmtAPSN64, CfmtEBP, CfmtPCHTXT]
              , not (BS.all (\b -> b == 0x20 || b == 0) d) ->
         ["note: dropping description: \"" ++ trimNulSpace (BS8.unpack d) ++ "\""]
       _ -> []
@@ -300,6 +312,7 @@ fmtExt CfmtRUP    = ".rup"
 fmtExt CfmtAPSN64 = ".aps"
 fmtExt CfmtAPSGBA = ".aps"
 fmtExt CfmtGDIFF  = ".gdiff"
+fmtExt CfmtPCHTXT = ".pchtxt"
 
 fmtName :: CreateFormat -> String
 fmtName CfmtBPS    = "BPS"
@@ -315,3 +328,4 @@ fmtName CfmtRUP    = "RUP"
 fmtName CfmtAPSN64 = "APS (N64)"
 fmtName CfmtAPSGBA = "APS (GBA)"
 fmtName CfmtGDIFF  = "GDIFF"
+fmtName CfmtPCHTXT = "PCHTXT"

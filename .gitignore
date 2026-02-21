@@ -11,6 +11,8 @@ dist-newstyle/
 *.smc
 *.nds
 *.gb
+*.gbc
+*.nso
 *.bin
 *.iso
 *.img

@@ -142,3 +142,30 @@ bps        | ips     | test/data/emerald/size-change/patch.bps     | test/data/e
 bps        | ebp     | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      |          | reject:16 MB                     |  | --with
 bps        | ips32   | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      | 8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03 | accept |  | --with
 bps        | ppf3    | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      | 8706b59e57aeb18872b214d792e341ceece9451cd4b47dfe29982fe2f3262a03 | accept |  | --with --no-undo --no-validate
+#
+# ============================================================================
+# Part E: PCHTXT conversions
+# ============================================================================
+#
+# --- PCHTXT as target (dm4k, 4 MB GBC) ---
+ips        | pchtxt  | test/data/dm4k/patch.ips                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept |  |
+ips32      | pchtxt  | test/data/dm4k/patch.ips32                  | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept |  |
+ebp        | pchtxt  | test/data/dm4k/patch.ebp                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping EBP metadata |
+ppf3       | pchtxt  | test/data/dm4k/patch.ppf                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping.*validation,dropping undo |
+aps-n64    | pchtxt  | test/data/dm4k/patch.aps                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept |  |
+#
+# --- PCHTXT as target (emerald NINJA1, 16 MB GBA) ---
+ninja1     | pchtxt  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+#
+# --- PCHTXT as target (paper-mario PMSR/Yay0, 40 MB N64) ---
+pmsr       | pchtxt  | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
+#
+# --- PCHTXT as source (ipswitch-splat310, offsets > 16 MB) ---
+pchtxt     | ips     | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:offsets > 16 MB |  |
+pchtxt     | ips32   | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
+pchtxt     | ebp     | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:offsets > 16 MB |  |
+pchtxt     | ppf3    | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept |  | --no-undo --no-validate
+pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
+pchtxt     | pmsr    | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
+pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept |  |
+pchtxt     | aps-n64 | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:requires target file |  |

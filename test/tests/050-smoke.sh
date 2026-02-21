@@ -23,7 +23,8 @@ _run_smoke() {
                    "$REPO"/test/data/**/*.rup.rup \
                    "$REPO"/test/data/**/*.aps.aps \
                    "$REPO"/test/data/**/*.aps \
-                   "$REPO"/test/data/**/*.ninja1; do
+                   "$REPO"/test/data/**/*.ninja1 \
+                   "$REPO"/test/data/**/*.pchtxt; do
     [ -f "$patchfile" ] || continue
     relpath="${patchfile#$REPO/}"
 

@@ -15,6 +15,7 @@ import qualified Patch.PPF.Apply as PPF
 import qualified Patch.VCDIFF as VCDIFF
 import qualified Patch.BSDiff as BSDiff
 import qualified Patch.XDelta1 as XDelta1
+import qualified Patch.PCHTXT as PCHTXT
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -64,6 +65,9 @@ main = defaultMain $ testGroup "Properties"
   , testGroup "GDIFF"
       [ testProperty "round-trip" prop_gdiff
       , testProperty "parse-truncated" prop_gdiffTrunc ]
+  , testGroup "PCHTXT"
+      [ testProperty "round-trip" prop_pchtxt
+      , testProperty "parse-truncated" prop_pchtxtTrunc ]
   , testGroup "VCDIFF"
       [ testProperty "parse-truncated" prop_vcdiffTrunc ]
   , testGroup "BSDiff"
@@ -224,6 +228,16 @@ prop_rup = forAll genPair $ \(src, tgt) ->
          result <- applyViaFile RUP.applyRUP p src
          pure $ result === tgt
 
+-- PCHTXT: pure overlay, no truncation
+prop_pchtxt :: Property
+prop_pchtxt = forAll genPairNoShrink $ \(src, tgt) ->
+  let patch = PCHTXT.createPCHTXT src tgt
+  in case PCHTXT.parsePCHTXT patch of
+       Left err -> counterexample ("parse: " ++ err) $ property False
+       Right p  -> ioProperty $ do
+         result <- applyViaFile PCHTXT.applyPCHTXT p src
+         pure $ result === tgt
+
 -- APS-N64: pure overlay, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
@@ -305,6 +319,10 @@ prop_apsGbaTrunc = forAll genPair $ \(src, tgt) ->
 prop_gdiffTrunc :: Property
 prop_gdiffTrunc = forAll genPair $ \(src, tgt) ->
   truncated GDIFF.parseGDIFF (GDIFF.createGDIFF src tgt)
+
+prop_pchtxtTrunc :: Property
+prop_pchtxtTrunc = forAll genPairNoShrink $ \(src, tgt) ->
+  truncated PCHTXT.parsePCHTXT (PCHTXT.createPCHTXT src tgt)
 
 ----------------------------------------------------------------------------
 -- Consume-only formats: truncation on real test data

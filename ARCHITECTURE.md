@@ -5,35 +5,40 @@
 ## Module Map
 
 ```
+app/
+  Main.hs                  303 lines   CLI parsing, command handlers
 src/
-  Main.hs                 1229 lines   CLI, closure-based dispatch, overlay conversion
   Patch/
+    SomePatch.hs           310 lines   SomePatch existential, ApplyStrategy, parseSome dispatch
+    Overlay.hs             261 lines   OverlaySource, conversion, createFromMemory
     Types.hs                 5 lines   PatchFormat enum
     Detect.hs               31 lines   Magic-byte detection → PatchFormat
-    Binary.hs              263 lines   Shared primitives: endian readers, varints, CRC32, memcpy
-    Get.hs                 180 lines   Pure parser monad (position-threading over strict ByteString)
+    Binary.hs              ~280 lines  Shared primitives: endian readers, varints, CRC32, memcpy, mergeNearby
+    Get.hs                 ~185 lines  Pure parser monad (position-threading over strict ByteString)
     Format.hs               61 lines   Display helpers: hex padding, CRC formatting, hex dumps
     Explain.hs             422 lines   Record-by-record textual dumps for all formats
     Archive.hs             195 lines   ZIP/RAR/7z detection + single-entry extraction
-    IPS.hs                 344 lines   IPS + IPS32 + EBP: parse, apply, create, info
-    BPS.hs                 231 lines   BPS: parse, apply (unsafeCreate + memcpy), create, info
+    IPS.hs                 ~340 lines  IPS + IPS32 + EBP: parse, apply, create, info
+    BPS.hs                 ~240 lines  BPS: parse, apply (unsafeCreate + memcpy), create, info
     UPS.hs                 200 lines   UPS: parse, apply (packZipWith xor), create, info
-    VCDIFF.hs              501 lines   VCDIFF/xdelta3: parse, apply (unsafeCreate), info
-    BSDiff.hs              139 lines   BSDiff/BDF: parse, apply + external bspatch fallback, info
+    VCDIFF.hs              ~510 lines  VCDIFF/xdelta3: parse, apply (unsafeCreate), info
+    BSDiff.hs              ~150 lines  BSDiff/BDF: parse, apply + safe bzip2 decompress, info
     GDIFF.hs               211 lines   W3C GDIFF: parse, apply (unsafeCreate), create, info
-    XDelta1.hs             214 lines   xdelta v1.1: parse, gzip decompress, apply (unsafeCreate), info
+    XDelta1.hs             ~220 lines  xdelta v1.1: parse, gzip decompress, apply (unsafeCreate), info
     APS.hs                 330 lines   APS N64 (type 0+1) + GBA: parse, apply, create, info
-    RUP.hs                 290 lines   RUP/NINJA2: parse, apply, create, info
+    RUP.hs                 ~300 lines  RUP/NINJA2: parse, apply, create, info
     DPS.hs                 233 lines   DPS: parse, apply, create, info
     NINJA1.hs              327 lines   NINJA1 (B/BZ/T/TZ): parse, apply, create, info
     PMSR.hs                176 lines   Paper Mario Star Rod: parse, apply, create, info
     Yay0.hs                107 lines   Nintendo LZSS decompression for Star Rod .mod files
     PPF/
-      Types.hs              66 lines   PPF types (Patch, Record, Version, ParseError)
-      Parse.hs             166 lines   PPF 1/2/3/4 parser
+      Types.hs             ~50 lines   PPF types (Patch, Record, Version)
+      Parse.hs             ~170 lines  PPF 1/2/3/4 parser
       Apply.hs              68 lines   PPF apply + undo
       Create.hs            118 lines   PPF3 create (IO wrapper + pure core)
       Info.hs               66 lines   PPF info display
+test/
+  Props.hs                 335 lines   QuickCheck: 13 round-trip + 16 truncation properties
 ```
 
 ## Data Flow
@@ -74,9 +79,11 @@ data SomePatch = SomePatch
 
 data ApplyStrategy
   = InPlace (FilePath -> IO ())
-  | InMemory (BS.ByteString -> IO (Either String BS.ByteString))
-             (Maybe Word32)   -- source CRC
-             (Maybe Word32)   -- target CRC
+  | InMemory
+      { imApply     :: BS.ByteString -> IO (Either String BS.ByteString)
+      , imSourceCRC :: Maybe Word32
+      , imTargetCRC :: Maybe Word32
+      }
 
 data UndoStrategy
   = UndoInPlace (FilePath -> IO (Either String Int))
@@ -128,18 +135,14 @@ diffs, while application reconstructs a known-size target buffer.
 
 **Either String for errors.** Every error path ends in `hPutStrLn
 stderr` and `exitFailure`. A structured error ADT would add type
-safety that no consumer benefits from. The PPF module has a
-`ParseError` ADT from early development; it works fine but isn't
-replicated elsewhere.
+safety that no consumer benefits from.
 
-**Single-runner modular testing.** `test/run.sh` sources modules from
-`test/tests/` in numeric order: suite-driven apply (91 tests),
-matrix-driven create/convert/undo (89 tests), auto-discovered
-info+explain smoke (202 tests), procedural CLI tests (49 tests).
-431 tests total. Declarative matrix files (`test/matrix/*.txt`)
-define round-trip and conversion test cases. No Haskell test
-framework — the tool's correctness is defined by producing the
-right bytes, and `sha256sum` is the authority on that.
+**Two-layer testing.** Integration tests (`test/run.sh`, 470 tests)
+use SHA256 verification against real patches and external tools.
+Property tests (`test/Props.hs`, 29 QuickCheck properties) test
+round-trip correctness and parser robustness with random data.
+Declarative matrix files (`test/matrix/*.txt`) define round-trip,
+conversion, and cross-validation test cases.
 
 ## Format Support Matrix
 

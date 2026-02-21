@@ -12,6 +12,7 @@ module Patch.Explain
   , explainPMSR
   , explainDPS
   , explainNINJA1
+  , explainPCHTXT
   ) where
 
 import qualified Patch.PPF.Types as PPF
@@ -27,6 +28,7 @@ import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PMSR as PMSR
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
+import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
 
@@ -419,4 +421,41 @@ showN1Record n (NINJA1.NINJA1Record off dat) =
   padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
   ++ "  at 0x" ++ padHex 6 off
   ++ "\n" ++ hexDump dat
+
+----------------------------------------------------------------------------
+-- PCHTXT
+----------------------------------------------------------------------------
+
+explainPCHTXT :: PCHTXT.PCHTXTPatch -> String
+explainPCHTXT p = unlines $
+  [ "format:      PCHTXT (Nintendo Switch)"
+  ] ++ nsobidLine
+  ++ [ "blocks:      " ++ show (length (PCHTXT.pchtxtBlocks p))
+     , ""
+     ]
+  ++ concatMap showBlock (zip [1..] (PCHTXT.pchtxtBlocks p))
+  ++ [summary]
+  where
+    nsobidLine = case PCHTXT.pchtxtNsobid p of
+      Just nso -> ["nsobid:      " ++ nso]
+      Nothing  -> []
+    enabledEntries = concatMap PCHTXT.pchtxtBlockEntries
+                       (filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p))
+    totalBytes = sum (map (BS.length . PCHTXT.pchtxtData) enabledEntries)
+    summary = show (length enabledEntries) ++ " enabled entries, "
+              ++ show totalBytes ++ " bytes total"
+
+    showBlock :: (Int, PCHTXT.PCHTXTBlock) -> [String]
+    showBlock (n, block) =
+      let status = if PCHTXT.pchtxtBlockEnabled block then "enabled" else "disabled"
+          desc = maybe "" (" -- " ++) (PCHTXT.pchtxtBlockDesc block)
+      in ("block " ++ show n ++ " (" ++ status ++ ")" ++ desc)
+         : map showEntry (PCHTXT.pchtxtBlockEntries block)
+         ++ [""]
+
+    showEntry :: PCHTXT.PCHTXTEntry -> String
+    showEntry e =
+      "    " ++ padHex 8 (PCHTXT.pchtxtOffset e) ++ "  Write  "
+      ++ padR 10 (show (BS.length (PCHTXT.pchtxtData e)) ++ " B")
+      ++ "\n" ++ hexDump (PCHTXT.pchtxtData e)
 

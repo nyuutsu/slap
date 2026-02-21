@@ -152,7 +152,7 @@ undoParser = CmdUndo
 createParser :: Parser Command
 createParser = CmdCreate
   <$> option (eitherReader parseCfmt) (long "format" <> metavar "FMT" <> value CfmtBPS
-      <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
+      <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
   <*> rawFlag
   <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
@@ -166,7 +166,7 @@ convertParser :: Parser Command
 convertParser = CmdConvert
   <$> argument str (metavar "PATCH" <> help "Patch file to convert")
   <*> option (eitherReader parseCfmt) (long "to" <> short 't' <> metavar "FMT"
-      <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
+      <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
   <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
       <> help "Output file (default: replace input extension)"))
   <*> optional (option str (long "with" <> metavar "SOURCE"
@@ -196,7 +196,8 @@ parseCfmt s = case map toLower s of
   "aps-gba" -> Right CfmtAPSGBA
   "apsgba"  -> Right CfmtAPSGBA
   "gdiff"   -> Right CfmtGDIFF
-  _ -> Left ("unknown format: " ++ s ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff")
+  "pchtxt"  -> Right CfmtPCHTXT
+  _ -> Left ("unknown format: " ++ s ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
 
 patchInfoParser :: Parser Command
 patchInfoParser = CmdInfo
