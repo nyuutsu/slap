@@ -8,7 +8,6 @@ import Patch.Binary (getWord16LE, getWord32LE, getInt64LE)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
-import Data.List (unfoldr)
 
 -- | Parse a PPF patch file from raw bytes.
 parsePatch :: ByteString -> Either String Patch
@@ -34,13 +33,14 @@ detectVersion bs
 parsePPF1 :: ByteString -> Either String Patch
 parsePPF1 bs = do
   requireLen 56 "PPF1 header" bs
+  recs <- parseRecords32 (BS.drop 56 bs)
   Right Patch
     { patchVersion     = PPF1
     , patchDescription = BS.take 50 (BS.drop 6 bs)
     , patchFileSize    = Nothing
     , patchValidation  = Nothing
     , patchHasUndo     = False
-    , patchRecords     = parseRecords32 (BS.drop 56 bs)
+    , patchRecords     = recs
     , patchFileId      = Nothing
     }
 
@@ -50,13 +50,14 @@ parsePPF2 bs = do
   requireLen 1084 "PPF2 header" bs
   let fid  = detectFileId getWord32LE 4 bs
       body = stripFileId 4 fid (BS.drop 1084 bs)
+  recs <- parseRecords32 body
   Right Patch
     { patchVersion     = PPF2
     , patchDescription = BS.take 50 (BS.drop 6 bs)
     , patchFileSize    = Just (getWord32LE 56 bs)
     , patchValidation  = Just (Validation BIN (BS.take 1024 (BS.drop 60 bs)))
     , patchHasUndo     = False
-    , patchRecords     = parseRecords32 body
+    , patchRecords     = recs
     , patchFileId      = fid
     }
 
@@ -77,13 +78,14 @@ parsePPF3 bs = do
         else Nothing
       fid  = detectFileId getWord16LE 2 bs
       body = stripFileId 2 fid (BS.drop headerSize bs)
+  recs <- parseRecords64 hasUndo body
   Right Patch
     { patchVersion     = PPF3
     , patchDescription = BS.take 50 (BS.drop 6 bs)
     , patchFileSize    = Nothing
     , patchValidation  = validation
     , patchHasUndo     = hasUndo
-    , patchRecords     = parseRecords64 hasUndo body
+    , patchRecords     = recs
     , patchFileId      = fid
     }
 
@@ -93,56 +95,69 @@ parsePPF3 bs = do
 parsePPF4 :: ByteString -> Either String Patch
 parsePPF4 bs = do
   requireLen 60 "PPF4 header" bs
+  recs <- parseRecords4 (BS.drop 60 bs)
   Right Patch
     { patchVersion     = PPF4
     , patchDescription = BS.take 50 (BS.drop 6 bs)
     , patchFileSize    = Nothing
     , patchValidation  = Nothing
     , patchHasUndo     = False
-    , patchRecords     = parseRecords4 (BS.drop 60 bs)
+    , patchRecords     = recs
     , patchFileId      = Nothing
     }
 
 -- Parse PPF1/PPF2 records (4-byte offset, 1-byte count, N bytes data).
-parseRecords32 :: ByteString -> [Record]
-parseRecords32 = unfoldr step
+parseRecords32 :: ByteString -> Either String [Record]
+parseRecords32 = go []
   where
-    step bs
-      | BS.length bs < 5 = Nothing
+    go acc bs
+      | BS.length bs < 5 = Right (reverse acc)
+      | 5 + count > BS.length bs =
+          Left ("truncated PPF1/2 record: need " ++ show count
+                ++ " data bytes, have " ++ show (BS.length bs - 5))
       | otherwise =
-          let off   = fromIntegral (getWord32LE 0 bs) :: Int64
-              count = fromIntegral (BS.index bs 4) :: Int
-          in Just ( Record off (BS.take count (BS.drop 5 bs)) Nothing Replace
-                  , BS.drop (5 + count) bs )
+          go (Record off (BS.take count (BS.drop 5 bs)) Nothing Replace : acc)
+             (BS.drop (5 + count) bs)
+      where
+        off   = fromIntegral (getWord32LE 0 bs) :: Int64
+        count = fromIntegral (BS.index bs 4) :: Int
 
 -- Parse PPF3 records (8-byte offset, 1-byte count, N bytes data, optional undo).
-parseRecords64 :: Bool -> ByteString -> [Record]
-parseRecords64 hasUndo = unfoldr step
+parseRecords64 :: Bool -> ByteString -> Either String [Record]
+parseRecords64 hasUndo = go []
   where
-    step bs
-      | BS.length bs < 9 = Nothing
+    go acc bs
+      | BS.length bs < 9 = Right (reverse acc)
+      | need > BS.length bs =
+          Left ("truncated PPF3 record: need " ++ show need
+                ++ " bytes, have " ++ show (BS.length bs))
       | otherwise =
-          let off   = getInt64LE 0 bs
-              count = fromIntegral (BS.index bs 8) :: Int
-              dat   = BS.take count (BS.drop 9 bs)
-              undo  = if hasUndo
-                      then Just (BS.take count (BS.drop (9 + count) bs))
-                      else Nothing
-              skip  = 9 + count + if hasUndo then count else 0
-          in Just (Record off dat undo Replace, BS.drop skip bs)
+          go (Record off dat undo Replace : acc) (BS.drop need bs)
+      where
+        off   = getInt64LE 0 bs
+        count = fromIntegral (BS.index bs 8) :: Int
+        dat   = BS.take count (BS.drop 9 bs)
+        undo  = if hasUndo
+                then Just (BS.take count (BS.drop (9 + count) bs))
+                else Nothing
+        need  = 9 + count + if hasUndo then count else 0
 
 -- Parse PPF4 records (1-byte cmd, 4-byte offset, 1-byte count, N bytes data).
-parseRecords4 :: ByteString -> [Record]
-parseRecords4 = unfoldr step
+parseRecords4 :: ByteString -> Either String [Record]
+parseRecords4 = go []
   where
-    step bs
-      | BS.length bs < 6 = Nothing
+    go acc bs
+      | BS.length bs < 6 = Right (reverse acc)
+      | 6 + count > BS.length bs =
+          Left ("truncated PPF4 record: need " ++ show count
+                ++ " data bytes, have " ++ show (BS.length bs - 6))
       | otherwise =
-          let cmd   = if BS.index bs 0 == 1 then Append else Replace
-              off   = fromIntegral (getWord32LE 1 bs) :: Int64
-              count = fromIntegral (BS.index bs 5) :: Int
-          in Just ( Record off (BS.take count (BS.drop 6 bs)) Nothing cmd
-                  , BS.drop (6 + count) bs )
+          go (Record off (BS.take count (BS.drop 6 bs)) Nothing cmd : acc)
+             (BS.drop (6 + count) bs)
+      where
+        cmd   = if BS.index bs 0 == 1 then Append else Replace
+        off   = fromIntegral (getWord32LE 1 bs) :: Int64
+        count = fromIntegral (BS.index bs 5) :: Int
 
 -- File_ID.diz detection, parameterised by length-field reader and width.
 detectFileId :: (Integral a) => (Int -> ByteString -> a) -> Int -> ByteString -> Maybe FileId

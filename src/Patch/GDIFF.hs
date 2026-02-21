@@ -101,7 +101,7 @@ parseGDIFF bs
                   len <- fromIntegral <$> word32BE
                   parseCmds (GDiffCopy off len : acc)
 
-        _ -> error "unreachable"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
+        _ -> fail "impossible GDIFF opcode"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
 
 cmdOutSize :: GDiffCmd -> Int64
 cmdOutSize (GDiffData d)    = fromIntegral (BS.length d)

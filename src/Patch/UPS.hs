@@ -11,7 +11,8 @@ module Patch.UPS
   ) where
 
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32)
-import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd)
+import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
+import Control.Monad (when)
 import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
@@ -67,6 +68,8 @@ parseUPSBody :: Get (Int64, Int64, [UPSBlock])
 parseUPSBody = do
   srcSize <- byuuVarint
   tgtSize <- byuuVarint
+  when (srcSize < 0) $ failGet "UPS: negative source size"
+  when (tgtSize < 0) $ failGet "UPS: negative target size"
   blocks  <- parseBlocks
   pure (srcSize, tgtSize, blocks)
 

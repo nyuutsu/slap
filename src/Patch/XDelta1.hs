@@ -27,6 +27,8 @@ import Foreign.Ptr (Ptr)
 import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
 import qualified Codec.Compression.GZip as GZip
+import Control.Exception (SomeException, try, evaluate)
+import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -75,7 +77,10 @@ parseV11 :: ByteString -> ByteString -> Either String XDelta1Patch
 parseV11 bs expectedMagic
   | totalLen < 44 = Left "xdelta1: file too short"
   | trailingMagic /= expectedMagic = Left "xdelta1: trailing magic mismatch"
-  | otherwise = parseControl ctrlSeg dataSeg fromName toName
+  | otherwise = do
+      dataSeg' <- safeDecompressGZip dataSegRaw
+      ctrlSeg' <- safeDecompressGZip ctrlSegRaw
+      parseControl ctrlSeg' dataSeg' fromName toName
   where
     totalLen = BS.length bs
 
@@ -97,13 +102,19 @@ parseV11 bs expectedMagic
     compressed = testBit flags 3
     dataSegRaw = BS.take (controlOff - headerOff) (BS.drop headerOff bs)
     ctrlSegRaw = BS.take (trailerOff - controlOff) (BS.drop controlOff bs)
-    dataSeg = if compressed then decompressGzip dataSegRaw else dataSegRaw
-    ctrlSeg = if compressed then decompressGzip ctrlSegRaw else ctrlSegRaw
 
-decompressGzip :: ByteString -> ByteString
-decompressGzip bs
-  | BS.null bs = BS.empty
-  | otherwise  = BL.toStrict $ GZip.decompress $ BL.fromStrict bs
+    safeDecompressGZip raw
+      | not compressed = Right raw
+      | BS.null raw    = Right BS.empty
+      | otherwise      = unsafePerformIO $ do
+          result <- try @SomeException $ evaluate $ BL.toStrict $
+                      BL.take maxDecompressedSize $
+                      GZip.decompress $ BL.fromStrict raw
+          pure $ case result of
+            Left e  -> Left ("xdelta1: gzip decompression failed: " ++ show e)
+            Right d -> Right d
+
+    maxDecompressedSize = 4 * 1024 * 1024 * 1024 :: Int64  -- 4 GiB
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
 parseControl :: ByteString -> ByteString -> ByteString -> ByteString
@@ -168,6 +179,7 @@ fixSequentialOffsets sources = reverse . snd . foldl' step (initPos, [])
 applyXDelta1 :: XDelta1Patch -> ByteString -> Either String ByteString
 applyXDelta1 patch _source
   | xd1ToLen patch == 0 = Right BS.empty
+  | xd1ToLen patch < 0  = Left "xdelta1: negative target size"
 applyXDelta1 patch source = Right $ unsafeCreate sz $ \ptr ->
     go ptr 0 (xd1Instructions patch)
   where
@@ -184,8 +196,14 @@ applyXDelta1 patch source = Right $ unsafeCreate sz $ \ptr ->
                   else source
           off = fromIntegral (xd1InstOffset inst)
           len = fromIntegral (xd1InstLength inst) :: Int
-      copyBSRange ptr pos srcBs off len
-      go ptr (pos + len) rest
+          -- Clamp to remaining output buffer
+          safeLen = max 0 $ min len (sz - pos)
+          -- Clamp source read to available data
+          srcSafeLen = if off >= 0 && off < BS.length srcBs
+                       then min safeLen (BS.length srcBs - off)
+                       else 0
+      copyBSRange ptr pos srcBs off srcSafeLen
+      go ptr (pos + safeLen) rest
 
 ----------------------------------------------------------------------------
 -- Info
@@ -211,4 +229,3 @@ xdelta1Info p = unlines $ filter (not . null)
         ++ (if xd1SrcSequential s then " seq" else "")
         ++ "  " ++ show (xd1SrcLen s) ++ " bytes"
       | (i, s) <- zip [(0::Int)..] (xd1Sources p) ]
-

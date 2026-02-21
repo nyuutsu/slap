@@ -83,17 +83,21 @@ getByte = Get $ \bs pos ->
   else Left ("getByte: offset " ++ show pos ++ " out of bounds (length " ++ show (BS.length bs) ++ ")")
 
 getBytes :: Int -> Get ByteString
-getBytes n = Get $ \bs pos ->
-  if pos + n <= BS.length bs
-  then Right (BS.take n (BS.drop pos bs), pos + n)
-  else Left ("getBytes: need " ++ show n ++ " bytes at offset " ++ show pos ++ " but only " ++ show (BS.length bs - pos) ++ " available")
+getBytes n
+  | n < 0     = Get $ \_ _ -> Left ("getBytes: negative length " ++ show n)
+  | otherwise = Get $ \bs pos ->
+      if pos + n <= BS.length bs
+      then Right (BS.take n (BS.drop pos bs), pos + n)
+      else Left ("getBytes: need " ++ show n ++ " bytes at offset " ++ show pos ++ " but only " ++ show (BS.length bs - pos) ++ " available")
 
 skip :: Int -> Get ()
-skip n = Get $ \bs pos ->
-  let pos' = pos + n
-  in if pos' <= BS.length bs
-     then Right ((), pos')
-     else Left ("skip: offset " ++ show pos' ++ " out of bounds")
+skip n
+  | n < 0     = Get $ \_ _ -> Left ("skip: negative count " ++ show n)
+  | otherwise = Get $ \bs pos ->
+      let pos' = pos + n
+      in if pos' <= BS.length bs
+         then Right ((), pos')
+         else Left ("skip: offset " ++ show pos' ++ " out of bounds")
 
 getPosition :: Get Int
 getPosition = Get $ \_ pos -> Right (pos, pos)
@@ -171,10 +175,12 @@ vcdiffVarint = liftReadV getVcdiffVarint
 edsioVarint :: Get Int64
 edsioVarint = go 0 0
   where
-    go acc shift = do
-      byte <- getByte
-      let val = fromIntegral (byte .&. 0x7F) :: Int64
-          acc' = acc .|. (val `shiftL` shift)
-      if testBit byte 7
-        then go acc' (shift + 7)
-        else pure acc'
+    go acc shift
+      | shift > 63 = fail "edsioVarint: too many continuation bytes"
+      | otherwise = do
+          byte <- getByte
+          let val = fromIntegral (byte .&. 0x7F) :: Int64
+              acc' = acc .|. (val `shiftL` shift)
+          if testBit byte 7
+            then go acc' (shift + 7)
+            else pure acc'

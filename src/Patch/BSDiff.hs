@@ -20,6 +20,8 @@ import Patch.Binary (copyBSRange)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
+import Control.Exception (SomeException, try, evaluate)
+import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -57,6 +59,25 @@ getOffT off bs =
      else magnitude
 
 ----------------------------------------------------------------------------
+-- Safe decompression
+----------------------------------------------------------------------------
+
+-- | Decompress bzip2 data with exception handling and size cap.
+-- Prevents decompression bombs and catches malformed bzip2 streams.
+maxDecompressedSize :: Int64
+maxDecompressedSize = 4 * 1024 * 1024 * 1024  -- 4 GiB
+
+safeDecompressBZip :: String -> ByteString -> Either String ByteString
+safeDecompressBZip _     compressed | BS.null compressed = Right BS.empty
+safeDecompressBZip label compressed = unsafePerformIO $ do
+  result <- try @SomeException $ evaluate $ BL.toStrict $
+              BL.take maxDecompressedSize $
+              BZip.decompress $ BL.fromStrict compressed
+  pure $ case result of
+    Left e  -> Left ("bsdiff: " ++ label ++ " decompression failed: " ++ show e)
+    Right d -> Right d
+
+----------------------------------------------------------------------------
 -- Parsing
 ----------------------------------------------------------------------------
 
@@ -65,22 +86,22 @@ parseBSDiff bs
   | BS.length bs < 32 = Left "too short for bsdiff header"
   | BS.take 8 bs /= "BSDIFF40" = Left "not a bsdiff file (bad magic)"
   | ctrlSz < 0 || diffSz < 0 || newSz < 0 = Left "negative size in bsdiff header"
-  | otherwise =
-      let ctrlOff  = 32
-          diffOff  = 32 + fromIntegral ctrlSz
-          extraOff = diffOff + fromIntegral diffSz
-          ctrlCompressed  = BS.take (fromIntegral ctrlSz) (BS.drop ctrlOff bs)
-          diffCompressed  = BS.take (fromIntegral diffSz) (BS.drop diffOff bs)
-          extraCompressed = BS.drop extraOff bs
-          ctrlData  = BL.toStrict $ BZip.decompress $ BL.fromStrict ctrlCompressed
-          diffData  = BL.toStrict $ BZip.decompress $ BL.fromStrict diffCompressed
-          extraData = BL.toStrict $ BZip.decompress $ BL.fromStrict extraCompressed
-          controls  = parseControls ctrlData
-      in Right (BSDiffPatch ctrlSz diffSz newSz controls diffData extraData)
+  | otherwise = do
+      ctrlData  <- safeDecompressBZip "control" ctrlCompressed
+      diffData  <- safeDecompressBZip "diff" diffCompressed
+      extraData <- safeDecompressBZip "extra" extraCompressed
+      let controls = parseControls ctrlData
+      Right (BSDiffPatch ctrlSz diffSz newSz controls diffData extraData)
   where
     ctrlSz = getOffT 8 bs
     diffSz = getOffT 16 bs
     newSz  = getOffT 24 bs
+    ctrlOff  = 32
+    diffOff  = 32 + fromIntegral ctrlSz
+    extraOff = diffOff + fromIntegral diffSz
+    ctrlCompressed  = BS.take (fromIntegral ctrlSz) (BS.drop ctrlOff bs)
+    diffCompressed  = BS.take (fromIntegral diffSz) (BS.drop diffOff bs)
+    extraCompressed = BS.drop extraOff bs
 
 parseControls :: ByteString -> [BSDiffControl]
 parseControls bs
@@ -96,28 +117,36 @@ parseControls bs
 applyBSDiff :: BSDiffPatch -> ByteString -> Either String ByteString
 applyBSDiff patch _source
   | bsdNewSize patch == 0 = Right BS.empty
+  | bsdNewSize patch < 0  = Left "bsdiff: negative target size"
 applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
   go ptr 0 0 0 0 (bsdControls patch)
   where
-    sz     = fromIntegral (bsdNewSize patch)
-    srcLen = BS.length source
-    diffBs = bsdDiffData patch
+    sz      = fromIntegral (bsdNewSize patch)
+    srcLen  = BS.length source
+    diffBs  = bsdDiffData patch
     extraBs = bsdExtraData patch
+    diffLen = BS.length diffBs
+    extraLen = BS.length extraBs
 
     go :: Ptr Word8 -> Int -> Int -> Int -> Int -> [BSDiffControl] -> IO ()
     go _ptr _dOff _eOff _oPos _nPos [] = pure ()
     go ptr dOff eOff oPos nPos (ctrl:rest) = do
-      let addLen = fromIntegral (ctrlAdd ctrl)
-          cpLen  = fromIntegral (ctrlCopy ctrl)
+      -- Clamp add/copy lengths to remaining output buffer space
+      let addLen = max 0 $ min (fromIntegral (ctrlAdd ctrl)) (sz - nPos)
+          cpLen  = max 0 $ min (fromIntegral (ctrlCopy ctrl)) (sz - nPos - addLen)
           sk     = fromIntegral (ctrlSeek ctrl)
       -- Add: target[nPos+i] = source[oPos+i] + diff[dOff+i]
       mapM_ (\i -> do
         let s = if oPos + i >= 0 && oPos + i < srcLen
                 then BS.index source (oPos + i) else 0
-            d = BS.index diffBs (dOff + i)
+            d = if dOff + i >= 0 && dOff + i < diffLen
+                then BS.index diffBs (dOff + i) else 0
         pokeByteOff ptr (nPos + i) (s + d :: Word8)) [0..addLen-1]
       -- Copy: target[nPos+addLen..] = extra[eOff..]
-      copyBSRange ptr (nPos + addLen) extraBs eOff cpLen
+      let safeCpLen = if eOff >= 0 && eOff < extraLen
+                      then min cpLen (extraLen - eOff)
+                      else 0
+      copyBSRange ptr (nPos + addLen) extraBs eOff safeCpLen
       go ptr (dOff + addLen) (eOff + cpLen)
         (oPos + addLen + sk) (nPos + addLen + cpLen) rest
 

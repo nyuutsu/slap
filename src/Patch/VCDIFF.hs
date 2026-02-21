@@ -134,36 +134,47 @@ decodeAddr ac mode here addrPosRef addrBs
   | mode == 0 = do
       -- Self mode
       pos <- readIORef addrPosRef
-      let (v, n) = getVcdiffVarint pos addrBs
-      writeIORef addrPosRef (pos + n)
-      updateCache ac v
-      pure v
+      if pos >= BS.length addrBs then pure 0
+      else do
+        let (v, n) = getVcdiffVarint pos addrBs
+        writeIORef addrPosRef (pos + n)
+        updateCache ac v
+        pure v
   | mode == 1 = do
       -- Here mode
       pos <- readIORef addrPosRef
-      let (v, n) = getVcdiffVarint pos addrBs
-      writeIORef addrPosRef (pos + n)
-      let addr = here - v
-      updateCache ac addr
-      pure addr
+      if pos >= BS.length addrBs then pure 0
+      else do
+        let (v, n) = getVcdiffVarint pos addrBs
+        writeIORef addrPosRef (pos + n)
+        let addr = here - v
+        updateCache ac addr
+        pure addr
   | mode < acNearSize ac + 2 = do
       -- Near mode
       pos <- readIORef addrPosRef
-      let (v, n) = getVcdiffVarint pos addrBs
-      writeIORef addrPosRef (pos + n)
-      base <- readIORef (acNear ac ! (mode - 2))
-      let addr = base + v
-      updateCache ac addr
-      pure addr
+      if pos >= BS.length addrBs then pure 0
+      else do
+        let (v, n) = getVcdiffVarint pos addrBs
+        writeIORef addrPosRef (pos + n)
+        base <- readIORef (acNear ac ! (mode - 2))
+        let addr = base + v
+        updateCache ac addr
+        pure addr
   | otherwise = do
       -- Same mode
       pos <- readIORef addrPosRef
-      let byte = fromIntegral (BS.index addrBs pos) :: Int
-      writeIORef addrPosRef (pos + 1)
-      let sameIdx = (mode - acNearSize ac - 2) * 256 + byte
-      addr <- readIORef (acSame ac ! sameIdx)
-      updateCache ac addr
-      pure addr
+      if pos >= BS.length addrBs then pure 0
+      else do
+        let byte = fromIntegral (BS.index addrBs pos) :: Int
+        writeIORef addrPosRef (pos + 1)
+        let sameIdx = (mode - acNearSize ac - 2) * 256 + byte
+        if sameIdx >= 0 && sameIdx < acSameSize ac * 256
+          then do
+            addr <- readIORef (acSame ac ! sameIdx)
+            updateCache ac addr
+            pure addr
+          else pure 0
 
 ----------------------------------------------------------------------------
 -- Code table serialization (RFC 3284 §7)
@@ -296,6 +307,7 @@ parseVCDIFF' allowCustom bs
       let deltaEnd = deltaStart + fromIntegral deltaLen
       -- Inside the delta body:
       targetSz  <- vcdiffVarint
+      when (targetSz < 0) $ failGet "VCDIFF: negative window target size"
       deltaInd  <- getByte
       addRunLen <- vcdiffVarint
       instLen   <- vcdiffVarint
@@ -340,14 +352,18 @@ parseVCDIFF' allowCustom bs
 ----------------------------------------------------------------------------
 
 applyVCDIFF :: VCDIFFPatch -> ByteString -> Either String ByteString
-applyVCDIFF patch source =
-  let totalSize = sum (map vcdTargetLen (vcdWindows patch))
-      ct = vcdCodeTable patch
-      nSz = vcdNearSize patch
-      sSz = vcdSameSize patch
-  in Right $ unsafeCreate (fromIntegral totalSize) $ \outPtr -> do
-       globalOutRef <- newIORef (0 :: Int)
-       mapM_ (applyWindow ct nSz sSz source outPtr globalOutRef (fromIntegral totalSize)) (vcdWindows patch)
+applyVCDIFF patch source
+  | totalSize < 0  = Left "VCDIFF: negative total target size"
+  | totalSize == 0 = Right BS.empty
+  | otherwise =
+      Right $ unsafeCreate (fromIntegral totalSize) $ \outPtr -> do
+        globalOutRef <- newIORef (0 :: Int)
+        mapM_ (applyWindow ct nSz sSz source outPtr globalOutRef (fromIntegral totalSize)) (vcdWindows patch)
+  where
+    totalSize = sum (map vcdTargetLen (vcdWindows patch))
+    ct = vcdCodeTable patch
+    nSz = vcdNearSize patch
+    sSz = vcdSameSize patch
 
 applyWindow :: Array Word8 CodeEntry -> Int -> Int
             -> ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
@@ -404,9 +420,11 @@ applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
       readInstVarint :: IO Int64
       readInstVarint = do
         p <- readIORef instPosRef
-        let (v, n) = getVcdiffVarint p instBs
-        writeIORef instPosRef (p + n)
-        pure v
+        if p >= BS.length instBs then pure 0
+        else do
+          let (v, n) = getVcdiffVarint p instBs
+          writeIORef instPosRef (p + n)
+          pure v
 
       executeInst :: VCDInst -> IO ()
       executeInst VcdNoop = pure ()
@@ -415,7 +433,11 @@ applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
         wOut <- readIORef winOutRef
         aPos <- readIORef addRunPosRef
         let count = min sz (tgtLen - wOut)
-        copyBSRange outPtr (globalOut + wOut) addBs aPos count
+            -- Clamp to available add/run data
+            safeCount = if aPos >= 0 && aPos < BS.length addBs
+                        then min count (BS.length addBs - aPos)
+                        else 0
+        copyBSRange outPtr (globalOut + wOut) addBs aPos safeCount
         writeIORef addRunPosRef (aPos + count)
         writeIORef winOutRef (wOut + count)
 
@@ -424,8 +446,9 @@ applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
         wOut <- readIORef winOutRef
         aPos <- readIORef addRunPosRef
         let count = min sz (tgtLen - wOut)
-            byte  = BS.index addBs aPos
-        mapM_ (\i -> pokeByteOff outPtr (globalOut + wOut + i) byte) [0..count-1]
+        when (aPos >= 0 && aPos < BS.length addBs && count > 0) $ do
+          let byte = BS.index addBs aPos
+          mapM_ (\i -> pokeByteOff outPtr (globalOut + wOut + i) byte) [0..count-1]
         writeIORef addRunPosRef (aPos + 1)
         writeIORef winOutRef (wOut + count)
 

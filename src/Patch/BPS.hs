@@ -11,7 +11,8 @@ module Patch.BPS
   ) where
 
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32, copyBSRange)
-import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd)
+import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
+import Control.Monad (when)
 import Patch.Format (showCRC)
 
 import Data.ByteString (ByteString)
@@ -74,6 +75,8 @@ parseBPSBody :: Get (Int64, Int64, ByteString, [BPSAction])
 parseBPSBody = do
   srcSize <- byuuVarint
   tgtSize <- byuuVarint
+  when (srcSize < 0) $ failGet "BPS: negative source size"
+  when (tgtSize < 0) $ failGet "BPS: negative target size"
   metaLen <- fromIntegral <$> byuuVarint
   meta    <- getBytes metaLen
   actions <- parseActions
@@ -137,9 +140,13 @@ applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
       TargetCopy len delta -> do
         let tgtRel' = tgtRel + delta
             count   = min len (tgtLen - outPos)
+            readOff = fromIntegral tgtRel'
         -- Byte-by-byte: source region may overlap with destination
         mapM_ (\i -> do
-          b <- peekByteOff ptr (fromIntegral tgtRel' + i) :: IO Word8
+          let ri = readOff + i
+          b <- if ri >= 0 && ri < tgtLen
+               then peekByteOff ptr ri :: IO Word8
+               else pure 0
           pokeByteOff ptr (outPos + i) b) [0..count-1]
         go ptr (outPos + count) srcRel (tgtRel' + fromIntegral count) rest
 

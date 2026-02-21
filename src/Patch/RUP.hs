@@ -64,8 +64,11 @@ packedInt :: Get Int64
 packedInt = do
   n <- fromIntegral <$> getByte
   bytes <- getBytes n
+  -- Only interpret first 8 bytes (enough for Int64); extra bytes are
+  -- consumed from the stream but don't contribute to the value.
+  let n' = min n 8
   pure $ foldl' (\acc i ->
-    acc + fromIntegral (BS.index bytes i) * (256 ^ i)) 0 [0..n-1]
+    acc + fromIntegral (BS.index bytes i) * (256 ^ i)) 0 [0..n'-1]
 
 packedBS :: Get ByteString
 packedBS = do
