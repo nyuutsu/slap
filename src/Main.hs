@@ -351,7 +351,7 @@ parseSome bs = case detectFormat bs of
     | otherwise -> Left "unknown patch format"
 
   Just FmtPPF -> case PPF.parsePatch bs of
-    Left err -> Left (showPPFError err)
+    Left err -> Left err
     Right p  ->
       let recs = PPF.patchRecords p
       in Right SomePatch
@@ -1186,11 +1186,6 @@ checkCRC force label expected actual
 fmtCRC :: Word32 -> String
 fmtCRC w = "0x" ++ showCRC w
 
-showPPFError :: PPF.ParseError -> String
-showPPFError (PPF.BadMagic bs')       = "not a PPF file (bad magic: " ++ show bs' ++ ")"
-showPPFError (PPF.UnknownVersion v)   = "unknown PPF version byte: " ++ show v
-showPPFError (PPF.TruncatedFile msg)  = "truncated file: " ++ msg
-showPPFError (PPF.UnknownImageType v) = "unknown image type: " ++ show v
 
 describeIPS :: IPS.IPSRecord -> String
 describeIPS (IPS.IPSRecord off dat) =

@@ -11,7 +11,7 @@ import Data.Int (Int64)
 import Data.List (unfoldr)
 
 -- | Parse a PPF patch file from raw bytes.
-parsePatch :: ByteString -> Either ParseError Patch
+parsePatch :: ByteString -> Either String Patch
 parsePatch bs = detectVersion bs >>= \case
   PPF1 -> parsePPF1 bs
   PPF2 -> parsePPF2 bs
@@ -19,19 +19,19 @@ parsePatch bs = detectVersion bs >>= \case
   PPF4 -> parsePPF4 bs
 
 -- Version detection: bytes 0-3 as ASCII "PPF1" .. "PPF4".
-detectVersion :: ByteString -> Either ParseError Version
+detectVersion :: ByteString -> Either String Version
 detectVersion bs
-  | BS.length bs < 6       = Left (TruncatedFile "file too short for header")
+  | BS.length bs < 6       = Left "truncated file: file too short for header"
   | magic == "PPF1"        = Right PPF1
   | magic == "PPF2"        = Right PPF2
   | magic == "PPF3"        = Right PPF3
   | magic == "PPF4"        = Right PPF4
-  | BS.take 3 bs == "PPF"  = Left (UnknownVersion (BS.index bs 3))
-  | otherwise              = Left (BadMagic (BS.take 5 bs))
+  | BS.take 3 bs == "PPF"  = Left ("unknown PPF version byte: " ++ show (BS.index bs 3))
+  | otherwise              = Left ("not a PPF file (bad magic: " ++ show (BS.take 5 bs) ++ ")")
   where magic = BS.take 4 bs
 
 -- PPF1: 56-byte header, then records with 4-byte offsets.
-parsePPF1 :: ByteString -> Either ParseError Patch
+parsePPF1 :: ByteString -> Either String Patch
 parsePPF1 bs = do
   requireLen 56 "PPF1 header" bs
   Right Patch
@@ -45,7 +45,7 @@ parsePPF1 bs = do
     }
 
 -- PPF2: 1084-byte header, then records with 4-byte offsets, optional File_ID.diz.
-parsePPF2 :: ByteString -> Either ParseError Patch
+parsePPF2 :: ByteString -> Either String Patch
 parsePPF2 bs = do
   requireLen 1084 "PPF2 header" bs
   let fid  = detectFileId getWord32LE 4 bs
@@ -61,13 +61,13 @@ parsePPF2 bs = do
     }
 
 -- PPF3: 60 or 1084-byte header, then records with 8-byte offsets, optional undo.
-parsePPF3 :: ByteString -> Either ParseError Patch
+parsePPF3 :: ByteString -> Either String Patch
 parsePPF3 bs = do
   requireLen 60 "PPF3 header" bs
   imgType <- case BS.index bs 56 of
     0x00 -> Right BIN
     0x01 -> Right GI
-    b    -> Left (UnknownImageType b)
+    b    -> Left ("unknown image type: " ++ show b)
   let hasBlock   = BS.index bs 57 /= 0
       hasUndo    = BS.index bs 58 /= 0
       headerSize = if hasBlock then 1084 else 60
@@ -90,7 +90,7 @@ parsePPF3 bs = do
 -- Pyriel's internal format (magic "PPF4"): 60-byte header, records with command byte +
 -- 4-byte offsets.  Reverse-engineered from the Suikoden I/II bug fix patchers; not a
 -- published spec — only ever generated and consumed within those patchers' Lua runtime.
-parsePPF4 :: ByteString -> Either ParseError Patch
+parsePPF4 :: ByteString -> Either String Patch
 parsePPF4 bs = do
   requireLen 60 "PPF4 header" bs
   Right Patch
@@ -160,7 +160,7 @@ stripFileId _ Nothing body = body
 stripFileId lenSize (Just (FileId content)) body =
   BS.take (BS.length body - 18 - BS.length content - 16 - lenSize) body
 
-requireLen :: Int -> String -> ByteString -> Either ParseError ()
+requireLen :: Int -> String -> ByteString -> Either String ()
 requireLen n ctx bs
   | BS.length bs >= n = Right ()
-  | otherwise = Left (TruncatedFile (ctx ++ ": need " ++ show n ++ " bytes, have " ++ show (BS.length bs)))
+  | otherwise = Left ("truncated file: " ++ ctx ++ ": need " ++ show n ++ " bytes, have " ++ show (BS.length bs))

@@ -4,7 +4,7 @@ module Patch.PPF.Types where
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
-import Data.Word (Word8, Word32)
+import Data.Word (Word32)
 
 -- | PPF format version.
 data Version = PPF1 | PPF2 | PPF3 | PPF4
@@ -47,14 +47,6 @@ data Patch = Patch
   , patchRecords     :: [Record]
   , patchFileId      :: Maybe FileId
   } deriving (Show)
-
--- | Errors during parsing.
-data ParseError
-  = BadMagic ByteString
-  | UnknownVersion Word8
-  | TruncatedFile String
-  | UnknownImageType Word8
-  deriving (Show)
 
 -- | Offset in target file where validation block is read from.
 validationOffset :: ImageType -> Int64
