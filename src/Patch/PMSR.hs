@@ -11,6 +11,7 @@ module Patch.PMSR
   , pmsrInfo
   ) where
 
+import Patch.Binary (mergeNearby)
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Patch.Get as G
 
@@ -102,7 +103,7 @@ encodePMSR recs = BL.toStrict $ toLazyByteString $
 -- | Diff two byte strings into PMSR records.
 -- Merges nearby differences (gap < 6 bytes) and splits at 0xFFFFFF (16 MB chunks).
 diffToRecordsPMSR :: ByteString -> ByteString -> [(Int, ByteString)]
-diffToRecordsPMSR orig modified = mergeNearby modified $ go 0
+diffToRecordsPMSR orig modified = mergeNearby 8 maxBound modified $ go 0
   where
     minLen = min (BS.length orig) (BS.length modified)
 
@@ -136,20 +137,6 @@ diffToRecordsPMSR orig modified = mergeNearby modified $ go 0
               rest  = BS.drop 0x100000 dat
           in (off, chunk) : splitRecord (off + 0x100000) rest
 
--- | Merge records that are within 8 bytes of each other.
--- Matches Star Rod's coalescing threshold (Patcher.java: lastEnd + 8).
-mergeNearby :: ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-mergeNearby _ [] = []
-mergeNearby _ [x] = [x]
-mergeNearby modBs ((off1, d1) : (off2, d2) : rest)
-  | gap <= 8 =
-      mergeNearby modBs ((off1, merged) : rest)
-  | otherwise = (off1, d1) : mergeNearby modBs ((off2, d2) : rest)
-  where
-    end1 = off1 + BS.length d1
-    gap  = off2 - end1
-    fill = BS.take gap (BS.drop end1 modBs)
-    merged = d1 <> fill <> d2
 
 ----------------------------------------------------------------------------
 -- Info

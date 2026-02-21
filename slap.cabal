@@ -32,8 +32,10 @@ library slap-internal
     , Patch.Explain
     , Patch.GDIFF
     , Patch.IPS
+    , Patch.Overlay
     , Patch.PMSR
     , Patch.RUP
+    , Patch.SomePatch
     , Patch.Types
     , Patch.UPS
     , Patch.VCDIFF

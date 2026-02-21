@@ -91,9 +91,8 @@ genPair :: Gen (ByteString, ByteString)
 genPair = (,) <$> genBS <*> genBS
 
 -- | (source, target) where len(target) >= len(source).
--- Overlay formats that lack truncation support can only grow or stay same-size.
--- Affected: IPS32/EBP (create omits truncation marker), PPF3, PMSR, NINJA1,
--- DPS, APS-N64 (pure overlay), RUP (create doesn't emit overflow when shrinking).
+-- Pure overlay formats that lack truncation support can only grow or stay same-size.
+-- Affected: PPF3, PMSR, NINJA1, DPS, APS-N64.
 genPairNoShrink :: Gen (ByteString, ByteString)
 genPairNoShrink = do
   a <- genBS
@@ -157,12 +156,11 @@ prop_apsGba = forAll genPair $ \(src, tgt) ->
          pure $ result === tgt
 
 ----------------------------------------------------------------------------
--- Overlay formats: target must be >= source (no truncation support)
+-- Formats with truncation support (any size combination)
 ----------------------------------------------------------------------------
 
--- createIPS32 passes Nothing for truncation marker (encodeIPS32 supports it)
 prop_ips32 :: Property
-prop_ips32 = forAll genPairNoShrink $ \(src, tgt) ->
+prop_ips32 = forAll genPair $ \(src, tgt) ->
   case IPS.createIPS32 src tgt of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
@@ -171,9 +169,8 @@ prop_ips32 = forAll genPairNoShrink $ \(src, tgt) ->
         result <- applyViaFile IPS.applyIPS p src
         pure $ result === tgt
 
--- createEBP doesn't emit truncation marker
 prop_ebp :: Property
-prop_ebp = forAll genPairNoShrink $ \(src, tgt) ->
+prop_ebp = forAll genPair $ \(src, tgt) ->
   case IPS.createEBP src tgt "" of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
@@ -182,7 +179,7 @@ prop_ebp = forAll genPairNoShrink $ \(src, tgt) ->
         result <- applyViaFile IPS.applyIPS p src
         pure $ result === tgt
 
--- PPF3: pure overlay, no truncation mechanism in the spec
+-- Pure overlays: no truncation, target must be >= source
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(src, tgt) ->
   let patch = PPF.createPatchPure src tgt "" False False
@@ -218,10 +215,8 @@ prop_dps = forAll genPairNoShrink $ \(src, tgt) ->
        Left err     -> counterexample err $ property False
        Right result -> result === tgt
 
--- RUP: createRUP doesn't emit overflow section when target < source,
--- causing parser to choke (apply does support truncation via hSetFileSize)
 prop_rup :: Property
-prop_rup = forAll genPairNoShrink $ \(src, tgt) ->
+prop_rup = forAll genPair $ \(src, tgt) ->
   let patch = RUP.createRUP src tgt
   in case RUP.parseRUP patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -264,13 +259,13 @@ prop_ipsTrunc = forAll genPair $ \(src, tgt) ->
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
-prop_ips32Trunc = forAll genPairNoShrink $ \(src, tgt) ->
+prop_ips32Trunc = forAll genPair $ \(src, tgt) ->
   case IPS.createIPS32 src tgt of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
-prop_ebpTrunc = forAll genPairNoShrink $ \(src, tgt) ->
+prop_ebpTrunc = forAll genPair $ \(src, tgt) ->
   case IPS.createEBP src tgt "" of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
@@ -296,7 +291,7 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(src, tgt) ->
   truncated DPS.parseDPS (DPS.createDPS src tgt)
 
 prop_rupTrunc :: Property
-prop_rupTrunc = forAll genPairNoShrink $ \(src, tgt) ->
+prop_rupTrunc = forAll genPair $ \(src, tgt) ->
   truncated RUP.parseRUP (RUP.createRUP src tgt)
 
 prop_apsN64Trunc :: Property

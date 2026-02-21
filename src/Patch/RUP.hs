@@ -178,7 +178,7 @@ applyRUP patch target = do
         hSeek h AbsoluteSeek (fromIntegral appendPos)
         BS.hPut h overflow
     -- Handle truncation (if target is smaller than source)
-    when (rupTargetSz patch > 0 && rupTargetSz patch < rupSourceSz patch) $
+    when (rupTargetSz patch < rupSourceSz patch) $
       hSetFileSize h (fromIntegral (rupTargetSz patch))
   pure (length (rupRecords patch))
 
@@ -264,13 +264,17 @@ createRUP old new = BL.toStrict $ toLazyByteString $
       let oldDat = BS.take (BS.length newDat) (BS.drop off oldTrim)
       in (off, BS.packZipWith xor oldDat newDat)
 
-    -- Overflow: if new is longer, emit the extra bytes
+    -- Overflow section: emitted whenever sizes differ (parser expects it)
     overflowPart
       | BS.length new > BS.length old =
           let extra = BS.drop (BS.length old) new
           in word8 0  -- overflow type
              <> putVLV (fromIntegral (BS.length extra))
              <> byteString extra
+      | BS.length new < BS.length old =
+          -- Truncation: empty overflow; applyRUP uses hSetFileSize
+          word8 0  -- overflow type
+          <> putVLV 0
       | otherwise = mempty
 
 encodeXorRec :: (Int, ByteString) -> Builder

@@ -17,7 +17,7 @@ module Patch.IPS
   , ipsInfo
   ) where
 
-import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
+import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, mergeNearby)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
 import qualified Patch.Get as G
@@ -103,12 +103,21 @@ parseRecords variant offWidth eofMarker = go []
           pos <- getPosition
           input <- getInput
           let rest = BS.drop pos input
-          if BS.index rest 0 == 0x7B  -- '{' → EBP JSON metadata
+          if BS.index rest 0 == 0x7B  -- '{' → EBP JSON metadata (no truncation)
             then pure (IPSPatch variant (reverse acc) Nothing (Just rest) clean)
-            else let trunc = if avail >= 3
-                             then Just (fromIntegral (getWord24BE pos input))
-                             else Nothing
-                 in pure (IPSPatch variant (reverse acc) trunc Nothing clean)
+            else
+              -- Try truncation marker, then check for trailing EBP JSON
+              let trunc = if avail >= offWidth
+                          then Just (fromIntegral (if offWidth == 3
+                                 then getWord24BE pos input
+                                 else getWord32BE pos input))
+                          else Nothing
+                  jsonOff = if avail >= offWidth then offWidth else avail
+                  rest' = BS.drop jsonOff rest
+                  ebpMeta = if not (BS.null rest') && BS.index rest' 0 == 0x7B
+                            then Just rest'
+                            else Nothing
+              in pure (IPSPatch variant (reverse acc) trunc ebpMeta clean)
         else pure (IPSPatch variant (reverse acc) Nothing Nothing clean)
 
 -- | Apply an IPS patch to a target file (seek-and-write).
@@ -211,7 +220,11 @@ createIPS32 :: ByteString -> ByteString -> Either String ByteString
 createIPS32 orig modified
   | BS.length modified > 0xFFFFFFFF =
       Left "file exceeds 4 GB IPS32 offset limit — use BPS instead"
-  | otherwise = Right (encodeIPS32 (diffToRecords 0xFFFF orig modified) Nothing)
+  | otherwise =
+      let trunc = if BS.length modified < BS.length orig
+                  then Just (fromIntegral (BS.length modified))
+                  else Nothing
+      in Right (encodeIPS32 (diffToRecords 0xFFFF orig modified) trunc)
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
 encodeIPSRecord offWidth (off, dat) =
@@ -243,7 +256,11 @@ createEBP :: ByteString -> ByteString -> String -> Either String ByteString
 createEBP orig modified desc
   | BS.length modified > 0x1000000 =
       Left "file exceeds 16 MB IPS offset limit — use BPS instead"
-  | otherwise = Right (encodeEBP (diffToRecords 0xFFFF orig modified) desc)
+  | otherwise =
+      let trunc = if BS.length modified < BS.length orig
+                  then Just (fromIntegral (BS.length modified))
+                  else Nothing
+      in Right (encodeEBP (diffToRecords 0xFFFF orig modified) trunc desc)
 
 allSame :: ByteString -> Bool
 allSame bs
@@ -273,11 +290,13 @@ encodeIPS32 recs trunc = BL.toStrict $ toLazyByteString $
   <> maybe mempty (truncOffset 4) trunc
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
-encodeEBP :: [(Int, ByteString)] -> String -> ByteString
-encodeEBP recs desc = BL.toStrict $ toLazyByteString $
+-- Truncation marker (if any) goes between EOF and JSON.
+encodeEBP :: [(Int, ByteString)] -> Maybe Int64 -> String -> ByteString
+encodeEBP recs trunc desc = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) recs
   <> byteString "EOF"
+  <> maybe mempty (truncOffset 3) trunc
   <> byteString (ebpJson desc)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
@@ -304,7 +323,7 @@ ebpJson d = BS8.pack $
 -- | Diff two byte strings into IPS records (offset, data).
 -- Merges nearby differences (gap < 6 bytes) and splits at maxRecSize.
 diffToRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
-diffToRecords maxRecSize orig modified = mergeNearby maxRecSize modified $ go 0
+diffToRecords maxRecSize orig modified = mergeNearby 5 maxRecSize modified $ go 0
   where
     minLen = min (BS.length orig) (BS.length modified)
 
@@ -337,18 +356,3 @@ diffToRecords maxRecSize orig modified = mergeNearby maxRecSize modified $ go 0
               rest  = BS.drop maxRecSize dat
           in (off, chunk) : splitRecord (off + maxRecSize) rest
 
--- | Merge records that are within 6 bytes of each other.
--- Uses actual bytes from the modified file to fill gaps.
-mergeNearby :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-mergeNearby _ _ [] = []
-mergeNearby _ _ [x] = [x]
-mergeNearby maxRecSize modBs ((off1, d1) : (off2, d2) : rest)
-  | gap <= 5 && mergedLen <= maxRecSize =
-      mergeNearby maxRecSize modBs ((off1, merged) : rest)
-  | otherwise = (off1, d1) : mergeNearby maxRecSize modBs ((off2, d2) : rest)
-  where
-    end1 = off1 + BS.length d1
-    gap  = off2 - end1
-    fill = BS.take gap (BS.drop end1 modBs)
-    merged = d1 <> fill <> d2
-    mergedLen = BS.length merged

@@ -23,7 +23,8 @@ import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), shiftL, shiftR, (.|.), testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
-import Foreign.Ptr (Ptr)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 data BPSAction
@@ -113,17 +114,15 @@ applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
     tgtLen = fromIntegral (bpsTargetSize patch)
     srcLen = BS.length source
 
-    readSrc :: Int -> Word8
-    readSrc i
-      | i < srcLen = BS.index source i
-      | otherwise  = 0
-
     go :: Ptr Word8 -> Int -> Int64 -> Int64 -> [BPSAction] -> IO ()
     go _   _      _      _      []           = pure ()
     go ptr outPos srcRel tgtRel (action:rest) = case action of
       SourceRead len -> do
         let count = min len (tgtLen - outPos)
-        mapM_ (\i -> pokeByteOff ptr (outPos + i) (readSrc (outPos + i))) [0..count-1]
+            inBounds = max 0 (min count (srcLen - outPos))
+        copyBSRange ptr outPos source outPos inBounds
+        when (inBounds < count) $
+          fillBytes (ptr `plusPtr` (outPos + inBounds)) 0 (count - inBounds)
         go ptr (outPos + count) srcRel tgtRel rest
 
       TargetRead dat -> do
@@ -133,8 +132,21 @@ applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
 
       SourceCopy len delta -> do
         let srcRel' = srcRel + delta
+            srcOff  = fromIntegral srcRel' :: Int
             count   = min len (tgtLen - outPos)
-        mapM_ (\i -> pokeByteOff ptr (outPos + i) (readSrc (fromIntegral srcRel' + i))) [0..count-1]
+            -- Clamp to the portion that falls within the source ByteString
+            clipStart = max 0 (negate srcOff)
+            inStart   = max 0 srcOff
+            inBounds  = max 0 (min (count - clipStart) (srcLen - inStart))
+        -- Zero-fill any leading out-of-bounds bytes
+        when (clipStart > 0) $
+          fillBytes (ptr `plusPtr` outPos) 0 (min clipStart count)
+        -- Bulk copy the in-bounds portion
+        copyBSRange ptr (outPos + clipStart) source inStart inBounds
+        -- Zero-fill any trailing out-of-bounds bytes
+        let copied = clipStart + inBounds
+        when (copied < count) $
+          fillBytes (ptr `plusPtr` (outPos + copied)) 0 (count - copied)
         go ptr (outPos + count) (srcRel' + fromIntegral count) tgtRel rest
 
       TargetCopy len delta -> do
