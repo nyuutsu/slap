@@ -132,11 +132,10 @@ bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/s
 bps        | ups     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
 bps        | rup     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
 bps        | aps-gba | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
-# size-change create loses file extension (diffHunks only compares overlapping bytes)
-bps        | ninja1  | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
-bps        | aps-n64 | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
-bps        | dps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
-bps        | gdiff   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | skip:create-loses-file-extension |  | --with
+bps        | ninja1  | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | aps-n64 | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | dps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
+bps        | gdiff   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
 #
 # --- emerald-size (16→32 MB) ---
 bps        | ips     | test/data/emerald/size-change/patch.bps     | test/data/emerald/base.gba      |          | reject:16 MB                     |  | --with

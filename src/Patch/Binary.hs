@@ -204,9 +204,14 @@ crc16Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
 -- Merges nearby hunks (gap <= 5 bytes) to reduce record count.
 -- Returns [(offset, changedBytes)] from the second ByteString.
 diffHunks :: ByteString -> ByteString -> [(Int, ByteString)]
-diffHunks old new = merge (go 0)
+diffHunks old new = merge (go 0 ++ extension)
   where
-    minLen = min (BS.length old) (BS.length new)
+    oldLen = BS.length old
+    newLen = BS.length new
+    minLen = min oldLen newLen
+    extension
+      | newLen > oldLen = [(oldLen, BS.drop oldLen new)]
+      | otherwise       = []
     go i
       | i >= minLen = []
       | BS.index old i == BS.index new i = go (i + 1)
