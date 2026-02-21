@@ -13,6 +13,7 @@ module Patch.IPS
   , encodeIPS
   , encodeIPS32
   , encodeEBP
+  , encodeEBPRaw
   , ipsInfo
   ) where
 
@@ -278,6 +279,15 @@ encodeEBP recs desc = BL.toStrict $ toLazyByteString $
   <> foldMap (encodeIPSRecord 3) recs
   <> byteString "EOF"
   <> byteString (ebpJson desc)
+
+-- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
+-- Used by overlay conversion to preserve source EBP metadata as-is.
+encodeEBPRaw :: [(Int, ByteString)] -> ByteString -> ByteString
+encodeEBPRaw recs meta = BL.toStrict $ toLazyByteString $
+  byteString "PATCH"
+  <> foldMap (encodeIPSRecord 3) recs
+  <> byteString "EOF"
+  <> byteString meta
 
 truncOffset :: Int -> Int64 -> Builder
 truncOffset w off = encodeOffset w (fromIntegral off)

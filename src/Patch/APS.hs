@@ -267,7 +267,7 @@ encodeAPSN64 recs destSize desc = BL.toStrict $ toLazyByteString $
     <> foldMap encodeN64Rec (splitLong recs)
   where
     descBytes = let bs = BS8.pack (take 50 desc)
-                in bs <> BS.replicate (50 - BS.length bs) 0x20
+                in bs <> BS.replicate (50 - BS.length bs) 0
 
 -- | Split hunks longer than 255 bytes into multiple records.
 splitLong :: [(Int, ByteString)] -> [(Int, ByteString)]

@@ -985,7 +985,11 @@ convertOverlay os target desc includeUndo includeValidation =
   in case target of
     CfmtIPS     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeIPS (overlayToIntPairs rs) (osTruncate os), notes)
     CfmtIPS32   -> Right (IPS.encodeIPS32 (splitOverlay 0xFFFF intRecs) (osTruncate os), notes)
-    CfmtEBP     -> checkIPSOffsets os >>= \rs -> Right (IPS.encodeEBP (overlayToIntPairs rs) (resolveDesc desc (osEBPMeta os) (osDescription os) ""), notes)
+    CfmtEBP     -> checkIPSOffsets os >>= \rs ->
+      let pairs = overlayToIntPairs rs
+      in case if null desc then osEBPMeta os else Nothing of
+           Just raw -> Right (IPS.encodeEBPRaw pairs raw, notes)
+           Nothing  -> Right (IPS.encodeEBP pairs (resolveDesc desc (osEBPMeta os) (osDescription os) ""), notes)
     CfmtPPF3    -> convertToPPF3 os desc includeUndo includeValidation notes
     CfmtNINJA1  -> Right (NINJA1.encodeNINJA1 intRecs (osSourceCRC os) (osSourceMD5 os) (osSourceSHA1 os), notes)
     CfmtPMSR    -> Right (PMSR.encodePMSR intRecs, notes)
