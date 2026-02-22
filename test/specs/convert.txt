@@ -1,4 +1,4 @@
-# Conversion matrix — source of truth for all convert tests
+# Conversion specs — source of truth for all convert tests
 # source | target | source_patch | base | target_sha | result | expected_warnings | flags
 #
 # SHA256 key:
@@ -18,44 +18,44 @@ ppf3       | ips     | test/data/stadium2/heavy-diff/patch.ppf     |            
 ppf3       | ips32   | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
 ppf3       | ebp     | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:offsets > 16 MB       |                                                    |
 ppf3       | ppf3    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |                                                            |
-ppf3       | ninja1  | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
+ppf3       | ninja1  | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
 ppf3       | pmsr    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
-ppf3       | aps-n64 | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:requires target file  |                                                    |
+ppf3       | aps-n64 | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:source lacks target file  |                                                    |
 #
 # --- IPS source (emerald, 16 MB — records only, no metadata) ---
 ips        | ips     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
 ips        | ips32   | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
 ips        | ebp     | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
 ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --no-undo --no-validate
-ips        | ninja1  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | ninja1  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --with
 ips        | pmsr    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
-ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:requires target file  |  |
+ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks target file  |  |
 #
 # --- IPS32 source (stadium2, 64 MB — records only) ---
 ips32      | ips     | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:offsets > 16 MB       |  |
 ips32      | ips32   | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
 ips32      | ebp     | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:offsets > 16 MB       |  |
 ips32      | ppf3    | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --no-undo --no-validate
-ips32      | ninja1  | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+ips32      | ninja1  | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
 ips32      | pmsr    | test/data/stadium2/heavy-diff/patch.ips32   | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
-ips32      | aps-n64 | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:requires target file  |  |
+ips32      | aps-n64 | test/data/stadium2/heavy-diff/patch.ips32   |                                 |          | reject:source lacks target file  |  |
 #
 # --- EBP source (emerald, 16 MB — has EBP JSON metadata) ---
 ebp        | ips     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
 ebp        | ips32   | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
 ebp        | ebp     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
 ebp        | ppf3    | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata | --no-undo --no-validate
-ebp        | ninja1  | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | ninja1  | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --with
 ebp        | pmsr    | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
-ebp        | aps-n64 | test/data/emerald/heavy-diff/patch.ebp.ebp  |                                 |          | reject:requires target file  |  |
+ebp        | aps-n64 | test/data/emerald/heavy-diff/patch.ebp.ebp  |                                 |          | reject:source lacks target file  |  |
 #
 # --- APS-N64 source (stadium2, 64 MB — has description, dest_size) ---
 aps-n64    | ips     | test/data/stadium2/heavy-diff/patch.aps.aps |                                 |          | reject:offsets > 16 MB       |  |
-aps-n64    | ips32   | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
+aps-n64    | ips32   | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping file size |
 aps-n64    | ebp     | test/data/stadium2/heavy-diff/patch.aps.aps |                                 |          | reject:offsets > 16 MB       |  |
-aps-n64    | ppf3    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --no-undo --no-validate
-aps-n64    | ninja1  | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
-aps-n64    | pmsr    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description |
+aps-n64    | ppf3    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping file size | --no-undo --no-validate
+aps-n64    | ninja1  | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
+aps-n64    | pmsr    | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping file size |
 aps-n64    | aps-n64 | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
 #
 # --- NINJA1 source (emerald, 16 MB — has sourceCRC, sourceMD5, sourceSHA1) ---
@@ -65,16 +65,16 @@ ninja1     | ebp     | test/data/emerald/heavy-diff/patch.ninja1   | test/data/e
 ninja1     | ppf3    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 | --no-undo --no-validate
 ninja1     | ninja1  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
 ninja1     | pmsr    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
-ninja1     | aps-n64 | test/data/emerald/heavy-diff/patch.ninja1   |                                 |          | reject:requires target file  |  |
+ninja1     | aps-n64 | test/data/emerald/heavy-diff/patch.ninja1   |                                 |          | reject:source lacks target file  |  |
 #
 # --- PMSR source (paper-mario, 40 MB Yay0 — records only, no metadata) ---
 pmsr       | ips     | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:offsets > 16 MB       |  |
 pmsr       | ips32   | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
 pmsr       | ebp     | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:offsets > 16 MB       |  |
 pmsr       | ppf3    | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  | --no-undo --no-validate
-pmsr       | ninja1  | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
+pmsr       | ninja1  | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  | --with
 pmsr       | pmsr    | test/data/paper-mario/pmmq-jr.mod           | test/data/paper-mario/base.z64  | d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6 | accept |  |
-pmsr       | aps-n64 | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:requires target file  |  |
+pmsr       | aps-n64 | test/data/paper-mario/pmmq-jr.mod           |                                 |          | reject:source lacks target file  |  |
 #
 # ============================================================================
 # Supplementary: PPF2→APS-N64 (PPF2 carries fileSize, satisfies dest_size)
@@ -84,8 +84,8 @@ ppf2       | aps-n64 | test/data/dm4k/patch.ppf2.ppf               | test/data/d
 # ============================================================================
 # PPF3 default undo/validate gating
 # ============================================================================
-ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:no undo data          |  | --no-validate
-ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:no validation block   |  | --no-undo
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks undo data      |  | --no-validate
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks validation     |  | --no-undo
 #
 # ============================================================================
 # Part B: non-overlay rejection (without --with)
@@ -152,7 +152,7 @@ ips        | pchtxt  | test/data/dm4k/patch.ips                    | test/data/d
 ips32      | pchtxt  | test/data/dm4k/patch.ips32                  | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept |  |
 ebp        | pchtxt  | test/data/dm4k/patch.ebp                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping EBP metadata |
 ppf3       | pchtxt  | test/data/dm4k/patch.ppf                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping.*validation,dropping undo |
-aps-n64    | pchtxt  | test/data/dm4k/patch.aps                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept |  |
+aps-n64    | pchtxt  | test/data/dm4k/patch.aps                    | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping file size |
 #
 # --- PCHTXT as target (emerald NINJA1, 16 MB GBA) ---
 ninja1     | pchtxt  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
@@ -165,7 +165,7 @@ pchtxt     | ips     | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | rejec
 pchtxt     | ips32   | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
 pchtxt     | ebp     | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:offsets > 16 MB |  |
 pchtxt     | ppf3    | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept |  | --no-undo --no-validate
-pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
+pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:source lacks source CRC32 |  |
 pchtxt     | pmsr    | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept | dropping description |
 pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | accept |  |
-pchtxt     | aps-n64 | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:requires target file |  |
+pchtxt     | aps-n64 | test/data/pchtxt/ipswitch-splat310.pchtxt   |  |  | reject:source lacks target file |  |

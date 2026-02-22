@@ -13,7 +13,7 @@ module Patch.NINJA1
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import Patch.Binary (diffHunks, putWord32BE)
+import Patch.Binary (diffHunks, putWord32BE, crc32, md5, sha1)
 import Patch.Format (showCRC, padHex)
 
 import Data.ByteString (ByteString)
@@ -24,7 +24,6 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Char (toLower)
 import Data.Int (Int64)
-import Data.Maybe (fromMaybe)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 import System.IO
@@ -103,15 +102,15 @@ parseBinGet fmt = do
   md5Bytes  <- getBytes 16
   sha1Bytes <- getBytes 20
   (recs, clean) <- parseBinRecords
-  let crc  = if BS.all (== 0) crcBytes then Nothing else Just (decodeBE32 crcBytes)
-      md5  = if BS.all (== 0) md5Bytes then Nothing else Just md5Bytes
-      sha1 = if BS.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
+  let crc'  = if BS.all (== 0) crcBytes then Nothing else Just (decodeBE32 crcBytes)
+      md5'  = if BS.all (== 0) md5Bytes then Nothing else Just md5Bytes
+      sha1' = if BS.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
   pure NINJA1Patch
     { n1SubFormat  = fmt
     , n1RomType    = romType
-    , n1SourceCRC  = crc
-    , n1SourceMD5  = md5
-    , n1SourceSHA1 = sha1
+    , n1SourceCRC  = crc'
+    , n1SourceMD5  = md5'
+    , n1SourceSHA1 = sha1'
     , n1Records    = recs
     , n1CleanEOF   = clean
     }
@@ -159,14 +158,14 @@ parseTxt fmt payload = do
   case contentLines of
     [] -> Left "empty NINJA1 textual patch"
     (hdrLine : recLines) -> do
-      let (romType, crc, md5, sha1) = parseTxtHeader hdrLine
+      let (romType, crc', md5', sha1') = parseTxtHeader hdrLine
       recs <- mapM parseTxtRecord recLines
       Right NINJA1Patch
         { n1SubFormat  = fmt
         , n1RomType    = romType
-        , n1SourceCRC  = crc
-        , n1SourceMD5  = md5
-        , n1SourceSHA1 = sha1
+        , n1SourceCRC  = crc'
+        , n1SourceMD5  = md5'
+        , n1SourceSHA1 = sha1'
         , n1Records    = recs
         , n1CleanEOF   = True  -- textual format has no EOF sentinel
         }
@@ -174,23 +173,23 @@ parseTxt fmt payload = do
     isSkippable line = BS.null line || BS8.head line == '#'
 
 parseTxtHeader :: ByteString -> (Word8, Maybe Word32, Maybe ByteString, Maybe ByteString)
-parseTxtHeader line = (romType, crc, md5, sha1)
+parseTxtHeader line = (romType, crc', md5', sha1')
   where
     ws = map BS8.unpack (BS8.words line)
     romType = case ws of
       (f:_) -> romTypeFromName f
       _     -> 0
     isUnk s = s == "unk" || s == "unk."
-    crc = case ws of
+    crc' = case ws of
       (_:c:_) | not (isUnk c) -> case (readHex c :: [(Word32, String)]) of
         [(n, "")] -> Just n
         _         -> Nothing
       _ -> Nothing
-    nonEmpty bs = if BS.null bs then Nothing else Just bs
-    md5 = case ws of
+    nonEmpty bx = if BS.null bx then Nothing else Just bx
+    md5' = case ws of
       (_:_:m:_) | not (isUnk m) -> nonEmpty (hexToBS m)
       _ -> Nothing
-    sha1 = case ws of
+    sha1' = case ws of
       (_:_:_:s:_) | not (isUnk s) -> nonEmpty (hexToBS s)
       _ -> Nothing
 
@@ -257,11 +256,11 @@ ninja1Info p = unlines $ filter (not . null)
       Nothing -> ""
       Just c  -> "source CRC:  0x" ++ showCRC c
     md5Str = case n1SourceMD5 p of
-      Nothing  -> ""
-      Just md5 -> "source MD5:  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack md5)
+      Nothing -> ""
+      Just h  -> "source MD5:  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
     sha1Str = case n1SourceSHA1 p of
-      Nothing   -> ""
-      Just sha1 -> "source SHA1: " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack sha1)
+      Nothing -> ""
+      Just h  -> "source SHA1: " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
     totalBytes = sum (map (BS.length . n1RecData) (n1Records p))
 
 romTypeName' :: Word8 -> String
@@ -291,20 +290,20 @@ romTypeName' n  = "unknown (" ++ show n ++ ")"
 
 createNINJA1 :: BS.ByteString -> BS.ByteString -> BS.ByteString
 createNINJA1 old new =
-  encodeNINJA1 (diffHunks old new) Nothing Nothing Nothing
+  encodeNINJA1 (diffHunks old new) (crc32 old) (md5 old) (sha1 old)
 
 -- | Encode pre-diffed records as a NINJA1 Binary (uncompressed) patch.
 encodeNINJA1 :: [(Int, BS.ByteString)]
-             -> Maybe Word32          -- source CRC32
-             -> Maybe BS.ByteString   -- source MD5 (16 bytes)
-             -> Maybe BS.ByteString   -- source SHA1 (20 bytes)
+             -> Word32          -- source CRC32
+             -> BS.ByteString   -- source MD5 (16 bytes)
+             -> BS.ByteString   -- source SHA1 (20 bytes)
              -> BS.ByteString
 encodeNINJA1 recs srcCRC srcMD5 srcSHA1 = BL.toStrict $ toLazyByteString $
     byteString "NINJA1B "        -- magic + subformat
     <> word8 0                   -- ROM type: RAW
-    <> putWord32BE (fromMaybe 0 srcCRC)
-    <> byteString (fromMaybe (BS.replicate 16 0) srcMD5)
-    <> byteString (fromMaybe (BS.replicate 20 0) srcSHA1)
+    <> putWord32BE srcCRC
+    <> byteString srcMD5
+    <> byteString srcSHA1
     <> foldMap encodeRecord recs
     <> word8 3 <> byteString "EOF"     -- EOF sentinel
 

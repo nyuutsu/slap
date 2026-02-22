@@ -12,7 +12,7 @@ module Patch.RUP
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd)
-import Patch.Binary (diffHunks)
+import Patch.Binary (diffHunks, md5)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -225,8 +225,8 @@ rupInfo p = unlines $ filter (not . null)
                     ++ "\ntarget size: " ++ show (rupTargetSz p)
 
     md5Str _ Nothing = ""
-    md5Str label (Just md5) =
-      label ++ ":  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack md5)
+    md5Str label (Just h) =
+      label ++ ":  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
 
     overflowStr = case rupOverflow p of
       Nothing -> ""
@@ -248,8 +248,8 @@ createRUP old new = BL.toStrict $ toLazyByteString $
     <> word8 0                           -- ROM type byte
     <> putVLV (fromIntegral (BS.length old))   -- source size
     <> putVLV (fromIntegral (BS.length new))   -- target size
-    <> byteString (BS.replicate 16 0)    -- source MD5 (unknown)
-    <> byteString (BS.replicate 16 0)    -- target MD5 (unknown)
+    <> byteString (md5 old)              -- source MD5
+    <> byteString (md5 new)              -- target MD5
     <> overflowPart
     <> foldMap encodeXorRec xorHunks
     <> word8 0x00                        -- END command

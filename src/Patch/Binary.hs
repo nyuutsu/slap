@@ -18,6 +18,9 @@ module Patch.Binary
     -- * CRC-32 / CRC-16
   , crc32
   , crc16
+    -- * Cryptographic hashes
+  , md5
+  , sha1
     -- * Bulk memory operations
   , copyBSRange
     -- * Diff
@@ -39,6 +42,8 @@ import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
+import qualified Crypto.Hash as H
+import qualified Data.ByteArray as BA
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -162,6 +167,16 @@ crc32 = complement . BS.foldl' step (complement 0)
     step crc byte =
       let idx = fromIntegral ((crc `xor` fromIntegral byte) .&. 0xFF)
       in (crc `shiftR` 8) `xor` (crc32Table ! idx)
+
+----------------------------------------------------------------------------
+-- Cryptographic hashes
+----------------------------------------------------------------------------
+
+md5 :: ByteString -> ByteString
+md5 = BA.convert . H.hashWith H.MD5
+
+sha1 :: ByteString -> ByteString
+sha1 = BA.convert . H.hashWith H.SHA1
 
 ----------------------------------------------------------------------------
 -- Bulk memory operations

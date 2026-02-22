@@ -80,6 +80,7 @@ run_suite() {
     else
       bad "$test_name" "slap apply returned error"
     fi
+    test_cleanup
   done < "$suite_file"
   echo ""
 }

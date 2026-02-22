@@ -1,4 +1,4 @@
-# Undo test matrix
+# Undo test specs
 # method | base | patch | base_sha256 | provenance
 #
 # UPS self-inverse: apply then undo with same patch

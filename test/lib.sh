@@ -7,11 +7,41 @@ fail=0
 skip=0
 
 TMPDIR_BASE=$(mktemp -d -p "${SLAP_TMPDIR:-${TMPDIR:-/tmp}}" slap-test.XXXXXX)
-cleanup() { rm -rf "$TMPDIR_BASE"; }
-trap cleanup EXIT
+trap 'rm -rf "$TMPDIR_BASE"' EXIT
+
+# Per-test temp file tracking.  mktmp registers files; test_cleanup
+# removes them immediately.  Every test iteration calls test_cleanup
+# when done so nothing accumulates.  No EXIT trap — if the process
+# is killed, at most one iteration's files remain (a few hundred MB),
+# not the entire suite's worth.
+_tmpfiles=()
 
 mktmp() {
-  mktemp -p "$TMPDIR_BASE"
+  local f
+  f=$(mktemp -p "$TMPDIR_BASE")
+  _tmpfiles+=("$f")
+  echo "$f"
+}
+
+mktmp_ext() {
+  local base
+  base=$(mktemp -p "$TMPDIR_BASE")
+  rm -f "$base"
+  _tmpfiles+=("${base}.$1")
+  echo "${base}.$1"
+}
+
+test_cleanup() {
+  local f
+  for f in "${_tmpfiles[@]}"; do
+    rm -f "$f"
+  done
+  _tmpfiles=()
+}
+
+# final_cleanup — call at the end of run.sh to remove TMPDIR_BASE.
+final_cleanup() {
+  rm -rf "$TMPDIR_BASE"
 }
 
 sha() { sha256sum "$1" | cut -d' ' -f1; }
@@ -73,23 +103,11 @@ expect_ok() {
   fi
 }
 
-# expect_success <label> <cmd...>
-# Expects zero exit (don't check output).
-expect_success() {
-  local name="$1"
-  shift
-  if "$@" >/dev/null 2>&1; then
-    ok "$name"
-  else
-    bad "$name" "command failed"
-  fi
-}
-
 # bootstrap <base> <patch> → prints tmp path to patched file
-# Fatal on failure.
+# Fatal on failure.  Caller is responsible for rm when done.
 bootstrap() {
   local base="$1" patch="$2"
-  local target; target=$(mktmp)
+  local target; target=$(mktemp -p "$TMPDIR_BASE")
   cp "$base" "$target"
   if ! "$SLAP" apply "$patch" "$target" --in-place --no-backup --force >/dev/null 2>&1; then
     echo "FATAL: bootstrap apply failed: $SLAP apply $patch"
@@ -114,7 +132,7 @@ verify_sha() {
 }
 
 # strip_comments <file>
-# Reads a matrix file, strips comments and blank lines.
+# Reads a spec file, strips comments and blank lines.
 strip_comments() {
   grep -v '^\s*#' "$1" | grep -v '^\s*$'
 }

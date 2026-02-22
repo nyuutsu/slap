@@ -15,9 +15,8 @@ import System.IO
 -- Returns warnings (if any) and the number of records applied.
 applyPatch :: Patch -> FilePath -> IO ([String], Int)
 applyPatch patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  warnings <- validateTarget patch h
   n <- writeRecords h (patchRecords patch) recData
-  pure (warnings, n)
+  pure ([], n)
 
 -- | Undo a parsed PPF3 patch (requires undo data).
 undoPatch :: Patch -> FilePath -> IO (Either String Int)

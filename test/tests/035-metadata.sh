@@ -105,6 +105,7 @@ _run_metadata() {
     fi
   fi
 
+  test_cleanup
   echo ""
 }
 

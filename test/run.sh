@@ -38,4 +38,5 @@ done
 
 echo "=============================="
 echo "passed: $pass  failed: $fail  skipped: $skip"
+final_cleanup
 [ "$fail" -eq 0 ] || exit 1

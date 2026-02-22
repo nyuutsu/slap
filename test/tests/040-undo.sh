@@ -1,11 +1,11 @@
-# 040-undo.sh — matrix-driven undo tests
-# For each line in matrix/undo.txt: apply patch, undo, verify base SHA256.
+# 040-undo.sh — spec-driven undo tests
+# For each line in specs/undo.txt: apply patch, undo, verify base SHA256.
 
 _run_undo() {
   echo "--- undo tests ---"
 
-  local undo_matrix="$REPO/test/matrix/undo.txt"
-  [ -f "$undo_matrix" ] || { echo "SKIP  undo: matrix file not found"; return; }
+  local undo_spec="$REPO/test/specs/undo.txt"
+  [ -f "$undo_spec" ] || { echo "SKIP  undo: spec file not found"; return; }
 
   while IFS='|' read -r method base_rel patch_rel base_sha provenance; do
     method=$(trim "$method")
@@ -48,7 +48,8 @@ _run_undo() {
     else
       bad "$test_name" "SHA256 mismatch after undo"
     fi
-  done < <(strip_comments "$undo_matrix")
+    test_cleanup
+  done < <(strip_comments "$undo_spec")
 
   echo ""
 }

@@ -2,17 +2,18 @@
 
 module Main (main) where
 
-import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
-import Patch.Overlay (CreateFormat(..), createFromMemory, convertOverlay, fmtExt, fmtName)
+import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), parseSome)
+import Patch.Convert (CreateFormat(..), createFromMemory, convertDirect, fmtExt, fmtName)
 import Patch.Archive (detectArchive, unwrapArchive)
-import Patch.Binary (crc32)
-import Patch.Format (showCRC)
+import Patch.Binary (crc32, crc16, md5, sha1)
+import Patch.Format (showCRC, padHex)
 
 import qualified Data.ByteString as BS
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
-import Data.Maybe (fromMaybe)
-import Data.Word (Word32)
+import Data.Int (Int64)
+import Data.Maybe (fromMaybe, isJust)
+import Data.Word (Word16, Word32)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist, removeFile)
@@ -26,8 +27,9 @@ import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 data Command
   = CmdApply
-      { cmdForce   :: Bool
-      , cmdVerbose :: Bool
+      { cmdForce    :: Bool
+      , cmdNoVerify :: Bool
+      , cmdVerbose  :: Bool
       , cmdInPlace :: Bool
       , cmdBackup  :: Bool
       , cmdDryRun  :: Bool
@@ -62,6 +64,7 @@ data Command
       , cmdConvDesc      :: String
       , cmdConvUndo      :: Bool
       , cmdConvValidate  :: Bool
+      , cmdNoVerify      :: Bool
       }
   | CmdInfo    { cmdPatch :: FilePath }
   | CmdExplain { cmdPatch :: FilePath }
@@ -103,25 +106,26 @@ explainParser = CmdExplain
   <$> argument str (metavar "PATCH" <> help "Patch file to explain")
 
 applyParser :: Parser Command
-applyParser = CmdApply
-  <$> forceFlag
-  <*> verboseFlag
-  <*> inPlaceFlag
-  <*> backupFlag
-  <*> dryRunFlag
-  <*> rawFlag
+applyParser = mk
+  <$> forceFlag <*> noVerifyFlag <*> yoloFlag
+  <*> verboseFlag <*> inPlaceFlag <*> backupFlag <*> dryRunFlag <*> rawFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
   <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
   <*> outputOpt
   where
+    mk force' nv yolo' = CmdApply (force' || yolo') (nv || yolo')
     outputOpt = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
                   <> help "Write patched output to FILE"))
             <|> optional (argument str (metavar "OUTPUT"))
 
 forceFlag :: Parser Bool
-forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output / ignore CRC mismatches")
-        <|> switch (long "yolo" <> hidden)
-        <|> switch (long "send-it" <> hidden)
+forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output files")
+
+noVerifyFlag :: Parser Bool
+noVerifyFlag = switch (long "no-verify" <> help "Skip checksum validation (mismatches become warnings)")
+
+yoloFlag :: Parser Bool
+yoloFlag = switch (long "yolo" <> hidden)
 
 verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
@@ -163,7 +167,7 @@ createParser = CmdCreate
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
 
 convertParser :: Parser Command
-convertParser = CmdConvert
+convertParser = mk
   <$> argument str (metavar "PATCH" <> help "Patch file to convert")
   <*> option (eitherReader parseCfmt) (long "to" <> short 't' <> metavar "FMT"
       <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
@@ -176,6 +180,9 @@ convertParser = CmdConvert
       <> help "Patch description (PPF3/EBP)")
   <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
   <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
+  <*> noVerifyFlag <*> yoloFlag
+  where
+    mk p t o w r d u v nv yolo' = CmdConvert p t o w r d u v (nv || yolo')
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
@@ -266,18 +273,20 @@ doApply cmd = do
             | cmdInPlace cmd         = cmdSource cmd
             | Just o <- cmdOutput cmd = o
             | otherwise              = deriveOutput (cmdPatch cmd) (cmdSource cmd)
+          v = spVerification sp
+          nv = cmdNoVerify cmd
 
       -- Dry run: report and exit
       when (cmdDryRun cmd) $ do
         putStrLn $ "would apply " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                 ++ " \8594 " ++ outputPath
-        case spApply sp of
-          InMemory { imSourceCRC = Just expected } -> do
+        case vSourceCRC32 v of
+          Just expected -> do
             sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
             let actual = crc32 sourceBs
             putStrLn $ "source CRC: " ++ fmtCRC actual
               ++ if actual == expected then " \10003" else " \10007 (expected " ++ fmtCRC expected ++ ")"
-          _ -> pure ()
+          Nothing -> pure ()
         exitSuccess
 
       -- Refuse to overwrite unless --force or --in-place
@@ -294,24 +303,27 @@ doApply cmd = do
 
       case spApply sp of
         InPlace f -> do
+          -- Read source for pre-apply verification if needed
+          when (hasSourceV v) $ do
+            sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
+            verifySource nv v sourceBs
           unless (cmdInPlace cmd) $
             copyFile (cmdSource cmd) outputPath
           f (if cmdInPlace cmd then cmdSource cmd else outputPath)
+          -- Post-apply target verification if needed
+          when (hasTargetV v) $ do
+            targetBs <- BS.readFile (if cmdInPlace cmd then cmdSource cmd else outputPath)
+            verifyTarget nv v targetBs
           putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                   ++ " \8594 " ++ outputPath
-        InMemory { imApply = apply, imSourceCRC = srcCRC, imTargetCRC = tgtCRC } -> do
+        InMemory { imApply = apply } -> do
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
-          forM_ srcCRC $ \expected ->
-            checkCRC (cmdForce cmd) "source" expected (crc32 sourceBs)
+          verifySource nv v sourceBs
           result <- apply sourceBs
           case result of
             Left err -> die err
             Right target -> do
-              forM_ tgtCRC $ \expected -> do
-                let actual = crc32 target
-                when (actual /= expected) $
-                  warn ("target CRC mismatch after apply (expected "
-                        ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
+              verifyTarget nv v target
               BS.writeFile outputPath target
               putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                       ++ " \8594 " ++ outputPath
@@ -372,15 +384,16 @@ doConvert cmd = do
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) sourcePath
+          verifySource (cmdNoVerify cmd) (spVerification sp) sourceBs
           targetBs <- applyForConvert sp sourceBs
           case createFromMemory (cmdConvTo cmd) sourceBs targetBs (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
             Left err -> die err
             Right result -> do
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
-        Nothing -> case spDirectConvert sp of
+        Nothing -> case spContents sp of
           Nothing -> die (needWithMsg sp)
-          Just os -> case convertOverlay os (cmdConvTo cmd) (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
+          Just pc -> case convertDirect pc (cmdConvTo cmd) (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
             Left err -> die err
             Right (result, notes) -> do
               forM_ notes $ \n -> hPutStrLn stderr ("slap: " ++ n)
@@ -436,14 +449,71 @@ resolveOutput source (Just out) = do
     then copyFile source out >> pure out
     else die ("source file not found: " ++ source)
 
+----------------------------------------------------------------------------
+-- Verification helpers
+----------------------------------------------------------------------------
+
+verifySource :: Bool -> Verification -> BS.ByteString -> IO ()
+verifySource nv v bs = do
+  forM_ (vSourceCRC32 v) $ \expected ->
+    checkCRC nv "source" expected (crc32 bs)
+  forM_ (vSourceMD5 v) $ \expected ->
+    checkHash nv "source MD5" expected (md5 bs)
+  forM_ (vSourceSHA1 v) $ \expected ->
+    checkHash nv "source SHA1" expected (sha1 bs)
+  -- Per-block CRC16 and PPF validation are advisory (warning-only)
+  unless nv $ do
+    forM_ (vSourceBlocks v) $ \(off, expected) ->
+      warnBlock "source" off expected (crc16 (safeSlice off 0x10000 bs))
+    forM_ (vPPFBlock v) $ \(off, expected) ->
+      warnPPFBlock off expected bs
+
+verifyTarget :: Bool -> Verification -> BS.ByteString -> IO ()
+verifyTarget nv v bs = do
+  forM_ (vTargetCRC32 v) $ \expected ->
+    checkCRC nv "target" expected (crc32 bs)
+  forM_ (vTargetMD5 v) $ \expected ->
+    checkHash nv "target MD5" expected (md5 bs)
+  unless nv $
+    forM_ (vTargetBlocks v) $ \(off, expected) ->
+      warnBlock "target" off expected (crc16 (safeSlice off 0x10000 bs))
+
+hasSourceV :: Verification -> Bool
+hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSourceSHA1 v)
+            || not (null (vSourceBlocks v)) || isJust (vPPFBlock v)
+
+hasTargetV :: Verification -> Bool
+hasTargetV v = isJust (vTargetCRC32 v) || isJust (vTargetMD5 v)
+            || not (null (vTargetBlocks v))
+
 checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
-checkCRC force label expected actual
+checkCRC nv label expected actual
   | expected == actual = pure ()
-  | force = warn (label ++ " CRC mismatch (expected "
-                  ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
+  | nv = warn (label ++ " CRC mismatch (expected "
+               ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
   | otherwise = die (label ++ " CRC mismatch (expected "
                      ++ fmtCRC expected ++ ", got " ++ fmtCRC actual
-                     ++ ")\n  use --force to apply anyway")
+                     ++ ")\n  use --no-verify to apply anyway")
+
+checkHash :: Bool -> String -> BS.ByteString -> BS.ByteString -> IO ()
+checkHash nv label expected actual
+  | expected == actual = pure ()
+  | nv = warn (label ++ " mismatch")
+  | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
+
+warnBlock :: String -> Int -> Word16 -> Word16 -> IO ()
+warnBlock label off expected actual
+  | expected == actual = pure ()
+  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (fromIntegral off))
+
+warnPPFBlock :: Int64 -> BS.ByteString -> BS.ByteString -> IO ()
+warnPPFBlock off expected bs =
+  let actual = safeSlice (fromIntegral off) (BS.length expected) bs
+  in when (actual /= expected) $
+       warn ("validation block mismatch at 0x" ++ padHex 8 (fromIntegral off))
+
+safeSlice :: Int -> Int -> BS.ByteString -> BS.ByteString
+safeSlice off len bs = BS.take len (BS.drop off bs)
 
 fmtCRC :: Word32 -> String
 fmtCRC w = "0x" ++ showCRC w

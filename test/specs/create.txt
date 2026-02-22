@@ -1,4 +1,4 @@
-# Create round-trip matrix
+# Create round-trip specs
 # Each line: create a patch with slap, apply it back, verify SHA256.
 # format | scenario | base | bootstrap_patch | target_sha256 | provenance
 #

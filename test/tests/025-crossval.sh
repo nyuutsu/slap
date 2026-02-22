@@ -12,8 +12,8 @@ _run_crossval() {
 
   declare -A BOOTSTRAP_CACHE
 
-  local crossval_matrix="$REPO/test/matrix/crossval.txt"
-  [ -f "$crossval_matrix" ] || { echo "SKIP  crossval: matrix file not found"; return; }
+  local crossval_spec="$REPO/test/specs/crossval.txt"
+  [ -f "$crossval_spec" ] || { echo "SKIP  crossval: spec file not found"; return; }
 
   while IFS='|' read -r fmt scenario base_rel bootstrap_rel target_sha tool; do
     fmt=$(trim "$fmt")
@@ -125,8 +125,12 @@ _run_crossval() {
     else
       bad "$test_name" "SHA256 mismatch (got $got_sha)"
     fi
-  done < <(strip_comments "$crossval_matrix")
+    test_cleanup
+  done < <(strip_comments "$crossval_spec")
 
+  for _k in "${!BOOTSTRAP_CACHE[@]}"; do
+    rm -f "${BOOTSTRAP_CACHE[$_k]}"
+  done
   unset BOOTSTRAP_CACHE
   echo ""
 }

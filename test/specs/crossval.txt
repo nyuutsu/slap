@@ -1,4 +1,4 @@
-# Cross-validation matrix — slap create → external tool apply → SHA256 verify
+# Cross-validation specs — slap create → external tool apply → SHA256 verify
 # format | scenario | base | bootstrap_patch | target_sha256 | tool
 #
 # Different encoders produce bitwise-different valid patches, so we never

@@ -17,8 +17,14 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PCHTXT as PCHTXT
 
+import Patch.Binary (crc32, md5, sha1)
+import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
+                      FormatSpec(..), emptyContents, formatSpec,
+                      canConvert, conversionNotes)
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.Set as Set
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openBinaryTempFile)
 import Test.Tasty
@@ -49,12 +55,14 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "parse-truncated" prop_pmsrTrunc ]
   , testGroup "NINJA1"
       [ testProperty "round-trip" prop_ninja1
+      , testProperty "hashes" prop_ninja1Hashes
       , testProperty "parse-truncated" prop_ninja1Trunc ]
   , testGroup "DPS"
       [ testProperty "round-trip" prop_dps
       , testProperty "parse-truncated" prop_dpsTrunc ]
   , testGroup "RUP"
       [ testProperty "round-trip" prop_rup
+      , testProperty "hashes" prop_rupHashes
       , testProperty "parse-truncated" prop_rupTrunc ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -74,6 +82,14 @@ main = defaultMain $ testGroup "Properties"
       [ testProperty "parse-truncated" prop_bsdiffTrunc ]
   , testGroup "XDelta1"
       [ testProperty "parse-truncated" prop_xdelta1Trunc ]
+  , testGroup "Contracts"
+      [ testProperty "canConvert-full" prop_canConvertFull
+      , testProperty "no-surplus-no-notes" prop_noSurplusNoNotes
+      , testProperty "ninja1-rejects-empty" prop_ninja1RejectsEmpty
+      , testProperty "apsn64-rejects-empty" prop_apsn64RejectsEmpty
+      , testProperty "ppf3-undo-rejects-empty" prop_ppf3UndoRejectsEmpty
+      , testProperty "ppf3-validate-rejects-empty" prop_ppf3ValidateRejectsEmpty
+      ]
   ]
 
 ----------------------------------------------------------------------------
@@ -211,6 +227,17 @@ prop_ninja1 = forAll genPairNoShrink $ \(src, tgt) ->
          result <- applyViaFile NINJA1.applyNINJA1 p src
          pure $ result === tgt
 
+prop_ninja1Hashes :: Property
+prop_ninja1Hashes = forAll genPairNoShrink $ \(src, _) ->
+  not (BS.null src) ==>
+  let patch = NINJA1.createNINJA1 src src
+  in case NINJA1.parseNINJA1 patch of
+       Left err -> counterexample ("parse: " ++ err) $ property False
+       Right p  ->
+         NINJA1.n1SourceCRC p === Just (crc32 src) .&&.
+         NINJA1.n1SourceMD5 p === Just (md5 src) .&&.
+         NINJA1.n1SourceSHA1 p === Just (sha1 src)
+
 -- DPS: overlay with extension, but no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(src, tgt) ->
@@ -227,6 +254,15 @@ prop_rup = forAll genPair $ \(src, tgt) ->
        Right p  -> ioProperty $ do
          result <- applyViaFile RUP.applyRUP p src
          pure $ result === tgt
+
+prop_rupHashes :: Property
+prop_rupHashes = forAll genPair $ \(src, tgt) ->
+  let patch = RUP.createRUP src tgt
+  in case RUP.parseRUP patch of
+       Left err -> counterexample ("parse: " ++ err) $ property False
+       Right p  ->
+         RUP.rupSourceMD5 p === Just (md5 src) .&&.
+         RUP.rupTargetMD5 p === Just (md5 tgt)
 
 -- PCHTXT: pure overlay, no truncation
 prop_pchtxt :: Property
@@ -247,6 +283,83 @@ prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
        Right p  -> ioProperty $ do
          result <- applyViaFile APS.applyAPS p src
          pure $ result === tgt
+
+----------------------------------------------------------------------------
+-- Contract properties
+----------------------------------------------------------------------------
+
+-- | Overlay formats reachable by the direct path.
+overlayFormats :: [CreateFormat]
+overlayFormats =
+  [CfmtIPS, CfmtIPS32, CfmtEBP, CfmtPPF3, CfmtNINJA1, CfmtPMSR, CfmtPCHTXT, CfmtAPSN64]
+
+-- | PatchContents with every field populated.
+fullContents :: PatchContents
+fullContents = PatchContents
+  { pcRecords     = [(0, BS.pack [0xFF])]
+  , pcDescription = Just (BS.pack [0x74, 0x65, 0x73, 0x74])
+  , pcSourceCRC32 = Just 0xDEADBEEF
+  , pcSourceMD5   = Just (BS.replicate 16 0xAA)
+  , pcSourceSHA1  = Just (BS.replicate 20 0xBB)
+  , pcDestSize    = Just 1024
+  , pcValidation  = Just (BS.replicate 1024 0)
+  , pcUndoData    = Just [(0, BS.pack [0x00], BS.pack [0xFF])]
+  , pcTruncation  = Just 512
+  , pcEBPMeta     = Just (BS.pack [0x7B, 0x7D])
+  }
+
+-- | canConvert succeeds for every overlay format when all fields are present.
+prop_canConvertFull :: Property
+prop_canConvertFull = conjoin
+  [ counterexample (show fmt) $
+      canConvert fullContents (formatSpec fmt True True) === Right ()
+  | fmt <- overlayFormats
+  ]
+
+-- | No conversion notes when provides exactly matches required ∪ accepted.
+prop_noSurplusNoNotes :: Property
+prop_noSurplusNoNotes = conjoin
+  [ counterexample (show fmt) $
+      let spec = formatSpec fmt True True
+          kept = fsRequired spec `Set.union` fsAccepted spec
+          trimmed = fullContents
+            { pcDescription = if FDescription `Set.member` kept then pcDescription fullContents else Nothing
+            , pcSourceCRC32 = if FSourceCRC32 `Set.member` kept then pcSourceCRC32 fullContents else Nothing
+            , pcSourceMD5   = if FSourceMD5   `Set.member` kept then pcSourceMD5   fullContents else Nothing
+            , pcSourceSHA1  = if FSourceSHA1  `Set.member` kept then pcSourceSHA1  fullContents else Nothing
+            , pcDestSize    = if FDestSize    `Set.member` kept then pcDestSize    fullContents else Nothing
+            , pcValidation  = if FValidation  `Set.member` kept then pcValidation  fullContents else Nothing
+            , pcUndoData    = if FUndoData    `Set.member` kept then pcUndoData    fullContents else Nothing
+            , pcTruncation  = if FTruncation  `Set.member` kept then pcTruncation  fullContents else Nothing
+            , pcEBPMeta     = if FEBPMeta     `Set.member` kept then pcEBPMeta     fullContents else Nothing
+            }
+      in conversionNotes trimmed spec === []
+  | fmt <- overlayFormats
+  ]
+
+-- | NINJA1 requires hashes — empty contents must fail.
+prop_ninja1RejectsEmpty :: Property
+prop_ninja1RejectsEmpty =
+  property $ isLeft (canConvert (emptyContents []) (formatSpec CfmtNINJA1 False False))
+
+-- | APS-N64 requires dest size — empty contents must fail.
+prop_apsn64RejectsEmpty :: Property
+prop_apsn64RejectsEmpty =
+  property $ isLeft (canConvert (emptyContents []) (formatSpec CfmtAPSN64 False False))
+
+-- | PPF3 with undo requires undo data — empty contents must fail.
+prop_ppf3UndoRejectsEmpty :: Property
+prop_ppf3UndoRejectsEmpty =
+  property $ isLeft (canConvert (emptyContents []) (formatSpec CfmtPPF3 True False))
+
+-- | PPF3 with validation requires validation block — empty contents must fail.
+prop_ppf3ValidateRejectsEmpty :: Property
+prop_ppf3ValidateRejectsEmpty =
+  property $ isLeft (canConvert (emptyContents []) (formatSpec CfmtPPF3 False True))
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft _        = False
 
 ----------------------------------------------------------------------------
 -- Parse-truncated: truncate valid patches to random lengths, verify no crash

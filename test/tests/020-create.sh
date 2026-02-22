@@ -1,13 +1,13 @@
-# 020-create.sh — matrix-driven create round-trip tests
-# For each line in matrix/create.txt: bootstrap target, create patch, apply, verify SHA256.
+# 020-create.sh — spec-driven create round-trip tests
+# For each line in specs/create.txt: bootstrap target, create patch, apply, verify SHA256.
 
 _run_create() {
   echo "--- create round-trips ---"
 
   declare -A BOOTSTRAP_CACHE
 
-  local create_matrix="$REPO/test/matrix/create.txt"
-  [ -f "$create_matrix" ] || { echo "SKIP  create: matrix file not found"; return; }
+  local create_spec="$REPO/test/specs/create.txt"
+  [ -f "$create_spec" ] || { echo "SKIP  create: spec file not found"; return; }
 
   while IFS='|' read -r fmt scenario base_rel bootstrap_rel target_sha provenance; do
     fmt=$(trim "$fmt")
@@ -62,8 +62,12 @@ _run_create() {
     else
       bad "$test_name" "SHA256 mismatch"
     fi
-  done < <(strip_comments "$create_matrix")
+    test_cleanup
+  done < <(strip_comments "$create_spec")
 
+  for _k in "${!BOOTSTRAP_CACHE[@]}"; do
+    rm -f "${BOOTSTRAP_CACHE[$_k]}"
+  done
   unset BOOTSTRAP_CACHE
   echo ""
 }

@@ -17,11 +17,9 @@ _run_smoke() {
                    "$REPO"/test/data/**/*.xdelta1 \
                    "$REPO"/test/data/**/*.mod \
                    "$REPO"/test/data/**/*.ppf \
-                   "$REPO"/test/data/**/*.ppf1.ppf \
-                   "$REPO"/test/data/**/*.ppf2.ppf \
-                   "$REPO"/test/data/**/*.ebp.ebp \
-                   "$REPO"/test/data/**/*.rup.rup \
-                   "$REPO"/test/data/**/*.aps.aps \
+                   "$REPO"/test/data/**/*.ebp \
+                   "$REPO"/test/data/**/*.rup \
+                   "$REPO"/test/data/**/*.bdf \
                    "$REPO"/test/data/**/*.aps \
                    "$REPO"/test/data/**/*.ninja1 \
                    "$REPO"/test/data/**/*.pchtxt; do

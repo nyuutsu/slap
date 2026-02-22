@@ -53,7 +53,7 @@ only the `PatchFormat` enum for detection.
 defined in `Patch.SomePatch`, not a sum type. `parseSome` is the single
 dispatch point: it parses raw bytes into format-specific types, then
 closes over them to produce a `SomePatch` carrying `spInfo`, `spExplain`,
-`spApply`, `spUndo`, `spDirectConvert`, etc. All consumers work through
+`spApply`, `spUndo`, `spVerification`, `spContents`, etc. All consumers work through
 these fields. Adding a new format means adding one block to `parseSome`;
 nothing else changes.
 
@@ -89,12 +89,13 @@ Shared infrastructure:
 Yay0-compressed PMSR is transparently decompressed in `parseSome`;
 info/explain output shows "PMSR/Yay0" to distinguish from raw PMSR.
 
-`Patch.Overlay` holds the overlay conversion subsystem: `OverlaySource`,
-`OverlayRecord`, `convertOverlay`, `createFromMemory`, `overlayWarnings`,
-and the `extract*` functions that lift format-specific types into
-`OverlaySource`. `emptyOverlay` provides a default record with all
-optional fields set to `Nothing`; extract functions use record update
-syntax to set only the fields they carry.
+`Patch.Convert` holds the conversion subsystem: `PatchContents` (the
+universal overlay representation), `PatchField`/`FormatSpec` (declarative
+format contracts), `canConvert`/`conversionNotes` (contract checking),
+`convertDirect` (overlay→overlay encoding), and `createFromMemory`
+(apply-then-create path). `parseSome` populates `spContents :: Maybe
+PatchContents` for overlay formats; `canConvert` checks whether the
+source contents satisfy the target format's required fields.
 
 `Main.hs` is CLI parsing (optparse-applicative) and command handlers
 (apply, undo, create, convert, info, explain). Apply is safe by default
@@ -128,7 +129,7 @@ over-engineering for a CLI tool where every error path ends in
 
 ## Testing
 
-Single runner (`test/run.sh`), 470 integration tests + 29 QuickCheck
+Single runner (`test/run.sh`), ~490 integration tests + 39 QuickCheck
 properties, modular architecture:
 
 **`test/run.sh`** — Entry point. Discovers and sources test modules
@@ -148,29 +149,29 @@ Test modules in `test/tests/`:
   header, then pipe-delimited patch lines (format, path, confidence,
   provenance). Applies each patch, checks SHA256.
 - **020-create.sh** (15 tests) — Matrix-driven from
-  `test/matrix/create.txt`. Bootstraps targets from BPS patches,
+  `test/specs/create.txt`. Bootstraps targets from BPS patches,
   round-trips through all 13 create formats.
 - **025-crossval.sh** (11 tests) — Cross-validation: slap create →
   external tool apply → SHA256 verify. 9 formats via Flips
   (IPS/BPS/UPS) and RomPatcher.js (EBP/PPF3/APS-N64/APS-GBA/RUP/PMSR).
-- **030-convert.sh** — Matrix-driven from `test/matrix/convert.txt`.
+- **030-convert.sh** — Matrix-driven from `test/specs/convert.txt`.
   Pairwise overlay conversions, PPF3 undo/validate gating, non-overlay
   rejection, `--with` bypass, size-change rows.
 - **035-metadata.sh** — Metadata round-trip fidelity for self-conversions
   (PPF3→PPF3, NINJA1→NINJA1, APS-N64→APS-N64, EBP→EBP). Parses
   `slap info` output and compares specific metadata fields.
 - **040-undo.sh** (4 tests) — Matrix-driven from
-  `test/matrix/undo.txt`. UPS self-inverse, PPF3 committed undo data.
+  `test/specs/undo.txt`. UPS self-inverse, PPF3 committed undo data.
 - **050-smoke.sh** (202 tests) — Auto-discovered. Runs `info` and
   `explain` on every patch file in `test/data/`.
 - **060-cli.sh** (49 tests) — Procedural. Corrupt input, `--dry-run`,
   `--force`, `--in-place`/`--no-backup`, output collision, `--verbose`,
   undo/convert error paths, compound flags, create flags, hidden
-  aliases (`--yolo`, `--send-it`, `--clobber`), health warnings,
+  aliases (`--yolo`, `--clobber`), `--no-verify`, health warnings,
   empty diffs, undo with `-o`, archive unwrapping (ZIP), IPS
   truncation markers, VCDIFF custom code tables.
 
-Matrix files (`test/matrix/*.txt`) are pipe-delimited with comment
+Spec files (`test/specs/*.txt`) are pipe-delimited with comment
 support. Each row specifies source format, target format, patch path,
 optional base ROM, expected SHA256, and result disposition (`accept`,
 `reject:message`, or `skip:reason`).
@@ -186,9 +187,10 @@ named `base.{ext}`, patches with clean names. Current coverage:
 - **11 more real-world suites** — Banjo-Tooie (APS-N64), FFTA (APS-GBA), Kirby DL2 (BPS), Mother 3 (UPS stress), SotN (PPF3), Suikoden (5 PPF4 bugfixes), FE6 (IPS stress)
 
 QuickCheck property tests in `test/Props.hs` (tasty + tasty-quickcheck):
-13 round-trip properties (`create → parse → apply = identity`, one per
-create format) and 16 truncation properties (truncate a valid patch to
-random length, verify parser returns `Left` without crashing). Run via
+15 round-trip properties (`create → parse → apply = identity`, one per
+create format), 2 hash properties (NINJA1/RUP), 16 truncation properties
+(truncate a valid patch to random length, verify parser returns `Left`
+without crashing), and 6 conversion contract properties. Run via
 `cabal test`.
 
 Run all: `cabal build && bash test/run.sh && cabal test`

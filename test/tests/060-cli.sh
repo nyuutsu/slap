@@ -72,25 +72,55 @@ run_dryrun() {
 }
 
 ############################################################################
-# --force (CRC mismatch override)
+# --force (overwrite only, no CRC bypass)
 ############################################################################
 
 run_force() {
   matches_filter "force" || return 0
   [ -f "$DM4K_BASE" ] || { skp "force" "base ROM not found"; return; }
-  echo "--- --force (CRC mismatch) ---"
+  echo "--- --force (overwrite only) ---"
 
   local wrong; wrong=$(mktmp)
   dd if=/dev/urandom of="$wrong" bs=4096 count=1024 2>/dev/null
-  local crc_out; crc_out=$(mktmp)
-  rm -f "$crc_out"
-  expect_fail "force/UPS wrong source fails" "CRC mismatch" \
-    "$SLAP" apply "$DM4K_UPS" "$wrong" -o "$crc_out"
-
   local out; out=$(mktmp)
   rm -f "$out"
-  expect_ok "force/UPS wrong source + --force" "applied" \
+  expect_fail "force/--force does not bypass CRC" "CRC mismatch" \
     "$SLAP" apply "$DM4K_UPS" "$wrong" -o "$out" --force
+
+  echo ""
+}
+
+############################################################################
+# --no-verify (checksum bypass)
+############################################################################
+
+run_noverify() {
+  matches_filter "noverify" || matches_filter "no-verify" || return 0
+  [ -f "$DM4K_BASE" ] || { skp "noverify" "base ROM not found"; return; }
+  echo "--- --no-verify (checksum bypass) ---"
+
+  local wrong; wrong=$(mktmp)
+  dd if=/dev/urandom of="$wrong" bs=4096 count=1024 2>/dev/null
+
+  # Without --no-verify: fails on source CRC
+  local out; out=$(mktmp)
+  rm -f "$out"
+  expect_fail "noverify/BPS wrong source fails by default" "CRC mismatch" \
+    "$SLAP" apply "$DM4K_BPS" "$wrong" -o "$out"
+
+  # Error message suggests --no-verify, not --force
+  local err
+  err=$("$SLAP" apply "$DM4K_BPS" "$wrong" -o "$out" 2>&1) || true
+  if echo "$err" | grep -q "\-\-no-verify"; then
+    ok "noverify/error suggests --no-verify"
+  else
+    bad "noverify/error suggests --no-verify" "expected '--no-verify' in: $err"
+  fi
+
+  # --no-verify bypasses source + target CRC (both become warnings)
+  rm -f "$out"
+  expect_ok "noverify/--no-verify bypasses CRC" "applied" \
+    "$SLAP" apply "$DM4K_BPS" "$wrong" -o "$out" --no-verify
 
   echo ""
 }
@@ -262,12 +292,18 @@ run_aliases() {
   [ -f "$DM4K_BASE" ] || { skp "aliases" "base ROM not found"; return; }
   echo "--- hidden aliases ---"
 
+  # --yolo overwrites existing output (--force)
   local out; out=$(mktmp)
-  expect_ok "aliases/--yolo" "applied" \
+  expect_ok "aliases/--yolo overwrites" "applied" \
     "$SLAP" apply "$DM4K_IPS" "$DM4K_BASE" -o "$out" --yolo
 
-  expect_ok "aliases/--send-it" "applied" \
-    "$SLAP" apply "$DM4K_IPS" "$DM4K_BASE" -o "$out" --send-it
+  # --yolo bypasses CRC (--no-verify)
+  local wrong; wrong=$(mktmp)
+  dd if=/dev/urandom of="$wrong" bs=4096 count=1024 2>/dev/null
+  local yolo_out; yolo_out=$(mktmp)
+  rm -f "$yolo_out"
+  expect_ok "aliases/--yolo bypasses CRC" "applied" \
+    "$SLAP" apply "$DM4K_BPS" "$wrong" -o "$yolo_out" --yolo
 
   local work; work=$(mktmp)
   cp "$DM4K_BASE" "$work"
@@ -389,7 +425,7 @@ run_archive() {
   command -v unzip >/dev/null || { skp "archive" "unzip not found"; return; }
   echo "--- archive unwrapping ---"
 
-  local zipfile; zipfile=$(mktmp).zip
+  local zipfile; zipfile=$(mktmp_ext zip)
   (cd "$(dirname "$DM4K_IPS")" && zip -j "$zipfile" "$(basename "$DM4K_IPS")") >/dev/null 2>&1
 
   local result; result=$(mktmp)
@@ -412,13 +448,13 @@ run_archive() {
   expect_ok "archive/info ZIP-wrapped" "IPS" "$SLAP" info "$zipfile"
   expect_ok "archive/explain ZIP-wrapped" "IPS" "$SLAP" explain "$zipfile"
 
-  local chaffzip; chaffzip=$(mktmp).zip
-  local readme; readme=$(mktmp).txt
+  local chaffzip; chaffzip=$(mktmp_ext zip)
+  local readme; readme=$(mktmp_ext txt)
   echo "README" > "$readme"
   (cd "$(dirname "$DM4K_IPS")" && zip -j "$chaffzip" "$(basename "$DM4K_IPS")" "$readme") >/dev/null 2>&1
   expect_ok "archive/ZIP chaff filters readme" "IPS" "$SLAP" info "$chaffzip"
 
-  local multizip; multizip=$(mktmp).zip
+  local multizip; multizip=$(mktmp_ext zip)
   (cd "$(dirname "$DM4K_IPS")" && zip -j "$multizip" "$(basename "$DM4K_IPS")" "$(basename "$DM4K_BPS")") >/dev/null 2>&1
   expect_fail "archive/multi-entry ZIP fails" "candidate files" "$SLAP" info "$multizip"
 
@@ -512,23 +548,58 @@ run_pchtxt_detect() {
 }
 
 ############################################################################
+# NINJA1 source verification
+############################################################################
+
+run_ninja1_verify() {
+  matches_filter "ninja1-verify" || return 0
+  [ -f "$DM4K_BASE" ] || { skp "ninja1-verify" "base ROM not found"; return; }
+  echo "--- NINJA1 source verification ---"
+
+  # Create a patched target via IPS
+  local target; target=$(mktmp)
+  cp "$DM4K_BASE" "$target"
+  "$SLAP" apply "$DM4K_IPS" "$target" --in-place --no-backup >/dev/null 2>&1
+
+  # Create NINJA1 patch
+  local patch; patch=$(mktmp)
+  "$SLAP" create --format ninja1 "$DM4K_BASE" "$target" "$patch" >/dev/null 2>&1
+
+  # Info should show source CRC
+  expect_ok "ninja1-verify/info shows source CRC" "source CRC" "$SLAP" info "$patch"
+
+  # Apply to correct source succeeds
+  local out; out=$(mktmp)
+  rm -f "$out"
+  expect_ok "ninja1-verify/correct source" "applied" \
+    "$SLAP" apply "$patch" "$DM4K_BASE" -o "$out"
+
+  # Apply to wrong source fails
+  local wrong; wrong=$(mktmp)
+  dd if=/dev/urandom of="$wrong" bs=4096 count=1024 2>/dev/null
+  rm -f "$out"
+  expect_fail "ninja1-verify/wrong source rejected" "mismatch" \
+    "$SLAP" apply "$patch" "$wrong" -o "$out"
+
+  # --no-verify bypasses
+  rm -f "$out"
+  expect_ok "ninja1-verify/--no-verify bypasses" "applied" \
+    "$SLAP" apply "$patch" "$wrong" -o "$out" --no-verify
+
+  echo ""
+}
+
+############################################################################
 # Run all CLI tests
 ############################################################################
 
-run_corrupt
-run_dryrun
-run_force
-run_inplace
-run_collision
-run_verbose
-run_undo_errors
-run_compound
-run_create_flags
-run_aliases
-run_warnings
-run_empty_diff
-run_undo_output
-run_archive
-run_ips_truncate
-run_custom_codetable
-run_pchtxt_detect
+for _fn in \
+  run_corrupt run_dryrun run_force run_noverify run_inplace \
+  run_collision run_verbose run_undo_errors run_compound \
+  run_create_flags run_aliases run_warnings run_empty_diff \
+  run_undo_output run_archive run_ips_truncate \
+  run_custom_codetable run_pchtxt_detect run_ninja1_verify
+do
+  "$_fn"
+  test_cleanup
+done

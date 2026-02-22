@@ -32,7 +32,7 @@ library slap-internal
     , Patch.Explain
     , Patch.GDIFF
     , Patch.IPS
-    , Patch.Overlay
+    , Patch.Convert
     , Patch.PCHTXT
     , Patch.PMSR
     , Patch.RUP
@@ -60,6 +60,8 @@ library slap-internal
     , process              >= 1.6
     , bzlib                >= 0.5
     , zlib                 >= 0.6
+    , crypton              >= 0.31
+    , memory               >= 0.18
 
 executable slap
   main-is:          Main.hs
@@ -88,3 +90,6 @@ test-suite props
     , tasty-quickcheck     >= 0.10
     , QuickCheck           >= 2.14
     , slap:slap-internal
+    , containers           >= 0.6
+    , crypton              >= 0.31
+    , memory               >= 0.18

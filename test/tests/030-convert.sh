@@ -1,11 +1,11 @@
-# 030-convert.sh — matrix-driven conversion tests
-# Parses matrix/convert.txt and runs accept/reject/warning checks.
+# 030-convert.sh — spec-driven conversion tests
+# Parses specs/convert.txt and runs accept/reject/warning checks.
 
 _run_convert() {
-  echo "--- conversion matrix ---"
+  echo "--- conversion specs ---"
 
-  local convert_matrix="$REPO/test/matrix/convert.txt"
-  [ -f "$convert_matrix" ] || { echo "SKIP  convert: matrix file not found"; return; }
+  local convert_spec="$REPO/test/specs/convert.txt"
+  [ -f "$convert_spec" ] || { echo "SKIP  convert: spec file not found"; return; }
 
   while IFS='|' read -r src_fmt tgt_fmt patch_rel base_rel target_sha result expected_warnings flags; do
     src_fmt=$(trim "$src_fmt")
@@ -96,6 +96,7 @@ _run_convert() {
     if [ -n "$expected_warnings" ]; then
       local warn_ok=true
       local wp
+      local -a _warn_pats
       IFS=',' read -ra _warn_pats <<< "$expected_warnings"
       for wp in "${_warn_pats[@]}"; do
         wp=$(trim "$wp")
@@ -126,7 +127,8 @@ _run_convert() {
     else
       ok "$test_name"
     fi
-  done < <(strip_comments "$convert_matrix")
+    test_cleanup
+  done < <(strip_comments "$convert_spec")
 
   echo ""
 }
