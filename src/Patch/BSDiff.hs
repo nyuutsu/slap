@@ -74,7 +74,7 @@ safeDecompressBZip label compressed = unsafePerformIO $ do
               BL.take maxDecompressedSize $
               BZip.decompress $ BL.fromStrict compressed
   pure $ case result of
-    Left e  -> Left ("bsdiff: " ++ label ++ " decompression failed: " ++ show e)
+    Left e  -> Left ("BSDiff: " ++ label ++ " decompression failed: " ++ show e)
     Right d -> Right d
 
 ----------------------------------------------------------------------------
@@ -83,9 +83,9 @@ safeDecompressBZip label compressed = unsafePerformIO $ do
 
 parseBSDiff :: ByteString -> Either String BSDiffPatch
 parseBSDiff bs
-  | BS.length bs < 32 = Left "too short for bsdiff header"
-  | BS.take 8 bs /= "BSDIFF40" = Left "not a bsdiff file (bad magic)"
-  | ctrlSz < 0 || diffSz < 0 || newSz < 0 = Left "negative size in bsdiff header"
+  | BS.length bs < 32 = Left "BSDiff: input too short"
+  | BS.take 8 bs /= "BSDIFF40" = Left "not a BSDiff file (bad magic)"
+  | ctrlSz < 0 || diffSz < 0 || newSz < 0 = Left "BSDiff: invalid header (negative size)"
   | otherwise = do
       ctrlData  <- safeDecompressBZip "control" ctrlCompressed
       diffData  <- safeDecompressBZip "diff" diffCompressed
@@ -117,7 +117,7 @@ parseControls bs
 applyBSDiff :: BSDiffPatch -> ByteString -> Either String ByteString
 applyBSDiff patch _source
   | bsdNewSize patch == 0 = Right BS.empty
-  | bsdNewSize patch < 0  = Left "bsdiff: negative target size"
+  | bsdNewSize patch < 0  = Left "BSDiff: negative target size"
 applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
   go ptr 0 0 0 0 (bsdControls patch)
   where

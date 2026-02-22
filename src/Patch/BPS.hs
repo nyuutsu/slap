@@ -46,15 +46,15 @@ data BPSPatch = BPSPatch
 
 parseBPS :: ByteString -> Either String BPSPatch
 parseBPS bs
-  | BS.length bs < 4 = Left "too short for BPS header"
+  | BS.length bs < 4 = Left "BPS: input too short"
   | BS.take 4 bs /= "BPS1" = Left "not a BPS file (bad magic)"
-  | BS.length bs < 12 = Left "truncated BPS footer"
+  | BS.length bs < 12 = Left "BPS: truncated footer"
   | otherwise = do
       -- Validate patch CRC (covers everything except the last 4 bytes)
       let storedPatchCRC = getWord32LE (BS.length bs - 4) bs
           actualPatchCRC = crc32 (BS.take (BS.length bs - 4) bs)
       if storedPatchCRC /= actualPatchCRC
-        then Left ("patch CRC mismatch (stored " ++ showCRC storedPatchCRC
+        then Left ("BPS: patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
         else pure ()
       let srcCRC = getWord32LE (BS.length bs - 12) bs

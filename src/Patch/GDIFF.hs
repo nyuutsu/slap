@@ -41,9 +41,9 @@ data GDiffPatch = GDiffPatch
 
 parseGDIFF :: ByteString -> Either String GDiffPatch
 parseGDIFF bs
-  | BS.length bs < 5 = Left "too short for GDIFF header"
+  | BS.length bs < 5 = Left "GDIFF: input too short"
   | BS.take 4 bs /= "\xd1\xff\xd1\xff" = Left "not a GDIFF file (bad magic)"
-  | BS.index bs 4 /= 4 = Left ("unsupported GDIFF version: " ++ show (BS.index bs 4))
+  | BS.index bs 4 /= 4 = Left ("GDIFF: unsupported version: " ++ show (BS.index bs 4))
   | otherwise = runGet (do { _ <- getBytes 5; parseCmds [] }) bs
   where
     parseCmds acc = do

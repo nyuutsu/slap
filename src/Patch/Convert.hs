@@ -26,6 +26,7 @@ import qualified Patch.PMSR as PMSR
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
+import Patch.Binary (diffHunks, crc32, md5, sha1)
 import Patch.Format (showCRC, padHex)
 
 import qualified Data.ByteString as BS
@@ -60,7 +61,7 @@ data FormatSpec = FormatSpec
   , fsAccepted :: Set.Set PatchField
   }
 
--- | Universal representation of a direct (overlay) patch's contents.
+-- | Universal representation of a direct patch's contents.
 data PatchContents = PatchContents
   { pcRecords     :: [(Int64, BS.ByteString)]
   , pcDescription :: Maybe BS.ByteString
@@ -179,11 +180,11 @@ fieldNote pc field = case field of
     | Just crc <- pcSourceCRC32 pc, crc /= 0 ->
       ["note: dropping source CRC32: 0x" ++ showCRC crc]
   FSourceMD5
-    | Just md5 <- pcSourceMD5 pc, not (BS.all (== 0) md5) ->
-      ["note: dropping source MD5: " ++ hexBS md5]
+    | Just md5v <- pcSourceMD5 pc, not (BS.all (== 0) md5v) ->
+      ["note: dropping source MD5: " ++ hexBS md5v]
   FSourceSHA1
-    | Just sha1 <- pcSourceSHA1 pc, not (BS.all (== 0) sha1) ->
-      ["note: dropping source SHA1: " ++ hexBS sha1]
+    | Just sha1v <- pcSourceSHA1 pc, not (BS.all (== 0) sha1v) ->
+      ["note: dropping source SHA1: " ++ hexBS sha1v]
   FDescription
     | Just d <- pcDescription pc
     , not (BS.all (\b -> b == 0x20 || b == 0) d) ->
@@ -206,7 +207,7 @@ fieldNote pc field = case field of
   _ -> []
 
 ----------------------------------------------------------------------------
--- Direct conversion (overlay → overlay)
+-- Direct conversion (direct → direct)
 ----------------------------------------------------------------------------
 
 -- | Convert parsed patch contents to a target format without the source ROM.
@@ -220,7 +221,7 @@ convertDirect pc target cliDesc includeUndo includeValidation = case target of
   CfmtRUP    -> Left (diffOnlyMsg CfmtRUP)
   CfmtAPSGBA -> Left (diffOnlyMsg CfmtAPSGBA)
   CfmtGDIFF  -> Left (diffOnlyMsg CfmtGDIFF)
-  -- Overlay targets: contract check → offset check → encode
+  -- Direct targets: contract check → offset check → encode
   _ -> do
     let spec = formatSpec target includeUndo includeValidation
     case canConvert pc spec of
@@ -245,11 +246,11 @@ checkOffsetLimits target recs
 -- | Encode PatchContents into the target format.
 encodeDirect :: PatchContents -> CreateFormat -> String -> BS.ByteString
 encodeDirect pc target cliDesc = case target of
-  CfmtIPS    -> IPS.encodeIPS intRecs (pcTruncation pc)
+  CfmtIPS    -> IPS.encodeIPS splitIPS (pcTruncation pc)
   CfmtIPS32  -> IPS.encodeIPS32 (splitRecords 0xFFFF intRecs) (pcTruncation pc)
   CfmtEBP    -> case if null cliDesc then pcEBPMeta pc else Nothing of
-                  Just raw -> IPS.encodeEBPRaw intRecs raw
-                  Nothing  -> IPS.encodeEBP intRecs (pcTruncation pc) desc
+                  Just raw -> IPS.encodeEBPRaw splitIPS raw
+                  Nothing  -> IPS.encodeEBP splitIPS (pcTruncation pc) desc
   CfmtPPF3   -> PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
                    (pcUndoData pc) (pcValidation pc)
   CfmtNINJA1 -> case (pcSourceCRC32 pc, pcSourceMD5 pc, pcSourceSHA1 pc) of
@@ -257,16 +258,20 @@ encodeDirect pc target cliDesc = case target of
                      NINJA1.encodeNINJA1 intRecs crc md5v sha1v
                    _ -> error "unreachable: canConvert verified"
   CfmtPMSR   -> PMSR.encodePMSR intRecs
-  CfmtPCHTXT -> PCHTXT.encodePCHTXT intRecs (pcDescription pc)
+  CfmtPCHTXT -> PCHTXT.encodePCHTXT intRecs pchtxtDesc
   CfmtAPSN64 -> case pcDestSize pc of
                   Just sz -> APS.encodeAPSN64 intRecs sz apsDesc
                   Nothing -> error "unreachable: canConvert verified FDestSize"
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
   where
-    intRecs = toIntPairs (pcRecords pc)
-    desc    = resolveDesc cliDesc (pcEBPMeta pc) (pcDescription pc) ""
-    apsDesc = resolveDesc cliDesc Nothing (pcDescription pc) (replicate 50 ' ')
+    intRecs  = toIntPairs (pcRecords pc)
+    splitIPS = splitRecords 0xFFFF intRecs
+    desc     = resolveDesc cliDesc (pcEBPMeta pc) (pcDescription pc) ""
+    apsDesc  = resolveDesc cliDesc Nothing (pcDescription pc) (replicate 50 ' ')
+    pchtxtDesc
+      | not (null cliDesc) = Just (BS8.pack cliDesc)
+      | otherwise          = pcDescription pc
 
 ----------------------------------------------------------------------------
 -- Create
@@ -274,20 +279,84 @@ encodeDirect pc target cliDesc = case target of
 
 -- | Create a patch from source and target bytes.
 createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> Bool -> Bool -> Either String BS.ByteString
-createFromMemory CfmtBPS    src tgt _    _    _   = Right (BPS.createBPS src tgt)
-createFromMemory CfmtUPS    src tgt _    _    _   = Right (UPS.createUPS src tgt)
-createFromMemory CfmtPMSR   src tgt _    _    _   = Right (PMSR.createPMSR src tgt)
-createFromMemory CfmtIPS    src tgt _    _    _   = IPS.createIPS src tgt
-createFromMemory CfmtIPS32  src tgt _    _    _   = IPS.createIPS32 src tgt
-createFromMemory CfmtEBP    src tgt desc _    _   = IPS.createEBP src tgt desc
-createFromMemory CfmtPPF3   src tgt desc undo val = Right (PPF.createPatchPure src tgt desc undo val)
-createFromMemory CfmtNINJA1 src tgt _    _    _   = Right (NINJA1.createNINJA1 src tgt)
-createFromMemory CfmtDPS    src tgt _    _    _   = Right (DPS.createDPS src tgt)
-createFromMemory CfmtRUP    src tgt _    _    _   = Right (RUP.createRUP src tgt)
-createFromMemory CfmtAPSN64 src tgt _    _    _   = Right (APS.createAPSN64 src tgt)
-createFromMemory CfmtAPSGBA src tgt _    _    _   = Right (APS.createAPSGBA src tgt)
-createFromMemory CfmtGDIFF  src tgt _    _    _   = Right (GDIFF.createGDIFF src tgt)
-createFromMemory CfmtPCHTXT src tgt _    _    _   = Right (PCHTXT.createPCHTXT src tgt)
+createFromMemory fmt src tgt desc undo val
+  | isDirect fmt =
+      let pc = buildContents fmt src tgt undo val
+      in checkOffsetLimits fmt (pcRecords pc)
+         >> Right (encodeDirect pc fmt desc)
+  | otherwise = case fmt of
+      CfmtBPS    -> Right (BPS.createBPS src tgt)
+      CfmtUPS    -> Right (UPS.createUPS src tgt)
+      CfmtDPS    -> Right (DPS.createDPS src tgt)
+      CfmtRUP    -> Right (RUP.createRUP src tgt)
+      CfmtAPSGBA -> Right (APS.createAPSGBA src tgt)
+      CfmtGDIFF  -> Right (GDIFF.createGDIFF src tgt)
+      _          -> error "unreachable: all formats handled"
+
+-- | Direct formats that go through PatchContents → encodeDirect.
+isDirect :: CreateFormat -> Bool
+isDirect CfmtIPS    = True
+isDirect CfmtIPS32  = True
+isDirect CfmtEBP    = True
+isDirect CfmtPPF3   = True
+isDirect CfmtNINJA1 = True
+isDirect CfmtPMSR   = True
+isDirect CfmtPCHTXT = True
+isDirect CfmtAPSN64 = True
+isDirect _          = False
+
+-- | Build PatchContents from source and target bytes for a direct format.
+buildContents :: CreateFormat -> BS.ByteString -> BS.ByteString
+              -> Bool -> Bool -> PatchContents
+buildContents fmt src tgt includeUndo includeValidation = PatchContents
+  { pcRecords     = int64Recs
+  , pcDescription = Nothing
+  , pcSourceCRC32 = if needs FSourceCRC32 then Just (crc32 src) else Nothing
+  , pcSourceMD5   = if needs FSourceMD5   then Just (md5 src)   else Nothing
+  , pcSourceSHA1  = if needs FSourceSHA1  then Just (sha1 src)  else Nothing
+  , pcDestSize    = if needs FDestSize
+                    then Just (fromIntegral (BS.length tgt))
+                    else Nothing
+  , pcValidation  = if needs FValidation && BS.length src > 0x9320 + 1024
+                    then Just (BS.take 1024 (BS.drop 0x9320 src))
+                    else Nothing
+  , pcUndoData    = if needs FUndoData
+                    then Just (computeUndo src int64Recs)
+                    else Nothing
+  , pcTruncation  = if needs FTruncation && BS.length tgt < BS.length src
+                    then Just (fromIntegral (BS.length tgt))
+                    else Nothing
+  , pcEBPMeta     = Nothing
+  }
+  where
+    hunks     = diffHunks src tgt
+    int64Recs = map (\(o, d) -> (fromIntegral o, d)) hunks
+    spec      = formatSpec fmt includeUndo includeValidation
+    allFields = fsRequired spec `Set.union` fsAccepted spec
+    needs f   = f `Set.member` allFields
+
+-- | Compute undo triples from source bytes and diff records.
+-- Each record is split at 255 bytes (PPF3 record size limit).
+computeUndo :: BS.ByteString -> [(Int64, BS.ByteString)]
+            -> [(Int64, BS.ByteString, BS.ByteString)]
+computeUndo src = concatMap splitUndo
+  where
+    srcLen = BS.length src
+    splitUndo (off, dat)
+      | BS.null dat = []
+      | BS.length dat <= 255 =
+          [(off, dat, oldBytes (fromIntegral off) (BS.length dat))]
+      | otherwise =
+          let chunk = BS.take 255 dat
+              intOff = fromIntegral off
+          in (off, chunk, oldBytes intOff 255)
+             : splitUndo (off + 255, BS.drop 255 dat)
+    oldBytes off len
+      | off >= srcLen = BS.replicate len 0
+      | off + len > srcLen =
+          BS.take (srcLen - off) (BS.drop off src)
+          <> BS.replicate (len - (srcLen - off)) 0
+      | otherwise = BS.take len (BS.drop off src)
 
 ----------------------------------------------------------------------------
 -- Internal helpers

@@ -9,7 +9,6 @@ import qualified Patch.DPS as DPS
 import qualified Patch.RUP as RUP
 import qualified Patch.APS as APS
 import qualified Patch.GDIFF as GDIFF
-import qualified Patch.PPF.Create as PPF
 import qualified Patch.PPF.Parse as PPF
 import qualified Patch.PPF.Apply as PPF
 import qualified Patch.VCDIFF as VCDIFF
@@ -20,7 +19,7 @@ import qualified Patch.PCHTXT as PCHTXT
 import Patch.Binary (crc32, md5, sha1)
 import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
                       FormatSpec(..), emptyContents, formatSpec,
-                      canConvert, conversionNotes)
+                      canConvert, conversionNotes, createFromMemory)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -111,7 +110,7 @@ genPair :: Gen (ByteString, ByteString)
 genPair = (,) <$> genBS <*> genBS
 
 -- | (source, target) where len(target) >= len(source).
--- Pure overlay formats that lack truncation support can only grow or stay same-size.
+-- Pure direct formats that lack truncation support can only grow or stay same-size.
 -- Affected: PPF3, PMSR, NINJA1, DPS, APS-N64.
 genPairNoShrink :: Gen (ByteString, ByteString)
 genPairNoShrink = do
@@ -119,7 +118,7 @@ genPairNoShrink = do
   b <- genBS
   pure $ if BS.length a <= BS.length b then (a, b) else (b, a)
 
--- | Apply an overlay patch via temp file, return result bytes.
+-- | Apply a direct-format patch via temp file, return result bytes.
 applyViaFile :: (p -> FilePath -> IO a) -> p -> ByteString -> IO ByteString
 applyViaFile applyFn patch source = do
   dir <- getTemporaryDirectory
@@ -151,7 +150,7 @@ prop_ups = forAll genPair $ \(src, tgt) ->
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(src, tgt) ->
-  case IPS.createIPS src tgt of
+  case createFromMemory CfmtIPS src tgt "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -181,7 +180,7 @@ prop_apsGba = forAll genPair $ \(src, tgt) ->
 
 prop_ips32 :: Property
 prop_ips32 = forAll genPair $ \(src, tgt) ->
-  case IPS.createIPS32 src tgt of
+  case createFromMemory CfmtIPS32 src tgt "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -191,7 +190,7 @@ prop_ips32 = forAll genPair $ \(src, tgt) ->
 
 prop_ebp :: Property
 prop_ebp = forAll genPair $ \(src, tgt) ->
-  case IPS.createEBP src tgt "" of
+  case createFromMemory CfmtEBP src tgt "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -199,11 +198,12 @@ prop_ebp = forAll genPair $ \(src, tgt) ->
         result <- applyViaFile IPS.applyIPS p src
         pure $ result === tgt
 
--- Pure overlays: no truncation, target must be >= source
+-- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = PPF.createPatchPure src tgt "" False False
-  in case PPF.parsePatch patch of
+  case createFromMemory CfmtPPF3 src tgt "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case PPF.parsePatch patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
          result <- applyViaFile PPF.applyPatch p src
@@ -211,8 +211,9 @@ prop_ppf3 = forAll genPairNoShrink $ \(src, tgt) ->
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = PMSR.createPMSR src tgt
-  in case PMSR.parsePMSR patch of
+  case createFromMemory CfmtPMSR src tgt "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case PMSR.parsePMSR patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
          result <- applyViaFile PMSR.applyPMSR p src
@@ -220,8 +221,9 @@ prop_pmsr = forAll genPairNoShrink $ \(src, tgt) ->
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = NINJA1.createNINJA1 src tgt
-  in case NINJA1.parseNINJA1 patch of
+  case createFromMemory CfmtNINJA1 src tgt "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case NINJA1.parseNINJA1 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
          result <- applyViaFile NINJA1.applyNINJA1 p src
@@ -230,15 +232,16 @@ prop_ninja1 = forAll genPairNoShrink $ \(src, tgt) ->
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(src, _) ->
   not (BS.null src) ==>
-  let patch = NINJA1.createNINJA1 src src
-  in case NINJA1.parseNINJA1 patch of
+  case createFromMemory CfmtNINJA1 src src "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case NINJA1.parseNINJA1 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  ->
          NINJA1.n1SourceCRC p === Just (crc32 src) .&&.
          NINJA1.n1SourceMD5 p === Just (md5 src) .&&.
          NINJA1.n1SourceSHA1 p === Just (sha1 src)
 
--- DPS: overlay with extension, but no truncation
+-- DPS: direct with extension, but no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(src, tgt) ->
   let patch = DPS.createDPS src tgt
@@ -264,21 +267,23 @@ prop_rupHashes = forAll genPair $ \(src, tgt) ->
          RUP.rupSourceMD5 p === Just (md5 src) .&&.
          RUP.rupTargetMD5 p === Just (md5 tgt)
 
--- PCHTXT: pure overlay, no truncation
+-- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = PCHTXT.createPCHTXT src tgt
-  in case PCHTXT.parsePCHTXT patch of
+  case createFromMemory CfmtPCHTXT src tgt "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case PCHTXT.parsePCHTXT patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
          result <- applyViaFile PCHTXT.applyPCHTXT p src
          pure $ result === tgt
 
--- APS-N64: pure overlay, no truncation
+-- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = APS.createAPSN64 src tgt
-  in case APS.parseAPS patch of
+  case createFromMemory CfmtAPSN64 src tgt "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case APS.parseAPS patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
          result <- applyViaFile APS.applyAPS p src
@@ -288,9 +293,9 @@ prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
 -- Contract properties
 ----------------------------------------------------------------------------
 
--- | Overlay formats reachable by the direct path.
-overlayFormats :: [CreateFormat]
-overlayFormats =
+-- | Direct formats that go through buildContents → encodeDirect.
+directFormats :: [CreateFormat]
+directFormats =
   [CfmtIPS, CfmtIPS32, CfmtEBP, CfmtPPF3, CfmtNINJA1, CfmtPMSR, CfmtPCHTXT, CfmtAPSN64]
 
 -- | PatchContents with every field populated.
@@ -308,12 +313,12 @@ fullContents = PatchContents
   , pcEBPMeta     = Just (BS.pack [0x7B, 0x7D])
   }
 
--- | canConvert succeeds for every overlay format when all fields are present.
+-- | canConvert succeeds for every direct format when all fields are present.
 prop_canConvertFull :: Property
 prop_canConvertFull = conjoin
   [ counterexample (show fmt) $
       canConvert fullContents (formatSpec fmt True True) === Right ()
-  | fmt <- overlayFormats
+  | fmt <- directFormats
   ]
 
 -- | No conversion notes when provides exactly matches required ∪ accepted.
@@ -334,7 +339,7 @@ prop_noSurplusNoNotes = conjoin
             , pcEBPMeta     = if FEBPMeta     `Set.member` kept then pcEBPMeta     fullContents else Nothing
             }
       in conversionNotes trimmed spec === []
-  | fmt <- overlayFormats
+  | fmt <- directFormats
   ]
 
 -- | NINJA1 requires hashes — empty contents must fail.
@@ -381,19 +386,19 @@ prop_bpsTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(src, tgt) ->
-  case IPS.createIPS src tgt of
+  case createFromMemory CfmtIPS src tgt "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
 prop_ips32Trunc = forAll genPair $ \(src, tgt) ->
-  case IPS.createIPS32 src tgt of
+  case createFromMemory CfmtIPS32 src tgt "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
 prop_ebpTrunc = forAll genPair $ \(src, tgt) ->
-  case IPS.createEBP src tgt "" of
+  case createFromMemory CfmtEBP src tgt "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
@@ -403,15 +408,21 @@ prop_upsTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated PPF.parsePatch (PPF.createPatchPure src tgt "" False False)
+  case createFromMemory CfmtPPF3 src tgt "" False False of
+    Left _ -> discard
+    Right patch -> truncated PPF.parsePatch patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated PMSR.parsePMSR (PMSR.createPMSR src tgt)
+  case createFromMemory CfmtPMSR src tgt "" False False of
+    Left _ -> discard
+    Right patch -> truncated PMSR.parsePMSR patch
 
 prop_ninja1Trunc :: Property
 prop_ninja1Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated NINJA1.parseNINJA1 (NINJA1.createNINJA1 src tgt)
+  case createFromMemory CfmtNINJA1 src tgt "" False False of
+    Left _ -> discard
+    Right patch -> truncated NINJA1.parseNINJA1 patch
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(src, tgt) ->
@@ -423,7 +434,9 @@ prop_rupTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated APS.parseAPS (APS.createAPSN64 src tgt)
+  case createFromMemory CfmtAPSN64 src tgt "" False False of
+    Left _ -> discard
+    Right patch -> truncated APS.parseAPS patch
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(src, tgt) ->
@@ -435,7 +448,9 @@ prop_gdiffTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated PCHTXT.parsePCHTXT (PCHTXT.createPCHTXT src tgt)
+  case createFromMemory CfmtPCHTXT src tgt "" False False of
+    Left _ -> discard
+    Right patch -> truncated PCHTXT.parsePCHTXT patch
 
 ----------------------------------------------------------------------------
 -- Consume-only formats: truncation on real test data

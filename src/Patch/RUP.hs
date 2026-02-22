@@ -108,9 +108,9 @@ parseFixedHeader bs = RUPInfo
 
 parseRUP :: ByteString -> Either String RUPPatch
 parseRUP bs
-  | BS.length bs < 7 = Left "too short for RUP header"
+  | BS.length bs < 7 = Left "RUP: input too short"
   | BS.take 7 bs /= "NINJA2\0" = Left "not a RUP file (bad magic)"
-  | BS.length bs < headerSize = Left "truncated RUP header"
+  | BS.length bs < headerSize = Left "RUP: truncated header"
   | otherwise = runGet parseRUP' bs
   where
     parseRUP' :: Get RUPPatch

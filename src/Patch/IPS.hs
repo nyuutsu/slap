@@ -7,9 +7,6 @@ module Patch.IPS
   , IPSPatch(..)
   , parseIPS
   , applyIPS
-  , createIPS
-  , createIPS32
-  , createEBP
   , encodeIPS
   , encodeIPS32
   , encodeEBP
@@ -17,7 +14,7 @@ module Patch.IPS
   , ipsInfo
   ) where
 
-import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, mergeNearby)
+import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
 import qualified Patch.Get as G
@@ -198,34 +195,6 @@ takeQuoted ('\\' : c : rest) = c : takeQuoted rest
 takeQuoted (c : rest) = c : takeQuoted rest
 takeQuoted [] = ""
 
-----------------------------------------------------------------------------
--- Create
-----------------------------------------------------------------------------
-
--- | Create an IPS patch by diffing two byte strings.
--- Returns Left if the files exceed 16 MB (IPS offset limit).
-createIPS :: ByteString -> ByteString -> Either String ByteString
-createIPS orig modified
-  | BS.length modified > 0x1000000 =
-      Left "file exceeds 16 MB IPS offset limit — use IPS32 or BPS instead"
-  | otherwise =
-      let trunc = if BS.length modified < BS.length orig
-                  then Just (fromIntegral (BS.length modified))
-                  else Nothing
-      in Right (encodeIPS (diffToRecords 0xFFFF orig modified) trunc)
-
--- | Create an IPS32 patch by diffing two byte strings.
--- Returns Left if the files exceed 4 GB (IPS32 offset limit).
-createIPS32 :: ByteString -> ByteString -> Either String ByteString
-createIPS32 orig modified
-  | BS.length modified > 0xFFFFFFFF =
-      Left "file exceeds 4 GB IPS32 offset limit — use BPS instead"
-  | otherwise =
-      let trunc = if BS.length modified < BS.length orig
-                  then Just (fromIntegral (BS.length modified))
-                  else Nothing
-      in Right (encodeIPS32 (diffToRecords 0xFFFF orig modified) trunc)
-
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
 encodeIPSRecord offWidth (off, dat) =
   encodeOffset offWidth off
@@ -251,24 +220,13 @@ encodeOffset _ off =
   <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (off .&. 0xFF))
 
--- | Create an EBP patch (IPS + JSON metadata after EOF).
-createEBP :: ByteString -> ByteString -> String -> Either String ByteString
-createEBP orig modified desc
-  | BS.length modified > 0x1000000 =
-      Left "file exceeds 16 MB IPS offset limit — use BPS instead"
-  | otherwise =
-      let trunc = if BS.length modified < BS.length orig
-                  then Just (fromIntegral (BS.length modified))
-                  else Nothing
-      in Right (encodeEBP (diffToRecords 0xFFFF orig modified) trunc desc)
-
 allSame :: ByteString -> Bool
 allSame bs
   | BS.null bs = True
   | otherwise  = BS.all (== BS.index bs 0) bs
 
 ----------------------------------------------------------------------------
--- Encode from pre-split records (used by overlay conversion in Main.hs)
+-- Encode from pre-split records (used by direct conversion)
 ----------------------------------------------------------------------------
 
 -- | Encode pre-split records as an IPS patch. Records must have offsets
@@ -300,7 +258,7 @@ encodeEBP recs trunc desc = BL.toStrict $ toLazyByteString $
   <> byteString (ebpJson desc)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
--- Used by overlay conversion to preserve source EBP metadata as-is.
+-- Used by direct conversion to preserve source EBP metadata as-is.
 encodeEBPRaw :: [(Int, ByteString)] -> ByteString -> ByteString
 encodeEBPRaw recs meta = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
@@ -319,40 +277,4 @@ ebpJson d = BS8.pack $
     escapeJson ('"':cs)  = '\\' : '"'  : escapeJson cs
     escapeJson ('\\':cs) = '\\' : '\\' : escapeJson cs
     escapeJson (c:cs)    = c : escapeJson cs
-
--- | Diff two byte strings into IPS records (offset, data).
--- Merges nearby differences (gap < 6 bytes) and splits at maxRecSize.
-diffToRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
-diffToRecords maxRecSize orig modified = mergeNearby 5 maxRecSize modified $ go 0
-  where
-    minLen = min (BS.length orig) (BS.length modified)
-
-    go i
-      | i >= BS.length modified = []
-      | i >= minLen = extraRecords i
-      | BS.index orig i /= BS.index modified i = collectHunk i
-      | otherwise = go (i + 1)
-
-    collectHunk start =
-      let end = findEnd start
-          dat = BS.take (end - start) (BS.drop start modified)
-      in splitRecord start dat ++ go end
-
-    findEnd i
-      | i >= minLen = minLen
-      | i >= BS.length modified = BS.length modified
-      | BS.index orig i /= BS.index modified i = findEnd (i + 1)
-      | otherwise = i
-
-    extraRecords i
-      | i >= BS.length modified = []
-      | otherwise = splitRecord i (BS.drop i modified)
-
-    splitRecord off dat
-      | BS.null dat = []
-      | BS.length dat <= maxRecSize = [(off, dat)]
-      | otherwise =
-          let chunk = BS.take maxRecSize dat
-              rest  = BS.drop maxRecSize dat
-          in (off, chunk) : splitRecord (off + maxRecSize) rest
 

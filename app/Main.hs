@@ -162,7 +162,7 @@ createParser = CmdCreate
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (PPF3/EBP)")
+      <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
   <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
 
@@ -177,7 +177,7 @@ convertParser = mk
       <> help "Source ROM (required for differential formats)"))
   <*> rawFlag
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (PPF3/EBP)")
+      <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
   <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
   <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
   <*> noVerifyFlag <*> yoloFlag

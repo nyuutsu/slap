@@ -32,9 +32,9 @@ decompressYay0 :: BS.ByteString -> Either String BS.ByteString
 decompressYay0 bs
   | BS.length bs < 16 = Left "Yay0: truncated header"
   | BS.take 4 bs /= "Yay0" = Left "Yay0: bad magic"
-  | decompSize <= 0 = Left "Yay0: invalid decompressed size"
-  | linkOff > BS.length bs = Left "Yay0: link offset beyond file"
-  | chunkOff > BS.length bs = Left "Yay0: chunk offset beyond file"
+  | decompSize <= 0 = Left ("Yay0: invalid decompressed size: " ++ show decompSize)
+  | linkOff > BS.length bs = Left ("Yay0: link offset beyond file (offset " ++ show linkOff ++ ", file " ++ show (BS.length bs) ++ " bytes)")
+  | chunkOff > BS.length bs = Left ("Yay0: chunk offset beyond file (offset " ++ show chunkOff ++ ", file " ++ show (BS.length bs) ++ " bytes)")
   | otherwise = Right $ unsafeCreate decompSize $ \ptr -> do
       cmdPosRef <- newIORef (0x10 :: Int)
       cmdBitRef <- newIORef (7 :: Int)

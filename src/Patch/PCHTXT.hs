@@ -7,12 +7,9 @@ module Patch.PCHTXT
   , PCHTXTPatch(..)
   , parsePCHTXT
   , applyPCHTXT
-  , createPCHTXT
   , encodePCHTXT
   , pchtxtInfo
   ) where
-
-import Patch.Binary (diffHunks)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -82,7 +79,7 @@ parsePCHTXT bs = go (map BS8.unpack (BS8.lines bs)) Nothing [] Nothing 0 Nothing
       | "@" `isPrefixOf` l =
           go ls nso blocks lastComment shift curBlock
       | otherwise = case curBlock of
-          Nothing -> Left ("patch entry outside of @enabled/@disabled block: " ++ l)
+          Nothing -> Left ("PCHTXT: entry outside @enabled/@disabled block: " ++ l)
           Just (en, desc, revEntries) -> case parsePatchLine l shift of
             Left err -> Left err
             Right entry ->
@@ -105,10 +102,10 @@ parseFlag s
   | "offset_shift" `isPrefixOf` s =
       let val = dropWhile isSpace (drop 12 s)
       in if null val
-         then FlagError "missing offset_shift value"
+         then FlagError "PCHTXT: missing offset_shift value"
          else case parseHexInt val of
            Just v  -> FlagShift v
-           Nothing -> FlagError ("bad offset_shift value: " ++ val)
+           Nothing -> FlagError ("PCHTXT: invalid offset_shift value: " ++ val)
   | otherwise = FlagIgnored
 
 parseHexInt :: String -> Maybe Int64
@@ -127,14 +124,14 @@ parsePatchLine :: String -> Int64 -> Either String PCHTXTEntry
 parsePatchLine s shift = do
   let (offStr, rest) = span isHexDigit s
   if null offStr
-    then Left ("expected hex offset: " ++ s)
+    then Left ("PCHTXT: expected hex offset: " ++ s)
     else do
       off <- case readHex offStr :: [(Int64, String)] of
                [(v, "")] -> Right v
-               _ -> Left ("bad hex offset: " ++ offStr)
+               _ -> Left ("PCHTXT: invalid hex offset: " ++ offStr)
       let dataStr = dropWhile isSpace rest
       if null dataStr
-        then Left ("no data after offset: " ++ s)
+        then Left ("PCHTXT: no data after offset: " ++ s)
         else do
           dat <- case dataStr of
                    '"':qstr -> parseQuotedString qstr
@@ -145,7 +142,7 @@ parseHexBytes :: String -> Either String ByteString
 parseHexBytes s =
   let hexChars = takeWhile isHexDigit s
   in if odd (length hexChars)
-     then Left ("odd number of hex digits: " ++ s)
+     then Left ("PCHTXT: odd number of hex digits: " ++ s)
      else Right (BS.pack (pairUp hexChars))
   where
     pairUp (a:b:rest) = fromIntegral (digitToInt a * 16 + digitToInt b) : pairUp rest
@@ -154,7 +151,7 @@ parseHexBytes s =
 parseQuotedString :: String -> Either String ByteString
 parseQuotedString = fmap BS.pack . go
   where
-    go [] = Left "unterminated quoted string"
+    go [] = Left "PCHTXT: unterminated quoted string"
     go ('"':_) = Right []
     go ('\\':'n':rest) = (0x0A :) <$> go rest
     go ('\\':'t':rest) = (0x09 :) <$> go rest
@@ -180,11 +177,7 @@ applyPCHTXT patch target = withBinaryFile target ReadWriteMode $ \h -> do
 -- Create / Encode
 ----------------------------------------------------------------------------
 
--- | Create a PCHTXT patch from source and target bytes.
-createPCHTXT :: ByteString -> ByteString -> ByteString
-createPCHTXT src tgt = encodePCHTXT (diffHunks src tgt) Nothing
-
--- | Encode overlay records as PCHTXT text (for overlay conversion).
+-- | Encode records as PCHTXT text (for direct conversion and create).
 -- If a description is provided and looks like a hex build ID (all hex, 32+ chars),
 -- emit @nsobid-<id>; otherwise emit // <description> as a comment.
 encodePCHTXT :: [(Int, ByteString)] -> Maybe ByteString -> ByteString

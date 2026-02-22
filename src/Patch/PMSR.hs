@@ -6,12 +6,10 @@ module Patch.PMSR
   , PMSRPatch(..)
   , parsePMSR
   , applyPMSR
-  , createPMSR
   , encodePMSR
   , pmsrInfo
   ) where
 
-import Patch.Binary (mergeNearby)
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Patch.Get as G
 
@@ -44,7 +42,7 @@ data PMSRPatch = PMSRPatch
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
 parsePMSR :: ByteString -> Either String PMSRPatch
 parsePMSR bs
-  | BS.length bs < 4 = Left "too short for PMSR header"
+  | BS.length bs < 4 = Left "PMSR: input too short"
   | BS.take 4 bs /= "PMSR" = Left "not a PMSR file (bad magic)"
   | otherwise = runGet parsePMSR' bs
 
@@ -82,13 +80,6 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
       BS.hPut h (pmsrData r)
       go h (n + 1) rs
 
-----------------------------------------------------------------------------
--- Create
-----------------------------------------------------------------------------
-
-createPMSR :: ByteString -> ByteString -> ByteString
-createPMSR orig modified = encodePMSR (diffToRecordsPMSR orig modified)
-
 encodePMSR :: [(Int, ByteString)] -> ByteString
 encodePMSR recs = BL.toStrict $ toLazyByteString $
     byteString "PMSR"
@@ -99,44 +90,6 @@ encodePMSR recs = BL.toStrict $ toLazyByteString $
       word32BE (fromIntegral off)
       <> word32BE (fromIntegral (BS.length dat))
       <> byteString dat
-
--- | Diff two byte strings into PMSR records.
--- Merges nearby differences (gap < 6 bytes) and splits at 0xFFFFFF (16 MB chunks).
-diffToRecordsPMSR :: ByteString -> ByteString -> [(Int, ByteString)]
-diffToRecordsPMSR orig modified = mergeNearby 8 maxBound modified $ go 0
-  where
-    minLen = min (BS.length orig) (BS.length modified)
-
-    go i
-      | i >= BS.length modified = []
-      | i >= minLen = extraRecords i
-      | BS.index orig i /= BS.index modified i = collectHunk i
-      | otherwise = go (i + 1)
-
-    collectHunk start =
-      let end = findEnd start
-          dat = BS.take (end - start) (BS.drop start modified)
-      in splitRecord start dat ++ go end
-
-    findEnd i
-      | i >= minLen = minLen
-      | i >= BS.length modified = BS.length modified
-      | BS.index orig i /= BS.index modified i = findEnd (i + 1)
-      | otherwise = i
-
-    extraRecords i
-      | i >= BS.length modified = []
-      | otherwise = splitRecord i (BS.drop i modified)
-
-    -- PMSR uses uint32BE for length, so 4 GB max per record; use 1 MB chunks
-    splitRecord off dat
-      | BS.null dat = []
-      | BS.length dat <= 0x100000 = [(off, dat)]
-      | otherwise =
-          let chunk = BS.take 0x100000 dat
-              rest  = BS.drop 0x100000 dat
-          in (off, chunk) : splitRecord (off + 0x100000) rest
-
 
 ----------------------------------------------------------------------------
 -- Info

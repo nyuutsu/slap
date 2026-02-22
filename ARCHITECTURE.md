@@ -13,7 +13,7 @@ src/
     Convert.hs     PatchContents, FormatSpec, contract checking, direct conversion, createFromMemory
     Types.hs       PatchFormat enum
     Detect.hs      Magic-byte detection → PatchFormat
-    Binary.hs      Shared primitives: endian readers, varints, CRC32, MD5, SHA1, memcpy, mergeNearby
+    Binary.hs      Shared primitives: endian readers, varints, CRC32, MD5, SHA1, memcpy
     Get.hs         Pure parser monad (position-threading over strict ByteString)
     Format.hs      Display helpers: hex padding, CRC formatting, hex dumps
     Explain.hs     Record-by-record textual dumps for all formats
@@ -142,7 +142,7 @@ Three tiers of verification:
 ## Conversion — Contract System
 
 `Patch.Convert` defines a declarative contract system for direct
-(overlay→overlay) conversion.
+direct format conversion.
 
 ```haskell
 data PatchField = FRecords | FDescription | FSourceCRC32 | FSourceMD5
@@ -159,7 +159,7 @@ data PatchContents = PatchContents
     pcDestSize, pcValidation, pcUndoData, pcTruncation, pcEBPMeta }
 ```
 
-`parseSome` populates `spContents :: Maybe PatchContents` for overlay
+`parseSome` populates `spContents :: Maybe PatchContents` for direct
 formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR, PCHTXT).
 Differential formats set it to `Nothing`.
 
@@ -185,6 +185,16 @@ Two conversion paths:
 
 InPlace formats go through a temp file for the apply step;
 InMemory formats apply directly to the source ByteString.
+
+The conversion system is descriptive: each format declares what fields
+it requires, accepts, and provides. `canConvert` checks whether the
+source's provided fields satisfy the target's requirements — it doesn't
+maintain a table of allowed conversions. Most format pairs can't convert
+directly (the source lacks fields the target needs), so `--with` triggers
+an apply-then-create path instead. This is emergent from the field
+contracts, not hardcoded. Adding fields to a format's `spContents`
+automatically unlocks new direct conversions without touching dispatch
+logic.
 
 ## Key Design Decisions
 
@@ -251,4 +261,4 @@ conversion, and cross-validation test cases.
 
 \* UPS undo is self-inverse (apply the patch to the modified file).
 † BSDiff falls back to external `bspatch` if the built-in bz2 decompressor fails.
-‡ Direct overlay→overlay conversion (no ROM needed). All ‡ formats can convert to any other ‡ format.
+‡ Direct format conversion (no ROM needed). All ‡ formats can convert to any other ‡ format.

@@ -78,8 +78,8 @@ isDPS bs
 
 parseDPS :: ByteString -> Either String DPSPatch
 parseDPS bs
-  | BS.length bs < 198 = Left "too short for DPS header"
-  | BS.index bs 193 /= 1 = Left "not a DPS file (version byte != 1)"
+  | BS.length bs < 198 = Left "DPS: input too short"
+  | BS.index bs 193 /= 1 = Left ("DPS: unsupported version byte: " ++ show (BS.index bs 193))
   | otherwise = runGet parseDPS' bs
 
 parseDPS' :: Get DPSPatch

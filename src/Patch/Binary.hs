@@ -21,11 +21,11 @@ module Patch.Binary
     -- * Cryptographic hashes
   , md5
   , sha1
+  , sha256
     -- * Bulk memory operations
   , copyBSRange
     -- * Diff
   , diffHunks
-  , mergeNearby
     -- * Additional builders
   , putWord16LE
   , putWord32BE
@@ -178,6 +178,9 @@ md5 = BA.convert . H.hashWith H.MD5
 sha1 :: ByteString -> ByteString
 sha1 = BA.convert . H.hashWith H.SHA1
 
+sha256 :: ByteString -> ByteString
+sha256 = BA.convert . H.hashWith H.SHA256
+
 ----------------------------------------------------------------------------
 -- Bulk memory operations
 ----------------------------------------------------------------------------
@@ -246,21 +249,6 @@ diffHunks old new = merge (go 0 ++ extension)
           in merge ((o1, merged) : rest)
       | otherwise = (o1,d1) : merge ((o2,d2):rest)
 
--- | Merge records whose gaps are ≤ gapThreshold bytes, filling from modBs.
--- Won't merge if the result exceeds maxMerged bytes (use maxBound for no limit).
-mergeNearby :: Int -> Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-mergeNearby _ _ _ [] = []
-mergeNearby _ _ _ [x] = [x]
-mergeNearby gapThreshold maxMerged modBs ((off1, d1) : (off2, d2) : rest)
-  | gap <= gapThreshold && mergedLen <= maxMerged =
-      mergeNearby gapThreshold maxMerged modBs ((off1, merged) : rest)
-  | otherwise = (off1, d1) : mergeNearby gapThreshold maxMerged modBs ((off2, d2) : rest)
-  where
-    end1 = off1 + BS.length d1
-    gap  = off2 - end1
-    fill = BS.take gap (BS.drop end1 modBs)
-    merged = d1 <> fill <> d2
-    mergedLen = BS.length merged
 
 ----------------------------------------------------------------------------
 -- Additional builders

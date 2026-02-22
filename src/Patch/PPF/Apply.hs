@@ -21,7 +21,7 @@ applyPatch patch target = withBinaryFile target ReadWriteMode $ \h -> do
 -- | Undo a parsed PPF3 patch (requires undo data).
 undoPatch :: Patch -> FilePath -> IO (Either String Int)
 undoPatch patch target
-  | not (patchHasUndo patch) = pure (Left "patch has no undo data")
+  | not (patchHasUndo patch) = pure (Left "PPF: patch has no undo data")
   | otherwise = withBinaryFile target ReadWriteMode $ \h ->
       Right <$> writeRecords h (patchRecords patch) (fromMaybe BS.empty . recUndo)
 

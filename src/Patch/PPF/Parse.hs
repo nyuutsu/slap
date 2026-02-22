@@ -20,12 +20,12 @@ parsePatch bs = detectVersion bs >>= \case
 -- Version detection: bytes 0-3 as ASCII "PPF1" .. "PPF4".
 detectVersion :: ByteString -> Either String Version
 detectVersion bs
-  | BS.length bs < 6       = Left "truncated file: file too short for header"
+  | BS.length bs < 6       = Left "PPF: input too short"
   | magic == "PPF1"        = Right PPF1
   | magic == "PPF2"        = Right PPF2
   | magic == "PPF3"        = Right PPF3
   | magic == "PPF4"        = Right PPF4
-  | BS.take 3 bs == "PPF"  = Left ("unknown PPF version byte: " ++ show (BS.index bs 3))
+  | BS.take 3 bs == "PPF"  = Left ("PPF: unsupported version byte: " ++ show (BS.index bs 3))
   | otherwise              = Left ("not a PPF file (bad magic: " ++ show (BS.take 5 bs) ++ ")")
   where magic = BS.take 4 bs
 
@@ -68,7 +68,7 @@ parsePPF3 bs = do
   imgType <- case BS.index bs 56 of
     0x00 -> Right BIN
     0x01 -> Right GI
-    b    -> Left ("unknown image type: " ++ show b)
+    b    -> Left ("PPF3: unsupported image type: " ++ show b)
   let hasBlock   = BS.index bs 57 /= 0
       hasUndo    = BS.index bs 58 /= 0
       headerSize = if hasBlock then 1084 else 60
@@ -113,8 +113,8 @@ parseRecords32 = go []
     go acc bs
       | BS.length bs < 5 = Right (reverse acc)
       | 5 + count > BS.length bs =
-          Left ("truncated PPF1/2 record: need " ++ show count
-                ++ " data bytes, have " ++ show (BS.length bs - 5))
+          Left ("PPF1/2: truncated record (need " ++ show (5 + count)
+                ++ " bytes, have " ++ show (BS.length bs) ++ ")")
       | otherwise =
           go (Record off (BS.take count (BS.drop 5 bs)) Nothing Replace : acc)
              (BS.drop (5 + count) bs)
@@ -129,8 +129,8 @@ parseRecords64 hasUndo = go []
     go acc bs
       | BS.length bs < 9 = Right (reverse acc)
       | need > BS.length bs =
-          Left ("truncated PPF3 record: need " ++ show need
-                ++ " bytes, have " ++ show (BS.length bs))
+          Left ("PPF3: truncated record (need " ++ show need
+                ++ " bytes, have " ++ show (BS.length bs) ++ ")")
       | otherwise =
           go (Record off dat undo Replace : acc) (BS.drop need bs)
       where
@@ -149,8 +149,8 @@ parseRecords4 = go []
     go acc bs
       | BS.length bs < 6 = Right (reverse acc)
       | 6 + count > BS.length bs =
-          Left ("truncated PPF4 record: need " ++ show count
-                ++ " data bytes, have " ++ show (BS.length bs - 6))
+          Left ("PPF\"4\": truncated record (need " ++ show (6 + count)
+                ++ " bytes, have " ++ show (BS.length bs) ++ ")")
       | otherwise =
           go (Record off (BS.take count (BS.drop 6 bs)) Nothing cmd : acc)
              (BS.drop (6 + count) bs)
@@ -178,4 +178,4 @@ stripFileId lenSize (Just (FileId content)) body =
 requireLen :: Int -> String -> ByteString -> Either String ()
 requireLen n ctx bs
   | BS.length bs >= n = Right ()
-  | otherwise = Left ("truncated file: " ++ ctx ++ ": need " ++ show n ++ " bytes, have " ++ show (BS.length bs))
+  | otherwise = Left ("truncated " ++ ctx ++ " (need " ++ show n ++ " bytes, have " ++ show (BS.length bs) ++ ")")

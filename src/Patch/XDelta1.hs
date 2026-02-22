@@ -64,19 +64,19 @@ data XD1Instruction = XD1Instruction
 
 parseXDelta1 :: ByteString -> Either String XDelta1Patch
 parseXDelta1 bs
-  | BS.length bs < 20 = Left "too short for xdelta1"
+  | BS.length bs < 20 = Left "xdelta1: input too short"
   | magic == "%XDZ004%" = parseV11 bs magic  -- v1.1
   | magic == "%XDZ003%" = parseV11 bs magic  -- v1.0.4
-  | magic == "%XDZ002%" = Left "xdelta v1.0 format not supported"
-  | BS.take 7 bs == "%XDELTA" = Left "xdelta v0.14 format not supported"
+  | magic == "%XDZ002%" = Left "xdelta1: unsupported version (v1.0)"
+  | BS.take 7 bs == "%XDELTA" = Left "xdelta1: unsupported version (v0.14)"
   | otherwise = Left "not an xdelta1 file (bad magic)"
   where
     magic = BS.take 8 bs
 
 parseV11 :: ByteString -> ByteString -> Either String XDelta1Patch
 parseV11 bs expectedMagic
-  | totalLen < 44 = Left "xdelta1: file too short"
-  | trailingMagic /= expectedMagic = Left "xdelta1: trailing magic mismatch"
+  | totalLen < 44 = Left "xdelta1: input too short"
+  | trailingMagic /= expectedMagic = Left ("xdelta1: trailing magic mismatch (expected " ++ show expectedMagic ++ ", got " ++ show trailingMagic ++ ")")
   | otherwise = do
       dataSeg' <- safeDecompressGZip dataSegRaw
       ctrlSeg' <- safeDecompressGZip ctrlSegRaw
@@ -120,7 +120,7 @@ parseV11 bs expectedMagic
 parseControl :: ByteString -> ByteString -> ByteString -> ByteString
              -> Either String XDelta1Patch
 parseControl ctrl dataSeg fromName toName
-  | BS.length ctrl < 28 = Left "xdelta1: control segment too short"
+  | BS.length ctrl < 28 = Left ("xdelta1: truncated control segment (need 28 bytes, have " ++ show (BS.length ctrl) ++ ")")
   | otherwise = runGet parseCtrl ctrl
   where
     parseCtrl :: Get XDelta1Patch

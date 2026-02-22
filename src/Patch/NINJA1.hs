@@ -7,13 +7,12 @@ module Patch.NINJA1
   , NINJA1Record(..)
   , parseNINJA1
   , applyNINJA1
-  , createNINJA1
   , encodeNINJA1
   , ninja1Info
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import Patch.Binary (diffHunks, putWord32BE, crc32, md5, sha1)
+import Patch.Binary (putWord32BE)
 import Patch.Format (showCRC, padHex)
 
 import Data.ByteString (ByteString)
@@ -60,13 +59,13 @@ data NINJA1Record = NINJA1Record
 
 parseNINJA1 :: ByteString -> Either String NINJA1Patch
 parseNINJA1 bs
-  | BS.length bs < 8             = Left "too short for NINJA1 header"
+  | BS.length bs < 8             = Left "NINJA1: input too short"
   | BS.take 6 bs /= "NINJA1"    = Left "not a NINJA1 file (bad magic)"
   | subId == "B "                = parseBin N1Binary payload
   | subId == "BZ"                = zlibDecompress payload >>= parseBin N1BinaryZ
   | subId == BS.pack [0x54,0x0A] = parseTxt N1Text payload    -- "T\n"
   | subId == "TZ"                = zlibDecompress payload >>= parseTxt N1TextZ
-  | otherwise                    = Left ("unknown NINJA1 subformat: " ++ show subId)
+  | otherwise                    = Left ("NINJA1: unsupported subformat: " ++ show subId)
   where
     subId   = BS.take 2 (BS.drop 6 bs)
     payload = BS.drop 8 bs
@@ -77,7 +76,7 @@ zlibDecompress :: ByteString -> Either String ByteString
 zlibDecompress compressed = unsafePerformIO $ do
   result <- try $ evaluate $ BL.toStrict $ Zlib.decompress $ BL.fromStrict compressed
   pure $ case result of
-    Left (e :: SomeException) -> Left ("zlib decompression failed: " ++ show e)
+    Left (e :: SomeException) -> Left ("NINJA1: zlib decompression failed: " ++ show e)
     Right r -> Right r
 
 ----------------------------------------------------------------------------
@@ -92,7 +91,7 @@ zlibDecompress compressed = unsafePerformIO $ do
 
 parseBin :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
 parseBin fmt payload
-  | BS.length payload < 41 = Left "NINJA1 binary payload too short"
+  | BS.length payload < 41 = Left "NINJA1: binary payload too short"
   | otherwise = runGet (parseBinGet fmt) payload
 
 parseBinGet :: NINJA1SubFormat -> Get NINJA1Patch
@@ -156,7 +155,7 @@ parseTxt fmt payload = do
   let stripCR = BS8.takeWhile (/= '\r')
       contentLines = filter (not . isSkippable) (map stripCR (BS8.lines payload))
   case contentLines of
-    [] -> Left "empty NINJA1 textual patch"
+    [] -> Left "NINJA1: empty textual patch"
     (hdrLine : recLines) -> do
       let (romType, crc', md5', sha1') = parseTxtHeader hdrLine
       recs <- mapM parseTxtRecord recLines
@@ -198,8 +197,8 @@ parseTxtRecord line = case BS8.words line of
   (offStr : datParts@(_:_)) ->
     case (readHex (BS8.unpack offStr) :: [(Int64, String)]) of
       [(off, "")] -> Right (NINJA1Record off (hexToBS (concatMap BS8.unpack datParts)))
-      _ -> Left ("bad offset in NINJA1 text record: " ++ BS8.unpack offStr)
-  _ -> Left ("malformed NINJA1 text record: " ++ BS8.unpack line)
+      _ -> Left ("NINJA1: invalid offset in text record: " ++ BS8.unpack offStr)
+  _ -> Left ("NINJA1: malformed text record: " ++ BS8.unpack line)
 
 hexToBS :: String -> ByteString
 hexToBS s = BS.pack (go s)
@@ -285,12 +284,8 @@ romTypeName' 17 = "GP32"
 romTypeName' n  = "unknown (" ++ show n ++ ")"
 
 ----------------------------------------------------------------------------
--- Create (binary subformat, no hashes)
+-- Encode
 ----------------------------------------------------------------------------
-
-createNINJA1 :: BS.ByteString -> BS.ByteString -> BS.ByteString
-createNINJA1 old new =
-  encodeNINJA1 (diffHunks old new) (crc32 old) (md5 old) (sha1 old)
 
 -- | Encode pre-diffed records as a NINJA1 Binary (uncompressed) patch.
 encodeNINJA1 :: [(Int, BS.ByteString)]

@@ -210,7 +210,7 @@ serializedDefaultTable = BS.pack $
 
 deserializeCodeTable :: ByteString -> Either String (Array Word8 CodeEntry)
 deserializeCodeTable bs
-  | BS.length bs /= 1536 = Left $ "code table must be 1536 bytes, got " ++ show (BS.length bs)
+  | BS.length bs /= 1536 = Left $ "VCDIFF: code table must be 1536 bytes, got " ++ show (BS.length bs)
   | otherwise = do
       entries <- mapM mkEntry [0..255]
       pure $ listArray (0, 255) entries
@@ -224,7 +224,7 @@ deserializeCodeTable bs
     mkInst 1 s _ = Right (VcdAdd (fromIntegral s))
     mkInst 2 s _ = Right (VcdRun (fromIntegral s))
     mkInst 3 s m = Right (VcdCopy (fromIntegral s) (fromIntegral m))
-    mkInst t _ _ = Left ("invalid instruction type in code table: " ++ show t)
+    mkInst t _ _ = Left ("VCDIFF: invalid instruction type in code table: " ++ show t)
 
 -- | Decode a custom code table from the header's code table data.
 --   Format: near_size (1 byte), same_size (1 byte), then a VCDIFF delta
@@ -232,7 +232,7 @@ deserializeCodeTable bs
 --   custom table.
 decodeCustomTable :: ByteString -> Either String (Array Word8 CodeEntry, Int, Int)
 decodeCustomTable bs = do
-  when (BS.length bs < 2) $ Left "custom code table data too short"
+  when (BS.length bs < 2) $ Left "VCDIFF: custom code table data too short"
   let near = fromIntegral (BS.index bs 0) :: Int
       same = fromIntegral (BS.index bs 1) :: Int
       deltaBytes = BS.drop 2 bs
@@ -250,7 +250,7 @@ parseVCDIFF = parseVCDIFF' True
 
 parseVCDIFF' :: Bool -> ByteString -> Either String VCDIFFPatch
 parseVCDIFF' allowCustom bs
-  | BS.length bs < 5 = Left "too short for VCDIFF header"
+  | BS.length bs < 5 = Left "VCDIFF: input too short"
   | BS.take 3 bs /= "\xd6\xc3\xc4" = Left "not a VCDIFF file (bad magic)"
   | otherwise = do
       (mTableBytes, hdr, wins) <- runGet parseHeader bs

@@ -39,15 +39,15 @@ data UPSPatch = UPSPatch
 
 parseUPS :: ByteString -> Either String UPSPatch
 parseUPS bs
-  | BS.length bs < 4 = Left "too short for UPS header"
+  | BS.length bs < 4 = Left "UPS: input too short"
   | BS.take 4 bs /= "UPS1" = Left "not a UPS file (bad magic)"
-  | BS.length bs < 16 = Left "truncated UPS footer"
+  | BS.length bs < 16 = Left "UPS: truncated footer"
   | otherwise = do
       -- Validate patch CRC
       let storedPatchCRC = getWord32LE (BS.length bs - 4) bs
           actualPatchCRC = crc32 (BS.take (BS.length bs - 4) bs)
       if storedPatchCRC /= actualPatchCRC
-        then Left ("patch CRC mismatch (stored " ++ showCRC storedPatchCRC
+        then Left ("UPS: patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
         else pure ()
       let srcCRC = getWord32LE (BS.length bs - 12) bs

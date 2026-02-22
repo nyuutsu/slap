@@ -10,14 +10,13 @@ module Patch.APS
   , APSGBARecord(..)
   , parseAPS
   , applyAPS
-  , createAPSN64
   , createAPSGBA
   , encodeAPSN64
   , apsInfo
   ) where
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word16LE, word32LE)
-import Patch.Binary (crc16, putWord32LE, putWord16LE, diffHunks)
+import Patch.Binary (crc16, putWord32LE, putWord16LE)
 import Patch.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -75,7 +74,7 @@ data APSPatch = APSPatch APSVariant
 
 parseAPS :: ByteString -> Either String APSPatch
 parseAPS bs
-  | BS.length bs < 5 = Left "too short for APS header"
+  | BS.length bs < 5 = Left "APS: input too short"
   -- APS N64 and APS GBA: two unrelated formats by different authors who both
   -- thought "APS" was a good name.  N64 magic is "APS10" (5 ASCII bytes, probably
   -- "version 1.0"); GBA magic is "APS1" (4 bytes) followed by a LE u32 source size.
@@ -250,10 +249,6 @@ apsInfo (APSPatch variant) = case variant of
 ----------------------------------------------------------------------------
 -- Create APS N64 (simple type, raw overwrite records, max 255 bytes each)
 ----------------------------------------------------------------------------
-
-createAPSN64 :: ByteString -> ByteString -> ByteString
-createAPSN64 old new =
-  encodeAPSN64 (diffHunks old new) (fromIntegral (BS.length new)) (replicate 50 ' ')
 
 -- | Encode pre-diffed records as an APS N64 patch.
 -- Records are split at 255 bytes internally.

@@ -90,11 +90,11 @@ Yay0-compressed PMSR is transparently decompressed in `parseSome`;
 info/explain output shows "PMSR/Yay0" to distinguish from raw PMSR.
 
 `Patch.Convert` holds the conversion subsystem: `PatchContents` (the
-universal overlay representation), `PatchField`/`FormatSpec` (declarative
+universal direct representation), `PatchField`/`FormatSpec` (declarative
 format contracts), `canConvert`/`conversionNotes` (contract checking),
-`convertDirect` (overlay→overlay encoding), and `createFromMemory`
+`convertDirect` (direct→direct encoding), and `createFromMemory`
 (apply-then-create path). `parseSome` populates `spContents :: Maybe
-PatchContents` for overlay formats; `canConvert` checks whether the
+PatchContents` for direct formats; `canConvert` checks whether the
 source contents satisfy the target format's required fields.
 
 `Main.hs` is CLI parsing (optparse-applicative) and command handlers
@@ -155,7 +155,7 @@ Test modules in `test/tests/`:
   external tool apply → SHA256 verify. 9 formats via Flips
   (IPS/BPS/UPS) and RomPatcher.js (EBP/PPF3/APS-N64/APS-GBA/RUP/PMSR).
 - **030-convert.sh** — Matrix-driven from `test/specs/convert.txt`.
-  Pairwise overlay conversions, PPF3 undo/validate gating, non-overlay
+  Pairwise direct conversions, PPF3 undo/validate gating, non-direct
   rejection, `--with` bypass, size-change rows.
 - **035-metadata.sh** — Metadata round-trip fidelity for self-conversions
   (PPF3→PPF3, NINJA1→NINJA1, APS-N64→APS-N64, EBP→EBP). Parses
