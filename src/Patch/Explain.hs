@@ -1,5 +1,17 @@
 module Patch.Explain
-  ( explainPPF
+  ( ExplainData(..)
+  , ExplainSection(..)
+  , ExplainRegion(..)
+  , ExplainPayload(..)
+  , CopySource(..)
+  , ExplainSummary(..)
+  , SummaryBytes(..)
+  , Annotation(..)
+  , OffsetKind(..)
+  , AnnotDetail(..)
+  , renderExplain
+  , renderSummary
+  , explainPPF
   , explainIPS
   , explainBPS
   , explainUPS
@@ -32,26 +44,397 @@ import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.List (mapAccumL)
+import Data.Char (isDigit)
+import Data.List (mapAccumL, sort, intercalate, partition)
 import Data.Int (Int64)
+import Data.Word (Word8)
+
+----------------------------------------------------------------------------
+-- Types
+----------------------------------------------------------------------------
+
+data ExplainData = ExplainData
+  { edFormat   :: String              -- "PPF3", "IPS (EBP)", "BPS", etc.
+  , edHeader   :: [(String, String)]  -- key-value metadata (key without colon)
+  , edSections :: [ExplainSection]    -- grouped content
+  , edSummary  :: ExplainSummary      -- structured summary
+  , edNotes    :: [String]            -- trailing messages
+  }
+
+data ExplainSection
+  = SectionRegions [ExplainRegion]              -- flat numbered list
+  | SectionBlock String [ExplainRegion]         -- labeled block + entries (PCHTXT)
+  | SectionLabeled String [(String, String)]    -- labeled block + kv pairs (VCDIFF)
+  | SectionText String                          -- free text line
+
+data ExplainRegion = ExplainRegion
+  { erOffset     :: Int64              -- primary offset (output or target)
+  , erSize       :: Int                -- bytes affected
+  , erLabel      :: String             -- operation label with trailing space
+  , erPayload    :: ExplainPayload
+  , erAnnotation :: Annotation         -- structured trailing metadata
+  }
+
+data ExplainPayload
+  = PayloadWrite ByteString            -- literal data (renderer hex dumps)
+  | PayloadFill Word8 Int              -- fill byte + repeat count
+  | PayloadCopy CopySource             -- copy operation
+  | PayloadXOR (Maybe ByteString)      -- XOR delta
+  | PayloadMeta [(String, String)]     -- key-value details (BSDiff ctrl)
+
+data CopySource = FromSource | FromTarget | FromPatch
+  deriving (Eq, Show)
+
+data ExplainSummary
+  = SummaryNone
+  | Summary Int String (Maybe (Int, SummaryBytes))
+    -- ^ count, unit label, optional (byteCount, bytesSuffix)
+
+data SummaryBytes = BytesTotal | BytesTotalOutput
+
+data Annotation
+  = AnnotNone                                    -- no annotation (PCHTXT)
+  | AnnotAt OffsetKind Int64 [AnnotDetail]       -- offset display + details
+  | AnnotBSDiff Int64 Int64 Int64                -- add, copy, seek
+
+data OffsetKind = AtOffset | AtOutput
+
+data AnnotDetail
+  = DetailRLE                   -- "(RLE)"
+  | DetailUndo                  -- "(undo data)"
+  | DetailDelta Int64           -- "(delta +N)"
+  | DetailSkip Int64            -- "(skip N)"
+  | DetailSource Int64          -- "(source 0xN)"
+  | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
+  | DetailCRC16 Int64 Int64     -- "(src CRC16 0xN, tgt CRC16 0xN)"
+
+----------------------------------------------------------------------------
+-- Renderer
+----------------------------------------------------------------------------
+
+renderExplain :: ExplainData -> String
+renderExplain ed = unlines $
+  [ "format:      " ++ edFormat ed ]
+  ++ map renderHeader (edHeader ed)
+  ++ [""]
+  ++ concatMap renderSection (edSections ed)
+  ++ notesLines
+  ++ [renderSummaryLine (edSummary ed) | not (isSummaryNone (edSummary ed))]
+  where
+    notesLines = map (\n -> n) (edNotes ed)
+
+    renderHeader (k, v) =
+      k ++ ":" ++ replicate (max 1 (13 - length k - 1)) ' ' ++ v
+
+    renderSection (SectionRegions rs) =
+      zipWith renderRegion [1..] rs
+
+    renderSection (SectionBlock label rs) =
+      label : map renderBlockEntry rs ++ [""]
+
+    renderSection (SectionLabeled label kvs) =
+      label : map renderLabeledKV kvs ++ [""]
+
+    renderSection (SectionText t) = [t]
+
+    renderLabeledKV (k, v) =
+      "  " ++ k ++ ":" ++ replicate (max 1 (18 - length k - 3)) ' ' ++ v
+
+    renderBlockEntry r =
+      "    " ++ padHex 8 (erOffset r) ++ "  " ++ erLabel r
+      ++ padR 10 (show (erSize r) ++ " B")
+      ++ "\n" ++ hexDump (payloadBytes (erPayload r))
+
+    payloadBytes (PayloadWrite bs) = bs
+    payloadBytes _ = BS.empty
+
+    annot = renderAnnotation . erAnnotation
+
+    renderRegion n r = case erPayload r of
+      PayloadWrite bs ->
+        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        ++ annot r
+        ++ "\n" ++ hexDump bs
+      PayloadFill val count ->
+        padNum n ++ "  " ++ erLabel r ++ show count ++ " x 0x"
+        ++ padHex 2 (fromIntegral val :: Int64)
+        ++ annot r
+      PayloadCopy _ ->
+        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        ++ annot r
+      PayloadXOR _ ->
+        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        ++ annot r
+      PayloadMeta _ ->
+        padNum n ++ "  " ++ erLabel r ++ annot r
+
+isSummaryNone :: ExplainSummary -> Bool
+isSummaryNone SummaryNone = True
+isSummaryNone _           = False
+
+renderSummaryLine :: ExplainSummary -> String
+renderSummaryLine SummaryNone = ""
+renderSummaryLine (Summary count unit Nothing) =
+  show count ++ " " ++ unit
+renderSummaryLine (Summary count unit (Just (bytes, sfx))) =
+  show count ++ " " ++ unit ++ ", " ++ show bytes ++ " " ++ renderBytesSuffix sfx
+
+renderBytesSuffix :: SummaryBytes -> String
+renderBytesSuffix BytesTotal       = "bytes total"
+renderBytesSuffix BytesTotalOutput = "bytes total output"
+
+renderAnnotation :: Annotation -> String
+renderAnnotation AnnotNone = ""
+renderAnnotation (AnnotBSDiff add copy seek) =
+  "add " ++ padR 10 (show add ++ " B")
+  ++ "  copy " ++ padR 10 (show copy ++ " B")
+  ++ "  seek " ++ showSigned seek
+renderAnnotation (AnnotAt kind off details) =
+  srcPrefix ++ "  " ++ kindStr kind ++ "0x" ++ padHex 6 off
+  ++ concatMap renderDetail rest
+  where
+    (srcIdxs, rest) = partition isSrcIdx details
+    isSrcIdx (DetailSourceIndex _) = True
+    isSrcIdx _                     = False
+    srcPrefix = case srcIdxs of
+      (DetailSourceIndex i : _) -> "  from source " ++ show i
+      _                         -> ""
+    kindStr AtOffset = "at "
+    kindStr AtOutput = "at output "
+
+renderDetail :: AnnotDetail -> String
+renderDetail DetailRLE             = "  (RLE)"
+renderDetail DetailUndo            = "  (undo data)"
+renderDetail (DetailDelta d)       = "  (delta " ++ showSigned d ++ ")"
+renderDetail (DetailSkip s)        = "  (skip " ++ show s ++ ")"
+renderDetail (DetailSource off)    = "  (source 0x" ++ padHex 6 off ++ ")"
+renderDetail (DetailSourceIndex _) = ""
+renderDetail (DetailCRC16 src tgt) =
+  "  (src CRC16 " ++ padHex 4 src ++ ", tgt CRC16 " ++ padHex 4 tgt ++ ")"
+
+----------------------------------------------------------------------------
+-- Summary renderer
+----------------------------------------------------------------------------
+
+renderSummary :: ExplainData -> String
+renderSummary ed = unlines $ filter (not . null) $
+  [ "format:      " ++ edFormat ed
+  , "records:     " ++ commaNum totalRecords
+  ]
+  ++ modifiedLine
+  ++ rangeLine
+  ++ sizeChangeLine
+  ++ [""]
+  ++ regionsBlock
+  ++ recordSizeLine
+  ++ [""]
+  ++ sparkline
+  ++ capabilityNotes
+  where
+    allRegions = concatMap sectionRegions (edSections ed)
+
+    totalRecords = length allRegions
+
+    sectionRegions (SectionRegions rs)  = rs
+    sectionRegions (SectionBlock _ rs)  = rs
+    sectionRegions (SectionLabeled _ _) = []
+    sectionRegions (SectionText _)      = []
+
+    -- Modified bytes breakdown
+    totalModified = sum (map erSize allRegions)
+    payloadCounts = foldl countPayload (0,0,0,0,0) allRegions
+    countPayload (!w,!f,!c,!x,!m) r = case erPayload r of
+      PayloadWrite _  -> (w+1,f,c,x,m)
+      PayloadFill _ _ -> (w,f+1,c,x,m)
+      PayloadCopy _   -> (w,f,c+1,x,m)
+      PayloadXOR _    -> (w,f,c,x+1,m)
+      PayloadMeta _   -> (w,f,c,x,m+1)
+    breakdownStr = let (w,f,c,x,m) = payloadCounts
+                       parts = filter ((/= 0) . fst)
+                         [ (w, "writes"), (f, "fills"), (c, "copies")
+                         , (x, "XOR"), (m, "structural") ]
+                   in case parts of
+                        [] -> ""
+                        ps -> " (" ++ intercalate ", "
+                                (map (\(n,l) -> commaNum n ++ " " ++ l) ps)
+                              ++ ")"
+    modifiedLine
+      | totalRecords == 0 = []
+      | otherwise = ["modified:    " ++ commaNum totalModified
+                     ++ " bytes" ++ breakdownStr]
+
+    -- Offset range
+    offsets = map erOffset allRegions
+    minOff = minimum offsets
+    maxEnd = maximum [ erOffset r + fromIntegral (erSize r)
+                     | r <- allRegions ]
+    rangeLine
+      | totalRecords == 0 = ["range:       (empty patch)"]
+      | otherwise = ["range:       0x" ++ padHex 6 minOff
+                     ++ " \8211 0x" ++ padHex 6 (maxEnd - 1)]
+
+    -- Size change from header
+    sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
+                           lookupHeader "new size") of
+      (Just srcS, Just tgtS, _) -> mkSizeLine srcS tgtS
+      (Just srcS, _, Just tgtS) -> mkSizeLine srcS tgtS
+      _ -> []
+
+    lookupHeader key = lookup key (edHeader ed)
+
+    mkSizeLine srcS tgtS =
+      case (parseSize srcS, parseSize tgtS) of
+        (Just src, Just tgt) ->
+          let diff = tgt - src
+              sign = if diff >= 0 then "+" else ""
+              truncNote = case lookupHeader "truncation" of
+                Just t  -> " (truncation at " ++ t ++ ")"
+                Nothing -> ""
+          in ["size change: " ++ sign ++ commaNum (fromIntegral diff)
+              ++ " bytes" ++ truncNote]
+        _ -> []
+
+    parseSize s =
+      let digits = filter isDigit (takeWhile (\c -> isDigit c || c == ',') s)
+      in case reads digits of
+           [(n, "")] -> Just (n :: Int64)
+           _         -> Nothing
+
+    -- Bucket-based analysis
+    bucketCount = 56 :: Int
+
+    buckets :: [(Int, Int)]  -- (bucketIndex, byteCount)
+    buckets
+      | totalRecords == 0 = []
+      | otherwise =
+          let rangeSize = max 1 (maxEnd - minOff)
+              bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
+              toBucket r =
+                let startB = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+                    endB   = fromIntegral (((erOffset r + fromIntegral (erSize r) - 1) - minOff) `div` bucketSize)
+                in [ (b, erSize r) | b <- [max 0 startB .. min (bucketCount-1) endB] ]
+          in concatMap toBucket allRegions
+
+    bucketSums :: [Int]
+    bucketSums
+      | totalRecords == 0 = []
+      | otherwise =
+          let arr = replicate bucketCount 0
+              addTo xs (i, v) = take i xs ++ [xs !! i + v] ++ drop (i+1) xs
+          in foldl addTo arr buckets
+
+    -- Contiguous runs of non-empty buckets, as (startIdx, endIdx) pairs
+    findRuns :: [Int] -> [(Int, Int)]
+    findRuns sums = go 0 Nothing []
+      where
+        go i (Just s) acc | i >= length sums = reverse ((s, i-1) : acc)
+        go i Nothing  acc | i >= length sums = reverse acc
+        go i Nothing  acc
+          | sums !! i > 0 = go (i+1) (Just i) acc
+          | otherwise      = go (i+1) Nothing acc
+        go i (Just s) acc
+          | sums !! i > 0 = go (i+1) (Just s) acc
+          | otherwise      = go (i+1) Nothing ((s, i-1) : acc)
+
+    regionsBlock
+      | totalRecords == 0 = []
+      | otherwise =
+          let rangeSize = max 1 (maxEnd - minOff)
+              bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
+              runs = findRuns bucketSums
+              fmt (rStart, rEnd) =
+                let sOff = minOff + fromIntegral rStart * bucketSize
+                    eOff = minOff + fromIntegral (rEnd + 1) * bucketSize - 1
+                    recsInRun = length [ r | r <- allRegions
+                                       , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+                                       , b >= rStart && b <= rEnd ]
+                    bytesInRun = sum [ erSize r | r <- allRegions
+                                     , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+                                     , b >= rStart && b <= rEnd ]
+                    pct = if totalModified > 0
+                          then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
+                          else 0
+                in "  0x" ++ padHex 6 sOff ++ " \8211 0x" ++ padHex 6 eOff
+                   ++ "   " ++ padR 5 (show recsInRun) ++ " records"
+                   ++ "   " ++ padR 10 (commaNum bytesInRun ++ " B")
+                   ++ "   " ++ showPct pct
+          in case runs of
+               [] -> []
+               _  -> "regions:" : map fmt runs
+
+    showPct :: Double -> String
+    showPct p =
+      let s = show (round (p * 10) :: Int)
+          (whole, frac) = splitAt (length s - 1) s
+          w = if null whole then "0" else whole
+      in padR 6 (w ++ "." ++ frac ++ "%")
+
+    -- Record size distribution
+    sizes = sort (map erSize allRegions)
+    recordSizeLine = case sizes of
+      []    -> []
+      (s:_) | all (== s) sizes ->
+          ["record sizes: " ++ commaNum s ++ " B"]
+      (minS:_) ->
+          let maxS    = last sizes
+              medianS = sizes !! (length sizes `div` 2)
+              meanS   = totalModified `div` totalRecords
+          in ["record sizes: " ++ commaNum minS ++ " \8211 "
+              ++ commaNum maxS ++ " B"
+              ++ " (median " ++ commaNum medianS
+              ++ ", mean " ++ commaNum meanS ++ ")"]
+
+    -- Sparkline
+    sparkline
+      | totalRecords == 0 = []
+      | otherwise =
+          let chars = map (\s -> if s > 0 then '#' else '.') bucketSums
+              leftLabel = "0x" ++ padHex 6 minOff
+              rightLabel = "0x" ++ padHex 6 (maxEnd - 1)
+              barLine = "[" ++ chars ++ "]"
+              -- right-align rightLabel to closing bracket
+              gap = max 1 (length barLine - length leftLabel - length rightLabel)
+              labelLine = " " ++ leftLabel
+                          ++ replicate gap ' ' ++ rightLabel
+          in [barLine, labelLine]
+
+    -- Capability notes
+    capabilityNotes =
+      let hasCopy = any (\r -> case erPayload r of PayloadCopy _ -> True; _ -> False) allRegions
+          hasXOR  = any (\r -> case erPayload r of PayloadXOR _  -> True; _ -> False) allRegions
+          hasMeta = any (\r -> case erPayload r of PayloadMeta _ -> True; _ -> False) allRegions
+      in if hasCopy || hasXOR || hasMeta
+         then ["", "note: patch uses delta/reference operations (requires source file)"]
+         else []
+
+-- | Format an integer with comma grouping.
+commaNum :: Int -> String
+commaNum n
+  | n < 0     = "-" ++ commaNum (negate n)
+  | otherwise = reverse (go (reverse (show n)))
+  where
+    go [] = []
+    go xs = let (a, b) = splitAt 3 xs
+            in a ++ if null b then "" else "," ++ go b
 
 ----------------------------------------------------------------------------
 -- PPF
 ----------------------------------------------------------------------------
 
-explainPPF :: PPF.Patch -> String
-explainPPF p = unlines $
-  [ "format:      " ++ ppfVerStr (PPF.patchVersion p)
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showPPFRecord [1..] (PPF.patchRecords p)
-    ++ [summary]
+explainPPF :: PPF.Patch -> ExplainData
+explainPPF p = ExplainData
+  { edFormat   = ppfVerStr (PPF.patchVersion p)
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (zipWith mkPPFRegion [1..] (PPF.patchRecords p))]
+  , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
+  , edNotes    = []
+  }
   where
     nRecs = length (PPF.patchRecords p)
     totalBytes = sum (map (BS.length . PPF.recData) (PPF.patchRecords p))
-    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
 
 ppfVerStr :: PPF.Version -> String
 ppfVerStr PPF.PPF1 = "PPF1"
@@ -59,51 +442,60 @@ ppfVerStr PPF.PPF2 = "PPF2"
 ppfVerStr PPF.PPF3 = "PPF3"
 ppfVerStr PPF.PPF4 = "PPF \"4\" (Pyriel internal format)"
 
-showPPFRecord :: Int -> PPF.Record -> String
-showPPFRecord n r =
-  padNum n ++ "  " ++ cmdStr ++ padR 10 (show (BS.length (PPF.recData r)) ++ " B")
-  ++ "  at 0x" ++ padHex 6 (PPF.recOffset r)
-  ++ undoStr
-  ++ "\n" ++ hexDump (PPF.recData r)
+mkPPFRegion :: Int -> PPF.Record -> ExplainRegion
+mkPPFRegion _ r = ExplainRegion
+  { erOffset     = PPF.recOffset r
+  , erSize       = BS.length (PPF.recData r)
+  , erLabel      = cmdStr
+  , erPayload    = PayloadWrite (PPF.recData r)
+  , erAnnotation = AnnotAt AtOffset (PPF.recOffset r) undoDetail
+  }
   where
     cmdStr = case PPF.recCmd r of
       PPF.Replace -> "Write  "
       PPF.Append  -> "Append "
-    undoStr = case PPF.recUndo r of
-      Nothing -> ""
-      Just _  -> "  (undo data)"
+    undoDetail = case PPF.recUndo r of
+      Nothing -> []
+      Just _  -> [DetailUndo]
 
 ----------------------------------------------------------------------------
 -- IPS
 ----------------------------------------------------------------------------
 
-explainIPS :: IPS.IPSPatch -> String
-explainIPS p = unlines $
-  [ "format:      " ++ case IPS.ipsVariant p of
+explainIPS :: IPS.IPSPatch -> ExplainData
+explainIPS p = ExplainData
+  { edFormat   = case IPS.ipsVariant p of
       IPS.StandardIPS -> case IPS.ipsEBPMeta p of
         Nothing -> "IPS"
         Just _  -> "IPS (EBP)"
       IPS.IPS32       -> "IPS32"
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showIPSRecord [1..] (IPS.ipsRecords p)
-    ++ [truncStr, summary]
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (map mkIPSRegion (IPS.ipsRecords p))]
+  , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
+  , edNotes    = truncNote
+  }
   where
     nRecs = length (IPS.ipsRecords p)
     totalBytes = sum (map ipsRecSize (IPS.ipsRecords p))
-    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
-    truncStr = case IPS.ipsTruncate p of
-      Nothing -> ""
-      Just sz -> "truncate to " ++ show sz ++ " bytes"
+    truncNote = case IPS.ipsTruncate p of
+      Nothing -> []
+      Just sz -> ["truncate to " ++ show sz ++ " bytes"]
 
-showIPSRecord :: Int -> IPS.IPSRecord -> String
-showIPSRecord n (IPS.IPSRecord off dat) =
-  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
-  ++ "  at 0x" ++ padHex 6 off
-  ++ "\n" ++ hexDump dat
-showIPSRecord n (IPS.IPSRecordRLE off count val) =
-  padNum n ++ "  Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val :: Int64)
-  ++ "  at 0x" ++ padHex 6 off ++ "  (RLE)"
+mkIPSRegion :: IPS.IPSRecord -> ExplainRegion
+mkIPSRegion (IPS.IPSRecord off dat) = ExplainRegion
+  { erOffset     = off
+  , erSize       = BS.length dat
+  , erLabel      = "Write  "
+  , erPayload    = PayloadWrite dat
+  , erAnnotation = AnnotAt AtOffset off []
+  }
+mkIPSRegion (IPS.IPSRecordRLE off count val) = ExplainRegion
+  { erOffset     = off
+  , erSize       = count
+  , erLabel      = "Fill "
+  , erPayload    = PayloadFill val count
+  , erAnnotation = AnnotAt AtOffset off [DetailRLE]
+  }
 
 ipsRecSize :: IPS.IPSRecord -> Int
 ipsRecSize (IPS.IPSRecord _ d)       = BS.length d
@@ -113,299 +505,347 @@ ipsRecSize (IPS.IPSRecordRLE _ c _)  = c
 -- BPS
 ----------------------------------------------------------------------------
 
-explainBPS :: BPS.BPSPatch -> String
-explainBPS p = unlines $
-  [ "format:      BPS"
-  , "source size: " ++ show (BPS.bpsSourceSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsSourceCRC p) ++ ")"
-  , "target size: " ++ show (BPS.bpsTargetSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsTargetCRC p) ++ ")"
-  , ""
-  ] ++ snd (mapAccumL showBPSAction 0 (zip [1..] (BPS.bpsActions p)))
-    ++ [summary]
+explainBPS :: BPS.BPSPatch -> ExplainData
+explainBPS p = ExplainData
+  { edFormat   = "BPS"
+  , edHeader   = [ ("source size", show (BPS.bpsSourceSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsSourceCRC p) ++ ")")
+                 , ("target size", show (BPS.bpsTargetSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsTargetCRC p) ++ ")")
+                 ]
+  , edSections = [SectionRegions (snd (mapAccumL mkBPSRegion 0 (BPS.bpsActions p)))]
+  , edSummary  = Summary nActs "actions" (Just (fromIntegral (BPS.bpsTargetSize p), BytesTotalOutput))
+  , edNotes    = []
+  }
   where
     nActs = length (BPS.bpsActions p)
-    summary = show nActs ++ " actions, " ++ show (BPS.bpsTargetSize p) ++ " bytes total output"
 
-showBPSAction :: Int64 -> (Int, BPS.BPSAction) -> (Int64, String)
-showBPSAction outPos (n, act) = case act of
+mkBPSRegion :: Int64 -> BPS.BPSAction -> (Int64, ExplainRegion)
+mkBPSRegion outPos act = case act of
   BPS.SourceRead len ->
     ( outPos + fromIntegral len
-    , padNum n ++ "  SourceRead " ++ padR 10 (show len ++ " B")
-      ++ "  at output 0x" ++ padHex 6 outPos )
+    , ExplainRegion outPos len "SourceRead " (PayloadCopy FromSource)
+        (AnnotAt AtOutput outPos [])
+    )
   BPS.TargetRead dat ->
     let len = BS.length dat
     in ( outPos + fromIntegral len
-       , padNum n ++ "  TargetRead " ++ padR 10 (show len ++ " B")
-         ++ "  at output 0x" ++ padHex 6 outPos
-         ++ "\n" ++ hexDump dat )
+       , ExplainRegion outPos len "TargetRead " (PayloadWrite dat)
+           (AnnotAt AtOutput outPos [])
+       )
   BPS.SourceCopy len delta ->
     ( outPos + fromIntegral len
-    , padNum n ++ "  SourceCopy " ++ padR 10 (show len ++ " B")
-      ++ "  at output 0x" ++ padHex 6 outPos
-      ++ "  (delta " ++ showSigned delta ++ ")" )
+    , ExplainRegion outPos len "SourceCopy " (PayloadCopy FromSource)
+        (AnnotAt AtOutput outPos [DetailDelta delta])
+    )
   BPS.TargetCopy len delta ->
     ( outPos + fromIntegral len
-    , padNum n ++ "  TargetCopy " ++ padR 10 (show len ++ " B")
-      ++ "  at output 0x" ++ padHex 6 outPos
-      ++ "  (delta " ++ showSigned delta ++ ")" )
+    , ExplainRegion outPos len "TargetCopy " (PayloadCopy FromTarget)
+        (AnnotAt AtOutput outPos [DetailDelta delta])
+    )
 
 ----------------------------------------------------------------------------
 -- UPS
 ----------------------------------------------------------------------------
 
-explainUPS :: UPS.UPSPatch -> String
-explainUPS p = unlines $
-  [ "format:      UPS"
-  , "source size: " ++ show (UPS.upsSourceSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsSourceCRC p) ++ ")"
-  , "target size: " ++ show (UPS.upsTargetSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsTargetCRC p) ++ ")"
-  , ""
-  ] ++ snd (mapAccumL showUPSBlock 0 (zip [1..] (UPS.upsBlocks p)))
-    ++ [summary]
+explainUPS :: UPS.UPSPatch -> ExplainData
+explainUPS p = ExplainData
+  { edFormat   = "UPS"
+  , edHeader   = [ ("source size", show (UPS.upsSourceSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsSourceCRC p) ++ ")")
+                 , ("target size", show (UPS.upsTargetSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsTargetCRC p) ++ ")")
+                 ]
+  , edSections = [SectionRegions (snd (mapAccumL mkUPSRegion 0 (UPS.upsBlocks p)))]
+  , edSummary  = Summary nBlocks "blocks" Nothing
+  , edNotes    = []
+  }
   where
     nBlocks = length (UPS.upsBlocks p)
-    summary = show nBlocks ++ " blocks"
 
-showUPSBlock :: Int64 -> (Int, UPS.UPSBlock) -> (Int64, String)
-showUPSBlock pos (n, UPS.UPSBlock skip xd) =
+mkUPSRegion :: Int64 -> UPS.UPSBlock -> (Int64, ExplainRegion)
+mkUPSRegion pos (UPS.UPSBlock skip xd) =
   let xorOff = pos + skip
       len    = BS.length xd
   in ( xorOff + fromIntegral len
-     , padNum n ++ "  XOR  " ++ padR 10 (show len ++ " B")
-       ++ "  at 0x" ++ padHex 6 xorOff
-       ++ "  (skip " ++ show skip ++ ")" )
+     , ExplainRegion xorOff len "XOR  " (PayloadXOR Nothing)
+         (AnnotAt AtOffset xorOff [DetailSkip skip])
+     )
 
 ----------------------------------------------------------------------------
 -- VCDIFF
 ----------------------------------------------------------------------------
 
-explainVCDIFF :: VCDIFF.VCDIFFPatch -> String
-explainVCDIFF p = unlines $
-  [ "format:      VCDIFF" ++ if VCDIFF.vcdVersion (VCDIFF.vcdHeader p) == 0x53
-                              then " (xdelta3)" else ""
-  , "windows:     " ++ show nWins
-  , "target size: " ++ show totalTgt
-  , ""
-  ] ++ concatMap showVCDIFFWindow (zip [1..] (VCDIFF.vcdWindows p))
-    ++ [show nWins ++ " windows, " ++ show totalTgt ++ " bytes total output"]
+explainVCDIFF :: VCDIFF.VCDIFFPatch -> ExplainData
+explainVCDIFF p = ExplainData
+  { edFormat   = "VCDIFF" ++ if VCDIFF.vcdVersion (VCDIFF.vcdHeader p) == 0x53
+                               then " (xdelta3)" else ""
+  , edHeader   = [ ("windows", show nWins)
+                 , ("target size", show totalTgt)
+                 ]
+  , edSections = concatMap mkVCDIFFSection (zip [1..] (VCDIFF.vcdWindows p))
+  , edSummary  = Summary nWins "windows" (Just (fromIntegral totalTgt, BytesTotalOutput))
+  , edNotes    = []
+  }
   where
     nWins = length (VCDIFF.vcdWindows p)
     totalTgt = sum (map VCDIFF.vcdTargetLen (VCDIFF.vcdWindows p))
 
-showVCDIFFWindow :: (Int, VCDIFF.VCDIFFWindow) -> [String]
-showVCDIFFWindow (n, w) =
-  [ "window " ++ show n ++ ":"
-  , "  target size:    " ++ show (VCDIFF.vcdTargetLen w)
-  , "  source segment: " ++ show (VCDIFF.vcdSourceLen w) ++ " bytes at 0x"
-    ++ padHex 6 (VCDIFF.vcdSourcePos w)
-  , "  add/run data:   " ++ show (BS.length (VCDIFF.vcdAddRunData w)) ++ " bytes"
-  , "  instructions:   " ++ show (BS.length (VCDIFF.vcdInstructions w)) ++ " bytes"
-  , "  addresses:      " ++ show (BS.length (VCDIFF.vcdAddresses w)) ++ " bytes"
-  , adlerStr
-  , ""
+mkVCDIFFSection :: (Int, VCDIFF.VCDIFFWindow) -> [ExplainSection]
+mkVCDIFFSection (n, w) =
+  [ SectionLabeled ("window " ++ show n ++ ":")
+      ( [ ("target size", show (VCDIFF.vcdTargetLen w))
+        , ("source segment", show (VCDIFF.vcdSourceLen w) ++ " bytes at 0x"
+            ++ padHex 6 (VCDIFF.vcdSourcePos w))
+        , ("add/run data", show (BS.length (VCDIFF.vcdAddRunData w)) ++ " bytes")
+        , ("instructions", show (BS.length (VCDIFF.vcdInstructions w)) ++ " bytes")
+        , ("addresses", show (BS.length (VCDIFF.vcdAddresses w)) ++ " bytes")
+        ] ++ adlerKV
+      )
   ]
   where
-    adlerStr = case VCDIFF.vcdAdler32 w of
-      Nothing -> ""
-      Just a  -> "  adler32:        0x" ++ padHex 8 (fromIntegral a :: Int64)
+    adlerKV = case VCDIFF.vcdAdler32 w of
+      Nothing -> []
+      Just a  -> [("adler32", "0x" ++ padHex 8 (fromIntegral a :: Int64))]
 
 ----------------------------------------------------------------------------
 -- APS
 ----------------------------------------------------------------------------
 
-explainAPS :: APS.APSPatch -> String
+explainAPS :: APS.APSPatch -> ExplainData
 explainAPS (APS.APSPatch variant) = case variant of
-  APS.APSN64 _hdr recs -> unlines $
-    [ "format:      APS (N64)"
-    , "records:     " ++ show (length recs)
-    , ""
-    ] ++ zipWith showN64Record [1..] recs
-      ++ [show (length recs) ++ " records"]
-  APS.APSGBA hdr recs -> unlines $
-    [ "format:      APS (GBA)"
-    , "source size: " ++ show (APS.gbaSourceSize hdr)
-    , "target size: " ++ show (APS.gbaTargetSize hdr)
-    , ""
-    ] ++ zipWith showGBARecord [1..] recs
-      ++ [show (length recs) ++ " blocks"]
+  APS.APSN64 _hdr recs -> ExplainData
+    { edFormat   = "APS (N64)"
+    , edHeader   = [("records", show (length recs))]
+    , edSections = [SectionRegions (map mkN64Region recs)]
+    , edSummary  = Summary (length recs) "records" Nothing
+    , edNotes    = []
+    }
+  APS.APSGBA hdr recs -> ExplainData
+    { edFormat   = "APS (GBA)"
+    , edHeader   = [ ("source size", show (APS.gbaSourceSize hdr))
+                   , ("target size", show (APS.gbaTargetSize hdr))
+                   ]
+    , edSections = [SectionRegions (map mkGBARegion recs)]
+    , edSummary  = Summary (length recs) "blocks" Nothing
+    , edNotes    = []
+    }
 
-showN64Record :: Int -> APS.APSN64Record -> String
-showN64Record n (APS.APSN64Normal off dat) =
-  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
-  ++ "  at 0x" ++ padHex 6 off
-  ++ "\n" ++ hexDump dat
-showN64Record n (APS.APSN64RLE off val count) =
-  padNum n ++ "  Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val :: Int64)
-  ++ "  at 0x" ++ padHex 6 off ++ "  (RLE)"
+mkN64Region :: APS.APSN64Record -> ExplainRegion
+mkN64Region (APS.APSN64Normal off dat) = ExplainRegion
+  { erOffset     = off
+  , erSize       = BS.length dat
+  , erLabel      = "Write  "
+  , erPayload    = PayloadWrite dat
+  , erAnnotation = AnnotAt AtOffset off []
+  }
+mkN64Region (APS.APSN64RLE off val count) = ExplainRegion
+  { erOffset     = off
+  , erSize       = fromIntegral count
+  , erLabel      = "Fill "
+  , erPayload    = PayloadFill val (fromIntegral count)
+  , erAnnotation = AnnotAt AtOffset off [DetailRLE]
+  }
 
-showGBARecord :: Int -> APS.APSGBARecord -> String
-showGBARecord n r =
-  padNum n ++ "  XOR block  65536 B  at 0x" ++ padHex 6 (fromIntegral (APS.gbaOffset r) :: Int64)
-  ++ "  (src CRC16 " ++ padHex 4 (fromIntegral (APS.gbaSourceCRC r) :: Int64)
-  ++ ", tgt CRC16 " ++ padHex 4 (fromIntegral (APS.gbaTargetCRC r) :: Int64) ++ ")"
+mkGBARegion :: APS.APSGBARecord -> ExplainRegion
+mkGBARegion r = ExplainRegion
+  { erOffset     = fromIntegral (APS.gbaOffset r)
+  , erSize       = 65536
+  , erLabel      = "XOR block  "
+  , erPayload    = PayloadXOR Nothing
+  , erAnnotation = AnnotAt AtOffset (fromIntegral (APS.gbaOffset r))
+      [DetailCRC16 (fromIntegral (APS.gbaSourceCRC r)) (fromIntegral (APS.gbaTargetCRC r))]
+  }
 
 ----------------------------------------------------------------------------
 -- RUP
 ----------------------------------------------------------------------------
 
-explainRUP :: RUP.RUPPatch -> String
-explainRUP p = unlines $
-  [ "format:      RUP (NINJA2)"
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showRUPRecord [1..] (RUP.rupRecords p)
-    ++ [show nRecs ++ " records"]
+explainRUP :: RUP.RUPPatch -> ExplainData
+explainRUP p = ExplainData
+  { edFormat   = "RUP (NINJA2)"
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (map mkRUPRegion (RUP.rupRecords p))]
+  , edSummary  = Summary nRecs "records" Nothing
+  , edNotes    = []
+  }
   where
     nRecs = length (RUP.rupRecords p)
 
-showRUPRecord :: Int -> RUP.RUPRecord -> String
-showRUPRecord n (RUP.RUPRecord off xd) =
-  padNum n ++ "  XOR  " ++ padR 10 (show (BS.length xd) ++ " B")
-  ++ "  at 0x" ++ padHex 6 off
+mkRUPRegion :: RUP.RUPRecord -> ExplainRegion
+mkRUPRegion (RUP.RUPRecord off xd) = ExplainRegion
+  { erOffset     = off
+  , erSize       = BS.length xd
+  , erLabel      = "XOR  "
+  , erPayload    = PayloadXOR Nothing
+  , erAnnotation = AnnotAt AtOffset off []
+  }
 
 ----------------------------------------------------------------------------
 -- GDIFF
 ----------------------------------------------------------------------------
 
-explainGDIFF :: GDIFF.GDiffPatch -> String
-explainGDIFF p = unlines $
-  [ "format:      GDIFF (W3C)"
-  , "commands:    " ++ show nCmds
-  , ""
-  ] ++ snd (mapAccumL showGDIFFCmd 0 (zip [1..] (GDIFF.gdiffCmds p)))
-    ++ [show nCmds ++ " commands"]
+explainGDIFF :: GDIFF.GDiffPatch -> ExplainData
+explainGDIFF p = ExplainData
+  { edFormat   = "GDIFF (W3C)"
+  , edHeader   = [("commands", show nCmds)]
+  , edSections = [SectionRegions (snd (mapAccumL mkGDIFFRegion 0 (GDIFF.gdiffCmds p)))]
+  , edSummary  = Summary nCmds "commands" Nothing
+  , edNotes    = []
+  }
   where
     nCmds = length (GDIFF.gdiffCmds p)
 
-showGDIFFCmd :: Int64 -> (Int, GDIFF.GDiffCmd) -> (Int64, String)
-showGDIFFCmd outPos (n, cmd) = case cmd of
+mkGDIFFRegion :: Int64 -> GDIFF.GDiffCmd -> (Int64, ExplainRegion)
+mkGDIFFRegion outPos cmd = case cmd of
   GDIFF.GDiffData dat ->
     let len = BS.length dat
     in ( outPos + fromIntegral len
-       , padNum n ++ "  DATA  " ++ padR 10 (show len ++ " B")
-         ++ "  at output 0x" ++ padHex 6 outPos
-         ++ "\n" ++ hexDump dat )
+       , ExplainRegion outPos len "DATA  " (PayloadWrite dat)
+           (AnnotAt AtOutput outPos [])
+       )
   GDIFF.GDiffCopy off len ->
     ( outPos + len
-    , padNum n ++ "  COPY  " ++ padR 10 (show len ++ " B")
-      ++ "  at output 0x" ++ padHex 6 outPos
-      ++ "  (source 0x" ++ padHex 6 off ++ ")" )
+    , ExplainRegion outPos (fromIntegral len) "COPY  " (PayloadCopy FromSource)
+        (AnnotAt AtOutput outPos [DetailSource off])
+    )
 
 ----------------------------------------------------------------------------
 -- BSDiff
 ----------------------------------------------------------------------------
 
-explainBSDiff :: BSDiff.BSDiffPatch -> String
-explainBSDiff p = unlines $
-  [ "format:      BSDiff / BDF (BSDIFF40)"
-  , "new size:    " ++ show (BSDiff.bsdNewSize p)
-  , "ctrl block:  " ++ show (BSDiff.bsdCtrlSize p) ++ " bytes (compressed)"
-  , "diff block:  " ++ show (BSDiff.bsdDiffSize p) ++ " bytes (compressed)"
-  , ""
-  ] ++ if null (BSDiff.bsdControls p)
-       then ["(control data not decoded)"]
-       else zipWith showBSDiffCtrl [1..] (BSDiff.bsdControls p)
-         ++ [show (length (BSDiff.bsdControls p)) ++ " control tuples"]
+explainBSDiff :: BSDiff.BSDiffPatch -> ExplainData
+explainBSDiff p = ExplainData
+  { edFormat   = "BSDiff / BDF (BSDIFF40)"
+  , edHeader   = [ ("new size", show (BSDiff.bsdNewSize p))
+                 , ("ctrl block", show (BSDiff.bsdCtrlSize p) ++ " bytes (compressed)")
+                 , ("diff block", show (BSDiff.bsdDiffSize p) ++ " bytes (compressed)")
+                 ]
+  , edSections = if null (BSDiff.bsdControls p)
+                 then [SectionText "(control data not decoded)"]
+                 else [SectionRegions (map mkBSDiffRegion (BSDiff.bsdControls p))]
+  , edSummary  = if null (BSDiff.bsdControls p)
+                 then SummaryNone
+                 else Summary (length (BSDiff.bsdControls p)) "control tuples" Nothing
+  , edNotes    = []
+  }
 
-showBSDiffCtrl :: Int -> BSDiff.BSDiffControl -> String
-showBSDiffCtrl n ctrl =
-  padNum n ++ "  add " ++ padR 10 (show (BSDiff.ctrlAdd ctrl) ++ " B")
-  ++ "  copy " ++ padR 10 (show (BSDiff.ctrlCopy ctrl) ++ " B")
-  ++ "  seek " ++ showSigned (BSDiff.ctrlSeek ctrl)
+mkBSDiffRegion :: BSDiff.BSDiffControl -> ExplainRegion
+mkBSDiffRegion ctrl = ExplainRegion
+  { erOffset     = 0
+  , erSize       = 0
+  , erLabel      = ""
+  , erPayload    = PayloadMeta []
+  , erAnnotation = AnnotBSDiff (BSDiff.ctrlAdd ctrl) (BSDiff.ctrlCopy ctrl) (BSDiff.ctrlSeek ctrl)
+  }
 
 ----------------------------------------------------------------------------
 -- XDelta1
 ----------------------------------------------------------------------------
 
-explainXDelta1 :: XDelta1.XDelta1Patch -> String
-explainXDelta1 p = unlines $
-  [ "format:      xdelta1"
-  , "from:        " ++ BS8.unpack (XDelta1.xd1FromName p)
-  , "to:          " ++ BS8.unpack (XDelta1.xd1ToName p)
-  , "target size: " ++ show (XDelta1.xd1ToLen p)
-  , "sources:     " ++ show (length (XDelta1.xd1Sources p))
-  , ""
-  ] ++ zipWith showXD1Source [0..] (XDelta1.xd1Sources p)
-    ++ ["", "instructions: " ++ show nInsts, ""]
-    ++ zipWith showXD1Inst [1..] (XDelta1.xd1Instructions p)
-    ++ [show nInsts ++ " instructions, " ++ show (XDelta1.xd1ToLen p) ++ " bytes total output"]
+explainXDelta1 :: XDelta1.XDelta1Patch -> ExplainData
+explainXDelta1 p = ExplainData
+  { edFormat   = "xdelta1"
+  , edHeader   = [ ("from", BS8.unpack (XDelta1.xd1FromName p))
+                 , ("to", BS8.unpack (XDelta1.xd1ToName p))
+                 , ("target size", show (XDelta1.xd1ToLen p))
+                 , ("sources", show (length (XDelta1.xd1Sources p)))
+                 ]
+  , edSections = map mkXD1SourceText (zip [0..] (XDelta1.xd1Sources p))
+      ++ [SectionText "", SectionText ("instructions: " ++ show nInsts), SectionText ""]
+      ++ [SectionRegions (map mkXD1Region (XDelta1.xd1Instructions p))]
+  , edSummary  = Summary nInsts "instructions" (Just (fromIntegral (XDelta1.xd1ToLen p), BytesTotalOutput))
+  , edNotes    = []
+  }
   where
     nInsts = length (XDelta1.xd1Instructions p)
 
-showXD1Source :: Int -> XDelta1.XD1Source -> String
-showXD1Source n s =
+mkXD1SourceText :: (Int, XDelta1.XD1Source) -> ExplainSection
+mkXD1SourceText (n, s) = SectionText $
   "  [" ++ show n ++ "] " ++ BS8.unpack (XDelta1.xd1SrcName s)
   ++ (if XDelta1.xd1SrcIsData s then " (data)" else " (file)")
   ++ (if XDelta1.xd1SrcSequential s then " seq" else "")
   ++ "  " ++ show (XDelta1.xd1SrcLen s) ++ " bytes"
 
-showXD1Inst :: Int -> XDelta1.XD1Instruction -> String
-showXD1Inst n inst =
-  padNum n ++ "  Copy  " ++ padR 10 (show (XDelta1.xd1InstLength inst) ++ " B")
-  ++ "  from source " ++ show (XDelta1.xd1InstIndex inst)
-  ++ "  at 0x" ++ padHex 6 (XDelta1.xd1InstOffset inst)
+mkXD1Region :: XDelta1.XD1Instruction -> ExplainRegion
+mkXD1Region inst = ExplainRegion
+  { erOffset     = XDelta1.xd1InstOffset inst
+  , erSize       = fromIntegral (XDelta1.xd1InstLength inst)
+  , erLabel      = "Copy  "
+  , erPayload    = PayloadCopy FromSource
+  , erAnnotation = AnnotAt AtOffset (XDelta1.xd1InstOffset inst)
+      [DetailSourceIndex (XDelta1.xd1InstIndex inst)]
+  }
 
 ----------------------------------------------------------------------------
 -- PMSR
 ----------------------------------------------------------------------------
 
-explainPMSR :: PMSR.PMSRPatch -> String
-explainPMSR p = unlines $
-  [ "format:      PMSR (Paper Mario Star Rod)"
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showPMSRRecord [1..] (PMSR.pmsrRecords p)
-    ++ [summary]
+explainPMSR :: PMSR.PMSRPatch -> ExplainData
+explainPMSR p = ExplainData
+  { edFormat   = "PMSR (Paper Mario Star Rod)"
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (map mkPMSRRegion (PMSR.pmsrRecords p))]
+  , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
+  , edNotes    = []
+  }
   where
     nRecs = length (PMSR.pmsrRecords p)
     totalBytes = sum (map (BS.length . PMSR.pmsrData) (PMSR.pmsrRecords p))
-    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
 
-showPMSRRecord :: Int -> PMSR.PMSRRecord -> String
-showPMSRRecord n r =
-  padNum n ++ "  Write  " ++ padR 10 (show (BS.length (PMSR.pmsrData r)) ++ " B")
-  ++ "  at 0x" ++ padHex 6 (PMSR.pmsrOffset r)
-  ++ "\n" ++ hexDump (PMSR.pmsrData r)
+mkPMSRRegion :: PMSR.PMSRRecord -> ExplainRegion
+mkPMSRRegion r = ExplainRegion
+  { erOffset     = PMSR.pmsrOffset r
+  , erSize       = BS.length (PMSR.pmsrData r)
+  , erLabel      = "Write  "
+  , erPayload    = PayloadWrite (PMSR.pmsrData r)
+  , erAnnotation = AnnotAt AtOffset (PMSR.pmsrOffset r) []
+  }
 
 ----------------------------------------------------------------------------
 -- DPS
 ----------------------------------------------------------------------------
 
-explainDPS :: DPS.DPSPatch -> String
-explainDPS p = unlines $
-  [ "format:      DPS (Deufeufeu Patching System)"
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showDPSRecord [1..] (DPS.dpsRecords p)
-    ++ [summary]
+explainDPS :: DPS.DPSPatch -> ExplainData
+explainDPS p = ExplainData
+  { edFormat   = "DPS (Deufeufeu Patching System)"
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (map mkDPSRegion (DPS.dpsRecords p))]
+  , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
+  , edNotes    = []
+  }
   where
     nRecs = length (DPS.dpsRecords p)
     totalBytes = sum (map recBytes (DPS.dpsRecords p))
-    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
     recBytes r = case DPS.dpsRecPayload r of
       DPS.PayloadData dat    -> BS.length dat
       DPS.PayloadCopy _ len  -> fromIntegral len
 
-showDPSRecord :: Int -> DPS.DPSRecord -> String
-showDPSRecord n r = case DPS.dpsRecPayload r of
-  DPS.PayloadData dat ->
-    padNum n ++ "  Data   " ++ padR 10 (show (BS.length dat) ++ " B")
-    ++ "  at 0x" ++ padHex 6 (DPS.dpsRecOutOffset r)
-    ++ "\n" ++ hexDump dat
-  DPS.PayloadCopy srcOff len ->
-    padNum n ++ "  Copy   " ++ padR 10 (show len ++ " B")
-    ++ "  at 0x" ++ padHex 6 (DPS.dpsRecOutOffset r)
-    ++ "  (source 0x" ++ padHex 6 srcOff ++ ")"
+mkDPSRegion :: DPS.DPSRecord -> ExplainRegion
+mkDPSRegion r = case DPS.dpsRecPayload r of
+  DPS.PayloadData dat -> ExplainRegion
+    { erOffset     = DPS.dpsRecOutOffset r
+    , erSize       = BS.length dat
+    , erLabel      = "Data   "
+    , erPayload    = PayloadWrite dat
+    , erAnnotation = AnnotAt AtOffset (DPS.dpsRecOutOffset r) []
+    }
+  DPS.PayloadCopy srcOff len -> ExplainRegion
+    { erOffset     = DPS.dpsRecOutOffset r
+    , erSize       = fromIntegral len
+    , erLabel      = "Copy   "
+    , erPayload    = PayloadCopy FromSource
+    , erAnnotation = AnnotAt AtOffset (DPS.dpsRecOutOffset r) [DetailSource srcOff]
+    }
 
 ----------------------------------------------------------------------------
 -- NINJA1
 ----------------------------------------------------------------------------
 
-explainNINJA1 :: NINJA1.NINJA1Patch -> String
-explainNINJA1 p = unlines $
-  [ "format:      NINJA1 (" ++ subFmtStr ++ ")"
-  , "records:     " ++ show nRecs
-  , ""
-  ] ++ zipWith showN1Record [1..] (NINJA1.n1Records p)
-    ++ [summary]
+explainNINJA1 :: NINJA1.NINJA1Patch -> ExplainData
+explainNINJA1 p = ExplainData
+  { edFormat   = "NINJA1 (" ++ subFmtStr ++ ")"
+  , edHeader   = [("records", show nRecs)]
+  , edSections = [SectionRegions (map mkN1Region (NINJA1.n1Records p))]
+  , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
+  , edNotes    = []
+  }
   where
     nRecs = length (NINJA1.n1Records p)
     subFmtStr = case NINJA1.n1SubFormat p of
@@ -414,48 +854,49 @@ explainNINJA1 p = unlines $
       NINJA1.N1Text    -> "text"
       NINJA1.N1TextZ   -> "text, compressed"
     totalBytes = sum (map (BS.length . NINJA1.n1RecData) (NINJA1.n1Records p))
-    summary = show nRecs ++ " records, " ++ show totalBytes ++ " bytes total"
 
-showN1Record :: Int -> NINJA1.NINJA1Record -> String
-showN1Record n (NINJA1.NINJA1Record off dat) =
-  padNum n ++ "  Write  " ++ padR 10 (show (BS.length dat) ++ " B")
-  ++ "  at 0x" ++ padHex 6 off
-  ++ "\n" ++ hexDump dat
+mkN1Region :: NINJA1.NINJA1Record -> ExplainRegion
+mkN1Region (NINJA1.NINJA1Record off dat) = ExplainRegion
+  { erOffset     = off
+  , erSize       = BS.length dat
+  , erLabel      = "Write  "
+  , erPayload    = PayloadWrite dat
+  , erAnnotation = AnnotAt AtOffset off []
+  }
 
 ----------------------------------------------------------------------------
 -- PCHTXT
 ----------------------------------------------------------------------------
 
-explainPCHTXT :: PCHTXT.PCHTXTPatch -> String
-explainPCHTXT p = unlines $
-  [ "format:      PCHTXT (Nintendo Switch)"
-  ] ++ nsobidLine
-  ++ [ "blocks:      " ++ show (length (PCHTXT.pchtxtBlocks p))
-     , ""
-     ]
-  ++ concatMap showBlock (zip [1..] (PCHTXT.pchtxtBlocks p))
-  ++ [summary]
+explainPCHTXT :: PCHTXT.PCHTXTPatch -> ExplainData
+explainPCHTXT p = ExplainData
+  { edFormat   = "PCHTXT (Nintendo Switch)"
+  , edHeader   = nsobidKV ++ [("blocks", show (length (PCHTXT.pchtxtBlocks p)))]
+  , edSections = map mkPCHTXTBlock (zip [1..] (PCHTXT.pchtxtBlocks p))
+  , edSummary  = Summary (length enabledEntries) "enabled entries" (Just (totalBytes, BytesTotal))
+  , edNotes    = []
+  }
   where
-    nsobidLine = case PCHTXT.pchtxtNsobid p of
-      Just nso -> ["nsobid:      " ++ nso]
+    nsobidKV = case PCHTXT.pchtxtNsobid p of
+      Just nso -> [("nsobid", nso)]
       Nothing  -> []
     enabledEntries = concatMap PCHTXT.pchtxtBlockEntries
                        (filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p))
     totalBytes = sum (map (BS.length . PCHTXT.pchtxtData) enabledEntries)
-    summary = show (length enabledEntries) ++ " enabled entries, "
-              ++ show totalBytes ++ " bytes total"
 
-    showBlock :: (Int, PCHTXT.PCHTXTBlock) -> [String]
-    showBlock (n, block) =
-      let status = if PCHTXT.pchtxtBlockEnabled block then "enabled" else "disabled"
-          desc = maybe "" (" -- " ++) (PCHTXT.pchtxtBlockDesc block)
-      in ("block " ++ show n ++ " (" ++ status ++ ")" ++ desc)
-         : map showEntry (PCHTXT.pchtxtBlockEntries block)
-         ++ [""]
+mkPCHTXTBlock :: (Int, PCHTXT.PCHTXTBlock) -> ExplainSection
+mkPCHTXTBlock (n, block) =
+  SectionBlock label (map mkPCHTXTEntry (PCHTXT.pchtxtBlockEntries block))
+  where
+    status = if PCHTXT.pchtxtBlockEnabled block then "enabled" else "disabled"
+    desc = maybe "" (" -- " ++) (PCHTXT.pchtxtBlockDesc block)
+    label = "block " ++ show n ++ " (" ++ status ++ ")" ++ desc
 
-    showEntry :: PCHTXT.PCHTXTEntry -> String
-    showEntry e =
-      "    " ++ padHex 8 (PCHTXT.pchtxtOffset e) ++ "  Write  "
-      ++ padR 10 (show (BS.length (PCHTXT.pchtxtData e)) ++ " B")
-      ++ "\n" ++ hexDump (PCHTXT.pchtxtData e)
-
+mkPCHTXTEntry :: PCHTXT.PCHTXTEntry -> ExplainRegion
+mkPCHTXTEntry e = ExplainRegion
+  { erOffset     = PCHTXT.pchtxtOffset e
+  , erSize       = BS.length (PCHTXT.pchtxtData e)
+  , erLabel      = "Write  "
+  , erPayload    = PayloadWrite (PCHTXT.pchtxtData e)
+  , erAnnotation = AnnotNone
+  }

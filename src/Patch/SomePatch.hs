@@ -29,6 +29,7 @@ import qualified Patch.PCHTXT as PCHTXT
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.Explain as Explain
+import Patch.Explain (ExplainData(..))
 import qualified Patch.Yay0 as Yay0
 
 import qualified Data.ByteString as BS
@@ -77,7 +78,7 @@ data UndoStrategy
 data SomePatch = SomePatch
   { spFormat         :: String
   , spInfo           :: String
-  , spExplain        :: String
+  , spExplain        :: ExplainData
   , spIsDifferential :: Bool
   , spApply          :: ApplyStrategy
   , spUndo           :: Maybe UndoStrategy
@@ -104,7 +105,8 @@ parseSome bs = case detectFormat bs of
           Right sp -> Right sp
             { spFormat  = spFormat sp ++ "/Yay0"
             , spInfo    = replaceFirst "PMSR" "PMSR/Yay0" (spInfo sp)
-            , spExplain = replaceFirst "PMSR" "PMSR/Yay0" (spExplain sp)
+            , spExplain = (spExplain sp)
+                { edFormat = edFormat (spExplain sp) ++ "/Yay0" }
             }
     -- DPS: no magic bytes, heuristic detection
     | DPS.isDPS bs -> case DPS.parseDPS bs of

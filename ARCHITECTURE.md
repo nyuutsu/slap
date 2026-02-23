@@ -16,7 +16,7 @@ src/
     Binary.hs      Shared primitives: endian readers, varints, CRC32, MD5, SHA1, memcpy
     Get.hs         Pure parser monad (position-threading over strict ByteString)
     Format.hs      Display helpers: hex padding, CRC formatting, hex dumps
-    Explain.hs     Record-by-record textual dumps for all formats
+    Explain.hs     Structured explain data types, per-format explain functions, shared renderer
     Archive.hs     ZIP/RAR/7z detection + single-entry extraction
     IPS.hs         IPS + IPS32 + EBP: parse, apply, create, info
     BPS.hs         BPS: parse, apply (unsafeCreate + memcpy), create, info
@@ -51,7 +51,7 @@ test/
                   ┌─────────┬────────┬────────┬──────────┬────┘
                   ▼         ▼        ▼        ▼          ▼
                spInfo   spExplain  spApply  spVerify  spContents
-              (String)  (String)  (Strategy) (Verif)  (Maybe PatchContents)
+              (String) (ExplainData) (Strategy) (Verif)  (Maybe PatchContents)
 ```
 
 `parseSome` is the **only** function that knows about format-specific
@@ -67,7 +67,7 @@ format #17 means adding one block to `parseSome`. Nothing else changes.
 data SomePatch = SomePatch
   { spFormat         :: String
   , spInfo           :: String
-  , spExplain        :: String
+  , spExplain        :: ExplainData
   , spIsDifferential :: Bool
   , spApply          :: ApplyStrategy
   , spUndo           :: Maybe UndoStrategy

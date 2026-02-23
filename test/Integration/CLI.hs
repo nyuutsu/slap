@@ -48,6 +48,7 @@ cliTests = do
         , pchtxtDetectTests slap
         , if baseExists then ninja1VerifyTests slap dm4kBase dm4kIps else []
         , if baseExists then descriptionTests slap dm4kBase dm4kBps else []
+        , explainModeTests slap dm4kIps
         ]
 
 ----------------------------------------------------------------------------
@@ -642,6 +643,44 @@ descriptionTests slap base bps =
           "desc/pchtxt convert" "converted"
         patchStr <- BS8.unpack <$> BS.readFile patch2
         assertBool "expected override comment" ("// override" `isInfixOf` patchStr)
+  ]
+
+explainModeTests :: FilePath -> FilePath -> [TestTree]
+explainModeTests slap ips =
+  [ testCase "explain/default is summary" $ do
+      (ec, sout, serr) <- runSlap slap ["explain", ips]
+      let combined = sout ++ serr
+      case ec of
+        ExitSuccess -> do
+          assertBool "expected 'records:' in summary"
+            ("records:" `isInfixOf` combined)
+          assertBool "expected 'range:' in summary"
+            ("range:" `isInfixOf` combined)
+        ExitFailure _ ->
+          assertFailure ("explain failed: " ++ combined)
+
+  , testCase "explain/--records is dump" $ do
+      (ec, sout, serr) <- runSlap slap ["explain", "--records", ips]
+      let combined = sout ++ serr
+      case ec of
+        ExitSuccess ->
+          -- record dump has numbered entries like "   1  Write"
+          assertBool "expected numbered record in dump"
+            ("Write" `isInfixOf` combined)
+        ExitFailure _ ->
+          assertFailure ("explain --records failed: " ++ combined)
+
+  , testCase "explain/empty patch summary" $
+      withTempFile "slap-ips" $ \fp -> do
+        -- "PATCHEOF" — valid IPS with 0 records
+        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46])
+        (ec, sout, _) <- runSlap slap ["explain", fp]
+        case ec of
+          ExitSuccess ->
+            assertBool "expected 'records:' even for empty"
+              ("records:" `isInfixOf` sout)
+          ExitFailure _ ->
+            assertFailure "explain of empty IPS failed"
   ]
 
 removeFileSafe :: FilePath -> IO ()

@@ -4,6 +4,7 @@ module Main (main) where
 
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), parseSome)
 import Patch.Convert (CreateFormat(..), createFromMemory, convertDirect, fmtExt, fmtName)
+import Patch.Explain (renderExplain, renderSummary)
 import Patch.Archive (detectArchive, unwrapArchive)
 import Patch.Binary (crc32, crc16, md5, sha1)
 import Patch.Format (showCRC, padHex)
@@ -67,7 +68,7 @@ data Command
       , cmdNoVerify      :: Bool
       }
   | CmdInfo    { cmdPatch :: FilePath }
-  | CmdExplain { cmdPatch :: FilePath }
+  | CmdExplain FilePath Bool
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -80,7 +81,7 @@ main = execParser opts >>= \case
   cmd@CmdCreate{}  -> doCreate cmd
   cmd@CmdConvert{} -> doConvert cmd
   CmdInfo pf       -> doInfo pf
-  CmdExplain pf    -> doExplain pf
+  CmdExplain pf rc -> doExplain pf rc
 
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
@@ -98,12 +99,13 @@ commandParser = subparser
  <> command "create"  (info (createParser  <**> helper) (progDesc "Create a patch from two files"))
  <> command "convert" (info (convertParser <**> helper) (progDesc "Convert a patch to a different format"))
  <> command "info"    (info (patchInfoParser <**> helper) (progDesc "Display patch information"))
- <> command "explain" (info (explainParser <**> helper) (progDesc "Detailed record-by-record patch description"))
+ <> command "explain" (info (explainParser <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
   )
 
 explainParser :: Parser Command
 explainParser = CmdExplain
   <$> argument str (metavar "PATCH" <> help "Patch file to explain")
+  <*> switch (long "records" <> help "Show full record-by-record dump instead of summary")
 
 applyParser :: Parser Command
 applyParser = mk
@@ -246,13 +248,14 @@ doInfo patchFile = do
       putStr (spInfo sp)
       emitWarnings sp
 
-doExplain :: FilePath -> IO ()
-doExplain patchFile = do
+doExplain :: FilePath -> Bool -> IO ()
+doExplain patchFile records = do
   patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
-      putStr (spExplain sp)
+      let render = if records then renderExplain else renderSummary
+      putStr (render (spExplain sp))
       emitWarnings sp
 
 ----------------------------------------------------------------------------

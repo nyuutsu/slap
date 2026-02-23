@@ -2,6 +2,7 @@ module Integration.Smoke (smokeTests) where
 
 import Integration.Helpers (repoDir, findPatchFiles)
 import Patch.SomePatch (SomePatch(..), parseSome)
+import Patch.Explain (renderExplain, renderSummary)
 
 import Control.Exception (evaluate)
 import qualified Data.ByteString as BS
@@ -41,6 +42,8 @@ smokeExplain fp = do
   case parseSome bs of
     Left err -> assertFailure ("parseSome failed: " ++ err)
     Right sp -> do
-      let s = spExplain sp
+      let s = renderExplain (spExplain sp)
       _ <- evaluate (length s)
+      let s2 = renderSummary (spExplain sp)
+      _ <- evaluate (length s2)
       pure ()
