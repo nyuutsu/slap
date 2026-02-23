@@ -68,12 +68,38 @@ pointer, use `copyBSRange` (which wraps memcpy) — not byte-by-byte
 the source and destination regions overlap and byte-by-byte is
 semantically required.
 
-## Correctness
+## Honesty
 
-slap does not fabricate data. If a conversion target requires metadata
-the source doesn't carry, the conversion is rejected — not silently
-filled with defaults. The contract system in `Patch.Convert` enforces
-this declaratively.
+Every byte slap writes must come from one of three sources:
+1. The inputs (source file, target file, parsed patch).
+2. An explicit user choice (CLI flag).
+3. A value that is true by construction — format magic bytes, version
+   markers, EOF sentinels, and tool identity (e.g. `"patcher":"slap"`).
+
+If a format field requires content metadata and we don't have it: ask
+the user or refuse the operation. Never silently invent data.
+
+This means:
+- No hardcoded content metadata. If `createFoo` needs an author
+  field, it takes a parameter. If the user didn't pass `--author`,
+  the field is empty or the operation is rejected — not filled with
+  a default.
+- Constrained fields use sum types, not raw bytes. If a field can
+  only be Append or Truncate, its type is `data OverflowMode =
+  OverflowAppend | OverflowTruncate`, not `Word8`. The compiler
+  enforces that nobody fabricates a value.
+- Conversion preserves what it can and warns about what it drops.
+  The contract system in `Patch.Convert` rejects conversions when
+  required metadata is missing. `conversionNotes` reports fields
+  that don't survive the conversion. Nothing is silently lost.
+- Permissiveness is a feature, not a defect — but it must be
+  explicit. If a user supplies a missing field via a flag and that
+  gets a conversion over the line, good. If the program quietly
+  fills in a zero and pretends, bad.
+
+This principle is aspirational — the codebase still has fabricated
+values being cleaned up (see NEXT.md prompts 25-26). But every new
+code path must follow it, and every existing violation is a bug to fix.
 
 Every committed test patch is either `gold` (real-world) or `verified`
 (created by a named external tool). slap never creates its own test
