@@ -142,7 +142,6 @@ verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as 
 inPlaceFlag :: Parser Bool
 inPlaceFlag = switch (long "in-place" <> short 'i'
                 <> help "Modify SOURCE directly (destructive; creates .bak by default)")
-          <|> switch (long "clobber" <> hidden)
 
 backupFlag :: Parser Bool
 backupFlag = flag True False (long "no-backup" <> help "Don't create .bak backup with --in-place")

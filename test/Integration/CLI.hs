@@ -324,11 +324,6 @@ aliasTests slap base ips bps =
         expectOk slap ["apply", bps, wrong, "-o", out, "--yolo"]
           "aliases/--yolo bypasses CRC" "applied"
 
-  , testCase "aliases/--clobber" $
-      withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
-        expectOk slap ["apply", ips, work, "--clobber", "--no-backup"]
-          "aliases/--clobber" "applied"
   ]
 
 warningTests :: FilePath -> FilePath -> [TestTree]
