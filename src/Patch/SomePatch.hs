@@ -62,10 +62,11 @@ data Verification = Verification
   , vSourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vPPFBlock     :: Maybe (Int64, BS.ByteString)  -- PPF validation block
+  , vWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
   }
 
 noVerification :: Verification
-noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing
+noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing []
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
@@ -259,6 +260,12 @@ parseSome bs = case detectFormat bs of
   Just FmtVCDIFF -> do
     p <- VCDIFF.parseVCDIFF bs
     let wins = VCDIFF.vcdWindows p
+        winOffsets = scanl (+) 0 (map VCDIFF.vcdTargetLen wins)
+        adlerChecks =
+          [ (fromIntegral off, fromIntegral (VCDIFF.vcdTargetLen w), a)
+          | (w, off) <- zip wins winOffsets
+          , Just a <- [VCDIFF.vcdAdler32 w]
+          ]
     Right SomePatch
       { spFormat         = "VCDIFF"
       , spInfo           = VCDIFF.vcdiffInfo p
@@ -267,7 +274,7 @@ parseSome bs = case detectFormat bs of
       , spApply          = InMemory
           { imApply     = \source -> pure (VCDIFF.applyVCDIFF p source) }
       , spUndo           = Nothing
-      , spVerification   = noVerification
+      , spVerification   = noVerification { vWindowAdler32 = adlerChecks }
       , spVerboseLines   = numbered wins $ \w ->
           "Window " ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"
       , spWarnings       = ["empty patch (0 windows)" | null wins]

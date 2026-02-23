@@ -49,6 +49,7 @@ cliTests = do
         , if baseExists then ninja1VerifyTests slap dm4kBase dm4kIps else []
         , if baseExists then descriptionTests slap dm4kBase dm4kBps else []
         , explainModeTests slap dm4kIps
+            (if baseExists then Just (dm4kBase, dm4kUps, dm4kBps) else Nothing)
         ]
 
 ----------------------------------------------------------------------------
@@ -645,8 +646,8 @@ descriptionTests slap base bps =
         assertBool "expected override comment" ("// override" `isInfixOf` patchStr)
   ]
 
-explainModeTests :: FilePath -> FilePath -> [TestTree]
-explainModeTests slap ips =
+explainModeTests :: FilePath -> FilePath -> Maybe (FilePath, FilePath, FilePath) -> [TestTree]
+explainModeTests slap ips mSourceFiles =
   [ testCase "explain/default is summary" $ do
       (ec, sout, serr) <- runSlap slap ["explain", ips]
       let combined = sout ++ serr
@@ -681,7 +682,55 @@ explainModeTests slap ips =
               ("records:" `isInfixOf` sout)
           ExitFailure _ ->
             assertFailure "explain of empty IPS failed"
-  ]
+  ] ++ case mSourceFiles of
+    Nothing -> []
+    Just (base, ups, bps) ->
+      [ testCase "explain/--with resolves XOR" $ do
+          (ec, sout, serr) <- runSlap slap
+            ["explain", "--records", "--with", base, ups]
+          let combined = sout ++ serr
+          case ec of
+            ExitSuccess ->
+              assertBool "expected 'resolved:' in output"
+                ("resolved:" `isInfixOf` combined)
+            ExitFailure _ ->
+              assertFailure ("explain --with UPS failed: " ++ combined)
+
+      , testCase "explain/--with resolves copy" $ do
+          (ec, sout, serr) <- runSlap slap
+            ["explain", "--records", "--with", base, bps]
+          let combined = sout ++ serr
+          case ec of
+            ExitSuccess ->
+              assertBool "expected 'source data:' in output"
+                ("source data:" `isInfixOf` combined)
+            ExitFailure _ ->
+              assertFailure ("explain --with BPS failed: " ++ combined)
+
+      , testCase "explain/--with summary note" $ do
+          (ec, sout, serr) <- runSlap slap
+            ["explain", "--with", base, bps]
+          let combined = sout ++ serr
+          case ec of
+            ExitSuccess ->
+              assertBool "expected 'source file provided' in output"
+                ("source file provided" `isInfixOf` combined)
+            ExitFailure _ ->
+              assertFailure ("explain --with summary failed: " ++ combined)
+
+      , testCase "explain/--with direct format unchanged" $ do
+          (ec, sout, serr) <- runSlap slap
+            ["explain", "--records", "--with", base, ips]
+          let combined = sout ++ serr
+          case ec of
+            ExitSuccess -> do
+              assertBool "unexpected 'resolved:' for direct format"
+                (not ("resolved:" `isInfixOf` combined))
+              assertBool "unexpected 'source data:' for direct format"
+                (not ("source data:" `isInfixOf` combined))
+            ExitFailure _ ->
+              assertFailure ("explain --with IPS failed: " ++ combined)
+      ]
 
 removeFileSafe :: FilePath -> IO ()
 removeFileSafe fp = do

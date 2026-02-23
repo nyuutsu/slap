@@ -6,7 +6,7 @@ import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Veri
 import Patch.Convert (CreateFormat(..), createFromMemory, convertDirect, fmtExt, fmtName)
 import Patch.Explain (renderExplain, renderSummary)
 import Patch.Archive (detectArchive, unwrapArchive)
-import Patch.Binary (crc32, crc16, md5, sha1)
+import Patch.Binary (crc32, crc16, md5, sha1, adler32)
 import Patch.Format (showCRC, padHex)
 
 import qualified Data.ByteString as BS
@@ -68,7 +68,7 @@ data Command
       , cmdNoVerify      :: Bool
       }
   | CmdInfo    { cmdPatch :: FilePath }
-  | CmdExplain FilePath Bool
+  | CmdExplain FilePath Bool (Maybe FilePath) Bool
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -81,7 +81,7 @@ main = execParser opts >>= \case
   cmd@CmdCreate{}  -> doCreate cmd
   cmd@CmdConvert{} -> doConvert cmd
   CmdInfo pf       -> doInfo pf
-  CmdExplain pf rc -> doExplain pf rc
+  CmdExplain pf rc mw raw -> doExplain pf rc mw raw
 
 opts :: ParserInfo Command
 opts = info (commandParser <**> helper)
@@ -106,6 +106,9 @@ explainParser :: Parser Command
 explainParser = CmdExplain
   <$> argument str (metavar "PATCH" <> help "Patch file to explain")
   <*> switch (long "records" <> help "Show full record-by-record dump instead of summary")
+  <*> optional (option str (long "with" <> metavar "SOURCE"
+      <> help "Source file (resolves delta/copy operations in output)"))
+  <*> rawFlag
 
 applyParser :: Parser Command
 applyParser = mk
@@ -248,14 +251,17 @@ doInfo patchFile = do
       putStr (spInfo sp)
       emitWarnings sp
 
-doExplain :: FilePath -> Bool -> IO ()
-doExplain patchFile records = do
+doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
+doExplain patchFile records mWithPath raw = do
   patchBs <- readUnwrap patchFile
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
+      mSource <- case mWithPath of
+        Nothing   -> pure Nothing
+        Just path -> Just <$> readMaybeUnwrap raw path
       let render = if records then renderExplain else renderSummary
-      putStr (render (spExplain sp))
+      putStr (render mSource (spExplain sp))
       emitWarnings sp
 
 ----------------------------------------------------------------------------
@@ -480,6 +486,8 @@ verifyTarget nv v bs = do
   unless nv $
     forM_ (vTargetBlocks v) $ \(off, expected) ->
       warnBlock "target" off expected (crc16 (safeSlice off 0x10000 bs))
+  forM_ (vWindowAdler32 v) $ \(off, len, expected) ->
+    checkAdler nv off expected (adler32 (safeSlice off len bs))
 
 hasSourceV :: Verification -> Bool
 hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSourceSHA1 v)
@@ -487,7 +495,7 @@ hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSour
 
 hasTargetV :: Verification -> Bool
 hasTargetV v = isJust (vTargetCRC32 v) || isJust (vTargetMD5 v)
-            || not (null (vTargetBlocks v))
+            || not (null (vTargetBlocks v)) || not (null (vWindowAdler32 v))
 
 checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
 checkCRC nv label expected actual
@@ -503,6 +511,14 @@ checkHash nv label expected actual
   | expected == actual = pure ()
   | nv = warn (label ++ " mismatch")
   | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
+
+checkAdler :: Bool -> Int -> Word32 -> Word32 -> IO ()
+checkAdler nv off expected actual
+  | expected == actual = pure ()
+  | nv = warn msg
+  | otherwise = die (msg ++ "\n  use --no-verify to apply anyway")
+  where msg = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral off)
+            ++ " (expected " ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")"
 
 warnBlock :: String -> Int -> Word16 -> Word16 -> IO ()
 warnBlock label off expected actual

@@ -42,8 +42,8 @@ smokeExplain fp = do
   case parseSome bs of
     Left err -> assertFailure ("parseSome failed: " ++ err)
     Right sp -> do
-      let s = renderExplain (spExplain sp)
+      let s = renderExplain Nothing (spExplain sp)
       _ <- evaluate (length s)
-      let s2 = renderSummary (spExplain sp)
+      let s2 = renderSummary Nothing (spExplain sp)
       _ <- evaluate (length s2)
       pure ()

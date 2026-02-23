@@ -15,9 +15,10 @@ module Patch.Binary
   , putWord16BE
   , putWord32LE
   , putByuuVarint
-    -- * CRC-32 / CRC-16
+    -- * CRC-32 / CRC-16 / Adler-32
   , crc32
   , crc16
+  , adler32
     -- * Cryptographic hashes
   , md5
   , sha1
@@ -214,6 +215,19 @@ crc16Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
     step c
       | testBit c 0 = (c `shiftR` 1) `xor` 0xA001
       | otherwise    = c `shiftR` 1
+
+----------------------------------------------------------------------------
+-- Adler-32 (RFC 1950)
+----------------------------------------------------------------------------
+
+adler32 :: ByteString -> Word32
+adler32 = finalize . BS.foldl' step (1, 0)
+  where
+    step (a, b) byte =
+      let a' = (a + fromIntegral byte) `mod` 65521
+          b' = (b + a') `mod` 65521
+      in (a', b')
+    finalize (a, b) = (b `shiftL` 16) .|. a
 
 ----------------------------------------------------------------------------
 -- Diff

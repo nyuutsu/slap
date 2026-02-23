@@ -5,9 +5,11 @@ module Patch.VCDIFF
   ( VCDIFFHeader(..)
   , VCDIFFWindow(..)
   , VCDIFFPatch(..)
+  , VCDDecodedInst(..)
   , parseVCDIFF
   , applyVCDIFF
   , vcdiffInfo
+  , decodeWindowInstructions
   ) where
 
 import Patch.Binary (getVcdiffVarint, copyBSRange)
@@ -18,10 +20,13 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Array (Array, listArray, (!))
+import Data.Array.ST (STArray, newArray, readArray, writeArray)
 import Data.Bits (testBit)
 import Control.Monad (when)
+import Control.Monad.ST (ST, runST)
 import Data.IORef
 import Data.Int (Int64)
+import Data.STRef (newSTRef, readSTRef, writeSTRef, modifySTRef')
 import Data.Word (Word8, Word32)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
@@ -59,6 +64,14 @@ data VCDIFFPatch = VCDIFFPatch
   , vcdNearSize  :: Int                    -- 4 by default
   , vcdSameSize  :: Int                    -- 3 by default
   } deriving (Show)
+
+-- | Decoded instruction for the explain path — mirrors execute logic but
+--   accumulates instructions instead of writing bytes.
+data VCDDecodedInst
+  = DAdd  Int64 ByteString         -- window-local output offset, literal bytes
+  | DRun  Int64 Word8 Int          -- window-local output offset, fill byte, count
+  | DCopy Int64 Int (Maybe Int64)  -- window-local output offset, size,
+                                   --   Just absoluteSrcFileOffset | Nothing (target/self ref)
 
 ----------------------------------------------------------------------------
 -- Default code table (RFC 3284 Section 5.6)
@@ -491,6 +504,168 @@ applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
     else pure ()
 
   writeIORef globalOutRef (globalOut + tgtLen)
+
+----------------------------------------------------------------------------
+-- Instruction decoding (pure, for explain path)
+----------------------------------------------------------------------------
+
+-- | Decode a window's instruction bytecodes into a list of decoded
+--   instructions. Mirrors 'applyWindow' but accumulates results in ST
+--   instead of writing bytes.
+decodeWindowInstructions :: Array Word8 CodeEntry -> Int -> Int
+                         -> VCDIFFWindow -> [VCDDecodedInst]
+decodeWindowInstructions codeTable nSz sSz win = runST body
+  where
+    tgtLen    = fromIntegral (vcdTargetLen win) :: Int
+    srcSegLen = fromIntegral (vcdSourceLen win) :: Int
+    hasSource = testBit (vcdWinIndicator win) 0
+    instBs    = vcdInstructions win
+    addBs     = vcdAddRunData win
+    addrBs    = vcdAddresses win
+
+    body :: forall s. ST s [VCDDecodedInst]
+    body = do
+      instPosRef   <- newSTRef (0 :: Int)
+      addRunPosRef <- newSTRef (0 :: Int)
+      addrPosRef   <- newSTRef (0 :: Int)
+      winOutRef    <- newSTRef (0 :: Int)
+      resultRef    <- newSTRef ([] :: [VCDDecodedInst])
+
+      nearArr     <- newArray (0, max 0 nSz - 1) 0 :: ST s (STArray s Int Int64)
+      sameArr     <- newArray (0, max 0 (sSz * 256) - 1) 0 :: ST s (STArray s Int Int64)
+      nearNextRef <- newSTRef (0 :: Int)
+
+      let emit inst = modifySTRef' resultRef (inst :)
+
+          updateCacheST :: Int64 -> ST s ()
+          updateCacheST addr = do
+            when (nSz > 0) $ do
+              idx <- readSTRef nearNextRef
+              writeArray nearArr idx addr
+              writeSTRef nearNextRef ((idx + 1) `mod` nSz)
+            when (sSz > 0) $ do
+              let sameIdx = fromIntegral addr `mod` (sSz * 256)
+              writeArray sameArr sameIdx addr
+
+          decodeAddrST :: Int -> Int64 -> ST s Int64
+          decodeAddrST mode here
+            | mode == 0 = do
+                pos <- readSTRef addrPosRef
+                if pos >= BS.length addrBs then pure 0
+                else do
+                  let (v, n) = getVcdiffVarint pos addrBs
+                  writeSTRef addrPosRef (pos + n)
+                  updateCacheST v
+                  pure v
+            | mode == 1 = do
+                pos <- readSTRef addrPosRef
+                if pos >= BS.length addrBs then pure 0
+                else do
+                  let (v, n) = getVcdiffVarint pos addrBs
+                  writeSTRef addrPosRef (pos + n)
+                  let a = here - v
+                  updateCacheST a
+                  pure a
+            | mode < nSz + 2 = do
+                pos <- readSTRef addrPosRef
+                if pos >= BS.length addrBs then pure 0
+                else do
+                  let (v, n) = getVcdiffVarint pos addrBs
+                  writeSTRef addrPosRef (pos + n)
+                  base <- readArray nearArr (mode - 2)
+                  let a = base + v
+                  updateCacheST a
+                  pure a
+            | otherwise = do
+                pos <- readSTRef addrPosRef
+                if pos >= BS.length addrBs then pure 0
+                else do
+                  let byte = fromIntegral (BS.index addrBs pos) :: Int
+                  writeSTRef addrPosRef (pos + 1)
+                  let sameIdx = (mode - nSz - 2) * 256 + byte
+                  if sameIdx >= 0 && sameIdx < sSz * 256
+                    then do
+                      a <- readArray sameArr sameIdx
+                      updateCacheST a
+                      pure a
+                    else pure 0
+
+          readNextInst :: ST s (Maybe Word8)
+          readNextInst = do
+            p <- readSTRef instPosRef
+            if p >= BS.length instBs
+              then pure Nothing
+              else do
+                writeSTRef instPosRef (p + 1)
+                pure (Just (BS.index instBs p))
+
+          readInstVarint :: ST s Int64
+          readInstVarint = do
+            p <- readSTRef instPosRef
+            if p >= BS.length instBs then pure 0
+            else do
+              let (v, n) = getVcdiffVarint p instBs
+              writeSTRef instPosRef (p + n)
+              pure v
+
+          executeInst :: VCDInst -> ST s ()
+          executeInst VcdNoop = pure ()
+          executeInst (VcdAdd sz0) = do
+            sz <- if sz0 == 0 then fromIntegral <$> readInstVarint else pure sz0
+            wOut <- readSTRef winOutRef
+            aPos <- readSTRef addRunPosRef
+            let count = min sz (tgtLen - wOut)
+                safeCount = if aPos >= 0 && aPos < BS.length addBs
+                            then min count (BS.length addBs - aPos)
+                            else 0
+            when (count > 0) $
+              emit (DAdd (fromIntegral wOut) (BS.take safeCount (BS.drop aPos addBs)))
+            writeSTRef addRunPosRef (aPos + count)
+            writeSTRef winOutRef (wOut + count)
+
+          executeInst (VcdRun sz0) = do
+            sz <- if sz0 == 0 then fromIntegral <$> readInstVarint else pure sz0
+            wOut <- readSTRef winOutRef
+            aPos <- readSTRef addRunPosRef
+            let count = min sz (tgtLen - wOut)
+            when (aPos >= 0 && aPos < BS.length addBs && count > 0) $
+              emit (DRun (fromIntegral wOut) (BS.index addBs aPos) count)
+            writeSTRef addRunPosRef (aPos + 1)
+            writeSTRef winOutRef (wOut + count)
+
+          executeInst (VcdCopy sz0 mode) = do
+            sz <- if sz0 == 0 then fromIntegral <$> readInstVarint else pure sz0
+            wOut <- readSTRef winOutRef
+            let here  = fromIntegral srcSegLen + fromIntegral wOut :: Int64
+                count = min sz (tgtLen - wOut)
+            addr <- decodeAddrST mode here
+            when (count > 0) $ do
+              let mSrcOff = if addr < fromIntegral srcSegLen && hasSource
+                            then Just (vcdSourcePos win + addr)
+                            else Nothing
+              emit (DCopy (fromIntegral wOut) count mSrcOff)
+            writeSTRef winOutRef (wOut + count)
+
+          loop :: ST s ()
+          loop = do
+            mb <- readNextInst
+            case mb of
+              Nothing -> pure ()
+              Just code -> do
+                let (inst1, inst2) = codeTable ! code
+                executeInst inst1
+                executeInst inst2
+                loop
+
+      loop
+
+      -- Implicit trailing copy from source
+      wOut <- readSTRef winOutRef
+      when (hasSource && wOut < tgtLen) $
+        emit (DCopy (fromIntegral wOut) (tgtLen - wOut)
+                     (Just (vcdSourcePos win + fromIntegral wOut)))
+
+      reverse <$> readSTRef resultRef
 
 ----------------------------------------------------------------------------
 -- Info
