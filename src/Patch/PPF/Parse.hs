@@ -149,7 +149,7 @@ parseRecords4 = go []
     go acc bs
       | BS.length bs < 6 = Right (reverse acc)
       | 6 + count > BS.length bs =
-          Left ("PPF\"4\": truncated record (need " ++ show (6 + count)
+          Left ("PPF4: truncated record (need " ++ show (6 + count)
                 ++ " bytes, have " ++ show (BS.length bs) ++ ")")
       | otherwise =
           go (Record off (BS.take count (BS.drop 6 bs)) Nothing cmd : acc)

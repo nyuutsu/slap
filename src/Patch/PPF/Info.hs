@@ -25,7 +25,7 @@ verStr :: Version -> String
 verStr PPF1 = "1"
 verStr PPF2 = "2"
 verStr PPF3 = "3"
-verStr PPF4 = " \"4\" (Pyriel internal format)"
+verStr PPF4 = "4 (Pyriel internal format)"
 
 sizeInfo :: Maybe Word32 -> String
 sizeInfo Nothing  = ""

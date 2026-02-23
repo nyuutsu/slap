@@ -485,7 +485,7 @@ ppfVerStr :: PPF.Version -> String
 ppfVerStr PPF.PPF1 = "PPF1"
 ppfVerStr PPF.PPF2 = "PPF2"
 ppfVerStr PPF.PPF3 = "PPF3"
-ppfVerStr PPF.PPF4 = "PPF \"4\" (Pyriel internal format)"
+ppfVerStr PPF.PPF4 = "PPF4 (Pyriel internal format)"
 
 mkPPFRegion :: Int -> PPF.Record -> ExplainRegion
 mkPPFRegion _ r = ExplainRegion
