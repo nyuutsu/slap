@@ -1,6 +1,8 @@
 module Patch.Convert
   ( PatchContents(..)
   , CreateFormat(..)
+  , CreateMeta(..)
+  , defaultMeta
   , PatchField(..)
   , FormatSpec(..)
   , emptyContents
@@ -16,6 +18,7 @@ module Patch.Convert
   ) where
 
 import qualified Patch.PPF.Create as PPF
+import Patch.PPF.Types (ImageType(..))
 import qualified Patch.IPS as IPS
 import Patch.IPS (jsonPairs, jsonFieldCI)
 import qualified Patch.BPS as BPS
@@ -30,13 +33,15 @@ import qualified Patch.PCHTXT as PCHTXT
 import Patch.Binary (diffHunks, crc32, md5, sha1)
 import Patch.Format (showCRC, padHex)
 
+import Control.Applicative ((<|>))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
 import Data.List (intercalate)
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
-import Data.Word (Word32)
+import Data.Word (Word8, Word32, Word64)
+import Numeric (showHex)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -54,6 +59,8 @@ data PatchField
   | FValidation
   | FTruncation
   | FEBPMeta
+  | FRomType
+  | FImageType
   deriving (Eq, Ord, Show)
 
 -- | Declares what a target format requires and can accept.
@@ -74,6 +81,8 @@ data PatchContents = PatchContents
   , pcUndoData    :: Maybe [(Int64, BS.ByteString, BS.ByteString)]
   , pcTruncation  :: Maybe Int64
   , pcEBPMeta     :: Maybe BS.ByteString
+  , pcRomType     :: Maybe Word8
+  , pcImageType   :: Maybe ImageType
   }
 
 data CreateFormat
@@ -81,13 +90,29 @@ data CreateFormat
   | CfmtNINJA1 | CfmtDPS | CfmtRUP | CfmtAPSN64 | CfmtAPSGBA | CfmtGDIFF | CfmtPCHTXT
   deriving (Show, Eq)
 
+data CreateMeta = CreateMeta
+  { cmTitle       :: String
+  , cmAuthor      :: String
+  , cmDesc        :: String
+  , cmVersion     :: String
+  , cmUndo        :: Bool
+  , cmValidate    :: Bool
+  , cmUnstable    :: Bool
+  , cmRomType     :: Maybe Word8
+  , cmImageType   :: Maybe ImageType
+  , cmBPSMetadata :: Maybe BS.ByteString
+  }
+
+defaultMeta :: CreateMeta
+defaultMeta = CreateMeta "" "" "" "" False False False Nothing Nothing Nothing
+
 ----------------------------------------------------------------------------
 -- PatchContents helpers
 ----------------------------------------------------------------------------
 
 emptyContents :: [(Int64, BS.ByteString)] -> PatchContents
 emptyContents recs = PatchContents
-  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 provides :: PatchContents -> Set.Set PatchField
 provides pc = Set.fromList $ [FRecords]
@@ -100,6 +125,8 @@ provides pc = Set.fromList $ [FRecords]
   ++ [FValidation   | isJust (pcValidation pc)]
   ++ [FTruncation   | isJust (pcTruncation pc)]
   ++ [FEBPMeta      | isJust (pcEBPMeta pc)]
+  ++ [FRomType      | isJust (pcRomType pc)]
+  ++ [FImageType    | isJust (pcImageType pc)]
 
 ----------------------------------------------------------------------------
 -- Format specs
@@ -112,8 +139,8 @@ formatSpec target includeUndo includeValidation = case target of
   CfmtEBP     -> FormatSpec (req []) (acc [FDescription, FTruncation, FEBPMeta])
   CfmtPPF3    -> FormatSpec (req $ [FUndoData  | includeUndo]
                                  ++ [FValidation | includeValidation])
-                             (acc [FDescription])
-  CfmtNINJA1  -> FormatSpec (req [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acc [])
+                             (acc [FDescription, FImageType])
+  CfmtNINJA1  -> FormatSpec (req [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acc [FRomType])
   CfmtPMSR    -> FormatSpec (req []) (acc [])
   CfmtPCHTXT  -> FormatSpec (req []) (acc [FDescription])
   CfmtAPSN64  -> FormatSpec (req [FDestSize]) (acc [FDescription])
@@ -163,27 +190,32 @@ fieldName FUndoData    = "undo data"
 fieldName FValidation  = "validation block"
 fieldName FTruncation  = "truncation marker"
 fieldName FEBPMeta     = "EBP metadata"
+fieldName FRomType     = "ROM type"
+fieldName FImageType   = "image type"
 
 ----------------------------------------------------------------------------
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> CreateFormat -> FormatSpec -> [String]
-conversionNotes pc target spec =
+conversionNotes :: PatchContents -> CreateFormat -> FormatSpec -> CreateMeta -> [String]
+conversionNotes pc target spec meta =
   let have = provides pc
       kept = fsRequired spec `Set.union` fsAccepted spec
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
       droppedNotes = concatMap (fieldNote pc) (Set.toList dropped)
-      interopNotes = ebpTruncMetaNote pc target
+      interopNotes = ebpTruncMetaNote pc target meta
   in droppedNotes ++ interopNotes
 
--- | Warn when EBP output has both truncation and metadata — some tools
--- (e.g. RomPatcher.js) treat them as mutually exclusive.
-ebpTruncMetaNote :: PatchContents -> CreateFormat -> [String]
-ebpTruncMetaNote pc CfmtEBP
-  | isJust (pcTruncation pc), isJust (pcEBPMeta pc) || isJust (pcDescription pc)
-  = ["note: EBP truncation + metadata may not be recognized by some tools"]
-ebpTruncMetaNote _ _ = []
+-- | Warn when EBP output has both truncation and metadata — RomPatcher.js
+-- treats them as mutually exclusive.
+ebpTruncMetaNote :: PatchContents -> CreateFormat -> CreateMeta -> [String]
+ebpTruncMetaNote pc CfmtEBP meta
+  | isJust (pcTruncation pc), hasMeta
+  = ["note: EBP truncation + metadata together; may not be compatible with RomPatcher.js"]
+  where
+    hasMeta = isJust (pcEBPMeta pc) || isJust (pcDescription pc)
+           || not (null (cmDesc meta)) || not (null (cmTitle meta)) || not (null (cmAuthor meta))
+ebpTruncMetaNote _ _ _ = []
 
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote pc field = case field of
@@ -215,6 +247,12 @@ fieldNote pc field = case field of
   FEBPMeta
     | isJust (pcEBPMeta pc) ->
       ["note: dropping EBP metadata"]
+  FRomType
+    | isJust (pcRomType pc) ->
+      ["note: dropping ROM type"]
+  FImageType
+    | isJust (pcImageType pc) ->
+      ["note: dropping image type"]
   _ -> []
 
 ----------------------------------------------------------------------------
@@ -222,10 +260,9 @@ fieldNote pc field = case field of
 ----------------------------------------------------------------------------
 
 -- | Convert parsed patch contents to a target format without the source ROM.
-convertDirect :: PatchContents -> CreateFormat -> String -> String -> String
-              -> Bool -> Bool
+convertDirect :: PatchContents -> CreateFormat -> CreateMeta
               -> Either String (BS.ByteString, [String])
-convertDirect pc target cliTitle cliAuthor cliDesc includeUndo includeValidation = case target of
+convertDirect pc target meta = case target of
   -- Differential formats always need --with
   CfmtBPS    -> Left (diffOnlyMsg CfmtBPS)
   CfmtUPS    -> Left (diffOnlyMsg CfmtUPS)
@@ -233,15 +270,16 @@ convertDirect pc target cliTitle cliAuthor cliDesc includeUndo includeValidation
   CfmtRUP    -> Left (diffOnlyMsg CfmtRUP)
   CfmtAPSGBA -> Left (diffOnlyMsg CfmtAPSGBA)
   CfmtGDIFF  -> Left (diffOnlyMsg CfmtGDIFF)
-  -- Direct targets: contract check → offset check → encode
+  -- Direct targets: contract check → offset check → sentinel check → encode
   _ -> do
-    let spec = formatSpec target includeUndo includeValidation
+    let spec = formatSpec target (cmUndo meta) (cmValidate meta)
     case canConvert pc spec of
       Left missing -> Left (formatMissing target missing)
       Right () -> do
         checkOffsetLimits target (pcRecords pc)
-        let notes = conversionNotes pc target spec
-        Right (encodeDirect pc BS.empty target cliTitle cliAuthor cliDesc, notes)
+        checkSentinelCollision target (pcRecords pc)
+        let notes = conversionNotes pc target spec meta
+        Right (encodeDirect pc BS.empty target meta, notes)
 
 diffOnlyMsg :: CreateFormat -> String
 diffOnlyMsg fmt = fmtName fmt ++ " requires source+target diff data\nuse --with SOURCE"
@@ -255,9 +293,30 @@ checkOffsetLimits target recs
        ++ "\nuse --to ips32, or --with SOURCE to re-diff")
   | otherwise = Right ()
 
+-- | Reject direct conversion to IPS/IPS32/EBP when a record starts at the
+-- EOF sentinel offset.  Without source bytes, avoidSentinel can't shift the
+-- record back safely.
+checkSentinelCollision :: CreateFormat -> [(Int64, BS.ByteString)] -> Either String ()
+checkSentinelCollision target recs = case sentinel of
+    Nothing -> Right ()
+    Just s
+      | any (\(off, _) -> off == s) recs ->
+          Left (fmtName target ++ ": record at offset 0x"
+             ++ showHexInt64 s
+             ++ " collides with EOF marker; use --with SOURCE to provide source bytes for safe encoding")
+      | otherwise -> Right ()
+  where
+    sentinel = case target of
+      CfmtIPS   -> Just 0x454F46
+      CfmtEBP   -> Just 0x454F46
+      CfmtIPS32 -> Just 0x45454F46
+      _         -> Nothing
+    showHexInt64 :: Int64 -> String
+    showHexInt64 n = showHex (fromIntegral n :: Word64) ""
+
 -- | Encode PatchContents into the target format.
-encodeDirect :: PatchContents -> BS.ByteString -> CreateFormat -> String -> String -> String -> BS.ByteString
-encodeDirect pc src target cliTitle cliAuthor cliDesc = case target of
+encodeDirect :: PatchContents -> BS.ByteString -> CreateFormat -> CreateMeta -> BS.ByteString
+encodeDirect pc src target meta = case target of
   CfmtIPS    -> IPS.encodeIPS src splitIPS (pcTruncation pc)
   CfmtIPS32  -> IPS.encodeIPS32 src (splitRecords 0xFFFF intRecs) (pcTruncation pc)
   CfmtEBP    -> case if null cliDesc && null cliTitle && null cliAuthor
@@ -266,10 +325,10 @@ encodeDirect pc src target cliTitle cliAuthor cliDesc = case target of
                   Nothing  -> IPS.encodeEBP src splitIPS (pcTruncation pc)
                                 ebpTitle ebpAuthor desc
   CfmtPPF3   -> PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
-                   (pcUndoData pc) (pcValidation pc)
+                   (pcUndoData pc) (pcValidation pc) imgType
   CfmtNINJA1 -> case (pcSourceCRC32 pc, pcSourceMD5 pc, pcSourceSHA1 pc) of
                    (Just crc, Just md5v, Just sha1v) ->
-                     NINJA1.encodeNINJA1 intRecs crc md5v sha1v
+                     NINJA1.encodeNINJA1 intRecs crc md5v sha1v romType
                    _ -> error "unreachable: canConvert verified"
   CfmtPMSR   -> PMSR.encodePMSR intRecs
   CfmtPCHTXT -> PCHTXT.encodePCHTXT intRecs pchtxtDesc
@@ -279,33 +338,45 @@ encodeDirect pc src target cliTitle cliAuthor cliDesc = case target of
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
   where
-    intRecs  = toIntPairs (pcRecords pc)
-    splitIPS = splitRecords 0xFFFF intRecs
-    desc     = resolveDesc cliDesc (pcEBPMeta pc) (pcDescription pc) ""
-    apsDesc  = resolveDesc cliDesc Nothing (pcDescription pc) (replicate 50 ' ')
+    cliDesc   = cmDesc meta
+    cliTitle  = cmTitle meta
+    cliAuthor = cmAuthor meta
+    intRecs   = toIntPairs (pcRecords pc)
+    splitIPS  = splitRecords 0xFFFF intRecs
+    desc      = resolveDesc cliDesc (pcEBPMeta pc) (pcDescription pc) ""
+    apsDesc   = resolveDesc cliDesc Nothing (pcDescription pc) (replicate 50 ' ')
     pchtxtDesc
       | not (null cliDesc) = Just (BS8.pack cliDesc)
       | otherwise          = pcDescription pc
-    ebpPairs = maybe [] jsonPairs (pcEBPMeta pc)
+    ebpPairs  = maybe [] jsonPairs (pcEBPMeta pc)
     ebpTitle  = resolveField cliTitle ebpPairs "title"
     ebpAuthor = resolveField cliAuthor ebpPairs "author"
+    -- CLI flag > PatchContents > format default
+    romType   = maybe NINJA1.RomRAW NINJA1.toNINJA1RomType (cmRomType meta <|> pcRomType pc)
+    imgType   = fromMaybe BIN (cmImageType meta <|> pcImageType pc)
 
 ----------------------------------------------------------------------------
 -- Create
 ----------------------------------------------------------------------------
 
 -- | Create a patch from source and target bytes.
-createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> String -> String -> Bool -> Bool -> Either String BS.ByteString
-createFromMemory fmt src tgt title author desc undo val
+createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> CreateMeta -> Either String BS.ByteString
+createFromMemory fmt src tgt m
   | isDirect fmt =
-      let pc = buildContents fmt src tgt undo val
+      let pc = buildContents fmt src tgt (cmUndo m) (cmValidate m)
       in checkOffsetLimits fmt (pcRecords pc)
-         >> Right (encodeDirect pc src fmt title author desc)
+         >> Right (encodeDirect pc src fmt m)
   | otherwise = case fmt of
-      CfmtBPS    -> Right (BPS.createBPS src tgt)
+      CfmtBPS    -> Right (BPS.createBPS src tgt (fromMaybe BS.empty (cmBPSMetadata m)))
       CfmtUPS    -> Right (UPS.createUPS src tgt)
-      CfmtDPS    -> Right (DPS.createDPS src tgt desc author)
-      CfmtRUP    -> Right (RUP.createRUP src tgt)
+      CfmtDPS    -> Right (DPS.createDPS src tgt (cmDesc m) (cmAuthor m)
+                     (cmVersion m) (if cmUnstable m then DPS.DPSUnstable else DPS.DPSStable))
+      CfmtRUP    -> Right (RUP.createRUP src tgt rupInfo (fromMaybe 0 (cmRomType m)))
+        where rupInfo = RUP.RUPInfo
+                (toMaybe (cmAuthor m)) (toMaybe (cmVersion m))
+                (toMaybe (cmTitle m)) Nothing Nothing Nothing Nothing
+                (toMaybe (cmDesc m))
+              toMaybe s = if null s then Nothing else Just (BS8.pack s)
       CfmtAPSGBA -> Right (APS.createAPSGBA src tgt)
       CfmtGDIFF  -> Right (GDIFF.createGDIFF src tgt)
       _          -> error "unreachable: all formats handled"
@@ -344,6 +415,8 @@ buildContents fmt src tgt includeUndo includeValidation = PatchContents
                     then Just (fromIntegral (BS.length tgt))
                     else Nothing
   , pcEBPMeta     = Nothing
+  , pcRomType     = Nothing
+  , pcImageType   = Nothing
   }
   where
     hunks     = diffHunks src tgt

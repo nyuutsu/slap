@@ -7,12 +7,15 @@ module Patch.XDelta1
   , XD1Instruction(..)
   , parseXDelta1
   , applyXDelta1
+  , xdelta1Meta
   , xdelta1Info
   ) where
 
+-- Canonical reference: ~/repos/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
+
 import Patch.Binary (getWord32BE, copyBSRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
-import Patch.Format (padHex)
+import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -209,20 +212,26 @@ applyXDelta1 patch source = Right $ unsafeCreate sz $ \ptr ->
 -- Info
 ----------------------------------------------------------------------------
 
-xdelta1Info :: XDelta1Patch -> String
-xdelta1Info p = unlines $ filter (not . null)
-  [ "format:      xdelta1"
-  , "from:        " ++ BS8.unpack (xd1FromName p)
-  , "to:          " ++ BS8.unpack (xd1ToName p)
-  , "target size: " ++ show (xd1ToLen p)
-  , "target MD5:  " ++ md5Hex (xd1ToMD5 p)
-  , "sources:     " ++ show (length (xd1Sources p))
-  , srcLines
-  , "instructions:" ++ show (length (xd1Instructions p))
-  , "data seg:    " ++ show (BS.length (xd1DataSeg p)) ++ " bytes"
+xdelta1Meta :: XDelta1Patch -> [(String, String)]
+xdelta1Meta p =
+  [ ("from", BS8.unpack (xd1FromName p))
+  , ("to", BS8.unpack (xd1ToName p))
+  , ("target size", show (xd1ToLen p))
+  , ("target MD5", md5Hex (xd1ToMD5 p))
+  , ("sources", show (length (xd1Sources p)))
+  , ("data seg", show (BS.length (xd1DataSeg p)) ++ " bytes")
   ]
   where
     md5Hex = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack
+
+xdelta1Info :: XDelta1Patch -> String
+xdelta1Info p = unlines $ filter (not . null) $
+  [ "format:      xdelta1" ]
+  ++ map renderField (xdelta1Meta p)
+  ++ [ srcLines
+     , "instructions:" ++ show (length (xd1Instructions p))
+     ]
+  where
     srcLines = unlines
       [ "  [" ++ show i ++ "] " ++ BS8.unpack (xd1SrcName s)
         ++ (if xd1SrcIsData s then " (data)" else " (file)")

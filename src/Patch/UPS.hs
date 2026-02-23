@@ -7,13 +7,16 @@ module Patch.UPS
   , parseUPS
   , applyUPS
   , createUPS
+  , upsMeta
   , upsInfo
   ) where
+
+-- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32)
 import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
 import Control.Monad (when)
-import Patch.Format (showCRC)
+import Patch.Format (showCRC, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -125,16 +128,20 @@ applyBlocks (UPSBlock skip xorBytes : rest) source pos =
   in unchanged <> byteString xored <> extraXor <> termByte
      <> applyBlocks rest source (termPos + 1)
 
-upsInfo :: UPSPatch -> String
-upsInfo p = unlines $ filter (not . null)
-  [ "format:      UPS"
-  , "source size: " ++ show (upsSourceSize p)
-  , "target size: " ++ show (upsTargetSize p)
-  , "blocks:      " ++ show (length (upsBlocks p))
-  , "source CRC:  " ++ showCRC (upsSourceCRC p)
-  , "target CRC:  " ++ showCRC (upsTargetCRC p)
-  , "patch CRC:   " ++ showCRC (upsPatchCRC p)
+upsMeta :: UPSPatch -> [(String, String)]
+upsMeta p =
+  [ ("source size", show (upsSourceSize p))
+  , ("target size", show (upsTargetSize p))
+  , ("source CRC", showCRC (upsSourceCRC p))
+  , ("target CRC", showCRC (upsTargetCRC p))
+  , ("patch CRC", showCRC (upsPatchCRC p))
   ]
+
+upsInfo :: UPSPatch -> String
+upsInfo p = unlines $
+  [ "format:      UPS" ]
+  ++ map renderField (upsMeta p)
+  ++ [ "blocks:      " ++ show (length (upsBlocks p)) ]
 
 ----------------------------------------------------------------------------
 -- Create

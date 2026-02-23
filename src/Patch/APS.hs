@@ -4,6 +4,9 @@
 module Patch.APS
   ( APSVariant(..)
   , APSPatch(..)
+  , APSPatchType(..)
+  , APSImageFormat(..)
+  , fromAPSImageFormat
   , APSN64Header(..)
   , APSN64Record(..)
   , APSGBAHeader(..)
@@ -12,12 +15,18 @@ module Patch.APS
   , applyAPS
   , createAPSGBA
   , encodeAPSN64
+  , apsMeta
   , apsInfo
   ) where
 
+-- Canonical reference (N64): https://github.com/btimofeev/UniPatcher/wiki/APS-(N64) (Blackbag spec, 1998)
+-- Canonical reference (GBA): https://github.com/btimofeev/UniPatcher/wiki/APS-(GBA)
+-- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.aps_n64.js
+-- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.aps_gba.js
+
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word16LE, word32LE)
 import Patch.Binary (crc16, putWord32LE, putWord16LE)
-import Patch.Format (padHex)
+import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -33,15 +42,40 @@ import System.IO
 -- Types
 ----------------------------------------------------------------------------
 
+data APSPatchType = APSSimple | APSN64Specific
+  deriving (Show, Eq)
+
+toAPSPatchType :: Word8 -> Either String APSPatchType
+toAPSPatchType 0 = Right APSSimple
+toAPSPatchType 1 = Right APSN64Specific
+toAPSPatchType b = Left ("APS: unknown N64 patch type: " ++ show b)
+
+fromAPSPatchType :: APSPatchType -> Word8
+fromAPSPatchType APSSimple       = 0
+fromAPSPatchType APSN64Specific  = 1
+
+data APSImageFormat = V64Format | Z64Format | UnknownImageFormat Word8
+  deriving (Show, Eq)
+
+toAPSImageFormat :: Word8 -> APSImageFormat
+toAPSImageFormat 0 = V64Format
+toAPSImageFormat 1 = Z64Format
+toAPSImageFormat b = UnknownImageFormat b
+
+fromAPSImageFormat :: APSImageFormat -> Word8
+fromAPSImageFormat V64Format              = 0
+fromAPSImageFormat Z64Format              = 1
+fromAPSImageFormat (UnknownImageFormat b) = b
+
 data APSVariant
   = APSN64 APSN64Header [APSN64Record]
   | APSGBA APSGBAHeader [APSGBARecord]
   deriving (Show)
 
 data APSN64Header = APSN64Header
-  { n64PatchType   :: Word8      -- 0 = simple, 1 = N64
+  { n64PatchType   :: APSPatchType
   , n64Description :: ByteString -- 50 bytes
-  , n64ImageFormat :: Maybe Word8  -- N64 only: 0=V64, 1=Z64
+  , n64ImageFormat :: Maybe APSImageFormat
   , n64CartId      :: Maybe ByteString  -- N64 only: 2 bytes
   , n64Country     :: Maybe Word8       -- N64 only
   , n64Crc         :: Maybe ByteString  -- N64 only: 8 bytes
@@ -104,29 +138,31 @@ parseAPS bs
 parseN64 :: Get APSPatch
 parseN64 = do
   skip 5  -- "APS10"
-  ptype <- getByte
-  skip 1  -- encoding (always 0)
-  desc <- getBytes 50
-  case ptype of
-    0 -> do  -- Simple patch
-      destSize <- word32LE
-      recs <- parseN64Records
-      pure $ APSPatch $ APSN64
-        (APSN64Header ptype desc Nothing Nothing Nothing Nothing destSize)
-        recs
-    1 -> do  -- N64-specific
-      imgFmt  <- getByte
-      cartId  <- getBytes 2
-      country <- getByte
-      crcVal  <- getBytes 8
-      skip 5  -- padding (bytes 69-73)
-      destSize <- word32LE
-      recs <- parseN64Records
-      pure $ APSPatch $ APSN64
-        (APSN64Header ptype desc (Just imgFmt) (Just cartId)
-                      (Just country) (Just crcVal) destSize)
-        recs
-    _ -> fail ("unknown APS N64 patch type: " ++ show ptype)
+  ptypeByte <- getByte
+  case toAPSPatchType ptypeByte of
+    Left err -> fail err
+    Right ptype -> do
+      skip 1  -- encoding (always 0)
+      desc <- getBytes 50
+      case ptype of
+        APSSimple -> do
+          destSize <- word32LE
+          recs <- parseN64Records
+          pure $ APSPatch $ APSN64
+            (APSN64Header ptype desc Nothing Nothing Nothing Nothing destSize)
+            recs
+        APSN64Specific -> do
+          imgFmt  <- toAPSImageFormat <$> getByte
+          cartId  <- getBytes 2
+          country <- getByte
+          crcVal  <- getBytes 8
+          skip 5  -- padding (bytes 69-73)
+          destSize <- word32LE
+          recs <- parseN64Records
+          pure $ APSPatch $ APSN64
+            (APSN64Header ptype desc (Just imgFmt) (Just cartId)
+                          (Just country) (Just crcVal) destSize)
+            recs
 
 parseN64Records :: Get [APSN64Record]
 parseN64Records = do
@@ -215,36 +251,45 @@ applyGBARecs source (APSGBARecord off _ _ xorDat : rest) = do
 -- Info
 ----------------------------------------------------------------------------
 
-apsInfo :: APSPatch -> String
-apsInfo (APSPatch variant) = case variant of
-  APSN64 hdr recs -> unlines $ filter (not . null)
-    [ "format:      APS (N64)"
-    , "patch type:  " ++ if n64PatchType hdr == 1 then "N64-specific" else "simple"
-    , descStr (n64Description hdr)
-    , fmtStr (n64ImageFormat hdr)
-    , cartStr (n64CartId hdr)
-    , countryStr (n64Country hdr)
-    , "dest size:   " ++ show (n64DestSize hdr)
-    , "records:     " ++ show (length recs)
+apsMeta :: APSPatch -> [(String, String)]
+apsMeta (APSPatch variant) = case variant of
+  APSN64 hdr _recs -> concat
+    [ [("patch type", patchTypeName (n64PatchType hdr))]
+    , descField (n64Description hdr)
+    , fmtField (n64ImageFormat hdr)
+    , cartField (n64CartId hdr)
+    , countryField (n64Country hdr)
+    , [("dest size", show (n64DestSize hdr))]
     ]
-  APSGBA hdr recs -> unlines $ filter (not . null)
-    [ "format:      APS (GBA)"
-    , "source size: " ++ show (gbaSourceSize hdr)
-    , "target size: " ++ show (gbaTargetSize hdr)
-    , "blocks:      " ++ show (length recs)
+  APSGBA hdr _recs ->
+    [ ("source size", show (gbaSourceSize hdr))
+    , ("target size", show (gbaTargetSize hdr))
     ]
   where
-    descStr d
-      | BS.all (\b -> b == 0x20 || b == 0) d = ""
-      | otherwise = "description: " ++ show (BS.takeWhile (/= 0) d)
-    fmtStr Nothing  = ""
-    fmtStr (Just 0) = "image:       V64 (byteswapped)"
-    fmtStr (Just 1) = "image:       Z64 (big-endian)"
-    fmtStr (Just f) = "image:       unknown (" ++ show f ++ ")"
-    cartStr Nothing  = ""
-    cartStr (Just c) = "cart ID:     " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack c)
-    countryStr Nothing  = ""
-    countryStr (Just c) = "country:     0x" ++ padHex 2 (fromIntegral c)
+    descField d
+      | BS.all (\b -> b == 0x20 || b == 0) d = []
+      | otherwise = [("description", show (BS.takeWhile (/= 0) d))]
+    patchTypeName APSSimple      = "simple"
+    patchTypeName APSN64Specific = "N64-specific"
+    fmtField Nothing                       = []
+    fmtField (Just V64Format)              = [("image", "V64 (byteswapped)")]
+    fmtField (Just Z64Format)              = [("image", "Z64 (big-endian)")]
+    fmtField (Just (UnknownImageFormat f)) = [("image", "unknown (" ++ show f ++ ")")]
+    cartField Nothing  = []
+    cartField (Just c) = [("cart ID", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack c))]
+    countryField Nothing  = []
+    countryField (Just c) = [("country", "0x" ++ padHex 2 (fromIntegral c))]
+
+apsInfo :: APSPatch -> String
+apsInfo (APSPatch variant) = case variant of
+  APSN64 _hdr recs -> unlines $ filter (not . null) $
+    [ "format:      APS (N64)" ]
+    ++ map renderField (apsMeta (APSPatch variant))
+    ++ [ "records:     " ++ show (length recs) ]
+  APSGBA _hdr recs -> unlines $ filter (not . null) $
+    [ "format:      APS (GBA)" ]
+    ++ map renderField (apsMeta (APSPatch variant))
+    ++ [ "blocks:      " ++ show (length recs) ]
 
 ----------------------------------------------------------------------------
 -- Create APS N64 (simple type, raw overwrite records, max 255 bytes each)
@@ -252,10 +297,13 @@ apsInfo (APSPatch variant) = case variant of
 
 -- | Encode pre-diffed records as an APS N64 patch.
 -- Records are split at 255 bytes internally.
+-- Patch type: APSSimple matches the simple-record structure we emit.
+-- N64-specific (type 1) would require image format, cart ID, country.
+-- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
 encodeAPSN64 :: [(Int, ByteString)] -> Word32 -> String -> ByteString
 encodeAPSN64 recs destSize desc = BL.toStrict $ toLazyByteString $
     byteString "APS10"             -- magic
-    <> word8 0                     -- patch type: simple
+    <> word8 (fromAPSPatchType APSSimple)  -- patch type: simple
     <> word8 0                     -- encoding: not used
     <> byteString descBytes        -- 50-byte description
     <> putWord32LE destSize        -- dest size

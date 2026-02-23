@@ -3,7 +3,9 @@
 module Main (main) where
 
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), parseSome)
-import Patch.Convert (CreateFormat(..), createFromMemory, convertDirect, fmtExt, fmtName)
+import Patch.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, convertDirect, fmtExt, fmtName)
+import Patch.PPF.Types (ImageType(..))
+import Patch.NINJA1 (NINJA1RomType(..), fromNINJA1RomType)
 import Patch.Explain (renderExplain, renderSummary)
 import Patch.Archive (detectArchive, unwrapArchive)
 import Patch.Binary (crc32, crc16, md5, sha1, adler32)
@@ -14,7 +16,7 @@ import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe, isJust)
-import Data.Word (Word16, Word32)
+import Data.Word (Word8, Word16, Word32)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist, removeFile)
@@ -57,6 +59,11 @@ data Command
       , cmdAuthor     :: String
       , cmdUndo       :: Bool
       , cmdValidate   :: Bool
+      , cmdVersion    :: String
+      , cmdUnstable   :: Bool
+      , cmdRomType    :: Maybe Word8
+      , cmdImageType  :: Maybe ImageType
+      , cmdMetadata   :: Maybe FilePath
       }
   | CmdConvert
       { cmdConvPatch     :: FilePath
@@ -70,6 +77,11 @@ data Command
       , cmdConvUndo      :: Bool
       , cmdConvValidate  :: Bool
       , cmdNoVerify      :: Bool
+      , cmdConvVersion   :: String
+      , cmdConvUnstable  :: Bool
+      , cmdConvRomType   :: Maybe Word8
+      , cmdConvImageType :: Maybe ImageType
+      , cmdConvMetadata  :: Maybe FilePath
       }
   | CmdInfo    { cmdPatch :: FilePath }
   | CmdExplain FilePath Bool (Maybe FilePath) Bool
@@ -170,13 +182,22 @@ createParser = CmdCreate
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
+      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)")
   <*> option str (long "title" <> metavar "TEXT" <> value ""
-      <> help "Patch title (EBP only)")
+      <> help "Patch title (EBP/RUP)")
   <*> option str (long "author" <> metavar "TEXT" <> value ""
-      <> help "Patch author (EBP only)")
+      <> help "Patch author (EBP/DPS/RUP)")
   <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
+  <*> option str (long "version" <> metavar "TEXT" <> value ""
+      <> help "Patch version (DPS/RUP)")
+  <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
+  <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
+      <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+  <*> optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
+      <> help "Image type (PPF3): bin, gi"))
+  <*> optional (option str (long "metadata" <> metavar "FILE"
+      <> help "Metadata file to embed (BPS)"))
 
 convertParser :: Parser Command
 convertParser = mk
@@ -189,16 +210,26 @@ convertParser = mk
       <> help "Source ROM (required for differential formats)"))
   <*> rawFlag
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
+      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)")
   <*> option str (long "title" <> metavar "TEXT" <> value ""
-      <> help "Patch title (EBP only)")
+      <> help "Patch title (EBP/RUP)")
   <*> option str (long "author" <> metavar "TEXT" <> value ""
-      <> help "Patch author (EBP only)")
+      <> help "Patch author (EBP/DPS/RUP)")
   <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
   <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
   <*> noVerifyFlag <*> yoloFlag
+  <*> option str (long "version" <> metavar "TEXT" <> value ""
+      <> help "Patch version (DPS/RUP)")
+  <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
+  <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
+      <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+  <*> optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
+      <> help "Image type (PPF3): bin, gi"))
+  <*> optional (option str (long "metadata" <> metavar "FILE"
+      <> help "Metadata file to embed (BPS)"))
   where
-    mk p t o w r d ti au u v nv yolo' = CmdConvert p t o w r d ti au u v (nv || yolo')
+    mk p t o w r d ti au u v nv yolo' ver un rt it md =
+      CmdConvert p t o w r d ti au u v (nv || yolo') ver un rt it md
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
@@ -221,6 +252,35 @@ parseCfmt s = case map toLower s of
   "gdiff"   -> Right CfmtGDIFF
   "pchtxt"  -> Right CfmtPCHTXT
   _ -> Left ("unknown format: " ++ s ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+
+parseRomType :: String -> Either String Word8
+parseRomType s = case map toLower s of
+  "raw"  -> Right (fromNINJA1RomType RomRAW)
+  "nes"  -> Right (fromNINJA1RomType RomNES)
+  "snes" -> Right (fromNINJA1RomType RomSNES)
+  "n64"  -> Right (fromNINJA1RomType RomN64)
+  "gb"   -> Right (fromNINJA1RomType RomGB)
+  "gbc"  -> Right (fromNINJA1RomType RomGBC)
+  "gba"  -> Right (fromNINJA1RomType RomGBA)
+  "ngp"  -> Right (fromNINJA1RomType RomNGP)
+  "ngpc" -> Right (fromNINJA1RomType RomNGPC)
+  "sms"  -> Right (fromNINJA1RomType RomSMS)
+  "gg"   -> Right (fromNINJA1RomType RomGameGear)
+  "mega" -> Right (fromNINJA1RomType RomGenesis)
+  "pce"  -> Right (fromNINJA1RomType RomPCEngine)
+  "ws"   -> Right (fromNINJA1RomType RomWonderSwan)
+  "wsc"  -> Right (fromNINJA1RomType RomWonderSwanColor)
+  "lynx" -> Right (fromNINJA1RomType RomLynx)
+  "jag"  -> Right (fromNINJA1RomType RomJaguar)
+  "gp32" -> Right (fromNINJA1RomType RomGP32)
+  _ -> Left ("unknown ROM type: " ++ s
+    ++ "\n  expected: raw, nes, snes, n64, gb, gbc, gba, ngp, ngpc, sms, gg, mega, pce, ws, wsc, lynx, jag, gp32")
+
+parseImageType :: String -> Either String ImageType
+parseImageType s = case map toLower s of
+  "bin" -> Right BIN
+  "gi"  -> Right GI
+  _ -> Left ("unknown image type: " ++ s ++ "\n  expected: bin, gi")
 
 patchInfoParser :: Parser Command
 patchInfoParser = CmdInfo
@@ -381,9 +441,22 @@ doCreate :: Command -> IO ()
 doCreate cmd = do
   origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
   modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
-  case createFromMemory (cmdCreateFmt cmd) origBs modBs
-         (cmdTitle cmd) (cmdAuthor cmd) (cmdDesc cmd)
-         (cmdUndo cmd) (cmdValidate cmd) of
+  mMeta <- case cmdMetadata cmd of
+    Nothing   -> pure Nothing
+    Just path -> Just <$> BS.readFile path
+  let meta = CreateMeta
+        { cmTitle       = cmdTitle cmd
+        , cmAuthor      = cmdAuthor cmd
+        , cmDesc        = cmdDesc cmd
+        , cmVersion     = cmdVersion cmd
+        , cmUndo        = cmdUndo cmd
+        , cmValidate    = cmdValidate cmd
+        , cmUnstable    = cmdUnstable cmd
+        , cmRomType     = cmdRomType cmd
+        , cmImageType   = cmdImageType cmd
+        , cmBPSMetadata = mMeta
+        }
+  case createFromMemory (cmdCreateFmt cmd) origBs modBs meta of
     Left err -> die err
     Right patchBs -> do
       BS.writeFile (cmdCreateOut cmd) patchBs
@@ -401,27 +474,40 @@ doConvert cmd = do
     Right sp -> do
       emitWarnings sp
       let outFile = fromMaybe (replaceExtension (cmdConvPatch cmd) (fmtExt (cmdConvTo cmd))) (cmdConvOutput cmd)
+      mMeta <- case cmdConvMetadata cmd of
+        Nothing   -> pure Nothing
+        Just path -> Just <$> BS.readFile path
+      let meta = CreateMeta
+            { cmTitle       = cmdConvTitle cmd
+            , cmAuthor      = cmdConvAuthor cmd
+            , cmDesc        = cmdConvDesc cmd
+            , cmVersion     = cmdConvVersion cmd
+            , cmUndo        = cmdConvUndo cmd
+            , cmValidate    = cmdConvValidate cmd
+            , cmUnstable    = cmdConvUnstable cmd
+            , cmRomType     = cmdConvRomType cmd
+            , cmImageType   = cmdConvImageType cmd
+            , cmBPSMetadata = mMeta
+            }
+      let emitNotes ns = forM_ ns $ \n -> hPutStrLn stderr ("slap: " ++ n)
       case cmdConvWith cmd of
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) sourcePath
           verifySource (cmdNoVerify cmd) (spVerification sp) sourceBs
           targetBs <- applyForConvert sp sourceBs
-          case createFromMemory (cmdConvTo cmd) sourceBs targetBs
-                 (cmdConvTitle cmd) (cmdConvAuthor cmd) (cmdConvDesc cmd)
-                 (cmdConvUndo cmd) (cmdConvValidate cmd) of
+          case createFromMemory (cmdConvTo cmd) sourceBs targetBs meta of
             Left err -> die err
             Right result -> do
+              emitNotes (spSourceNotes sp)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Nothing -> case spContents sp of
           Nothing -> die (needWithMsg sp)
-          Just pc -> case convertDirect pc (cmdConvTo cmd)
-                            (cmdConvTitle cmd) (cmdConvAuthor cmd) (cmdConvDesc cmd)
-                            (cmdConvUndo cmd) (cmdConvValidate cmd) of
+          Just pc -> case convertDirect pc (cmdConvTo cmd) meta of
             Left err -> die err
             Right (result, notes) -> do
-              forM_ notes $ \n -> hPutStrLn stderr ("slap: " ++ n)
+              emitNotes (spSourceNotes sp ++ notes)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
 

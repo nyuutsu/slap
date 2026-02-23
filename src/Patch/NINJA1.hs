@@ -5,15 +5,23 @@ module Patch.NINJA1
   ( NINJA1Patch(..)
   , NINJA1SubFormat(..)
   , NINJA1Record(..)
+  , NINJA1RomType(..)
+  , toNINJA1RomType
+  , fromNINJA1RomType
   , parseNINJA1
   , applyNINJA1
   , encodeNINJA1
+  , ninja1Meta
   , ninja1Info
   ) where
 
+-- Canonical reference: docs/specs/ninja-1.01php.tar.gz (Derrick Sobodash, 2004, GPLv2)
+-- Format spec: docs/specs/ninja1-filespec10.txt
+-- Both archived from http://ninja.cinnamonpirate.com/
+
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
 import Patch.Binary (putWord32BE)
-import Patch.Format (showCRC, padHex)
+import Patch.Format (showCRC, padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -38,9 +46,61 @@ import System.IO.Unsafe (unsafePerformIO)
 data NINJA1SubFormat = N1Binary | N1BinaryZ | N1Text | N1TextZ
   deriving (Show, Eq)
 
+-- | ROM platform type. Values 0-17 are defined by the NINJA1 spec;
+-- RomUnknown preserves any future/unknown value without crashing.
+data NINJA1RomType
+  = RomRAW | RomNES | RomSNES | RomN64 | RomGB | RomGBC | RomGBA
+  | RomNGP | RomNGPC | RomSMS | RomGameGear | RomGenesis
+  | RomPCEngine | RomWonderSwan | RomWonderSwanColor
+  | RomLynx | RomJaguar | RomGP32
+  | RomUnknown Word8
+  deriving (Show, Eq)
+
+toNINJA1RomType :: Word8 -> NINJA1RomType
+toNINJA1RomType  0 = RomRAW
+toNINJA1RomType  1 = RomNES
+toNINJA1RomType  2 = RomSNES
+toNINJA1RomType  3 = RomN64
+toNINJA1RomType  4 = RomGB
+toNINJA1RomType  5 = RomGBC
+toNINJA1RomType  6 = RomGBA
+toNINJA1RomType  7 = RomNGP
+toNINJA1RomType  8 = RomNGPC
+toNINJA1RomType  9 = RomSMS
+toNINJA1RomType 10 = RomGameGear
+toNINJA1RomType 11 = RomGenesis
+toNINJA1RomType 12 = RomPCEngine
+toNINJA1RomType 13 = RomWonderSwan
+toNINJA1RomType 14 = RomWonderSwanColor
+toNINJA1RomType 15 = RomLynx
+toNINJA1RomType 16 = RomJaguar
+toNINJA1RomType 17 = RomGP32
+toNINJA1RomType  n = RomUnknown n
+
+fromNINJA1RomType :: NINJA1RomType -> Word8
+fromNINJA1RomType RomRAW            = 0
+fromNINJA1RomType RomNES            = 1
+fromNINJA1RomType RomSNES           = 2
+fromNINJA1RomType RomN64            = 3
+fromNINJA1RomType RomGB             = 4
+fromNINJA1RomType RomGBC            = 5
+fromNINJA1RomType RomGBA            = 6
+fromNINJA1RomType RomNGP            = 7
+fromNINJA1RomType RomNGPC           = 8
+fromNINJA1RomType RomSMS            = 9
+fromNINJA1RomType RomGameGear       = 10
+fromNINJA1RomType RomGenesis        = 11
+fromNINJA1RomType RomPCEngine       = 12
+fromNINJA1RomType RomWonderSwan     = 13
+fromNINJA1RomType RomWonderSwanColor = 14
+fromNINJA1RomType RomLynx           = 15
+fromNINJA1RomType RomJaguar         = 16
+fromNINJA1RomType RomGP32           = 17
+fromNINJA1RomType (RomUnknown n)    = n
+
 data NINJA1Patch = NINJA1Patch
   { n1SubFormat  :: NINJA1SubFormat
-  , n1RomType    :: Word8
+  , n1RomType    :: NINJA1RomType
   , n1SourceCRC  :: Maybe Word32
   , n1SourceMD5  :: Maybe ByteString  -- 16 bytes
   , n1SourceSHA1 :: Maybe ByteString  -- 20 bytes
@@ -63,6 +123,7 @@ parseNINJA1 bs
   | BS.take 6 bs /= "NINJA1"    = Left "not a NINJA1 file (bad magic)"
   | subId == "B "                = parseBin N1Binary payload
   | subId == "BZ"                = zlibDecompress payload >>= parseBin N1BinaryZ
+  -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
   | subId == BS.pack [0x54,0x0A] = parseTxt N1Text payload    -- "T\n"
   | subId == "TZ"                = zlibDecompress payload >>= parseTxt N1TextZ
   | otherwise                    = Left ("NINJA1: unsupported subformat: " ++ show subId)
@@ -87,6 +148,7 @@ zlibDecompress compressed = unsafePerformIO $ do
 -- EOF: offlen=3 offset="EOF"
 -- All offsets/lengths are big-endian, width given by preceding byte.
 -- Patch bytes are raw overwrites (NOT XOR like NINJA2).
+-- Large file hash sampling (>0x1e00000) not implemented; see spec.
 ----------------------------------------------------------------------------
 
 parseBin :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
@@ -96,7 +158,7 @@ parseBin fmt payload
 
 parseBinGet :: NINJA1SubFormat -> Get NINJA1Patch
 parseBinGet fmt = do
-  romType   <- getByte
+  romType   <- toNINJA1RomType <$> getByte
   crcBytes  <- getBytes 4
   md5Bytes  <- getBytes 16
   sha1Bytes <- getBytes 20
@@ -171,13 +233,13 @@ parseTxt fmt payload = do
   where
     isSkippable line = BS.null line || BS8.head line == '#'
 
-parseTxtHeader :: ByteString -> (Word8, Maybe Word32, Maybe ByteString, Maybe ByteString)
+parseTxtHeader :: ByteString -> (NINJA1RomType, Maybe Word32, Maybe ByteString, Maybe ByteString)
 parseTxtHeader line = (romType, crc', md5', sha1')
   where
     ws = map BS8.unpack (BS8.words line)
     romType = case ws of
       (f:_) -> romTypeFromName f
-      _     -> 0
+      _     -> RomRAW
     isUnk s = s == "unk" || s == "unk."
     crc' = case ws of
       (_:c:_) | not (isUnk c) -> case (readHex c :: [(Word32, String)]) of
@@ -209,13 +271,13 @@ hexToBS s = BS.pack (go s)
       [(n, "")] -> n : go rest
       _         -> []
 
-romTypeFromName :: String -> Word8
+romTypeFromName :: String -> NINJA1RomType
 romTypeFromName s = case map toLower s of
-  "raw"  -> 0;  "nes"  -> 1;  "snes" -> 2;  "n64"  -> 3
-  "gb"   -> 4;  "gbc"  -> 5;  "gba"  -> 6;  "ngp"  -> 7
-  "ngpc" -> 8;  "sms"  -> 9;  "gg"   -> 10; "mega" -> 11
-  "pce"  -> 12; "ws"   -> 13; "wsc"  -> 14; "lynx" -> 15
-  "jag"  -> 16; "gp32" -> 17; _      -> 0
+  "raw"  -> RomRAW;   "nes"  -> RomNES;   "snes" -> RomSNES;  "n64"  -> RomN64
+  "gb"   -> RomGB;    "gbc"  -> RomGBC;   "gba"  -> RomGBA;   "ngp"  -> RomNGP
+  "ngpc" -> RomNGPC;  "sms"  -> RomSMS;   "gg"   -> RomGameGear; "mega" -> RomGenesis
+  "pce"  -> RomPCEngine; "ws" -> RomWonderSwan; "wsc" -> RomWonderSwanColor
+  "lynx" -> RomLynx;  "jag"  -> RomJaguar; "gp32" -> RomGP32; _ -> RomRAW
 
 ----------------------------------------------------------------------------
 -- Apply (raw overwrite, like IPS)
@@ -235,53 +297,55 @@ applyRecord h (NINJA1Record off dat) = do
 -- Info
 ----------------------------------------------------------------------------
 
-ninja1Info :: NINJA1Patch -> String
-ninja1Info p = unlines $ filter (not . null)
-  [ "format:      NINJA1 (" ++ subFmtStr ++ ")"
-  , "ROM type:    " ++ romTypeName' (n1RomType p)
-  , crcStr
-  , md5Str
-  , sha1Str
-  , "records:     " ++ show (length (n1Records p))
-  , "total bytes: " ++ show totalBytes
+ninja1Meta :: NINJA1Patch -> [(String, String)]
+ninja1Meta p = concat
+  [ [("ROM type", romTypeName (n1RomType p))]
+  , case n1SourceCRC p of
+      Nothing -> []
+      Just c  -> [("source CRC", "0x" ++ showCRC c)]
+  , case n1SourceMD5 p of
+      Nothing -> []
+      Just h  -> [("source MD5", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h))]
+  , case n1SourceSHA1 p of
+      Nothing -> []
+      Just h  -> [("source SHA1", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h))]
   ]
+
+ninja1Info :: NINJA1Patch -> String
+ninja1Info p = unlines $ filter (not . null) $
+  [ "format:      NINJA1 (" ++ subFmtStr ++ ")" ]
+  ++ map renderField (ninja1Meta p)
+  ++ [ "records:     " ++ show (length (n1Records p))
+     , "total bytes: " ++ show totalBytes
+     ]
   where
     subFmtStr = case n1SubFormat p of
       N1Binary  -> "binary"
       N1BinaryZ -> "binary, compressed"
       N1Text    -> "text"
       N1TextZ   -> "text, compressed"
-    crcStr = case n1SourceCRC p of
-      Nothing -> ""
-      Just c  -> "source CRC:  0x" ++ showCRC c
-    md5Str = case n1SourceMD5 p of
-      Nothing -> ""
-      Just h  -> "source MD5:  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
-    sha1Str = case n1SourceSHA1 p of
-      Nothing -> ""
-      Just h  -> "source SHA1: " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
     totalBytes = sum (map (BS.length . n1RecData) (n1Records p))
 
-romTypeName' :: Word8 -> String
-romTypeName' 0  = "RAW"
-romTypeName' 1  = "NES"
-romTypeName' 2  = "SNES"
-romTypeName' 3  = "N64"
-romTypeName' 4  = "GB"
-romTypeName' 5  = "GBC"
-romTypeName' 6  = "GBA"
-romTypeName' 7  = "NGP"
-romTypeName' 8  = "NGPC"
-romTypeName' 9  = "SMS"
-romTypeName' 10 = "Game Gear"
-romTypeName' 11 = "Genesis"
-romTypeName' 12 = "PC Engine"
-romTypeName' 13 = "WonderSwan"
-romTypeName' 14 = "WonderSwan Color"
-romTypeName' 15 = "Lynx"
-romTypeName' 16 = "Jaguar"
-romTypeName' 17 = "GP32"
-romTypeName' n  = "unknown (" ++ show n ++ ")"
+romTypeName :: NINJA1RomType -> String
+romTypeName RomRAW            = "RAW"
+romTypeName RomNES            = "NES"
+romTypeName RomSNES           = "SNES"
+romTypeName RomN64            = "N64"
+romTypeName RomGB             = "GB"
+romTypeName RomGBC            = "GBC"
+romTypeName RomGBA            = "GBA"
+romTypeName RomNGP            = "NGP"
+romTypeName RomNGPC           = "NGPC"
+romTypeName RomSMS            = "SMS"
+romTypeName RomGameGear       = "Game Gear"
+romTypeName RomGenesis        = "Genesis"
+romTypeName RomPCEngine       = "PC Engine"
+romTypeName RomWonderSwan     = "WonderSwan"
+romTypeName RomWonderSwanColor = "WonderSwan Color"
+romTypeName RomLynx           = "Lynx"
+romTypeName RomJaguar         = "Jaguar"
+romTypeName RomGP32           = "GP32"
+romTypeName (RomUnknown n)    = "unknown (" ++ show n ++ ")"
 
 ----------------------------------------------------------------------------
 -- Encode
@@ -292,10 +356,11 @@ encodeNINJA1 :: [(Int, BS.ByteString)]
              -> Word32          -- source CRC32
              -> BS.ByteString   -- source MD5 (16 bytes)
              -> BS.ByteString   -- source SHA1 (20 bytes)
+             -> NINJA1RomType   -- ROM platform type
              -> BS.ByteString
-encodeNINJA1 recs srcCRC srcMD5 srcSHA1 = BL.toStrict $ toLazyByteString $
+encodeNINJA1 recs srcCRC srcMD5 srcSHA1 romType = BL.toStrict $ toLazyByteString $
     byteString "NINJA1B "        -- magic + subformat
-    <> word8 0                   -- ROM type: RAW
+    <> word8 (fromNINJA1RomType romType)
     <> putWord32BE srcCRC
     <> byteString srcMD5
     <> byteString srcSHA1

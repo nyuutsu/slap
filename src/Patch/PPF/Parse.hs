@@ -2,20 +2,28 @@
 
 module Patch.PPF.Parse (parsePatch) where
 
+-- Canonical reference: reverse-engineered from Icarus/PPF-Studio; no formal spec
+-- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.ppf.js
+
 import Patch.PPF.Types
 import Patch.Binary (getWord16LE, getWord32LE, getInt64LE)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Int (Int64)
+import Data.Word (Word8)
+import Numeric (showHex)
 
 -- | Parse a PPF patch file from raw bytes.
 parsePatch :: ByteString -> Either String Patch
-parsePatch bs = detectVersion bs >>= \case
-  PPF1 -> parsePPF1 bs
-  PPF2 -> parsePPF2 bs
-  PPF3 -> parsePPF3 bs
-  PPF4 -> parsePPF4 bs
+parsePatch bs = do
+  ver <- detectVersion bs
+  checkEncoding ver bs
+  case ver of
+    PPF1 -> parsePPF1 bs
+    PPF2 -> parsePPF2 bs
+    PPF3 -> parsePPF3 bs
+    PPF4 -> parsePPF4 bs
 
 -- Version detection: bytes 0-3 as ASCII "PPF1" .. "PPF4".
 detectVersion :: ByteString -> Either String Version
@@ -29,6 +37,21 @@ detectVersion bs
   | otherwise              = Left ("not a PPF file (bad magic: " ++ show (BS.take 5 bs) ++ ")")
   where magic = BS.take 4 bs
 
+-- Byte 5: encoding method.  PPF1 = 0x00, PPF2 = 0x01, PPF3 = 0x02.
+-- PPF4 is undocumented — accept any value.
+checkEncoding :: Version -> ByteString -> Either String ()
+checkEncoding PPF4 _ = Right ()
+checkEncoding ver bs
+  | enc == expected = Right ()
+  | otherwise = Left ("PPF: encoding method 0x" ++ showHex enc ""
+                    ++ " does not match version " ++ magicStr)
+  where
+    enc = BS.index bs 5
+    (expected, magicStr) = case ver of
+      PPF1 -> (0x00 :: Word8, "PPF10")
+      PPF2 -> (0x01, "PPF20")
+      PPF3 -> (0x02, "PPF30")
+
 -- PPF1: 56-byte header, then records with 4-byte offsets.
 parsePPF1 :: ByteString -> Either String Patch
 parsePPF1 bs = do
@@ -40,6 +63,7 @@ parsePPF1 bs = do
     , patchFileSize    = Nothing
     , patchValidation  = Nothing
     , patchHasUndo     = False
+    , patchImageType   = Nothing
     , patchRecords     = recs
     , patchFileId      = Nothing
     }
@@ -57,6 +81,7 @@ parsePPF2 bs = do
     , patchFileSize    = Just (getWord32LE 56 bs)
     , patchValidation  = Just (Validation BIN (BS.take 1024 (BS.drop 60 bs)))
     , patchHasUndo     = False
+    , patchImageType   = Nothing
     , patchRecords     = recs
     , patchFileId      = fid
     }
@@ -85,6 +110,7 @@ parsePPF3 bs = do
     , patchFileSize    = Nothing
     , patchValidation  = validation
     , patchHasUndo     = hasUndo
+    , patchImageType   = Just imgType
     , patchRecords     = recs
     , patchFileId      = fid
     }
@@ -102,6 +128,7 @@ parsePPF4 bs = do
     , patchFileSize    = Nothing
     , patchValidation  = Nothing
     , patchHasUndo     = False
+    , patchImageType   = Nothing
     , patchRecords     = recs
     , patchFileId      = Nothing
     }

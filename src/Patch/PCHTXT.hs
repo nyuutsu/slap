@@ -8,13 +8,17 @@ module Patch.PCHTXT
   , parsePCHTXT
   , applyPCHTXT
   , encodePCHTXT
+  , pchtxtMeta
   , pchtxtInfo
   ) where
+
+-- Canonical reference: https://github.com/3096/ipswitch (IPSwitch, PCHTXT format creator)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.Char (digitToInt, intToDigit, isHexDigit, isSpace, toUpper)
+import Patch.Format (renderField)
 import Data.Int (Int64)
 import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Word (Word64)
@@ -40,8 +44,9 @@ data PCHTXTBlock = PCHTXTBlock
 
 -- | A parsed PCHTXT patch.
 data PCHTXTPatch = PCHTXTPatch
-  { pchtxtNsobid :: Maybe String
-  , pchtxtBlocks :: [PCHTXTBlock]
+  { pchtxtNsobid   :: Maybe String
+  , pchtxtBlocks   :: [PCHTXTBlock]
+  , pchtxtHasShift :: Bool  -- ^ True if @flag offset_shift was applied during parse
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -49,41 +54,41 @@ data PCHTXTPatch = PCHTXTPatch
 ----------------------------------------------------------------------------
 
 parsePCHTXT :: ByteString -> Either String PCHTXTPatch
-parsePCHTXT bs = go (map BS8.unpack (BS8.lines bs)) Nothing [] Nothing 0 Nothing
+parsePCHTXT bs = go (map BS8.unpack (BS8.lines bs)) Nothing [] Nothing 0 False Nothing
   where
-    -- go lines nsobid finishedBlocks lastComment shift curBlock
+    -- go lines nsobid finishedBlocks lastComment shift shifted curBlock
     -- curBlock = Maybe (enabled, description, revEntries)
-    go [] nso blocks _ _ curBlock =
-      Right (PCHTXTPatch nso (reverse (finishBlock curBlock blocks)))
+    go [] nso blocks _ _ shifted curBlock =
+      Right (PCHTXTPatch nso (reverse (finishBlock curBlock blocks)) shifted)
 
-    go (rawL:ls) nso blocks lastComment shift curBlock
-      | null l = go ls nso blocks lastComment shift curBlock
+    go (rawL:ls) nso blocks lastComment shift shifted curBlock
+      | null l = go ls nso blocks lastComment shift shifted curBlock
       | "@stop" `isPrefixOf` l =
-          Right (PCHTXTPatch nso (reverse (finishBlock curBlock blocks)))
+          Right (PCHTXTPatch nso (reverse (finishBlock curBlock blocks)) shifted)
       | "@nsobid-" `isPrefixOf` l =
-          go ls (Just (takeWhile isHexDigit (drop 8 l))) blocks Nothing shift curBlock
+          go ls (Just (takeWhile isHexDigit (drop 8 l))) blocks Nothing shift shifted curBlock
       | "@flag " `isPrefixOf` l = case parseFlag (drop 6 l) of
-          FlagShift val -> go ls nso blocks lastComment val curBlock
-          FlagIgnored   -> go ls nso blocks lastComment shift curBlock
+          FlagShift val -> go ls nso blocks lastComment val True curBlock
+          FlagIgnored   -> go ls nso blocks lastComment shift shifted curBlock
           FlagError err -> Left err
       | "@enabled" `isPrefixOf` l =
           let blocks' = finishBlock curBlock blocks
-          in go ls nso blocks' Nothing shift (Just (True, lastComment, []))
+          in go ls nso blocks' Nothing shift shifted (Just (True, lastComment, []))
       | "@disabled" `isPrefixOf` l =
           let blocks' = finishBlock curBlock blocks
-          in go ls nso blocks' Nothing shift (Just (False, lastComment, []))
+          in go ls nso blocks' Nothing shift shifted (Just (False, lastComment, []))
       | "/" `isPrefixOf` l =
-          go ls nso blocks (Just (dropWhile isSpace (dropWhile (== '/') l))) shift curBlock
+          go ls nso blocks (Just (dropWhile isSpace (dropWhile (== '/') l))) shift shifted curBlock
       | "#" `isPrefixOf` l =
-          go ls nso blocks lastComment shift curBlock
+          go ls nso blocks lastComment shift shifted curBlock
       | "@" `isPrefixOf` l =
-          go ls nso blocks lastComment shift curBlock
+          go ls nso blocks lastComment shift shifted curBlock
       | otherwise = case curBlock of
           Nothing -> Left ("PCHTXT: entry outside @enabled/@disabled block: " ++ l)
           Just (en, desc, revEntries) -> case parsePatchLine l shift of
             Left err -> Left err
             Right entry ->
-              go ls nso blocks lastComment shift (Just (en, desc, entry : revEntries))
+              go ls nso blocks lastComment shift shifted (Just (en, desc, entry : revEntries))
       where
         l = stripLine rawL
 
@@ -209,17 +214,22 @@ hexBytes = concatMap (\b ->
 -- Info
 ----------------------------------------------------------------------------
 
+pchtxtMeta :: PCHTXTPatch -> [(String, String)]
+pchtxtMeta p = case pchtxtNsobid p of
+  Just nso -> [("nsobid", nso)]
+  Nothing  -> []
+
 pchtxtInfo :: PCHTXTPatch -> String
-pchtxtInfo p = unlines $ filter (not . null)
-  [ "format:      PCHTXT (Nintendo Switch)"
-  , nsobidStr
-  , "blocks:      " ++ show totalBlocks
-      ++ " (" ++ show enabledBlocks ++ " enabled, "
-      ++ show disabledBlocks ++ " disabled)"
-  , "entries:     " ++ show totalEntries
-  , "total bytes: " ++ show totalBytes
-  , rangeStr
-  ]
+pchtxtInfo p = unlines $ filter (not . null) $
+  [ "format:      PCHTXT (Nintendo Switch)" ]
+  ++ map renderField (pchtxtMeta p)
+  ++ [ "blocks:      " ++ show totalBlocks
+       ++ " (" ++ show enabledBlocks ++ " enabled, "
+       ++ show disabledBlocks ++ " disabled)"
+     , "entries:     " ++ show totalEntries
+     , "total bytes: " ++ show totalBytes
+     , rangeStr
+     ]
   where
     totalBlocks = length (pchtxtBlocks p)
     enabledBlocks = length (filter pchtxtBlockEnabled (pchtxtBlocks p))
@@ -228,9 +238,6 @@ pchtxtInfo p = unlines $ filter (not . null)
                        (filter pchtxtBlockEnabled (pchtxtBlocks p))
     totalEntries = length enabledEntries
     totalBytes = sum (map (BS.length . pchtxtData) enabledEntries)
-    nsobidStr = case pchtxtNsobid p of
-      Just nso -> "nsobid:      " ++ nso
-      Nothing  -> ""
     rangeStr
       | null enabledEntries = "range:       (empty patch)"
       | otherwise =

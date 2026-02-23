@@ -2,7 +2,7 @@ module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat)
 import Patch.SomePatch (SomePatch(..), parseSome)
-import Patch.Convert (CreateFormat(..))
+import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
 
 import qualified Data.ByteString as BS
 import Data.Char (isSpace)
@@ -43,10 +43,10 @@ mkFieldTest patchPath fmt fieldName = testCase fieldName $ do
     Left err -> assertFailure ("parseSome original failed: " ++ err)
     Right sp1 -> do
       -- Self-convert: convert to same format
-      let (undo, validate) = case fmt of
-            CfmtPPF3 -> (True, True)
-            _        -> (False, False)
-      convResult <- attemptConvert sp1 fmt Nothing "" undo validate
+      let meta = case fmt of
+            CfmtPPF3 -> defaultMeta { cmUndo = True, cmValidate = True }
+            _        -> defaultMeta
+      convResult <- attemptConvert sp1 fmt Nothing meta
       case convResult of
         Left err -> assertFailure ("self-convert failed: " ++ err)
         Right (convertedBs, _) -> case parseSome convertedBs of

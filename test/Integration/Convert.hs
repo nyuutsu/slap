@@ -4,7 +4,7 @@ import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex,
    applyPatch, attemptConvert, matchPattern)
 import Patch.SomePatch (parseSome)
-import Patch.Convert (CreateFormat)
+import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
 import Control.Monad (when)
 import qualified Data.ByteString as BS
@@ -61,7 +61,8 @@ runConvertTest repo patchPath baseRel targetSha result warningsStr flagsStr tgtC
                    else pure Nothing
                else pure Nothing
 
-      convResult <- attemptConvert sp tgtCfmt mBase "" includeUndo includeValidate
+      let meta = defaultMeta { cmUndo = includeUndo, cmValidate = includeValidate }
+      convResult <- attemptConvert sp tgtCfmt mBase meta
 
       if "reject:" `isPrefixOf` result
         then do

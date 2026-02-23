@@ -3,7 +3,7 @@ module Integration.CrossVal (crossValTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex, applyPatch,
    withTempFile, withTempDir)
-import Patch.Convert (CreateFormat(..), createFromMemory)
+import Patch.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
 
 import qualified Data.ByteString as BS
@@ -46,7 +46,7 @@ mkCrossValTest repo cacheRef fields = case fields of
                 baseBs   <- BS.readFile basePath
                 targetBs <- getOrBootstrap cacheRef repo (baseRel, bootRel) baseBs bootPath
                 -- Create patch with slap
-                case createFromMemory fmt baseBs targetBs "" "" "" False False of
+                case createFromMemory fmt baseBs targetBs defaultMeta of
                   Left err -> assertFailure ("create failed: " ++ err)
                   Right patchBs ->
                     -- Apply with external tool, verify SHA256

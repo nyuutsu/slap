@@ -6,12 +6,18 @@ module Patch.DPS
   , DPSRecord(..)
   , DPSMode(..)
   , DPSPayload(..)
+  , DPSStability(..)
   , parseDPS
   , applyDPS
   , createDPS
+  , dpsMeta
   , dpsInfo
   , isDPS
   ) where
+
+-- Canonical reference: https://github.com/btimofeev/UniPatcher/wiki/DPS (format spec, from DPS patcher source)
+-- Original C source: https://github.com/xperia64/android-rom-patcher/blob/master/jni/dpspatcher/dpspatcher.c
+-- Author: Marc de Falco (Deufeufeu); deufeufeu.free.fr is dead.
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Patch.Get as G
@@ -22,6 +28,7 @@ import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Patch.Binary (putWord32LE, diffHunks)
+import Patch.Format (renderField)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 
@@ -29,11 +36,23 @@ import Data.Word (Word8, Word32)
 -- Types
 ----------------------------------------------------------------------------
 
+data DPSStability = DPSStable | DPSUnstable
+  deriving (Show, Eq)
+
+toDPSStability :: Word8 -> Either String DPSStability
+toDPSStability 0 = Right DPSStable
+toDPSStability 1 = Right DPSUnstable
+toDPSStability b = Left ("DPS: unknown stability flag: " ++ show b)
+
+fromDPSStability :: DPSStability -> Word8
+fromDPSStability DPSStable   = 0
+fromDPSStability DPSUnstable = 1
+
 data DPSPatch = DPSPatch
   { dpsName       :: ByteString   -- 64 bytes, null-padded
   , dpsAuthor     :: ByteString   -- 64 bytes, null-padded
   , dpsVersion    :: ByteString   -- 64 bytes, null-padded
-  , dpsFlag       :: Word8        -- 1 = unstable
+  , dpsFlag       :: DPSStability
   , dpsDPSVersion :: Word8        -- must be 1
   , dpsOrigSize   :: Int64        -- original ROM size
   , dpsRecords    :: [DPSRecord]
@@ -66,7 +85,6 @@ isDPS bs
   | BS.index bs 193 /= 1 = False  -- DPS version must be 1
   | BS.index bs 192 > 1 = False   -- flag must be 0 or 1
   | not (BS.all isHeaderByte (BS.take 192 bs)) = False
-  | BS.all (== 0) (BS.take 64 bs) = False  -- name must have content
   | otherwise = let firstMode = BS.index bs 198
                 in firstMode <= 1  -- first record mode must be 0 or 1
   where
@@ -87,19 +105,22 @@ parseDPS' = do
   name    <- trimNull <$> getBytes 64
   author  <- trimNull <$> getBytes 64
   version <- trimNull <$> getBytes 64
-  flag    <- getByte
-  ver     <- getByte
-  origSz  <- fromIntegral <$> G.word32LE
-  recs    <- parseRecords
-  pure DPSPatch
-    { dpsName       = name
-    , dpsAuthor     = author
-    , dpsVersion    = version
-    , dpsFlag       = flag
-    , dpsDPSVersion = ver
-    , dpsOrigSize   = origSz
-    , dpsRecords    = recs
-    }
+  flagByte <- getByte
+  case toDPSStability flagByte of
+    Left err -> fail err
+    Right flag -> do
+      ver     <- getByte
+      origSz  <- fromIntegral <$> G.word32LE
+      recs    <- parseRecords
+      pure DPSPatch
+        { dpsName       = name
+        , dpsAuthor     = author
+        , dpsVersion    = version
+        , dpsFlag       = flag
+        , dpsDPSVersion = ver
+        , dpsOrigSize   = origSz
+        , dpsRecords    = recs
+        }
 
 parseRecords :: Get [DPSRecord]
 parseRecords = do
@@ -108,6 +129,7 @@ parseRecords = do
   else do
     mode <- getByte
     outOff <- fromIntegral <$> G.word32LE
+    -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
     payload <- case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
         srcOff <- fromIntegral <$> G.word32LE
@@ -168,23 +190,27 @@ safeTake len off bs
 -- Info
 ----------------------------------------------------------------------------
 
-dpsInfo :: DPSPatch -> String
-dpsInfo p = unlines $ filter (not . null)
-  [ "format:      DPS (Deufeufeu Patching System)"
-  , fieldStr "name"    (dpsName p)
-  , fieldStr "author"  (dpsAuthor p)
-  , fieldStr "version" (dpsVersion p)
-  , "orig size:   " ++ show (dpsOrigSize p)
-  , flagStr
-  , "records:     " ++ show (length (dpsRecords p))
-  , "  copy:      " ++ show nCopy
-  , "  enclosed:  " ++ show nEnclosed
+dpsMeta :: DPSPatch -> [(String, String)]
+dpsMeta p = concat
+  [ fieldPair "name"    (dpsName p)
+  , fieldPair "author"  (dpsAuthor p)
+  , fieldPair "version" (dpsVersion p)
+  , [("orig size", show (dpsOrigSize p))]
+  , [("flag", "unstable") | dpsFlag p == DPSUnstable]
   ]
   where
-    fieldStr _     bs | BS.null bs = ""
-    fieldStr label bs = label ++ ": " ++ replicate (13 - length label - 2) ' ' ++ BS8.unpack bs
-    flagStr | dpsFlag p == 1 = "flag:        unstable"
-            | otherwise      = ""
+    fieldPair _ bs | BS.null bs = []
+    fieldPair label bs = [(label, BS8.unpack bs)]
+
+dpsInfo :: DPSPatch -> String
+dpsInfo p = unlines $ filter (not . null) $
+  [ "format:      DPS (Deufeufeu Patching System)" ]
+  ++ map renderField (dpsMeta p)
+  ++ [ "records:     " ++ show (length (dpsRecords p))
+     , "  copy:      " ++ show nCopy
+     , "  enclosed:  " ++ show nEnclosed
+     ]
+  where
     nCopy = length [() | DPSRecord CopyFromROM _ _ <- dpsRecords p]
     nEnclosed = length [() | DPSRecord EnclosedData _ _ <- dpsRecords p]
 
@@ -194,12 +220,12 @@ dpsInfo p = unlines $ filter (not . null)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: ByteString -> ByteString -> String -> String -> ByteString
-createDPS old new name author = BL.toStrict $ toLazyByteString $
-    padField 64 (if null name then "slap" else name)  -- name
+createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> ByteString
+createDPS old new name author version stability = BL.toStrict $ toLazyByteString $
+    padField 64 name                    -- name
     <> padField 64 author               -- author
-    <> padField 64 ""                   -- version
-    <> word8 0                          -- flag (stable)
+    <> padField 64 version              -- version
+    <> word8 (fromDPSStability stability)  -- flag
     <> word8 1                          -- DPS version
     <> putWord32LE (fromIntegral (BS.length old) :: Word32)  -- orig size
     <> foldMap encodeRec (dpsRecordsFromDiff old new)

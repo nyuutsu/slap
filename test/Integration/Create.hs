@@ -2,7 +2,7 @@ module Integration.Create (createTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex, applyPatch)
-import Patch.Convert (CreateFormat, createFromMemory)
+import Patch.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
 
 import qualified Data.ByteString as BS
@@ -65,7 +65,7 @@ getOrBootstrap cacheRef key baseBs bootPath = do
 -- | Create a patch, parse it back, apply to base, verify SHA256.
 roundTrip :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> IO ()
 roundTrip fmt baseBs targetBs expectedSha = do
-  case createFromMemory fmt baseBs targetBs "" "" "" False False of
+  case createFromMemory fmt baseBs targetBs defaultMeta of
     Left err -> assertFailure ("create failed: " ++ err)
     Right patchBs -> case parseSome patchBs of
       Left err -> assertFailure ("re-parse failed: " ++ err)

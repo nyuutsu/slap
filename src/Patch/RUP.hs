@@ -5,15 +5,23 @@ module Patch.RUP
   ( RUPPatch(..)
   , RUPInfo(..)
   , RUPRecord(..)
+  , OverflowMode(..)
   , parseRUP
   , applyRUP
   , createRUP
+  , rupMetaKV
   , rupInfo
   ) where
 
+-- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
+-- Archived from http://ninja.cinnamonpirate.com/files/filespec20.txt
+-- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.rup.js
+-- Note: NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
+-- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
+
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd)
 import Patch.Binary (diffHunks, md5)
-import Patch.Format (padHex)
+import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -29,11 +37,27 @@ import System.IO
 -- Types
 ----------------------------------------------------------------------------
 
+-- | Overflow mode: how size changes between source and target are handled.
+-- 'A' (0x41) = append extra bytes, 'M' (0x4D) = truncate.
+-- Spec does not mention XOR-with-0xFF encoding of overflow data;
+-- that is a RomPatcher.js convention which we follow for compatibility.
+data OverflowMode = OverflowAppend | OverflowTruncate
+  deriving (Show, Eq)
+
+toOverflowMode :: Word8 -> Either String OverflowMode
+toOverflowMode 0x41 = Right OverflowAppend
+toOverflowMode 0x4D = Right OverflowTruncate
+toOverflowMode b    = Left ("RUP: unknown overflow type: 0x" ++ padHex 2 (fromIntegral b))
+
+fromOverflowMode :: OverflowMode -> Word8
+fromOverflowMode OverflowAppend   = 0x41  -- 'A'
+fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
+
 data RUPPatch = RUPPatch
   { rupMeta         :: RUPInfo
   , rupRecords      :: [RUPRecord]
   , rupOverflow     :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
-  , rupOverflowType :: Maybe Word8       -- 0x41 'A' (append) or 0x4D 'M' (truncate)
+  , rupOverflowType :: Maybe OverflowMode
   , rupSourceMD5    :: Maybe ByteString  -- 16 bytes
   , rupTargetMD5    :: Maybe ByteString  -- 16 bytes
   , rupSourceSz     :: Int64
@@ -78,6 +102,8 @@ packedBS = do
 
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes): NINJA2 format
+-- Spec says "first sector of the patch (1024 bytes)" but actual total is 2048.
+-- PATCH_ENC (1B text encoding at offset 6) is consumed but not stored separately.
 ----------------------------------------------------------------------------
 
 headerSize :: Int
@@ -147,8 +173,11 @@ parseFileCmd patch = do
   (ovType, overflow) <- if srcSz /= tgtSz
     then do
       ty <- getByte
-      dat <- packedBS
-      pure (Just ty, Just dat)
+      case toOverflowMode ty of
+        Left err -> fail err
+        Right mode -> do
+          dat <- packedBS
+          pure (Just mode, Just dat)
     else pure (Nothing, Nothing)
   pure patch { rupSourceMD5    = Just srcMD5
              , rupTargetMD5    = Just tgtMD5
@@ -201,10 +230,9 @@ applyRecord h (RUPRecord off xorDat) = do
 -- Info
 ----------------------------------------------------------------------------
 
-rupInfo :: RUPPatch -> String
-rupInfo p = unlines $ filter (not . null)
-  [ "format:      RUP (NINJA2)"
-  , metaField "title"       (rupTitle (rupMeta p))
+rupMetaKV :: RUPPatch -> [(String, String)]
+rupMetaKV p = concat
+  [ metaField "title"       (rupTitle (rupMeta p))
   , metaField "author"      (rupAuthor (rupMeta p))
   , metaField "version"     (rupVersion (rupMeta p))
   , metaField "date"        (rupDate (rupMeta p))
@@ -212,31 +240,35 @@ rupInfo p = unlines $ filter (not . null)
   , metaField "language"    (rupLanguage (rupMeta p))
   , metaField "website"     (rupWebsite (rupMeta p))
   , metaField "description" (rupDescription (rupMeta p))
-  , sizeStr
-  , md5Str "source MD5" (rupSourceMD5 p)
-  , md5Str "target MD5" (rupTargetMD5 p)
-  , "records:     " ++ show (length (rupRecords p))
-  , overflowStr
+  , sizeFields
+  , md5Field "source MD5" (rupSourceMD5 p)
+  , md5Field "target MD5" (rupTargetMD5 p)
+  , overflowField
   ]
   where
-    metaField _     Nothing  = ""
-    metaField label (Just v) = label ++ ": " ++ padLabel label ++ show v
-    padLabel s = replicate (13 - length s - 2) ' '
+    metaField _ Nothing = []
+    metaField label (Just v) = [(label, show v)]
 
-    sizeStr
-      | rupSourceSz p == 0 && rupTargetSz p == 0 = ""
-      | otherwise = "source size: " ++ show (rupSourceSz p)
-                    ++ "\ntarget size: " ++ show (rupTargetSz p)
+    sizeFields
+      | rupSourceSz p == 0 && rupTargetSz p == 0 = []
+      | otherwise = [ ("source size", show (rupSourceSz p))
+                     , ("target size", show (rupTargetSz p)) ]
 
-    md5Str _ Nothing = ""
-    md5Str label (Just h) =
-      label ++ ":  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
+    md5Field _ Nothing = []
+    md5Field label (Just h) =
+      [(label, concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h))]
 
-    overflowStr = case (rupOverflowType p, rupOverflow p) of
-      (Just 0x41, Just d) -> "overflow:    append " ++ show (BS.length d) ++ " bytes"
-      (Just 0x4D, Just d) -> "overflow:    truncate " ++ show (BS.length d) ++ " bytes"
-      (_, Just d)         -> "overflow:    " ++ show (BS.length d) ++ " bytes"
-      _                   -> ""
+    overflowField = case (rupOverflowType p, rupOverflow p) of
+      (Just OverflowAppend,   Just d) -> [("overflow", "append " ++ show (BS.length d) ++ " bytes")]
+      (Just OverflowTruncate, Just d) -> [("overflow", "truncate " ++ show (BS.length d) ++ " bytes")]
+      (_, Just d)                     -> [("overflow", show (BS.length d) ++ " bytes")]
+      _                               -> []
+
+rupInfo :: RUPPatch -> String
+rupInfo p = unlines $ filter (not . null) $
+  [ "format:      RUP (NINJA2)" ]
+  ++ map renderField (rupMetaKV p)
+  ++ [ "records:     " ++ show (length (rupRecords p)) ]
 
 ----------------------------------------------------------------------------
 -- Create
@@ -244,14 +276,14 @@ rupInfo p = unlines $ filter (not . null)
 
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createRUP :: ByteString -> ByteString -> ByteString
-createRUP old new = BL.toStrict $ toLazyByteString $
+createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> ByteString
+createRUP old new info romType = BL.toStrict $ toLazyByteString $
     byteString "NINJA2"                  -- magic (6 bytes)
     <> word8 0                           -- text encoding
-    <> byteString (BS.replicate (headerSize - 7) 0)  -- rest of 2048-byte header
+    <> byteString (encodeFixedHeader info)  -- rest of 2048-byte header
     <> word8 0x01                        -- OPEN_NEW_FILE command
     <> putVLV 0                          -- filename length (empty)
-    <> word8 0                           -- ROM type byte
+    <> word8 romType                     -- ROM type byte
     <> putVLV (fromIntegral (BS.length old))   -- source size
     <> putVLV (fromIntegral (BS.length new))   -- target size
     <> byteString (md5 old)              -- source MD5
@@ -276,15 +308,42 @@ createRUP old new = BL.toStrict $ toLazyByteString $
     overflowPart
       | BS.length new > BS.length old =
           let extra = BS.drop (BS.length old) new
-          in word8 0x41  -- 'A' (append)
+          in word8 (fromOverflowMode OverflowAppend)
              <> putVLV (fromIntegral (BS.length extra))
              <> byteString (BS.map (xor 0xFF) extra)
       | BS.length new < BS.length old =
           let extra = BS.drop (BS.length new) old
-          in word8 0x4D  -- 'M' (truncate)
+          in word8 (fromOverflowMode OverflowTruncate)
              <> putVLV (fromIntegral (BS.length extra))
              <> byteString (BS.map (xor 0xFF) extra)
       | otherwise = mempty
+
+-- | Encode a RUPInfo into the fixed header region (bytes 7..2047).
+-- Mirrors parseFixedHeader layout: author@0x007/84, version@0x05B/11,
+-- title@0x066/256, genre@0x166/48, language@0x196/48, date@0x1C6/8,
+-- website@0x1CE/512, description@0x3CE/1074.
+encodeFixedHeader :: RUPInfo -> ByteString
+encodeFixedHeader info = BS.pack $ map byteAt [0 .. headerSize - 8]
+  where
+    -- Offset relative to byte 7 in the file (first byte after magic+textenc)
+    byteAt i = case lookup i fieldBytes of
+      Just b  -> b
+      Nothing -> 0
+    fieldBytes = concatMap expand fields
+    expand (off, len, mbs) = case mbs of
+      Nothing -> []
+      Just bs -> zip [off..off+len-1] (BS.unpack (padTo len bs))
+    padTo n bs = BS.take n bs <> BS.replicate (max 0 (n - BS.length bs)) 0
+    fields =
+      [ (0x007 - 7, 84,   rupAuthor info)
+      , (0x05B - 7, 11,   rupVersion info)
+      , (0x066 - 7, 256,  rupTitle info)
+      , (0x166 - 7, 48,   rupGenre info)
+      , (0x196 - 7, 48,   rupLanguage info)
+      , (0x1C6 - 7, 8,    rupDate info)
+      , (0x1CE - 7, 512,  rupWebsite info)
+      , (0x3CE - 7, 1074, rupDescription info)
+      ]
 
 encodeXorRec :: (Int, ByteString) -> Builder
 encodeXorRec (off, dat) =

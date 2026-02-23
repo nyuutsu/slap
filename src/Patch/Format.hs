@@ -5,6 +5,8 @@ module Patch.Format
   , padNum
   , padR
   , showSigned
+    -- * Key-value rendering
+  , renderField
     -- * Hex dump
   , hexDump
   , chunksOf
@@ -37,6 +39,10 @@ showSigned :: Int64 -> String
 showSigned v
   | v >= 0    = "+0x" ++ padHex 6 v
   | otherwise = "-0x" ++ padHex 6 (abs v)
+
+-- | Render a key-value pair with column-13 alignment.
+renderField :: (String, String) -> String
+renderField (k, v) = k ++ ":" ++ replicate (max 1 (13 - length k - 1)) ' ' ++ v
 
 -- | Hex dump of a ByteString, showing up to 64 bytes in 16-byte rows.
 hexDump :: ByteString -> String

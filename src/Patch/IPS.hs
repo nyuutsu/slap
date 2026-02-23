@@ -12,10 +12,14 @@ module Patch.IPS
   , encodeEBP
   , encodeEBPRaw
   , avoidSentinel
+  , ipsMeta
   , ipsInfo
   , jsonPairs
   , jsonFieldCI
   ) where
+
+-- Canonical reference: https://zerosoft.zophar.net/ips.php (Z.e.r.o, ZeroSoft, 1998-2002)
+-- No formal spec exists. The above is the de facto community standard.
 
 import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
@@ -29,6 +33,7 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
 import Data.Int (Int64)
+import Patch.Format (renderField)
 import Data.Bits (shiftR, (.&.))
 import Data.List (sortBy)
 import Data.Ord (comparing)
@@ -146,18 +151,41 @@ applyRecords h = go 0
           BS.hPut h (BS.replicate count val)
       go (n + 1) rs
 
+ipsMeta :: IPSPatch -> [(String, String)]
+ipsMeta p = concat
+  [ case ipsTruncate p of
+      Nothing -> []
+      Just sz -> [("truncate", show sz ++ " bytes")]
+  , ebpFields
+  ]
+  where
+    ebpFields = case ipsEBPMeta p of
+      Nothing -> []
+      Just meta ->
+        let pairs = jsonPairs meta
+            known = ["patcher", "title", "author", "description"]
+            knownFields = [ (k, v) | k <- known
+                          , Just v <- [jsonFieldCI pairs k]
+                          , not (null v) ]
+            unknownFields = sortBy (comparing fst)
+                          [ (k, v) | (k, v) <- pairs
+                          , map toLower k `notElem` known
+                          , not (null v) ]
+        in knownFields ++ unknownFields
+
 ipsInfo :: IPSPatch -> String
-ipsInfo p = unlines $ filter (not . null)
+ipsInfo p = unlines $ filter (not . null) $
   [ "format:      " ++ case ipsVariant p of
       StandardIPS -> case ipsEBPMeta p of
         Nothing -> "IPS"
         Just _  -> "IPS (EBP)"
       IPS32       -> "IPS32"
-  , "records:     " ++ show (length (ipsRecords p))
-  , "total bytes: " ++ show totalBytes
-  , rangeStr
-  , truncStr
-  ] ++ ebpFields
+  ]
+  ++ map renderField (ipsMeta p)
+  ++ [ "records:     " ++ show (length (ipsRecords p))
+     , "total bytes: " ++ show totalBytes
+     , rangeStr
+     ]
   where
     totalBytes = sum (map recSize (ipsRecords p))
     recSize (IPSRecord _ d)       = BS.length d
@@ -174,28 +202,6 @@ ipsInfo p = unlines $ filter (not . null)
 
     recOff (IPSRecord o _)       = o
     recOff (IPSRecordRLE o _ _)  = o
-
-    truncStr = case ipsTruncate p of
-      Nothing -> ""
-      Just sz -> "truncate:    " ++ show sz ++ " bytes"
-
-    ebpFields = case ipsEBPMeta p of
-      Nothing -> []
-      Just meta ->
-        let pairs = jsonPairs meta
-            known = ["patcher", "title", "author", "description"]
-            knownFields = [ (k, v) | k <- known
-                          , Just v <- [jsonFieldCI pairs k]
-                          , not (null v) ]
-            unknownFields = sortBy (comparing fst)
-                          [ (k, v) | (k, v) <- pairs
-                          , map toLower k `notElem` known
-                          , not (null v) ]
-            allFields = knownFields ++ unknownFields
-            maxKey = if null allFields then 0
-                     else maximum (map (length . fst) allFields)
-            pad k = k ++ ":" ++ replicate (max 1 (maxKey - length k + 6)) ' '
-        in map (\(k, v) -> pad k ++ v) allFields
 
 -- | Extract all string key-value pairs from a flat JSON object.
 -- Handles escaped quotes in values. Ignores non-string values.

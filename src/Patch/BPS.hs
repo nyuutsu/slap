@@ -7,13 +7,16 @@ module Patch.BPS
   , parseBPS
   , applyBPS
   , createBPS
+  , bpsMeta
   , bpsInfo
   ) where
+
+-- Canonical reference: https://github.com/blakesmith/rombp/blob/master/docs/bps_spec.md (byuu BPS spec)
 
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32, copyBSRange)
 import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
 import Control.Monad (when)
-import Patch.Format (showCRC)
+import Patch.Format (showCRC, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -162,36 +165,38 @@ applyBPS patch source = Right $ unsafeCreate tgtLen $ \ptr ->
           pokeByteOff ptr (outPos + i) b) [0..count-1]
         go ptr (outPos + count) srcRel (tgtRel' + fromIntegral count) rest
 
-bpsInfo :: BPSPatch -> String
-bpsInfo p = unlines $ filter (not . null)
-  [ "format:      BPS"
-  , "source size: " ++ show (bpsSourceSize p)
-  , "target size: " ++ show (bpsTargetSize p)
-  , metaStr
-  , "actions:     " ++ show (length (bpsActions p))
-  , "source CRC:  " ++ showCRC (bpsSourceCRC p)
-  , "target CRC:  " ++ showCRC (bpsTargetCRC p)
-  , "patch CRC:   " ++ showCRC (bpsPatchCRC p)
+bpsMeta :: BPSPatch -> [(String, String)]
+bpsMeta p = concat
+  [ [("source size", show (bpsSourceSize p))]
+  , [("target size", show (bpsTargetSize p))]
+  , if BS.null (bpsMetadata p) then []
+    else [("metadata", show (BS.length (bpsMetadata p)) ++ " bytes")]
+  , [("source CRC", showCRC (bpsSourceCRC p))]
+  , [("target CRC", showCRC (bpsTargetCRC p))]
+  , [("patch CRC", showCRC (bpsPatchCRC p))]
   ]
-  where
-    metaStr
-      | BS.null (bpsMetadata p) = ""
-      | otherwise = "metadata:    " ++ show (BS.length (bpsMetadata p)) ++ " bytes"
+
+bpsInfo :: BPSPatch -> String
+bpsInfo p = unlines $ filter (not . null) $
+  [ "format:      BPS" ]
+  ++ map renderField (bpsMeta p)
+  ++ [ "actions:     " ++ show (length (bpsActions p)) ]
 
 ----------------------------------------------------------------------------
 -- Create
 ----------------------------------------------------------------------------
 
 -- | Create a BPS patch (linear mode: SourceRead + TargetRead only).
-createBPS :: ByteString -> ByteString -> ByteString
-createBPS orig modified =
+createBPS :: ByteString -> ByteString -> ByteString -> ByteString
+createBPS orig modified metadata =
   let srcCRC = crc32 orig
       tgtCRC = crc32 modified
       actions = bpsDiff orig modified
       body = byteString "BPS1"
              <> putByuuVarint (fromIntegral (BS.length orig))
              <> putByuuVarint (fromIntegral (BS.length modified))
-             <> putByuuVarint 0  -- no metadata
+             <> putByuuVarint (fromIntegral (BS.length metadata))
+             <> byteString metadata
              <> foldMap encodeBPSAction actions
              <> putWord32LE srcCRC
              <> putWord32LE tgtCRC

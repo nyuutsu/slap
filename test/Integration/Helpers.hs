@@ -28,7 +28,7 @@ module Integration.Helpers
 import Patch.Binary (sha256)
 import Patch.Format (padHex)
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
-import Patch.Convert (CreateFormat(..), convertDirect, createFromMemory)
+import Patch.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, IOException)
 import qualified Data.ByteString as BS
@@ -194,22 +194,20 @@ attemptConvert
   :: SomePatch
   -> CreateFormat
   -> Maybe BS.ByteString  -- ^ base ROM (--with)
-  -> String               -- ^ description
-  -> Bool                 -- ^ include undo
-  -> Bool                 -- ^ include validation
+  -> CreateMeta           -- ^ metadata
   -> IO (Either String (BS.ByteString, [String]))
-attemptConvert sp tgtFmt mBase desc undo validate = case mBase of
+attemptConvert sp tgtFmt mBase meta = case mBase of
   Just baseBs -> do
     targetResult <- applyPatch sp baseBs
     case targetResult of
       Left err -> pure (Left err)
       Right targetBs ->
-        case createFromMemory tgtFmt baseBs targetBs "" "" desc undo validate of
+        case createFromMemory tgtFmt baseBs targetBs meta of
           Left err     -> pure (Left err)
           Right result -> pure (Right (result, []))
   Nothing -> case spContents sp of
     Nothing -> pure (Left (needWithMsg sp))
-    Just pc -> pure $ case convertDirect pc tgtFmt "" "" desc undo validate of
+    Just pc -> pure $ case convertDirect pc tgtFmt meta of
       Left err              -> Left err
       Right (result, notes) -> Right (result, notes)
   where

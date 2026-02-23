@@ -7,8 +7,11 @@ module Patch.GDIFF
   , parseGDIFF
   , applyGDIFF
   , createGDIFF
+  , gdiffMeta
   , gdiffInfo
   ) where
+
+-- Canonical reference: W3C NOTE-GDIFF-19970901
 
 import Patch.Binary (copyBSRange, diffHunks, putWord16BE, putWord32BE, putInt64BE)
 import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
@@ -135,6 +138,10 @@ applyGDIFF patch source
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
+
+-- | GDIFF carries no header metadata; this returns an empty list.
+gdiffMeta :: GDiffPatch -> [(String, String)]
+gdiffMeta _ = []
 
 gdiffInfo :: GDiffPatch -> String
 gdiffInfo p = unlines $ filter (not . null)

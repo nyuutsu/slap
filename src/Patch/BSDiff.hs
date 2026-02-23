@@ -6,8 +6,11 @@ module Patch.BSDiff
   , BSDiffControl(..)
   , parseBSDiff
   , applyBSDiff
+  , bsdiffMeta
   , bsdiffInfo
   ) where
+
+-- Canonical reference: bsdiff 4.3 source (Colin Percival)
 
 import qualified Codec.Compression.BZip as BZip
 import qualified Data.ByteString.Lazy as BL
@@ -17,6 +20,7 @@ import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Patch.Binary (copyBSRange)
+import Patch.Format (renderField)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
@@ -154,14 +158,18 @@ applyBSDiff patch source = Right $ unsafeCreate sz $ \ptr ->
 -- Info
 ----------------------------------------------------------------------------
 
-bsdiffInfo :: BSDiffPatch -> String
-bsdiffInfo p = unlines $ filter (not . null)
-  [ "format:      BSDiff / BDF (BSDIFF40)"
-  , "new size:    " ++ show (bsdNewSize p)
-  , "ctrl block:  " ++ show (bsdCtrlSize p) ++ " bytes (compressed)"
-  , "diff block:  " ++ show (bsdDiffSize p) ++ " bytes (compressed)"
-  , ctrlStr
+bsdiffMeta :: BSDiffPatch -> [(String, String)]
+bsdiffMeta p =
+  [ ("new size", show (bsdNewSize p))
+  , ("ctrl block", show (bsdCtrlSize p) ++ " bytes (compressed)")
+  , ("diff block", show (bsdDiffSize p) ++ " bytes (compressed)")
   ]
+
+bsdiffInfo :: BSDiffPatch -> String
+bsdiffInfo p = unlines $ filter (not . null) $
+  [ "format:      BSDiff / BDF (BSDIFF40)" ]
+  ++ map renderField (bsdiffMeta p)
+  ++ [ ctrlStr ]
   where
     ctrlStr
       | null (bsdControls p) = ""

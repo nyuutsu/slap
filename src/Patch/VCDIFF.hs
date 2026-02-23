@@ -8,11 +8,15 @@ module Patch.VCDIFF
   , VCDDecodedInst(..)
   , parseVCDIFF
   , applyVCDIFF
+  , vcdiffMeta
   , vcdiffInfo
   , decodeWindowInstructions
   ) where
 
+-- Canonical reference: RFC 3284
+
 import Patch.Binary (getVcdiffVarint, copyBSRange)
+import Patch.Format (renderField)
 import Patch.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
 
@@ -671,29 +675,25 @@ decodeWindowInstructions codeTable nSz sSz win = runST body
 -- Info
 ----------------------------------------------------------------------------
 
-vcdiffInfo :: VCDIFFPatch -> String
-vcdiffInfo p = unlines $ filter (not . null)
-  [ "format:      VCDIFF" ++ if vcdVersion (vcdHeader p) == 0x53
-                              then " (xdelta3)" else ""
-  , "version:     " ++ show (vcdVersion (vcdHeader p))
-  , compStr
-  , codeTableStr
-  , "windows:     " ++ show (length (vcdWindows p))
-  , totalTargetStr
-  , checksumStr
+vcdiffMeta :: VCDIFFPatch -> [(String, String)]
+vcdiffMeta p = concat
+  [ [("version", show (vcdVersion (vcdHeader p)))]
+  , case vcdCompressorId (vcdHeader p) of
+      Nothing -> []
+      Just c  -> [("compressor", show c)]
+  , if vcdHasCodeTable (vcdHeader p)
+    then [("code table", "custom (near=" ++ show (vcdNearSize p)
+          ++ ", same=" ++ show (vcdSameSize p) ++ ")")]
+    else []
+  , [("target size", show (sum (map vcdTargetLen (vcdWindows p))))]
+  , if any ((/= Nothing) . vcdAdler32) (vcdWindows p)
+    then [("checksums", "Adler32 (xdelta3)")]
+    else []
   ]
-  where
-    compStr = case vcdCompressorId (vcdHeader p) of
-      Nothing -> ""
-      Just c  -> "compressor:  " ++ show c
-    codeTableStr
-      | vcdHasCodeTable (vcdHeader p) =
-          "code table:  custom (near=" ++ show (vcdNearSize p)
-          ++ ", same=" ++ show (vcdSameSize p) ++ ")"
-      | otherwise = ""
-    totalTargetStr =
-      let total = sum (map vcdTargetLen (vcdWindows p))
-      in "target size: " ++ show total
-    checksumStr
-      | any ((/= Nothing) . vcdAdler32) (vcdWindows p) = "checksums:   Adler32 (xdelta3)"
-      | otherwise = ""
+
+vcdiffInfo :: VCDIFFPatch -> String
+vcdiffInfo p = unlines $ filter (not . null) $
+  [ "format:      VCDIFF" ++ if vcdVersion (vcdHeader p) == 0x53
+                              then " (xdelta3)" else "" ]
+  ++ map renderField (vcdiffMeta p)
+  ++ [ "windows:     " ++ show (length (vcdWindows p)) ]

@@ -90,6 +90,7 @@ data SomePatch = SomePatch
   , spRecordCount    :: Int
   , spRecordUnit     :: String
   , spContents       :: Maybe PatchContents
+  , spSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
   }
 
 ----------------------------------------------------------------------------
@@ -135,6 +136,7 @@ parseSome bs = case detectFormat bs of
             , spWarnings       = ["empty patch (0 records)" | null recs]
             , spRecordCount    = length recs
             , spRecordUnit     = "records"
+            , spSourceNotes    = []
             , spContents  = Nothing
             }
     | otherwise -> Left "unknown patch format"
@@ -150,6 +152,8 @@ parseSome bs = case detectFormat bs of
                 Nothing  -> Nothing
             , vFileSize = PPF.patchFileSize p
             }
+          srcNotes = ["PPF: File_ID.diz dropped (not representable in target format)"
+                     | Just _ <- [PPF.patchFileId p]]
       in Right SomePatch
         { spFormat         = "PPF"
         , spInfo           = PPF.showInfo p
@@ -166,6 +170,7 @@ parseSome bs = case detectFormat bs of
         , spWarnings       = ["empty patch (0 records)" | null recs]
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
+        , spSourceNotes    = srcNotes
         , spContents  = if hasAppend then Nothing else Just PatchContents
             { pcRecords     = map (\r -> (PPF.recOffset r, PPF.recData r)) recs
             , pcDescription = Just (PPF.patchDescription p)
@@ -180,6 +185,8 @@ parseSome bs = case detectFormat bs of
                               else Nothing
             , pcTruncation  = Nothing
             , pcEBPMeta     = Nothing
+            , pcRomType     = Nothing
+            , pcImageType   = PPF.patchImageType p
             }
         }
 
@@ -208,6 +215,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = warns
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
+      , spSourceNotes    = []
       , spContents  = Just (emptyContents (map expandIPS recs))
           { pcTruncation = IPS.ipsTruncate p
           , pcEBPMeta    = IPS.ipsEBPMeta p
@@ -233,6 +241,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 actions)" | null acts]
       , spRecordCount    = length acts
       , spRecordUnit     = "actions"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -257,6 +266,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 blocks)" | null blks]
       , spRecordCount    = length blks
       , spRecordUnit     = "blocks"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -283,6 +293,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 windows)" | null wins]
       , spRecordCount    = length wins
       , spRecordUnit     = "windows"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -319,6 +330,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | cnt == 0]
       , spRecordCount    = cnt
       , spRecordUnit     = "records"
+      , spSourceNotes    = []
       , spContents  = contents
       }
 
@@ -341,6 +353,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords p)]
       , spRecordCount    = length (RUP.rupRecords p)
       , spRecordUnit     = "records"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -369,10 +382,12 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = warns
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
+      , spSourceNotes    = []
       , spContents  = Just (emptyContents (map (\r -> (NINJA1.n1RecOffset r, NINJA1.n1RecData r)) recs))
           { pcSourceCRC32 = NINJA1.n1SourceCRC p
           , pcSourceMD5   = NINJA1.n1SourceMD5 p
           , pcSourceSHA1  = NINJA1.n1SourceSHA1 p
+          , pcRomType     = Just (NINJA1.fromNINJA1RomType (NINJA1.n1RomType p))
           }
       }
 
@@ -391,6 +406,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdControls p)]
       , spRecordCount    = length (BSDiff.bsdControls p)
       , spRecordUnit     = "control tuples"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -409,6 +425,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCmds p)]
       , spRecordCount    = length (GDIFF.gdiffCmds p)
       , spRecordUnit     = "commands"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -434,6 +451,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xd1Instructions p)]
       , spRecordCount    = length (XDelta1.xd1Instructions p)
       , spRecordUnit     = "instructions"
+      , spSourceNotes    = []
       , spContents  = Nothing
       }
 
@@ -454,15 +472,26 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 records)" | null recs]
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
+      , spSourceNotes    = []
       , spContents  = Just (emptyContents
           (map (\r -> (PMSR.pmsrOffset r, PMSR.pmsrData r)) recs))
       }
 
   Just FmtPCHTXT -> do
     p <- PCHTXT.parsePCHTXT bs
-    let enabledBlocks = filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p)
+    let allBlocks = PCHTXT.pchtxtBlocks p
+        enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
+        disabledBlocks = filter (not . PCHTXT.pchtxtBlockEnabled) allBlocks
+        disabledCount = sum (map (length . PCHTXT.pchtxtBlockEntries) disabledBlocks)
+        hasDescs = any (\b -> case PCHTXT.pchtxtBlockDesc b of Just _ -> True; Nothing -> False) allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
         pcRecs = map (\e -> (PCHTXT.pchtxtOffset e, PCHTXT.pchtxtData e)) entries
+        srcNotes = concat
+          [ ["PCHTXT: " ++ show disabledCount ++ " disabled entries dropped" | disabledCount > 0]
+          , ["PCHTXT: block descriptions dropped" | hasDescs]
+          , ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
+            | PCHTXT.pchtxtHasShift p]
+          ]
     Right SomePatch
       { spFormat         = "PCHTXT"
       , spInfo           = PCHTXT.pchtxtInfo p
@@ -477,6 +506,7 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = ["empty patch (0 entries)" | null entries]
       , spRecordCount    = length entries
       , spRecordUnit     = "entries"
+      , spSourceNotes    = srcNotes
       , spContents  = Just (emptyContents pcRecs)
           { pcDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p }
       }

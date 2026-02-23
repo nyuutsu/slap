@@ -1,0 +1,241 @@
+https://web.archive.org/web/20060715042307/http://ninja.cinnamonpirate.com/files/convroms.txt
+http://ninja.cinnamonpirate.com/files/convroms.txt
+
+------------------------------------------------------------------------------
+ How NINJA Handles ROMs                                           version 2.0
+ Written by Derrick Sobodash                                   Copyright 2006
+ Released on July 3, 2006                      http://www.cinnamonpirate.com/
+------------------------------------------------------------------------------
+
+ RAW (FILE_TYPE = 0)
+
+ No work needed. The file is handled as is.
+
+------------------------------------------------------------------------------
+
+ NINTENDO / FAMICOM (FILE_TYPE = 1)
+
+ Nintendo and Famicom ROMs come in three main formats: interNES, Famtasia
+ and UNIF.
+
+ To identify an interNES ROM, read the first three bytes and check if they
+ are the string "NES". To identify a Famtasia ROM, seek to $8 and read two
+ bytes. 0xaabb will indicate a Famtasia ROM. To identify UNIF, read the
+ first four bytes and see if it is the string "UNIF".
+
+ For comparing file to create a patch, you need to get everything into
+ the same format. interNES is easy, just subtract the first 0x10 bytes.
+ For Famtasia, subtract the first 0x200. However, UNIF is a little
+ more difficult.
+
+ The easiest way to handle UNIF is to patch together the PRG and CHR ROMs.
+ The fastest way to do this is to start reading from $40 and read 4 bytes.
+ If these 4 bytes are PRG[0-F] or CHR[0-F] in ASCII, read the next four
+ bytes. The next four bytes are a length indicator for how long the PRG or
+ CHR ROM is. Read that length and write it out to the new file. If the
+ original four bytes did not match PRG/CHR, read the next four and skip
+ that many bytes ahead. Repeat until you hit EOF.
+
+ At this point, all ROMs are in the same format and safe to create a
+ patch between.
+
+ To apply a patch, you need to again get everything into the same format
+ again, then apply the patch. When doing this though, save the original file
+ header. You will need to stick the header back onto an interNES or Famtasia
+ ROM. UNIF, again, is a bit more complicated.
+
+ Parse the UNIF file as before, but now when you hit a PRG[0-F] or CHR[0-F],
+ again read the length. Now take that many bytes off the common-format file
+ you patched and replace the following UNIF file bytes with that, then chop
+ them off the common format file. IF you repeat this through the whole UNIF
+ file, you'll have inserted the patched common data back into it.
+
+------------------------------------------------------------------------------
+
+ SUPER NINTENDO / SUPER FAMICOM (FILE_TYPE = 3)
+
+ First, read 0x16 bytes from $0, then read 0x8 bytes from $8, lastly read
+ 0x4 bytes from $1e8. If the first test is the string "GAME DOCTOR SF 3", you
+ have a GD3 ROM. If the second is "SUPERUFO", you have a Super UFO ROM. If
+ the last test is "NSRT", the ROM has an NSRT header we should preserve
+ when applying a patch.
+
+ Store those values for reference, then modulus the file size by 32 KBYTEs to
+ see if the ROM has a header. If it does, knock off the first 0x200 bytes.
+
+ Next, we need to figure out if we have a HiROM or LoROM ROM, and if it's
+ interleaved. LoROM games are never interleaved unless someone broke the ROM
+ by forcing tools to interleave the LoROM file. If they did, we don't care
+ since the ROM is broken anyway. To check what kind of ROM we have, we need
+ 2 bytes from $7fdc (inverse) and 2 bytes from $7fde (checksum). Lastly, take
+ the byte from $7fd5 and modulus its value by 0x10 (romstate).
+
+ If inverse + checksum = 0xffff, you've found the ROM's internal info. If
+ they do not, skip the next steps.
+
+ If romstate % 2 = 0, you have a LoROM. Nothing further needs to be done. If
+ it does not, you have a HiROM, and we'll now need to deinterleave.
+
+ Copiers aside from the Super UFO have a funky interleave scheme if the ROM
+ is 24Mbit or 32Mbit. The way I handle these is to bust the ROM into chunks
+ and plug the chunks into a deinterleave array, then collapse this array as
+ the new ROM. So you would plug chunk #0 where "0" appears as an array
+ value, chunk #1 goes where "0" appears and so on. Here are the arrays for
+ 24Mbit and 32Mbit ROMs.
+
+ chart_20Mbit = array(
+     1,   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,  23,  25,  27,  29,
+    31,  33,  35,  37,  39,  41,  43,  45,  47,  49,  51,  53,  55,  57,  59,
+    61,  63,  65,  67,  69,  71,  73,  75,  77,  79,  64,  66,  68,  70,  72,
+    74,  76,  78,  32,  34,  36,  38,  40,  42,  44,  46,  48,  50,  52,  54,
+    56,  58,  60,  62,   0,   2,   4,   6,   8,  10,  12,  14,  16,  18,  20,
+    22,  24,  26,  28,  30
+ );
+
+ chart_24Mbit = array(
+     1,   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,  23,  25,  27,  29,
+    31,  33,  35,  37,  39,  41,  43,  45,  47,  49,  51,  53,  55,  57,  59,
+    61,  63,  65,  67,  69,  71,  73,  75,  77,  79,  81,  83,  85,  87,  89,
+    91,  93,  95,  64,  66,  68,  70,  72,  74,  76,  78,  80,  82,  84,  86,
+    88,  90,  92,  94,   0,   2,   4,   6,   8,  10,  12,  14,  16,  18,  20,
+    22,  24,  26,  28,  30,  32,  34,  36,  38,  40,  42,  44,  46,  48,  50,
+    52,  54,  56,  58,  60,  62
+ );
+
+ Lastly, some tools will try to interleave an ExHiROM (ROMs greater
+ than 32Mbit) game. If this happens with a GD3 ROM, the deinterleave matrix
+ will be:
+
+ chart_48Mbit = array(
+   129, 131, 133, 135, 137, 139, 141, 143, 145, 147, 149, 151, 153, 155, 157,
+   159, 161, 163, 165, 167, 169, 171, 173, 175, 177, 179, 181, 183, 185, 187,
+   189, 191, 128, 130, 132, 134, 136, 138, 140, 142, 144, 146, 148, 150, 152,
+   154, 156, 158, 160, 162, 164, 166, 168, 170, 172, 174, 176, 178, 180, 182,
+   184, 186, 188, 190,   1,   3,   5,   7,   9,  11,  13,  15,  17,  19,  21,
+    23,  25,  27,  29,  31,  33,  35,  37,  39,  41,  43,  45,  47,  49,  51,
+    53,  55,  57,  59,  61,  63,  65,  67,  69,  71,  73,  75,  77,  79,  81,
+    83,  85,  87,  89,  91,  93,  95,  97,  99, 101, 103, 105, 107, 109, 111,
+   113, 115, 117, 119, 121, 123, 125, 127,   0,   2,   4,   6,   8,  10,  12,
+    14,  16,  18,  20,  22,  24,  26,  28,  30,  32,  34,  36,  38,  40,  42,
+    44,  46,  48,  50,  52,  54,  56,  58,  60,  62,  64,  66,  68,  70,  72,
+    74,  76,  78,  80,  82,  84,  86,  88,  90,  92,  94,  96,  98, 100, 102,
+   104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126
+ );
+
+ If the ROM is not a GD3 interleave or is not a 20Mbit, 24Mbit or 48Mbit
+ game, the interleave scheme for HiROM games is to break the ROM into even
+ and odd 32 KBYTE blocks. So if a game had only 8 32 KBYTE blocks like
+ 01234567, the interleaved version of the ROM would store data in the order
+ 13570246. So your task is to move the blocks so they go 01234567 once again.
+
+ Failing all the above, we have, we need 2 bytes from $ffdc (inverse) and 2
+ bytes from $ffde (checksum). Lastly, take the byte from $ffd5 and modulus
+ its value by 0x10 (romstate).
+
+ If inverse + checksum = 0xffff and romstate % 2 != 0, you have a plain,
+ deinterleaved HiROM game.
+
+ If the checksum does not computer but you still have the above rom state
+ value, chances are the game is a beta cart. Beta carts will fail checksum
+ math at both locations.
+
+------------------------------------------------------------------------------
+
+ NINTENDO 64 (FILE_TYPE = 4)
+
+ To check if a ROM is interleaved, read the first 4 bytes. If they equal
+ 0x80371240, the ROM is deinterleaved already. If they equal 0x37804012,
+ you will need to deinterleave.
+
+ Deinterleaving is simple. Read the file two bytes at a time, reverse the
+ bytes, and write them out. Essentially, 1234 deinterleaved will be 2143
+ in the interleaved ROM.
+
+------------------------------------------------------------------------------
+
+ NINTENDO GAME BOY (FILE_TYPE = 5)
+
+ Take the file size and modulus by 0x4000. If the result is not 0, there
+ is a 0x200 byte SmartCard header that needs to be removed.
+
+------------------------------------------------------------------------------
+
+ SEGA MASTER SYSTEM / GAME GEAR (FILE_TYPE = 6)
+
+ Read 4 bytes from $7ff4 and see if the result is the string "SEGA", if it
+ is, the ROM is deinterleaved. Next check two bytes at $8 and see if they
+ are 0xaabb. If they are, the ROM is interleaved. If both checks fail, you
+ may have a hacked interleaved ROM or an unlicensed deinterleaved ROM.
+
+ To deinterleave, you need to break the game into 16 KBYTE blocks (0x8000).
+ To find how many blocks there are, take (file size - 0x200) / 0x8000. The
+ deinterleave algorithm (assuming chunk is a character array with all bytes
+ in the block) is:
+
+ int low = 1;
+ int high = 0;
+ array block;
+
+ for(int i = 0; i < 8 * KBYTE; i ++)
+ {
+
+   block[low]  = chunk[(8 * KBYTE + i)];
+   block[high] = chunk[i];
+
+   low  += 2;
+   high += 2;
+
+ }
+
+ return(implode("", block));
+
+------------------------------------------------------------------------------
+
+ SEGA GENESIS / MEGADRIVE (FILE_TYPE = 7)
+
+ Read 4 bytes from $100 and see if the result is the string "SEGA", if it
+ is, the ROM is deinterleaved. Next check two bytes at $8 and see if they
+ are 0xaabb. If they are, the ROM is interleaved. If both checks fail, you
+ may have a hacked interleaved ROM or an unlicensed deinterleaved ROM.
+
+ To deinterleave, you need to break the game into 16 KBYTE blocks (0x8000).
+ To find how many blocks there are, take (file size - 0x200) / 0x8000. The
+ deinterleave algorithm (assuming chunk is a character array with all bytes
+ in the block) is:
+
+ int low = 1;
+ int high = 0;
+ array block;
+
+ for(int i = 0; i < 8 * KBYTE; i ++)
+ {
+
+   block[low]  = chunk[(8 * KBYTE + i)];
+   block[high] = chunk[i];
+
+   low  += 2;
+   high += 2;
+
+ }
+
+ return(implode("", block));
+
+------------------------------------------------------------------------------
+
+ NEC TURBOGRAFX-16 / PC-ENGINE (FILE_TYPE = 8)
+
+ Take the file size and modulus by 0x1000. If the result is not 0, there is
+ a 0x200 Magic Super Griffin header that needs to be removed.
+
+------------------------------------------------------------------------------
+
+ ATARI LYNX (FILE_TYPE = 9)
+
+ Read the first four bytes, if they match the string "LYNX", there is a 0x40
+ byte LYNX header to remove. Remove this for creating patches.
+
+ When applying, you should restore this header after patching since it
+ stores information about how to rotate the game's screen for games which
+ play vertically.
+
+------------------------------------------------------------------------------

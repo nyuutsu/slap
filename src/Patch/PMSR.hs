@@ -7,8 +7,12 @@ module Patch.PMSR
   , parsePMSR
   , applyPMSR
   , encodePMSR
+  , pmsrMeta
   , pmsrInfo
   ) where
+
+-- Canonical reference: Star Rod (Paper Mario 64 modding tool, Java, big-endian)
+-- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Patch.Get as G
@@ -94,6 +98,10 @@ encodePMSR recs = BL.toStrict $ toLazyByteString $
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
+
+-- | PMSR carries no header metadata; this returns an empty list.
+pmsrMeta :: PMSRPatch -> [(String, String)]
+pmsrMeta _ = []
 
 pmsrInfo :: PMSRPatch -> String
 pmsrInfo p = unlines $ filter (not . null)

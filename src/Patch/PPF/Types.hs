@@ -4,7 +4,7 @@ module Patch.PPF.Types where
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
-import Data.Word (Word32)
+import Data.Word (Word8, Word32)
 
 -- | PPF format version.
 data Version = PPF1 | PPF2 | PPF3 | PPF4
@@ -13,6 +13,10 @@ data Version = PPF1 | PPF2 | PPF3 | PPF4
 -- | PPF3 image type — determines the validation block source offset.
 data ImageType = BIN | GI
   deriving (Show, Eq)
+
+fromImageType :: ImageType -> Word8
+fromImageType BIN = 0x00
+fromImageType GI  = 0x01
 
 -- | Validation data embedded in PPF2/PPF3 headers.
 data Validation = Validation
@@ -44,6 +48,7 @@ data Patch = Patch
   , patchFileSize    :: Maybe Word32     -- ^ Expected target size (PPF2 only)
   , patchValidation  :: Maybe Validation -- ^ Block check data (PPF2 always, PPF3 optional)
   , patchHasUndo     :: Bool             -- ^ Whether undo data is present (PPF3 only)
+  , patchImageType   :: Maybe ImageType  -- ^ PPF3 only (byte 56)
   , patchRecords     :: [Record]
   , patchFileId      :: Maybe FileId
   } deriving (Show)

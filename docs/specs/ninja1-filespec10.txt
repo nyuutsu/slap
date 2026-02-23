@@ -1,0 +1,235 @@
+https://web.archive.org/web/20070102142757/http://ninja.cinnamonpirate.com/files/filespec10.txt
+http://ninja.cinnamonpirate.com/files/filespec10.txt
+
+------------------------------------------------------------------------------
+ NINJA File Format Specifications                                 version 1.0
+ Written by Derrick Sobodash                                   Copyright 2004
+ Released on February 26, 2004               http://ninja.cinnamonpirate.com/
+------------------------------------------------------------------------------
+
+ PURPOSE
+
+  A blessing and bane of translating games is the IPS file format. While it
+  may have been the international patching standard when files never
+  exceeded 4MB, today it is completely unsuitable. PPF (Playstation Patch
+  Format) was created to combat the 24-bit addressing limitations of IPS,
+  but even PPF stops at 32-bit, which will one day be obsolete.
+
+  Rather than being forced to upgrade to a new patching standard every few
+  years, I have chosen to create a format of my own that will continue to
+  be useable for at least another decade.
+
+  Hence, the NINJA file formats were born.
+
+------------------------------------------------------------------------------
+
+ METHOD
+
+  NINJA is based on two methods of file storage: textual and binary. A NINJA
+  patch can be either of these types. Aside from storing the patch, some
+  extra information is stored, including the CRC32, MD5 and SHA1 of the
+  source file. The format of the source file is also stored -- this being
+  the system it is for.
+
+  Certain systems, such as the SNES, can have incredible variance in a file
+  through lack or presence of header, interleaving methods, and splitting,
+  while still being a good dump of the data. By storing the system, NINJA
+  can harness extra functions to prepare that data so patches made with
+  NINJA will work with any format of the original ROM. This should cut down
+  on the number of emails from users who never think to check the CRC of
+  their ROM against the one in the readme (if an author was insightful
+  enough to supply one).
+
+  Before beginning a comparison, you must convert the input files to
+  whichever method is specified by the user. The standard for data is always
+  no header, deinterleaved and decrypted for every system.
+
+------------------------------------------------------------------------------
+
+ STRUCTURE
+
+  The standard extension for a NINJA patch is ".RUP"
+
+  Every NINJA patch must begin with the following header:
+    [5 bytes ] .......     NINJA     //ASCII text
+    [1 byte  ] .......     .......   //VERSION # (in decimal)
+    [2 bytes ] .......     .......   //PATCH ID, valid modes follow
+              0x4220      "B "       // Binary format
+              0x425a      "BZ"       // Binary + Gzip format
+              0x540d      "T\n"      // Textual format
+              0x545a      "TZ"       // Textual + Gzip format
+  With formats supporting Gzip compression, the entire contents of the file
+  following these format bytes will be a Gzip of patch. This should be
+  decompressed to memory.
+
+  Here is where textual format and binary format fork.
+
+  Binary format header:
+  
+    [1 byte  ] .......     .......   //File format of the source file
+                                     //Please see the VALID FORMATS section
+                                     //for supported values.
+    [4 bytes ] .......     .......   //CRC32 of the source file in binary
+                                     //A value of "0" will skip this check
+    [16 bytes] .......     .......   //MD5sum of the source file in binary
+                                     //A value of "0" will skip this check
+    [20 bytes] .......     .......   //SHA1 of the source file in binary
+                                     //A value of "0" will skip this check
+
+  Binary format patches:
+    [1 byte  ] .......     .......   //# of bytes in the offset (x)
+    [x bytes ] .......     .......   //Offset to patch at in big endian
+    [1 byte  ] .......     .......   //# of bytes in the patch length (y)
+    [y bytes ] .......     .......   //Length of the patch in big endian
+    [* bytes ] .......     .......   //The patch (in binary)
+
+  Binary format footer:
+    [1 byte  ] 0x03        .......   //Since we process the file looking at
+                                     //one byte to tell us how many to read
+                                     //for the offset, we say 3 here.
+    [3 bytes ] .......     EOF       //If you end up with "EOF" in your
+                                     //offset, the patch is done
+
+  Textual format header:
+    [1 lines ] FORMAT CRC32 MD5SUM SHA1\n
+                                     //CRC32 MD5SUM and SHA1 will accept a
+                                     //value of "unk." It will bypass that
+                                     //check when encountered.
+
+  Textual format patches:
+    [1 line  ] OFFSET PATCH_BYTES
+
+  Textual format footer:
+    (not applicable)
+
+------------------------------------------------------------------------------
+
+ VALID FORMATS
+
+  This is the list of data formats recognized in v1.0 NINJA files. The
+  number on the left is the decimal value to be used in binary patch format.
+
+     0 raw,   // RAW data, no special processing
+     1 nes,   // Nintendo Entertainment System/Famicom 8-bit
+     2 snes,  // Super Nintendo Entertainment System/Super Famicom 16-bit
+     3 n64,   // Nintendo 64
+     4 gb,    // Game Boy
+     5 gbc,   // Game Boy Color
+     6 gba,   // Game Boy Advance
+     7 ngp,   // NeoGeo Pocket
+     8 ngpc,  // NeoGeo Pocket Color
+     9 sms,   // Sega Master System
+    10 gg,    // Game Gear
+    11 mega,  // Genesis Megadrive
+    12 pce,   // NEC TurboGrafx16/PC-Engine
+    13 ws,    // Bandai WonderSwan
+    14 wsc,   // Bandai WonderSwan Color/Crystal
+    15 lynx,  // Atari Lynx
+    16 jag,   // Atari Jaguar
+    17 gp32   // Gamepark GP32
+
+------------------------------------------------------------------------------
+
+ LARGE FILES
+
+  Because reading large files into RAM is not practical as of Version 1.0 of
+  this document, we can't very well get a CRC32, MD5sum or SHA1 of a 100MB
+  file without considerable lag time. Therefore, for NINJA 1.0, this is how
+  we handle RAW files over 0x1e00000 bytes:
+
+  Read in the first 0x1400000 bytes of the file, append it with the last
+  0xa00000, then append that with the file size of the source (in decimal).
+  Then use that string to make your CRC32, MD5sum and SHA1.
+
+  There's a slight chance of error in detecting a bad file when applying the
+  patch, but probably not enough to worry about. This should at least take
+  care of anyone trying to patch something made off a CUE/BIN over an FCD or
+  Alcohol 120% MDF/MDS image.
+
+------------------------------------------------------------------------------
+
+ SYSTEM SPECIFIC
+
+  While there are some great documents out there for detecting system
+  formats, here are the big three for NINJA 1.0. Anything your
+  implementation of NINJA v1.0 does not have a function supporting, you
+  should treat as RAW and MUST write "RAW" for the header for format, so
+  all NINJA compatible patchers will treat it the same. If you encounter a
+  patch set to a mode you do not support, print an error message and exit.
+
+ SUPER NINTENDO
+
+  SNES ROMs which have headers have an extra 0x200 bytes on the front of
+  them. Once quick way to find out if a ROM has a header or not is to look
+  at the checksum and inverse checksum (both 16bit). This will also help
+  you detect LoROM/HiROM and interleaving.
+
+  First read in 16 bits from 0x7fdc and add them to the 16 from 0x7fde. If
+  you get 0xffff, you have no header. If it's garbage, try adding 0x200 to
+  those offsets and see if you get 0xffff. If you do, there's a header. Now
+  read in the lower nibble (bottom four bits) from 0x7fd5. If this is odd,
+  you have an interleaved HiROM game. If it's even, you have a LoROM game.
+  If you advanced 0x200 before, do it again for this offset.
+
+  If advancing 0x200 yielded nothing, then take a look at 0xffdc. Take the
+  16 bits from there and add it to the 16 from 0xffde and see if you get
+  0xffff. If not, at 0x200 to the offsets check again.
+
+  If your ROM is interleaved HiROM, you need to deinterleave it. For most
+  ROM size, this is simple. Split the ROM into 0x8000 byte chunks. Put all
+  the odd numbered chunks (assume 0 is your first chunk and 1 is second).
+  first in the ROM, then write all the even chunks. If the ROM is 20Mbit
+  or 24Mbit, however, there's a different interleave ordering. The pattern
+  is shown below in chunk numbers:
+
+  20Mbit (0x280000 bytes):
+     1,  3,  5,  7,  9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35,
+    37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71,
+    73, 75, 77, 79, 64, 66, 68, 70, 72, 74, 76, 78, 32, 34, 36, 38, 40, 42,
+    44, 46, 48, 50, 52, 54, 56, 58, 60, 62,  0,  2,  4,  6,  8, 10, 12, 14,
+    16, 18, 20, 22, 24, 26, 28, 30
+
+  24Mbit (0x300000 bytes):
+     1,  3,  5,  7,  9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35,
+    37, 39, 41, 43, 45, 47, 49, 51, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71,
+    73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 64, 66, 68, 70, 72, 74,
+    76, 78, 80, 82, 84, 86, 88, 90, 92, 94,  0,  2,  4,  6,  8, 10, 12, 14,
+    16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50,
+    52, 54, 56, 58, 60, 62
+
+  SEGA MEGADRIVE
+
+  Sega Megadrive is a bit easier. We only have two formats: BIN or SMD. BIN
+  is what we want everything to be.
+
+  Seek to 0x100 bytes and read in the first four bytes. If they are "SEGA"
+  in ASCII, you have a BIN ROM and are all done. If you get "SG" and two
+  bytes of JUNK, you probably have SMD. To be extra sure, read two bytes
+  from 0x8. If it's 0xaabb, you have an SMD. SMD has an 0x200 byte header
+  so seek to 0x200.
+
+  We deinterleave the ROM in 0x4000 (16KB) chunks. Because the SMD
+  interleaving is SO weird, I'm going to provide you with a block of code to
+  deinterleave a 16KB chunk:
+
+    $low   = 1;
+    $high  = 0;
+    $block = "";
+    for($i=0; $i<0x2000; $i++) {
+      $block[$low] = $chunk[$i];
+      $block[$high] = $chunk[(0x2000+$i)];
+      $low  = $o+2;
+      $high = $e+2;
+    }
+
+  $block will now contain the deinterleaved chunk.
+
+  NINTENDO GAME BOY
+
+  Game Boy is very simple, we just have to worry about the archaic
+  "Smart Card"(tm) headers. The headers are, surprise surprise, 0x200 bytes.
+  Just mod the file size by 0x4000 (16KB, the smallest Game Boy ROM size).
+  If you get 0, you have no header, if you get anything else, you do.
+
+------------------------------------------------------------------------------
+

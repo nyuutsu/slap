@@ -1,0 +1,60 @@
+------------------------------------------------------------------------------
+ NINJA Command Line Useage                                        version 2.0
+ Written by Derrick Sobodash                                   Copyright 2006
+ Released on June 29, 2006                   http://ninja.cinnamonpirate.com/
+------------------------------------------------------------------------------
+
+ NINJA does two things: makes patches and applies them. This version can
+ apply NINJA 2.0, PPF, IPS, FFP, PAT and GDIFF patches. In the case of PPF,
+ PAT, FFP and NINJA, the internal patch info will be displayed in the
+ console for you to read.
+
+ The command lines are:
+
+   * Create - ninja2.bat SOURCE MODIFIED FILE TYPE INFO
+                            |       |     |    |    |
+                            |       |     |    |    +- Text info file
+                            |       |     |    +------ Format of data
+                            |       |     +----------- File to create
+                            |       +----------------- Modified file/folder
+                            +------------------------- Original file/folder
+   * Apply  - ninja2.bat PATCH TARGET
+                           |     |
+                           |     +-------------------- File/Folder to patch
+                           +-------------------------- Patch file
+
+ The text info file must be a plain text file of 8 lines. The data expected
+ on each line is:
+
+   1: Author      (  84 characters max)
+   2: Version     (  11 characters max)
+   3: Title       ( 256 characters max)
+   4: Genre       (  48 characters max)
+   5: Language    (  48 characters max)
+   6: Date        (   8 characters max) (YYYYMMDD)
+   7: Website     ( 512 characters max)
+   8: Description (1074 characters max)
+
+ Data exceeding the limit for each line will be ignored. If no file is
+ specified, blank bytes will be entered for the file info.
+
+ Allowed data types are as follows:
+
+   raw - Raw Binary (0)               gb  - Nintendo Game Boy (5)
+   nes - Nintendo/Famicom (1)         sms - Sega Master System/Game Gear (6)
+   fds - Famicom Disk System (2)      mega- Sega Genesis/Megadrive (7)
+   snes- Super Nintendo/Famicom (3)   pce - NEC TurboGrafx-16/PC-Engine (8)
+   n64 - Nintendo 64 (4)              lynx- Atari Lynx (9)
+
+ If no data type is specified, raw is assumed.
+
+ If your original data is a folder, the modified data must be a folder with
+ the same structure. To decrease patch creation time, it is recommended
+ you include only modified files in the modified folder, otherwise NINJA
+ will be forced to scan every single file.
+
+ NINJA will fail if you attempt to create a patch between a file
+ and a folder.
+
+------------------------------------------------------------------------------
+

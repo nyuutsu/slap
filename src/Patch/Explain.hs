@@ -42,15 +42,15 @@ import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
 
-import Patch.Format (showCRC, padHex, padNum, padR, showSigned, hexDump)
+import Patch.Format (padHex, padNum, padR, showSigned, hexDump, renderField)
+import qualified Patch.PPF.Info as PPFInfo
 
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.Char (isDigit, toLower)
-import Data.List (mapAccumL, sort, sortBy, intercalate, partition)
-import Data.Ord (comparing)
+import Data.Char (isDigit)
+import Data.List (mapAccumL, sort, intercalate, partition)
 import Data.Int (Int64)
 import Data.Word (Word8)
 
@@ -120,16 +120,13 @@ data AnnotDetail
 renderExplain :: Maybe ByteString -> ExplainData -> String
 renderExplain mSource ed = unlines $
   [ "format:      " ++ edFormat ed ]
-  ++ map renderHeader (edHeader ed)
+  ++ map renderField (edHeader ed)
   ++ [""]
   ++ concatMap renderSection (edSections ed)
   ++ notesLines
   ++ [renderSummaryLine (edSummary ed) | not (isSummaryNone (edSummary ed))]
   where
     notesLines = map (\n -> n) (edNotes ed)
-
-    renderHeader (k, v) =
-      k ++ ":" ++ replicate (max 1 (13 - length k - 1)) ' ' ++ v
 
     renderSection (SectionRegions rs) =
       zipWith renderRegion [1..] rs
@@ -473,7 +470,7 @@ commaNum n
 explainPPF :: PPF.Patch -> ExplainData
 explainPPF p = ExplainData
   { edFormat   = ppfVerStr (PPF.patchVersion p)
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = PPFInfo.ppfMeta p
   , edSections = [SectionRegions (zipWith mkPPFRegion [1..] (PPF.patchRecords p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = []
@@ -515,7 +512,7 @@ explainIPS p = ExplainData
         Nothing -> "IPS"
         Just _  -> "IPS (EBP)"
       IPS.IPS32       -> "IPS32"
-  , edHeader   = [("records", show nRecs)] ++ ebpHeader
+  , edHeader   = IPS.ipsMeta p
   , edSections = [SectionRegions (map mkIPSRegion (IPS.ipsRecords p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = truncNote
@@ -526,19 +523,6 @@ explainIPS p = ExplainData
     truncNote = case IPS.ipsTruncate p of
       Nothing -> []
       Just sz -> ["truncate to " ++ show sz ++ " bytes"]
-    ebpHeader = case IPS.ipsEBPMeta p of
-      Nothing -> []
-      Just meta ->
-        let pairs = IPS.jsonPairs meta
-            known = ["patcher", "title", "author", "description"]
-            knownFields = [ (k, v) | k <- known
-                          , Just v <- [IPS.jsonFieldCI pairs k]
-                          , not (null v) ]
-            unknownFields = sortBy (comparing fst)
-                          [ (k, v) | (k, v) <- pairs
-                          , map toLower k `notElem` known
-                          , not (null v) ]
-        in knownFields ++ unknownFields
 
 mkIPSRegion :: IPS.IPSRecord -> ExplainRegion
 mkIPSRegion (IPS.IPSRecord off dat) = ExplainRegion
@@ -567,9 +551,7 @@ ipsRecSize (IPS.IPSRecordRLE _ c _)  = c
 explainBPS :: BPS.BPSPatch -> ExplainData
 explainBPS p = ExplainData
   { edFormat   = "BPS"
-  , edHeader   = [ ("source size", show (BPS.bpsSourceSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsSourceCRC p) ++ ")")
-                 , ("target size", show (BPS.bpsTargetSize p) ++ " (CRC 0x" ++ showCRC (BPS.bpsTargetCRC p) ++ ")")
-                 ]
+  , edHeader   = BPS.bpsMeta p
   , edSections = [SectionRegions (snd (mapAccumL mkBPSRegion (0, 0) (BPS.bpsActions p)))]
   , edSummary  = Summary nActs "actions" (Just (fromIntegral (BPS.bpsTargetSize p), BytesTotalOutput))
   , edNotes    = []
@@ -609,9 +591,7 @@ mkBPSRegion (outPos, srcRel) act = case act of
 explainUPS :: UPS.UPSPatch -> ExplainData
 explainUPS p = ExplainData
   { edFormat   = "UPS"
-  , edHeader   = [ ("source size", show (UPS.upsSourceSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsSourceCRC p) ++ ")")
-                 , ("target size", show (UPS.upsTargetSize p) ++ " (CRC 0x" ++ showCRC (UPS.upsTargetCRC p) ++ ")")
-                 ]
+  , edHeader   = UPS.upsMeta p
   , edSections = [SectionRegions (snd (mapAccumL mkUPSRegion 0 (UPS.upsBlocks p)))]
   , edSummary  = Summary nBlocks "blocks" Nothing
   , edNotes    = []
@@ -636,10 +616,7 @@ explainVCDIFF :: VCDIFF.VCDIFFPatch -> ExplainData
 explainVCDIFF p = ExplainData
   { edFormat   = "VCDIFF" ++ if VCDIFF.vcdVersion (VCDIFF.vcdHeader p) == 0x53
                                then " (xdelta3)" else ""
-  , edHeader   = [ ("windows", show nWins)
-                 , ("instructions", show totalInsts)
-                 , ("target size", show totalTgt)
-                 ]
+  , edHeader   = VCDIFF.vcdiffMeta p
   , edSections = concat sections
   , edSummary  = Summary totalInsts "instructions"
                    (Just (fromIntegral totalTgt, BytesTotalOutput))
@@ -647,7 +624,6 @@ explainVCDIFF p = ExplainData
   }
   where
     wins = VCDIFF.vcdWindows p
-    nWins = length wins
     totalTgt = sum (map VCDIFF.vcdTargetLen wins)
     ct  = VCDIFF.vcdCodeTable p
     nSz = VCDIFF.vcdNearSize p
@@ -715,19 +691,17 @@ decodedToRegion globalOff inst = case inst of
 ----------------------------------------------------------------------------
 
 explainAPS :: APS.APSPatch -> ExplainData
-explainAPS (APS.APSPatch variant) = case variant of
+explainAPS p@(APS.APSPatch variant) = case variant of
   APS.APSN64 _hdr recs -> ExplainData
     { edFormat   = "APS (N64)"
-    , edHeader   = [("records", show (length recs))]
+    , edHeader   = APS.apsMeta p
     , edSections = [SectionRegions (map mkN64Region recs)]
     , edSummary  = Summary (length recs) "records" Nothing
     , edNotes    = []
     }
-  APS.APSGBA hdr recs -> ExplainData
+  APS.APSGBA _hdr recs -> ExplainData
     { edFormat   = "APS (GBA)"
-    , edHeader   = [ ("source size", show (APS.gbaSourceSize hdr))
-                   , ("target size", show (APS.gbaTargetSize hdr))
-                   ]
+    , edHeader   = APS.apsMeta p
     , edSections = [SectionRegions (map mkGBARegion recs)]
     , edSummary  = Summary (length recs) "blocks" Nothing
     , edNotes    = []
@@ -766,7 +740,7 @@ mkGBARegion r = ExplainRegion
 explainRUP :: RUP.RUPPatch -> ExplainData
 explainRUP p = ExplainData
   { edFormat   = "RUP (NINJA2)"
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = RUP.rupMetaKV p
   , edSections = [SectionRegions (map mkRUPRegion (RUP.rupRecords p))]
   , edSummary  = Summary nRecs "records" Nothing
   , edNotes    = []
@@ -790,7 +764,7 @@ mkRUPRegion (RUP.RUPRecord off xd) = ExplainRegion
 explainGDIFF :: GDIFF.GDiffPatch -> ExplainData
 explainGDIFF p = ExplainData
   { edFormat   = "GDIFF (W3C)"
-  , edHeader   = [("commands", show nCmds)]
+  , edHeader   = GDIFF.gdiffMeta p
   , edSections = [SectionRegions (snd (mapAccumL mkGDIFFRegion 0 (GDIFF.gdiffCmds p)))]
   , edSummary  = Summary nCmds "commands" Nothing
   , edNotes    = []
@@ -819,27 +793,29 @@ mkGDIFFRegion outPos cmd = case cmd of
 explainBSDiff :: BSDiff.BSDiffPatch -> ExplainData
 explainBSDiff p = ExplainData
   { edFormat   = "BSDiff / BDF (BSDIFF40)"
-  , edHeader   = [ ("new size", show (BSDiff.bsdNewSize p))
-                 , ("ctrl block", show (BSDiff.bsdCtrlSize p) ++ " bytes (compressed)")
-                 , ("diff block", show (BSDiff.bsdDiffSize p) ++ " bytes (compressed)")
-                 ]
+  , edHeader   = BSDiff.bsdiffMeta p
   , edSections = if null (BSDiff.bsdControls p)
                  then [SectionText "(control data not decoded)"]
-                 else [SectionRegions (map mkBSDiffRegion (BSDiff.bsdControls p))]
+                 else [SectionRegions (snd (mapAccumL mkBSDiffRegion 0 (BSDiff.bsdControls p)))]
   , edSummary  = if null (BSDiff.bsdControls p)
                  then SummaryNone
                  else Summary (length (BSDiff.bsdControls p)) "control tuples" Nothing
   , edNotes    = []
   }
 
-mkBSDiffRegion :: BSDiff.BSDiffControl -> ExplainRegion
-mkBSDiffRegion ctrl = ExplainRegion
-  { erOffset     = 0
-  , erSize       = 0
-  , erLabel      = ""
-  , erPayload    = PayloadMeta []
-  , erAnnotation = AnnotBSDiff (BSDiff.ctrlAdd ctrl) (BSDiff.ctrlCopy ctrl) (BSDiff.ctrlSeek ctrl)
-  }
+mkBSDiffRegion :: Int64 -> BSDiff.BSDiffControl -> (Int64, ExplainRegion)
+mkBSDiffRegion outPos ctrl =
+  let addLen = BSDiff.ctrlAdd ctrl
+      cpLen  = BSDiff.ctrlCopy ctrl
+  in ( outPos + addLen + cpLen
+     , ExplainRegion
+       { erOffset     = outPos
+       , erSize       = fromIntegral (addLen + cpLen)
+       , erLabel      = ""
+       , erPayload    = PayloadMeta []
+       , erAnnotation = AnnotBSDiff addLen cpLen (BSDiff.ctrlSeek ctrl)
+       }
+     )
 
 ----------------------------------------------------------------------------
 -- XDelta1
@@ -848,11 +824,7 @@ mkBSDiffRegion ctrl = ExplainRegion
 explainXDelta1 :: XDelta1.XDelta1Patch -> ExplainData
 explainXDelta1 p = ExplainData
   { edFormat   = "xdelta1"
-  , edHeader   = [ ("from", BS8.unpack (XDelta1.xd1FromName p))
-                 , ("to", BS8.unpack (XDelta1.xd1ToName p))
-                 , ("target size", show (XDelta1.xd1ToLen p))
-                 , ("sources", show (length (XDelta1.xd1Sources p)))
-                 ]
+  , edHeader   = XDelta1.xdelta1Meta p
   , edSections = map mkXD1SourceText (zip [0..] (XDelta1.xd1Sources p))
       ++ [SectionText "", SectionText ("instructions: " ++ show nInsts), SectionText ""]
       ++ [SectionRegions (map mkXD1Region (XDelta1.xd1Instructions p))]
@@ -886,7 +858,7 @@ mkXD1Region inst = ExplainRegion
 explainPMSR :: PMSR.PMSRPatch -> ExplainData
 explainPMSR p = ExplainData
   { edFormat   = "PMSR (Paper Mario Star Rod)"
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = PMSR.pmsrMeta p
   , edSections = [SectionRegions (map mkPMSRRegion (PMSR.pmsrRecords p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = []
@@ -911,7 +883,7 @@ mkPMSRRegion r = ExplainRegion
 explainDPS :: DPS.DPSPatch -> ExplainData
 explainDPS p = ExplainData
   { edFormat   = "DPS (Deufeufeu Patching System)"
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = DPS.dpsMeta p
   , edSections = [SectionRegions (map mkDPSRegion (DPS.dpsRecords p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = []
@@ -947,7 +919,7 @@ mkDPSRegion r = case DPS.dpsRecPayload r of
 explainNINJA1 :: NINJA1.NINJA1Patch -> ExplainData
 explainNINJA1 p = ExplainData
   { edFormat   = "NINJA1 (" ++ subFmtStr ++ ")"
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = NINJA1.ninja1Meta p
   , edSections = [SectionRegions (map mkN1Region (NINJA1.n1Records p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = []
@@ -977,15 +949,12 @@ mkN1Region (NINJA1.NINJA1Record off dat) = ExplainRegion
 explainPCHTXT :: PCHTXT.PCHTXTPatch -> ExplainData
 explainPCHTXT p = ExplainData
   { edFormat   = "PCHTXT (Nintendo Switch)"
-  , edHeader   = nsobidKV ++ [("blocks", show (length (PCHTXT.pchtxtBlocks p)))]
+  , edHeader   = PCHTXT.pchtxtMeta p
   , edSections = map mkPCHTXTBlock (zip [1..] (PCHTXT.pchtxtBlocks p))
   , edSummary  = Summary (length enabledEntries) "enabled entries" (Just (totalBytes, BytesTotal))
   , edNotes    = []
   }
   where
-    nsobidKV = case PCHTXT.pchtxtNsobid p of
-      Just nso -> [("nsobid", nso)]
-      Nothing  -> []
     enabledEntries = concatMap PCHTXT.pchtxtBlockEntries
                        (filter PCHTXT.pchtxtBlockEnabled (PCHTXT.pchtxtBlocks p))
     totalBytes = sum (map (BS.length . PCHTXT.pchtxtData) enabledEntries)
