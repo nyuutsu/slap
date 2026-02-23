@@ -9,7 +9,7 @@ import qualified Data.ByteString as BS
 import Data.List (sort)
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath ((</>), takeExtension)
-import Test.Tasty (TestTree, testGroup, withResource)
+import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
 applyTests :: RomCache -> IO TestTree
@@ -32,23 +32,21 @@ mkSuiteGroup romCache repo suitesDir name = do
     then pure []  -- skip suite if base ROM missing
     else do
       let validEntries = filter isTestable entries
-          -- Share the base ROM read across all patch tests in this suite
-          resource = withResource (cachedReadFile romCache basePath) (const (pure ()))
-      pure [resource $ \getBase -> testGroup suiteName
-              (map (mkPatchTest repo getBase expectedSha) validEntries)]
+      pure [testGroup suiteName
+              (map (mkPatchTest romCache repo basePath expectedSha) validEntries)]
   where
     suiteName = take (length name - 6) name  -- strip .suite
     isTestable e = seConfidence e /= "broken"
 
-mkPatchTest :: FilePath -> IO BS.ByteString -> String -> SuiteEntry -> TestTree
-mkPatchTest repo getBase expectedSha entry =
+mkPatchTest :: RomCache -> FilePath -> FilePath -> String -> SuiteEntry -> TestTree
+mkPatchTest romCache repo basePath expectedSha entry =
   testCase (seFormat entry) $ do
     let patchPath = repo </> sePatch entry
     patchExists <- doesFileExist patchPath
     if not patchExists && seConfidence entry == "untested"
       then pure ()  -- silently skip untested entries with missing files
       else do
-        baseBs <- getBase
+        baseBs <- cachedReadFile romCache basePath
         patchBs <- BS.readFile patchPath
         case parseSome patchBs of
           Left err -> assertFailure ("parseSome failed: " ++ err)

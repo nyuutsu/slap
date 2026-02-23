@@ -45,6 +45,7 @@ import qualified Patch.PCHTXT as PCHTXT
 import Patch.Format (padHex, padNum, padR, showSigned, hexDump, renderField)
 import qualified Patch.PPF.Info as PPFInfo
 
+import Data.Array (accumArray, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -347,32 +348,27 @@ renderSummary mSource ed = unlines $ filter (not . null) $
     -- Bucket-based analysis
     bucketCount = 56 :: Int
 
-    buckets :: [(Int, Int)]  -- (bucketIndex, byteCount)
-    buckets
-      | totalRecords == 0 = []
-      | otherwise =
-          let rangeSize = max 1 (maxEnd - minOff)
-              bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
-              toBucket r =
-                let startB = fromIntegral ((erOffset r - minOff) `div` bucketSize)
-                    endB   = fromIntegral (((erOffset r + fromIntegral (erSize r) - 1) - minOff) `div` bucketSize)
-                in [ (b, erSize r) | b <- [max 0 startB .. min (bucketCount-1) endB] ]
-          in concatMap toBucket allRegions
+    rangeSize = max 1 (maxEnd - minOff)
+    bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
+
+    toBucket r =
+      let startB = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+          endB   = fromIntegral (((erOffset r + fromIntegral (erSize r) - 1) - minOff) `div` bucketSize)
+      in [ (b, erSize r) | b <- [max 0 startB .. min (bucketCount-1) endB] ]
 
     bucketSums :: [Int]
     bucketSums
       | totalRecords == 0 = []
-      | otherwise =
-          let arr = replicate bucketCount 0
-              addTo xs (i, v) = take i xs ++ [xs !! i + v] ++ drop (i+1) xs
-          in foldl addTo arr buckets
+      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
+                             (concatMap toBucket allRegions))
 
     -- Contiguous runs of non-empty buckets, as (startIdx, endIdx) pairs
     findRuns :: [Int] -> [(Int, Int)]
     findRuns sums = go 0 Nothing []
       where
-        go i (Just s) acc | i >= length sums = reverse ((s, i-1) : acc)
-        go i Nothing  acc | i >= length sums = reverse acc
+        len = length sums
+        go i (Just s) acc | i >= len = reverse ((s, i-1) : acc)
+        go i Nothing  acc | i >= len = reverse acc
         go i Nothing  acc
           | sums !! i > 0 = go (i+1) (Just i) acc
           | otherwise      = go (i+1) Nothing acc
@@ -380,21 +376,31 @@ renderSummary mSource ed = unlines $ filter (not . null) $
           | sums !! i > 0 = go (i+1) (Just s) acc
           | otherwise      = go (i+1) Nothing ((s, i-1) : acc)
 
+    -- Per-bucket record counts and byte sums, computed in one pass each
+    bucketCounts :: [Int]
+    bucketCounts
+      | totalRecords == 0 = []
+      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
+                     [ (b, 1 :: Int) | r <- allRegions
+                     , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+                     , b >= 0, b < bucketCount ])
+    bucketBytes :: [Int]
+    bucketBytes
+      | totalRecords == 0 = []
+      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
+                     [ (b, erSize r) | r <- allRegions
+                     , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
+                     , b >= 0, b < bucketCount ])
+
     regionsBlock
       | totalRecords == 0 = []
       | otherwise =
-          let rangeSize = max 1 (maxEnd - minOff)
-              bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
-              runs = findRuns bucketSums
+          let runs = findRuns bucketSums
               fmt (rStart, rEnd) =
                 let sOff = minOff + fromIntegral rStart * bucketSize
                     eOff = minOff + fromIntegral (rEnd + 1) * bucketSize - 1
-                    recsInRun = length [ r | r <- allRegions
-                                       , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
-                                       , b >= rStart && b <= rEnd ]
-                    bytesInRun = sum [ erSize r | r <- allRegions
-                                     , let b = fromIntegral ((erOffset r - minOff) `div` bucketSize)
-                                     , b >= rStart && b <= rEnd ]
+                    recsInRun = sum (take (rEnd - rStart + 1) (drop rStart bucketCounts))
+                    bytesInRun = sum (take (rEnd - rStart + 1) (drop rStart bucketBytes))
                     pct = if totalModified > 0
                           then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
                           else 0
