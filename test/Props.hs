@@ -2,6 +2,7 @@ module Main (main) where
 
 import qualified Patch.BPS as BPS
 import qualified Patch.IPS as IPS
+import Patch.IPS (avoidSentinel)
 import qualified Patch.UPS as UPS
 import qualified Patch.PMSR as PMSR
 import qualified Patch.NINJA1 as NINJA1
@@ -22,6 +23,7 @@ import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
                       canConvert, conversionNotes, createFromMemory)
 
 import Data.ByteString (ByteString)
+import Data.List (isPrefixOf)
 import qualified Data.ByteString as BS
 import qualified Data.Set as Set
 import System.Directory (getTemporaryDirectory, removeFile)
@@ -36,6 +38,8 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "parse-truncated" prop_bpsTrunc ]
   , testGroup "IPS"
       [ testProperty "round-trip" prop_ips
+      , testProperty "eof-collision" prop_ipsEofCollision
+      , testProperty "avoidSentinel" prop_avoidSentinel
       , testProperty "parse-truncated" prop_ipsTrunc ]
   , testGroup "IPS32"
       [ testProperty "round-trip" prop_ips32
@@ -158,6 +162,44 @@ prop_ips = forAll genPair $ \(src, tgt) ->
         result <- applyViaFile IPS.applyIPS p src
         pure $ result === tgt
 
+-- | Source and target that differ starting at exactly offset 0x454F46.
+genEofPair :: Gen (ByteString, ByteString)
+genEofPair = do
+  let off = 0x454F46
+  n <- choose (1, 100)
+  diffBytes <- BS.pack <$> vectorOf n (choose (1, 255))
+  let src = BS.replicate (off + n) 0
+      tgt = BS.replicate off 0 <> diffBytes
+  pure (src, tgt)
+
+prop_ipsEofCollision :: Property
+prop_ipsEofCollision = withMaxSuccess 20 $ forAll genEofPair $ \(src, tgt) ->
+  case createFromMemory CfmtIPS src tgt "" "" "" False False of
+    Left err -> counterexample ("create: " ++ err) $ property False
+    Right patch -> case IPS.parseIPS patch of
+      Left err -> counterexample ("parse: " ++ err) $ property False
+      Right p  -> ioProperty $ do
+        result <- applyViaFile IPS.applyIPS p src
+        pure $ result === tgt
+
+prop_avoidSentinel :: Property
+prop_avoidSentinel = property $
+  let src = BS.pack [0, 1, 2, 3, 4, 5, 6, 7]
+  in conjoin
+    [ -- Record at sentinel is shifted back
+      avoidSentinel 5 src [(5, BS.pack [0xFF])]
+        === [(4, BS.pack [4, 0xFF])]
+    , -- Record NOT at sentinel is unchanged
+      avoidSentinel 5 src [(3, BS.pack [0xAA])]
+        === [(3, BS.pack [0xAA])]
+    , -- Source too short: no-op
+      avoidSentinel 5 BS.empty [(5, BS.pack [0xFF])]
+        === [(5, BS.pack [0xFF])]
+    , -- Sentinel at offset 0: can't extend backward, no-op
+      avoidSentinel 0 src [(0, BS.pack [0xFF])]
+        === [(0, BS.pack [0xFF])]
+    ]
+
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(src, tgt) ->
   let patch = GDIFF.createGDIFF src tgt
@@ -244,7 +286,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(src, _) ->
 -- DPS: direct with extension, but no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(src, tgt) ->
-  let patch = DPS.createDPS src tgt
+  let patch = DPS.createDPS src tgt "" ""
   in case DPS.parseDPS patch >>= \p -> DPS.applyDPS p src of
        Left err     -> counterexample err $ property False
        Right result -> result === tgt
@@ -321,7 +363,7 @@ prop_canConvertFull = conjoin
   | fmt <- directFormats
   ]
 
--- | No conversion notes when provides exactly matches required ∪ accepted.
+-- | No dropped-field notes when provides exactly matches required ∪ accepted.
 prop_noSurplusNoNotes :: Property
 prop_noSurplusNoNotes = conjoin
   [ counterexample (show fmt) $
@@ -338,7 +380,9 @@ prop_noSurplusNoNotes = conjoin
             , pcTruncation  = if FTruncation  `Set.member` kept then pcTruncation  fullContents else Nothing
             , pcEBPMeta     = if FEBPMeta     `Set.member` kept then pcEBPMeta     fullContents else Nothing
             }
-      in conversionNotes trimmed spec === []
+          -- filter to only dropped-field notes; interop notes are tested separately
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (conversionNotes trimmed fmt spec)
+      in droppedNotes === []
   | fmt <- directFormats
   ]
 
@@ -426,7 +470,7 @@ prop_ninja1Trunc = forAll genPairNoShrink $ \(src, tgt) ->
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(src, tgt) ->
-  truncated DPS.parseDPS (DPS.createDPS src tgt)
+  truncated DPS.parseDPS (DPS.createDPS src tgt "" "")
 
 prop_rupTrunc :: Property
 prop_rupTrunc = forAll genPair $ \(src, tgt) ->

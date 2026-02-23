@@ -623,7 +623,7 @@ mkUPSRegion :: Int64 -> UPS.UPSBlock -> (Int64, ExplainRegion)
 mkUPSRegion pos (UPS.UPSBlock skip xd) =
   let xorOff = pos + skip
       len    = BS.length xd
-  in ( xorOff + fromIntegral len
+  in ( xorOff + fromIntegral len + 1  -- +1 for 0x00 terminator byte
      , ExplainRegion xorOff len "XOR  " (PayloadXOR (Just xd))
          (AnnotAt AtOffset xorOff [DetailSkip skip])
      )

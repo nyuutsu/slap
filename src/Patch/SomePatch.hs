@@ -62,11 +62,12 @@ data Verification = Verification
   , vSourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vPPFBlock     :: Maybe (Int64, BS.ByteString)  -- PPF validation block
+  , vFileSize     :: Maybe Word32                  -- PPF2 expected target file size (advisory)
   , vWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
   }
 
 noVerification :: Verification
-noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing []
+noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing []
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
@@ -142,10 +143,12 @@ parseSome bs = case detectFormat bs of
     Left err -> Left err
     Right p  ->
       let recs = PPF.patchRecords p
+          hasAppend = any (\r -> PPF.recCmd r == PPF.Append) recs
           ppfV = noVerification
             { vPPFBlock = case PPF.patchValidation p of
                 Just val -> Just (PPF.validationOffset (PPF.valImageType val), PPF.valBlock val)
                 Nothing  -> Nothing
+            , vFileSize = PPF.patchFileSize p
             }
       in Right SomePatch
         { spFormat         = "PPF"
@@ -163,7 +166,7 @@ parseSome bs = case detectFormat bs of
         , spWarnings       = ["empty patch (0 records)" | null recs]
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
-        , spContents  = Just PatchContents
+        , spContents  = if hasAppend then Nothing else Just PatchContents
             { pcRecords     = map (\r -> (PPF.recOffset r, PPF.recData r)) recs
             , pcDescription = Just (PPF.patchDescription p)
             , pcSourceCRC32 = Nothing

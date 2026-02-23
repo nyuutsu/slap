@@ -492,6 +492,8 @@ verifySource nv v bs = do
       warnBlock "source" off expected (crc16 (safeSlice off 0x10000 bs))
     forM_ (vPPFBlock v) $ \(off, expected) ->
       warnPPFBlock off expected bs
+    forM_ (vFileSize v) $ \expected ->
+      warnFileSize expected (fromIntegral (BS.length bs))
 
 verifyTarget :: Bool -> Verification -> BS.ByteString -> IO ()
 verifyTarget nv v bs = do
@@ -507,7 +509,7 @@ verifyTarget nv v bs = do
 
 hasSourceV :: Verification -> Bool
 hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSourceSHA1 v)
-            || not (null (vSourceBlocks v)) || isJust (vPPFBlock v)
+            || not (null (vSourceBlocks v)) || isJust (vPPFBlock v) || isJust (vFileSize v)
 
 hasTargetV :: Verification -> Bool
 hasTargetV v = isJust (vTargetCRC32 v) || isJust (vTargetMD5 v)
@@ -546,6 +548,11 @@ warnPPFBlock off expected bs =
   let actual = safeSlice (fromIntegral off) (BS.length expected) bs
   in when (actual /= expected) $
        warn ("validation block mismatch at 0x" ++ padHex 8 (fromIntegral off))
+
+warnFileSize :: Word32 -> Word32 -> IO ()
+warnFileSize expected actual =
+  when (expected /= actual) $
+    warn ("file size mismatch (expected " ++ show expected ++ ", got " ++ show actual ++ ")")
 
 safeSlice :: Int -> Int -> BS.ByteString -> BS.ByteString
 safeSlice off len bs = BS.take len (BS.drop off bs)

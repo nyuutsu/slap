@@ -234,8 +234,6 @@ pchtxtInfo p = unlines $ filter (not . null)
     rangeStr
       | null enabledEntries = "range:       (empty patch)"
       | otherwise =
-          let offsets = map pchtxtOffset enabledEntries
-              lo = minimum offsets
-              hi = maximum offsets
-                   + fromIntegral (BS.length (pchtxtData (last enabledEntries)))
+          let lo = minimum (map pchtxtOffset enabledEntries)
+              hi = maximum (map (\e -> pchtxtOffset e + fromIntegral (BS.length (pchtxtData e))) enabledEntries)
           in "range:       0x" ++ hexPad 8 lo ++ " - 0x" ++ hexPad 8 hi

@@ -30,13 +30,14 @@ import System.IO
 ----------------------------------------------------------------------------
 
 data RUPPatch = RUPPatch
-  { rupMeta      :: RUPInfo
-  , rupRecords   :: [RUPRecord]
-  , rupOverflow  :: Maybe ByteString  -- data to append (for size changes)
-  , rupSourceMD5 :: Maybe ByteString  -- 16 bytes
-  , rupTargetMD5 :: Maybe ByteString  -- 16 bytes
-  , rupSourceSz  :: Int64
-  , rupTargetSz  :: Int64
+  { rupMeta         :: RUPInfo
+  , rupRecords      :: [RUPRecord]
+  , rupOverflow     :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
+  , rupOverflowType :: Maybe Word8       -- 0x41 'A' (append) or 0x4D 'M' (truncate)
+  , rupSourceMD5    :: Maybe ByteString  -- 16 bytes
+  , rupTargetMD5    :: Maybe ByteString  -- 16 bytes
+  , rupSourceSz     :: Int64
+  , rupTargetSz     :: Int64
   } deriving (Show)
 
 data RUPInfo = RUPInfo
@@ -84,14 +85,14 @@ headerSize = 0x800  -- 2048 bytes
 
 parseFixedHeader :: ByteString -> RUPInfo
 parseFixedHeader bs = RUPInfo
-  { rupAuthor      = extractField 0x008 84
-  , rupVersion     = extractField 0x05C 11
-  , rupTitle       = extractField 0x067 256
-  , rupGenre       = extractField 0x167 48
-  , rupLanguage    = extractField 0x197 48
-  , rupDate        = extractField 0x1C7 8
-  , rupWebsite     = extractField 0x1CF 512
-  , rupDescription = extractField 0x3CF 1073
+  { rupAuthor      = extractField 0x007 84
+  , rupVersion     = extractField 0x05B 11
+  , rupTitle       = extractField 0x066 256
+  , rupGenre       = extractField 0x166 48
+  , rupLanguage    = extractField 0x196 48
+  , rupDate        = extractField 0x1C6 8
+  , rupWebsite     = extractField 0x1CE 512
+  , rupDescription = extractField 0x3CE 1074
   }
   where
     extractField offset len =
@@ -109,7 +110,7 @@ parseFixedHeader bs = RUPInfo
 parseRUP :: ByteString -> Either String RUPPatch
 parseRUP bs
   | BS.length bs < 7 = Left "RUP: input too short"
-  | BS.take 7 bs /= "NINJA2\0" = Left "not a RUP file (bad magic)"
+  | BS.take 6 bs /= "NINJA2" = Left "not a RUP file (bad magic)"
   | BS.length bs < headerSize = Left "RUP: truncated header"
   | otherwise = runGet parseRUP' bs
   where
@@ -120,7 +121,7 @@ parseRUP bs
       p <- parseCommands (emptyPatch meta)
       pure p { rupRecords = reverse (rupRecords p) }
 
-    emptyPatch m = RUPPatch m [] Nothing Nothing Nothing 0 0
+    emptyPatch m = RUPPatch m [] Nothing Nothing Nothing Nothing 0 0
 
 parseCommands :: RUPPatch -> Get RUPPatch
 parseCommands patch = do
@@ -143,16 +144,18 @@ parseFileCmd patch = do
   tgtSz <- packedInt
   srcMD5 <- getBytes 16
   tgtMD5 <- getBytes 16
-  overflow <- if srcSz /= tgtSz
+  (ovType, overflow) <- if srcSz /= tgtSz
     then do
-      skip 1  -- overflow type byte
-      Just <$> packedBS
-    else pure Nothing
-  pure patch { rupSourceMD5 = Just srcMD5
-             , rupTargetMD5 = Just tgtMD5
-             , rupSourceSz  = srcSz
-             , rupTargetSz  = tgtSz
-             , rupOverflow  = overflow
+      ty <- getByte
+      dat <- packedBS
+      pure (Just ty, Just dat)
+    else pure (Nothing, Nothing)
+  pure patch { rupSourceMD5    = Just srcMD5
+             , rupTargetMD5    = Just tgtMD5
+             , rupSourceSz     = srcSz
+             , rupTargetSz     = tgtSz
+             , rupOverflow     = overflow
+             , rupOverflowType = ovType
              }
 
 -- | Command 0x02: XOR record
@@ -170,13 +173,14 @@ applyRUP :: RUPPatch -> FilePath -> IO Int
 applyRUP patch target = do
   withBinaryFile target ReadWriteMode $ \h -> do
     mapM_ (applyRecord h) (rupRecords patch)
-    -- Handle overflow (append data for file size changes)
+    -- Handle overflow (append data for file size changes).
+    -- On-disk overflow is XOR'd with 0xFF; decode before writing.
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
         let appendPos = rupSourceSz patch
         hSeek h AbsoluteSeek (fromIntegral appendPos)
-        BS.hPut h overflow
+        BS.hPut h (BS.map (xor 0xFF) overflow)
     -- Handle truncation (if target is smaller than source)
     when (rupTargetSz patch < rupSourceSz patch) $
       hSetFileSize h (fromIntegral (rupTargetSz patch))
@@ -228,9 +232,11 @@ rupInfo p = unlines $ filter (not . null)
     md5Str label (Just h) =
       label ++ ":  " ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h)
 
-    overflowStr = case rupOverflow p of
-      Nothing -> ""
-      Just d  -> "overflow:    " ++ show (BS.length d) ++ " bytes"
+    overflowStr = case (rupOverflowType p, rupOverflow p) of
+      (Just 0x41, Just d) -> "overflow:    append " ++ show (BS.length d) ++ " bytes"
+      (Just 0x4D, Just d) -> "overflow:    truncate " ++ show (BS.length d) ++ " bytes"
+      (_, Just d)         -> "overflow:    " ++ show (BS.length d) ++ " bytes"
+      _                   -> ""
 
 ----------------------------------------------------------------------------
 -- Create
@@ -240,9 +246,9 @@ rupInfo p = unlines $ filter (not . null)
 -- XOR-based records with VLV encoding; handles size changes via overflow.
 createRUP :: ByteString -> ByteString -> ByteString
 createRUP old new = BL.toStrict $ toLazyByteString $
-    byteString "NINJA2\0"                -- magic (7 bytes)
-    <> word8 0                           -- ROM type: raw
-    <> byteString (BS.replicate (headerSize - 8) 0)  -- rest of 2048-byte header
+    byteString "NINJA2"                  -- magic (6 bytes)
+    <> word8 0                           -- text encoding
+    <> byteString (BS.replicate (headerSize - 7) 0)  -- rest of 2048-byte header
     <> word8 0x01                        -- OPEN_NEW_FILE command
     <> putVLV 0                          -- filename length (empty)
     <> word8 0                           -- ROM type byte
@@ -264,17 +270,20 @@ createRUP old new = BL.toStrict $ toLazyByteString $
       let oldDat = BS.take (BS.length newDat) (BS.drop off oldTrim)
       in (off, BS.packZipWith xor oldDat newDat)
 
-    -- Overflow section: emitted whenever sizes differ (parser expects it)
+    -- Overflow section: emitted whenever sizes differ (parser expects it).
+    -- Type byte: 'A' (0x41) = append, 'M' (0x4D) = truncate/minify.
+    -- Data is XOR'd with 0xFF on disk (RomPatcher.js convention).
     overflowPart
       | BS.length new > BS.length old =
           let extra = BS.drop (BS.length old) new
-          in word8 0  -- overflow type
+          in word8 0x41  -- 'A' (append)
              <> putVLV (fromIntegral (BS.length extra))
-             <> byteString extra
+             <> byteString (BS.map (xor 0xFF) extra)
       | BS.length new < BS.length old =
-          -- Truncation: empty overflow; applyRUP uses hSetFileSize
-          word8 0  -- overflow type
-          <> putVLV 0
+          let extra = BS.drop (BS.length new) old
+          in word8 0x4D  -- 'M' (truncate)
+             <> putVLV (fromIntegral (BS.length extra))
+             <> byteString (BS.map (xor 0xFF) extra)
       | otherwise = mempty
 
 encodeXorRec :: (Int, ByteString) -> Builder
@@ -282,7 +291,7 @@ encodeXorRec (off, dat) =
     word8 0x02                                -- XOR command
     <> putVLV (fromIntegral off)              -- offset
     <> putVLV (fromIntegral (BS.length dat))  -- length
-    <> byteString dat                         -- XOR data (from diffHunks, these are new bytes not XOR)
+    <> byteString dat                         -- XOR data
 
 -- | VLV: 1-byte length prefix, then N bytes little-endian.
 putVLV :: Int64 -> Builder

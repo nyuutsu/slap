@@ -194,10 +194,10 @@ dpsInfo p = unlines $ filter (not . null)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: ByteString -> ByteString -> ByteString
-createDPS old new = BL.toStrict $ toLazyByteString $
-    padField 64 "slap"                  -- name
-    <> padField 64 ""                   -- author
+createDPS :: ByteString -> ByteString -> String -> String -> ByteString
+createDPS old new name author = BL.toStrict $ toLazyByteString $
+    padField 64 (if null name then "slap" else name)  -- name
+    <> padField 64 author               -- author
     <> padField 64 ""                   -- version
     <> word8 0                          -- flag (stable)
     <> word8 1                          -- DPS version

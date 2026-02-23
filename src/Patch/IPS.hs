@@ -11,6 +11,7 @@ module Patch.IPS
   , encodeIPS32
   , encodeEBP
   , encodeEBPRaw
+  , avoidSentinel
   , ipsInfo
   , jsonPairs
   , jsonFieldCI
@@ -257,45 +258,57 @@ allSame bs
   | BS.null bs = True
   | otherwise  = BS.all (== BS.index bs 0) bs
 
+-- | Shift any record that starts exactly at a sentinel offset back by one byte,
+-- prepending the source byte at (off-1) so the encoder never emits the sentinel
+-- as a record offset.  No-op when the source is too short for the lookup.
+avoidSentinel :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
+avoidSentinel sentinel src = map fix
+  where
+    fix (off, dat)
+      | off == sentinel, off > 0, off - 1 < BS.length src =
+          (off - 1, BS.cons (BS.index src (off - 1)) dat)
+      | otherwise = (off, dat)
+
 ----------------------------------------------------------------------------
 -- Encode from pre-split records (used by direct conversion)
 ----------------------------------------------------------------------------
 
 -- | Encode pre-split records as an IPS patch. Records must have offsets
 -- ≤ 0xFFFFFF and data ≤ 65535 bytes each.
-encodeIPS :: [(Int, ByteString)] -> Maybe Int64 -> ByteString
-encodeIPS recs trunc = BL.toStrict $ toLazyByteString $
+encodeIPS :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS src recs trunc = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) recs
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
   <> byteString "EOF"
   <> maybe mempty (truncOffset 3) trunc
 
 -- | Encode pre-split records as an IPS32 patch. Records must have data
 -- ≤ 65535 bytes each.
-encodeIPS32 :: [(Int, ByteString)] -> Maybe Int64 -> ByteString
-encodeIPS32 recs trunc = BL.toStrict $ toLazyByteString $
+encodeIPS32 :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS32 src recs trunc = BL.toStrict $ toLazyByteString $
   byteString "IPS32"
-  <> foldMap (encodeIPSRecord 4) recs
+  <> foldMap (encodeIPSRecord 4) (avoidSentinel 0x45454F46 src recs)
   <> byteString "EEOF"
   <> maybe mempty (truncOffset 4) trunc
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
 -- Truncation marker (if any) goes between EOF and JSON.
-encodeEBP :: [(Int, ByteString)] -> Maybe Int64 -> String -> String -> String -> ByteString
-encodeEBP recs trunc title author desc = BL.toStrict $ toLazyByteString $
+encodeEBP :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> String -> String -> String -> ByteString
+encodeEBP src recs trunc title author desc = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) recs
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
   <> byteString "EOF"
   <> maybe mempty (truncOffset 3) trunc
   <> byteString (ebpJson title author desc)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
 -- Used by direct conversion to preserve source EBP metadata as-is.
-encodeEBPRaw :: [(Int, ByteString)] -> ByteString -> ByteString
-encodeEBPRaw recs meta = BL.toStrict $ toLazyByteString $
+encodeEBPRaw :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString -> ByteString
+encodeEBPRaw src recs trunc meta = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) recs
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
   <> byteString "EOF"
+  <> maybe mempty (truncOffset 3) trunc
   <> byteString meta
 
 truncOffset :: Int -> Int64 -> Builder
@@ -303,7 +316,7 @@ truncOffset w off = encodeOffset w (fromIntegral off)
 
 ebpJson :: String -> String -> String -> ByteString
 ebpJson t a d = BS8.pack $
-  "{\"title\":\"" ++ escapeJson t
+  "{\"patcher\":\"slap\",\"title\":\"" ++ escapeJson t
   ++ "\",\"author\":\"" ++ escapeJson a
   ++ "\",\"description\":\"" ++ escapeJson d ++ "\"}"
   where

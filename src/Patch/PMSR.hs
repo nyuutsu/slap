@@ -109,8 +109,8 @@ pmsrInfo p = unlines $ filter (not . null)
     rangeStr
       | null (pmsrRecords p) = "range:       (empty patch)"
       | otherwise =
-          let offsets = map pmsrOffset (pmsrRecords p)
-              lo = minimum offsets
-              hi = maximum offsets + fromIntegral (BS.length (pmsrData (last (pmsrRecords p))))
+          let recs = pmsrRecords p
+              lo = minimum (map pmsrOffset recs)
+              hi = maximum (map (\r -> pmsrOffset r + fromIntegral (BS.length (pmsrData r))) recs)
           in "range:       0x" ++ showHex (fromIntegral lo :: Word64) ""
              ++ " - 0x" ++ showHex (fromIntegral hi :: Word64) ""

@@ -168,12 +168,22 @@ fieldName FEBPMeta     = "EBP metadata"
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> FormatSpec -> [String]
-conversionNotes pc spec =
+conversionNotes :: PatchContents -> CreateFormat -> FormatSpec -> [String]
+conversionNotes pc target spec =
   let have = provides pc
       kept = fsRequired spec `Set.union` fsAccepted spec
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
-  in concatMap (fieldNote pc) (Set.toList dropped)
+      droppedNotes = concatMap (fieldNote pc) (Set.toList dropped)
+      interopNotes = ebpTruncMetaNote pc target
+  in droppedNotes ++ interopNotes
+
+-- | Warn when EBP output has both truncation and metadata — some tools
+-- (e.g. RomPatcher.js) treat them as mutually exclusive.
+ebpTruncMetaNote :: PatchContents -> CreateFormat -> [String]
+ebpTruncMetaNote pc CfmtEBP
+  | isJust (pcTruncation pc), isJust (pcEBPMeta pc) || isJust (pcDescription pc)
+  = ["note: EBP truncation + metadata may not be recognized by some tools"]
+ebpTruncMetaNote _ _ = []
 
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote pc field = case field of
@@ -230,8 +240,8 @@ convertDirect pc target cliTitle cliAuthor cliDesc includeUndo includeValidation
       Left missing -> Left (formatMissing target missing)
       Right () -> do
         checkOffsetLimits target (pcRecords pc)
-        let notes = conversionNotes pc spec
-        Right (encodeDirect pc target cliTitle cliAuthor cliDesc, notes)
+        let notes = conversionNotes pc target spec
+        Right (encodeDirect pc BS.empty target cliTitle cliAuthor cliDesc, notes)
 
 diffOnlyMsg :: CreateFormat -> String
 diffOnlyMsg fmt = fmtName fmt ++ " requires source+target diff data\nuse --with SOURCE"
@@ -246,14 +256,14 @@ checkOffsetLimits target recs
   | otherwise = Right ()
 
 -- | Encode PatchContents into the target format.
-encodeDirect :: PatchContents -> CreateFormat -> String -> String -> String -> BS.ByteString
-encodeDirect pc target cliTitle cliAuthor cliDesc = case target of
-  CfmtIPS    -> IPS.encodeIPS splitIPS (pcTruncation pc)
-  CfmtIPS32  -> IPS.encodeIPS32 (splitRecords 0xFFFF intRecs) (pcTruncation pc)
+encodeDirect :: PatchContents -> BS.ByteString -> CreateFormat -> String -> String -> String -> BS.ByteString
+encodeDirect pc src target cliTitle cliAuthor cliDesc = case target of
+  CfmtIPS    -> IPS.encodeIPS src splitIPS (pcTruncation pc)
+  CfmtIPS32  -> IPS.encodeIPS32 src (splitRecords 0xFFFF intRecs) (pcTruncation pc)
   CfmtEBP    -> case if null cliDesc && null cliTitle && null cliAuthor
                      then pcEBPMeta pc else Nothing of
-                  Just raw -> IPS.encodeEBPRaw splitIPS raw
-                  Nothing  -> IPS.encodeEBP splitIPS (pcTruncation pc)
+                  Just raw -> IPS.encodeEBPRaw src splitIPS (pcTruncation pc) raw
+                  Nothing  -> IPS.encodeEBP src splitIPS (pcTruncation pc)
                                 ebpTitle ebpAuthor desc
   CfmtPPF3   -> PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
                    (pcUndoData pc) (pcValidation pc)
@@ -290,11 +300,11 @@ createFromMemory fmt src tgt title author desc undo val
   | isDirect fmt =
       let pc = buildContents fmt src tgt undo val
       in checkOffsetLimits fmt (pcRecords pc)
-         >> Right (encodeDirect pc fmt title author desc)
+         >> Right (encodeDirect pc src fmt title author desc)
   | otherwise = case fmt of
       CfmtBPS    -> Right (BPS.createBPS src tgt)
       CfmtUPS    -> Right (UPS.createUPS src tgt)
-      CfmtDPS    -> Right (DPS.createDPS src tgt)
+      CfmtDPS    -> Right (DPS.createDPS src tgt desc author)
       CfmtRUP    -> Right (RUP.createRUP src tgt)
       CfmtAPSGBA -> Right (APS.createAPSGBA src tgt)
       CfmtGDIFF  -> Right (GDIFF.createGDIFF src tgt)

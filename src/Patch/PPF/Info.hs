@@ -50,9 +50,8 @@ bytesInfo recs =
 rangeInfo :: [Record] -> String
 rangeInfo [] = "range:       (empty patch)"
 rangeInfo recs =
-  let offsets = map recOffset recs
-      lo = minimum offsets
-      hi = maximum offsets + fromIntegral (BS.length (recData (last recs)))
+  let lo = minimum (map recOffset recs)
+      hi = maximum (map (\r -> recOffset r + fromIntegral (BS.length (recData r))) recs)
   in "range:       0x" ++ showHex (fromIntegral lo :: Word64) ""
      ++ " - 0x" ++ showHex (fromIntegral hi :: Word64) ""
 

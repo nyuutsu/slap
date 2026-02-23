@@ -1,14 +1,11 @@
-module Patch.PPF.Apply (applyPatch, undoPatch, validateTarget) where
+module Patch.PPF.Apply (applyPatch, undoPatch) where
 
 import Patch.PPF.Types
 
 import qualified Data.ByteString as BS
 import Data.ByteString (ByteString)
-import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
-import Data.Word (Word64)
 import Control.Monad (foldM)
-import Numeric (showHex)
 import System.IO
 
 -- | Apply a parsed PPF patch to a target file.
@@ -25,27 +22,6 @@ undoPatch patch target
   | otherwise = withBinaryFile target ReadWriteMode $ \h ->
       Right <$> writeRecords h (patchRecords patch) (fromMaybe BS.empty . recUndo)
 
--- | Validate the target file against the patch's embedded checks.
--- Returns a list of warnings (empty = all good).
-validateTarget :: Patch -> Handle -> IO [String]
-validateTarget patch h = do
-  sizeWarns <- case patchFileSize patch of
-    Nothing -> pure []
-    Just expected -> do
-      actual <- hFileSize h
-      pure [ "warning: file size mismatch (expected "
-             ++ show expected ++ ", got " ++ show actual ++ ")"
-           | fromIntegral expected /= actual ]
-  blockWarns <- case patchValidation patch of
-    Nothing -> pure []
-    Just val -> do
-      let off = validationOffset (valImageType val)
-      actual <- readAt h off validationSize
-      pure [ "warning: validation block mismatch at 0x"
-             ++ showHex (fromIntegral off :: Word64) ""
-           | actual /= valBlock val ]
-  pure (sizeWarns ++ blockWarns)
-
 -- Write records to a handle using a selector function (recData for apply, recUndo for undo).
 writeRecords :: Handle -> [Record] -> (Record -> ByteString) -> IO Int
 writeRecords h recs selector = foldM step 0 recs
@@ -60,8 +36,3 @@ writeRecords h recs selector = foldM step 0 recs
           pure (n + 1)
       where dat = selector r
 
--- Read n bytes from a handle at a given offset.
-readAt :: Handle -> Int64 -> Int -> IO ByteString
-readAt h off n = do
-  hSeek h AbsoluteSeek (fromIntegral off)
-  BS.hGet h n
