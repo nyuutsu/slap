@@ -823,7 +823,7 @@ mkBSDiffRegion outPos ctrl =
 
 explainXDelta1 :: XDelta1.XDelta1Patch -> ExplainData
 explainXDelta1 p = ExplainData
-  { edFormat   = "xdelta1"
+  { edFormat   = "xdelta1 v" ++ XDelta1.xd1Version p
   , edHeader   = XDelta1.xdelta1Meta p
   , edSections = map mkXD1SourceText (zip [0..] (XDelta1.xd1Sources p))
       ++ [SectionText "", SectionText ("instructions: " ++ show nInsts), SectionText ""]
@@ -840,6 +840,7 @@ mkXD1SourceText (n, s) = SectionText $
   ++ (if XDelta1.xd1SrcIsData s then " (data)" else " (file)")
   ++ (if XDelta1.xd1SrcSequential s then " seq" else "")
   ++ "  " ++ show (XDelta1.xd1SrcLen s) ++ " bytes"
+  ++ "  MD5:" ++ concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack (XDelta1.xd1SrcMD5 s))
 
 mkXD1Region :: XDelta1.XD1Instruction -> ExplainRegion
 mkXD1Region inst = ExplainRegion

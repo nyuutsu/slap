@@ -38,7 +38,8 @@ import System.IO.Unsafe (unsafePerformIO)
 ----------------------------------------------------------------------------
 
 data XDelta1Patch = XDelta1Patch
-  { xd1FromName     :: ByteString
+  { xd1Version      :: String      -- "1.1" or "1.0.4"
+  , xd1FromName     :: ByteString
   , xd1ToName       :: ByteString
   , xd1ToMD5        :: ByteString  -- 16 bytes
   , xd1ToLen        :: Int64
@@ -68,22 +69,22 @@ data XD1Instruction = XD1Instruction
 parseXDelta1 :: ByteString -> Either String XDelta1Patch
 parseXDelta1 bs
   | BS.length bs < 20 = Left "xdelta1: input too short"
-  | magic == "%XDZ004%" = parseV11 bs magic  -- v1.1
-  | magic == "%XDZ003%" = parseV11 bs magic  -- v1.0.4
+  | magic == "%XDZ004%" = parseV11 bs magic "1.1"
+  | magic == "%XDZ003%" = parseV11 bs magic "1.0.4"
   | magic == "%XDZ002%" = Left "xdelta1: unsupported version (v1.0)"
   | BS.take 7 bs == "%XDELTA" = Left "xdelta1: unsupported version (v0.14)"
   | otherwise = Left "not an xdelta1 file (bad magic)"
   where
     magic = BS.take 8 bs
 
-parseV11 :: ByteString -> ByteString -> Either String XDelta1Patch
-parseV11 bs expectedMagic
+parseV11 :: ByteString -> ByteString -> String -> Either String XDelta1Patch
+parseV11 bs expectedMagic ver
   | totalLen < 44 = Left "xdelta1: input too short"
   | trailingMagic /= expectedMagic = Left ("xdelta1: trailing magic mismatch (expected " ++ show expectedMagic ++ ", got " ++ show trailingMagic ++ ")")
   | otherwise = do
       dataSeg' <- safeDecompressGZip dataSegRaw
       ctrlSeg' <- safeDecompressGZip ctrlSegRaw
-      parseControl ctrlSeg' dataSeg' fromName toName
+      parseControl ver ctrlSeg' dataSeg' fromName toName
   where
     totalLen = BS.length bs
 
@@ -120,9 +121,9 @@ parseV11 bs expectedMagic
     maxDecompressedSize = 4 * 1024 * 1024 * 1024 :: Int64  -- 4 GiB
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
-parseControl :: ByteString -> ByteString -> ByteString -> ByteString
+parseControl :: String -> ByteString -> ByteString -> ByteString -> ByteString
              -> Either String XDelta1Patch
-parseControl ctrl dataSeg fromName toName
+parseControl ver ctrl dataSeg fromName toName
   | BS.length ctrl < 28 = Left ("xdelta1: truncated control segment (need 28 bytes, have " ++ show (BS.length ctrl) ++ ")")
   | otherwise = runGet parseCtrl ctrl
   where
@@ -137,7 +138,7 @@ parseControl ctrl dataSeg fromName toName
       instCount <- fromIntegral <$> edsioVarint
       insts <- parseInstructions instCount
       let fixedInsts = fixSequentialOffsets sources insts
-      pure (XDelta1Patch fromName toName toMD5 toLen sources fixedInsts dataSeg)
+      pure (XDelta1Patch ver fromName toName toMD5 toLen sources fixedInsts dataSeg)
 
 parseSources :: Int -> Get [XD1Source]
 parseSources 0 = pure []
@@ -214,19 +215,26 @@ applyXDelta1 patch source = Right $ unsafeCreate sz $ \ptr ->
 
 xdelta1Meta :: XDelta1Patch -> [(String, String)]
 xdelta1Meta p =
-  [ ("from", BS8.unpack (xd1FromName p))
-  , ("to", BS8.unpack (xd1ToName p))
-  , ("target size", show (xd1ToLen p))
-  , ("target MD5", md5Hex (xd1ToMD5 p))
-  , ("sources", show (length (xd1Sources p)))
-  , ("data seg", show (BS.length (xd1DataSeg p)) ++ " bytes")
-  ]
+  [ ("version", xd1Version p) ]
+  ++ [ ("from", BS8.unpack (xd1FromName p))
+     , ("to", BS8.unpack (xd1ToName p))
+     , ("target size", show (xd1ToLen p))
+     , ("target MD5", md5Hex (xd1ToMD5 p))
+     , ("sources", show (length srcs))
+     ]
+  ++ sourceMD5s
+  ++ [ ("data seg", show (BS.length (xd1DataSeg p)) ++ " bytes") ]
   where
+    srcs = xd1Sources p
     md5Hex = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack
+    sourceMD5s
+      | [s] <- srcs = [("source MD5", md5Hex (xd1SrcMD5 s))]
+      | otherwise    = [("source " ++ show i ++ " MD5", md5Hex (xd1SrcMD5 s))
+                        | (i, s) <- zip [(1::Int)..] srcs]
 
 xdelta1Info :: XDelta1Patch -> String
 xdelta1Info p = unlines $ filter (not . null) $
-  [ "format:      xdelta1" ]
+  [ "format:      xdelta1 v" ++ xd1Version p ]
   ++ map renderField (xdelta1Meta p)
   ++ [ srcLines
      , "instructions:" ++ show (length (xd1Instructions p))
@@ -237,4 +245,6 @@ xdelta1Info p = unlines $ filter (not . null) $
         ++ (if xd1SrcIsData s then " (data)" else " (file)")
         ++ (if xd1SrcSequential s then " seq" else "")
         ++ "  " ++ show (xd1SrcLen s) ++ " bytes"
+        ++ "  MD5:" ++ md5Hex (xd1SrcMD5 s)
       | (i, s) <- zip [(0::Int)..] (xd1Sources p) ]
+    md5Hex = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack

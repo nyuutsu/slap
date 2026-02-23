@@ -34,6 +34,7 @@ import System.IO.Unsafe (unsafePerformIO)
 data BSDiffPatch = BSDiffPatch
   { bsdCtrlSize  :: Int64       -- compressed control block size
   , bsdDiffSize  :: Int64       -- compressed diff block size
+  , bsdExtraSize :: Int64       -- compressed extra block size
   , bsdNewSize   :: Int64       -- target file size
   , bsdControls  :: [BSDiffControl]
   , bsdDiffData  :: ByteString  -- decompressed diff stream
@@ -95,7 +96,8 @@ parseBSDiff bs
       diffData  <- safeDecompressBZip "diff" diffCompressed
       extraData <- safeDecompressBZip "extra" extraCompressed
       let controls = parseControls ctrlData
-      Right (BSDiffPatch ctrlSz diffSz newSz controls diffData extraData)
+          extraSz = fromIntegral (BS.length bs) - 32 - ctrlSz - diffSz
+      Right (BSDiffPatch ctrlSz diffSz extraSz newSz controls diffData extraData)
   where
     ctrlSz = getOffT 8 bs
     diffSz = getOffT 16 bs
@@ -163,6 +165,7 @@ bsdiffMeta p =
   [ ("new size", show (bsdNewSize p))
   , ("ctrl block", show (bsdCtrlSize p) ++ " bytes (compressed)")
   , ("diff block", show (bsdDiffSize p) ++ " bytes (compressed)")
+  , ("extra block", show (bsdExtraSize p) ++ " bytes (compressed)")
   ]
 
 bsdiffInfo :: BSDiffPatch -> String
