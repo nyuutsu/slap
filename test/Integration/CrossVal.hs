@@ -46,7 +46,7 @@ mkCrossValTest repo cacheRef fields = case fields of
                 baseBs   <- BS.readFile basePath
                 targetBs <- getOrBootstrap cacheRef repo (baseRel, bootRel) baseBs bootPath
                 -- Create patch with slap
-                case createFromMemory fmt baseBs targetBs "" False False of
+                case createFromMemory fmt baseBs targetBs "" "" "" False False of
                   Left err -> assertFailure ("create failed: " ++ err)
                   Right patchBs ->
                     -- Apply with external tool, verify SHA256

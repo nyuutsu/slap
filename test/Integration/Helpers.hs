@@ -204,12 +204,12 @@ attemptConvert sp tgtFmt mBase desc undo validate = case mBase of
     case targetResult of
       Left err -> pure (Left err)
       Right targetBs ->
-        case createFromMemory tgtFmt baseBs targetBs desc undo validate of
+        case createFromMemory tgtFmt baseBs targetBs "" "" desc undo validate of
           Left err     -> pure (Left err)
           Right result -> pure (Right (result, []))
   Nothing -> case spContents sp of
     Nothing -> pure (Left (needWithMsg sp))
-    Just pc -> pure $ case convertDirect pc tgtFmt desc undo validate of
+    Just pc -> pure $ case convertDirect pc tgtFmt "" "" desc undo validate of
       Left err              -> Left err
       Right (result, notes) -> Right (result, notes)
   where

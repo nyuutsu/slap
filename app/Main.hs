@@ -53,6 +53,8 @@ data Command
       , cmdModified   :: FilePath
       , cmdCreateOut  :: FilePath
       , cmdDesc       :: String
+      , cmdTitle      :: String
+      , cmdAuthor     :: String
       , cmdUndo       :: Bool
       , cmdValidate   :: Bool
       }
@@ -63,6 +65,8 @@ data Command
       , cmdConvWith      :: Maybe FilePath
       , cmdRaw           :: Bool
       , cmdConvDesc      :: String
+      , cmdConvTitle     :: String
+      , cmdConvAuthor    :: String
       , cmdConvUndo      :: Bool
       , cmdConvValidate  :: Bool
       , cmdNoVerify      :: Bool
@@ -168,6 +172,10 @@ createParser = CmdCreate
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
       <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
+  <*> option str (long "title" <> metavar "TEXT" <> value ""
+      <> help "Patch title (EBP only)")
+  <*> option str (long "author" <> metavar "TEXT" <> value ""
+      <> help "Patch author (EBP only)")
   <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
 
@@ -183,11 +191,15 @@ convertParser = mk
   <*> rawFlag
   <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
       <> help "Patch description (PPF3/EBP/APS-N64/PCHTXT)")
+  <*> option str (long "title" <> metavar "TEXT" <> value ""
+      <> help "Patch title (EBP only)")
+  <*> option str (long "author" <> metavar "TEXT" <> value ""
+      <> help "Patch author (EBP only)")
   <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
   <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
   <*> noVerifyFlag <*> yoloFlag
   where
-    mk p t o w r d u v nv yolo' = CmdConvert p t o w r d u v (nv || yolo')
+    mk p t o w r d ti au u v nv yolo' = CmdConvert p t o w r d ti au u v (nv || yolo')
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
@@ -371,7 +383,8 @@ doCreate cmd = do
   origBs <- readMaybeUnwrap (cmdRaw cmd) (cmdOriginal cmd)
   modBs  <- readMaybeUnwrap (cmdRaw cmd) (cmdModified cmd)
   case createFromMemory (cmdCreateFmt cmd) origBs modBs
-         (cmdDesc cmd) (cmdUndo cmd) (cmdValidate cmd) of
+         (cmdTitle cmd) (cmdAuthor cmd) (cmdDesc cmd)
+         (cmdUndo cmd) (cmdValidate cmd) of
     Left err -> die err
     Right patchBs -> do
       BS.writeFile (cmdCreateOut cmd) patchBs
@@ -395,14 +408,18 @@ doConvert cmd = do
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) sourcePath
           verifySource (cmdNoVerify cmd) (spVerification sp) sourceBs
           targetBs <- applyForConvert sp sourceBs
-          case createFromMemory (cmdConvTo cmd) sourceBs targetBs (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
+          case createFromMemory (cmdConvTo cmd) sourceBs targetBs
+                 (cmdConvTitle cmd) (cmdConvAuthor cmd) (cmdConvDesc cmd)
+                 (cmdConvUndo cmd) (cmdConvValidate cmd) of
             Left err -> die err
             Right result -> do
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Nothing -> case spContents sp of
           Nothing -> die (needWithMsg sp)
-          Just pc -> case convertDirect pc (cmdConvTo cmd) (cmdConvDesc cmd) (cmdConvUndo cmd) (cmdConvValidate cmd) of
+          Just pc -> case convertDirect pc (cmdConvTo cmd)
+                            (cmdConvTitle cmd) (cmdConvAuthor cmd) (cmdConvDesc cmd)
+                            (cmdConvUndo cmd) (cmdConvValidate cmd) of
             Left err -> die err
             Right (result, notes) -> do
               forM_ notes $ \n -> hPutStrLn stderr ("slap: " ++ n)

@@ -17,6 +17,7 @@ module Patch.Convert
 
 import qualified Patch.PPF.Create as PPF
 import qualified Patch.IPS as IPS
+import Patch.IPS (jsonPairs, jsonFieldCI)
 import qualified Patch.BPS as BPS
 import qualified Patch.UPS as UPS
 import qualified Patch.APS as APS
@@ -211,9 +212,10 @@ fieldNote pc field = case field of
 ----------------------------------------------------------------------------
 
 -- | Convert parsed patch contents to a target format without the source ROM.
-convertDirect :: PatchContents -> CreateFormat -> String -> Bool -> Bool
+convertDirect :: PatchContents -> CreateFormat -> String -> String -> String
+              -> Bool -> Bool
               -> Either String (BS.ByteString, [String])
-convertDirect pc target cliDesc includeUndo includeValidation = case target of
+convertDirect pc target cliTitle cliAuthor cliDesc includeUndo includeValidation = case target of
   -- Differential formats always need --with
   CfmtBPS    -> Left (diffOnlyMsg CfmtBPS)
   CfmtUPS    -> Left (diffOnlyMsg CfmtUPS)
@@ -229,7 +231,7 @@ convertDirect pc target cliDesc includeUndo includeValidation = case target of
       Right () -> do
         checkOffsetLimits target (pcRecords pc)
         let notes = conversionNotes pc spec
-        Right (encodeDirect pc target cliDesc, notes)
+        Right (encodeDirect pc target cliTitle cliAuthor cliDesc, notes)
 
 diffOnlyMsg :: CreateFormat -> String
 diffOnlyMsg fmt = fmtName fmt ++ " requires source+target diff data\nuse --with SOURCE"
@@ -244,13 +246,15 @@ checkOffsetLimits target recs
   | otherwise = Right ()
 
 -- | Encode PatchContents into the target format.
-encodeDirect :: PatchContents -> CreateFormat -> String -> BS.ByteString
-encodeDirect pc target cliDesc = case target of
+encodeDirect :: PatchContents -> CreateFormat -> String -> String -> String -> BS.ByteString
+encodeDirect pc target cliTitle cliAuthor cliDesc = case target of
   CfmtIPS    -> IPS.encodeIPS splitIPS (pcTruncation pc)
   CfmtIPS32  -> IPS.encodeIPS32 (splitRecords 0xFFFF intRecs) (pcTruncation pc)
-  CfmtEBP    -> case if null cliDesc then pcEBPMeta pc else Nothing of
+  CfmtEBP    -> case if null cliDesc && null cliTitle && null cliAuthor
+                     then pcEBPMeta pc else Nothing of
                   Just raw -> IPS.encodeEBPRaw splitIPS raw
-                  Nothing  -> IPS.encodeEBP splitIPS (pcTruncation pc) desc
+                  Nothing  -> IPS.encodeEBP splitIPS (pcTruncation pc)
+                                ebpTitle ebpAuthor desc
   CfmtPPF3   -> PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
                    (pcUndoData pc) (pcValidation pc)
   CfmtNINJA1 -> case (pcSourceCRC32 pc, pcSourceMD5 pc, pcSourceSHA1 pc) of
@@ -272,18 +276,21 @@ encodeDirect pc target cliDesc = case target of
     pchtxtDesc
       | not (null cliDesc) = Just (BS8.pack cliDesc)
       | otherwise          = pcDescription pc
+    ebpPairs = maybe [] jsonPairs (pcEBPMeta pc)
+    ebpTitle  = resolveField cliTitle ebpPairs "title"
+    ebpAuthor = resolveField cliAuthor ebpPairs "author"
 
 ----------------------------------------------------------------------------
 -- Create
 ----------------------------------------------------------------------------
 
 -- | Create a patch from source and target bytes.
-createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> Bool -> Bool -> Either String BS.ByteString
-createFromMemory fmt src tgt desc undo val
+createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> String -> String -> Bool -> Bool -> Either String BS.ByteString
+createFromMemory fmt src tgt title author desc undo val
   | isDirect fmt =
       let pc = buildContents fmt src tgt undo val
       in checkOffsetLimits fmt (pcRecords pc)
-         >> Right (encodeDirect pc fmt desc)
+         >> Right (encodeDirect pc fmt title author desc)
   | otherwise = case fmt of
       CfmtBPS    -> Right (BPS.createBPS src tgt)
       CfmtUPS    -> Right (UPS.createUPS src tgt)
@@ -380,22 +387,18 @@ toIntPairs = map (\(off, dat) -> (fromIntegral off, dat))
 resolveDesc :: String -> Maybe BS.ByteString -> Maybe BS.ByteString -> String -> String
 resolveDesc cliDesc ebpMeta rawDesc def
   | not (null cliDesc) = cliDesc
-  | Just meta <- ebpMeta = extractEBPDesc meta
+  | Just meta <- ebpMeta
+  , Just d <- jsonFieldCI (jsonPairs meta) "description"
+  , not (null d) = d
   | Just d <- rawDesc    = trimNulSpace (BS8.unpack d)
   | otherwise            = def
-  where
-    extractEBPDesc bs = case BS8.unpack bs of
-      s -> case dropWhile (/= ':') (snd (breakOn "description" s)) of
-              (':':'"':rest) -> takeQuoted rest
-              _              -> def
-    takeQuoted ('"' : _)        = ""
-    takeQuoted ('\\' : c : cs)  = c : takeQuoted cs
-    takeQuoted (c : cs)         = c : takeQuoted cs
-    takeQuoted []               = ""
-    breakOn _ [] = ("", "")
-    breakOn needle ss@(x:xs)
-      | take (length needle) ss == needle = ("", ss)
-      | otherwise = let (a, b) = breakOn needle xs in (x:a, b)
+
+-- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
+resolveField :: String -> [(String, String)] -> String -> String
+resolveField cli pairs key
+  | not (null cli) = cli
+  | Just v <- jsonFieldCI pairs key = v
+  | otherwise = ""
 
 hexBS :: BS.ByteString -> String
 hexBS = concatMap (\b -> padHex 2 (fromIntegral b)) . BS.unpack

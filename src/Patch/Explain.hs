@@ -48,8 +48,9 @@ import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.Char (isDigit)
-import Data.List (mapAccumL, sort, intercalate, partition)
+import Data.Char (isDigit, toLower)
+import Data.List (mapAccumL, sort, sortBy, intercalate, partition)
+import Data.Ord (comparing)
 import Data.Int (Int64)
 import Data.Word (Word8)
 
@@ -514,7 +515,7 @@ explainIPS p = ExplainData
         Nothing -> "IPS"
         Just _  -> "IPS (EBP)"
       IPS.IPS32       -> "IPS32"
-  , edHeader   = [("records", show nRecs)]
+  , edHeader   = [("records", show nRecs)] ++ ebpHeader
   , edSections = [SectionRegions (map mkIPSRegion (IPS.ipsRecords p))]
   , edSummary  = Summary nRecs "records" (Just (totalBytes, BytesTotal))
   , edNotes    = truncNote
@@ -525,6 +526,19 @@ explainIPS p = ExplainData
     truncNote = case IPS.ipsTruncate p of
       Nothing -> []
       Just sz -> ["truncate to " ++ show sz ++ " bytes"]
+    ebpHeader = case IPS.ipsEBPMeta p of
+      Nothing -> []
+      Just meta ->
+        let pairs = IPS.jsonPairs meta
+            known = ["patcher", "title", "author", "description"]
+            knownFields = [ (k, v) | k <- known
+                          , Just v <- [IPS.jsonFieldCI pairs k]
+                          , not (null v) ]
+            unknownFields = sortBy (comparing fst)
+                          [ (k, v) | (k, v) <- pairs
+                          , map toLower k `notElem` known
+                          , not (null v) ]
+        in knownFields ++ unknownFields
 
 mkIPSRegion :: IPS.IPSRecord -> ExplainRegion
 mkIPSRegion (IPS.IPSRecord off dat) = ExplainRegion

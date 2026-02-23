@@ -65,7 +65,7 @@ getOrBootstrap cacheRef key baseBs bootPath = do
 -- | Create a patch, parse it back, apply to base, verify SHA256.
 roundTrip :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> IO ()
 roundTrip fmt baseBs targetBs expectedSha = do
-  case createFromMemory fmt baseBs targetBs "" False False of
+  case createFromMemory fmt baseBs targetBs "" "" "" False False of
     Left err -> assertFailure ("create failed: " ++ err)
     Right patchBs -> case parseSome patchBs of
       Left err -> assertFailure ("re-parse failed: " ++ err)

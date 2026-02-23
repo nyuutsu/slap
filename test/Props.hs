@@ -150,7 +150,7 @@ prop_ups = forAll genPair $ \(src, tgt) ->
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtIPS src tgt "" False False of
+  case createFromMemory CfmtIPS src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -180,7 +180,7 @@ prop_apsGba = forAll genPair $ \(src, tgt) ->
 
 prop_ips32 :: Property
 prop_ips32 = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtIPS32 src tgt "" False False of
+  case createFromMemory CfmtIPS32 src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -190,7 +190,7 @@ prop_ips32 = forAll genPair $ \(src, tgt) ->
 
 prop_ebp :: Property
 prop_ebp = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtEBP src tgt "" False False of
+  case createFromMemory CfmtEBP src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left err -> counterexample ("parse: " ++ err) $ property False
@@ -201,7 +201,7 @@ prop_ebp = forAll genPair $ \(src, tgt) ->
 -- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPPF3 src tgt "" False False of
+  case createFromMemory CfmtPPF3 src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case PPF.parsePatch patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -211,7 +211,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(src, tgt) ->
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPMSR src tgt "" False False of
+  case createFromMemory CfmtPMSR src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case PMSR.parsePMSR patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -221,7 +221,7 @@ prop_pmsr = forAll genPairNoShrink $ \(src, tgt) ->
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtNINJA1 src tgt "" False False of
+  case createFromMemory CfmtNINJA1 src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -232,7 +232,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(src, tgt) ->
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(src, _) ->
   not (BS.null src) ==>
-  case createFromMemory CfmtNINJA1 src src "" False False of
+  case createFromMemory CfmtNINJA1 src src "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -270,7 +270,7 @@ prop_rupHashes = forAll genPair $ \(src, tgt) ->
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPCHTXT src tgt "" False False of
+  case createFromMemory CfmtPCHTXT src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case PCHTXT.parsePCHTXT patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -281,7 +281,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(src, tgt) ->
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtAPSN64 src tgt "" False False of
+  case createFromMemory CfmtAPSN64 src tgt "" "" "" False False of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case APS.parseAPS patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
@@ -386,19 +386,19 @@ prop_bpsTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtIPS src tgt "" False False of
+  case createFromMemory CfmtIPS src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
 prop_ips32Trunc = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtIPS32 src tgt "" False False of
+  case createFromMemory CfmtIPS32 src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
 prop_ebpTrunc = forAll genPair $ \(src, tgt) ->
-  case createFromMemory CfmtEBP src tgt "" False False of
+  case createFromMemory CfmtEBP src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
@@ -408,19 +408,19 @@ prop_upsTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPPF3 src tgt "" False False of
+  case createFromMemory CfmtPPF3 src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated PPF.parsePatch patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPMSR src tgt "" False False of
+  case createFromMemory CfmtPMSR src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated PMSR.parsePMSR patch
 
 prop_ninja1Trunc :: Property
 prop_ninja1Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtNINJA1 src tgt "" False False of
+  case createFromMemory CfmtNINJA1 src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated NINJA1.parseNINJA1 patch
 
@@ -434,7 +434,7 @@ prop_rupTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtAPSN64 src tgt "" False False of
+  case createFromMemory CfmtAPSN64 src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated APS.parseAPS patch
 
@@ -448,7 +448,7 @@ prop_gdiffTrunc = forAll genPair $ \(src, tgt) ->
 
 prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(src, tgt) ->
-  case createFromMemory CfmtPCHTXT src tgt "" False False of
+  case createFromMemory CfmtPCHTXT src tgt "" "" "" False False of
     Left _ -> discard
     Right patch -> truncated PCHTXT.parsePCHTXT patch
 

@@ -12,6 +12,8 @@ module Patch.IPS
   , encodeEBP
   , encodeEBPRaw
   , ipsInfo
+  , jsonPairs
+  , jsonFieldCI
   ) where
 
 import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
@@ -24,8 +26,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
+import Data.Char (toLower)
 import Data.Int (Int64)
 import Data.Bits (shiftR, (.&.))
+import Data.List (sortBy)
+import Data.Ord (comparing)
 import Data.Word (Word8, Word32, Word64)
 import Numeric (showHex)
 import System.IO
@@ -175,25 +180,52 @@ ipsInfo p = unlines $ filter (not . null)
 
     ebpFields = case ipsEBPMeta p of
       Nothing -> []
-      Just meta -> filter (not . null)
-        [ maybe "" (\v -> "title:       " ++ v) (jsonField meta "title")
-        , maybe "" (\v -> "author:      " ++ v) (jsonField meta "author")
-        , maybe "" (\v -> "description: " ++ v) (jsonField meta "description")
-        ]
+      Just meta ->
+        let pairs = jsonPairs meta
+            known = ["patcher", "title", "author", "description"]
+            knownFields = [ (k, v) | k <- known
+                          , Just v <- [jsonFieldCI pairs k]
+                          , not (null v) ]
+            unknownFields = sortBy (comparing fst)
+                          [ (k, v) | (k, v) <- pairs
+                          , map toLower k `notElem` known
+                          , not (null v) ]
+            allFields = knownFields ++ unknownFields
+            maxKey = if null allFields then 0
+                     else maximum (map (length . fst) allFields)
+            pad k = k ++ ":" ++ replicate (max 1 (maxKey - length k + 6)) ' '
+        in map (\(k, v) -> pad k ++ v) allFields
 
--- | Extract a string field from a flat JSON object.
-jsonField :: ByteString -> ByteString -> Maybe String
-jsonField json key =
-  let needle = "\"" <> key <> "\":\""
-      (_, match) = BS.breakSubstring needle json
-  in if BS.null match then Nothing
-     else Just $ takeQuoted $ BS8.unpack $ BS.drop (BS.length needle) match
+-- | Extract all string key-value pairs from a flat JSON object.
+-- Handles escaped quotes in values. Ignores non-string values.
+jsonPairs :: ByteString -> [(String, String)]
+jsonPairs = parsePairs . BS8.unpack
+  where
+    parsePairs s = case dropWhile (/= '{') s of
+      ('{':rest) -> go rest
+      _          -> []
+    go s = case dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r') s of
+      ('}':_)    -> []
+      ('"':rest) -> case takeQuoted rest of
+        (key, afterKey) -> case dropWhile (\c -> c == ' ' || c == ':') afterKey of
+          ('"':valRest) -> case takeQuoted valRest of
+            (val, afterVal) -> (key, val) : go afterVal
+          other -> go other   -- non-string value, skip
+      _ -> []
+    takeQuoted = go' []
+      where
+        go' acc ('"' : rest)         = (reverse acc, rest)
+        go' acc ('\\' : '"' : rest)  = go' ('"' : acc) rest
+        go' acc ('\\' : '\\' : rest) = go' ('\\' : acc) rest
+        go' acc ('\\' : c : rest)    = go' (c : acc) rest
+        go' acc (c : rest)           = go' (c : acc) rest
+        go' acc []                   = (reverse acc, [])
 
-takeQuoted :: String -> String
-takeQuoted ('"' : _) = ""
-takeQuoted ('\\' : c : rest) = c : takeQuoted rest
-takeQuoted (c : rest) = c : takeQuoted rest
-takeQuoted [] = ""
+-- | Case-insensitive key lookup in extracted JSON pairs.
+jsonFieldCI :: [(String, String)] -> String -> Maybe String
+jsonFieldCI pairs key =
+  let lk = map toLower key
+  in lookup lk [(map toLower k, v) | (k, v) <- pairs]
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
 encodeIPSRecord offWidth (off, dat) =
@@ -249,13 +281,13 @@ encodeIPS32 recs trunc = BL.toStrict $ toLazyByteString $
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
 -- Truncation marker (if any) goes between EOF and JSON.
-encodeEBP :: [(Int, ByteString)] -> Maybe Int64 -> String -> ByteString
-encodeEBP recs trunc desc = BL.toStrict $ toLazyByteString $
+encodeEBP :: [(Int, ByteString)] -> Maybe Int64 -> String -> String -> String -> ByteString
+encodeEBP recs trunc title author desc = BL.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) recs
   <> byteString "EOF"
   <> maybe mempty (truncOffset 3) trunc
-  <> byteString (ebpJson desc)
+  <> byteString (ebpJson title author desc)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
 -- Used by direct conversion to preserve source EBP metadata as-is.
@@ -269,9 +301,11 @@ encodeEBPRaw recs meta = BL.toStrict $ toLazyByteString $
 truncOffset :: Int -> Int64 -> Builder
 truncOffset w off = encodeOffset w (fromIntegral off)
 
-ebpJson :: String -> ByteString
-ebpJson d = BS8.pack $
-  "{\"title\":\"\",\"author\":\"\",\"description\":\"" ++ escapeJson d ++ "\"}"
+ebpJson :: String -> String -> String -> ByteString
+ebpJson t a d = BS8.pack $
+  "{\"title\":\"" ++ escapeJson t
+  ++ "\",\"author\":\"" ++ escapeJson a
+  ++ "\",\"description\":\"" ++ escapeJson d ++ "\"}"
   where
     escapeJson [] = []
     escapeJson ('"':cs)  = '\\' : '"'  : escapeJson cs
