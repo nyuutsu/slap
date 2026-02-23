@@ -1,6 +1,6 @@
 # Architecture
 
-~7,300 lines of Haskell. 29 modules. 16 patch formats. One binary.
+~10,200 lines of Haskell. 40 modules. 16 patch formats. One binary.
 
 ## Module Map
 
@@ -39,7 +39,7 @@ src/
       Create.hs    PPF3 create (IO wrapper + pure core)
       Info.hs      PPF info display
 test/
-  Props.hs         QuickCheck: 15 round-trip + 2 hash + 16 truncation + 6 contract properties
+  Props.hs         QuickCheck: 44 properties (round-trip, hash, truncation, contract)
 ```
 
 ## Data Flow
@@ -227,11 +227,11 @@ diffs, while application reconstructs a known-size target buffer.
 stderr` and `exitFailure`. A structured error ADT would add type
 safety that no consumer benefits from.
 
-**Two-layer testing.** Integration tests (`test/run.sh`, 507 tests)
-use SHA256 verification against real patches and external tools.
-Property tests (`test/Props.hs`, 39 QuickCheck properties) test
+**Two-layer testing.** Integration tests (tasty, ~397 tests) use
+SHA256 verification against real patches and external tools.
+Property tests (`test/Props.hs`, 44 QuickCheck properties) test
 round-trip correctness, parser robustness, and conversion contracts.
-Declarative matrix files (`test/specs/*.txt`) define round-trip,
+Declarative matrix files (`test/specs/*.txt`) define apply, create,
 conversion, and cross-validation test cases.
 
 ## Format Support Matrix
