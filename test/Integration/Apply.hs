@@ -2,7 +2,7 @@ module Integration.Apply (applyTests) where
 
 import Integration.Helpers
   (repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
-   sha256Hex, applyPatch)
+   sha256Hex, applyPatch, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 
 import qualified Data.ByteString as BS
@@ -12,17 +12,17 @@ import System.FilePath ((</>), takeExtension)
 import Test.Tasty (TestTree, testGroup, withResource)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-applyTests :: IO TestTree
-applyTests = do
+applyTests :: RomCache -> IO TestTree
+applyTests romCache = do
   repo <- repoDir
   let suitesDir = repo </> "test" </> "suites"
   files <- sort . filter (\f -> takeExtension f == ".suite")
            <$> listDirectory suitesDir
-  groups <- mapM (mkSuiteGroup repo suitesDir) files
+  groups <- mapM (mkSuiteGroup romCache repo suitesDir) files
   pure (testGroup "apply" (concat groups))
 
-mkSuiteGroup :: FilePath -> FilePath -> String -> IO [TestTree]
-mkSuiteGroup repo suitesDir name = do
+mkSuiteGroup :: RomCache -> FilePath -> FilePath -> String -> IO [TestTree]
+mkSuiteGroup romCache repo suitesDir name = do
   let path = suitesDir </> name
   (hdr, entries) <- parseSuiteFile path
   let basePath = repo </> shBase hdr
@@ -33,7 +33,7 @@ mkSuiteGroup repo suitesDir name = do
     else do
       let validEntries = filter isTestable entries
           -- Share the base ROM read across all patch tests in this suite
-          resource = withResource (BS.readFile basePath) (const (pure ()))
+          resource = withResource (cachedReadFile romCache basePath) (const (pure ()))
       pure [resource $ \getBase -> testGroup suiteName
               (map (mkPatchTest repo getBase expectedSha) validEntries)]
   where

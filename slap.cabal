@@ -81,7 +81,7 @@ test-suite props
   main-is:          Props.hs
   hs-source-dirs:   test
   default-language: GHC2024
-  ghc-options:      -Wall
+  ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
       base                 >= 4.18 && < 5
     , bytestring           >= 0.11

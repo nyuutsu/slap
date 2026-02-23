@@ -1,6 +1,9 @@
 module Integration.Helpers
-  ( -- * Hashing
-    sha256Hex
+  ( -- * Caching
+    RomCache
+  , cachedReadFile
+    -- * Hashing
+  , sha256Hex
     -- * Spec/suite parsing
   , parseSpecFile
   , SuiteHeader(..)
@@ -34,7 +37,9 @@ import Control.Exception (catch, IOException)
 import qualified Data.ByteString as BS
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
+import Data.IORef (IORef, readIORef, atomicModifyIORef')
 import Data.List (isInfixOf, isPrefixOf)
+import qualified Data.Map.Strict as Map
 import System.Directory (listDirectory, doesDirectoryExist, removeFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode)
@@ -42,6 +47,22 @@ import System.FilePath ((</>), takeExtension)
 import System.IO (hClose, openBinaryTempFile)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
+
+----------------------------------------------------------------------------
+-- Caching
+----------------------------------------------------------------------------
+
+type RomCache = IORef (Map.Map FilePath BS.ByteString)
+
+cachedReadFile :: RomCache -> FilePath -> IO BS.ByteString
+cachedReadFile ref fp = do
+  m <- readIORef ref
+  case Map.lookup fp m of
+    Just bs -> pure bs
+    Nothing -> do
+      bs <- BS.readFile fp
+      atomicModifyIORef' ref (\m' -> (Map.insert fp bs m', ()))
+      pure bs
 
 ----------------------------------------------------------------------------
 -- Hashing

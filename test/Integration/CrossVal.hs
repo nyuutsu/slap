@@ -2,7 +2,7 @@ module Integration.CrossVal (crossValTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex, applyPatch,
-   withTempFile, withTempDir)
+   withTempFile, withTempDir, RomCache, cachedReadFile)
 import Patch.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
 
@@ -17,17 +17,17 @@ import System.Process (readProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-crossValTests :: IO TestTree
-crossValTests = do
+crossValTests :: RomCache -> IO TestTree
+crossValTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
   cacheRef <- newIORef (Map.empty :: Map.Map (String, String) BS.ByteString)
-  tests <- mapM (mkCrossValTest repo cacheRef) rows
+  tests <- mapM (mkCrossValTest romCache repo cacheRef) rows
   pure (testGroup "crossval" (concat tests))
 
-mkCrossValTest :: FilePath -> IORef (Map.Map (String, String) BS.ByteString)
+mkCrossValTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) BS.ByteString)
                -> [String] -> IO [TestTree]
-mkCrossValTest repo cacheRef fields = case fields of
+mkCrossValTest romCache repo cacheRef fields = case fields of
   (fmtStr : scenario : baseRel : bootRel : targetSha : toolName : _) -> do
     case parseCreateFormat fmtStr of
       Nothing -> pure []
@@ -43,7 +43,7 @@ mkCrossValTest repo cacheRef fields = case fields of
             case toolPath of
               Nothing -> pure []
               Just tool -> pure [testCase (fmtStr ++ "/" ++ scenario) $ do
-                baseBs   <- BS.readFile basePath
+                baseBs   <- cachedReadFile romCache basePath
                 targetBs <- getOrBootstrap cacheRef repo (baseRel, bootRel) baseBs bootPath
                 -- Create patch with slap
                 case createFromMemory fmt baseBs targetBs defaultMeta of
@@ -77,7 +77,7 @@ getOrBootstrap cacheRef _repo key baseBs bootPath = do
           case result of
             Left err -> error ("bootstrap apply failed: " ++ err)
             Right tgt -> do
-              modifyIORef' cacheRef (Map.insert key tgt)
+              atomicModifyIORef' cacheRef (\m -> (Map.insert key tgt m, ()))
               pure tgt
 
 findTool :: String -> IO (Maybe FilePath)

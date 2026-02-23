@@ -10,9 +10,24 @@ import Integration.Undo (undoTests)
 import Integration.Smoke (smokeTests)
 import Integration.CLI (cliTests)
 
+import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, forkIO)
+import Data.IORef (newIORef)
+import qualified Data.Map.Strict as Map
+import qualified Data.ByteString as BS
+
+parSequence :: [IO a] -> IO [a]
+parSequence actions = do
+  mvars <- mapM (\act -> do
+    mv <- newEmptyMVar
+    _ <- forkIO (act >>= putMVar mv)
+    pure mv) actions
+  mapM takeMVar mvars
+
 main :: IO ()
 main = do
-  trees <- sequence
-    [applyTests, createTests, crossValTests, convertTests,
-     metadataTests, undoTests, smokeTests, cliTests]
+  romCache <- newIORef (Map.empty :: Map.Map FilePath BS.ByteString)
+  trees <- parSequence
+    [applyTests romCache, createTests romCache, crossValTests romCache,
+     convertTests romCache, metadataTests romCache, undoTests romCache,
+     smokeTests romCache, cliTests romCache]
   defaultMain (testGroup "integration" trees)

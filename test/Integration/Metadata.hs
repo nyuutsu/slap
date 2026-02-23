@@ -1,6 +1,6 @@
 module Integration.Metadata (metadataTests) where
 
-import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat)
+import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, RomCache)
 import Patch.SomePatch (SomePatch(..), parseSome)
 import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
 
@@ -12,8 +12,8 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-metadataTests :: IO TestTree
-metadataTests = do
+metadataTests :: RomCache -> IO TestTree
+metadataTests _romCache = do
   repo <- repoDir
   groups <- mapM (mkMetadataGroup repo) metadataCases
   pure (testGroup "metadata" (concat groups))

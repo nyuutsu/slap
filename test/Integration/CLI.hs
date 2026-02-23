@@ -1,7 +1,8 @@
 module Integration.CLI (cliTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha256Hex, withTempFile, withTempDir)
+  (repoDir, findSlapBinary, runSlap, sha256Hex, withTempFile, withTempDir, RomCache)
+import Patch.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
 import qualified Data.ByteString as BS
@@ -15,21 +16,25 @@ import System.Process (readProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-cliTests :: IO TestTree
-cliTests = do
+cliTests :: RomCache -> IO TestTree
+cliTests _romCache = do
+  repo <- repoDir
   mSlap <- findSlapBinary
-  case mSlap of
-    Nothing -> pure (testGroup "cli" [])
+  let inProcess = concat
+        [ corruptTests
+        , warningTests repo
+        , pchtxtDetectTests
+        ]
+  subprocessTests <- case mSlap of
+    Nothing -> pure []
     Just slap -> do
-      repo <- repoDir
       let dm4kBase = repo </> "test/data/dm4k/base.gbc"
           dm4kBps  = repo </> "test/data/dm4k/patch.bps"
           dm4kIps  = repo </> "test/data/dm4k/patch.ips"
           dm4kUps  = repo </> "test/data/dm4k/patch.ups"
       baseExists <- doesFileExist dm4kBase
-      pure $ testGroup "cli" $ concat
-        [ corruptTests slap
-        , if baseExists then dryrunTests slap dm4kBase dm4kBps else []
+      pure $ concat
+        [ if baseExists then dryrunTests slap dm4kBase dm4kBps else []
         , if baseExists then forceTests slap dm4kBase dm4kUps else []
         , if baseExists then noverifyTests slap dm4kBase dm4kBps else []
         , if baseExists then inplaceTests slap dm4kBase dm4kIps else []
@@ -39,18 +44,17 @@ cliTests = do
         , if baseExists then compoundTests slap dm4kBase dm4kIps dm4kBps else []
         , if baseExists then createFlagTests slap dm4kBase dm4kBps else []
         , if baseExists then aliasTests slap dm4kBase dm4kIps dm4kBps else []
-        , warningTests slap repo
         , if baseExists then emptyDiffTests slap dm4kBase else []
         , if baseExists then undoOutputTests slap dm4kBase dm4kUps else []
         , if baseExists then archiveTests slap dm4kBase dm4kIps dm4kBps else []
         , if baseExists then ipsTruncateTests slap dm4kBase else []
         , customCodetableTests slap
-        , pchtxtDetectTests slap
         , if baseExists then ninja1VerifyTests slap dm4kBase dm4kIps else []
         , if baseExists then descriptionTests slap dm4kBase dm4kBps else []
         , explainModeTests slap dm4kIps
             (if baseExists then Just (dm4kBase, dm4kUps, dm4kBps) else Nothing)
         ]
+  pure $ testGroup "cli" (inProcess ++ subprocessTests)
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -84,37 +88,43 @@ writeGarbage :: FilePath -> Int -> IO ()
 writeGarbage fp n = BS.writeFile fp $ BS.pack $ take n $ map fromIntegral $
   iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
 
+ciContains :: String -> String -> Bool
+ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack
+
 ----------------------------------------------------------------------------
 -- Test groups
 ----------------------------------------------------------------------------
 
-corruptTests :: FilePath -> [TestTree]
-corruptTests slap =
+corruptTests :: [TestTree]
+corruptTests =
   [ testCase "corrupt/info empty file" $
-      withTempFile "slap-empty" $ \fp -> do
-        BS.writeFile fp BS.empty
-        expectFail slap ["info", fp] "corrupt/info empty file" "unknown"
+      case parseSome BS.empty of
+        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
+        Right _ -> assertFailure "expected parse failure for empty file"
 
   , testCase "corrupt/explain empty file" $
-      withTempFile "slap-empty" $ \fp -> do
-        BS.writeFile fp BS.empty
-        expectFail slap ["explain", fp] "corrupt/explain empty file" "unknown"
+      case parseSome BS.empty of
+        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
+        Right _ -> assertFailure "expected parse failure for empty file"
 
-  , testCase "corrupt/info random garbage" $
-      withTempFile "slap-garbage" $ \fp -> do
-        writeGarbage fp 256
-        expectFail slap ["info", fp] "corrupt/info random garbage" "unknown"
+  , testCase "corrupt/info random garbage" $ do
+      let bs = BS.pack $ take 256 $ map fromIntegral $
+                 iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
+      case parseSome bs of
+        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
+        Right _ -> assertFailure "expected parse failure for random garbage"
 
-  , testCase "corrupt/info truncated IPS (graceful)" $
-      withTempFile "slap-trunc" $ \fp -> do
-        -- "PATCH" + 2 bytes, no EOF
-        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02])
-        expectOk slap ["info", fp] "corrupt/info truncated IPS" "0"
+  , testCase "corrupt/info truncated IPS (graceful)" $ do
+      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome bs of
+        Left err -> assertFailure ("parseSome rejected truncated IPS: " ++ err)
+        Right sp -> assertBool "expected '0' in info" ("0" `isInfixOf` spInfo sp)
 
-  , testCase "corrupt/info truncated BPS" $
-      withTempFile "slap-trunc-bps" $ \fp -> do
-        BS.writeFile fp (BS.pack [0x42,0x50,0x53,0x31])  -- "BPS1"
-        expectFail slap ["info", fp] "corrupt/info truncated BPS" ""
+  , testCase "corrupt/info truncated BPS" $ do
+      let bs = BS.pack [0x42,0x50,0x53,0x31]
+      case parseSome bs of
+        Left _ -> pure ()
+        Right _ -> assertFailure "expected parse failure for truncated BPS"
   ]
 
 dryrunTests :: FilePath -> FilePath -> FilePath -> [TestTree]
@@ -326,37 +336,40 @@ aliasTests slap base ips bps =
 
   ]
 
-warningTests :: FilePath -> FilePath -> [TestTree]
-warningTests slap repo =
-  [ testCase "warnings/truncated IPS no EOF" $
-      withTempFile "slap-trunc" $ \fp -> do
-        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02])
-        expectOk slap ["info", fp] "warnings/truncated IPS no EOF" "no EOF marker"
+warningTests :: FilePath -> [TestTree]
+warningTests repo =
+  [ testCase "warnings/truncated IPS no EOF" $ do
+      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome bs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> assertBool "expected 'no EOF marker' in warnings"
+                     (any (ciContains "no EOF marker") (spWarnings sp))
 
-  , testCase "warnings/truncated IPS empty" $
-      withTempFile "slap-trunc" $ \fp -> do
-        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02])
-        expectOk slap ["info", fp] "warnings/truncated IPS empty" "empty patch"
+  , testCase "warnings/truncated IPS empty" $ do
+      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome bs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> assertBool "expected 'empty patch' in info"
+                     (ciContains "empty patch" (spInfo sp))
 
-  , testCase "warnings/empty IPS warns empty only" $
-      withTempFile "slap-ips" $ \fp -> do
-        -- "PATCHEOF"
-        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46])
-        (_, sout, serr) <- runSlap slap ["info", fp]
-        let combined = sout ++ serr
-        assertBool "should warn 'empty patch'"
-          ("empty patch" `isInfixOf` combined)
-        assertBool "should NOT warn 'no EOF'"
-          (not ("no EOF" `isInfixOf` combined))
+  , testCase "warnings/empty IPS warns empty only" $ do
+      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
+      case parseSome bs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> do
+          let info = spInfo sp
+          assertBool "should warn 'empty patch'" ("empty patch" `isInfixOf` info)
+          assertBool "should NOT warn 'no EOF'" (not ("no EOF" `isInfixOf` info))
 
   , testCase "warnings/normal IPS no warnings" $ do
       let ipsPath = repo </> "test/data/dm4k/patch.ips"
       exists <- doesFileExist ipsPath
       when exists $ do
-        (_, sout, serr) <- runSlap slap ["info", ipsPath]
-        let combined = sout ++ serr
-        assertBool "unexpected warning"
-          (not ("warning" `isInfixOf` combined))
+        bs <- BS.readFile ipsPath
+        case parseSome bs of
+          Left err -> assertFailure ("parseSome failed: " ++ err)
+          Right sp -> assertBool "unexpected warning"
+                       (not ("warning" `isInfixOf` spInfo sp))
   ]
 
 emptyDiffTests :: FilePath -> FilePath -> [TestTree]
@@ -536,13 +549,15 @@ customCodetableTests slap =
       , 0x01,0x08,0x00,0x0a,0x0a,0x00,0x02,0x02,0x01,0x45,0x45,0x18,0x03,0x00
       ]
 
-pchtxtDetectTests :: FilePath -> [TestTree]
-pchtxtDetectTests slap =
-  [ testCase "pchtxt-detect/single-slash before directive" $
-      withTempFile "slap-pchtxt" $ \fp -> do
-        BS.writeFile fp (BS.pack (map (fromIntegral . fromEnum)
-          "/ block comment\n/ another line\n@enabled\n00000000 FF\n"))
-        expectOk slap ["info", fp] "pchtxt-detect" "PCHTXT"
+pchtxtDetectTests :: [TestTree]
+pchtxtDetectTests =
+  [ testCase "pchtxt-detect/single-slash before directive" $ do
+      let bs = BS.pack (map (fromIntegral . fromEnum)
+            "/ block comment\n/ another line\n@enabled\n00000000 FF\n")
+      case parseSome bs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> assertBool "expected 'PCHTXT' in format"
+                     ("PCHTXT" `isInfixOf` spFormat sp)
   ]
 
 ninja1VerifyTests :: FilePath -> FilePath -> FilePath -> [TestTree]

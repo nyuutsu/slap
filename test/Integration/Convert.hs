@@ -2,7 +2,7 @@ module Integration.Convert (convertTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex,
-   applyPatch, attemptConvert, matchPattern)
+   applyPatch, attemptConvert, matchPattern, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
@@ -14,15 +14,15 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-convertTests :: IO TestTree
-convertTests = do
+convertTests :: RomCache -> IO TestTree
+convertTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  tests <- mapM (mkConvertTest repo) rows
+  tests <- mapM (mkConvertTest romCache repo) rows
   pure (testGroup "convert" (concat tests))
 
-mkConvertTest :: FilePath -> [String] -> IO [TestTree]
-mkConvertTest repo fields = case fields of
+mkConvertTest :: RomCache -> FilePath -> [String] -> IO [TestTree]
+mkConvertTest romCache repo fields = case fields of
   (srcFmt : tgtFmt : patchRel : baseRel : targetSha : result : rest)
     | "skip:" `isPrefixOf` result -> pure []
     | otherwise -> do
@@ -36,13 +36,13 @@ mkConvertTest repo fields = case fields of
             Just tgtCfmt -> do
               let label = srcFmt ++ " -> " ++ tgtFmt ++ " (" ++ patchRel ++ ")"
               pure [testCase label $
-                runConvertTest repo patchPath baseRel targetSha result
+                runConvertTest romCache repo patchPath baseRel targetSha result
                   warningsStr flagsStr tgtCfmt]
   _ -> pure []
 
-runConvertTest :: FilePath -> FilePath -> String -> String -> String
+runConvertTest :: RomCache -> FilePath -> FilePath -> String -> String -> String
                -> String -> String -> CreateFormat -> IO ()
-runConvertTest repo patchPath baseRel targetSha result warningsStr flagsStr tgtCfmt = do
+runConvertTest romCache repo patchPath baseRel targetSha result warningsStr flagsStr tgtCfmt = do
   patchBs <- BS.readFile patchPath
   case parseSome patchBs of
     Left err -> assertFailure ("parseSome failed: " ++ err)
@@ -57,7 +57,7 @@ runConvertTest repo patchPath baseRel targetSha result warningsStr flagsStr tgtC
                  let basePath = repo </> baseRel
                  exists <- doesFileExist basePath
                  if exists
-                   then Just <$> BS.readFile basePath
+                   then Just <$> cachedReadFile romCache basePath
                    else pure Nothing
                else pure Nothing
 
@@ -81,7 +81,7 @@ runConvertTest repo patchPath baseRel targetSha result warningsStr flagsStr tgtC
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
-                  baseBs <- maybe (BS.readFile basePath) pure mBase
+                  baseBs <- maybe (cachedReadFile romCache basePath) pure mBase
                   case parseSome convertedBs of
                     Left err -> assertFailure ("re-parse converted failed: " ++ err)
                     Right sp2 -> do
