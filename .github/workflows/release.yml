@@ -22,12 +22,10 @@ jobs:
       - name: Install static libs
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgmp-dev zlib1g-dev
+          sudo apt-get install -y libgmp-dev zlib1g-dev libbz2-dev
 
       - name: Build
-        run: |
-          cabal build \
-            --ghc-options='-optl-static -optl-pthread'
+        run: cabal build
 
       - name: Package
         run: |
@@ -70,33 +68,6 @@ jobs:
         with:
           name: slap-macos-arm64
           path: slap-${{ env.VERSION }}-macos-arm64.tar.gz
-
-  macos-x86:
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: haskell-actions/setup@v2
-        with:
-          ghc-version: '9.12.2'
-          cabal-version: 'latest'
-
-      - name: Build
-        run: cabal build
-
-      - name: Package
-        run: |
-          dir="slap-${VERSION}-macos-x86_64"
-          mkdir -p "$dir"
-          cp "$(cabal -v0 list-bin slap)" "$dir/slap"
-          cp slap.1 README.md LICENSE "$dir/"
-          file "$dir/slap"
-          tar czf "${dir}.tar.gz" "$dir"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: slap-macos-x86_64
-          path: slap-${{ env.VERSION }}-macos-x86_64.tar.gz
 
   windows:
     runs-on: windows-latest
