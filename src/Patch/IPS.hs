@@ -142,18 +142,16 @@ applyIPS patch target = withBinaryFile target ReadWriteMode $ \h -> do
   pure n
 
 applyRecords :: Handle -> [IPSRecord] -> IO Int
-applyRecords h = go 0
+applyRecords h recs = do
+  mapM_ applyOne recs
+  pure (length recs)
   where
-    go n [] = pure n
-    go n (r:rs) = do
-      case r of
-        IPSRecord off dat -> do
-          hSeek h AbsoluteSeek (fromIntegral off)
-          BS.hPut h dat
-        IPSRecordRLE off count val -> do
-          hSeek h AbsoluteSeek (fromIntegral off)
-          BS.hPut h (BS.replicate count val)
-      go (n + 1) rs
+    applyOne (IPSRecord off dat) = do
+      hSeek h AbsoluteSeek (fromIntegral off)
+      BS.hPut h dat
+    applyOne (IPSRecordRLE off count val) = do
+      hSeek h AbsoluteSeek (fromIntegral off)
+      BS.hPut h (BS.replicate count val)
 
 ipsMeta :: IPSPatch -> [(String, String)]
 ipsMeta p = concat

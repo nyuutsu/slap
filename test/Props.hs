@@ -363,6 +363,7 @@ fullContents = PatchContents
   , pcImageType   = Nothing
   , pcFileIdDiz   = Nothing
   , pcPCHTXTBlocks = Nothing
+  , pcNINJA1Compressed = Nothing
   }
 
 -- | canConvert succeeds for every direct format when all fields are present.

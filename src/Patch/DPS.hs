@@ -82,8 +82,8 @@ data DPSPayload
 isDPS :: ByteString -> Bool
 isDPS bs
   | BS.length bs < 199 = False  -- need header + at least 1 record byte
-  | BS.index bs 193 /= 1 = False  -- DPS version must be 1
-  | BS.index bs 192 > 1 = False   -- flag must be 0 or 1
+  | BS.index bs 193 /= 1 = False  -- DPS version must be 1 (3×64-byte fields + flag + version)
+  | BS.index bs 192 > 1 = False   -- stability flag at 3×64 must be 0 or 1
   | not (BS.all isHeaderByte (BS.take 192 bs)) = False
   | otherwise = let firstMode = BS.index bs 198
                 in firstMode <= 1  -- first record mode must be 0 or 1

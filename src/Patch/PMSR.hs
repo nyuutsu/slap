@@ -76,13 +76,12 @@ parseRecords n acc = do
 
 applyPMSR :: PMSRPatch -> FilePath -> IO Int
 applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  go h 0 (pmsrRecords patch)
+  mapM_ (applyOne h) (pmsrRecords patch)
+  pure (length (pmsrRecords patch))
   where
-    go _ n [] = pure n
-    go h n (r:rs) = do
+    applyOne h r = do
       hSeek h AbsoluteSeek (fromIntegral (pmsrOffset r))
       BS.hPut h (pmsrData r)
-      go h (n + 1) rs
 
 encodePMSR :: [(Int, ByteString)] -> ByteString
 encodePMSR recs = BL.toStrict $ toLazyByteString $

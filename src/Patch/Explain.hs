@@ -127,7 +127,7 @@ renderExplain mSource ed = unlines $
   ++ notesLines
   ++ [renderSummaryLine (edSummary ed) | not (isSummaryNone (edSummary ed))]
   where
-    notesLines = map (\n -> n) (edNotes ed)
+    notesLines = edNotes ed
 
     renderSection (SectionRegions rs) =
       zipWith renderRegion [1..] rs
@@ -346,7 +346,7 @@ renderSummary mSource ed = unlines $ filter (not . null) $
            _         -> Nothing
 
     -- Bucket-based analysis
-    bucketCount = 56 :: Int
+    bucketCount = 56 :: Int  -- terminal sparkline width
 
     rangeSize = max 1 (maxEnd - minOff)
     bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)

@@ -65,10 +65,11 @@ data Verification = Verification
   , vFileSize     :: Maybe Word32                  -- expected source file size (advisory)
   , vWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
   , vSourceBytes  :: [(Int, BS.ByteString, String)] -- (offset, expected, label) advisory byte checks
+  , vSourcePreHash :: BS.ByteString -> BS.ByteString -- transform source before hashing (NINJA1 sampling)
   }
 
 noVerification :: Verification
-noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing [] []
+noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing [] [] id
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
@@ -188,6 +189,7 @@ parseSome bs = case detectFormat bs of
             , pcImageType   = PPF.patchImageType p
             , pcFileIdDiz   = fmap PPF.fileIdContent (PPF.patchFileId p)
             , pcPCHTXTBlocks = Nothing
+            , pcNINJA1Compressed = Nothing
             }
         }
 
@@ -374,6 +376,11 @@ parseSome bs = case detectFormat bs of
           [ ["no EOF marker (patch may be truncated)" | not (NINJA1.n1CleanEOF p)]
           , ["empty patch (0 records)" | null recs]
           ]
+        compressed = NINJA1.n1SubFormat p `elem` [NINJA1.N1BinaryZ, NINJA1.N1TextZ]
+        srcNotes = case NINJA1.n1SubFormat p of
+          NINJA1.N1Text  -> ["note: NINJA1 text subformat converted to binary (B)"]
+          NINJA1.N1TextZ -> ["note: NINJA1 text subformat converted to compressed binary (BZ)"]
+          _              -> []
     Right SomePatch
       { spFormat         = "NINJA1"
       , spInfo           = NINJA1.ninja1Info p
@@ -382,9 +389,10 @@ parseSome bs = case detectFormat bs of
       , spApply          = InPlace $ \fp -> NINJA1.applyNINJA1 p fp >> pure ()
       , spUndo           = Nothing
       , spVerification   = noVerification
-          { vSourceCRC32 = NINJA1.n1SourceCRC p
-          , vSourceMD5   = NINJA1.n1SourceMD5 p
-          , vSourceSHA1  = NINJA1.n1SourceSHA1 p
+          { vSourceCRC32  = NINJA1.n1SourceCRC p
+          , vSourceMD5    = NINJA1.n1SourceMD5 p
+          , vSourceSHA1   = NINJA1.n1SourceSHA1 p
+          , vSourcePreHash = NINJA1.ninja1HashInput
           }
       , spVerboseLines   = numbered recs $ \r ->
           "Write " ++ show (BS.length (NINJA1.n1RecData r)) ++ " bytes at 0x"
@@ -392,12 +400,13 @@ parseSome bs = case detectFormat bs of
       , spWarnings       = warns
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
-      , spSourceNotes    = []
+      , spSourceNotes    = srcNotes
       , spContents  = Just (emptyContents (map (\r -> (NINJA1.n1RecOffset r, NINJA1.n1RecData r)) recs))
           { pcSourceCRC32 = NINJA1.n1SourceCRC p
           , pcSourceMD5   = NINJA1.n1SourceMD5 p
           , pcSourceSHA1  = NINJA1.n1SourceSHA1 p
           , pcRomType     = Just (NINJA1.fromNINJA1RomType (NINJA1.n1RomType p))
+          , pcNINJA1Compressed = Just compressed
           }
       }
 
@@ -539,7 +548,8 @@ numbered xs f = zipWith fmt [(1::Int)..] xs
     total = length xs
     fmt i x = "[" ++ show i ++ "/" ++ show total ++ "] " ++ f x
 
--- | Replace the first occurrence of a substring.
+-- | Replace the first occurrence of a substring.  O(n*m) but only called
+-- once for Yay0 format string rewriting, so it doesn't matter.
 replaceFirst :: String -> String -> String -> String
 replaceFirst _ _ [] = []
 replaceFirst needle replacement haystack@(x:xs)

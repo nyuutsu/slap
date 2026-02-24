@@ -1,6 +1,6 @@
 # Architecture
 
-~10,200 lines of Haskell. 40 modules. 16 patch formats. One binary.
+~10,300 lines of Haskell. 40 modules. 20 format variants. One binary.
 
 ## Module Map
 
@@ -77,6 +77,7 @@ data SomePatch = SomePatch
   , spRecordCount    :: Int
   , spRecordUnit     :: String
   , spContents       :: Maybe PatchContents
+  , spSourceNotes    :: [String]
   }
 
 data ApplyStrategy
@@ -109,14 +110,18 @@ Apply functions split into two strategies:
 
 ```haskell
 data Verification = Verification
-  { vSourceCRC32  :: Maybe Word32
-  , vSourceMD5    :: Maybe BS.ByteString
-  , vSourceSHA1   :: Maybe BS.ByteString
-  , vTargetCRC32  :: Maybe Word32
-  , vTargetMD5    :: Maybe BS.ByteString
-  , vSourceBlocks :: [(Int, Word16)]      -- APS-GBA per-block CRC16
-  , vTargetBlocks :: [(Int, Word16)]
-  , vPPFBlock     :: Maybe (Int64, BS.ByteString)
+  { vSourceCRC32   :: Maybe Word32
+  , vSourceMD5     :: Maybe BS.ByteString
+  , vSourceSHA1    :: Maybe BS.ByteString
+  , vTargetCRC32   :: Maybe Word32
+  , vTargetMD5     :: Maybe BS.ByteString
+  , vSourceBlocks  :: [(Int, Word16)]      -- APS-GBA per-block CRC16
+  , vTargetBlocks  :: [(Int, Word16)]
+  , vPPFBlock      :: Maybe (Int64, BS.ByteString)
+  , vFileSize      :: Maybe Word32         -- advisory source file size
+  , vWindowAdler32 :: [(Int, Int, Word32)] -- VCDIFF per-window
+  , vSourceBytes   :: [(Int, BS.ByteString, String)] -- advisory byte checks (APS-N64)
+  , vSourcePreHash :: BS.ByteString -> BS.ByteString -- transform before hashing (NINJA1)
   }
 ```
 
@@ -147,7 +152,8 @@ direct format conversion.
 ```haskell
 data PatchField = FRecords | FDescription | FSourceCRC32 | FSourceMD5
                 | FSourceSHA1 | FDestSize | FUndoData | FValidation
-                | FTruncation | FEBPMeta
+                | FTruncation | FEBPMeta | FRomType | FImageType
+                | FFileIdDiz | FPCHTXTBlocks
 
 data FormatSpec = FormatSpec
   { fsRequired :: Set PatchField   -- must be present or conversion fails
@@ -156,12 +162,15 @@ data FormatSpec = FormatSpec
 
 data PatchContents = PatchContents
   { pcRecords, pcDescription, pcSourceCRC32, pcSourceMD5, pcSourceSHA1,
-    pcDestSize, pcValidation, pcUndoData, pcTruncation, pcEBPMeta }
+    pcDestSize, pcValidation, pcUndoData, pcTruncation, pcEBPMeta,
+    pcRomType, pcImageType, pcFileIdDiz, pcPCHTXTBlocks,
+    pcNINJA1Compressed }
 ```
 
 `parseSome` populates `spContents :: Maybe PatchContents` for direct
 formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR, PCHTXT).
-Differential formats set it to `Nothing`.
+Differential formats set it to `Nothing`. PPF4 sets it to `Nothing`
+when Append records are present (offsets would be wrong).
 
 `convertDirect` checks `canConvert pc spec` — if the source contents
 satisfy the target spec's required fields, conversion proceeds.
@@ -227,12 +236,12 @@ diffs, while application reconstructs a known-size target buffer.
 stderr` and `exitFailure`. A structured error ADT would add type
 safety that no consumer benefits from.
 
-**Two-layer testing.** Integration tests (tasty, ~397 tests) use
+**Two-layer testing.** Integration tests (tasty, 397 tests) use
 SHA256 verification against real patches and external tools.
 Property tests (`test/Props.hs`, 44 QuickCheck properties) test
 round-trip correctness, parser robustness, and conversion contracts.
-Declarative matrix files (`test/specs/*.txt`) define apply, create,
-conversion, and cross-validation test cases.
+Declarative matrix files (`test/specs/*.txt`) define create,
+conversion, cross-validation, and undo test cases.
 
 ## Format Support Matrix
 
@@ -248,7 +257,7 @@ conversion, and cross-validation test cases.
 | PPF3 | ✓ | ✓ | ✓ | ✓‡ | ✓ | ✓ | ✓ |
 | PPF4 | ✓ | ✓ | — | — | — | ✓ | ✓ |
 | VCDIFF | ✓ | ✓ | — | — | — | ✓ | ✓ |
-| BSDiff/BDF | ✓ | ✓† | — | — | — | ✓ | ✓ |
+| BSDiff/BDF | ✓ | ✓ | — | — | — | ✓ | ✓ |
 | GDIFF | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
 | xdelta1 | ✓ | ✓ | — | — | — | ✓ | ✓ |
 | APS N64 | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
@@ -260,5 +269,4 @@ conversion, and cross-validation test cases.
 | PCHTXT | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
 
 \* UPS undo is self-inverse (apply the patch to the modified file).
-† BSDiff falls back to external `bspatch` if the built-in bz2 decompressor fails.
 ‡ Direct format conversion (no ROM needed). All ‡ formats can convert to any other ‡ format.

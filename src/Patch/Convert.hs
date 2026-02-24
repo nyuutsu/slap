@@ -13,6 +13,7 @@ module Patch.Convert
   , fieldName
   , convertDirect
   , createFromMemory
+  , createDefaultNotes
   , fmtExt
   , fmtName
   ) where
@@ -84,9 +85,11 @@ data PatchContents = PatchContents
   , pcTruncation  :: Maybe Int64
   , pcEBPMeta     :: Maybe BS.ByteString
   , pcRomType     :: Maybe Word8
+    -- ^ See cmRomType comment: Word8 is intentional (NINJA1 vs RUP semantics).
   , pcImageType   :: Maybe ImageType
   , pcFileIdDiz   :: Maybe BS.ByteString
   , pcPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
+  , pcNINJA1Compressed :: Maybe Bool  -- source was BZ/TZ (compressed)
   }
 
 data CreateFormat
@@ -103,6 +106,10 @@ data CreateMeta = CreateMeta
   , cmValidate    :: Bool
   , cmUnstable    :: Bool
   , cmRomType     :: Maybe Word8
+    -- ^ Word8, not a sum type: NINJA1 and RUP both carry a ROM type byte
+    -- but with different (and for RUP, unspecified) semantics.  NINJA1
+    -- converts at its boundary via toNINJA1RomType; RUP passes through raw.
+    -- A shared sum type would force NINJA1 labels onto RUP values.
   , cmImageType   :: Maybe ImageType
   , cmBPSMetadata :: Maybe BS.ByteString
   }
@@ -116,7 +123,7 @@ defaultMeta = CreateMeta "" "" "" "" False False False Nothing Nothing Nothing
 
 emptyContents :: [(Int64, BS.ByteString)] -> PatchContents
 emptyContents recs = PatchContents
-  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 provides :: PatchContents -> Set.Set PatchField
 provides pc = Set.fromList $ [FRecords]
@@ -212,7 +219,8 @@ conversionNotes pc target spec meta =
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
       droppedNotes = concatMap (fieldNote pc) (Set.toList dropped)
       interopNotes = ebpTruncMetaNote pc target meta
-  in droppedNotes ++ interopNotes
+      defaultNotes = defaultAssumptionNotes target meta (pcRomType pc) (pcImageType pc)
+  in droppedNotes ++ interopNotes ++ defaultNotes
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
 -- treats them as mutually exclusive.
@@ -224,6 +232,23 @@ ebpTruncMetaNote pc CfmtEBP meta
     hasMeta = isJust (pcEBPMeta pc) || isJust (pcDescription pc)
            || not (null (cmDesc meta)) || not (null (cmTitle meta)) || not (null (cmAuthor meta))
 ebpTruncMetaNote _ _ _ = []
+
+-- | Warn when encodeDirect defaults romType or imgType because neither the
+-- CLI flags nor the source patch provided a value.
+defaultAssumptionNotes :: CreateFormat -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [String]
+defaultAssumptionNotes target meta srcRomType srcImageType = concat
+  [ [ "note: assuming raw ROM type (use --rom-type to specify)"
+    | target == CfmtNINJA1
+    , Nothing <- [cmRomType meta <|> srcRomType] ]
+  , [ "note: assuming BIN image type (use --image-type gi for GI disc images)"
+    | target == CfmtPPF3
+    , Nothing <- [cmImageType meta <|> srcImageType] ]
+  ]
+
+-- | Default-assumption notes for the create and --with convert paths,
+-- where no source PatchContents is available.
+createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
+createDefaultNotes target meta = defaultAssumptionNotes target meta Nothing Nothing
 
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote pc field = case field of
@@ -352,6 +377,7 @@ encodeDirect pc src target meta = case target of
   CfmtNINJA1 -> case (pcSourceCRC32 pc, pcSourceMD5 pc, pcSourceSHA1 pc) of
                    (Just crc, Just md5v, Just sha1v) ->
                      NINJA1.encodeNINJA1 intRecs crc md5v sha1v romType
+                       (fromMaybe False (pcNINJA1Compressed pc))
                    _ -> error "unreachable: canConvert verified"
   CfmtPMSR   -> PMSR.encodePMSR intRecs
   CfmtPCHTXT -> case pcPCHTXTBlocks pc of
@@ -426,9 +452,9 @@ buildContents :: CreateFormat -> BS.ByteString -> BS.ByteString
 buildContents fmt src tgt meta = PatchContents
   { pcRecords     = int64Recs
   , pcDescription = Nothing
-  , pcSourceCRC32 = if needs FSourceCRC32 then Just (crc32 src) else Nothing
-  , pcSourceMD5   = if needs FSourceMD5   then Just (md5 src)   else Nothing
-  , pcSourceSHA1  = if needs FSourceSHA1  then Just (sha1 src)  else Nothing
+  , pcSourceCRC32 = if needs FSourceCRC32 then Just (crc32 hashSrc) else Nothing
+  , pcSourceMD5   = if needs FSourceMD5   then Just (md5 hashSrc)   else Nothing
+  , pcSourceSHA1  = if needs FSourceSHA1  then Just (sha1 hashSrc)  else Nothing
   , pcDestSize    = if needs FDestSize
                     then Just (fromIntegral (BS.length tgt))
                     else Nothing
@@ -446,10 +472,14 @@ buildContents fmt src tgt meta = PatchContents
   , pcImageType   = Nothing
   , pcFileIdDiz   = Nothing
   , pcPCHTXTBlocks = Nothing
+  , pcNINJA1Compressed = Nothing
   }
   where
     hunks     = diffHunks src tgt
     int64Recs = map (\(o, d) -> (fromIntegral o, d)) hunks
+    hashSrc   = case fmt of
+      CfmtNINJA1 -> NINJA1.ninja1HashInput src
+      _          -> src
     valOff    = case cmImageType meta of
                   Just GI -> 0x80A0
                   _       -> 0x9320

@@ -19,7 +19,7 @@ module Patch.RUP
 -- Note: NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
 -- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
 
-import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd)
+import Patch.Get (Get, runGet, getByte, getBytes, atEnd)
 import Patch.Binary (diffHunks, md5)
 import Patch.Format (padHex, renderField)
 
@@ -63,6 +63,8 @@ data RUPPatch = RUPPatch
   , rupTargetMD5    :: Maybe ByteString  -- 16 bytes
   , rupSourceSz     :: Int64
   , rupTargetSz     :: Int64
+  , rupPatchEnc     :: Word8             -- PATCH_ENC (text encoding, byte 6)
+  , rupRomType      :: Word8             -- ROM type byte from OPEN_NEW_FILE command
   } deriving (Show)
 
 data RUPInfo = RUPInfo
@@ -104,12 +106,13 @@ packedBS = do
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes): NINJA2 format
 -- Spec says "first sector of the patch (1024 bytes)" but actual total is 2048.
--- PATCH_ENC (1B text encoding at offset 6) is consumed but not stored separately.
+-- PATCH_ENC (1B text encoding at offset 6) is stored in rupPatchEnc.
 ----------------------------------------------------------------------------
 
 headerSize :: Int
-headerSize = 0x800  -- 2048 bytes
+headerSize = 0x800  -- NINJA2 spec: fixed 2048-byte header
 
+-- | Parse the fixed header region.  Field offsets per ninja2-filespec20.txt §2.
 parseFixedHeader :: ByteString -> RUPInfo
 parseFixedHeader bs = RUPInfo
   { rupAuthor      = extractField 0x007 84
@@ -145,10 +148,11 @@ parseRUP bs
     parseRUP' = do
       hdr <- getBytes headerSize
       let meta = parseFixedHeader hdr
-      p <- parseCommands (emptyPatch meta)
+          enc  = BS.index hdr 6  -- PATCH_ENC byte
+      p <- parseCommands (emptyPatch meta enc)
       pure p { rupRecords = reverse (rupRecords p) }
 
-    emptyPatch m = RUPPatch m [] Nothing Nothing Nothing Nothing 0 0
+    emptyPatch m enc = RUPPatch m [] Nothing Nothing Nothing Nothing 0 0 enc 0
 
 parseCommands :: RUPPatch -> Get RUPPatch
 parseCommands patch = do
@@ -166,7 +170,7 @@ parseCommands patch = do
 parseFileCmd :: RUPPatch -> Get RUPPatch
 parseFileCmd patch = do
   _filename <- packedBS
-  skip 1  -- ROM type byte
+  rt <- getByte  -- ROM type byte
   srcSz <- packedInt
   tgtSz <- packedInt
   srcMD5 <- getBytes 16
@@ -186,6 +190,7 @@ parseFileCmd patch = do
              , rupTargetSz     = tgtSz
              , rupOverflow     = overflow
              , rupOverflowType = ovType
+             , rupRomType      = rt
              }
 
 -- | Command 0x02: XOR record
@@ -241,6 +246,7 @@ rupMetaKV p = concat
   , metaField "language"    (rupLanguage (rupMeta p))
   , metaField "website"     (rupWebsite (rupMeta p))
   , metaField "description" (rupDescription (rupMeta p))
+  , romTypeField
   , sizeFields
   , md5Field "source MD5" (rupSourceMD5 p)
   , md5Field "target MD5" (rupTargetMD5 p)
@@ -249,6 +255,10 @@ rupMetaKV p = concat
   where
     metaField _ Nothing = []
     metaField label (Just v) = [(label, BS8.unpack v)]
+
+    romTypeField
+      | rupRomType p == 0 = []
+      | otherwise = [("ROM type", show (rupRomType p))]
 
     sizeFields
       | rupSourceSz p == 0 && rupTargetSz p == 0 = []

@@ -13,6 +13,7 @@ module Patch.NINJA1
   , encodeNINJA1
   , ninja1Meta
   , ninja1Info
+  , ninja1HashInput
   ) where
 
 -- Canonical reference: docs/specs/ninja-1.01php.tar.gz (Derrick Sobodash, 2004, GPLv2)
@@ -148,7 +149,7 @@ zlibDecompress compressed = unsafePerformIO $ do
 -- EOF: offlen=3 offset="EOF"
 -- All offsets/lengths are big-endian, width given by preceding byte.
 -- Patch bytes are raw overwrites (NOT XOR like NINJA2).
--- Large file hash sampling (>0x1e00000) not implemented; see spec.
+-- Large file hash sampling (>0x1e00000): see ninja1HashInput.
 ----------------------------------------------------------------------------
 
 parseBin :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
@@ -351,21 +352,26 @@ romTypeName (RomUnknown n)    = "unknown (" ++ show n ++ ")"
 -- Encode
 ----------------------------------------------------------------------------
 
--- | Encode pre-diffed records as a NINJA1 Binary (uncompressed) patch.
+-- | Encode pre-diffed records as a NINJA1 Binary patch.
+-- When compress is True, zlib-compresses the payload and emits BZ subformat.
 encodeNINJA1 :: [(Int, BS.ByteString)]
              -> Word32          -- source CRC32
              -> BS.ByteString   -- source MD5 (16 bytes)
              -> BS.ByteString   -- source SHA1 (20 bytes)
              -> NINJA1RomType   -- ROM platform type
+             -> Bool            -- compress (BZ subformat)
              -> BS.ByteString
-encodeNINJA1 recs srcCRC srcMD5 srcSHA1 romType = BL.toStrict $ toLazyByteString $
-    byteString "NINJA1B "        -- magic + subformat
-    <> word8 (fromNINJA1RomType romType)
-    <> putWord32BE srcCRC
-    <> byteString srcMD5
-    <> byteString srcSHA1
-    <> foldMap encodeRecord recs
-    <> word8 3 <> byteString "EOF"     -- EOF sentinel
+encodeNINJA1 recs srcCRC srcMD5 srcSHA1 romType doCompress
+  | doCompress = "NINJA1BZ" <> BL.toStrict (Zlib.compress (BL.fromStrict payload))
+  | otherwise  = "NINJA1B " <> payload
+  where
+    payload = BL.toStrict $ toLazyByteString $
+        word8 (fromNINJA1RomType romType)
+        <> putWord32BE srcCRC
+        <> byteString srcMD5
+        <> byteString srcSHA1
+        <> foldMap encodeRecord recs
+        <> word8 3 <> byteString "EOF"     -- EOF sentinel
 
 encodeRecord :: (Int, BS.ByteString) -> Builder
 encodeRecord (off, dat) =
@@ -384,3 +390,23 @@ encodeBE n = BS.pack (go [] n)
   where
     go acc 0 = acc
     go acc v = go (fromIntegral (v .&. 0xFF) : acc) (v `shiftR` 8)
+
+----------------------------------------------------------------------------
+-- Large-file hash sampling
+--
+-- Per the PHP reference (ninja-1.01php), files >0x1e00000 bytes use a
+-- sample instead of the full file: first 20 MiB + last 10 MiB + decimal
+-- file size string.  CRC32/MD5/SHA1 are computed on this sample.
+----------------------------------------------------------------------------
+
+-- | Prepare hash input for NINJA1 source verification.
+-- Files >0x1e00000 (30 MiB) use the sampling algorithm from the PHP
+-- reference: first 0x1400000 bytes, last 0xa00000 bytes, decimal size.
+ninja1HashInput :: BS.ByteString -> BS.ByteString
+ninja1HashInput bs
+  | BS.length bs > 0x1e00000 =
+      let first    = BS.take 0x1400000 bs
+          lastPart = BS.drop (BS.length bs - 0xa00000) bs
+          sizeStr  = BS8.pack (show (BS.length bs))
+      in first <> lastPart <> sizeStr
+  | otherwise = bs

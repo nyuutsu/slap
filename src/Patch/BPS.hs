@@ -224,6 +224,8 @@ encodeSignedVarint v =
   in putByuuVarint encoded
 
 -- | Linear diff: SourceRead for matching runs, TargetRead for differences.
+-- Not using Patch.Binary.diffHunks because BPS needs SourceRead actions for
+-- unchanged regions (to reproduce implicit copies), not just changed hunks.
 bpsDiff :: ByteString -> ByteString -> [BPSAction]
 bpsDiff orig modified = go 0
   where

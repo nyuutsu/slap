@@ -59,7 +59,7 @@ pmsr   | paper-mario-pp  | test/data/paper-mario/base.z64 | test/data/paper-mari
 # ============================================================================
 #
 # No external applier available:
-#   IPS32, NINJA1, DPS, GDIFF — no widely available CLI applier
+#   IPS32, NINJA1, DPS, GDIFF, PCHTXT — no widely available CLI applier
 #
 # External applier exists but slap cannot create the format:
 #   BSDiff (bspatch), VCDIFF (xdelta3), xdelta1 (xdelta)

@@ -281,7 +281,7 @@ parseVCDIFF' allowCustom bs
     parseHeader = do
       skip 3  -- magic
       version <- getByte
-      when (version /= 0 && version /= 0x53) $
+      when (version /= 0 && version /= 0x53) $  -- 0x53 = 'S', xdelta3 version indicator
         failGet ("unsupported VCDIFF version: " ++ show version)
       hdrIndicator <- getByte
       let hasCompressor = testBit hdrIndicator 0

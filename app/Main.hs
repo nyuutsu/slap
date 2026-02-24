@@ -3,7 +3,7 @@
 module Main (main) where
 
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), parseSome)
-import Patch.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, convertDirect, fmtExt, fmtName)
+import Patch.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, fmtExt, fmtName)
 import Patch.PPF.Types (ImageType(..))
 import Patch.NINJA1 (NINJA1RomType(..), fromNINJA1RomType)
 import Patch.Explain (renderExplain, renderSummary)
@@ -22,7 +22,7 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import Control.Exception (SomeException, catch, finally)
+import Control.Exception (IOException, catch, finally)
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 ----------------------------------------------------------------------------
@@ -457,6 +457,8 @@ doCreate cmd = do
         , cmImageType   = cmdImageType cmd
         , cmBPSMetadata = mMeta
         }
+  let defaultNotes = createDefaultNotes (cmdCreateFmt cmd) meta
+  forM_ defaultNotes $ \n -> hPutStrLn stderr ("slap: " ++ n)
   case createFromMemory (cmdCreateFmt cmd) origBs modBs meta of
     Left err -> die err
     Right patchBs -> do
@@ -500,7 +502,7 @@ doConvert cmd = do
           case createFromMemory (cmdConvTo cmd) sourceBs targetBs meta of
             Left err -> die err
             Right result -> do
-              emitNotes (spSourceNotes sp)
+              emitNotes (spSourceNotes sp ++ createDefaultNotes (cmdConvTo cmd) meta)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Nothing -> case spContents sp of
@@ -527,7 +529,7 @@ applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
 applyViaTemp sourceBs apply = do
   (tmp, h) <- openBinaryTempFile "/tmp" "slap.tmp"
   hClose h
-  flip finally (removeFile tmp `catch` (\(_ :: SomeException) -> pure ())) $ do
+  flip finally (removeFile tmp `catch` (\(_ :: IOException) -> pure ())) $ do
     BS.writeFile tmp sourceBs
     apply tmp
     BS.readFile tmp
@@ -566,12 +568,13 @@ resolveOutput source (Just out) = do
 
 verifySource :: Bool -> Verification -> BS.ByteString -> IO ()
 verifySource nv v bs = do
+  let hbs = vSourcePreHash v bs
   forM_ (vSourceCRC32 v) $ \expected ->
-    checkCRC nv "source" expected (crc32 bs)
+    checkCRC nv "source" expected (crc32 hbs)
   forM_ (vSourceMD5 v) $ \expected ->
-    checkHash nv "source MD5" expected (md5 bs)
+    checkHash nv "source MD5" expected (md5 hbs)
   forM_ (vSourceSHA1 v) $ \expected ->
-    checkHash nv "source SHA1" expected (sha1 bs)
+    checkHash nv "source SHA1" expected (sha1 hbs)
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
   unless nv $ do
     forM_ (vSourceBlocks v) $ \(off, expected) ->
