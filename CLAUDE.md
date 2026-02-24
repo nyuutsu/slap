@@ -97,9 +97,8 @@ This means:
   gets a conversion over the line, good. If the program quietly
   fills in a zero and pretends, bad.
 
-This principle is aspirational — the codebase still has fabricated
-values being cleaned up (see NEXT.md prompts 25-26). But every new
-code path must follow it, and every existing violation is a bug to fix.
+Remaining violations of this principle are tracked in beauty-audit.md
+and fixed as they're found.
 
 Every committed test patch is either `gold` (real-world) or `verified`
 (created by a named external tool). slap never creates its own test
