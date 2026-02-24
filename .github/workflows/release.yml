@@ -1,0 +1,126 @@
+name: Build release binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  VERSION: '0.1.0'
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.12.2'
+          cabal-version: 'latest'
+
+      - name: Install static libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev zlib1g-dev
+
+      - name: Build
+        run: |
+          cabal build \
+            --ghc-options='-optl-static -optl-pthread'
+
+      - name: Package
+        run: |
+          dir="slap-${VERSION}-linux-x86_64"
+          mkdir -p "$dir"
+          cp "$(cabal -v0 list-bin slap)" "$dir/slap"
+          cp slap.1 README.md LICENSE "$dir/"
+          file "$dir/slap"
+          ldd "$dir/slap" || echo "statically linked"
+          tar czf "${dir}.tar.gz" "$dir"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-linux-x86_64
+          path: slap-${{ env.VERSION }}-linux-x86_64.tar.gz
+
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.12.2'
+          cabal-version: 'latest'
+
+      - name: Build
+        run: cabal build
+
+      - name: Package
+        run: |
+          dir="slap-${VERSION}-macos-arm64"
+          mkdir -p "$dir"
+          cp "$(cabal -v0 list-bin slap)" "$dir/slap"
+          cp slap.1 README.md LICENSE "$dir/"
+          file "$dir/slap"
+          tar czf "${dir}.tar.gz" "$dir"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-macos-arm64
+          path: slap-${{ env.VERSION }}-macos-arm64.tar.gz
+
+  macos-x86:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.12.2'
+          cabal-version: 'latest'
+
+      - name: Build
+        run: cabal build
+
+      - name: Package
+        run: |
+          dir="slap-${VERSION}-macos-x86_64"
+          mkdir -p "$dir"
+          cp "$(cabal -v0 list-bin slap)" "$dir/slap"
+          cp slap.1 README.md LICENSE "$dir/"
+          file "$dir/slap"
+          tar czf "${dir}.tar.gz" "$dir"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-macos-x86_64
+          path: slap-${{ env.VERSION }}-macos-x86_64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.12.2'
+          cabal-version: 'latest'
+
+      - name: Build
+        run: cabal build
+
+      - name: Package
+        shell: bash
+        run: |
+          dir="slap-${VERSION}-windows-x86_64"
+          mkdir -p "$dir"
+          cp "$(cabal -v0 list-bin slap)" "$dir/slap.exe"
+          cp slap.1 README.md LICENSE "$dir/"
+          file "$dir/slap.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slap-windows-x86_64
+          path: slap-${{ env.VERSION }}-windows-x86_64/
