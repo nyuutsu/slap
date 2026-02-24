@@ -33,11 +33,12 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
 import Data.Int (Int64)
-import Patch.Format (renderField)
+import Patch.Format (padHex, renderField)
 import Data.Bits (shiftR, (.&.))
 import Data.List (sortBy)
 import Data.Ord (comparing)
 import Data.Word (Word8, Word32, Word64)
+import Control.Monad (when)
 import Numeric (showHex)
 import System.IO
 
@@ -98,6 +99,9 @@ parseRecords variant offWidth eofMarker = go []
           if size == 0
             then do  -- RLE record
               rleCount <- fromIntegral <$> G.word16BE
+              when (rleCount == 0) $
+                fail ("IPS: RLE record with count 0 at offset 0x"
+                      ++ showHex (fromIntegral off :: Word64) "")
               rleVal   <- getByte
               go (IPSRecordRLE off rleCount rleVal : acc)
             else do  -- Normal record
@@ -194,9 +198,8 @@ ipsInfo p = unlines $ filter (not . null) $
     rangeStr
       | null (ipsRecords p) = "range:       (empty patch)"
       | otherwise =
-          let offsets = map recOff (ipsRecords p)
-              lo = minimum offsets
-              hi = maximum offsets + fromIntegral (recSize (last (ipsRecords p)))
+          let lo = minimum [ recOff r | r <- ipsRecords p ]
+              hi = maximum [ recOff r + fromIntegral (recSize r) | r <- ipsRecords p ]
           in "range:       0x" ++ showHex (fromIntegral lo :: Word64) ""
              ++ " - 0x" ++ showHex (fromIntegral hi :: Word64) ""
 
@@ -329,5 +332,7 @@ ebpJson t a d = BS8.pack $
     escapeJson [] = []
     escapeJson ('"':cs)  = '\\' : '"'  : escapeJson cs
     escapeJson ('\\':cs) = '\\' : '\\' : escapeJson cs
-    escapeJson (c:cs)    = c : escapeJson cs
+    escapeJson (c:cs)
+      | c < ' '   = "\\u00" ++ padHex 2 (fromIntegral (fromEnum c)) ++ escapeJson cs
+      | otherwise  = c : escapeJson cs
 

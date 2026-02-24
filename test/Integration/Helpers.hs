@@ -33,7 +33,7 @@ import Patch.Format (padHex)
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
 import Patch.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
-import Control.Exception (catch, IOException)
+import Control.Exception (catch, finally, IOException)
 import qualified Data.ByteString as BS
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
@@ -180,11 +180,10 @@ applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
 applyViaTemp source action = do
   (tmp, h) <- openBinaryTempFile "/tmp" "slap-int"
   hClose h
-  BS.writeFile tmp source
-  action tmp
-  result <- BS.readFile tmp
-  removeFileSafe tmp
-  pure result
+  flip finally (removeFileSafe tmp) $ do
+    BS.writeFile tmp source
+    action tmp
+    BS.readFile tmp
 
 -- | Undo a parsed patch.
 undoPatch :: SomePatch -> BS.ByteString -> IO (Either String BS.ByteString)

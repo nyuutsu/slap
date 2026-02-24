@@ -22,6 +22,7 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist, removeFile)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
+import Control.Exception (SomeException, catch, finally)
 import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
 
 ----------------------------------------------------------------------------
@@ -526,11 +527,10 @@ applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
 applyViaTemp sourceBs apply = do
   (tmp, h) <- openBinaryTempFile "/tmp" "slap.tmp"
   hClose h
-  BS.writeFile tmp sourceBs
-  apply tmp
-  result <- BS.readFile tmp
-  removeFile tmp
-  pure result
+  flip finally (removeFile tmp `catch` (\(_ :: SomeException) -> pure ())) $ do
+    BS.writeFile tmp sourceBs
+    apply tmp
+    BS.readFile tmp
 
 -- | Error message when --with is required but not provided.
 needWithMsg :: SomePatch -> String
@@ -580,6 +580,8 @@ verifySource nv v bs = do
       warnPPFBlock off expected bs
     forM_ (vFileSize v) $ \expected ->
       warnFileSize expected (fromIntegral (BS.length bs))
+    forM_ (vSourceBytes v) $ \(off, expected, label) ->
+      warnSourceBytes label off expected bs
 
 verifyTarget :: Bool -> Verification -> BS.ByteString -> IO ()
 verifyTarget nv v bs = do
@@ -596,6 +598,7 @@ verifyTarget nv v bs = do
 hasSourceV :: Verification -> Bool
 hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSourceSHA1 v)
             || not (null (vSourceBlocks v)) || isJust (vPPFBlock v) || isJust (vFileSize v)
+            || not (null (vSourceBytes v))
 
 hasTargetV :: Verification -> Bool
 hasTargetV v = isJust (vTargetCRC32 v) || isJust (vTargetMD5 v)
@@ -639,6 +642,12 @@ warnFileSize :: Word32 -> Word32 -> IO ()
 warnFileSize expected actual =
   when (expected /= actual) $
     warn ("file size mismatch (expected " ++ show expected ++ ", got " ++ show actual ++ ")")
+
+warnSourceBytes :: String -> Int -> BS.ByteString -> BS.ByteString -> IO ()
+warnSourceBytes label off expected bs =
+  let actual = safeSlice off (BS.length expected) bs
+  in when (actual /= expected) $
+       warn (label ++ " mismatch at 0x" ++ padHex 8 (fromIntegral off))
 
 safeSlice :: Int -> Int -> BS.ByteString -> BS.ByteString
 safeSlice off len bs = BS.take len (BS.drop off bs)

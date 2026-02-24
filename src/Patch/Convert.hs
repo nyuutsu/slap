@@ -363,14 +363,16 @@ encodeDirect pc src target meta = case target of
 createFromMemory :: CreateFormat -> BS.ByteString -> BS.ByteString -> CreateMeta -> Either String BS.ByteString
 createFromMemory fmt src tgt m
   | isDirect fmt =
-      let pc = buildContents fmt src tgt (cmUndo m) (cmValidate m)
+      let pc = buildContents fmt src tgt m
       in checkOffsetLimits fmt (pcRecords pc)
          >> Right (encodeDirect pc src fmt m)
   | otherwise = case fmt of
       CfmtBPS    -> Right (BPS.createBPS src tgt (fromMaybe BS.empty (cmBPSMetadata m)))
       CfmtUPS    -> Right (UPS.createUPS src tgt)
-      CfmtDPS    -> Right (DPS.createDPS src tgt (cmDesc m) (cmAuthor m)
-                     (cmVersion m) (if cmUnstable m then DPS.DPSUnstable else DPS.DPSStable))
+      CfmtDPS    -> Right (DPS.createDPS src tgt
+                     (if null (cmTitle m) then cmDesc m else cmTitle m)
+                     (cmAuthor m) (cmVersion m)
+                     (if cmUnstable m then DPS.DPSUnstable else DPS.DPSStable))
       CfmtRUP    -> Right (RUP.createRUP src tgt rupInfo (fromMaybe 0 (cmRomType m)))
         where rupInfo = RUP.RUPInfo
                 (toMaybe (cmAuthor m)) (toMaybe (cmVersion m))
@@ -395,8 +397,8 @@ isDirect _          = False
 
 -- | Build PatchContents from source and target bytes for a direct format.
 buildContents :: CreateFormat -> BS.ByteString -> BS.ByteString
-              -> Bool -> Bool -> PatchContents
-buildContents fmt src tgt includeUndo includeValidation = PatchContents
+              -> CreateMeta -> PatchContents
+buildContents fmt src tgt meta = PatchContents
   { pcRecords     = int64Recs
   , pcDescription = Nothing
   , pcSourceCRC32 = if needs FSourceCRC32 then Just (crc32 src) else Nothing
@@ -405,8 +407,8 @@ buildContents fmt src tgt includeUndo includeValidation = PatchContents
   , pcDestSize    = if needs FDestSize
                     then Just (fromIntegral (BS.length tgt))
                     else Nothing
-  , pcValidation  = if needs FValidation && BS.length src > 0x9320 + 1024
-                    then Just (BS.take 1024 (BS.drop 0x9320 src))
+  , pcValidation  = if needs FValidation && BS.length src > valOff + 1024
+                    then Just (BS.take 1024 (BS.drop valOff src))
                     else Nothing
   , pcUndoData    = if needs FUndoData
                     then Just (computeUndo src int64Recs)
@@ -421,7 +423,10 @@ buildContents fmt src tgt includeUndo includeValidation = PatchContents
   where
     hunks     = diffHunks src tgt
     int64Recs = map (\(o, d) -> (fromIntegral o, d)) hunks
-    spec      = formatSpec fmt includeUndo includeValidation
+    valOff    = case cmImageType meta of
+                  Just GI -> 0x80A0
+                  _       -> 0x9320
+    spec      = formatSpec fmt (cmUndo meta) (cmValidate meta)
     allFields = fsRequired spec `Set.union` fsAccepted spec
     needs f   = f `Set.member` allFields
 

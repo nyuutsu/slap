@@ -74,7 +74,8 @@ data APSVariant
 
 data APSN64Header = APSN64Header
   { n64PatchType   :: APSPatchType
-  , n64Description :: ByteString -- 50 bytes
+  , n64Encoding    :: Word8        -- encoding method byte (0 in all known patches)
+  , n64Description :: ByteString   -- 50 bytes
   , n64ImageFormat :: Maybe APSImageFormat
   , n64CartId      :: Maybe ByteString  -- N64 only: 2 bytes
   , n64Country     :: Maybe Word8       -- N64 only
@@ -142,14 +143,14 @@ parseN64 = do
   case toAPSPatchType ptypeByte of
     Left err -> fail err
     Right ptype -> do
-      skip 1  -- encoding (always 0)
+      encodingByte <- getByte
       desc <- getBytes 50
       case ptype of
         APSSimple -> do
           destSize <- word32LE
           recs <- parseN64Records
           pure $ APSPatch $ APSN64
-            (APSN64Header ptype desc Nothing Nothing Nothing Nothing destSize)
+            (APSN64Header ptype encodingByte desc Nothing Nothing Nothing Nothing destSize)
             recs
         APSN64Specific -> do
           imgFmt  <- toAPSImageFormat <$> getByte
@@ -160,7 +161,7 @@ parseN64 = do
           destSize <- word32LE
           recs <- parseN64Records
           pure $ APSPatch $ APSN64
-            (APSN64Header ptype desc (Just imgFmt) (Just cartId)
+            (APSN64Header ptype encodingByte desc (Just imgFmt) (Just cartId)
                           (Just country) (Just crcVal) destSize)
             recs
 
@@ -255,6 +256,7 @@ apsMeta :: APSPatch -> [(String, String)]
 apsMeta (APSPatch variant) = case variant of
   APSN64 hdr _recs -> concat
     [ [("patch type", patchTypeName (n64PatchType hdr))]
+    , [("encoding", show (n64Encoding hdr)) | n64Encoding hdr /= 0]
     , descField (n64Description hdr)
     , fmtField (n64ImageFormat hdr)
     , cartField (n64CartId hdr)

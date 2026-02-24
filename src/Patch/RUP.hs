@@ -25,6 +25,7 @@ import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor, (.&.), shiftR)
@@ -159,7 +160,7 @@ parseCommands patch = do
       0x01 -> parseFileCmd patch >>= parseCommands
       0x02 -> parseXorRecord patch >>= parseCommands
       0x00 -> pure patch  -- END marker
-      _    -> pure patch  -- unknown, stop
+      _    -> fail ("RUP: unknown command code: 0x" ++ padHex 2 (fromIntegral code))
 
 -- | Command 0x01: OPEN_NEW_FILE
 parseFileCmd :: RUPPatch -> Get RUPPatch
@@ -247,7 +248,7 @@ rupMetaKV p = concat
   ]
   where
     metaField _ Nothing = []
-    metaField label (Just v) = [(label, show v)]
+    metaField label (Just v) = [(label, BS8.unpack v)]
 
     sizeFields
       | rupSourceSz p == 0 && rupTargetSz p == 0 = []

@@ -62,12 +62,13 @@ data Verification = Verification
   , vSourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
   , vPPFBlock     :: Maybe (Int64, BS.ByteString)  -- PPF validation block
-  , vFileSize     :: Maybe Word32                  -- PPF2 expected target file size (advisory)
+  , vFileSize     :: Maybe Word32                  -- expected source file size (advisory)
   , vWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
+  , vSourceBytes  :: [(Int, BS.ByteString, String)] -- (offset, expected, label) advisory byte checks
   }
 
 noVerification :: Verification
-noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing []
+noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing [] []
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
@@ -309,20 +310,29 @@ parseSome bs = case detectFormat bs of
                 , pcDestSize    = Just (APS.n64DestSize hdr)
                 }
             , noVerification
+                { vSourceBytes = concat
+                    [ maybe [] (\c -> [(0x3C, c, "N64 cart ID")]) (APS.n64CartId hdr)
+                    , maybe [] (\c -> [(0x3E, BS.singleton c, "N64 country")]) (APS.n64Country hdr)
+                    , maybe [] (\c -> [(0x10, c, "N64 CRC")]) (APS.n64Crc hdr)
+                    ]
+                }
             )
-          APS.APSPatch (APS.APSGBA _ recs) ->
+          APS.APSPatch (APS.APSGBA hdr recs) ->
             ( length recs
             , Nothing
             , noVerification
                 { vSourceBlocks = map (\r -> (fromIntegral (APS.gbaOffset r), APS.gbaSourceCRC r)) recs
                 , vTargetBlocks = map (\r -> (fromIntegral (APS.gbaOffset r), APS.gbaTargetCRC r)) recs
+                , vFileSize = Just (APS.gbaSourceSize hdr)
                 }
             )
     Right SomePatch
       { spFormat         = "APS"
       , spInfo           = APS.apsInfo p
       , spExplain        = Explain.explainAPS p
-      , spIsDifferential = False
+      , spIsDifferential = case p of
+          APS.APSPatch (APS.APSGBA _ _) -> True
+          _                             -> False
       , spApply          = InPlace $ \fp -> APS.applyAPS p fp >> pure ()
       , spUndo           = Nothing
       , spVerification   = verif
@@ -342,7 +352,7 @@ parseSome bs = case detectFormat bs of
       { spFormat         = "RUP"
       , spInfo           = RUP.rupInfo p
       , spExplain        = Explain.explainRUP p
-      , spIsDifferential = False
+      , spIsDifferential = True
       , spApply          = InPlace $ \fp -> RUP.applyRUP p fp >> pure ()
       , spUndo           = Nothing
       , spVerification   = noVerification
