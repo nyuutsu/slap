@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Patch.PPF.Create (encodePPF3) where
+module Patch.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
 import Patch.PPF.Types (ImageType(..), fromImageType)
 
@@ -61,3 +61,11 @@ encodeWriteRecord (off, dat) =
   int64LE off
   <> word8 (fromIntegral (BS.length dat))
   <> byteString dat
+
+-- | Encode a File_ID.diz trailer in PPF3 format (2-byte LE length).
+encodeFileIdDiz :: ByteString -> ByteString
+encodeFileIdDiz content = BL.toStrict $ toLazyByteString $
+  byteString "@BEGIN_FILE_ID.DIZ"
+  <> byteString content
+  <> byteString "@END_FILE_ID.DIZ"
+  <> word16LE (fromIntegral (BS.length content))

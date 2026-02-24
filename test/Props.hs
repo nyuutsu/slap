@@ -361,6 +361,8 @@ fullContents = PatchContents
   , pcEBPMeta     = Just (BS.pack [0x7B, 0x7D])
   , pcRomType     = Just 0
   , pcImageType   = Nothing
+  , pcFileIdDiz   = Nothing
+  , pcPCHTXTBlocks = Nothing
   }
 
 -- | canConvert succeeds for every direct format when all fields are present.

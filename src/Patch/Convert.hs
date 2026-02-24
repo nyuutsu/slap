@@ -61,6 +61,8 @@ data PatchField
   | FEBPMeta
   | FRomType
   | FImageType
+  | FFileIdDiz
+  | FPCHTXTBlocks
   deriving (Eq, Ord, Show)
 
 -- | Declares what a target format requires and can accept.
@@ -83,6 +85,8 @@ data PatchContents = PatchContents
   , pcEBPMeta     :: Maybe BS.ByteString
   , pcRomType     :: Maybe Word8
   , pcImageType   :: Maybe ImageType
+  , pcFileIdDiz   :: Maybe BS.ByteString
+  , pcPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   }
 
 data CreateFormat
@@ -112,7 +116,7 @@ defaultMeta = CreateMeta "" "" "" "" False False False Nothing Nothing Nothing
 
 emptyContents :: [(Int64, BS.ByteString)] -> PatchContents
 emptyContents recs = PatchContents
-  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 provides :: PatchContents -> Set.Set PatchField
 provides pc = Set.fromList $ [FRecords]
@@ -127,6 +131,8 @@ provides pc = Set.fromList $ [FRecords]
   ++ [FEBPMeta      | isJust (pcEBPMeta pc)]
   ++ [FRomType      | isJust (pcRomType pc)]
   ++ [FImageType    | isJust (pcImageType pc)]
+  ++ [FFileIdDiz    | isJust (pcFileIdDiz pc)]
+  ++ [FPCHTXTBlocks | isJust (pcPCHTXTBlocks pc)]
 
 ----------------------------------------------------------------------------
 -- Format specs
@@ -139,10 +145,10 @@ formatSpec target includeUndo includeValidation = case target of
   CfmtEBP     -> FormatSpec (req []) (acc [FDescription, FTruncation, FEBPMeta])
   CfmtPPF3    -> FormatSpec (req $ [FUndoData  | includeUndo]
                                  ++ [FValidation | includeValidation])
-                             (acc [FDescription, FImageType])
+                             (acc [FDescription, FImageType, FFileIdDiz])
   CfmtNINJA1  -> FormatSpec (req [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acc [FRomType])
   CfmtPMSR    -> FormatSpec (req []) (acc [])
-  CfmtPCHTXT  -> FormatSpec (req []) (acc [FDescription])
+  CfmtPCHTXT  -> FormatSpec (req []) (acc [FDescription, FPCHTXTBlocks])
   CfmtAPSN64  -> FormatSpec (req [FDestSize]) (acc [FDescription])
   -- Differential formats: specs unused (rejected before contract check)
   _           -> FormatSpec (req []) (acc [])
@@ -192,6 +198,8 @@ fieldName FTruncation  = "truncation marker"
 fieldName FEBPMeta     = "EBP metadata"
 fieldName FRomType     = "ROM type"
 fieldName FImageType   = "image type"
+fieldName FFileIdDiz   = "File_ID.diz"
+fieldName FPCHTXTBlocks = "PCHTXT blocks"
 
 ----------------------------------------------------------------------------
 -- Conversion notes (dropped-field warnings)
@@ -253,6 +261,18 @@ fieldNote pc field = case field of
   FImageType
     | isJust (pcImageType pc) ->
       ["note: dropping image type"]
+  FFileIdDiz
+    | isJust (pcFileIdDiz pc) ->
+      ["note: dropping File_ID.diz"]
+  FPCHTXTBlocks
+    | Just blocks <- pcPCHTXTBlocks pc ->
+      let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
+                              (filter (not . PCHTXT.pchtxtBlockEnabled) blocks))
+          hasDescs = any (isJust . PCHTXT.pchtxtBlockDesc) blocks
+      in concat
+        [ ["note: dropping " ++ show disabled ++ " disabled entries" | disabled > 0]
+        , ["note: dropping block descriptions" | hasDescs]
+        ]
   _ -> []
 
 ----------------------------------------------------------------------------
@@ -324,14 +344,19 @@ encodeDirect pc src target meta = case target of
                   Just raw -> IPS.encodeEBPRaw src splitIPS (pcTruncation pc) raw
                   Nothing  -> IPS.encodeEBP src splitIPS (pcTruncation pc)
                                 ebpTitle ebpAuthor desc
-  CfmtPPF3   -> PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
-                   (pcUndoData pc) (pcValidation pc) imgType
+  CfmtPPF3   -> let base = PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
+                              (pcUndoData pc) (pcValidation pc) imgType
+                 in case pcFileIdDiz pc of
+                      Nothing  -> base
+                      Just diz -> base <> PPF.encodeFileIdDiz diz
   CfmtNINJA1 -> case (pcSourceCRC32 pc, pcSourceMD5 pc, pcSourceSHA1 pc) of
                    (Just crc, Just md5v, Just sha1v) ->
                      NINJA1.encodeNINJA1 intRecs crc md5v sha1v romType
                    _ -> error "unreachable: canConvert verified"
   CfmtPMSR   -> PMSR.encodePMSR intRecs
-  CfmtPCHTXT -> PCHTXT.encodePCHTXT intRecs pchtxtDesc
+  CfmtPCHTXT -> case pcPCHTXTBlocks pc of
+                   Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDesc
+                   Nothing     -> PCHTXT.encodePCHTXT intRecs pchtxtDesc
   CfmtAPSN64 -> case pcDestSize pc of
                   Just sz -> APS.encodeAPSN64 intRecs sz apsDesc
                   Nothing -> error "unreachable: canConvert verified FDestSize"
@@ -419,6 +444,8 @@ buildContents fmt src tgt meta = PatchContents
   , pcEBPMeta     = Nothing
   , pcRomType     = Nothing
   , pcImageType   = Nothing
+  , pcFileIdDiz   = Nothing
+  , pcPCHTXTBlocks = Nothing
   }
   where
     hunks     = diffHunks src tgt

@@ -8,6 +8,7 @@ module Patch.PCHTXT
   , parsePCHTXT
   , applyPCHTXT
   , encodePCHTXT
+  , encodePCHTXTBlocks
   , pchtxtMeta
   , pchtxtInfo
   ) where
@@ -198,6 +199,27 @@ encodePCHTXT recs mDesc = BS8.pack $ unlines $
                          else ["// " ++ s, ""]
     trimNul = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
     encodeEntry (off, dat) = hexPad 8 (fromIntegral off) ++ " " ++ hexBytes dat
+
+-- | Encode from full block structure, preserving disabled blocks and descriptions.
+encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe ByteString -> ByteString
+encodePCHTXTBlocks blocks mDesc = BS8.pack $ unlines $
+  descLines ++ concatMap encodeBlock blocks
+  where
+    descLines = case mDesc of
+      Nothing -> []
+      Just d  -> let s = trimNul (BS8.unpack d)
+                 in if null s then []
+                    else if length s >= 32 && all isHexDigit s
+                         then ["@nsobid-" ++ s, ""]
+                         else ["// " ++ s, ""]
+    trimNul = reverse . dropWhile (\c -> c == ' ' || c == '\0') . reverse
+    encodeBlock b =
+      let header = if pchtxtBlockEnabled b then "@enabled" else "@disabled"
+          desc = case pchtxtBlockDesc b of
+            Just d  -> ["// " ++ d]
+            Nothing -> []
+      in desc ++ [header] ++ map encodeEntry (pchtxtBlockEntries b)
+    encodeEntry e = hexPad 8 (pchtxtOffset e) ++ " " ++ hexBytes (pchtxtData e)
 
 hexPad :: Int -> Int64 -> String
 hexPad w val =

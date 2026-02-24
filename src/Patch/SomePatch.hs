@@ -153,8 +153,6 @@ parseSome bs = case detectFormat bs of
                 Nothing  -> Nothing
             , vFileSize = PPF.patchFileSize p
             }
-          srcNotes = ["PPF: File_ID.diz dropped (not representable in target format)"
-                     | Just _ <- [PPF.patchFileId p]]
       in Right SomePatch
         { spFormat         = "PPF"
         , spInfo           = PPF.showInfo p
@@ -171,7 +169,7 @@ parseSome bs = case detectFormat bs of
         , spWarnings       = ["empty patch (0 records)" | null recs]
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
-        , spSourceNotes    = srcNotes
+        , spSourceNotes    = []
         , spContents  = if hasAppend then Nothing else Just PatchContents
             { pcRecords     = map (\r -> (PPF.recOffset r, PPF.recData r)) recs
             , pcDescription = Just (PPF.patchDescription p)
@@ -188,6 +186,8 @@ parseSome bs = case detectFormat bs of
             , pcEBPMeta     = Nothing
             , pcRomType     = Nothing
             , pcImageType   = PPF.patchImageType p
+            , pcFileIdDiz   = fmap PPF.fileIdContent (PPF.patchFileId p)
+            , pcPCHTXTBlocks = Nothing
             }
         }
 
@@ -491,17 +491,10 @@ parseSome bs = case detectFormat bs of
     p <- PCHTXT.parsePCHTXT bs
     let allBlocks = PCHTXT.pchtxtBlocks p
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
-        disabledBlocks = filter (not . PCHTXT.pchtxtBlockEnabled) allBlocks
-        disabledCount = sum (map (length . PCHTXT.pchtxtBlockEntries) disabledBlocks)
-        hasDescs = any (\b -> case PCHTXT.pchtxtBlockDesc b of Just _ -> True; Nothing -> False) allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
         pcRecs = map (\e -> (PCHTXT.pchtxtOffset e, PCHTXT.pchtxtData e)) entries
-        srcNotes = concat
-          [ ["PCHTXT: " ++ show disabledCount ++ " disabled entries dropped" | disabledCount > 0]
-          , ["PCHTXT: block descriptions dropped" | hasDescs]
-          , ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
-            | PCHTXT.pchtxtHasShift p]
-          ]
+        srcNotes = ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
+                   | PCHTXT.pchtxtHasShift p]
     Right SomePatch
       { spFormat         = "PCHTXT"
       , spInfo           = PCHTXT.pchtxtInfo p
@@ -518,7 +511,9 @@ parseSome bs = case detectFormat bs of
       , spRecordUnit     = "entries"
       , spSourceNotes    = srcNotes
       , spContents  = Just (emptyContents pcRecs)
-          { pcDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p }
+          { pcDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p
+          , pcPCHTXTBlocks = Just allBlocks
+          }
       }
 
 ----------------------------------------------------------------------------
