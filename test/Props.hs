@@ -17,7 +17,8 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PCHTXT as PCHTXT
 
-import Patch.Binary (crc32, md5, sha1, diffHunks)
+import Patch.Binary (md5, sha1, diffHunks)
+import Patch.FFI (rustyCRC32)
 import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
                       FormatSpec(..), emptyContents, formatSpec, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
@@ -336,7 +337,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(src, _) ->
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  ->
-         NINJA1.n1SourceCRC p === Just (crc32 src) .&&.
+         NINJA1.n1SourceCRC p === Just (rustyCRC32 src) .&&.
          NINJA1.n1SourceMD5 p === Just (md5 src) .&&.
          NINJA1.n1SourceSHA1 p === Just (sha1 src)
 

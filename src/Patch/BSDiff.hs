@@ -12,20 +12,17 @@ module Patch.BSDiff
 
 -- Canonical reference: bsdiff 4.3 source (Colin Percival)
 
-import qualified Codec.Compression.BZip as BZip
-import qualified Data.ByteString.Lazy as BL
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Patch.Binary (copyBSRange)
+import Patch.Compress (bz2Decompress)
 import Patch.Format (renderField)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
-import Control.Exception (SomeException, try, evaluate)
-import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -67,20 +64,11 @@ getOffT off bs =
 -- Safe decompression
 ----------------------------------------------------------------------------
 
--- | Decompress bzip2 data with exception handling and size cap.
--- Prevents decompression bombs and catches malformed bzip2 streams.
-maxDecompressedSize :: Int64
-maxDecompressedSize = 4 * 1024 * 1024 * 1024  -- 4 GiB
-
 safeDecompressBZip :: String -> ByteString -> Either String ByteString
 safeDecompressBZip _     compressed | BS.null compressed = Right BS.empty
-safeDecompressBZip label compressed = unsafePerformIO $ do
-  result <- try @SomeException $ evaluate $ BL.toStrict $
-              BL.take maxDecompressedSize $
-              BZip.decompress $ BL.fromStrict compressed
-  pure $ case result of
-    Left e  -> Left ("BSDiff: " ++ label ++ " decompression failed: " ++ show e)
-    Right d -> Right d
+safeDecompressBZip label compressed = case bz2Decompress compressed of
+  Left _  -> Left ("BSDiff: " ++ label ++ " decompression failed")
+  Right d -> Right d
 
 ----------------------------------------------------------------------------
 -- Parsing

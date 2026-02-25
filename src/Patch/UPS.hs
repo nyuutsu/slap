@@ -13,7 +13,8 @@ module Patch.UPS
 
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
-import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, crc32)
+import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint)
+import Patch.FFI (rustyCRC32)
 import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
 import Control.Monad (when)
 import Patch.Format (showCRC, renderField)
@@ -48,7 +49,7 @@ parseUPS bs
   | otherwise = do
       -- Validate patch CRC
       let storedPatchCRC = getWord32LE (BS.length bs - 4) bs
-          actualPatchCRC = crc32 (BS.take (BS.length bs - 4) bs)
+          actualPatchCRC = rustyCRC32 (BS.take (BS.length bs - 4) bs)
       if storedPatchCRC /= actualPatchCRC
         then Left ("UPS: patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
@@ -149,8 +150,8 @@ upsInfo p = unlines $
 
 createUPS :: ByteString -> ByteString -> ByteString
 createUPS orig modified =
-  let srcCRC = crc32 orig
-      tgtCRC = crc32 modified
+  let srcCRC = rustyCRC32 orig
+      tgtCRC = rustyCRC32 modified
       maxLen = max (BS.length orig) (BS.length modified)
       padSrc = if BS.length orig < maxLen
                then orig <> BS.replicate (maxLen - BS.length orig) 0
@@ -167,7 +168,7 @@ createUPS orig modified =
              <> putWord32LE srcCRC
              <> putWord32LE tgtCRC
       bodyBs = BL.toStrict (toLazyByteString body)
-      patchCRC = crc32 bodyBs
+      patchCRC = rustyCRC32 bodyBs
   in bodyBs <> BL.toStrict (toLazyByteString (putWord32LE patchCRC))
 
 encodeUPSBlock :: UPSBlock -> Builder

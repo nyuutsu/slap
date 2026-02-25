@@ -15,10 +15,9 @@ module Patch.Binary
   , putWord16BE
   , putWord32LE
   , putByuuVarint
-    -- * CRC-32 / CRC-16 / Adler-32
-  , crc32
+    -- * CRC-16 / Adler-32
   , crc16
-  , adler32
+  , adler32  -- re-exported from Patch.FFI
     -- * Cryptographic hashes
   , md5
   , sha1
@@ -38,13 +37,14 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BSU
 import Data.ByteString.Builder (Builder, word8)
 import Data.Array (Array, listArray, (!))
-import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit, complement)
+import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as H
 import qualified Data.ByteArray as BA
+import Patch.FFI (rustyAdler32)
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -158,18 +158,6 @@ putByuuVarint = go
           in word8 lo <> go v'
 
 ----------------------------------------------------------------------------
--- CRC-32 (standard reflected polynomial 0xEDB88320)
-----------------------------------------------------------------------------
-
-crc32 :: ByteString -> Word32
-crc32 = complement . BS.foldl' step (complement 0)
-  where
-    step :: Word32 -> Word8 -> Word32
-    step crc byte =
-      let idx = fromIntegral ((crc `xor` fromIntegral byte) .&. 0xFF)
-      in (crc `shiftR` 8) `xor` (crc32Table ! idx)
-
-----------------------------------------------------------------------------
 -- Cryptographic hashes
 ----------------------------------------------------------------------------
 
@@ -217,17 +205,11 @@ crc16Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
       | otherwise    = c `shiftR` 1
 
 ----------------------------------------------------------------------------
--- Adler-32 (RFC 1950)
+-- Adler-32 (RFC 1950) — via rusty-slap
 ----------------------------------------------------------------------------
 
 adler32 :: ByteString -> Word32
-adler32 = finalize . BS.foldl' step (1, 0)
-  where
-    step (a, b) byte =
-      let a' = (a + fromIntegral byte) `mod` 65521
-          b' = (b + a') `mod` 65521
-      in (a', b')
-    finalize (a, b) = (b `shiftL` 16) .|. a
+adler32 = rustyAdler32
 
 ----------------------------------------------------------------------------
 -- Diff
@@ -291,12 +273,3 @@ putInt64BE w =
   <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (w .&. 0xFF))
 
-crc32Table :: Array Word32 Word32
-crc32Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
-  where
-    mkEntry :: Word32 -> Word32
-    mkEntry n = iterate step n !! 8
-    step :: Word32 -> Word32
-    step c
-      | testBit c 0 = (c `shiftR` 1) `xor` 0xEDB88320
-      | otherwise    = c `shiftR` 1

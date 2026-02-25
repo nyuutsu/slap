@@ -1,0 +1,17 @@
+[package]
+name = "rusty-slap"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+crc32fast = "1"
+flate2 = "1"
+bzip2-rs = "0.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"

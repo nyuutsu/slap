@@ -20,7 +20,6 @@ import Patch.Format (padHex, renderField)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits ((.&.), shiftR, testBit)
 import Data.Int (Int64)
@@ -29,9 +28,7 @@ import Foreign.Ptr (Ptr)
 
 import qualified Data.IntMap.Strict as IM
 import qualified Data.IntSet as IS
-import qualified Codec.Compression.GZip as GZip
-import Control.Exception (SomeException, try, evaluate)
-import System.IO.Unsafe (unsafePerformIO)
+import Patch.Compress (gzipInflate)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -110,15 +107,9 @@ parseV11 bs expectedMagic ver
     safeDecompressGZip raw
       | not compressed = Right raw
       | BS.null raw    = Right BS.empty
-      | otherwise      = unsafePerformIO $ do
-          result <- try @SomeException $ evaluate $ BL.toStrict $
-                      BL.take maxDecompressedSize $
-                      GZip.decompress $ BL.fromStrict raw
-          pure $ case result of
-            Left e  -> Left ("xdelta1: gzip decompression failed: " ++ show e)
-            Right d -> Right d
-
-    maxDecompressedSize = 4 * 1024 * 1024 * 1024 :: Int64  -- 4 GiB
+      | otherwise      = case gzipInflate raw of
+          Left _  -> Left "xdelta1: gzip decompression failed"
+          Right d -> Right d
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
 parseControl :: String -> ByteString -> ByteString -> ByteString -> ByteString

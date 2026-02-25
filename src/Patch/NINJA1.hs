@@ -41,9 +41,7 @@ import Data.Word (Word8, Word32)
 import Numeric (readHex)
 import System.IO
 
-import qualified Codec.Compression.Zlib as Zlib
-import Control.Exception (SomeException, try, evaluate)
-import System.IO.Unsafe (unsafePerformIO)
+import Patch.Compress (zlibInflate, zlibDeflate)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -138,13 +136,10 @@ parseNINJA1 bs
     payload = BS.drop 8 bs
 
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
-{-# NOINLINE zlibDecompress #-}
 zlibDecompress :: ByteString -> Either String ByteString
-zlibDecompress compressed = unsafePerformIO $ do
-  result <- try $ evaluate $ BL.toStrict $ Zlib.decompress $ BL.fromStrict compressed
-  pure $ case result of
-    Left (e :: SomeException) -> Left ("NINJA1: zlib decompression failed: " ++ show e)
-    Right r -> Right r
+zlibDecompress compressed = case zlibInflate compressed of
+  Left _  -> Left "NINJA1: zlib decompression failed"
+  Right r -> Right r
 
 ----------------------------------------------------------------------------
 -- Binary format: 41-byte header + variable-length records + EOF sentinel
@@ -380,7 +375,7 @@ encodeNINJA1 :: [(Int, BS.ByteString)]
              -> Bool            -- compress (BZ subformat)
              -> BS.ByteString
 encodeNINJA1 recs srcCRC srcMD5 srcSHA1 romType doCompress
-  | doCompress = "NINJA1BZ" <> BL.toStrict (Zlib.compress (BL.fromStrict payload))
+  | doCompress = "NINJA1BZ" <> zlibDeflate payload
   | otherwise  = "NINJA1B " <> payload
   where
     payload = BL.toStrict $ toLazyByteString $

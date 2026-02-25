@@ -8,7 +8,8 @@ import Patch.PPF.Types (ImageType(..))
 import Patch.NINJA1 (NINJA1RomType(..), fromNINJA1RomType)
 import Patch.Explain (renderExplain, renderSummary)
 import Patch.Archive (detectArchive, unwrapArchive)
-import Patch.Binary (crc32, crc16, md5, sha1, adler32)
+import Patch.Binary (crc16, md5, sha1, adler32)
+import Patch.FFI (rustyCRC32)
 import Patch.Format (showCRC, padHex)
 
 import qualified Data.ByteString as BS
@@ -373,7 +374,7 @@ doApply cmd = do
         case vSourceCRC32 v of
           Just expected -> do
             sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
-            let actual = crc32 sourceBs
+            let actual = rustyCRC32 sourceBs
             putStrLn $ "source CRC: " ++ fmtCRC actual
               ++ if actual == expected then " \10003" else " \10007 (expected " ++ fmtCRC expected ++ ")"
           Nothing -> pure ()
@@ -587,7 +588,7 @@ verifySource :: Bool -> Verification -> BS.ByteString -> IO ()
 verifySource nv v bs = do
   let hbs = vSourcePreHash v bs
   forM_ (vSourceCRC32 v) $ \expected ->
-    checkCRC nv "source" expected (crc32 hbs)
+    checkCRC nv "source" expected (rustyCRC32 hbs)
   forM_ (vSourceMD5 v) $ \expected ->
     checkHash nv "source MD5" expected (md5 hbs)
   forM_ (vSourceSHA1 v) $ \expected ->
@@ -606,7 +607,7 @@ verifySource nv v bs = do
 verifyTarget :: Bool -> Verification -> BS.ByteString -> IO ()
 verifyTarget nv v bs = do
   forM_ (vTargetCRC32 v) $ \expected ->
-    checkCRC nv "target" expected (crc32 bs)
+    checkCRC nv "target" expected (rustyCRC32 bs)
   forM_ (vTargetMD5 v) $ \expected ->
     checkHash nv "target MD5" expected (md5 bs)
   unless nv $

@@ -1,4 +1,6 @@
 dist-newstyle/
+rusty-slap/target/
+.rusty-stamp
 *.hi
 *.o
 *.dyn_hi

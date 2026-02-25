@@ -31,7 +31,8 @@ import qualified Patch.PMSR as PMSR
 import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
-import Patch.Binary (diffHunks, crc32, md5, sha1)
+import Patch.Binary (diffHunks, md5, sha1)
+import Patch.FFI (rustyCRC32)
 import Patch.Format (showCRC, padHex)
 
 import Control.Applicative ((<|>))
@@ -476,7 +477,7 @@ buildContents :: CreateFormat -> BS.ByteString -> BS.ByteString
 buildContents fmt src tgt meta = PatchContents
   { pcRecords     = int64Recs
   , pcDescription = Nothing
-  , pcSourceCRC32 = if needs FSourceCRC32 then Just (crc32 hashSrc) else Nothing
+  , pcSourceCRC32 = if needs FSourceCRC32 then Just (rustyCRC32 hashSrc) else Nothing
   , pcSourceMD5   = if needs FSourceMD5   then Just (md5 hashSrc)   else Nothing
   , pcSourceSHA1  = if needs FSourceSHA1  then Just (sha1 hashSrc)  else Nothing
   , pcDestSize    = if needs FDestSize

@@ -9,11 +9,19 @@ provides info/explain commands for inspection.
 ## Build and test
 
 ```
-cabal build    # GHC 9.12.2, GHC2024, -Wall -O2, zero warnings
-cabal test     # props (QuickCheck) + integration (tasty)
+make           # builds rusty-slap (Rust staticlib) then Haskell via cabal
+make test      # props (QuickCheck) + integration (tasty)
 ```
 
-Filter: `cabal test integration --test-options='-p "$0~/apply/"'`
+Direct cabal (when Rust hasn't changed):
+```
+cabal build --extra-lib-dirs=$(pwd)/rusty-slap/target/release
+cabal test  --extra-lib-dirs=$(pwd)/rusty-slap/target/release
+```
+
+Filter: `cabal test integration --test-options='-p "$0~/apply/"' --extra-lib-dirs=...`
+
+GHC 9.12.2, GHC2024, `-Wall -O2`, zero warnings (Haskell + Rust + clippy).
 
 ## Code style
 
@@ -104,11 +112,50 @@ Every committed test patch is either `gold` (real-world) or `verified`
 (created by a named external tool). slap never creates its own test
 inputs.
 
+## Rust code style (rusty-slap)
+
+Write idiomatic Rust, not C-in-Rust-syntax. The same principle as
+Haskell: prefer the shorter, cleaner way to express something.
+
+- **Iterator adapters over manual loops.** `.map().collect()` over
+  `for x in xs { v.push(f(x)) }`. `.scan()` for prefix sums.
+  `.take_while()`, `.zip()`, `.enumerate()` over index arithmetic.
+  Don't force an adapter chain when a `for` loop reads better, but
+  default to iterators and only fall back to loops when the adapter
+  chain becomes unreadable.
+- **Pattern matching.** `if let`, `match`, destructuring. Never
+  `x.is_some()` followed by `x.unwrap()`.
+- **`#[inline]` on small hot functions** called in tight loops
+  (lcp, varint encode, extend helpers). The compiler usually inlines
+  these anyway, but the annotation documents intent.
+- **`#[must_use]` on pure functions** that return computed values.
+- **Minimal `unsafe`.** Confine `unsafe` to the FFI boundary
+  (pointer-to-slice conversion). Algorithmic code must be safe Rust.
+  If you reach for `unsafe` inside an algorithm, justify it with a
+  benchmark showing the safe version is measurably slower.
+- **Newtypes and enums** when they prevent misuse. If a function
+  takes both an offset and a length as `usize`, consider whether
+  newtypes would catch transposition bugs. Same threshold as Haskell:
+  use them when the cost of a bug exceeds the syntactic cost.
+- **No `unwrap()` / `expect()` in library code.** Return `Result` or
+  `Option`. The FFI boundary converts errors to return codes.
+- **Terse names in tight scope**, descriptive names at module
+  boundaries — same convention as the Haskell side.
+- **`clippy` clean.** `cargo clippy --release` with no warnings.
+  Fix the code, don't `#[allow]` the lint.
+
+Release profile: `lto = "fat"`, `codegen-units = 1`,
+`panic = "abort"`, `target-cpu=native` via RUSTFLAGS.
+
 ## Where to find things
 
 - `src/Patch/` — one module per format (parse, apply, info, explain)
 - `src/Patch/SomePatch.hs` — `parseSome` dispatch, `SomePatch` type
 - `src/Patch/Convert.hs` — conversion contracts and encoding
+- `src/Patch/FFI.hs` — Rust FFI: CRC32, Adler32, BPS diff
+- `src/Patch/Compress.hs` — Rust FFI: zlib, gzip, bzip2
+- `rusty-slap/` — Rust staticlib (SA-IS, BPS diff, checksums, compression)
 - `app/Main.hs` — CLI parsing and command handlers
 - `test/` — Props.hs (QuickCheck), Integration/ (tasty integration)
+- `Makefile` — orchestrates Rust build then Haskell build
 - `NEXT.md` — planned work and session prompts

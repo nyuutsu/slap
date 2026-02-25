@@ -1,6 +1,6 @@
 # Architecture
 
-~10,300 lines of Haskell. 40 modules. 20 format variants. One binary.
+~8,600 lines of Haskell + ~900 lines of Rust. 20 format variants. One binary.
 
 ## Module Map
 
@@ -13,18 +13,20 @@ src/
     Convert.hs     PatchContents, FormatSpec, contract checking, direct conversion, createFromMemory
     Types.hs       PatchFormat enum
     Detect.hs      Magic-byte detection → PatchFormat
-    Binary.hs      Shared primitives: endian readers, varints, CRC32, MD5, SHA1, memcpy
+    Binary.hs      Shared primitives: endian readers, varints, CRC-16, MD5, SHA1, memcpy
+    FFI.hs         Rust FFI: rustyCRC32, rustyAdler32, rustyBpsDiff
+    Compress.hs    Rust FFI: zlibInflate/Deflate, gzipInflate, bz2Decompress
     Get.hs         Pure parser monad (position-threading over strict ByteString)
     Format.hs      Display helpers: hex padding, CRC formatting, hex dumps
     Explain.hs     Structured explain data types, per-format explain functions, shared renderer
     Archive.hs     ZIP/RAR/7z detection + single-entry extraction
     IPS.hs         IPS + IPS32 + EBP: parse, apply, create, info
-    BPS.hs         BPS: parse, apply (unsafeCreate + memcpy), create, info
+    BPS.hs         BPS: parse, apply (unsafeCreate + memcpy), create (via Rust diff), info
     UPS.hs         UPS: parse, apply (packZipWith xor), create, info
     VCDIFF.hs      VCDIFF/xdelta3: parse, apply (unsafeCreate), info
-    BSDiff.hs      BSDiff/BDF: parse, apply + safe bzip2 decompress, info
+    BSDiff.hs      BSDiff/BDF: parse, apply, info
     GDIFF.hs       W3C GDIFF: parse, apply (unsafeCreate), create, info
-    XDelta1.hs     xdelta v1.1: parse, gzip decompress, apply (unsafeCreate), info
+    XDelta1.hs     xdelta v1.1: parse, apply (unsafeCreate), info
     APS.hs         APS N64 (type 0+1) + GBA: parse, apply, create, info
     RUP.hs         RUP/NINJA2: parse, apply, create, info
     DPS.hs         DPS: parse, apply, create, info
@@ -38,8 +40,14 @@ src/
       Apply.hs     PPF apply + undo
       Create.hs    PPF3 create (IO wrapper + pure core)
       Info.hs      PPF info display
+rusty-slap/src/
+  lib.rs           FFI boundary (extern "C" exports, pointer ↔ slice, write_vec_to_ffi)
+  crc32.rs         CRC-32 via crc32fast (hardware CLMUL/PCLMULQDQ)
+  sa.rs            SA-IS suffix array (linear-time, Nong/Zhang/Chan 2009)
+  bps_diff.rs      BPS diff engine (Flips' concatenated SA + progressive sorting)
+  compress.rs      flate2 (zlib/gzip) + bzip2-rs (bzip2), pure Rust
 test/
-  Props.hs         QuickCheck: 44 properties (round-trip, hash, truncation, contract)
+  Props.hs         QuickCheck: 49 properties (round-trip, hash, truncation, contract)
 ```
 
 ## Data Flow
@@ -96,15 +104,10 @@ parsed format-specific data is captured in closures at construction
 time. The key tradeoff: you lose the ability to pattern-match on
 `SomeIPS` vs `SomeBPS`, but nothing outside `parseSome` needs to.
 
-Apply functions split into two strategies:
-
-1. **InMemory** (BPS, UPS, VCDIFF, BSDiff, GDIFF, XDelta1, DPS):
-   Takes source ByteString, returns target ByteString.
-   Uses `unsafeCreate` + raw pointer writes for output buffers.
-
-2. **InPlace** (IPS, PPF, APS, RUP, NINJA1, PMSR, PCHTXT):
-   Seeks and writes into a mutable file. Used for formats that
-   were designed for in-place patching.
+All formats use **InMemory** apply: takes source ByteString, returns
+target ByteString. Uses `unsafeCreate` + raw pointer writes for output
+buffers. `InPlace` exists in the type but is unused for apply — only
+`UndoInPlace` is used (PPF3 undo).
 
 ## Verification
 
@@ -192,8 +195,7 @@ Two conversion paths:
    via `createFromMemory`. Works for any input format → any creatable
    output format, including differential formats.
 
-InPlace formats go through a temp file for the apply step;
-InMemory formats apply directly to the source ByteString.
+All formats apply in memory to the source ByteString.
 
 The conversion system is descriptive: each format declares what fields
 it requires, accepts, and provides. `canConvert` checks whether the
@@ -236,12 +238,41 @@ diffs, while application reconstructs a known-size target buffer.
 stderr` and `exitFailure`. A structured error ADT would add type
 safety that no consumer benefits from.
 
-**Two-layer testing.** Integration tests (tasty, 397 tests) use
+**Two-layer testing.** Integration tests (tasty, 428 tests) use
 SHA256 verification against real patches and external tools.
-Property tests (`test/Props.hs`, 44 QuickCheck properties) test
+Property tests (`test/Props.hs`, 49 QuickCheck properties) test
 round-trip correctness, parser robustness, and conversion contracts.
 Declarative matrix files (`test/specs/*.txt`) define create,
 conversion, cross-validation, and undo test cases.
+
+## rusty-slap — Rust Static Library
+
+Performance-critical and platform-accelerated code lives in `rusty-slap/`,
+a Rust `staticlib` linked into the Haskell binary via `ccall unsafe` FFI.
+
+**What Rust owns:**
+- CRC-32 (hardware CLMUL/PCLMULQDQ via `crc32fast`)
+- Adler-32 (RFC 1950)
+- BPS diff (SA-IS suffix array + Flips' concatenated-SA algorithm)
+- Compression: zlib/gzip (`flate2`/`miniz_oxide`), bzip2 (`bzip2-rs`)
+
+**What Haskell keeps:** parsing, format logic, conversion, CLI, types.
+
+**FFI boundary:** `Patch.FFI` (checksums, BPS diff) and `Patch.Compress`
+(zlib, gzip, bzip2). Rust allocates output buffers via `Box<[u8]>`;
+Haskell copies with `packCStringLen`, then frees via `rusty_free`.
+
+**Build:** `Makefile` orchestrates `cargo build --release` then
+`cabal build --extra-lib-dirs=...`. A `.rusty-stamp` file detects when
+the Rust `.a` changes and triggers `cabal clean` (cabal 3.14 uses
+content hashing, so mtime tricks don't work).
+
+**Dependencies:** All Rust crates are pure Rust. The final binary has
+no runtime dependency on libz, libbz2, or any system C library beyond
+what GHC requires (libc, libm, libgmp).
+
+Release profile: `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`,
+`RUSTFLAGS += -C target-cpu=native`.
 
 ## Format Support Matrix
 
