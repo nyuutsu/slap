@@ -9,6 +9,7 @@ import Integration.Metadata (metadataTests)
 import Integration.Undo (undoTests)
 import Integration.Smoke (smokeTests)
 import Integration.CLI (cliTests)
+import Integration.FailureMode (failureModeTests)
 
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, forkIO)
 import Data.IORef (newIORef)
@@ -29,5 +30,6 @@ main = do
   trees <- parSequence
     [applyTests romCache, createTests romCache, crossValTests romCache,
      convertTests romCache, metadataTests romCache, undoTests romCache,
-     smokeTests romCache, cliTests romCache]
+     smokeTests romCache, cliTests romCache,
+     failureModeTests romCache]
   defaultMain (testGroup "integration" trees)

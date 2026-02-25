@@ -108,6 +108,7 @@ test-suite integration
                   , Integration.Undo
                   , Integration.Smoke
                   , Integration.CLI
+                  , Integration.FailureMode
   default-language: GHC2024
   ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
