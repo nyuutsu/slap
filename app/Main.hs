@@ -15,7 +15,7 @@ import qualified Data.ByteString as BS
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
 import Data.Int (Int64)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Word (Word8, Word16, Word32)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
@@ -84,7 +84,7 @@ data Command
       , cmdConvImageType :: Maybe ImageType
       , cmdConvMetadata  :: Maybe FilePath
       }
-  | CmdInfo    { cmdPatch :: FilePath }
+  | CmdInfo    { cmdPatch :: FilePath, cmdExtractMeta :: Maybe FilePath }
   | CmdExplain FilePath Bool (Maybe FilePath) Bool
 
 ----------------------------------------------------------------------------
@@ -97,7 +97,7 @@ main = execParser opts >>= \case
   cmd@CmdUndo{}    -> doUndo cmd
   cmd@CmdCreate{}  -> doCreate cmd
   cmd@CmdConvert{} -> doConvert cmd
-  CmdInfo pf       -> doInfo pf
+  cmd@CmdInfo{}    -> doInfo cmd
   CmdExplain pf rc mw raw -> doExplain pf rc mw raw
 
 opts :: ParserInfo Command
@@ -286,6 +286,8 @@ parseImageType s = case map toLower s of
 patchInfoParser :: Parser Command
 patchInfoParser = CmdInfo
   <$> argument str (metavar "PATCH" <> help "Patch file to inspect")
+  <*> optional (option str (long "extract-metadata" <> metavar "FILE"
+      <> help "Write embedded metadata to FILE (BPS)"))
 
 ----------------------------------------------------------------------------
 -- Archive-aware file reading
@@ -314,14 +316,21 @@ readMaybeUnwrap False = readUnwrap
 -- Info & Explain
 ----------------------------------------------------------------------------
 
-doInfo :: FilePath -> IO ()
-doInfo patchFile = do
-  patchBs <- readUnwrap patchFile
+doInfo :: Command -> IO ()
+doInfo cmd = do
+  patchBs <- readUnwrap (cmdPatch cmd)
   case parseSome patchBs of
     Left err -> die err
     Right sp -> do
       putStr (spInfo sp)
       emitWarnings sp
+      case cmdExtractMeta cmd of
+        Nothing -> pure ()
+        Just outPath -> case spMetadata sp of
+          Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
+          Just meta -> do
+            BS.writeFile outPath meta
+            putStrLn ("wrote metadata to " ++ outPath)
 
 doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
 doExplain patchFile records mWithPath raw = do
@@ -493,6 +502,14 @@ doConvert cmd = do
             , cmBPSMetadata = mMeta
             }
       let emitNotes ns = forM_ ns $ \n -> hPutStrLn stderr ("slap: " ++ n)
+          metaNotes = case spMetadata sp of
+            Nothing -> []
+            Just m  ->
+              let n = BS.length m
+              in if cmdConvTo cmd == CfmtBPS
+                 then ["note: source has " ++ show n ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
+                      | isNothing (cmBPSMetadata meta)]
+                 else ["note: dropping BPS metadata (" ++ show n ++ " bytes)"]
       case cmdConvWith cmd of
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
@@ -502,7 +519,7 @@ doConvert cmd = do
           case createFromMemory (cmdConvTo cmd) sourceBs targetBs meta of
             Left err -> die err
             Right result -> do
-              emitNotes (spSourceNotes sp ++ createDefaultNotes (cmdConvTo cmd) meta)
+              emitNotes (spSourceNotes sp ++ metaNotes ++ createDefaultNotes (cmdConvTo cmd) meta)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Nothing -> case spContents sp of

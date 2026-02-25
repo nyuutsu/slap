@@ -92,6 +92,7 @@ data SomePatch = SomePatch
   , spRecordUnit     :: String
   , spContents       :: Maybe PatchContents
   , spSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
+  , spMetadata       :: Maybe BS.ByteString  -- ^ Arbitrary metadata blob (BPS)
   }
 
 ----------------------------------------------------------------------------
@@ -139,6 +140,7 @@ parseSome bs = case detectFormat bs of
             , spRecordUnit     = "records"
             , spSourceNotes    = []
             , spContents  = Nothing
+            , spMetadata       = Nothing
             }
     | otherwise -> Left "unknown patch format"
 
@@ -169,6 +171,7 @@ parseSome bs = case detectFormat bs of
         , spRecordCount    = length recs
         , spRecordUnit     = "records"
         , spSourceNotes    = []
+        , spMetadata       = Nothing
         , spContents  = if hasAppend then Nothing else Just PatchContents
             { pcRecords     = map (\r -> (PPF.recOffset r, PPF.recData r)) recs
             , pcDescription = Just (PPF.patchDescription p)
@@ -188,6 +191,7 @@ parseSome bs = case detectFormat bs of
             , pcFileIdDiz   = fmap PPF.fileIdContent (PPF.patchFileId p)
             , pcPCHTXTBlocks = Nothing
             , pcNINJA1Compressed = Nothing
+            , pcMetadata = Nothing
             }
         }
 
@@ -218,6 +222,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Just (emptyContents (map expandIPS recs))
           { pcTruncation = IPS.ipsTruncate p
           , pcEBPMeta    = IPS.ipsEBPMeta p
@@ -244,6 +249,8 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length acts
       , spRecordUnit     = "actions"
       , spSourceNotes    = []
+      , spMetadata       = if BS.null (BPS.bpsMetadata p) then Nothing
+                           else Just (BPS.bpsMetadata p)
       , spContents  = Nothing
       }
 
@@ -269,6 +276,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length blks
       , spRecordUnit     = "blocks"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -296,6 +304,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length wins
       , spRecordUnit     = "windows"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -343,6 +352,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = cnt
       , spRecordUnit     = "records"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = contents
       }
 
@@ -367,6 +377,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length (RUP.rupRecords p)
       , spRecordUnit     = "records"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -403,6 +414,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spSourceNotes    = srcNotes
+      , spMetadata       = Nothing
       , spContents  = Just (emptyContents (map (\r -> (NINJA1.n1RecOffset r, NINJA1.n1RecData r)) recs))
           { pcSourceCRC32 = NINJA1.n1SourceCRC p
           , pcSourceMD5   = NINJA1.n1SourceMD5 p
@@ -428,6 +440,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length (BSDiff.bsdControls p)
       , spRecordUnit     = "control tuples"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -447,6 +460,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length (GDIFF.gdiffCmds p)
       , spRecordUnit     = "commands"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -473,6 +487,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length (XDelta1.xd1Instructions p)
       , spRecordUnit     = "instructions"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Nothing
       }
 
@@ -495,6 +510,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spSourceNotes    = []
+      , spMetadata       = Nothing
       , spContents  = Just (emptyContents
           (map (\r -> (PMSR.pmsrOffset r, PMSR.pmsrData r)) recs))
       }
@@ -523,6 +539,7 @@ parseSome bs = case detectFormat bs of
       , spRecordCount    = length entries
       , spRecordUnit     = "entries"
       , spSourceNotes    = srcNotes
+      , spMetadata       = Nothing
       , spContents  = Just (emptyContents pcRecs)
           { pcDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p
           , pcPCHTXTBlocks = Just allBlocks

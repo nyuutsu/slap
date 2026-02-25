@@ -20,6 +20,7 @@ import Patch.Format (showCRC, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Internal (unsafeCreate)
@@ -170,12 +171,21 @@ bpsMeta :: BPSPatch -> [(String, String)]
 bpsMeta p = concat
   [ [("source size", show (bpsSourceSize p))]
   , [("target size", show (bpsTargetSize p))]
-  , if BS.null (bpsMetadata p) then []
-    else [("metadata", show (BS.length (bpsMetadata p)) ++ " bytes")]
+  , [("metadata", metaStr)]
   , [("source CRC", showCRC (bpsSourceCRC p))]
   , [("target CRC", showCRC (bpsTargetCRC p))]
   , [("patch CRC", showCRC (bpsPatchCRC p))]
   ]
+  where
+    meta = bpsMetadata p
+    metaStr
+      | BS.null meta = "(none)"
+      | otherwise    = show (BS.length meta) ++ " bytes: "
+                    ++ map sanitize (BS8.unpack (BS.take 200 meta))
+                    ++ if BS.length meta > 200 then "..." else ""
+    sanitize c
+      | c >= ' ' && c <= '~' = c
+      | otherwise             = '.'
 
 bpsInfo :: BPSPatch -> String
 bpsInfo p = unlines $ filter (not . null) $

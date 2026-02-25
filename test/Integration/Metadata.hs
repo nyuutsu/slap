@@ -2,21 +2,23 @@ module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, RomCache)
 import Patch.SomePatch (SomePatch(..), parseSome)
-import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
+import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta, createFromMemory)
+import qualified Patch.BPS as BPS
 
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
 import Data.Char (isSpace)
-import Data.List (isPrefixOf, find)
+import Data.List (isPrefixOf, isInfixOf, find)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
+import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
 
 metadataTests :: RomCache -> IO TestTree
 metadataTests _romCache = do
   repo <- repoDir
   groups <- mapM (mkMetadataGroup repo) metadataCases
-  pure (testGroup "metadata" (concat groups))
+  pure (testGroup "metadata" (concat groups ++ [bpsMetadataGroup]))
 
 -- | (format, patch_path_relative, fields_to_check)
 metadataCases :: [(String, String, [String])]
@@ -81,3 +83,49 @@ extractField name info =
 
 trim' :: String -> String
 trim' = reverse . dropWhile isSpace . reverse . dropWhile isSpace
+
+----------------------------------------------------------------------------
+-- BPS metadata tests (programmatic, no committed test data)
+----------------------------------------------------------------------------
+
+bpsMetadataGroup :: TestTree
+bpsMetadataGroup = testGroup "bps-metadata"
+  [ testCase "round-trip via spMetadata" $ do
+      let src  = BS.pack [0..63]
+          tgt  = BS.pack [64..127]
+          meta = BS8.pack "<patch><title>Test</title></patch>"
+          patchBs = BPS.createBPS src tgt meta
+      case parseSome patchBs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> assertEqual "spMetadata" (Just meta) (spMetadata sp)
+
+  , testCase "empty metadata gives Nothing" $ do
+      let src  = BS.pack [0..15]
+          tgt  = BS.pack [16..31]
+          patchBs = BPS.createBPS src tgt BS.empty
+      case parseSome patchBs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> assertEqual "spMetadata" Nothing (spMetadata sp)
+
+  , testCase "info shows metadata preview" $ do
+      let src  = BS.pack [0..63]
+          tgt  = BS.pack [64..127]
+          meta = BS8.pack "hello-world-metadata"
+          patchBs = BPS.createBPS src tgt meta
+      case parseSome patchBs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp -> do
+          assertBool "info mentions metadata content"
+            ("hello-world-metadata" `isInfixOf` spInfo sp)
+          assertBool "info shows byte count"
+            ("20 bytes" `isInfixOf` spInfo sp)
+
+  , testCase "info shows (none) without metadata" $ do
+      let src  = BS.pack [0..63]
+          tgt  = BS.pack [64..127]
+          patchBs = BPS.createBPS src tgt BS.empty
+      case parseSome patchBs of
+        Left err -> assertFailure ("parseSome failed: " ++ err)
+        Right sp ->
+          assertBool "info shows (none)" ("(none)" `isInfixOf` spInfo sp)
+  ]

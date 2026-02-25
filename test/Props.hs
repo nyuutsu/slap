@@ -37,7 +37,8 @@ main = defaultMain $ testGroup "Properties"
       [ testProperty "round-trip" prop_bps
       , testProperty "parse-truncated" prop_bpsTrunc
       , testProperty "block-move" prop_bpsBlockMove
-      , testProperty "no-size-regression" prop_bpsNoSizeRegression ]
+      , testProperty "no-size-regression" prop_bpsNoSizeRegression
+      , testProperty "metadata-round-trip" prop_bpsMetadata ]
   , testGroup "IPS"
       [ testProperty "round-trip" prop_ips
       , testProperty "eof-collision" prop_ipsEofCollision
@@ -154,6 +155,14 @@ prop_bps = forAll genPair $ \(src, tgt) ->
   in case BPS.parseBPS patch >>= \p -> BPS.applyBPS p src of
        Left err     -> counterexample err $ property False
        Right result -> result === tgt
+
+prop_bpsMetadata :: Property
+prop_bpsMetadata = forAll genPair $ \(src, tgt) ->
+  forAll genBS $ \meta ->
+    let patch = BPS.createBPS src tgt meta
+    in case BPS.parseBPS patch of
+         Left err -> counterexample err $ property False
+         Right p  -> BPS.bpsMetadata p === meta
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(src, tgt) ->
@@ -406,6 +415,7 @@ fullContents = PatchContents
   , pcFileIdDiz   = Nothing
   , pcPCHTXTBlocks = Nothing
   , pcNINJA1Compressed = Nothing
+  , pcMetadata = Nothing
   }
 
 -- | canConvert succeeds for every direct format when all fields are present.

@@ -64,6 +64,7 @@ data PatchField
   | FImageType
   | FFileIdDiz
   | FPCHTXTBlocks
+  | FMetadata
   deriving (Eq, Ord, Show)
 
 -- | Declares what a target format requires and can accept.
@@ -90,6 +91,8 @@ data PatchContents = PatchContents
   , pcFileIdDiz   :: Maybe BS.ByteString
   , pcPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   , pcNINJA1Compressed :: Maybe Bool  -- source was BZ/TZ (compressed)
+  , pcMetadata :: Maybe BS.ByteString
+    -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
 
 data CreateFormat
@@ -138,6 +141,7 @@ emptyContents recs = PatchContents
   , pcFileIdDiz   = Nothing
   , pcPCHTXTBlocks = Nothing
   , pcNINJA1Compressed = Nothing
+  , pcMetadata = Nothing
   }
 
 provides :: PatchContents -> Set.Set PatchField
@@ -155,6 +159,7 @@ provides pc = Set.fromList $ [FRecords]
   ++ [FImageType    | isJust (pcImageType pc)]
   ++ [FFileIdDiz    | isJust (pcFileIdDiz pc)]
   ++ [FPCHTXTBlocks | isJust (pcPCHTXTBlocks pc)]
+  ++ [FMetadata     | isJust (pcMetadata pc)]
 
 ----------------------------------------------------------------------------
 -- Format specs
@@ -222,6 +227,7 @@ fieldName FRomType     = "ROM type"
 fieldName FImageType   = "image type"
 fieldName FFileIdDiz   = "File_ID.diz"
 fieldName FPCHTXTBlocks = "PCHTXT blocks"
+fieldName FMetadata     = "metadata"
 
 ----------------------------------------------------------------------------
 -- Conversion notes (dropped-field warnings)
@@ -313,6 +319,9 @@ fieldNote pc field = case field of
         [ ["note: dropping " ++ show disabled ++ " disabled entries" | disabled > 0]
         , ["note: dropping block descriptions" | hasDescs]
         ]
+  FMetadata
+    | Just m <- pcMetadata pc, not (BS.null m) ->
+      ["note: dropping metadata (" ++ show (BS.length m) ++ " bytes)"]
   _ -> []
 
 ----------------------------------------------------------------------------
@@ -488,6 +497,7 @@ buildContents fmt src tgt meta = PatchContents
   , pcFileIdDiz   = Nothing
   , pcPCHTXTBlocks = Nothing
   , pcNINJA1Compressed = Nothing
+  , pcMetadata = Nothing
   }
   where
     hunks     = case fmt of
