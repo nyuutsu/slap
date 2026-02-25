@@ -123,7 +123,22 @@ defaultMeta = CreateMeta "" "" "" "" False False False Nothing Nothing Nothing
 
 emptyContents :: [(Int64, BS.ByteString)] -> PatchContents
 emptyContents recs = PatchContents
-  recs Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+  { pcRecords     = recs
+  , pcDescription = Nothing
+  , pcSourceCRC32 = Nothing
+  , pcSourceMD5   = Nothing
+  , pcSourceSHA1  = Nothing
+  , pcDestSize    = Nothing
+  , pcValidation  = Nothing
+  , pcUndoData    = Nothing
+  , pcTruncation  = Nothing
+  , pcEBPMeta     = Nothing
+  , pcRomType     = Nothing
+  , pcImageType   = Nothing
+  , pcFileIdDiz   = Nothing
+  , pcPCHTXTBlocks = Nothing
+  , pcNINJA1Compressed = Nothing
+  }
 
 provides :: PatchContents -> Set.Set PatchField
 provides pc = Set.fromList $ [FRecords]
