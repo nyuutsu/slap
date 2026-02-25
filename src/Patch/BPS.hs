@@ -23,9 +23,10 @@ import qualified Data.ByteString as BS
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Internal (unsafeCreate)
-import Data.Bits ((.&.), shiftL, shiftR, (.|.), testBit)
+import Data.Bits ((.&.), shiftL, shiftR, (.|.), testBit, xor)
 import Data.Int (Int64)
-import Data.Word (Word8, Word32)
+import Data.Word (Word8, Word32, Word64)
+import qualified Data.IntMap.Strict as IM
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
@@ -186,7 +187,7 @@ bpsInfo p = unlines $ filter (not . null) $
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a BPS patch (linear mode: SourceRead + TargetRead only).
+-- | Create a BPS patch using rolling-hash matching.
 createBPS :: ByteString -> ByteString -> ByteString -> ByteString
 createBPS orig modified metadata =
   let srcCRC = crc32 orig
@@ -223,35 +224,159 @@ encodeSignedVarint v =
       encoded = (magnitude `shiftL` 1) .|. (if v < 0 then 1 else 0)
   in putByuuVarint encoded
 
--- | Linear diff: SourceRead for matching runs, TargetRead for differences.
--- Not using Patch.Binary.diffHunks because BPS needs SourceRead actions for
--- unchanged regions (to reproduce implicit copies), not just changed hunks.
-bpsDiff :: ByteString -> ByteString -> [BPSAction]
-bpsDiff orig modified = go 0
+----------------------------------------------------------------------------
+-- Rolling-hash diff
+----------------------------------------------------------------------------
+
+-- Window size for hash matching.
+diffWindow :: Int
+diffWindow = 16
+
+-- Maximum candidates to check per hash bucket.
+diffMaxCands :: Int
+diffMaxCands = 8
+
+-- FNV-1a hash of diffWindow bytes starting at off.
+hashW :: ByteString -> Int -> Int
+hashW bs off = fromIntegral (scan off 14695981039346656037)
   where
-    srcLen = BS.length orig
-    tgtLen = BS.length modified
+    !end = off + diffWindow
+    scan :: Int -> Word64 -> Word64
+    scan !i !h
+      | i >= end  = h
+      | otherwise = scan (i + 1) ((h `xor` fromIntegral (BS.index bs i)) * 1099511628211)
 
-    go i
-      | i >= tgtLen = []
-      | i < srcLen && BS.index orig i == BS.index modified i =
-          let end = matchEnd i
-              len = end - i
-          in SourceRead len : go end
+-- Stride for index building.  Dense for small files, sampled for large ones.
+-- With stride S, matches starting at non-S-aligned source offsets are still
+-- found (at most S-1 bytes later), losing at most S-1 literal bytes per match.
+indexStride :: Int -> Int
+indexStride len
+  | len <= 0x40000   = 1   -- <= 256 KB: every byte
+  | len <= 0x1000000 = 4   -- <= 16 MB: every 4th byte
+  | otherwise        = 16  -- > 16 MB: every 16th byte
+
+-- Build hash -> [offset] index, strided for large inputs.
+buildHashIndex :: ByteString -> IM.IntMap [Int]
+buildHashIndex bs
+  | len < diffWindow = IM.empty
+  | otherwise = foldl' ins IM.empty [0, stride .. len - diffWindow]
+  where
+    len    = BS.length bs
+    stride = indexStride len
+    ins !m i = IM.insertWith (++) (hashW bs i) [i] m
+
+-- Count matching bytes between a[aOff..] and b[bOff..].
+extendFwd :: ByteString -> Int -> ByteString -> Int -> Int
+extendFwd a aOff b bOff = scan 0
+  where
+    !limit = min (BS.length a - aOff) (BS.length b - bOff)
+    scan :: Int -> Int
+    scan !n
+      | n >= limit = n
+      | BS.index a (aOff + n) == BS.index b (bOff + n) = scan (n + 1)
+      | otherwise  = n
+
+-- Cost of a byuu-style varint encoding (in bytes).
+byuuVarintCost :: Int64 -> Int
+byuuVarintCost v
+  | v <= 0x7F = 1
+  | otherwise = 1 + byuuVarintCost (shiftR v 7 - 1)
+
+-- Encoded size of a SourceCopy/TargetCopy action (length varint + delta varint).
+copyActionCost :: Int -> Int64 -> Int
+copyActionCost len delta = byuuVarintCost (fromIntegral (shiftL (len - 1) 2 .|. 2))
+                         + byuuVarintCost signedEnc
+  where
+    magnitude = abs delta
+    signedEnc = shiftL magnitude 1 .|. (if delta < 0 then 1 else 0)
+
+-- | Rolling-hash diff: emits SourceRead, TargetRead, SourceCopy, TargetCopy.
+bpsDiff :: ByteString -> ByteString -> [BPSAction]
+bpsDiff src tgt
+  | tgtLen == 0 = []
+  | otherwise   = walk 0 0 0 (-1)
+  where
+    !srcLen = BS.length src
+    !tgtLen = BS.length tgt
+    srcIdx  = buildHashIndex src
+    tgtIdx  = buildHashIndex tgt
+
+    -- pendStart < 0 means no pending literals; >= 0 means literals from
+    -- pendStart to outPos-1 waiting to be flushed as TargetRead.
+    walk :: Int -> Int64 -> Int64 -> Int -> [BPSAction]
+    walk !outPos !srcRel !tgtRel !pend
+      | outPos >= tgtLen = flushP pend outPos []
+
+      -- SourceRead: lockstep match at current position
+      | outPos < srcLen, BS.index src outPos == BS.index tgt outPos =
+          let !len     = srLen outPos
+              !outPos' = outPos + len
+          in flushP pend outPos (SourceRead len : walk outPos' srcRel tgtRel (-1))
+
+      -- Hash-based copy match
+      | outPos + diffWindow <= tgtLen
+      , Just (act, len, srcRel', tgtRel') <- findCopy outPos srcRel tgtRel =
+          let !outPos' = outPos + len
+          in flushP pend outPos (act : walk outPos' srcRel' tgtRel' (-1))
+
+      -- Accumulate literal byte
       | otherwise =
-          let end = diffEnd i
-              dat = BS.take (end - i) (BS.drop i modified)
-          in TargetRead dat : go end
+          walk (outPos + 1) srcRel tgtRel (if pend < 0 then outPos else pend)
 
-    matchEnd i
-      | i >= tgtLen = tgtLen
-      | i >= srcLen = i
-      | BS.index orig i == BS.index modified i = matchEnd (i + 1)
-      | otherwise = i
+    flushP :: Int -> Int -> [BPSAction] -> [BPSAction]
+    flushP pend outPos rest
+      | pend < 0  = rest
+      | otherwise = TargetRead (BS.take (outPos - pend) (BS.drop pend tgt)) : rest
 
-    diffEnd i
-      | i >= tgtLen = tgtLen
-      | i >= srcLen = tgtLen  -- everything beyond source is a diff
-      | BS.index orig i /= BS.index modified i = diffEnd (i + 1)
-      | otherwise = i
+    -- Count SourceRead length starting at i (caller verified first byte matches).
+    srLen :: Int -> Int
+    srLen start = scan start
+      where
+        !lim = min srcLen tgtLen
+        scan :: Int -> Int
+        scan !j
+          | j >= lim                          = j - start
+          | BS.index src j == BS.index tgt j = scan (j + 1)
+          | otherwise                         = j - start
+
+    -- Find the best SourceCopy or TargetCopy at outPos.
+    -- Returns (action, matchLen, newSrcRel, newTgtRel).
+    findCopy :: Int -> Int64 -> Int64 -> Maybe (BPSAction, Int, Int64, Int64)
+    findCopy outPos srcRel tgtRel = pickBetter srcOpt tgtOpt
+      where
+        !h = hashW tgt outPos
+
+        srcOpt = do
+          (len, off) <- bestCandidate src (IM.findWithDefault [] h srcIdx)
+          let !delta = fromIntegral off - srcRel
+          if copyActionCost len delta < len
+            then Just (SourceCopy len delta, len,
+                       fromIntegral off + fromIntegral len, tgtRel)
+            else Nothing
+
+        tgtOpt = do
+          (len, off) <- bestCandidate tgt
+                          (filter (< outPos) (IM.findWithDefault [] h tgtIdx))
+          let !delta = fromIntegral off - tgtRel
+          if copyActionCost len delta < len
+            then Just (TargetCopy len delta, len,
+                       srcRel, fromIntegral off + fromIntegral len)
+            else Nothing
+
+        bestCandidate ref cands =
+          case [ (len, c)
+               | c <- take diffMaxCands cands
+               , let len = extendFwd ref c tgt outPos
+               , len >= diffWindow
+               ] of
+            []   -> Nothing
+            x:xs -> Just (foldl' pick x xs)
+          where pick a@(la,_) b@(lb,_) = if lb > la then b else a
+
+        pickBetter Nothing  Nothing  = Nothing
+        pickBetter (Just s) Nothing  = Just s
+        pickBetter Nothing  (Just t) = Just t
+        pickBetter (Just s@(_,sl,_,_)) (Just t@(_,tl,_,_))
+          | sl >= tl  = Just s
+          | otherwise = Just t
 

@@ -35,7 +35,9 @@ main :: IO ()
 main = defaultMain $ testGroup "Properties"
   [ testGroup "BPS"
       [ testProperty "round-trip" prop_bps
-      , testProperty "parse-truncated" prop_bpsTrunc ]
+      , testProperty "parse-truncated" prop_bpsTrunc
+      , testProperty "block-move" prop_bpsBlockMove
+      , testProperty "no-size-regression" prop_bpsNoSizeRegression ]
   , testGroup "IPS"
       [ testProperty "round-trip" prop_ips
       , testProperty "eof-collision" prop_ipsEofCollision
@@ -470,6 +472,41 @@ truncated parse patch =
 prop_bpsTrunc :: Property
 prop_bpsTrunc = forAll genPair $ \(src, tgt) ->
   truncated BPS.parseBPS (BPS.createBPS src tgt BS.empty)
+
+-- | Block move: 4 KB of data moves from offset 0x1000 to offset 0x8000.
+-- The rolling-hash diff should emit SourceCopy, producing a small patch
+-- rather than 4 KB of literal bytes.
+prop_bpsBlockMove :: Property
+prop_bpsBlockMove = once $
+  let blockSize = 4096
+      -- Distinctive block content that won't match surrounding zeros
+      block = BS.pack [fromIntegral ((i * 7 + 3) `mod` 251) | i <- [0..blockSize-1] :: [Int]]
+      pad1  = 0x1000
+      pad2  = 0x8000
+      srcLen = pad2 + blockSize
+      src   = BS.replicate pad1 0 <> block <> BS.replicate (srcLen - pad1 - blockSize) 0
+      tgt   = BS.replicate pad2 0 <> block
+      patch = BPS.createBPS src tgt BS.empty
+  in counterexample ("patch size: " ++ show (BS.length patch)
+                      ++ " (block: " ++ show blockSize ++ ")") $
+     conjoin
+       [ case BPS.parseBPS patch >>= \p -> BPS.applyBPS p src of
+           Left err     -> counterexample err $ property False
+           Right result -> result === tgt
+       , property (BS.length patch < 1024)
+       ]
+
+-- | Patch size should not regress: a random diff with the rolling-hash
+-- algorithm must produce patches no larger than a pure-literal encoding
+-- (TargetRead for every byte), which costs targetLen + small overhead.
+prop_bpsNoSizeRegression :: Property
+prop_bpsNoSizeRegression = forAll genPair $ \(src, tgt) ->
+  let patch = BPS.createBPS src tgt BS.empty
+      -- Worst case: entire target as TargetRead + BPS header/footer
+      maxSize = BS.length tgt + 100
+  in counterexample ("patch size: " ++ show (BS.length patch)
+                      ++ ", max: " ++ show maxSize) $
+     BS.length patch <= maxSize
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(src, tgt) ->
