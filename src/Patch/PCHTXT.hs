@@ -7,6 +7,7 @@ module Patch.PCHTXT
   , PCHTXTPatch(..)
   , parsePCHTXT
   , applyPCHTXT
+  , applyPCHTXTMemory
   , encodePCHTXT
   , encodePCHTXTBlocks
   , pchtxtMeta
@@ -15,14 +16,20 @@ module Patch.PCHTXT
 
 -- Canonical reference: https://github.com/3096/ipswitch (IPSwitch, PCHTXT format creator)
 
+import Patch.Binary (copyBSRange)
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Internal (unsafeCreate)
 import Data.Char (digitToInt, intToDigit, isHexDigit, isSpace, toUpper)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
 import Patch.Format (renderField)
 import Data.Int (Int64)
 import Data.List (dropWhileEnd, isPrefixOf)
-import Data.Word (Word64)
+import Data.Word (Word8, Word64)
 import Numeric (readHex, showHex)
 import System.IO
 
@@ -178,6 +185,21 @@ applyPCHTXT patch target = withBinaryFile target ReadWriteMode $ \h -> do
     hSeek h AbsoluteSeek (fromIntegral (pchtxtOffset e))
     BS.hPut h (pchtxtData e)) entries
   pure (length entries)
+
+-- | Apply a PCHTXT patch in memory: copy source, then overwrite at offsets.
+applyPCHTXTMemory :: PCHTXTPatch -> ByteString -> ByteString
+applyPCHTXTMemory patch source = unsafeCreate outLen $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    forM_ entries $ \e ->
+      copyBSRange ptr (fromIntegral (pchtxtOffset e)) (pchtxtData e) 0 (BS.length (pchtxtData e))
+  where
+    entries = concatMap pchtxtBlockEntries
+                (filter pchtxtBlockEnabled (pchtxtBlocks patch))
+    srcLen = BS.length source
+    outLen = foldl' max srcLen
+      [ fromIntegral (pchtxtOffset e) + BS.length (pchtxtData e) | e <- entries ]
 
 ----------------------------------------------------------------------------
 -- Create / Encode

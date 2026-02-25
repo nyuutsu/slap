@@ -8,6 +8,7 @@ module Patch.RUP
   , OverflowMode(..)
   , parseRUP
   , applyRUP
+  , applyRUPMemory
   , createRUP
   , rupMetaKV
   , rupInfo
@@ -20,18 +21,22 @@ module Patch.RUP
 -- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
 
 import Patch.Get (Get, runGet, getByte, getBytes, atEnd)
-import Patch.Binary (diffHunks, md5)
+import Patch.Binary (diffHunks, md5, copyBSRange)
 import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor, (.&.), shiftR)
 import Data.Int (Int64)
 import Data.Word (Word8)
-import Control.Monad (when)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
+import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO
 
 ----------------------------------------------------------------------------
@@ -231,6 +236,33 @@ applyRecord h (RUPRecord off xorDat) = do
       result = BS.packZipWith xor padded xorDat
   hSeek h AbsoluteSeek (fromIntegral off)
   BS.hPut h result
+
+-- | Apply a RUP patch in memory: XOR records + overflow handling.
+applyRUPMemory :: RUPPatch -> ByteString -> ByteString
+applyRUPMemory patch source = unsafeCreate outLen $ \ptr -> do
+    -- Copy source, zero-fill any extension
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    -- XOR records: read from buffer, XOR, write back
+    forM_ (rupRecords patch) $ \(RUPRecord off xorDat) -> do
+      let recOff = fromIntegral off :: Int
+          len    = BS.length xorDat
+      forM_ [0..len-1] $ \i -> do
+        let pos = recOff + i
+        old <- peekByteOff ptr pos :: IO Word8
+        pokeByteOff ptr pos (old `xor` BS.index xorDat i)
+    -- Overflow: decoded data (XOR'd with 0xFF on disk) written at source end
+    case rupOverflow patch of
+      Nothing -> pure ()
+      Just overflow -> do
+        let appendPos = fromIntegral (rupSourceSz patch) :: Int
+            decoded = BS.map (xor 0xFF) overflow
+        copyBSRange ptr appendPos decoded 0 (BS.length decoded)
+  where
+    srcLen = BS.length source
+    tgt    = fromIntegral (rupTargetSz patch) :: Int
+    outLen = if tgt > 0 then tgt else srcLen
 
 ----------------------------------------------------------------------------
 -- Info

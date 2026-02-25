@@ -7,6 +7,7 @@ module Patch.IPS
   , IPSPatch(..)
   , parseIPS
   , applyIPS
+  , applyIPSMemory
   , encodeIPS
   , encodeIPS32
   , encodeEBP
@@ -21,7 +22,7 @@ module Patch.IPS
 -- Canonical reference: https://zerosoft.zophar.net/ips.php (Z.e.r.o, ZeroSoft, 1998-2002)
 -- No formal spec exists. The above is the de facto community standard.
 
-import Patch.Binary (getWord24BE, getWord32BE, putWord16BE)
+import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyBSRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
 import qualified Patch.Get as G
@@ -30,6 +31,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString.Builder
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
 import Data.Int (Int64)
@@ -38,7 +40,9 @@ import Data.Bits (shiftR, (.&.))
 import Data.List (sortBy)
 import Data.Ord (comparing)
 import Data.Word (Word8, Word32, Word64)
-import Control.Monad (when)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
 import Numeric (showHex)
 import System.IO
 
@@ -152,6 +156,27 @@ applyRecords h recs = do
     applyOne (IPSRecordRLE off count val) = do
       hSeek h AbsoluteSeek (fromIntegral off)
       BS.hPut h (BS.replicate count val)
+
+-- | Apply an IPS patch in memory: copy source, then overwrite at offsets.
+-- Handles truncation and RLE records.
+applyIPSMemory :: IPSPatch -> ByteString -> ByteString
+applyIPSMemory patch source = unsafeCreate outLen $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    forM_ (ipsRecords patch) $ \case
+      IPSRecord off dat ->
+        copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
+      IPSRecordRLE off count val ->
+        fillBytes (ptr `plusPtr` fromIntegral off) val count
+  where
+    srcLen = BS.length source
+    recEnd (IPSRecord off dat)       = fromIntegral off + BS.length dat
+    recEnd (IPSRecordRLE off cnt _)  = fromIntegral off + cnt
+    maxRecEnd = foldl' max srcLen (map recEnd (ipsRecords patch))
+    outLen = case ipsTruncate patch of
+      Just sz -> fromIntegral sz
+      Nothing -> maxRecEnd
 
 ipsMeta :: IPSPatch -> [(String, String)]
 ipsMeta p = concat

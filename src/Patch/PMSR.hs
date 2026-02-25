@@ -6,6 +6,7 @@ module Patch.PMSR
   , PMSRPatch(..)
   , parsePMSR
   , applyPMSR
+  , applyPMSRMemory
   , encodePMSR
   , pmsrMeta
   , pmsrInfo
@@ -17,12 +18,18 @@ module Patch.PMSR
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Patch.Get as G
 
+import Patch.Binary (copyBSRange)
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.ByteString.Builder
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as BL
 import Data.Int (Int64)
-import Data.Word (Word64)
+import Data.Word (Word8, Word64)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
 import Numeric (showHex)
 import System.IO
 
@@ -82,6 +89,19 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
     applyOne h r = do
       hSeek h AbsoluteSeek (fromIntegral (pmsrOffset r))
       BS.hPut h (pmsrData r)
+
+-- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
+applyPMSRMemory :: PMSRPatch -> ByteString -> ByteString
+applyPMSRMemory patch source = unsafeCreate outLen $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    forM_ (pmsrRecords patch) $ \r ->
+      copyBSRange ptr (fromIntegral (pmsrOffset r)) (pmsrData r) 0 (BS.length (pmsrData r))
+  where
+    srcLen = BS.length source
+    outLen = foldl' max srcLen
+      [ fromIntegral (pmsrOffset r) + BS.length (pmsrData r) | r <- pmsrRecords patch ]
 
 encodePMSR :: [(Int, ByteString)] -> ByteString
 encodePMSR recs = BL.toStrict $ toLazyByteString $

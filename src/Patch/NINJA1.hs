@@ -10,6 +10,7 @@ module Patch.NINJA1
   , fromNINJA1RomType
   , parseNINJA1
   , applyNINJA1
+  , applyNINJA1Memory
   , encodeNINJA1
   , ninja1Meta
   , ninja1Info
@@ -21,16 +22,20 @@ module Patch.NINJA1
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import Patch.Binary (putWord32BE)
+import Patch.Binary (putWord32BE, copyBSRange)
 import Patch.Format (showCRC, padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Char (toLower)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
@@ -293,6 +298,19 @@ applyRecord :: Handle -> NINJA1Record -> IO ()
 applyRecord h (NINJA1Record off dat) = do
   hSeek h AbsoluteSeek (fromIntegral off)
   BS.hPut h dat
+
+-- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
+applyNINJA1Memory :: NINJA1Patch -> ByteString -> ByteString
+applyNINJA1Memory patch source = unsafeCreate outLen $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    forM_ (n1Records patch) $ \(NINJA1Record off dat) ->
+      copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
+  where
+    srcLen = BS.length source
+    outLen = foldl' max srcLen
+      [ fromIntegral (n1RecOffset r) + BS.length (n1RecData r) | r <- n1Records patch ]
 
 ----------------------------------------------------------------------------
 -- Info

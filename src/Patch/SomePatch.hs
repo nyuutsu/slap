@@ -37,7 +37,6 @@ import qualified Data.ByteString.Char8 as BS8
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word16, Word32)
-import System.IO (hPutStrLn, stderr)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -159,9 +158,8 @@ parseSome bs = case detectFormat bs of
         , spInfo           = PPF.showInfo p
         , spExplain        = Explain.explainPPF p
         , spIsDifferential = False
-        , spApply          = InPlace $ \fp -> do
-            (warnings, _) <- PPF.applyPatch p fp
-            mapM_ (hPutStrLn stderr) warnings
+        , spApply          = InMemory
+            { imApply = \source -> pure (Right (PPF.applyPatchMemory p source)) }
         , spUndo           = Just (UndoInPlace $ PPF.undoPatch p)
         , spVerification   = ppfV
         , spVerboseLines   = numbered recs $ \r ->
@@ -211,7 +209,8 @@ parseSome bs = case detectFormat bs of
       , spInfo           = IPS.ipsInfo p
       , spExplain        = Explain.explainIPS p
       , spIsDifferential = False
-      , spApply          = InPlace $ \fp -> IPS.applyIPS p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (IPS.applyIPSMemory p source)) }
       , spUndo           = Nothing
       , spVerification   = noVerification
       , spVerboseLines   = numbered recs describeIPS
@@ -335,7 +334,8 @@ parseSome bs = case detectFormat bs of
       , spIsDifferential = case p of
           APS.APSPatch (APS.APSGBA _ _) -> True
           _                             -> False
-      , spApply          = InPlace $ \fp -> APS.applyAPS p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (APS.applyAPSMemory p source)) }
       , spUndo           = Nothing
       , spVerification   = verif
       , spVerboseLines   = []
@@ -355,7 +355,8 @@ parseSome bs = case detectFormat bs of
       , spInfo           = RUP.rupInfo p
       , spExplain        = Explain.explainRUP p
       , spIsDifferential = True
-      , spApply          = InPlace $ \fp -> RUP.applyRUP p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (RUP.applyRUPMemory p source)) }
       , spUndo           = Nothing
       , spVerification   = noVerification
           { vSourceMD5 = filterZero (RUP.rupSourceMD5 p)
@@ -386,7 +387,8 @@ parseSome bs = case detectFormat bs of
       , spInfo           = NINJA1.ninja1Info p
       , spExplain        = Explain.explainNINJA1 p
       , spIsDifferential = False
-      , spApply          = InPlace $ \fp -> NINJA1.applyNINJA1 p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (NINJA1.applyNINJA1Memory p source)) }
       , spUndo           = Nothing
       , spVerification   = noVerification
           { vSourceCRC32  = NINJA1.n1SourceCRC p
@@ -482,7 +484,8 @@ parseSome bs = case detectFormat bs of
       , spInfo           = PMSR.pmsrInfo p
       , spExplain        = Explain.explainPMSR p
       , spIsDifferential = False
-      , spApply          = InPlace $ \fp -> PMSR.applyPMSR p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (PMSR.applyPMSRMemory p source)) }
       , spUndo           = Nothing
       , spVerification   = noVerification
       , spVerboseLines   = numbered recs $ \r ->
@@ -509,7 +512,8 @@ parseSome bs = case detectFormat bs of
       , spInfo           = PCHTXT.pchtxtInfo p
       , spExplain        = Explain.explainPCHTXT p
       , spIsDifferential = False
-      , spApply          = InPlace $ \fp -> PCHTXT.applyPCHTXT p fp >> pure ()
+      , spApply          = InMemory
+            { imApply = \source -> pure (Right (PCHTXT.applyPCHTXTMemory p source)) }
       , spUndo           = Nothing
       , spVerification   = noVerification
       , spVerboseLines   = numbered entries $ \e ->

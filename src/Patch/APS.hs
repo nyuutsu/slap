@@ -13,6 +13,7 @@ module Patch.APS
   , APSGBARecord(..)
   , parseAPS
   , applyAPS
+  , applyAPSMemory
   , createAPSGBA
   , encodeAPSN64
   , apsMeta
@@ -25,17 +26,22 @@ module Patch.APS
 -- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.aps_gba.js
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word16LE, word32LE)
-import Patch.Binary (crc16, putWord32LE, putWord16LE)
+import Patch.Binary (crc16, putWord32LE, putWord16LE, copyBSRange)
 import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as BL
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
+import Control.Monad (forM_, when)
+import Foreign.Marshal.Utils (fillBytes)
+import Foreign.Ptr (plusPtr)
+import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO
 
 ----------------------------------------------------------------------------
@@ -247,6 +253,46 @@ applyGBARecs source (APSGBARecord off _ _ xorDat : rest) = do
       after = BS.drop (blockOff + blockSize) source
       result = before <> newBlock <> after
   applyGBARecs result rest
+
+-- | Apply an APS patch in memory.
+applyAPSMemory :: APSPatch -> ByteString -> ByteString
+applyAPSMemory (APSPatch variant) source = case variant of
+  APSN64 _ recs -> applyN64Memory recs source
+  APSGBA hdr recs -> applyGBAMemory hdr recs source
+
+-- | APS N64: copy source, then overwrite at offsets (including RLE).
+applyN64Memory :: [APSN64Record] -> ByteString -> ByteString
+applyN64Memory recs source = unsafeCreate outLen $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen outLen)
+    when (outLen > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+    forM_ recs $ \case
+      APSN64Normal off dat ->
+        copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
+      APSN64RLE off val count ->
+        fillBytes (ptr `plusPtr` fromIntegral off) val (fromIntegral count)
+  where
+    srcLen = BS.length source
+    recEnd (APSN64Normal off dat) = fromIntegral off + BS.length dat
+    recEnd (APSN64RLE off _ cnt)  = fromIntegral off + fromIntegral cnt
+    outLen = foldl' max srcLen (map recEnd recs)
+
+-- | APS GBA: copy source padded to target size, then XOR 64KB blocks in place.
+applyGBAMemory :: APSGBAHeader -> [APSGBARecord] -> ByteString -> ByteString
+applyGBAMemory hdr recs source = unsafeCreate tgtSize $ \ptr -> do
+    copyBSRange ptr 0 source 0 (min srcLen tgtSize)
+    when (tgtSize > srcLen) $
+      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (tgtSize - srcLen)
+    forM_ recs $ \(APSGBARecord off _ _ xorDat) -> do
+      let blockOff = fromIntegral off :: Int
+      forM_ [0..65535] $ \i -> do
+        let pos = blockOff + i
+        when (pos < tgtSize) $ do
+          old <- peekByteOff ptr pos :: IO Word8
+          pokeByteOff ptr pos (old `xor` BS.index xorDat i)
+  where
+    srcLen = BS.length source
+    tgtSize = fromIntegral (gbaTargetSize hdr)
 
 ----------------------------------------------------------------------------
 -- Info
