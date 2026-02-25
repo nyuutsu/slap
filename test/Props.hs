@@ -2,7 +2,7 @@ module Main (main) where
 
 import qualified Patch.BPS as BPS
 import qualified Patch.IPS as IPS
-import Patch.IPS (avoidSentinel)
+import Patch.IPS (avoidSentinel, optimalIPSRecords)
 import qualified Patch.UPS as UPS
 import qualified Patch.PMSR as PMSR
 import qualified Patch.NINJA1 as NINJA1
@@ -17,7 +17,7 @@ import qualified Patch.BSDiff as BSDiff
 import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PCHTXT as PCHTXT
 
-import Patch.Binary (crc32, md5, sha1)
+import Patch.Binary (crc32, md5, sha1, diffHunks)
 import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
                       FormatSpec(..), emptyContents, formatSpec, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
@@ -42,9 +42,11 @@ main = defaultMain $ testGroup "Properties"
       [ testProperty "round-trip" prop_ips
       , testProperty "eof-collision" prop_ipsEofCollision
       , testProperty "avoidSentinel" prop_avoidSentinel
+      , testProperty "dp-not-larger" prop_dpNotLarger
       , testProperty "parse-truncated" prop_ipsTrunc ]
   , testGroup "IPS32"
       [ testProperty "round-trip" prop_ips32
+      , testProperty "dp-not-larger" prop_dpIPS32NotLarger
       , testProperty "parse-truncated" prop_ips32Trunc ]
   , testGroup "EBP"
       [ testProperty "round-trip" prop_ebp
@@ -207,6 +209,44 @@ prop_avoidSentinel = property $
       avoidSentinel 0 src [(0, BS.pack [0xFF])]
         === [(0, BS.pack [0xFF])]
     ]
+
+-- | Split records at maxSize boundaries (same logic as Patch.Convert.splitRecords).
+splitMax :: Int -> [(Int, ByteString)] -> [(Int, ByteString)]
+splitMax maxSz = concatMap split1
+  where
+    split1 (off, dat)
+      | BS.length dat <= maxSz = [(off, dat)]
+      | otherwise =
+          let (h, t) = BS.splitAt maxSz dat
+          in (off, h) : split1 (off + maxSz, t)
+
+-- | Total encoded IPS record size (excluding magic/EOF marker).
+ipsEncodedSize :: Int -> [(Int, ByteString)] -> Int
+ipsEncodedSize offWidth = sum . map recSz
+  where
+    recSz (_, d)
+      | BS.length d >= 3, BS.all (== BS.index d 0) d = offWidth + 5
+      | otherwise = offWidth + 2 + BS.length d
+
+-- | DP patch size must not exceed greedy patch size for IPS (offWidth=3).
+prop_dpNotLarger :: Property
+prop_dpNotLarger = forAll genPair $ \(src, tgt) ->
+  let dpRecs     = optimalIPSRecords 3 src tgt
+      greedyRecs = splitMax 0xFFFF (diffHunks src tgt)
+      dpSz       = ipsEncodedSize 3 dpRecs
+      greedySz   = ipsEncodedSize 3 greedyRecs
+  in counterexample ("DP: " ++ show dpSz ++ ", greedy: " ++ show greedySz) $
+     dpSz <= greedySz
+
+-- | DP patch size must not exceed greedy patch size for IPS32 (offWidth=4).
+prop_dpIPS32NotLarger :: Property
+prop_dpIPS32NotLarger = forAll genPair $ \(src, tgt) ->
+  let dpRecs     = optimalIPSRecords 4 src tgt
+      greedyRecs = splitMax 0xFFFF (diffHunks src tgt)
+      dpSz       = ipsEncodedSize 4 dpRecs
+      greedySz   = ipsEncodedSize 4 greedyRecs
+  in counterexample ("DP: " ++ show dpSz ++ ", greedy: " ++ show greedySz) $
+     dpSz <= greedySz
 
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(src, tgt) ->

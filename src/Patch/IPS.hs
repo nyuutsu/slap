@@ -13,6 +13,7 @@ module Patch.IPS
   , encodeEBP
   , encodeEBPRaw
   , avoidSentinel
+  , optimalIPSRecords
   , ipsMeta
   , ipsInfo
   , jsonPairs
@@ -37,12 +38,16 @@ import Data.Char (toLower)
 import Data.Int (Int64)
 import Patch.Format (padHex, renderField)
 import Data.Bits (shiftR, (.&.))
-import Data.List (sortBy)
+import Data.List (sort, sortBy)
 import Data.Ord (comparing)
 import Data.Word (Word8, Word32, Word64)
 import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
+import Control.Monad.ST (ST, runST)
+import Data.Array (Array, listArray, (!))
+import Data.Array.MArray (newArray, readArray, writeArray)
+import Data.Array.ST (STUArray)
 import Numeric (showHex)
 import System.IO
 
@@ -358,4 +363,149 @@ ebpJson t a d = BS8.pack $
     escapeJson (c:cs)
       | c < ' '   = "\\u00" ++ padHex 2 (fromIntegral (fromEnum c)) ++ escapeJson cs
       | otherwise  = c : escapeJson cs
+
+----------------------------------------------------------------------------
+-- Optimal IPS record generation via DP
+----------------------------------------------------------------------------
+
+-- | Compute optimal IPS record set via DP.
+-- Considers RLE extraction and gap merging with format-aware thresholds.
+-- offWidth is 3 for IPS/EBP, 4 for IPS32.
+optimalIPSRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
+optimalIPSRecords offWidth src tgt =
+  concatMap (dpBlock offWidth) (mergeGaps offWidth tgt (rawDiff src tgt))
+
+-- | Diff without gap merging — raw changed regions.
+rawDiff :: ByteString -> ByteString -> [(Int, ByteString)]
+rawDiff old new = go 0 ++ extension
+  where
+    oldLen = BS.length old
+    newLen = BS.length new
+    minLen = min oldLen newLen
+    extension
+      | newLen > oldLen = [(oldLen, BS.drop oldLen new)]
+      | otherwise       = []
+    go i
+      | i >= minLen = []
+      | BS.index old i == BS.index new i = go (i + 1)
+      | otherwise =
+          let end = findEnd (i + 1)
+          in (i, BS.take (end - i) (BS.drop i new)) : go end
+    findEnd j
+      | j >= minLen = minLen
+      | BS.index old j /= BS.index new j = findEnd (j + 1)
+      | otherwise = j
+
+-- | Merge hunks with gaps <= offWidth+1 (the break-even for separate records).
+mergeGaps :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
+mergeGaps _ _ [] = []
+mergeGaps _ _ [x] = [x]
+mergeGaps offWidth tgt ((o1,d1):(o2,d2):rest)
+  | o2 - (o1 + BS.length d1) <= offWidth + 1 =
+      let merged = BS.take (o2 + BS.length d2 - o1) (BS.drop o1 tgt)
+      in mergeGaps offWidth tgt ((o1, merged) : rest)
+  | otherwise = (o1,d1) : mergeGaps offWidth tgt ((o2,d2):rest)
+
+-- | DP within a single block to find optimal Copy/RLE record partition.
+-- Returns records with absolute offsets and data <= 65535 bytes each.
+dpBlock :: Int -> (Int, ByteString) -> [(Int, ByteString)]
+dpBlock offWidth (blockOff, blockData)
+  | BS.null blockData = []
+  | otherwise = runST go
+  where
+    n = BS.length blockData
+    inf = n * (offWidth + 7) + 1
+    runs = maxRuns blockData
+    rawPos = dedup . sort $
+      [0, n] ++ concatMap (\(a, b) -> [a, b]) runs
+    positions = ensureMaxGap 0xFFFF rawPos
+    k = length positions
+    posArr = listArray (0, k - 1) positions :: Array Int Int
+    rlePreds = listArray (0, k - 1) (computeRLEPreds positions runs)
+                 :: Array Int Int
+
+    go :: forall s. ST s [(Int, ByteString)]
+    go = do
+      costA <- newArray (0, k - 1) inf :: ST s (STUArray s Int Int)
+      predA <- newArray (0, k - 1) (-1) :: ST s (STUArray s Int Int)
+      writeArray costA 0 0
+
+      forM_ [1 .. k - 1] $ \j -> do
+        let pj = posArr ! j
+
+        -- Copy: scan backward within 65535 window
+        let scanCopy best bestI i
+              | i < 0 = pure (best, bestI)
+              | pj - (posArr ! i) > 0xFFFF = pure (best, bestI)
+              | otherwise = do
+                  ci <- readArray costA i
+                  let c = ci + offWidth + 2 + pj - (posArr ! i)
+                  if c < best
+                    then scanCopy c i (i - 1)
+                    else scanCopy best bestI (i - 1)
+        (copyCost, copyIdx) <- scanCopy inf (-1) (j - 1)
+
+        -- RLE option
+        let rp = rlePreds ! j
+        (bestCost, bestIdx) <-
+          if rp >= 0 && pj - (posArr ! rp) > 3 then do
+            cr <- readArray costA rp
+            let rleCost = cr + offWidth + 5
+            pure $ if rleCost < copyCost
+              then (rleCost, rp)
+              else (copyCost, copyIdx)
+          else pure (copyCost, copyIdx)
+
+        writeArray costA j bestCost
+        writeArray predA j bestIdx
+
+      -- Backtrack from final position to extract records in order
+      let extract j acc
+            | j <= 0 = pure acc
+            | otherwise = do
+                p <- readArray predA j
+                let st = posArr ! p
+                    en = posArr ! j
+                    dat = BS.take (en - st) (BS.drop st blockData)
+                extract p ((blockOff + st, dat) : acc)
+
+      extract (k - 1) []
+
+-- | Find maximal same-byte runs >= 4 bytes.  Returns [(start, end)].
+maxRuns :: ByteString -> [(Int, Int)]
+maxRuns bs
+  | BS.null bs = []
+  | otherwise  = go 0 (BS.index bs 0) 1
+  where
+    n = BS.length bs
+    go start byte i
+      | i >= n    = [(start, n) | n - start >= 4]
+      | BS.index bs i == byte = go start byte (i + 1)
+      | otherwise = [(start, i) | i - start >= 4]
+                    ++ go i (BS.index bs i) (i + 1)
+
+-- | Ensure no two consecutive positions are more than maxGap apart.
+ensureMaxGap :: Int -> [Int] -> [Int]
+ensureMaxGap _ [] = []
+ensureMaxGap _ [x] = [x]
+ensureMaxGap mg (a:b:rest)
+  | b - a <= mg = a : ensureMaxGap mg (b : rest)
+  | otherwise   = a : ensureMaxGap mg ((a + mg) : b : rest)
+
+-- | Remove consecutive duplicates from a sorted list.
+dedup :: (Eq a) => [a] -> [a]
+dedup [] = []
+dedup [x] = [x]
+dedup (x:y:rest)
+  | x == y    = dedup (y : rest)
+  | otherwise = x : dedup (y : rest)
+
+-- | For each position, find the RLE predecessor (previous position in same
+-- maximal run), or -1 if none.
+computeRLEPreds :: [Int] -> [(Int, Int)] -> [Int]
+computeRLEPreds positions runs =
+  (-1) : [ if sameRun prev cur then j - 1 else (-1)
+         | (j, (prev, cur)) <- zip [1..] (zip positions (drop 1 positions)) ]
+  where
+    sameRun p q = any (\(rs, re) -> rs <= p && q <= re) runs
 

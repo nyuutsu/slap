@@ -490,7 +490,11 @@ buildContents fmt src tgt meta = PatchContents
   , pcNINJA1Compressed = Nothing
   }
   where
-    hunks     = diffHunks src tgt
+    hunks     = case fmt of
+      CfmtIPS   -> IPS.optimalIPSRecords 3 src tgt
+      CfmtIPS32 -> IPS.optimalIPSRecords 4 src tgt
+      CfmtEBP   -> IPS.optimalIPSRecords 3 src tgt
+      _         -> diffHunks src tgt
     int64Recs = map (\(o, d) -> (fromIntegral o, d)) hunks
     hashSrc   = case fmt of
       CfmtNINJA1 -> NINJA1.ninja1HashInput src
