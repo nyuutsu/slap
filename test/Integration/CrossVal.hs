@@ -9,11 +9,11 @@ import Patch.SomePatch (parseSome)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.IORef
-import System.Directory (doesFileExist, listDirectory, copyFile)
+import System.Directory (doesFileExist, listDirectory, copyFile, makeAbsolute)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>), takeExtension)
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcessWithExitCode, proc, cwd, readCreateProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
@@ -81,14 +81,16 @@ getOrBootstrap cacheRef _repo key baseBs bootPath = do
               pure tgt
 
 findTool :: String -> IO (Maybe FilePath)
-findTool name = case name of
-  "flips" -> lookupTool "FLIPS" [home </> "repos/Flips/flips"]
-  "rompatcher" -> lookupTool "ROMPATCHER" [home </> "repos/RomPatcher.js/index.js"]
-  "bspatch" -> lookupTool "BSPATCH" ["/usr/bin/bspatch"]
-  "xdelta3" -> lookupTool "XDELTA3" ["/usr/bin/xdelta3"]
-  _ -> pure Nothing
+findTool name = do
+  repo <- repoDir
+  let tools = repo </> "tools"
+  case name of
+    "flips"      -> lookupTool "FLIPS"      [tools </> "flips/flips"]
+    "rompatcher" -> lookupTool "ROMPATCHER" [tools </> "rompatcher-js/index.js"]
+    "bspatch"    -> lookupTool "BSPATCH"    ["/usr/bin/bspatch"]
+    "xdelta3"    -> lookupTool "XDELTA3"    ["/usr/bin/xdelta3"]
+    _            -> pure Nothing
   where
-    home = "/home/nyuu"
     lookupTool envVar fallbacks = do
       menv <- lookupEnv envVar
       case menv of
@@ -99,7 +101,7 @@ findTool name = case name of
     findFirst [] = pure Nothing
     findFirst (p:ps) = do
       exists <- doesFileExist p
-      if exists then pure (Just p) else findFirst ps
+      if exists then Just <$> makeAbsolute p else findFirst ps
 
 applyExternal :: FilePath -> String -> CreateFormat -> FilePath -> FilePath -> FilePath -> IO ()
 applyExternal tool toolName _fmt baseFile patchFile outFile = case toolName of
@@ -110,15 +112,17 @@ applyExternal tool toolName _fmt baseFile patchFile outFile = case toolName of
       _           -> assertFailure ("flips failed: " ++ err)
 
   "rompatcher" -> withTempDir "slap-rp" $ \tmpDir -> do
-    let ext = takeExtension baseFile
+    let ext = case takeExtension baseFile of
+                "" -> ".bin"  -- RomPatcher.js needs an extension to name the output
+                e  -> e
         stem = "rom"
         romCopy = tmpDir </> (stem ++ ext)
     copyFile baseFile romCopy
-    (ec, out, err) <- readProcessWithExitCode "node"
-      [tool, "patch", romCopy, patchFile] ""
+    -- RomPatcher.js outputs relative to CWD
+    let p = (proc "node" [tool, "patch", romCopy, patchFile]) { cwd = Just tmpDir }
+    (ec, out, err) <- readCreateProcessWithExitCode p ""
     case ec of
       ExitSuccess -> do
-        -- RomPatcher.js outputs "rom (patched).ext"
         files <- listDirectory tmpDir
         let expected = stem ++ " (patched)" ++ ext
         case filter (== expected) files of
