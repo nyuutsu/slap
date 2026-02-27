@@ -99,7 +99,6 @@ This means:
   gets a conversion over the line, good. If the program quietly
   fills in a zero and pretends, bad.
 
-
 Every committed test patch is either `gold` (real-world) or `verified`
 (created by a named external tool). slap never creates its own test
 inputs.

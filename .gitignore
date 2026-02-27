@@ -8,6 +8,8 @@ rusty-slap/target/
 
 # Local working files
 NEXT.md
+homework.md
+planned-formats.md
 
 # External reference tools (symlinks to local repos)
 tools/

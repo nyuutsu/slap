@@ -1,6 +1,6 @@
 # Architecture
 
-Haskell + Rust. 20 format variants.
+Haskell + Rust.
 
 ## Module Map
 
@@ -56,8 +56,8 @@ test/
 types. It parses the raw bytes, then closes over the parsed data to
 produce a `SomePatch` — a record of closures carrying all operations.
 Every consumer (`doApply`, `doInfo`, `doConvert`, etc.) works through
-`SomePatch` fields, never inspecting the underlying format. Adding
-format #17 means adding one block to `parseSome`. Nothing else changes.
+`SomePatch` fields, never inspecting the underlying format. Adding a
+new format means adding one block to `parseSome`. Nothing else changes.
 
 ## SomePatch — Closure-Based Existential
 
@@ -114,16 +114,11 @@ Two conversion paths:
 
 ## Key Design Decisions
 
-**Closure-based existential, not sum type or typeclass.** The original
-`SomePatch` was a sum type with 11 constructors, requiring 8 dispatch
-functions (someInfo, someExplain, someApply, applyToMemory, tryDirect,
-someFmtName, someIsDifferential, needWithMsg) — each with an arm for
-every format. That's ~88 case arms, all doing structurally similar
-things. A typeclass + existential wrapper would solve the dispatch
-problem but adds language extensions, careful module layering, and
-indirection. The closure-based record is the same thing typeclasses
-compile to, without the ceremony. `parseSome` constructs the record;
-consumers use field accessors.
+**Closure-based existential, not sum type or typeclass.** `SomePatch`
+is a record of closures — the same thing a typeclass + existential
+compiles to, without the language extensions or module layering.
+`parseSome` constructs the record; consumers use field accessors.
+Each format module stays self-contained.
 
 **Patch.Get monad, not attoparsec/binary/cereal.** 176 lines,
 no dependencies, position tracking, bounded reads, error messages
@@ -135,10 +130,6 @@ Patch application uses `unsafeCreate` with raw pointer arithmetic
 (single allocation, memcpy-speed bulk copies via `copyBSRange`).
 The distinction matters: creation builds output incrementally from
 diffs, while application reconstructs a known-size target buffer.
-
-**Either String for errors.** Every error path ends in `hPutStrLn
-stderr` and `exitFailure`. A structured error ADT would add type
-safety that no consumer benefits from.
 
 ## rusty-slap — Rust Static Library
 
