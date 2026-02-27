@@ -137,10 +137,13 @@ parseAPS bs
     gbaStructure b =
       let payload = BS.length b - 12
           nRecs   = payload `div` 65544
-      in payload >= 65544 && payload `mod` 65544 == 0
-         && all (\i -> let pos = 12 + i * 65544
-                       in BS.index b pos == 0 && BS.index b (pos + 1) == 0)
-                [0 .. nRecs - 1]
+      -- Zero-record GBA patch (identity diff) is structurally valid.
+      -- Without this, a collision (source size mod 256 == 48) routes to N64.
+      in payload == 0
+         || (payload >= 65544 && payload `mod` 65544 == 0
+             && all (\i -> let pos = 12 + i * 65544
+                           in BS.index b pos == 0 && BS.index b (pos + 1) == 0)
+                    [0 .. nRecs - 1])
 
 parseN64 :: Get APSPatch
 parseN64 = do

@@ -19,8 +19,10 @@ import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Binary (md5, sha1, diffHunks)
 import Patch.FFI (rustyCRC32)
+import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
 import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
-                      FormatSpec(..), emptyContents, formatSpec, defaultMeta,
+                      FormatSpec(..), CreateMeta(..),
+                      emptyContents, formatSpec, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
 
 import Data.ByteString (ByteString)
@@ -91,6 +93,14 @@ main = defaultMain $ testGroup "Properties"
       [ testProperty "parse-truncated" prop_bsdiffTrunc ]
   , testGroup "XDelta1"
       [ testProperty "parse-truncated" prop_xdelta1Trunc ]
+  , testGroup "Identity"
+      [ testProperty name (prop_identity fmt)
+      | (name, fmt) <- allCreateFormats
+      ]
+  , testGroup "Undo"
+      [ testProperty "UPS" prop_upsUndo
+      , testProperty "PPF3" prop_ppf3Undo
+      ]
   , testGroup "Contracts"
       [ testProperty "canConvert-full" prop_canConvertFull
       , testProperty "no-surplus-no-notes" prop_noSurplusNoNotes
@@ -133,6 +143,14 @@ genPairNoShrink = do
   a <- genBS
   b <- genBS
   pure $ if BS.length a <= BS.length b then (a, b) else (b, a)
+
+-- | (source, target) of equal length.  UPS undo is only lossless when
+-- source and target sizes match (the normal ROM patching case).
+genSameSizePair :: Gen (ByteString, ByteString)
+genSameSizePair = do
+  src <- genBS
+  tgt <- BS.pack <$> vectorOf (BS.length src) arbitrary
+  pure (src, tgt)
 
 -- | Apply a direct-format patch via temp file, return result bytes.
 applyViaFile :: (p -> FilePath -> IO a) -> p -> ByteString -> IO ByteString
@@ -388,6 +406,92 @@ prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
        Right p  -> ioProperty $ do
          result <- applyViaFile APS.applyAPS p src
          pure $ result === tgt
+
+----------------------------------------------------------------------------
+-- Identity: create(src, src) → parse → apply == src
+----------------------------------------------------------------------------
+
+allCreateFormats :: [(String, CreateFormat)]
+allCreateFormats =
+  [ ("BPS",     CfmtBPS)
+  , ("IPS",     CfmtIPS)
+  , ("IPS32",   CfmtIPS32)
+  , ("EBP",     CfmtEBP)
+  , ("UPS",     CfmtUPS)
+  , ("PPF3",    CfmtPPF3)
+  , ("PMSR",    CfmtPMSR)
+  , ("NINJA1",  CfmtNINJA1)
+  , ("DPS",     CfmtDPS)
+  , ("RUP",     CfmtRUP)
+  , ("APS-N64", CfmtAPSN64)
+  , ("APS-GBA", CfmtAPSGBA)
+  , ("GDIFF",   CfmtGDIFF)
+  , ("PCHTXT",  CfmtPCHTXT)
+  ]
+
+-- | For any non-empty source, create(src, src) should be an identity patch.
+prop_identity :: CreateFormat -> Property
+prop_identity fmt = forAll genBS $ \src -> not (BS.null src) ==>
+  case createFromMemory fmt src src defaultMeta of
+    Left _ -> discard
+    Right patch -> case parseSome patch of
+      Left err -> counterexample ("parse: " ++ err) $ property False
+      Right sp -> ioProperty $ do
+        result <- applySomePatch sp src
+        pure $ case result of
+          Left err  -> counterexample ("apply: " ++ err) $ property False
+          Right out -> out === src
+
+-- | Apply through the SomePatch closure, handling both InMemory and InPlace.
+applySomePatch :: SomePatch -> ByteString -> IO (Either String ByteString)
+applySomePatch sp source = case spApply sp of
+  InMemory { imApply = apply } -> apply source
+  InPlace f -> Right <$> applyViaFile (\() fp -> f fp) () source
+
+----------------------------------------------------------------------------
+-- Undo: create → apply → undo == original
+----------------------------------------------------------------------------
+
+-- | UPS XOR is symmetric: applying the same patch to the target yields
+-- the source.  Only holds for same-size inputs (different sizes lose
+-- information in the size field).
+prop_upsUndo :: Property
+prop_upsUndo = forAll genSameSizePair $ \(src, tgt) ->
+  let patch = UPS.createUPS src tgt
+  in case UPS.parseUPS patch of
+       Left err -> counterexample err $ property False
+       Right p  -> UPS.applyUPS p (UPS.applyUPS p src) === src
+
+-- | PPF3 with undo data: apply then undo recovers the original.
+-- Same-size pairs only — PPF3 undo writes back original bytes but can't
+-- truncate the file, so growth is irreversible.
+prop_ppf3Undo :: Property
+prop_ppf3Undo = forAll genSameSizePair $ \(src, tgt) -> not (BS.null src) ==>
+  case createFromMemory CfmtPPF3 src tgt (defaultMeta { cmUndo = True }) of
+    Left _ -> discard
+    Right patch -> case PPF.parsePatch patch of
+      Left err -> counterexample ("parse: " ++ err) $ property False
+      Right p -> ioProperty $ do
+        let applied = PPF.applyPatchMemory p src
+        result <- undoViaFile (PPF.undoPatch p) applied
+        pure $ case result of
+          Left err  -> counterexample ("undo: " ++ err) $ property False
+          Right out -> out === src
+
+-- | Write bytes to a temp file, run an undo function, read back.
+undoViaFile :: (FilePath -> IO (Either String Int)) -> ByteString -> IO (Either String ByteString)
+undoViaFile undoFn target = do
+  dir <- getTemporaryDirectory
+  (tmp, h) <- openBinaryTempFile dir "slap-undo"
+  BS.hPut h target
+  hClose h
+  result <- undoFn tmp
+  case result of
+    Left err -> removeFile tmp >> pure (Left err)
+    Right _  -> do
+      bs <- BS.readFile tmp
+      removeFile tmp
+      pure (Right bs)
 
 ----------------------------------------------------------------------------
 -- Contract properties

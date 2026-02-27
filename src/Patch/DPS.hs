@@ -81,12 +81,14 @@ data DPSPayload
 -- offset 193, flag byte 0 or 1 at offset 192.
 isDPS :: ByteString -> Bool
 isDPS bs
-  | BS.length bs < 199 = False  -- need header + at least 1 record byte
-  | BS.index bs 193 /= 1 = False  -- DPS version must be 1 (3×64-byte fields + flag + version)
-  | BS.index bs 192 > 1 = False   -- stability flag at 3×64 must be 0 or 1
+  | BS.length bs < 198 = False  -- 3×64 header + flag + version + u32 orig_size
+  | BS.index bs 193 /= 1 = False  -- DPS version must be 1
+  | BS.index bs 192 > 1 = False   -- stability flag must be 0 or 1
   | not (BS.all isHeaderByte (BS.take 192 bs)) = False
-  | otherwise = let firstMode = BS.index bs 198
-                in firstMode <= 1  -- first record mode must be 0 or 1
+  -- Zero-record patch (198 bytes exactly) is valid: identity diff.
+  -- When records exist, check the first mode byte for extra confidence.
+  | BS.length bs > 198 = BS.index bs 198 <= 1
+  | otherwise = True
   where
     isHeaderByte b = (b >= 0x20 && b <= 0x7E) || b == 0
 
