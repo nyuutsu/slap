@@ -16,7 +16,8 @@ module Patch.Explain
   , explainBPS
   , explainUPS
   , explainVCDIFF
-  , explainAPS
+  , explainAPSN64
+  , explainAPSGBA
   , explainRUP
   , explainBSDiff
   , explainGDIFF
@@ -31,7 +32,8 @@ import qualified Patch.PPF.Types as PPF
 import qualified Patch.IPS as IPS
 import qualified Patch.BPS as BPS
 import qualified Patch.UPS as UPS
-import qualified Patch.APS as APS
+import qualified Patch.APS.N64 as APSN64
+import qualified Patch.APS.GBA as APSGBA
 import qualified Patch.RUP as RUP
 import qualified Patch.VCDIFF as VCDIFF
 import qualified Patch.BSDiff as BSDiff
@@ -696,32 +698,33 @@ decodedToRegion globalOff inst = case inst of
 -- APS
 ----------------------------------------------------------------------------
 
-explainAPS :: APS.APSPatch -> ExplainData
-explainAPS p@(APS.APSPatch variant) = case variant of
-  APS.APSN64 _hdr recs -> ExplainData
-    { edFormat   = "APS (N64)"
-    , edHeader   = APS.apsMeta p
-    , edSections = [SectionRegions (map mkN64Region recs)]
-    , edSummary  = Summary (length recs) "records" Nothing
-    , edNotes    = []
-    }
-  APS.APSGBA _hdr recs -> ExplainData
-    { edFormat   = "APS (GBA)"
-    , edHeader   = APS.apsMeta p
-    , edSections = [SectionRegions (map mkGBARegion recs)]
-    , edSummary  = Summary (length recs) "blocks" Nothing
-    , edNotes    = []
-    }
+explainAPSN64 :: APSN64.APSN64Patch -> ExplainData
+explainAPSN64 p@(APSN64.APSN64Patch _hdr recs) = ExplainData
+  { edFormat   = "APS (N64)"
+  , edHeader   = APSN64.apsN64Meta p
+  , edSections = [SectionRegions (map mkN64Region recs)]
+  , edSummary  = Summary (length recs) "records" Nothing
+  , edNotes    = []
+  }
 
-mkN64Region :: APS.APSN64Record -> ExplainRegion
-mkN64Region (APS.APSN64Normal off dat) = ExplainRegion
+explainAPSGBA :: APSGBA.APSGBAPatch -> ExplainData
+explainAPSGBA p@(APSGBA.APSGBAPatch _hdr recs) = ExplainData
+  { edFormat   = "APS (GBA)"
+  , edHeader   = APSGBA.apsGBAMeta p
+  , edSections = [SectionRegions (map mkGBARegion recs)]
+  , edSummary  = Summary (length recs) "blocks" Nothing
+  , edNotes    = []
+  }
+
+mkN64Region :: APSN64.APSN64Record -> ExplainRegion
+mkN64Region (APSN64.APSN64Normal off dat) = ExplainRegion
   { erOffset     = off
   , erSize       = BS.length dat
   , erLabel      = "Write  "
   , erPayload    = PayloadWrite dat
   , erAnnotation = AnnotAt AtOffset off []
   }
-mkN64Region (APS.APSN64RLE off val count) = ExplainRegion
+mkN64Region (APSN64.APSN64RLE off val count) = ExplainRegion
   { erOffset     = off
   , erSize       = fromIntegral count
   , erLabel      = "Fill "
@@ -729,14 +732,14 @@ mkN64Region (APS.APSN64RLE off val count) = ExplainRegion
   , erAnnotation = AnnotAt AtOffset off [DetailRLE]
   }
 
-mkGBARegion :: APS.APSGBARecord -> ExplainRegion
+mkGBARegion :: APSGBA.APSGBARecord -> ExplainRegion
 mkGBARegion r = ExplainRegion
-  { erOffset     = fromIntegral (APS.gbaOffset r)
+  { erOffset     = fromIntegral (APSGBA.gbaOffset r)
   , erSize       = 65536
   , erLabel      = "XOR block  "
-  , erPayload    = PayloadXOR (Just (APS.gbaXorData r))
-  , erAnnotation = AnnotAt AtOffset (fromIntegral (APS.gbaOffset r))
-      [DetailCRC16 (fromIntegral (APS.gbaSourceCRC r)) (fromIntegral (APS.gbaTargetCRC r))]
+  , erPayload    = PayloadXOR (Just (APSGBA.gbaXorData r))
+  , erAnnotation = AnnotAt AtOffset (fromIntegral (APSGBA.gbaOffset r))
+      [DetailCRC16 (fromIntegral (APSGBA.gbaSourceCRC r)) (fromIntegral (APSGBA.gbaTargetCRC r))]
   }
 
 ----------------------------------------------------------------------------

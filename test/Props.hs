@@ -8,7 +8,8 @@ import qualified Patch.PMSR as PMSR
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.DPS as DPS
 import qualified Patch.RUP as RUP
-import qualified Patch.APS as APS
+import qualified Patch.APS.N64 as APSN64
+import qualified Patch.APS.GBA as APSGBA
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.PPF.Parse as PPF
 import qualified Patch.PPF.Apply as PPF
@@ -285,11 +286,11 @@ prop_gdiff = forAll genPair $ \(src, tgt) ->
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(src, tgt) ->
-  let patch = APS.createAPSGBA src tgt
-  in case APS.parseAPS patch of
+  let patch = APSGBA.createAPSGBA src tgt
+  in case APSGBA.parseAPSGBA patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
-         result <- applyViaFile APS.applyAPS p src
+         result <- applyViaFile APSGBA.applyAPSGBA p src
          pure $ result === tgt
 
 ----------------------------------------------------------------------------
@@ -401,10 +402,10 @@ prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(src, tgt) ->
   case createFromMemory CfmtAPSN64 src tgt defaultMeta of
     Left err -> counterexample ("create: " ++ err) $ property False
-    Right patch -> case APS.parseAPS patch of
+    Right patch -> case APSN64.parseAPSN64 patch of
        Left err -> counterexample ("parse: " ++ err) $ property False
        Right p  -> ioProperty $ do
-         result <- applyViaFile APS.applyAPS p src
+         result <- applyViaFile APSN64.applyAPSN64 p src
          pure $ result === tgt
 
 ----------------------------------------------------------------------------
@@ -715,11 +716,11 @@ prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(src, tgt) ->
   case createFromMemory CfmtAPSN64 src tgt defaultMeta of
     Left _ -> discard
-    Right patch -> truncated APS.parseAPS patch
+    Right patch -> truncated APSN64.parseAPSN64 patch
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(src, tgt) ->
-  truncated APS.parseAPS (APS.createAPSGBA src tgt)
+  truncated APSGBA.parseAPSGBA (APSGBA.createAPSGBA src tgt)
 
 prop_gdiffTrunc :: Property
 prop_gdiffTrunc = forAll genPair $ \(src, tgt) ->

@@ -27,7 +27,9 @@ src/
     BSDiff.hs      BSDiff/BDF: parse, apply, info
     GDIFF.hs       W3C GDIFF: parse, apply (unsafeCreate), create, info
     XDelta1.hs     xdelta v1.1: parse, apply (unsafeCreate), info
-    APS.hs         APS N64 (type 0+1) + GBA: parse, apply, create, info
+    APS/
+      N64.hs       APS N64 (Blackbag 1998): parse, apply, create, info
+      GBA.hs       APS GBA (unrelated format, same name): parse, apply, create, info
     RUP.hs         RUP/NINJA2: parse, apply, create, info
     DPS.hs         DPS: parse, apply, create, info
     NINJA1.hs      NINJA1 (B/BZ/T/TZ): parse, apply, create, info

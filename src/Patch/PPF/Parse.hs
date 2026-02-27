@@ -3,7 +3,7 @@
 module Patch.PPF.Parse (parsePatch) where
 
 -- Canonical reference: reverse-engineered from Icarus/PPF-Studio; no formal spec
--- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.ppf.js
+-- Secondary: RomPatcher.js modules/RomPatcher.format.ppf.js
 
 import Patch.PPF.Types
 import Patch.Binary (getWord16LE, getWord32LE, getInt64LE)

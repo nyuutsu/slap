@@ -11,7 +11,7 @@ module Patch.XDelta1
   , xdelta1Info
   ) where
 
--- Canonical reference: ~/repos/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
+-- Canonical reference: tools/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
 
 import Patch.Binary (getWord32BE, copyBSRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)

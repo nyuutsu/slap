@@ -19,7 +19,8 @@ import qualified Patch.IPS as IPS
 import qualified Patch.BPS as BPS
 import qualified Patch.UPS as UPS
 import qualified Patch.VCDIFF as VCDIFF
-import qualified Patch.APS as APS
+import qualified Patch.APS.N64 as APSN64
+import qualified Patch.APS.GBA as APSGBA
 import qualified Patch.RUP as RUP
 import qualified Patch.BSDiff as BSDiff
 import qualified Patch.GDIFF as GDIFF
@@ -308,53 +309,45 @@ parseSome bs = case detectFormat bs of
       , spContents  = Nothing
       }
 
-  Just FmtAPS -> do
-    p <- APS.parseAPS bs
-    let expandAPS (APS.APSN64Normal off dat)  = (off, dat)
-        expandAPS (APS.APSN64RLE off val n)   = (off, BS.replicate (fromIntegral n) val)
-        (cnt, contents, verif) = case p of
-          APS.APSPatch (APS.APSN64 hdr recs) ->
-            ( length recs
-            , Just (emptyContents (map expandAPS recs))
-                { pcDescription = Just (APS.n64Description hdr)
-                , pcDestSize    = Just (APS.n64DestSize hdr)
-                }
-            , noVerification
-                { vSourceBytes = concat
-                    [ maybe [] (\c -> [(0x3C, c, "N64 cart ID")]) (APS.n64CartId hdr)
-                    , maybe [] (\c -> [(0x3E, BS.singleton c, "N64 country")]) (APS.n64Country hdr)
-                    , maybe [] (\c -> [(0x10, c, "N64 CRC")]) (APS.n64Crc hdr)
-                    ]
-                }
-            )
-          APS.APSPatch (APS.APSGBA hdr recs) ->
-            ( length recs
-            , Nothing
-            , noVerification
-                { vSourceBlocks = map (\r -> (fromIntegral (APS.gbaOffset r), APS.gbaSourceCRC r)) recs
-                , vTargetBlocks = map (\r -> (fromIntegral (APS.gbaOffset r), APS.gbaTargetCRC r)) recs
-                , vFileSize = Just (APS.gbaSourceSize hdr)
-                }
-            )
+  -- APS N64 and APS GBA are unrelated formats by different authors who
+  -- both used "APS" as the name.  detectFormat dispatches on magic, but
+  -- "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
+  -- Disambiguate via GBA's fixed record structure (12 + N*65544 bytes,
+  -- 64KB-aligned offsets).
+  Just FmtAPSN64
+    | gbaStructure bs -> parseAPSGBABlock bs
+    | otherwise -> do
+    p@(APSN64.APSN64Patch hdr recs) <- APSN64.parseAPSN64 bs
+    let expandN64 (APSN64.APSN64Normal off dat) = (off, dat)
+        expandN64 (APSN64.APSN64RLE off val n)  = (off, BS.replicate (fromIntegral n) val)
     Right SomePatch
-      { spFormat         = "APS"
-      , spInfo           = APS.apsInfo p
-      , spExplain        = Explain.explainAPS p
-      , spIsDifferential = case p of
-          APS.APSPatch (APS.APSGBA _ _) -> True
-          _                             -> False
+      { spFormat         = "APS (N64)"
+      , spInfo           = APSN64.apsN64Info p
+      , spExplain        = Explain.explainAPSN64 p
+      , spIsDifferential = False
       , spApply          = InMemory
-            { imApply = \source -> pure (Right (APS.applyAPSMemory p source)) }
+            { imApply = \source -> pure (Right (APSN64.applyAPSN64Memory p source)) }
       , spUndo           = Nothing
-      , spVerification   = verif
+      , spVerification   = noVerification
+            { vSourceBytes = concat
+                [ maybe [] (\c -> [(0x3C, c, "N64 cart ID")]) (APSN64.n64CartId hdr)
+                , maybe [] (\c -> [(0x3E, BS.singleton c, "N64 country")]) (APSN64.n64Country hdr)
+                , maybe [] (\c -> [(0x10, c, "N64 CRC")]) (APSN64.n64Crc hdr)
+                ]
+            }
       , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 records)" | cnt == 0]
-      , spRecordCount    = cnt
+      , spWarnings       = ["empty patch (0 records)" | null recs]
+      , spRecordCount    = length recs
       , spRecordUnit     = "records"
       , spSourceNotes    = []
       , spMetadata       = Nothing
-      , spContents  = contents
+      , spContents  = Just (emptyContents (map expandN64 recs))
+            { pcDescription = Just (APSN64.n64Description hdr)
+            , pcDestSize    = Just (APSN64.n64DestSize hdr)
+            }
       }
+
+  Just FmtAPSGBA -> parseAPSGBABlock bs
 
   Just FmtRUP -> do
     p <- RUP.parseRUP bs
@@ -549,6 +542,44 @@ parseSome bs = case detectFormat bs of
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
+
+parseAPSGBABlock :: BS.ByteString -> Either String SomePatch
+parseAPSGBABlock bs = do
+  p@(APSGBA.APSGBAPatch hdr recs) <- APSGBA.parseAPSGBA bs
+  Right SomePatch
+    { spFormat         = "APS (GBA)"
+    , spInfo           = APSGBA.apsGBAInfo p
+    , spExplain        = Explain.explainAPSGBA p
+    , spIsDifferential = True
+    , spApply          = InMemory
+          { imApply = \source -> pure (Right (APSGBA.applyAPSGBAMemory p source)) }
+    , spUndo           = Nothing
+    , spVerification   = noVerification
+          { vSourceBlocks = map (\r -> (fromIntegral (APSGBA.gbaOffset r), APSGBA.gbaSourceCRC r)) recs
+          , vTargetBlocks = map (\r -> (fromIntegral (APSGBA.gbaOffset r), APSGBA.gbaTargetCRC r)) recs
+          , vFileSize = Just (APSGBA.gbaSourceSize hdr)
+          }
+    , spVerboseLines   = []
+    , spWarnings       = ["empty patch (0 blocks)" | null recs]
+    , spRecordCount    = length recs
+    , spRecordUnit     = "blocks"
+    , spSourceNotes    = []
+    , spMetadata       = Nothing
+    , spContents  = Nothing
+    }
+
+-- | Structural check for APS-GBA: 12-byte header + N * 65544-byte records,
+-- each record offset 64KB-aligned.  Used to disambiguate "APS10" (N64) from
+-- "APS1" + source_size when size mod 256 == 48.
+gbaStructure :: BS.ByteString -> Bool
+gbaStructure b =
+  let payload = BS.length b - 12
+      nRecs   = payload `div` 65544
+  in payload == 0
+     || (payload >= 65544 && payload `mod` 65544 == 0
+         && all (\i -> let pos = 12 + i * 65544
+                       in BS.index b pos == 0 && BS.index b (pos + 1) == 0)
+                [0 .. nRecs - 1])
 
 describeIPS :: IPS.IPSRecord -> String
 describeIPS (IPS.IPSRecord off dat) =

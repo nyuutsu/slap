@@ -14,7 +14,8 @@ build-type:    Simple
 library slap-internal
   exposed-modules:
       Patch.Archive
-    , Patch.APS
+    , Patch.APS.N64
+    , Patch.APS.GBA
     , Patch.Binary
     , Patch.BPS
     , Patch.Compress

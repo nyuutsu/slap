@@ -24,7 +24,8 @@ import qualified Patch.IPS as IPS
 import Patch.IPS (jsonPairs, jsonFieldCI)
 import qualified Patch.BPS as BPS
 import qualified Patch.UPS as UPS
-import qualified Patch.APS as APS
+import qualified Patch.APS.N64 as APSN64
+import qualified Patch.APS.GBA as APSGBA
 import qualified Patch.RUP as RUP
 import qualified Patch.GDIFF as GDIFF
 import qualified Patch.PMSR as PMSR
@@ -409,7 +410,7 @@ encodeDirect pc src target meta = case target of
                    Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDesc
                    Nothing     -> PCHTXT.encodePCHTXT intRecs pchtxtDesc
   CfmtAPSN64 -> case pcDestSize pc of
-                  Just sz -> APS.encodeAPSN64 intRecs sz apsDesc
+                  Just sz -> APSN64.encodeAPSN64 intRecs sz apsDesc
                   Nothing -> error "unreachable: canConvert verified FDestSize"
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
@@ -455,7 +456,7 @@ createFromMemory fmt src tgt m
                 (toMaybe (cmTitle m)) Nothing Nothing Nothing Nothing
                 (toMaybe (cmDesc m))
               toMaybe s = if null s then Nothing else Just (BS8.pack s)
-      CfmtAPSGBA -> Right (APS.createAPSGBA src tgt)
+      CfmtAPSGBA -> Right (APSGBA.createAPSGBA src tgt)
       CfmtGDIFF  -> Right (GDIFF.createGDIFF src tgt)
       _          -> error "unreachable: all formats handled"
 

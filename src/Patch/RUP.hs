@@ -16,7 +16,7 @@ module Patch.RUP
 
 -- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
 -- Archived from http://ninja.cinnamonpirate.com/files/filespec20.txt
--- Secondary: ~/repos/RomPatcher[dot]js/rom-patcher-js/modules/RomPatcher.format.rup.js
+-- Secondary: RomPatcher.js modules/RomPatcher.format.rup.js
 -- Note: NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
 -- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
 
