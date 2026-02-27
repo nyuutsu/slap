@@ -194,18 +194,18 @@ xorToBlocks bs = go 0
                   in UPSBlock skip xd : go end
 
     countZeros :: Int -> Int64
-    countZeros i = go' i
+    countZeros i = countFrom i
       where
-        go' j
+        countFrom j
           | j >= len = fromIntegral (j - i)
-          | BS.index bs j == 0 = go' (j + 1)
+          | BS.index bs j == 0 = countFrom (j + 1)
           | otherwise = fromIntegral (j - i)
 
     collectNonzero :: Int -> (ByteString, Int)
-    collectNonzero start = go' start []
+    collectNonzero start = collectFrom start []
       where
-        go' j acc
+        collectFrom j acc
           | j >= len = (BS.pack (reverse acc), j)
           | BS.index bs j == 0 = (BS.pack (reverse acc), j + 1)  -- +1: consume terminator position
-          | otherwise = go' (j + 1) (BS.index bs j : acc)
+          | otherwise = collectFrom (j + 1) (BS.index bs j : acc)
 

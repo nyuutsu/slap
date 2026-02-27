@@ -1,13 +1,13 @@
 module Integration.Metadata (metadataTests) where
 
-import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, RomCache)
+import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
 import Patch.SomePatch (SomePatch(..), parseSome)
 import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Patch.BPS as BPS
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.Char (isSpace)
+import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf, isInfixOf, find)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
@@ -66,23 +66,17 @@ mkFieldTest patchPath fmt fieldName = testCase fieldName $ do
 extractField :: String -> String -> String
 extractField name info =
   case find (matchesField name) (lines info) of
-    Just l  -> trim' (dropField name l)
+    Just l  -> trim (dropField name l)
     Nothing -> "<not found>"
   where
     matchesField n line =
       let stripped = dropWhile isSpace line
-          lower = map toLow stripped
-          target = map toLow n ++ ":"
+          lower = map toLower stripped
+          target = map toLower n ++ ":"
       in target `isPrefixOf` lower
     dropField _n line =
       let stripped = dropWhile isSpace line
       in drop 1 (dropWhile (/= ':') stripped)
-    toLow c
-      | c >= 'A' && c <= 'Z' = toEnum (fromEnum c + 32)
-      | otherwise             = c
-
-trim' :: String -> String
-trim' = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 ----------------------------------------------------------------------------
 -- BPS metadata tests (programmatic, no committed test data)

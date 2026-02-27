@@ -136,7 +136,7 @@ applyParser = mk
   <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
   <*> outputOpt
   where
-    mk force' nv yolo' = CmdApply (force' || yolo') (nv || yolo')
+    mk force noVerify yolo = CmdApply (force || yolo) (noVerify || yolo)
     outputOpt = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
                   <> help "Write patched output to FILE"))
             <|> optional (argument str (metavar "OUTPUT"))
@@ -230,8 +230,9 @@ convertParser = mk
   <*> optional (option str (long "metadata" <> metavar "FILE"
       <> help "Metadata file to embed (BPS)"))
   where
-    mk p t o w r d ti au u v nv yolo' ver un rt it md =
-      CmdConvert p t o w r d ti au u v (nv || yolo') ver un rt it md
+    mk patch toFmt output with_ raw desc title author undo validate noVerify yolo version unstable romType imgType metadata =
+      CmdConvert patch toFmt output with_ raw desc title author undo validate
+        (noVerify || yolo) version unstable romType imgType metadata
 
 parseCfmt :: String -> Either String CreateFormat
 parseCfmt s = case map toLower s of
@@ -364,14 +365,14 @@ doApply cmd = do
             | cmdInPlace cmd         = cmdSource cmd
             | Just o <- cmdOutput cmd = o
             | otherwise              = deriveOutput (cmdPatch cmd) (cmdSource cmd)
-          v = spVerification sp
-          nv = cmdNoVerify cmd
+          verif = spVerification sp
+          noVerify = cmdNoVerify cmd
 
       -- Dry run: report and exit
       when (cmdDryRun cmd) $ do
         putStrLn $ "would apply " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                 ++ " \8594 " ++ outputPath
-        case vSourceCRC32 v of
+        case vSourceCRC32 verif of
           Just expected -> do
             sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
             let actual = rustyCRC32 sourceBs
@@ -395,26 +396,26 @@ doApply cmd = do
       case spApply sp of
         InPlace f -> do
           -- Read source for pre-apply verification if needed
-          when (hasSourceV v) $ do
+          when (hasSourceV verif) $ do
             sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
-            verifySource nv v sourceBs
+            verifySource noVerify verif sourceBs
           unless (cmdInPlace cmd) $
             copyFile (cmdSource cmd) outputPath
           f (if cmdInPlace cmd then cmdSource cmd else outputPath)
           -- Post-apply target verification if needed
-          when (hasTargetV v) $ do
+          when (hasTargetV verif) $ do
             targetBs <- BS.readFile (if cmdInPlace cmd then cmdSource cmd else outputPath)
-            verifyTarget nv v targetBs
+            verifyTarget noVerify verif targetBs
           putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                   ++ " \8594 " ++ outputPath
         InMemory { imApply = apply } -> do
           sourceBs <- readMaybeUnwrap (cmdRaw cmd) (cmdSource cmd)
-          verifySource nv v sourceBs
+          verifySource noVerify verif sourceBs
           result <- apply sourceBs
           case result of
             Left err -> die err
             Right target -> do
-              verifyTarget nv v target
+              verifyTarget noVerify verif target
               BS.writeFile outputPath target
               putStrLn $ "applied " ++ show (spRecordCount sp) ++ " " ++ spRecordUnit sp
                       ++ " \8594 " ++ outputPath
@@ -433,8 +434,8 @@ doUndo cmd = do
       case spUndo sp of
         Nothing -> die "undo not supported for this format"
         Just (UndoInPlace f) -> do
-          actual <- resolveOutput (cmdSource cmd) (cmdOutput cmd)
-          result <- f actual
+          undoPath <- resolveOutput (cmdSource cmd) (cmdOutput cmd)
+          result <- f undoPath
           case result of
             Left err -> die err
             Right n  -> putStrLn ("reverted " ++ show n ++ " records")
@@ -502,7 +503,7 @@ doConvert cmd = do
             , cmImageType   = cmdConvImageType cmd
             , cmBPSMetadata = mMeta
             }
-      let emitNotes ns = forM_ ns $ \n -> hPutStrLn stderr ("slap: " ++ n)
+      let printNotes ns = forM_ ns $ \note -> hPutStrLn stderr ("slap: " ++ note)
           metaNotes = case spMetadata sp of
             Nothing -> []
             Just m  ->
@@ -520,7 +521,7 @@ doConvert cmd = do
           case createFromMemory (cmdConvTo cmd) sourceBs targetBs meta of
             Left err -> die err
             Right result -> do
-              emitNotes (spSourceNotes sp ++ metaNotes ++ createDefaultNotes (cmdConvTo cmd) meta)
+              printNotes (spSourceNotes sp ++ metaNotes ++ createDefaultNotes (cmdConvTo cmd) meta)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
         Nothing -> case spContents sp of
@@ -528,7 +529,7 @@ doConvert cmd = do
           Just pc -> case convertDirect pc (cmdConvTo cmd) meta of
             Left err -> die err
             Right (result, notes) -> do
-              emitNotes (spSourceNotes sp ++ notes)
+              printNotes (spSourceNotes sp ++ notes)
               BS.writeFile outFile result
               putStrLn ("converted to " ++ fmtName (cmdConvTo cmd) ++ ": " ++ outFile)
 
@@ -585,65 +586,69 @@ resolveOutput source (Just out) = do
 ----------------------------------------------------------------------------
 
 verifySource :: Bool -> Verification -> BS.ByteString -> IO ()
-verifySource nv v bs = do
-  let hbs = vSourcePreHash v bs
-  forM_ (vSourceCRC32 v) $ \expected ->
-    checkCRC nv "source" expected (rustyCRC32 hbs)
-  forM_ (vSourceMD5 v) $ \expected ->
-    checkHash nv "source MD5" expected (md5 hbs)
-  forM_ (vSourceSHA1 v) $ \expected ->
-    checkHash nv "source SHA1" expected (sha1 hbs)
+verifySource noVerify verif bs = do
+  let preprocessed = vSourcePreHash verif bs
+  forM_ (vSourceCRC32 verif) $ \expected ->
+    checkCRC noVerify "source" expected (rustyCRC32 preprocessed)
+  forM_ (vSourceMD5 verif) $ \expected ->
+    checkHash noVerify "source MD5" expected (md5 preprocessed)
+  forM_ (vSourceSHA1 verif) $ \expected ->
+    checkHash noVerify "source SHA1" expected (sha1 preprocessed)
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
-  unless nv $ do
-    forM_ (vSourceBlocks v) $ \(off, expected) ->
+  unless noVerify $ do
+    forM_ (vSourceBlocks verif) $ \(off, expected) ->
       warnBlock "source" off expected (crc16 (safeSlice off 0x10000 bs))
-    forM_ (vPPFBlock v) $ \(off, expected) ->
+    forM_ (vPPFBlock verif) $ \(off, expected) ->
       warnPPFBlock off expected bs
-    forM_ (vFileSize v) $ \expected ->
+    forM_ (vFileSize verif) $ \expected ->
       warnFileSize expected (fromIntegral (BS.length bs))
-    forM_ (vSourceBytes v) $ \(off, expected, label) ->
+    forM_ (vSourceBytes verif) $ \(off, expected, label) ->
       warnSourceBytes label off expected bs
 
 verifyTarget :: Bool -> Verification -> BS.ByteString -> IO ()
-verifyTarget nv v bs = do
-  forM_ (vTargetCRC32 v) $ \expected ->
-    checkCRC nv "target" expected (rustyCRC32 bs)
-  forM_ (vTargetMD5 v) $ \expected ->
-    checkHash nv "target MD5" expected (md5 bs)
-  unless nv $
-    forM_ (vTargetBlocks v) $ \(off, expected) ->
+verifyTarget noVerify verif bs = do
+  forM_ (vTargetCRC32 verif) $ \expected ->
+    checkCRC noVerify "target" expected (rustyCRC32 bs)
+  forM_ (vTargetMD5 verif) $ \expected ->
+    checkHash noVerify "target MD5" expected (md5 bs)
+  unless noVerify $
+    forM_ (vTargetBlocks verif) $ \(off, expected) ->
       warnBlock "target" off expected (crc16 (safeSlice off 0x10000 bs))
-  forM_ (vWindowAdler32 v) $ \(off, len, expected) ->
-    checkAdler nv off expected (adler32 (safeSlice off len bs))
+  forM_ (vWindowAdler32 verif) $ \(off, len, expected) ->
+    checkAdler noVerify off expected (adler32 (safeSlice off len bs))
 
 hasSourceV :: Verification -> Bool
-hasSourceV v = isJust (vSourceCRC32 v) || isJust (vSourceMD5 v) || isJust (vSourceSHA1 v)
-            || not (null (vSourceBlocks v)) || isJust (vPPFBlock v) || isJust (vFileSize v)
-            || not (null (vSourceBytes v))
+hasSourceV verif = or
+  [ isJust (vSourceCRC32 verif), isJust (vSourceMD5 verif), isJust (vSourceSHA1 verif)
+  , not (null (vSourceBlocks verif)), isJust (vPPFBlock verif), isJust (vFileSize verif)
+  , not (null (vSourceBytes verif))
+  ]
 
 hasTargetV :: Verification -> Bool
-hasTargetV v = isJust (vTargetCRC32 v) || isJust (vTargetMD5 v)
-            || not (null (vTargetBlocks v)) || not (null (vWindowAdler32 v))
+hasTargetV verif = or
+  [ isJust (vTargetCRC32 verif), isJust (vTargetMD5 verif)
+  , not (null (vTargetBlocks verif)), not (null (vWindowAdler32 verif))
+  ]
 
 checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
-checkCRC nv label expected actual
+checkCRC noVerify label expected actual
   | expected == actual = pure ()
-  | nv = warn (label ++ " CRC mismatch (expected "
+  | noVerify = warn (label ++ " CRC mismatch (expected "
                ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")")
   | otherwise = die (label ++ " CRC mismatch (expected "
                      ++ fmtCRC expected ++ ", got " ++ fmtCRC actual
                      ++ ")\n  use --no-verify to apply anyway")
 
 checkHash :: Bool -> String -> BS.ByteString -> BS.ByteString -> IO ()
-checkHash nv label expected actual
+checkHash noVerify label expected actual
   | expected == actual = pure ()
-  | nv = warn (label ++ " mismatch")
+  | noVerify = warn (label ++ " mismatch")
   | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
 
 checkAdler :: Bool -> Int -> Word32 -> Word32 -> IO ()
-checkAdler nv off expected actual
+checkAdler noVerify off expected actual
   | expected == actual = pure ()
-  | nv = warn msg
+  | noVerify = warn msg
   | otherwise = die (msg ++ "\n  use --no-verify to apply anyway")
   where msg = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral off)
             ++ " (expected " ++ fmtCRC expected ++ ", got " ++ fmtCRC actual ++ ")"

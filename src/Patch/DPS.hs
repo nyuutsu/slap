@@ -52,8 +52,8 @@ data DPSPatch = DPSPatch
   { dpsName       :: ByteString   -- 64 bytes, null-padded
   , dpsAuthor     :: ByteString   -- 64 bytes, null-padded
   , dpsVersion    :: ByteString   -- 64 bytes, null-padded
-  , dpsFlag       :: DPSStability
-  , dpsDPSVersion :: Word8        -- must be 1
+  , dpsStability       :: DPSStability
+  , dpsFormatVersion :: Word8        -- must be 1
   , dpsOrigSize   :: Int64        -- original ROM size
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
@@ -100,10 +100,10 @@ parseDPS :: ByteString -> Either String DPSPatch
 parseDPS bs
   | BS.length bs < 198 = Left "DPS: input too short"
   | BS.index bs 193 /= 1 = Left ("DPS: unsupported version byte: " ++ show (BS.index bs 193))
-  | otherwise = runGet parseDPS' bs
+  | otherwise = runGet parseDPSBody bs
 
-parseDPS' :: Get DPSPatch
-parseDPS' = do
+parseDPSBody :: Get DPSPatch
+parseDPSBody = do
   name    <- trimNull <$> getBytes 64
   author  <- trimNull <$> getBytes 64
   version <- trimNull <$> getBytes 64
@@ -118,8 +118,8 @@ parseDPS' = do
         { dpsName       = name
         , dpsAuthor     = author
         , dpsVersion    = version
-        , dpsFlag       = flag
-        , dpsDPSVersion = ver
+        , dpsStability       = flag
+        , dpsFormatVersion = ver
         , dpsOrigSize   = origSz
         , dpsRecords    = recs
         }
@@ -158,18 +158,18 @@ applyDPS patch source = Right $ buildOutput source (dpsRecords patch)
 buildOutput :: ByteString -> [DPSRecord] -> ByteString
 buildOutput source recs =
   -- DPS builds output by writing chunks at specified offsets.
-  -- Start with a copy of the source, then overlay records.
+  -- Start with a copy of the source, then overwrite at each record's offset.
   let base = source
       apply1 buf (DPSRecord _ outOff (PayloadData dat)) =
-        overlay buf (fromIntegral outOff) dat
+        overwriteAt buf (fromIntegral outOff) dat
       apply1 buf (DPSRecord _ outOff (PayloadCopy srcOff len)) =
-        let chunk = safeTake (fromIntegral len) (fromIntegral srcOff) source
-        in overlay buf (fromIntegral outOff) chunk
+        let chunk = takePadded (fromIntegral len) (fromIntegral srcOff) source
+        in overwriteAt buf (fromIntegral outOff) chunk
   in foldl' apply1 base recs
 
 -- | Write bytes at a given offset, extending with zeros if needed.
-overlay :: ByteString -> Int -> ByteString -> ByteString
-overlay buf off dat
+overwriteAt :: ByteString -> Int -> ByteString -> ByteString
+overwriteAt buf off dat
   | off + BS.length dat <= BS.length buf =
       let (before, rest) = BS.splitAt off buf
           after = BS.drop (BS.length dat) rest
@@ -180,8 +180,8 @@ overlay buf off dat
       buf <> BS.replicate (off - BS.length buf) 0 <> dat
 
 -- | Safe slice from a ByteString, padding with zeros if out of range.
-safeTake :: Int -> Int -> ByteString -> ByteString
-safeTake len off bs
+takePadded :: Int -> Int -> ByteString -> ByteString
+takePadded len off bs
   | off >= BS.length bs = BS.replicate len 0
   | off + len > BS.length bs =
       let available = BS.take (BS.length bs - off) (BS.drop off bs)
@@ -198,7 +198,7 @@ dpsMeta p = concat
   , fieldPair "author"  (dpsAuthor p)
   , fieldPair "version" (dpsVersion p)
   , [("orig size", show (dpsOrigSize p))]
-  , [("flag", "unstable") | dpsFlag p == DPSUnstable]
+  , [("flag", "unstable") | dpsStability p == DPSUnstable]
   ]
   where
     fieldPair _ bs | BS.null bs = []

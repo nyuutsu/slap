@@ -109,7 +109,11 @@ parseN64 = do
           destSize <- word32LE
           recs <- parseN64Records
           pure $ APSN64Patch
-            (APSN64Header ptype encodingByte desc Nothing Nothing Nothing Nothing destSize)
+            APSN64Header
+              { n64PatchType = ptype, n64Encoding = encodingByte, n64Description = desc
+              , n64ImageFormat = Nothing, n64CartId = Nothing
+              , n64Country = Nothing, n64Crc = Nothing, n64DestSize = destSize
+              }
             recs
         APSN64Specific -> do
           imgFmt  <- toAPSImageFormat <$> getByte
@@ -120,8 +124,11 @@ parseN64 = do
           destSize <- word32LE
           recs <- parseN64Records
           pure $ APSN64Patch
-            (APSN64Header ptype encodingByte desc (Just imgFmt) (Just cartId)
-                          (Just country) (Just crcVal) destSize)
+            APSN64Header
+              { n64PatchType = ptype, n64Encoding = encodingByte, n64Description = desc
+              , n64ImageFormat = Just imgFmt, n64CartId = Just cartId
+              , n64Country = Just country, n64Crc = Just crcVal, n64DestSize = destSize
+              }
             recs
 
 parseN64Records :: Get [APSN64Record]

@@ -44,7 +44,7 @@ import qualified Patch.DPS as DPS
 import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
 
-import Patch.Format (padHex, padNum, padR, showSigned, hexDump, renderField)
+import Patch.Format (padHex, padNum, padRight, showSigned, hexDump, renderField)
 import qualified Patch.PPF.Info as PPFInfo
 
 import Data.Array (accumArray, elems)
@@ -147,7 +147,7 @@ renderExplain mSource ed = unlines $
 
     renderBlockEntry r =
       "    " ++ padHex 8 (erOffset r) ++ "  " ++ erLabel r
-      ++ padR 10 (show (erSize r) ++ " B")
+      ++ padRight 10 (show (erSize r) ++ " B")
       ++ "\n" ++ hexDump (payloadBytes (erPayload r))
 
     payloadBytes (PayloadWrite bs) = bs
@@ -157,7 +157,7 @@ renderExplain mSource ed = unlines $
 
     renderRegion n r = case erPayload r of
       PayloadWrite bs ->
-        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        padNum n ++ "  " ++ erLabel r ++ padRight 10 (show (erSize r) ++ " B")
         ++ annot r
         ++ "\n" ++ hexDump bs
       PayloadFill val count ->
@@ -165,16 +165,16 @@ renderExplain mSource ed = unlines $
         ++ padHex 2 (fromIntegral val :: Int64)
         ++ annot r
       PayloadCopy _ ->
-        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        padNum n ++ "  " ++ erLabel r ++ padRight 10 (show (erSize r) ++ " B")
         ++ annot r
         ++ renderCopySource mSource r
       PayloadXOR (Just xd) ->
-        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        padNum n ++ "  " ++ erLabel r ++ padRight 10 (show (erSize r) ++ " B")
         ++ annot r
         ++ "\n" ++ labeledHexDump "delta" xd
         ++ renderResolvedXOR mSource (erOffset r) xd
       PayloadXOR Nothing ->
-        padNum n ++ "  " ++ erLabel r ++ padR 10 (show (erSize r) ++ " B")
+        padNum n ++ "  " ++ erLabel r ++ padRight 10 (show (erSize r) ++ " B")
         ++ annot r
       PayloadMeta _ ->
         padNum n ++ "  " ++ erLabel r ++ annot r
@@ -197,8 +197,8 @@ renderBytesSuffix BytesTotalOutput = "bytes total output"
 renderAnnotation :: Annotation -> String
 renderAnnotation AnnotNone = ""
 renderAnnotation (AnnotBSDiff add copy seek) =
-  "add " ++ padR 10 (show add ++ " B")
-  ++ "  copy " ++ padR 10 (show copy ++ " B")
+  "add " ++ padRight 10 (show add ++ " B")
+  ++ "  copy " ++ padRight 10 (show copy ++ " B")
   ++ "  seek " ++ showSigned seek
 renderAnnotation (AnnotAt kind off details) =
   srcPrefix ++ "  " ++ kindStr kind ++ "0x" ++ padHex 6 off
@@ -289,7 +289,7 @@ renderSummary mSource ed = unlines $ filter (not . null) $
 
     -- Modified bytes breakdown
     totalModified = sum (map erSize allRegions)
-    payloadCounts = foldl countPayload (0,0,0,0,0) allRegions
+    payloadCounts = foldl' countPayload (0,0,0,0,0) allRegions
     countPayload (!w,!f,!c,!x,!m) r = case erPayload r of
       PayloadWrite _  -> (w+1,f,c,x,m)
       PayloadFill _ _ -> (w,f+1,c,x,m)
@@ -407,8 +407,8 @@ renderSummary mSource ed = unlines $ filter (not . null) $
                           then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
                           else 0
                 in "  0x" ++ padHex 6 sOff ++ " \8211 0x" ++ padHex 6 eOff
-                   ++ "   " ++ padR 5 (show recsInRun) ++ " records"
-                   ++ "   " ++ padR 10 (commaNum bytesInRun ++ " B")
+                   ++ "   " ++ padRight 5 (show recsInRun) ++ " records"
+                   ++ "   " ++ padRight 10 (commaNum bytesInRun ++ " B")
                    ++ "   " ++ showPct pct
           in case runs of
                [] -> []
@@ -419,7 +419,7 @@ renderSummary mSource ed = unlines $ filter (not . null) $
       let s = show (round (p * 10) :: Int)
           (whole, frac) = splitAt (length s - 1) s
           w = if null whole then "0" else whole
-      in padR 6 (w ++ "." ++ frac ++ "%")
+      in padRight 6 (w ++ "." ++ frac ++ "%")
 
     -- Record size distribution
     sizes = sort (map erSize allRegions)
@@ -749,7 +749,7 @@ mkGBARegion r = ExplainRegion
 explainRUP :: RUP.RUPPatch -> ExplainData
 explainRUP p = ExplainData
   { edFormat   = "RUP (NINJA2)"
-  , edHeader   = RUP.rupMetaKV p
+  , edHeader   = RUP.rupMeta p
   , edSections = [SectionRegions (map mkRUPRegion (RUP.rupRecords p))]
   , edSummary  = Summary nRecs "records" Nothing
   , edNotes    = []

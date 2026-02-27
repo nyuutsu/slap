@@ -247,14 +247,14 @@ jsonPairs = parsePairs . BS8.unpack
             (val, afterVal) -> (key, val) : go afterVal
           other -> go other   -- non-string value, skip
       _ -> []
-    takeQuoted = go' []
+    takeQuoted = scanQuoted []
       where
-        go' acc ('"' : rest)         = (reverse acc, rest)
-        go' acc ('\\' : '"' : rest)  = go' ('"' : acc) rest
-        go' acc ('\\' : '\\' : rest) = go' ('\\' : acc) rest
-        go' acc ('\\' : c : rest)    = go' (c : acc) rest
-        go' acc (c : rest)           = go' (c : acc) rest
-        go' acc []                   = (reverse acc, [])
+        scanQuoted acc ('"' : rest)         = (reverse acc, rest)
+        scanQuoted acc ('\\' : '"' : rest)  = scanQuoted ('"' : acc) rest
+        scanQuoted acc ('\\' : '\\' : rest) = scanQuoted ('\\' : acc) rest
+        scanQuoted acc ('\\' : c : rest)    = scanQuoted (c : acc) rest
+        scanQuoted acc (c : rest)           = scanQuoted (c : acc) rest
+        scanQuoted acc []                   = (reverse acc, [])
 
 -- | Case-insensitive key lookup in extracted JSON pairs.
 jsonFieldCI :: [(String, String)] -> String -> Maybe String
@@ -370,11 +370,11 @@ ebpJson t a d = BS8.pack $
 -- offWidth is 3 for IPS/EBP, 4 for IPS32.
 optimalIPSRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
 optimalIPSRecords offWidth src tgt =
-  concatMap (dpBlock offWidth) (mergeGaps offWidth tgt (rawDiff src tgt))
+  concatMap (partitionOptimal offWidth) (mergeGaps offWidth tgt (diffRaw src tgt))
 
 -- | Diff without gap merging — raw changed regions.
-rawDiff :: ByteString -> ByteString -> [(Int, ByteString)]
-rawDiff old new = go 0 ++ extension
+diffRaw :: ByteString -> ByteString -> [(Int, ByteString)]
+diffRaw old new = go 0 ++ extension
   where
     oldLen = BS.length old
     newLen = BS.length new
@@ -405,14 +405,14 @@ mergeGaps offWidth tgt ((o1,d1):(o2,d2):rest)
 
 -- | DP within a single block to find optimal Copy/RLE record partition.
 -- Returns records with absolute offsets and data <= 65535 bytes each.
-dpBlock :: Int -> (Int, ByteString) -> [(Int, ByteString)]
-dpBlock offWidth (blockOff, blockData)
+partitionOptimal :: Int -> (Int, ByteString) -> [(Int, ByteString)]
+partitionOptimal offWidth (blockOff, blockData)
   | BS.null blockData = []
   | otherwise = runST go
   where
     n = BS.length blockData
     inf = n * (offWidth + 7) + 1
-    runs = maxRuns blockData
+    runs = findByteRuns blockData
     rawPos = dedup . sort $
       [0, n] ++ concatMap (\(a, b) -> [a, b]) runs
     positions = ensureMaxGap 0xFFFF rawPos
@@ -469,8 +469,8 @@ dpBlock offWidth (blockOff, blockData)
       extract (k - 1) []
 
 -- | Find maximal same-byte runs >= 4 bytes.  Returns [(start, end)].
-maxRuns :: ByteString -> [(Int, Int)]
-maxRuns bs
+findByteRuns :: ByteString -> [(Int, Int)]
+findByteRuns bs
   | BS.null bs = []
   | otherwise  = go 0 (BS.index bs 0) 1
   where

@@ -241,19 +241,19 @@ prop_avoidSentinel = property $
 
 -- | Split records at maxSize boundaries (same logic as Patch.Convert.splitRecords).
 splitMax :: Int -> [(Int, ByteString)] -> [(Int, ByteString)]
-splitMax maxSz = concatMap split1
+splitMax maxSz = concatMap splitRecord
   where
-    split1 (off, dat)
+    splitRecord (off, dat)
       | BS.length dat <= maxSz = [(off, dat)]
       | otherwise =
           let (h, t) = BS.splitAt maxSz dat
-          in (off, h) : split1 (off + maxSz, t)
+          in (off, h) : splitRecord (off + maxSz, t)
 
 -- | Total encoded IPS record size (excluding magic/EOF marker).
 ipsEncodedSize :: Int -> [(Int, ByteString)] -> Int
-ipsEncodedSize offWidth = sum . map recSz
+ipsEncodedSize offWidth = sum . map recordSize
   where
-    recSz (_, d)
+    recordSize (_, d)
       | BS.length d >= 3, BS.all (== BS.index d 0) d = offWidth + 5
       | otherwise = offWidth + 2 + BS.length d
 

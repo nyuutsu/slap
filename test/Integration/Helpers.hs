@@ -22,6 +22,16 @@ module Integration.Helpers
   , runSlap
     -- * Pattern matching
   , matchPattern
+    -- * Subprocess assertions
+  , expectFail
+  , expectOk
+    -- * Test data
+  , writeGarbage
+    -- * String helpers
+  , trim
+  , ciContains
+    -- * File helpers
+  , removeIfExists
     -- * Temp helpers
   , withTempFile
   , withTempDir
@@ -37,11 +47,12 @@ import qualified Data.ByteString as BS
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
 import Data.IORef (IORef, readIORef, atomicModifyIORef')
-import Data.List (isPrefixOf)
+import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Map.Strict as Map
 import System.Directory (removeFile)
 import System.Environment (lookupEnv)
-import System.Exit (ExitCode)
+import System.Exit (ExitCode(..))
+import Test.Tasty.HUnit (assertBool, assertFailure)
 import System.IO (hClose, openBinaryTempFile)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
@@ -178,7 +189,7 @@ applyViaTemp :: BS.ByteString -> (FilePath -> IO ()) -> IO BS.ByteString
 applyViaTemp source action = do
   (tmp, h) <- openBinaryTempFile "/tmp" "slap-int"
   hClose h
-  flip finally (removeFileSafe tmp) $ do
+  flip finally (removeIfExists tmp) $ do
     BS.writeFile tmp source
     action tmp
     BS.readFile tmp
@@ -194,14 +205,14 @@ undoPatch sp patched = case spUndo sp of
     BS.writeFile tmp patched
     result <- f tmp
     case result of
-      Left err -> removeFileSafe tmp >> pure (Left err)
+      Left err -> removeIfExists tmp >> pure (Left err)
       Right _  -> do
         bs <- BS.readFile tmp
-        removeFileSafe tmp
+        removeIfExists tmp
         pure (Right bs)
 
-removeFileSafe :: FilePath -> IO ()
-removeFileSafe fp = removeFile fp `catch` (\(_ :: IOException) -> pure ())
+removeIfExists :: FilePath -> IO ()
+removeIfExists fp = removeFile fp `catch` (\(_ :: IOException) -> pure ())
 
 ----------------------------------------------------------------------------
 -- Conversion
@@ -296,3 +307,48 @@ withTempFile template action =
 
 withTempDir :: String -> (FilePath -> IO a) -> IO a
 withTempDir = withSystemTempDirectory
+
+----------------------------------------------------------------------------
+-- Subprocess assertions
+----------------------------------------------------------------------------
+
+-- | Run slap, expect failure, check stderr+stdout contains pattern (case-insensitive).
+expectFail :: FilePath -> [String] -> String -> String -> IO ()
+expectFail slap args label pattern = do
+  (ec, out, err) <- runSlap slap args
+  let combined = out ++ err
+  case ec of
+    ExitFailure _ ->
+      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
+        (map toLower pattern `isInfixOf` map toLower combined)
+    ExitSuccess ->
+      assertFailure (label ++ ": expected failure but got success: " ++ combined)
+
+-- | Run slap, expect success, check stderr+stdout contains pattern (case-insensitive).
+expectOk :: FilePath -> [String] -> String -> String -> IO ()
+expectOk slap args label pattern = do
+  (ec, out, err) <- runSlap slap args
+  let combined = out ++ err
+  case ec of
+    ExitSuccess ->
+      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
+        (map toLower pattern `isInfixOf` map toLower combined)
+    ExitFailure _ ->
+      assertFailure (label ++ ": expected success but got failure: " ++ combined)
+
+----------------------------------------------------------------------------
+-- Test data
+----------------------------------------------------------------------------
+
+-- | Write deterministic pseudo-random bytes to a file.
+writeGarbage :: FilePath -> Int -> IO ()
+writeGarbage fp n = BS.writeFile fp $ BS.pack $ take n $ map fromIntegral $
+  iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
+
+----------------------------------------------------------------------------
+-- String helpers
+----------------------------------------------------------------------------
+
+-- | Case-insensitive substring check.
+ciContains :: String -> String -> Bool
+ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack

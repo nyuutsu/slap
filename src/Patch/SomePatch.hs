@@ -69,7 +69,14 @@ data Verification = Verification
   }
 
 noVerification :: Verification
-noVerification = Verification Nothing Nothing Nothing Nothing Nothing [] [] Nothing Nothing [] [] id
+noVerification = Verification
+  { vSourceCRC32 = Nothing, vSourceMD5 = Nothing, vSourceSHA1 = Nothing
+  , vTargetCRC32 = Nothing, vTargetMD5 = Nothing
+  , vSourceBlocks = [], vTargetBlocks = []
+  , vPPFBlock = Nothing, vFileSize = Nothing
+  , vWindowAdler32 = [], vSourceBytes = []
+  , vSourcePreHash = id
+  }
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
@@ -158,7 +165,7 @@ parseSome bs = case detectFormat bs of
             }
       in Right SomePatch
         { spFormat         = "PPF"
-        , spInfo           = PPF.showInfo p
+        , spInfo           = PPF.ppfInfo p
         , spExplain        = Explain.explainPPF p
         , spIsDifferential = False
         , spApply          = InMemory

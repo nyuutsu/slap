@@ -1,4 +1,4 @@
-module Patch.PPF.Info (showInfo, ppfMeta) where
+module Patch.PPF.Info (ppfInfo, ppfMeta) where
 
 import Patch.PPF.Types
 import Patch.Format (renderField)
@@ -30,8 +30,8 @@ ppfMeta p = concat
       ++ " (" ++ show (BS.length (valBlock v)) ++ " bytes)"
 
 -- | Format a human-readable summary of a parsed PPF patch.
-showInfo :: Patch -> String
-showInfo p = unlines $ filter (not . null) $
+ppfInfo :: Patch -> String
+ppfInfo p = unlines $ filter (not . null) $
   [ "format:      PPF" ++ verStr (patchVersion p) ]
   ++ map renderField (ppfMeta p)
   ++ [ "records:     " ++ show (length (patchRecords p))

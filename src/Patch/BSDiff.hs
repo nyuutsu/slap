@@ -50,8 +50,8 @@ data BSDiffControl = BSDiffControl
 
 -- | Read a signed 64-bit LE value in bsdiff format.
 -- Bit 63 of byte 7 is the sign; lower 63 bits are the magnitude (LE).
-getOffT :: Int -> ByteString -> Int64
-getOffT off bs =
+getSignMagnitude64 :: Int -> ByteString -> Int64
+getSignMagnitude64 off bs =
   let b i = fromIntegral (BS.index bs (off + i)) :: Int64
       magnitude = b 0 .|. (b 1 `shiftL` 8) .|. (b 2 `shiftL` 16) .|. (b 3 `shiftL` 24)
                   .|. (b 4 `shiftL` 32) .|. (b 5 `shiftL` 40) .|. (b 6 `shiftL` 48)
@@ -87,9 +87,9 @@ parseBSDiff bs
           extraSz = fromIntegral (BS.length bs) - 32 - ctrlSz - diffSz
       Right (BSDiffPatch ctrlSz diffSz extraSz newSz controls diffData extraData)
   where
-    ctrlSz = getOffT 8 bs
-    diffSz = getOffT 16 bs
-    newSz  = getOffT 24 bs
+    ctrlSz = getSignMagnitude64 8 bs
+    diffSz = getSignMagnitude64 16 bs
+    newSz  = getSignMagnitude64 24 bs
     ctrlOff  = 32
     diffOff  = 32 + fromIntegral ctrlSz
     extraOff = diffOff + fromIntegral diffSz
@@ -101,7 +101,7 @@ parseControls :: ByteString -> [BSDiffControl]
 parseControls bs
   | BS.length bs < 24 = []
   | otherwise =
-      BSDiffControl (getOffT 0 bs) (getOffT 8 bs) (getOffT 16 bs)
+      BSDiffControl (getSignMagnitude64 0 bs) (getSignMagnitude64 8 bs) (getSignMagnitude64 16 bs)
         : parseControls (BS.drop 24 bs)
 
 ----------------------------------------------------------------------------

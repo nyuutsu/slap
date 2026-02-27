@@ -253,7 +253,7 @@ decodeCustomTable bs = do
   let near = fromIntegral (BS.index bs 0) :: Int
       same = fromIntegral (BS.index bs 1) :: Int
       deltaBytes = BS.drop 2 bs
-  inner <- parseVCDIFF' False deltaBytes
+  inner <- parseVCDIFFWith False deltaBytes
   customSerialized <- applyVCDIFF inner serializedDefaultTable
   tbl <- deserializeCodeTable customSerialized
   pure (tbl, near, same)
@@ -263,10 +263,10 @@ decodeCustomTable bs = do
 ----------------------------------------------------------------------------
 
 parseVCDIFF :: ByteString -> Either String VCDIFFPatch
-parseVCDIFF = parseVCDIFF' True
+parseVCDIFF = parseVCDIFFWith True
 
-parseVCDIFF' :: Bool -> ByteString -> Either String VCDIFFPatch
-parseVCDIFF' allowCustom bs
+parseVCDIFFWith :: Bool -> ByteString -> Either String VCDIFFPatch
+parseVCDIFFWith allowCustom bs
   | BS.length bs < 5 = Left "VCDIFF: input too short"
   | BS.take 3 bs /= "\xd6\xc3\xc4" = Left "not a VCDIFF file (bad magic)"
   | otherwise = do

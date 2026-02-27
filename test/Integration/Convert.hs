@@ -2,7 +2,7 @@ module Integration.Convert (convertTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha256Hex,
-   applyPatch, attemptConvert, matchPattern, RomCache, cachedReadFile)
+   applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
@@ -95,7 +95,7 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsStr flag
 checkWarnings :: String -> [String] -> IO ()
 checkWarnings "" _ = pure ()
 checkWarnings warningsStr notes = do
-  let patterns = map trim' (splitComma warningsStr)
+  let patterns = map trim (splitComma warningsStr)
   mapM_ (\pat ->
     when (not (null pat)) $
       assertBool
@@ -110,5 +110,3 @@ splitComma (c:cs) = case splitComma cs of
   (x:xs) -> (c:x) : xs
   []     -> [[c]]
 
-trim' :: String -> String
-trim' = reverse . dropWhile (== ' ') . reverse . dropWhile (== ' ')

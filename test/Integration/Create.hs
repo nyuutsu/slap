@@ -26,7 +26,7 @@ createTests romCache = do
 mkCreateTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) BS.ByteString)
              -> [String] -> IO [TestTree]
 mkCreateTest romCache repo cacheRef fields = case fields of
-  (fmtStr : _scenario : basePath : bootstrapPath : targetSha : _) -> do
+  (fmtStr : scenario : basePath : bootstrapPath : targetSha : _) -> do
     case parseCreateFormat fmtStr of
       Nothing -> pure []
       Just fmt -> do
@@ -36,7 +36,7 @@ mkCreateTest romCache repo cacheRef fields = case fields of
         bootExists <- doesFileExist boot
         if not (baseExists && bootExists)
           then pure []
-          else pure [testCase (fmtStr ++ "/" ++ _scenario) $ do
+          else pure [testCase (fmtStr ++ "/" ++ scenario) $ do
             baseBs   <- cachedReadFile romCache base
             targetBs <- getOrBootstrap cacheRef (basePath, bootstrapPath) baseBs boot
             roundTrip fmt baseBs targetBs targetSha

@@ -149,7 +149,7 @@ extractEntry fmt archivePath entryName = do
 findExtracted :: FilePath -> String -> IO (Maybe FilePath)
 findExtracted tmpDir entryName = do
   -- flat extraction puts file directly in tmpDir
-  let basename = takeFileName' entryName
+  let basename = takeFileNamePortable entryName
       flatPath = tmpDir ++ "/" ++ basename
       fullPath = tmpDir ++ "/" ++ entryName
   flatExists <- doesFileExist flatPath
@@ -160,8 +160,8 @@ findExtracted tmpDir entryName = do
       pure (if fullExists then Just fullPath else Nothing)
 
 -- | Extract basename from a path (handles both / and \ separators).
-takeFileName' :: String -> String
-takeFileName' = reverse . takeWhile (\c -> c /= '/' && c /= '\\') . reverse
+takeFileNamePortable :: String -> String
+takeFileNamePortable = reverse . takeWhile (\c -> c /= '/' && c /= '\\') . reverse
 
 doExtract :: ArchiveFormat -> FilePath -> String -> FilePath -> IO (Either String ())
 doExtract ArchiveZIP archivePath entryName tmpDir = do

@@ -120,7 +120,18 @@ data CreateMeta = CreateMeta
   }
 
 defaultMeta :: CreateMeta
-defaultMeta = CreateMeta "" "" "" "" False False False Nothing Nothing Nothing
+defaultMeta = CreateMeta
+  { cmTitle       = ""
+  , cmAuthor      = ""
+  , cmDesc        = ""
+  , cmVersion     = ""
+  , cmUndo        = False
+  , cmValidate    = False
+  , cmUnstable    = False
+  , cmRomType     = Nothing
+  , cmImageType   = Nothing
+  , cmBPSMetadata = Nothing
+  }
 
 ----------------------------------------------------------------------------
 -- PatchContents helpers
@@ -390,11 +401,12 @@ encodeDirect :: PatchContents -> BS.ByteString -> CreateFormat -> CreateMeta -> 
 encodeDirect pc src target meta = case target of
   CfmtIPS    -> IPS.encodeIPS src splitIPS (pcTruncation pc)
   CfmtIPS32  -> IPS.encodeIPS32 src (splitRecords 0xFFFF intRecs) (pcTruncation pc)
-  CfmtEBP    -> case if null cliDesc && null cliTitle && null cliAuthor
-                     then pcEBPMeta pc else Nothing of
-                  Just raw -> IPS.encodeEBPRaw src splitIPS (pcTruncation pc) raw
-                  Nothing  -> IPS.encodeEBP src splitIPS (pcTruncation pc)
-                                ebpTitle ebpAuthor desc
+  CfmtEBP    -> let passthrough = if null cliDesc && null cliTitle && null cliAuthor
+                                  then pcEBPMeta pc else Nothing
+                 in case passthrough of
+                      Just raw -> IPS.encodeEBPRaw src splitIPS (pcTruncation pc) raw
+                      Nothing  -> IPS.encodeEBP src splitIPS (pcTruncation pc)
+                                    ebpTitle ebpAuthor desc
   CfmtPPF3   -> let base = PPF.encodePPF3 (splitRecords 255 (pcRecords pc)) desc
                               (pcUndoData pc) (pcValidation pc) imgType
                  in case pcFileIdDiz pc of
@@ -452,9 +464,11 @@ createFromMemory fmt src tgt m
                      (if cmUnstable m then DPS.DPSUnstable else DPS.DPSStable))
       CfmtRUP    -> Right (RUP.createRUP src tgt rupInfo (fromMaybe 0 (cmRomType m)))
         where rupInfo = RUP.RUPInfo
-                (toMaybe (cmAuthor m)) (toMaybe (cmVersion m))
-                (toMaybe (cmTitle m)) Nothing Nothing Nothing Nothing
-                (toMaybe (cmDesc m))
+                { RUP.rupAuthor = toMaybe (cmAuthor m), RUP.rupVersion = toMaybe (cmVersion m)
+                , RUP.rupTitle = toMaybe (cmTitle m), RUP.rupGenre = Nothing
+                , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
+                , RUP.rupWebsite = Nothing, RUP.rupDescription = toMaybe (cmDesc m)
+                }
               toMaybe s = if null s then Nothing else Just (BS8.pack s)
       CfmtAPSGBA -> Right (APSGBA.createAPSGBA src tgt)
       CfmtGDIFF  -> Right (GDIFF.createGDIFF src tgt)

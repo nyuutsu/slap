@@ -55,10 +55,10 @@ parsePMSR :: ByteString -> Either String PMSRPatch
 parsePMSR bs
   | BS.length bs < 4 = Left "PMSR: input too short"
   | BS.take 4 bs /= "PMSR" = Left "not a PMSR file (bad magic)"
-  | otherwise = runGet parsePMSR' bs
+  | otherwise = runGet parsePMSRBody bs
 
-parsePMSR' :: Get PMSRPatch
-parsePMSR' = do
+parsePMSRBody :: Get PMSRPatch
+parsePMSRBody = do
   skip 4  -- magic
   count <- fromIntegral <$> G.word32BE
   recs  <- parseRecords count []

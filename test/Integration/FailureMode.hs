@@ -2,16 +2,14 @@ module Integration.FailureMode (failureModeTests) where
 
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha256Hex, applyPatch,
-   withTempFile, RomCache, cachedReadFile, parseCreateFormat)
+   withTempFile, RomCache, cachedReadFile, parseCreateFormat,
+   expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, createFromMemory, defaultMeta)
 
-import Control.Monad (when)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
-import Data.Char (toLower)
-import Data.List (isInfixOf)
-import System.Directory (doesFileExist, removeFile)
+import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
@@ -53,44 +51,6 @@ failureModeTests romCache = do
   pure $ testGroup "failure-mode" (tests ++ inProcessTests)
 
 ----------------------------------------------------------------------------
--- Helpers
-----------------------------------------------------------------------------
-
-expectFail :: FilePath -> [String] -> String -> String -> IO ()
-expectFail slap args label pattern = do
-  (ec, out, err) <- runSlap slap args
-  let combined = out ++ err
-  case ec of
-    ExitFailure _ ->
-      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
-        (map toLower pattern `isInfixOf` map toLower combined)
-    ExitSuccess ->
-      assertFailure (label ++ ": expected failure but got success: " ++ combined)
-
-expectOk :: FilePath -> [String] -> String -> String -> IO ()
-expectOk slap args label pattern = do
-  (ec, out, err) <- runSlap slap args
-  let combined = out ++ err
-  case ec of
-    ExitSuccess ->
-      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
-        (map toLower pattern `isInfixOf` map toLower combined)
-    ExitFailure _ ->
-      assertFailure (label ++ ": expected success but got failure: " ++ combined)
-
-writeGarbage :: FilePath -> Int -> IO ()
-writeGarbage fp n = BS.writeFile fp $ BS.pack $ take n $ map fromIntegral $
-  iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
-
-ciContains :: String -> String -> Bool
-ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack
-
-rm :: FilePath -> IO ()
-rm fp = do
-  exists <- doesFileExist fp
-  when exists (removeFile fp)
-
-----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
 ----------------------------------------------------------------------------
 
@@ -105,7 +65,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)  -- same size as dm4k
-        rm out
+        removeIfExists out
         expectFail slap ["apply", bps, wrong, "-o", out]
           "wrong-source/BPS" "mismatch"
 
@@ -113,7 +73,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectOk slap ["apply", bps, wrong, "-o", out, "--no-verify"]
           "wrong-source/BPS --no-verify" "applied"
 
@@ -122,7 +82,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectFail slap ["apply", ups, wrong, "-o", out]
           "wrong-source/UPS" "mismatch"
 
@@ -130,7 +90,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectOk slap ["apply", ups, wrong, "-o", out, "--no-verify"]
           "wrong-source/UPS --no-verify" "applied"
 
@@ -139,7 +99,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectFail slap ["apply", rup, wrong, "-o", out]
           "wrong-source/RUP" "mismatch"
 
@@ -147,7 +107,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectOk slap ["apply", rup, wrong, "-o", out, "--no-verify"]
           "wrong-source/RUP --no-verify" "applied"
 
@@ -156,7 +116,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectFail slap ["apply", xd1, wrong, "-o", out]
           "wrong-source/xdelta1" "mismatch"
 
@@ -164,7 +124,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectOk slap ["apply", xd1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
@@ -173,7 +133,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectFail slap ["apply", vcdiff, wrong, "-o", out]
           "wrong-source/VCDIFF" "mismatch"
 
@@ -181,7 +141,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectOk slap ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
           "wrong-source/VCDIFF --no-verify" "applied"
 
@@ -193,7 +153,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
         BS.readFile base >>= BS.writeFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup"]
         -- work is now the patched output, not the original source
-        rm out
+        removeIfExists out
         expectFail slap ["apply", bps, work, "-o", out]
           "wrong-source/BPS patched-as-source" "mismatch"
   ]
@@ -205,7 +165,7 @@ wrongSourceApsGbaTests slap _fftaBase apsGba =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (16 * 1024 * 1024)  -- 16 MB like GBA
-        rm out
+        removeIfExists out
         -- APS-GBA block CRC16 is advisory (warning-only), so it proceeds
         -- but should print a warning about CRC16 mismatch
         (ec, sout, serr) <- runSlap slap ["apply", apsGba, wrong, "-o", out]
@@ -275,7 +235,7 @@ wrongSizeSourceTests slap _base bps =
       withTempFile "slap-out" $ \out -> do
         -- dm4k is 4 MB, give it 1 KB
         writeGarbage small 1024
-        rm out
+        removeIfExists out
         expectFail slap ["apply", bps, small, "-o", out]
           "wrong-size/BPS too small" "mismatch"
 
@@ -284,7 +244,7 @@ wrongSizeSourceTests slap _base bps =
       withTempFile "slap-out" $ \out -> do
         -- dm4k is 4 MB, give it 8 MB
         writeGarbage large (8 * 1024 * 1024)
-        rm out
+        removeIfExists out
         expectFail slap ["apply", bps, large, "-o", out]
           "wrong-size/BPS too large" "mismatch"
 
@@ -292,7 +252,7 @@ wrongSizeSourceTests slap _base bps =
       withTempFile "slap-empty" $ \empty ->
       withTempFile "slap-out" $ \out -> do
         BS.writeFile empty BS.empty
-        rm out
+        removeIfExists out
         expectFail slap ["apply", bps, empty, "-o", out]
           "wrong-size/BPS empty" "mismatch"
 
@@ -301,7 +261,7 @@ wrongSizeSourceTests slap _base bps =
       withTempFile "slap-small" $ \small ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage small 1024
-        rm out
+        removeIfExists out
         -- May succeed or fail, but should not crash with an unhandled exception
         (ec, sout, serr) <- runSlap slap ["apply", bps, small, "-o", out, "--no-verify"]
         let combined = sout ++ serr

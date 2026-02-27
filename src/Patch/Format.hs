@@ -3,7 +3,7 @@ module Patch.Format
     showCRC
   , padHex
   , padNum
-  , padR
+  , padRight
   , showSigned
     -- * Key-value rendering
   , renderField
@@ -31,8 +31,8 @@ padNum n =
   let s = show n
   in replicate (4 - length s) ' ' ++ s
 
-padR :: Int -> String -> String
-padR w s = s ++ replicate (w - length s) ' '
+padRight :: Int -> String -> String
+padRight w s = s ++ replicate (w - length s) ' '
 
 -- | Show a signed offset as +0xNNNNNN or -0xNNNNNN.
 showSigned :: Int64 -> String

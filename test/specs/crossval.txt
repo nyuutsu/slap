@@ -11,11 +11,11 @@
 #   emerald-heavy target:   520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
 #   paper-mario-pp target:  b1ce80f553bc4fe1429405c5028f45e7085f34c0eb1a05f3a794fac80f18b1cd
 #
-# External tools:
-#   flips       — ~/repos/Flips/flips (Floating IPS v199)
+# External tools (looked up via $FLIPS/$ROMPATCHER env or tools/ fallback):
+#   flips       — tools/flips/flips (Floating IPS v199)
 #   bspatch     — /usr/bin/bspatch
 #   xdelta3     — /usr/bin/xdelta3
-#   rompatcher  — ~/repos/RomPatcher[dot]js/index.js (via node)
+#   rompatcher  — tools/rompatcher-js/index.js (via node)
 #
 # ============================================================================
 # Flips (IPS, BPS, UPS)

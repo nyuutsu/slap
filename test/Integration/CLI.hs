@@ -1,15 +1,15 @@
 module Integration.CLI (cliTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha256Hex, withTempFile, withTempDir, RomCache)
+  (repoDir, findSlapBinary, runSlap, sha256Hex, withTempFile, withTempDir, RomCache,
+   expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Patch.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
-import Data.Char (toLower)
 import Data.List (isInfixOf)
-import System.Directory (doesFileExist, findExecutable, removeFile)
+import System.Directory (doesFileExist, findExecutable)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
@@ -55,41 +55,6 @@ cliTests _romCache = do
   pure $ testGroup "cli" (inProcess ++ subprocessTests)
 
 ----------------------------------------------------------------------------
--- Helpers
-----------------------------------------------------------------------------
-
--- | Run slap, expect failure, check stderr+stdout contains pattern (case-insensitive).
-expectFail :: FilePath -> [String] -> String -> String -> IO ()
-expectFail slap args label pattern = do
-  (ec, out, err) <- runSlap slap args
-  let combined = out ++ err
-  case ec of
-    ExitFailure _ ->
-      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
-        (map toLower pattern `isInfixOf` map toLower combined)
-    ExitSuccess ->
-      assertFailure (label ++ ": expected failure but got success")
-
--- | Run slap, expect success, check stderr+stdout contains pattern (case-insensitive).
-expectOk :: FilePath -> [String] -> String -> String -> IO ()
-expectOk slap args label pattern = do
-  (ec, out, err) <- runSlap slap args
-  let combined = out ++ err
-  case ec of
-    ExitSuccess ->
-      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
-        (map toLower pattern `isInfixOf` map toLower combined)
-    ExitFailure _ ->
-      assertFailure (label ++ ": expected success but got failure: " ++ combined)
-
-writeGarbage :: FilePath -> Int -> IO ()
-writeGarbage fp n = BS.writeFile fp $ BS.pack $ take n $ map fromIntegral $
-  iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
-
-ciContains :: String -> String -> Bool
-ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack
-
-----------------------------------------------------------------------------
 -- Test groups
 ----------------------------------------------------------------------------
 
@@ -124,13 +89,13 @@ dryrunTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 dryrunTests slap base bps =
   [ testCase "dryrun/reports action" $
       withTempFile "slap-out" $ \out -> do
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", bps, base, "-o", out, "--dry-run"]
           "dryrun/reports action" "would apply"
 
   , testCase "dryrun/no output file" $
       withTempFile "slap-out" $ \out -> do
-        removeFileSafe out
+        removeIfExists out
         _ <- runSlap slap ["apply", bps, base, "-o", out, "--dry-run"]
         exists <- doesFileExist out
         assertBool "output file should not be created" (not exists)
@@ -154,7 +119,7 @@ forceTests slap _base ups =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         expectFail slap ["apply", ups, wrong, "-o", out, "--force"]
           "force/--force does not bypass CRC" "CRC mismatch"
   ]
@@ -165,7 +130,7 @@ noverifyTests slap _base bps =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         (ec, sout, serr) <- runSlap slap ["apply", bps, wrong, "-o", out]
         let combined = sout ++ serr
         case ec of
@@ -179,7 +144,7 @@ noverifyTests slap _base bps =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", bps, wrong, "-o", out, "--no-verify"]
           "noverify/--no-verify bypasses CRC" "applied"
   ]
@@ -193,7 +158,7 @@ inplaceTests slap base ips =
         let bak = work ++ ".bak"
         exists <- doesFileExist bak
         assertBool "no .bak created" exists
-        removeFileSafe bak
+        removeIfExists bak
 
   , testCase "inplace/--no-backup skips .bak" $
       withTempFile "slap-work" $ \work -> do
@@ -223,7 +188,7 @@ verboseTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 verboseTests slap base ips =
   [ testCase "verbose/prints records" $
       withTempFile "slap-out" $ \out -> do
-        removeFileSafe out
+        removeIfExists out
         (ec, sout, serr) <- runSlap slap
           ["apply", ips, base, "-o", out, "--verbose", "--force"]
         let combined = sout ++ serr
@@ -264,7 +229,7 @@ compoundTests slap base ips bps =
 
   , testCase "compound/explicit -o creates file" $
       withTempFile "slap-out" $ \out -> do
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", ips, base, "-o", out] "compound/-o" "applied"
         exists <- doesFileExist out
         assertBool "output file not created" exists
@@ -303,7 +268,7 @@ aliasTests slap base ips bps =
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", bps, wrong, "-o", out, "--yolo"]
           "aliases/--yolo bypasses CRC" "applied"
 
@@ -464,7 +429,7 @@ customCodetableTests slap =
         BS.writeFile patch vcdiffCustom
         -- "AABBCCDD"
         BS.writeFile source (BS.pack [0x41,0x41,0x42,0x42,0x43,0x43,0x44,0x44])
-        removeFileSafe result
+        removeIfExists result
         (ec, _, serr) <- runSlap slap ["apply", patch, source, "-o", result, "--force"]
         case ec of
           ExitSuccess -> do
@@ -510,7 +475,7 @@ ninja1VerifyTests slap base ips =
         BS.readFile base >>= BS.writeFile target
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", patch, base, "-o", out] "ninja1/correct" "applied"
 
   , testCase "ninja1-verify/wrong source rejected" $
@@ -522,7 +487,7 @@ ninja1VerifyTests slap base ips =
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         expectFail slap ["apply", patch, wrong, "-o", out] "ninja1/wrong" "mismatch"
 
   , testCase "ninja1-verify/--no-verify bypasses" $
@@ -534,7 +499,7 @@ ninja1VerifyTests slap base ips =
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
+        removeIfExists out
         expectOk slap ["apply", patch, wrong, "-o", out, "--no-verify"]
           "ninja1/--no-verify" "applied"
   ]
@@ -674,8 +639,3 @@ explainModeTests slap ips mSourceFiles =
             ExitFailure _ ->
               assertFailure ("explain --with IPS failed: " ++ combined)
       ]
-
-removeFileSafe :: FilePath -> IO ()
-removeFileSafe fp = do
-  exists <- doesFileExist fp
-  when exists (removeFile fp)

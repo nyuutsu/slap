@@ -10,7 +10,7 @@ module Patch.RUP
   , applyRUP
   , applyRUPMemory
   , createRUP
-  , rupMetaKV
+  , rupMeta
   , rupInfo
   ) where
 
@@ -60,14 +60,14 @@ fromOverflowMode OverflowAppend   = 0x41  -- 'A'
 fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
 data RUPPatch = RUPPatch
-  { rupMeta         :: RUPInfo
+  { rupHeader       :: RUPInfo
   , rupRecords      :: [RUPRecord]
   , rupOverflow     :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , rupOverflowType :: Maybe OverflowMode
   , rupSourceMD5    :: Maybe ByteString  -- 16 bytes
   , rupTargetMD5    :: Maybe ByteString  -- 16 bytes
-  , rupSourceSz     :: Int64
-  , rupTargetSz     :: Int64
+  , rupSourceSize     :: Int64
+  , rupTargetSize     :: Int64
   , rupPatchEnc     :: Word8             -- PATCH_ENC (text encoding, byte 6)
   , rupRomType      :: Word8             -- ROM type byte from OPEN_NEW_FILE command
   } deriving (Show)
@@ -147,17 +147,21 @@ parseRUP bs
   | BS.length bs < 7 = Left "RUP: input too short"
   | BS.take 6 bs /= "NINJA2" = Left "not a RUP file (bad magic)"
   | BS.length bs < headerSize = Left "RUP: truncated header"
-  | otherwise = runGet parseRUP' bs
+  | otherwise = runGet parseRUPBody bs
   where
-    parseRUP' :: Get RUPPatch
-    parseRUP' = do
+    parseRUPBody :: Get RUPPatch
+    parseRUPBody = do
       hdr <- getBytes headerSize
       let meta = parseFixedHeader hdr
           enc  = BS.index hdr 6  -- PATCH_ENC byte
       p <- parseCommands (emptyPatch meta enc)
       pure p { rupRecords = reverse (rupRecords p) }
 
-    emptyPatch m enc = RUPPatch m [] Nothing Nothing Nothing Nothing 0 0 enc 0
+    emptyPatch m enc = RUPPatch
+      { rupHeader = m, rupRecords = [], rupOverflow = Nothing
+      , rupOverflowType = Nothing, rupSourceMD5 = Nothing, rupTargetMD5 = Nothing
+      , rupSourceSize = 0, rupTargetSize = 0, rupPatchEnc = enc, rupRomType = 0
+      }
 
 parseCommands :: RUPPatch -> Get RUPPatch
 parseCommands patch = do
@@ -191,8 +195,8 @@ parseFileCmd patch = do
     else pure (Nothing, Nothing)
   pure patch { rupSourceMD5    = Just srcMD5
              , rupTargetMD5    = Just tgtMD5
-             , rupSourceSz     = srcSz
-             , rupTargetSz     = tgtSz
+             , rupSourceSize     = srcSz
+             , rupTargetSize     = tgtSz
              , rupOverflow     = overflow
              , rupOverflowType = ovType
              , rupRomType      = rt
@@ -218,12 +222,12 @@ applyRUP patch target = do
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPos = rupSourceSz patch
+        let appendPos = rupSourceSize patch
         hSeek h AbsoluteSeek (fromIntegral appendPos)
         BS.hPut h (BS.map (xor 0xFF) overflow)
     -- Handle truncation (if target is smaller than source)
-    when (rupTargetSz patch < rupSourceSz patch) $
-      hSetFileSize h (fromIntegral (rupTargetSz patch))
+    when (rupTargetSize patch < rupSourceSize patch) $
+      hSetFileSize h (fromIntegral (rupTargetSize patch))
   pure (length (rupRecords patch))
 
 applyRecord :: Handle -> RUPRecord -> IO ()
@@ -256,28 +260,28 @@ applyRUPMemory patch source = unsafeCreate outLen $ \ptr -> do
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPos = fromIntegral (rupSourceSz patch) :: Int
+        let appendPos = fromIntegral (rupSourceSize patch) :: Int
             decoded = BS.map (xor 0xFF) overflow
         copyBSRange ptr appendPos decoded 0 (BS.length decoded)
   where
     srcLen = BS.length source
-    tgt    = fromIntegral (rupTargetSz patch) :: Int
+    tgt    = fromIntegral (rupTargetSize patch) :: Int
     outLen = if tgt > 0 then tgt else srcLen
 
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
 
-rupMetaKV :: RUPPatch -> [(String, String)]
-rupMetaKV p = concat
-  [ metaField "title"       (rupTitle (rupMeta p))
-  , metaField "author"      (rupAuthor (rupMeta p))
-  , metaField "version"     (rupVersion (rupMeta p))
-  , metaField "date"        (rupDate (rupMeta p))
-  , metaField "genre"       (rupGenre (rupMeta p))
-  , metaField "language"    (rupLanguage (rupMeta p))
-  , metaField "website"     (rupWebsite (rupMeta p))
-  , metaField "description" (rupDescription (rupMeta p))
+rupMeta :: RUPPatch -> [(String, String)]
+rupMeta p = concat
+  [ metaField "title"       (rupTitle (rupHeader p))
+  , metaField "author"      (rupAuthor (rupHeader p))
+  , metaField "version"     (rupVersion (rupHeader p))
+  , metaField "date"        (rupDate (rupHeader p))
+  , metaField "genre"       (rupGenre (rupHeader p))
+  , metaField "language"    (rupLanguage (rupHeader p))
+  , metaField "website"     (rupWebsite (rupHeader p))
+  , metaField "description" (rupDescription (rupHeader p))
   , romTypeField
   , sizeFields
   , md5Field "source MD5" (rupSourceMD5 p)
@@ -293,9 +297,9 @@ rupMetaKV p = concat
       | otherwise = [("ROM type", show (rupRomType p))]
 
     sizeFields
-      | rupSourceSz p == 0 && rupTargetSz p == 0 = []
-      | otherwise = [ ("source size", show (rupSourceSz p))
-                     , ("target size", show (rupTargetSz p)) ]
+      | rupSourceSize p == 0 && rupTargetSize p == 0 = []
+      | otherwise = [ ("source size", show (rupSourceSize p))
+                     , ("target size", show (rupTargetSize p)) ]
 
     md5Field _ Nothing = []
     md5Field label (Just h) =
@@ -310,7 +314,7 @@ rupMetaKV p = concat
 rupInfo :: RUPPatch -> String
 rupInfo p = unlines $ filter (not . null) $
   [ "format:      RUP (NINJA2)" ]
-  ++ map renderField (rupMetaKV p)
+  ++ map renderField (rupMeta p)
   ++ [ "records:     " ++ show (length (rupRecords p)) ]
 
 ----------------------------------------------------------------------------
