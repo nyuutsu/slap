@@ -21,7 +21,7 @@ module Patch.IPS
   ) where
 
 -- Canonical reference: https://zerosoft.zophar.net/ips.php (Z.e.r.o, ZeroSoft, 1998-2002)
--- No formal spec exists. The above is the de facto community standard.
+-- No formal spec exists.
 
 import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyBSRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
@@ -77,8 +77,6 @@ parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
 parseRecords variant offWidth eofMarker = go []
   where
     -- Peek at the next offWidth bytes to check for EOF marker without consuming.
-    -- Returns: Nothing = not enough bytes (truncated), Just True = EOF found,
-    -- Just False = not EOF (more records).
     peekEOF :: Get (Maybe Bool)
     peekEOF = do
       avail <- remaining
@@ -162,8 +160,8 @@ applyRecords h recs = do
       hSeek h AbsoluteSeek (fromIntegral off)
       BS.hPut h (BS.replicate count val)
 
--- | Apply an IPS patch in memory: copy source, then overwrite at offsets.
--- Handles truncation and RLE records.
+-- | Apply an IPS patch in memory. Supports truncation (ipsTruncate) and
+-- RLE records — both are optional IPS features that many patchers omit.
 applyIPSMemory :: IPSPatch -> ByteString -> ByteString
 applyIPSMemory patch source = unsafeCreate outLen $ \ptr -> do
     copyBSRange ptr 0 source 0 (min srcLen outLen)
@@ -235,7 +233,6 @@ ipsInfo p = unlines $ filter (not . null) $
     recOff (IPSRecordRLE o _ _)  = o
 
 -- | Extract all string key-value pairs from a flat JSON object.
--- Handles escaped quotes in values. Ignores non-string values.
 jsonPairs :: ByteString -> [(String, String)]
 jsonPairs = parsePairs . BS8.unpack
   where

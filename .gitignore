@@ -6,6 +6,12 @@ rusty-slap/target/
 *.dyn_hi
 *.dyn_o
 
+# Local working files
+NEXT.md
+
+# External reference tools (symlinks to local repos)
+tools/
+
 # Large ROM files (test ROMs placed by user)
 *.z64
 *.gba

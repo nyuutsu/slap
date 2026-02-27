@@ -51,9 +51,9 @@ outside the source.
 
 ## Error handling
 
-`Either String` for parse/apply errors. A proper error ADT would be
-over-engineering for a CLI tool where every error path ends in
-`hPutStrLn stderr` and `exitFailure`.
+`Either String` for parse/apply errors. Every error path ends in
+`hPutStrLn stderr` and `exitFailure` — an error ADT adds type safety
+that no consumer benefits from.
 
 Error message convention:
 - Format prefix: `"FORMAT: description"` (e.g., `"BPS: input too short"`)

@@ -14,7 +14,6 @@ import Data.Word (Word8)
 import System.IO
 
 -- | Apply a parsed PPF patch to a target file.
--- Returns warnings (if any) and the number of records applied.
 applyPatch :: Patch -> FilePath -> IO ([String], Int)
 applyPatch patch target = withBinaryFile target ReadWriteMode $ \h -> do
   n <- writeRecords h (patchRecords patch) recData
@@ -27,7 +26,7 @@ undoPatch patch target
   | otherwise = withBinaryFile target ReadWriteMode $ \h ->
       Right <$> writeRecords h (patchRecords patch) (fromMaybe BS.empty . recUndo)
 
--- Write records to a handle using a selector function (recData for apply, recUndo for undo).
+-- Write records to a handle, selecting the data or undo payload per record.
 writeRecords :: Handle -> [Record] -> (Record -> ByteString) -> IO Int
 writeRecords h recs selector = foldM step 0 recs
   where

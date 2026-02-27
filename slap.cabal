@@ -3,15 +3,8 @@ name:          slap
 version:       0.1.0.0
 synopsis:      Multi-format ROM patching tool
 description:
-  Auto-detects patch format from magic bytes and applies.  Supports
-  PPF (1/2/3 + "4"/Pyriel internal), IPS (standard/IPS32/EBP), BPS, UPS,
-  VCDIFF/xdelta3, APS (N64/GBA), RUP/NINJA2, NINJA1 (binary/text/zlib),
-  DPS, BSDiff/BDF, GDIFF, xdelta1, PMSR (with Yay0 decompression
-  for Star Rod .mod files), and PCHTXT (Nintendo Switch).  Can create
-  BPS, IPS, IPS32, EBP, UPS, PPF3, PMSR, NINJA1, DPS, RUP, APS
-  (N64/GBA), GDIFF, and PCHTXT patches.  Converts between formats
-  with the convert command.  Transparently unwraps ZIP/RAR/7z archives
-  containing patches.
+  Apply, create, and convert ROM patches. 20 format variants.
+  See README for the full list.
 
 license:       MIT
 license-file:  LICENSE

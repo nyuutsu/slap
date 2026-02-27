@@ -125,12 +125,9 @@ indirection. The closure-based record is the same thing typeclasses
 compile to, without the ceremony. `parseSome` constructs the record;
 consumers use field accessors.
 
-**Patch.Get monad, not attoparsec/binary/cereal.** The parser monad
-is 176 lines and provides exactly what binary format parsing needs:
-position tracking, bounded reads, error messages with byte offsets.
-No dependencies. Parsec-family combinators are for text grammars;
-attoparsec is for streaming. Neither fits strict-ByteString binary
-formats where you need `getWord32LE` at a specific offset.
+**Patch.Get monad, not attoparsec/binary/cereal.** 176 lines,
+no dependencies, position tracking, bounded reads, error messages
+with byte offsets.
 
 **Builder for output, unsafeCreate for apply.** Patch creation uses
 `Data.ByteString.Builder` (lazy construction, efficient concat).

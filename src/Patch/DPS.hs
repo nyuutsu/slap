@@ -86,7 +86,7 @@ isDPS bs
   | BS.index bs 192 > 1 = False   -- stability flag must be 0 or 1
   | not (BS.all isHeaderByte (BS.take 192 bs)) = False
   -- Zero-record patch (198 bytes exactly) is valid: identity diff.
-  -- When records exist, check the first mode byte for extra confidence.
+  -- When records exist, first byte must be a valid mode (0 or 1).
   | BS.length bs > 198 = BS.index bs 198 <= 1
   | otherwise = True
   where

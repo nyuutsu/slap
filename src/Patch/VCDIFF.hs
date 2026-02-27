@@ -333,11 +333,11 @@ parseVCDIFF' allowCustom bs
       when (testBit deltaInd 0 || testBit deltaInd 1
             || (not isXd3 && testBit deltaInd 2)) $
         failGet "secondary compression in VCDIFF data sections is not supported"
-      -- Compute where data sections start by working backwards from deltaEnd.
-      -- This handles xdelta3 Adler32 checksums robustly: xdelta3 writes 4 bytes
-      -- of Adler32 after the length fields (even in version 0 mode, sometimes
-      -- without setting any flag), so we compute the data start position from
-      -- the known end instead of guessing what's between lengths and data.
+      -- Compute data section start from deltaEnd, not from current position.
+      -- xdelta3 writes 4 bytes of Adler32 after the length fields (even in
+      -- version 0 mode, sometimes without setting any flag), so working
+      -- backwards from the known end avoids guessing what's between lengths
+      -- and data.
       afterLengths <- getPosition
       let dataStart = deltaEnd
                       - fromIntegral addRunLen
@@ -392,9 +392,7 @@ applyWindow codeTable nSz sSz source outPtr globalOutRef totalTgtLen win = do
       hasSource = testBit (vcdWinIndicator win) 0
       hasTarget = testBit (vcdWinIndicator win) 1
 
-  -- Build the source window: source segment data that COPY addresses reference.
-  -- As we build target bytes, they get appended to form the full "source window + target" space.
-  -- We read source bytes from the segment, and target bytes from what we've written so far.
+  -- Build the source window (COPY address space = source segment ++ target-so-far).
 
   ac <- newAddrCache nSz sSz
   addRunPosRef <- newIORef (0 :: Int)
