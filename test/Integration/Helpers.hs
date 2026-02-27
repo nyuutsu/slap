@@ -20,7 +20,6 @@ module Integration.Helpers
   , repoDir
   , findSlapBinary
   , runSlap
-  , findPatchFiles
     -- * Pattern matching
   , matchPattern
     -- * Temp helpers
@@ -38,12 +37,11 @@ import qualified Data.ByteString as BS
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
 import Data.IORef (IORef, readIORef, atomicModifyIORef')
-import Data.List (isInfixOf, isPrefixOf)
+import Data.List (isPrefixOf)
 import qualified Data.Map.Strict as Map
-import System.Directory (listDirectory, doesDirectoryExist, removeFile)
+import System.Directory (removeFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode)
-import System.FilePath ((</>), takeExtension)
 import System.IO (hClose, openBinaryTempFile)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
@@ -265,34 +263,6 @@ findSlapBinary = do
 runSlap :: FilePath -> [String] -> IO (ExitCode, String, String)
 runSlap bin args = readProcessWithExitCode bin args ""
 
--- | Recursively find patch files by extension under a directory.
-findPatchFiles :: FilePath -> IO [FilePath]
-findPatchFiles dir = go dir
-  where
-    patchExts :: [String]
-    patchExts = [".ips", ".ips32", ".bps", ".ups", ".vcdiff", ".bsdiff",
-                 ".gdiff", ".xdelta1", ".mod", ".ppf", ".ebp", ".rup",
-                 ".bdf", ".aps", ".ninja1", ".pchtxt", ".dps"]
-    go :: FilePath -> IO [FilePath]
-    go d = do
-      entries <- listDirectory d
-      concat <$> mapM (processEntry d) entries
-    processEntry :: FilePath -> String -> IO [FilePath]
-    processEntry parent name = do
-      let full = parent </> name
-      isDir <- doesDirectoryExist full
-      if isDir
-        then go full
-        else pure [full | isPatchFile name]
-    isPatchFile :: String -> Bool
-    isPatchFile name =
-      takeExtension name `elem` patchExts
-      || ".ppf1" `isInfixOf` name
-      || ".ppf2" `isInfixOf` name
-      || ".ppf3" `isInfixOf` name
-      || ".ebp." `isInfixOf` name
-      || ".aps." `isInfixOf` name
-      || ".rup." `isInfixOf` name
 
 ----------------------------------------------------------------------------
 -- Pattern matching

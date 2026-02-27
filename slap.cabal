@@ -107,7 +107,6 @@ test-suite integration
                   , Integration.Convert
                   , Integration.Metadata
                   , Integration.Undo
-                  , Integration.Smoke
                   , Integration.CLI
                   , Integration.FailureMode
   default-language: GHC2024

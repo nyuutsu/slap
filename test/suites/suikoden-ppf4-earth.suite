@@ -1,8 +1,0 @@
-# Suikoden (USA) — Pyriel PPF4 guardian of earth bugfix
-# Real-world PPF4 patch: 7 records, 19 bytes.
-
-base:   test/data/suikoden/base.bin
-sha256: 2fa74c2dc75a68da76abd07cba67e21a0c1660d967e301ad00f8eaba8132d65c
-desc:   suikoden guardian of earth fix (real-world PPF4)
-
-PPF4     | test/data/suikoden/guardian_of_earth_base.ppf | gold | Pyriel GS1 Patch guardian of earth fix

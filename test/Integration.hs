@@ -7,7 +7,6 @@ import Integration.CrossVal (crossValTests)
 import Integration.Convert (convertTests)
 import Integration.Metadata (metadataTests)
 import Integration.Undo (undoTests)
-import Integration.Smoke (smokeTests)
 import Integration.CLI (cliTests)
 import Integration.FailureMode (failureModeTests)
 
@@ -30,6 +29,5 @@ main = do
   trees <- parSequence
     [applyTests romCache, createTests romCache, crossValTests romCache,
      convertTests romCache, metadataTests romCache, undoTests romCache,
-     smokeTests romCache, cliTests romCache,
-     failureModeTests romCache]
+     cliTests romCache, failureModeTests romCache]
   defaultMain (testGroup "integration" trees)

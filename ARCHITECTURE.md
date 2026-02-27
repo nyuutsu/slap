@@ -47,7 +47,7 @@ rusty-slap/src/
   bps_diff.rs      BPS diff engine (concatenated SA + progressive sorting, after Alcaro/Flips)
   compress.rs      flate2 (zlib/gzip) + bzip2-rs (bzip2), pure Rust
 test/
-  Props.hs         QuickCheck: 49 properties (round-trip, hash, truncation, contract)
+  Props.hs         QuickCheck properties (round-trip, parse-truncated, contract)
 ```
 
 ## Data Flow
@@ -61,57 +61,12 @@ format #17 means adding one block to `parseSome`. Nothing else changes.
 
 ## SomePatch — Closure-Based Existential
 
-```haskell
-data SomePatch = SomePatch
-  { spFormat         :: String
-  , spInfo           :: String
-  , spExplain        :: ExplainData
-  , spIsDifferential :: Bool
-  , spApply          :: ApplyStrategy
-  , spUndo           :: Maybe UndoStrategy
-  , spVerification   :: Verification
-  , spVerboseLines   :: [String]
-  , spWarnings       :: [String]
-  , spRecordCount    :: Int
-  , spRecordUnit     :: String
-  , spContents       :: Maybe PatchContents
-  , spSourceNotes    :: [String]
-  }
-
-data ApplyStrategy
-  = InPlace (FilePath -> IO ())
-  | InMemory
-      { imApply :: BS.ByteString -> IO (Either String BS.ByteString) }
-
-data UndoStrategy
-  = UndoInPlace (FilePath -> IO (Either String Int))
-  | UndoInMemory (BS.ByteString -> BS.ByteString)
-```
-
-This is what a typeclass + existential compiles to, but without the
-language extensions, module layering constraints, or indirection. The
-parsed format-specific data is captured in closures at construction
-time. The key tradeoff: you lose the ability to pattern-match on
-`SomeIPS` vs `SomeBPS`, but nothing outside `parseSome` needs to.
+`SomePatch` is a record of closures — what a typeclass + existential
+compiles to, without the language extensions or module layering.
+`parseSome` captures format-specific data in closures at construction
+time; consumers use field accessors, never pattern-match on formats.
 
 ## Verification
-
-```haskell
-data Verification = Verification
-  { vSourceCRC32   :: Maybe Word32
-  , vSourceMD5     :: Maybe BS.ByteString
-  , vSourceSHA1    :: Maybe BS.ByteString
-  , vTargetCRC32   :: Maybe Word32
-  , vTargetMD5     :: Maybe BS.ByteString
-  , vSourceBlocks  :: [(Int, Word16)]      -- APS-GBA per-block CRC16
-  , vTargetBlocks  :: [(Int, Word16)]
-  , vPPFBlock      :: Maybe (Int64, BS.ByteString)
-  , vFileSize      :: Maybe Word32         -- advisory source file size
-  , vWindowAdler32 :: [(Int, Int, Word32)] -- VCDIFF per-window
-  , vSourceBytes   :: [(Int, BS.ByteString, String)] -- advisory byte checks (APS-N64)
-  , vSourcePreHash :: BS.ByteString -> BS.ByteString -- transform before hashing (NINJA1)
-  }
-```
 
 Checksum validation flows through `verifySource`/`verifyTarget` in
 Main.hs — format modules never check hashes themselves. Three tiers:
@@ -130,24 +85,8 @@ Main.hs — format modules never check hashes themselves. Three tiers:
 ## Conversion — Contract System
 
 `Patch.Convert` defines a contract system for direct format conversion.
-
-```haskell
-data PatchField = FRecords | FDescription | FSourceCRC32 | FSourceMD5
-                | FSourceSHA1 | FDestSize | FUndoData | FValidation
-                | FTruncation | FEBPMeta | FRomType | FImageType
-                | FFileIdDiz | FPCHTXTBlocks
-
-data FormatSpec = FormatSpec
-  { fsRequired :: Set PatchField   -- must be present or conversion fails
-  , fsAccepted :: Set PatchField   -- carried through if available
-  }
-
-data PatchContents = PatchContents
-  { pcRecords, pcDescription, pcSourceCRC32, pcSourceMD5, pcSourceSHA1,
-    pcDestSize, pcValidation, pcUndoData, pcTruncation, pcEBPMeta,
-    pcRomType, pcImageType, pcFileIdDiz, pcPCHTXTBlocks,
-    pcNINJA1Compressed }
-```
+Each target format declares required and accepted fields (`FormatSpec`).
+Each parsed overlay patch exposes its fields (`PatchContents`).
 
 `parseSome` populates `spContents :: Maybe PatchContents` for direct
 formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR, PCHTXT).

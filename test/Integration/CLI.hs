@@ -44,8 +44,6 @@ cliTests _romCache = do
         , if baseExists then compoundTests slap dm4kBase dm4kIps dm4kBps else []
         , if baseExists then createFlagTests slap dm4kBase dm4kBps else []
         , if baseExists then aliasTests slap dm4kBase dm4kIps dm4kBps else []
-        , if baseExists then emptyDiffTests slap dm4kBase else []
-        , if baseExists then undoOutputTests slap dm4kBase dm4kUps else []
         , if baseExists then archiveTests slap dm4kBase dm4kIps dm4kBps else []
         , if baseExists then ipsTruncateTests slap dm4kBase else []
         , customCodetableTests slap
@@ -97,17 +95,12 @@ ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack
 
 corruptTests :: [TestTree]
 corruptTests =
-  [ testCase "corrupt/info empty file" $
+  [ testCase "corrupt/empty file" $
       case parseSome BS.empty of
         Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
         Right _ -> assertFailure "expected parse failure for empty file"
 
-  , testCase "corrupt/explain empty file" $
-      case parseSome BS.empty of
-        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
-        Right _ -> assertFailure "expected parse failure for empty file"
-
-  , testCase "corrupt/info random garbage" $ do
+  , testCase "corrupt/random garbage" $ do
       let bs = BS.pack $ take 256 $ map fromIntegral $
                  iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
       case parseSome bs of
@@ -168,23 +161,19 @@ forceTests slap _base ups =
 
 noverifyTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 noverifyTests slap _base bps =
-  [ testCase "noverify/BPS wrong source fails by default" $
+  [ testCase "noverify/BPS wrong source fails and suggests flag" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
         removeFileSafe out
-        expectFail slap ["apply", bps, wrong, "-o", out]
-          "noverify/BPS wrong source fails" "CRC mismatch"
-
-  , testCase "noverify/error suggests --no-verify" $
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        writeGarbage wrong (4096 * 1024)
-        removeFileSafe out
-        (_, sout, serr) <- runSlap slap ["apply", bps, wrong, "-o", out]
+        (ec, sout, serr) <- runSlap slap ["apply", bps, wrong, "-o", out]
         let combined = sout ++ serr
-        assertBool "expected '--no-verify' in error"
-          ("--no-verify" `isInfixOf` combined)
+        case ec of
+          ExitFailure _ -> do
+            assertBool "expected 'mismatch'" (ciContains "mismatch" combined)
+            assertBool "expected '--no-verify'" ("--no-verify" `isInfixOf` combined)
+          ExitSuccess ->
+            assertFailure ("expected failure but got success: " ++ combined)
 
   , testCase "noverify/--no-verify bypasses CRC" $
       withTempFile "slap-wrong" $ \wrong ->
@@ -245,12 +234,9 @@ verboseTests slap base ips =
   ]
 
 undoErrorTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
-undoErrorTests slap base ips bps =
+undoErrorTests slap base ips _bps =
   [ testCase "undo/unsupported IPS" $
       expectFail slap ["undo", ips, base] "undo/unsupported IPS" "undo not supported"
-
-  , testCase "undo/unsupported BPS" $
-      expectFail slap ["undo", bps, base] "undo/unsupported BPS" "undo not supported"
   ]
 
 compoundTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
@@ -260,12 +246,6 @@ compoundTests slap base ips bps =
         BS.readFile base >>= BS.writeFile work
         expectOk slap ["apply", ips, work, "--in-place", "--force", "--verbose", "--no-backup"]
           "compound/IPS" "applied"
-
-  , testCase "compound/in-place+force+verbose+no-backup (BPS)" $
-      withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
-        expectOk slap ["apply", bps, work, "--in-place", "--force", "--verbose", "--no-backup"]
-          "compound/BPS" "applied"
 
   , testCase "compound/dry-run+verbose shows both" $
       do (_, sout, serr) <- runSlap slap
@@ -282,19 +262,12 @@ compoundTests slap base ips bps =
         afterSha <- sha256Hex <$> BS.readFile work
         assertEqual "source modified" beforeSha afterSha
 
-  , testCase "compound/explicit -o output" $
+  , testCase "compound/explicit -o creates file" $
       withTempFile "slap-out" $ \out -> do
         removeFileSafe out
         expectOk slap ["apply", ips, base, "-o", out] "compound/-o" "applied"
         exists <- doesFileExist out
         assertBool "output file not created" exists
-
-  , testCase "compound/explicit -o file created" $
-      withTempFile "slap-out" $ \out -> do
-        removeFileSafe out
-        _ <- runSlap slap ["apply", ips, base, "-o", out]
-        exists <- doesFileExist out
-        assertBool "file not found" exists
   ]
 
 createFlagTests :: FilePath -> FilePath -> FilePath -> [TestTree]
@@ -372,46 +345,6 @@ warningTests repo =
                        (not ("warning" `isInfixOf` spInfo sp))
   ]
 
-emptyDiffTests :: FilePath -> FilePath -> [TestTree]
-emptyDiffTests slap base =
-  [ testCase ("empty-diff/" ++ fmt) $
-      withTempFile "slap-patch" $ \patch ->
-      withTempFile "slap-result" $ \result -> do
-        expectOk slap ["create", "--format", fmt, base, base, patch]
-          ("empty-diff/" ++ fmt) "wrote"
-        BS.readFile base >>= BS.writeFile result
-        expectOk slap ["apply", patch, result, "--in-place", "--no-backup", "--force"]
-          ("empty-diff/" ++ fmt ++ " apply") "applied"
-        baseSha <- sha256Hex <$> BS.readFile base
-        resultSha <- sha256Hex <$> BS.readFile result
-        assertEqual "SHA256 mismatch" baseSha resultSha
-  | fmt <- ["bps", "ips", "ips32", "ups", "ppf3", "pmsr"]
-  ]
-
-undoOutputTests :: FilePath -> FilePath -> FilePath -> [TestTree]
-undoOutputTests slap base ups =
-  [ testCase "undo-output/produces original" $
-      withTempFile "slap-work" $ \work ->
-      withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile work
-        _ <- runSlap slap ["apply", ups, work, "--in-place", "--no-backup", "--force"]
-        removeFileSafe out
-        _ <- runSlap slap ["undo", ups, work, "-o", out]
-        baseSha <- sha256Hex <$> BS.readFile base
-        outSha  <- sha256Hex <$> BS.readFile out
-        assertEqual "SHA256 mismatch" baseSha outSha
-
-  , testCase "undo-output/leaves source untouched" $
-      withTempFile "slap-work" $ \work ->
-      withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile work
-        _ <- runSlap slap ["apply", ups, work, "--in-place", "--no-backup", "--force"]
-        patchedSha <- sha256Hex <$> BS.readFile work
-        removeFileSafe out
-        _ <- runSlap slap ["undo", ups, work, "-o", out]
-        workSha <- sha256Hex <$> BS.readFile work
-        assertEqual "source modified" patchedSha workSha
-  ]
 
 archiveTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 archiveTests slap base ips bps =

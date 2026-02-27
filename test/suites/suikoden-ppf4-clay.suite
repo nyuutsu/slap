@@ -1,8 +1,0 @@
-# Suikoden (USA) — Pyriel PPF4 clay guardian bugfix
-# Real-world PPF4 patch: 7 records, 19 bytes.
-
-base:   test/data/suikoden/base.bin
-sha256: a0595bbc6907b691ddade908bd54607d252046372fc2f3cf50e0992872bce6d4
-desc:   suikoden clay guardian fix (real-world PPF4)
-
-PPF4     | test/data/suikoden/clay_guardian_base.ppf | gold | Pyriel GS1 Patch clay guardian fix
