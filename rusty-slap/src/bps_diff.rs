@@ -1,4 +1,5 @@
-//! BPS diff engine using Flips' suffix-array approach.
+//! BPS diff engine based on Alcaro's suffix-array approach from Flips
+//! (`libbps-suf.cpp`).  See `docs/bps-diff-algorithm.md` for a writeup.
 //!
 //! Concatenates target (windowed) + source, suffix-sorts, then walks the
 //! target left-to-right choosing the cheapest BPS action at each position.
@@ -188,7 +189,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
             }
         };
 
-        // Classify match and apply Flips' cost heuristic.
+        // Classify match and apply cost heuristic (see docs/bps-diff-algorithm.md).
         let emit = best.and_then(|(pos, mlen)| {
             let is_source = pos >= sortedsize;
             let file_pos = if is_source { pos - sortedsize } else { pos };

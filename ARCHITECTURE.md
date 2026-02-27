@@ -1,6 +1,6 @@
 # Architecture
 
-~8,600 lines of Haskell + ~900 lines of Rust. 20 format variants. One binary.
+Haskell + Rust. 20 format variants.
 
 ## Module Map
 
@@ -44,23 +44,13 @@ rusty-slap/src/
   lib.rs           FFI boundary (extern "C" exports, pointer ↔ slice, write_vec_to_ffi)
   crc32.rs         CRC-32 via crc32fast (hardware CLMUL/PCLMULQDQ)
   sa.rs            SA-IS suffix array (linear-time, Nong/Zhang/Chan 2009)
-  bps_diff.rs      BPS diff engine (Flips' concatenated SA + progressive sorting)
+  bps_diff.rs      BPS diff engine (concatenated SA + progressive sorting, after Alcaro/Flips)
   compress.rs      flate2 (zlib/gzip) + bzip2-rs (bzip2), pure Rust
 test/
   Props.hs         QuickCheck: 49 properties (round-trip, hash, truncation, contract)
 ```
 
 ## Data Flow
-
-```
-                          ┌─────────────┐
-  file bytes ──→ Detect ──→ PatchFormat ──→ parseSome ──→ SomePatch
-                                                              │
-                  ┌─────────┬────────┬────────┬──────────┬────┘
-                  ▼         ▼        ▼        ▼          ▼
-               spInfo   spExplain  spApply  spVerify  spContents
-              (String) (ExplainData) (Strategy) (Verif)  (Maybe PatchContents)
-```
 
 `parseSome` is the **only** function that knows about format-specific
 types. It parses the raw bytes, then closes over the parsed data to
@@ -104,11 +94,6 @@ parsed format-specific data is captured in closures at construction
 time. The key tradeoff: you lose the ability to pattern-match on
 `SomeIPS` vs `SomeBPS`, but nothing outside `parseSome` needs to.
 
-All formats use **InMemory** apply: takes source ByteString, returns
-target ByteString. Uses `unsafeCreate` + raw pointer writes for output
-buffers. `InPlace` exists in the type but is unused for apply — only
-`UndoInPlace` is used (PPF3 undo).
-
 ## Verification
 
 ```haskell
@@ -128,13 +113,8 @@ data Verification = Verification
   }
 ```
 
-Every `SomePatch` carries a `Verification` record populated by
-`parseSome` from whatever the parsed format provides. All checksum
-validation flows through `verifySource`/`verifyTarget` in Main.hs,
-which inspect `spVerification` fields — format modules never check
-hashes themselves.
-
-Three tiers of verification:
+Checksum validation flows through `verifySource`/`verifyTarget` in
+Main.hs — format modules never check hashes themselves. Three tiers:
 
 1. **Whole-file hashes** (CRC32, MD5, SHA1): Fatal by default.
    `--no-verify` downgrades mismatches to warnings.
@@ -149,8 +129,7 @@ Three tiers of verification:
 
 ## Conversion — Contract System
 
-`Patch.Convert` defines a declarative contract system for direct
-direct format conversion.
+`Patch.Convert` defines a contract system for direct format conversion.
 
 ```haskell
 data PatchField = FRecords | FDescription | FSourceCRC32 | FSourceMD5
@@ -192,20 +171,7 @@ Two conversion paths:
 
 2. **Apply-then-create** (needs `--with`): Apply the source patch to
    the ROM in memory, then create a new patch from (original, target)
-   via `createFromMemory`. Works for any input format → any creatable
-   output format, including differential formats.
-
-All formats apply in memory to the source ByteString.
-
-The conversion system is descriptive: each format declares what fields
-it requires, accepts, and provides. `canConvert` checks whether the
-source's provided fields satisfy the target's requirements — it doesn't
-maintain a table of allowed conversions. Most format pairs can't convert
-directly (the source lacks fields the target needs), so `--with` triggers
-an apply-then-create path instead. This is emergent from the field
-contracts, not hardcoded. Adding fields to a format's `spContents`
-automatically unlocks new direct conversions without touching dispatch
-logic.
+   via `createFromMemory`.
 
 ## Key Design Decisions
 
@@ -238,22 +204,15 @@ diffs, while application reconstructs a known-size target buffer.
 stderr` and `exitFailure`. A structured error ADT would add type
 safety that no consumer benefits from.
 
-**Two-layer testing.** Integration tests (tasty, 428 tests) use
-SHA256 verification against real patches and external tools.
-Property tests (`test/Props.hs`, 49 QuickCheck properties) test
-round-trip correctness, parser robustness, and conversion contracts.
-Declarative matrix files (`test/specs/*.txt`) define create,
-conversion, cross-validation, and undo test cases.
-
 ## rusty-slap — Rust Static Library
 
-Performance-critical and platform-accelerated code lives in `rusty-slap/`,
-a Rust `staticlib` linked into the Haskell binary via `ccall unsafe` FFI.
+`rusty-slap/` is a Rust `staticlib` linked into the Haskell binary
+via `ccall unsafe` FFI.
 
 **What Rust owns:**
 - CRC-32 (hardware CLMUL/PCLMULQDQ via `crc32fast`)
 - Adler-32 (RFC 1950)
-- BPS diff (SA-IS suffix array + Flips' concatenated-SA algorithm)
+- BPS diff (SA-IS suffix array + concatenated-SA algorithm, after Alcaro's Flips)
 - Compression: zlib/gzip (`flate2`/`miniz_oxide`), bzip2 (`bzip2-rs`)
 
 **What Haskell keeps:** parsing, format logic, conversion, CLI, types.
@@ -273,31 +232,3 @@ what GHC requires (libc, libm, libgmp).
 
 Release profile: `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`,
 `RUSTFLAGS += -C target-cpu=native`.
-
-## Format Support Matrix
-
-| Format | Parse | Apply | Create | Convert | Undo | Info | Explain |
-|--------|-------|-------|--------|---------|------|------|---------|
-| IPS | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| IPS32 | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| EBP | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| BPS | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
-| UPS | ✓ | ✓ | ✓ | — | ✓* | ✓ | ✓ |
-| PPF1 | ✓ | ✓ | — | ✓‡ | — | ✓ | ✓ |
-| PPF2 | ✓ | ✓ | — | ✓‡ | — | ✓ | ✓ |
-| PPF3 | ✓ | ✓ | ✓ | ✓‡ | ✓ | ✓ | ✓ |
-| PPF4 | ✓ | ✓ | — | — | — | ✓ | ✓ |
-| VCDIFF | ✓ | ✓ | — | — | — | ✓ | ✓ |
-| BSDiff/BDF | ✓ | ✓ | — | — | — | ✓ | ✓ |
-| GDIFF | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
-| xdelta1 | ✓ | ✓ | — | — | — | ✓ | ✓ |
-| APS N64 | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| APS GBA | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
-| RUP | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
-| DPS | ✓ | ✓ | ✓ | — | — | ✓ | ✓ |
-| NINJA1 | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| PMSR | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-| PCHTXT | ✓ | ✓ | ✓ | ✓‡ | — | ✓ | ✓ |
-
-\* UPS undo is self-inverse (apply the patch to the modified file).
-‡ Direct format conversion (no ROM needed). All ‡ formats can convert to any other ‡ format.

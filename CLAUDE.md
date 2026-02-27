@@ -1,11 +1,5 @@
 # slap — Project Instructions
 
-## What this is
-
-A multi-format ROM patching CLI. Auto-detects format from magic bytes,
-applies/undoes patches, creates patches, converts between formats, and
-provides info/explain commands for inspection.
-
 ## Build and test
 
 ```
@@ -105,8 +99,6 @@ This means:
   gets a conversion over the line, good. If the program quietly
   fills in a zero and pretends, bad.
 
-Remaining violations of this principle are tracked in beauty-audit.md
-and fixed as they're found.
 
 Every committed test patch is either `gold` (real-world) or `verified`
 (created by a named external tool). slap never creates its own test

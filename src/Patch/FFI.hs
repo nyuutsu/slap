@@ -35,7 +35,7 @@ rustyAdler32 bs = unsafeDupablePerformIO $
   BSU.unsafeUseAsCStringLen bs $ \(ptr, len) ->
     pure $ c_rustyAdler32 (castPtr ptr) (fromIntegral len)
 
--- | BPS diff via rusty-slap (suffix-array Flips algorithm).
+-- | BPS diff via rusty-slap (suffix-array algorithm, after Alcaro's Flips).
 -- Returns the raw encoded action byte stream.
 rustyBpsDiff :: ByteString -> ByteString -> ByteString
 rustyBpsDiff src tgt = unsafeDupablePerformIO $
