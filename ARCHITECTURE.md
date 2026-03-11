@@ -116,20 +116,10 @@ Two conversion paths:
 
 ## Key Design Decisions
 
-**Closure-based existential, not sum type or typeclass.** `SomePatch`
-is a record of closures — the same thing a typeclass + existential
-compiles to, without the language extensions or module layering.
-`parseSome` constructs the record; consumers use field accessors.
-Each format module stays self-contained.
-
-**Patch.Get monad, not attoparsec/binary/cereal.** 176 lines,
-no dependencies, position tracking, bounded reads, error messages
-with byte offsets.
-
 **Builder for output, unsafeCreate for apply.** Patch creation uses
 `Data.ByteString.Builder` (lazy construction, efficient concat).
 Patch application uses `unsafeCreate` with raw pointer arithmetic
-(single allocation, memcpy-speed bulk copies via `copyBSRange`).
+(single allocation, bulk copies via `copyBSRange`).
 The distinction matters: creation builds output incrementally from
 diffs, while application reconstructs a known-size target buffer.
 

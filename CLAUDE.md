@@ -1,5 +1,28 @@
 # slap — Project Instructions
 
+Multi-format ROM patch tool. Haskell + Rust.
+
+Applies, creates, converts, and inspects ROM patches — IPS, BPS,
+UPS, PPF, RUP, and more. Haskell for format logic, Rust for
+performance-critical internals (checksums, suffix arrays,
+compression) via FFI.
+
+## Design principles
+
+- **Honesty above convenience.** Every byte slap writes must be
+  traceable to inputs, user choices, or values true by construction.
+  No silently invented data. See the Honesty section for the full
+  rule.
+- **Respect settled patterns.** The closure-based existential
+  (`SomePatch`), `Either String` errors, the conversion contract
+  system — these are design decisions. Don't propose alternatives
+  without explicitly flagging the departure.
+- **Types encode constraints.** If a field can only be two things,
+  its type is a sum type, not a raw byte. The compiler enforces
+  what convention can't.
+- **Haskell > Rust > C.** Pure domain logic in Haskell. Performance-
+  critical internals in Rust via FFI. No C dependencies.
+
 ## Build and test
 
 ```
@@ -17,24 +40,58 @@ Filter: `cabal test integration --test-options='-p "$0~/apply/"' --extra-lib-dir
 
 GHC 9.12.2, GHC2024, `-Wall -O2`, zero warnings (Haskell + Rust + clippy).
 
-## Code style
+## Haskell style
 
-GHC2024 language edition. Build with `-Wall -O2`, zero warnings at all
-times. If a warning fires, fix the code — don't disable the warning.
+GHC2024 language edition. `-Wall -O2`, zero warnings. Fix the code,
+don't disable the warning. Strict fields on data types by default.
+No orphan instances.
 
-Prefer the shorter, cleaner way to express something. Pattern matching
-over if-chains, guards over nested cases, `where` over deeply nested
-`let`. Reach for standard combinators (`unfoldr`, `foldl'`, `mapAccumL`)
-when they fit naturally — don't write manual recursion to avoid learning
-a combinator, but don't force one in when direct recursion reads better.
+**Be idiomatic.** Use the right combinator when it fits (`unfoldr`,
+`foldl'`, `mapAccumL`, `fromMaybe`, `mapMaybe`, `guard`). Don't
+write manual recursion to avoid learning a combinator, but don't
+force one in when direct recursion reads better.
 
-Terse variable names in tight scope — `bs` for a ByteString, `pos` for
-an offset, `acc` for an accumulator. Descriptive names for things that
-cross function boundaries or appear in record fields.
+**Descriptive names.** `patchOffset` not `off`, `sourceBytes` not
+`bs`, `remaining` not `rem`. Spell it out. Domain abbreviations
+that ARE the standard term stay abbreviated: CRC, EOF, BPS, IPS,
+PPF. When in doubt, spell it out.
 
-`fromIntegral` is unavoidable in binary format code. Don't try to hide
-it — explicit type conversions at byte boundaries are clearer than type
-class abstractions.
+**No shadowing, no prime-naming.** Don't reuse a binding name in
+an inner scope. Don't use `x'` or `xs''` — if two things need
+names, find two real names.
+
+**Pattern matching** over if-chains. Guards over nested cases.
+`where` over deeply nested `let`.
+
+**Sugar is good when it's free.** Operator sections, `<$>`, `<*>`,
+`LambdaCase` — use them when they make code read better without
+hiding meaning.
+
+**Composability.** Small functions that combine well. When a pattern
+emerges, make a clean abstraction — three duplicated blocks are
+worse than one clear function.
+
+**New code follows the same rules.** Every naming convention here
+applies equally to new code, refactors, and helpers introduced
+during changes. If a rename pass cleaned something up, the same
+patterns shouldn't come back in through new helpers or variables.
+This includes test code.
+
+**Qualified imports** for containers (`Map`, `Set`, `Text`,
+`ByteString`, `LazyByteString`).
+
+**Proposals should be elegant** — but we discuss fit with the
+project's direction before committing.
+
+**Upgrade existing code** when touching it. Better names, better
+combinators, clearer structure.
+
+Derive what's natural for the type. Closed enumerations should
+have `Enum, Bounded`.
+
+`fromIntegral` is unavoidable in binary format code. Explicit type
+conversions at byte boundaries are clearer than type class
+abstractions.
 
 ## Comments
 
@@ -48,6 +105,27 @@ reader a trip to the spec. Wire format details are not obvious from code.
 
 No `-- TODO` comments in committed code. Either do it or track it
 outside the source.
+
+## Working together
+
+The user is learning Haskell alongside building. Teaching is part
+of the work — not separate from it.
+
+- Explain new concepts before using them — combinators, type
+  signatures, patterns. Say what they mean and why they work.
+  Lecture freely.
+- Teach the user to write Haskell, not just watch it appear.
+  Explain what to write and why, then have them write it.
+- Go slow on structural changes and new abstractions. Discuss
+  before committing. No bulk code drops.
+- When upgrading code to better patterns, show before and after,
+  explain what improved.
+- If something isn't clear, stop and explain. Understanding
+  matters more than progress.
+- Commit messages describe what changed and why, in imperative mood
+  ("Add X" rather than "Added X"). Keep subject lines under 72
+  characters and put detail in the body when it's needed. Avoid
+  em dashes in commit messages.
 
 ## Error handling
 
@@ -130,8 +208,8 @@ Haskell: prefer the shorter, cleaner way to express something.
   use them when the cost of a bug exceeds the syntactic cost.
 - **No `unwrap()` / `expect()` in library code.** Return `Result` or
   `Option`. The FFI boundary converts errors to return codes.
-- **Terse names in tight scope**, descriptive names at module
-  boundaries — same convention as the Haskell side.
+- **Descriptive names** — same convention as the Haskell side.
+  Spell it out.
 - **`clippy` clean.** `cargo clippy --release` with no warnings.
   Fix the code, don't `#[allow]` the lint.
 
@@ -149,4 +227,4 @@ Release profile: `lto = "fat"`, `codegen-units = 1`,
 - `app/Main.hs` — CLI parsing and command handlers
 - `test/` — Props.hs (QuickCheck), Integration/ (tasty integration)
 - `Makefile` — orchestrates Rust build then Haskell build
-- `NEXT.md` — planned work and session prompts
+- `NEXT.md` — planned work
