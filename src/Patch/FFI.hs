@@ -1,8 +1,8 @@
 module Patch.FFI (rustyCRC32, rustyAdler32, rustyBpsDiff) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BSU
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8, Word32)
 import Foreign.C.Types (CSize(..))
 import Foreign.Marshal.Alloc (alloca)
@@ -25,32 +25,32 @@ foreign import ccall unsafe "rusty_free"
 
 -- | CRC-32 via rusty-slap (hardware-accelerated crc32fast).
 rustyCRC32 :: ByteString -> Word32
-rustyCRC32 bs = unsafeDupablePerformIO $
-  BSU.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-    pure $ c_rustyCRC32 (castPtr ptr) (fromIntegral len)
+rustyCRC32 input = unsafeDupablePerformIO $
+  UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+    pure $ c_rustyCRC32 (castPtr dataPointer) (fromIntegral dataLength)
 
 -- | Adler-32 via rusty-slap (RFC 1950).
 rustyAdler32 :: ByteString -> Word32
-rustyAdler32 bs = unsafeDupablePerformIO $
-  BSU.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-    pure $ c_rustyAdler32 (castPtr ptr) (fromIntegral len)
+rustyAdler32 input = unsafeDupablePerformIO $
+  UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+    pure $ c_rustyAdler32 (castPtr dataPointer) (fromIntegral dataLength)
 
 -- | BPS diff via rusty-slap (suffix-array algorithm, after Alcaro's Flips).
 -- Returns the raw encoded action byte stream.
 rustyBpsDiff :: ByteString -> ByteString -> ByteString
-rustyBpsDiff src tgt = unsafeDupablePerformIO $
-  BSU.unsafeUseAsCStringLen src $ \(srcPtr, srcLen) ->
-    BSU.unsafeUseAsCStringLen tgt $ \(tgtPtr, tgtLen) ->
-      alloca $ \outPtrPtr ->
-        alloca $ \outLenPtr -> do
-          c_bpsDiff (castPtr srcPtr) (fromIntegral srcLen)
-                    (castPtr tgtPtr) (fromIntegral tgtLen)
-                    outPtrPtr outLenPtr
-          outPtr <- peek outPtrPtr
-          outLen <- peek outLenPtr
-          if outPtr == nullPtr
-            then pure BS.empty
+rustyBpsDiff source target = unsafeDupablePerformIO $
+  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, sourceLength) ->
+    UnsafeByteString.unsafeUseAsCStringLen target $ \(targetPointer, targetLength) ->
+      alloca $ \resultAddressPointer ->
+        alloca $ \resultLengthPointer -> do
+          c_bpsDiff (castPtr sourcePointer) (fromIntegral sourceLength)
+                    (castPtr targetPointer) (fromIntegral targetLength)
+                    resultAddressPointer resultLengthPointer
+          resultPointer <- peek resultAddressPointer
+          resultLength <- peek resultLengthPointer
+          if resultPointer == nullPtr
+            then pure ByteString.empty
             else do
-              result <- BS.packCStringLen (castPtr outPtr, fromIntegral outLen)
-              c_free outPtr outLen
+              result <- ByteString.packCStringLen (castPtr resultPointer, fromIntegral resultLength)
+              c_free resultPointer resultLength
               pure result

@@ -17,13 +17,13 @@ module Patch.APS.GBA
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_gba.js
 
 import Patch.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
-import Patch.Binary (crc16, copyBSRange, putWord32LE, putWord16LE)
+import Patch.Binary (crc16, copyByteStringRange, putWord32LE, putWord16LE)
 import Patch.Format (renderField)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word8, Word16, Word32)
@@ -40,15 +40,15 @@ data APSGBAPatch = APSGBAPatch APSGBAHeader [APSGBARecord]
   deriving (Show)
 
 data APSGBAHeader = APSGBAHeader
-  { gbaSourceSize :: Word32
-  , gbaTargetSize :: Word32
+  { apsGbaSourceSize :: Word32
+  , apsGbaTargetSize :: Word32
   } deriving (Show)
 
 data APSGBARecord = APSGBARecord
-  { gbaOffset    :: Word32
-  , gbaSourceCRC :: Word16
-  , gbaTargetCRC :: Word16
-  , gbaXorData   :: ByteString  -- 65536 bytes
+  { apsGbaOffset    :: Word32
+  , apsGbaSourceCRC :: Word16
+  , apsGbaTargetCRC :: Word16
+  , apsGbaXorData   :: ByteString  -- 65536 bytes
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -56,133 +56,133 @@ data APSGBARecord = APSGBARecord
 ----------------------------------------------------------------------------
 
 parseAPSGBA :: ByteString -> Either String APSGBAPatch
-parseAPSGBA bs
-  | BS.length bs < 4 = Left "APS-GBA: input too short"
-  | BS.take 4 bs /= "APS1" = Left "not an APS-GBA file (bad magic)"
-  | otherwise = runGet parseGBA bs
+parseAPSGBA input
+  | ByteString.length input < 4 = Left "APS-GBA: input too short"
+  | ByteString.take 4 input /= "APS1" = Left "not an APS-GBA file (bad magic)"
+  | otherwise = runGet parseGBA input
 
 parseGBA :: Get APSGBAPatch
 parseGBA = do
   skip 4  -- "APS1"
-  srcSize <- word32LE
-  tgtSize <- word32LE
-  recs <- parseGBARecords
-  pure $ APSGBAPatch (APSGBAHeader srcSize tgtSize) recs
+  sourceSize <- word32LE
+  targetSize <- word32LE
+  records <- parseGBARecords
+  pure $ APSGBAPatch (APSGBAHeader sourceSize targetSize) records
 
 parseGBARecords :: Get [APSGBARecord]
 parseGBARecords = do
   avail <- remaining
   if avail < 65544 then pure []
   else do
-    off    <- word32LE
-    srcCrc <- word16LE
-    tgtCrc <- word16LE
-    xorDat <- getBytes 65536
-    rest   <- parseGBARecords
-    pure (APSGBARecord off srcCrc tgtCrc xorDat : rest)
+    offset <- word32LE
+    sourceCrc <- word16LE
+    targetCrc <- word16LE
+    xorPayload <- getBytes 65536
+    rest <- parseGBARecords
+    pure (APSGBARecord offset sourceCrc targetCrc xorPayload : rest)
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
 applyAPSGBA :: APSGBAPatch -> FilePath -> IO Int
-applyAPSGBA (APSGBAPatch hdr recs) target = do
-  source <- BS.readFile target
-  let tgtSize = fromIntegral (gbaTargetSize hdr) :: Int
-      padded = if BS.length source < tgtSize
-               then source <> BS.replicate (tgtSize - BS.length source) 0
+applyAPSGBA (APSGBAPatch header records) target = do
+  source <- ByteString.readFile target
+  let targetSize = fromIntegral (apsGbaTargetSize header) :: Int
+      padded = if ByteString.length source < targetSize
+               then source <> ByteString.replicate (targetSize - ByteString.length source) 0
                else source
-  result <- applyGBARecs padded recs
-  BS.writeFile target (BS.take tgtSize result)
-  pure (length recs)
+  result <- applyGBARecs padded records
+  ByteString.writeFile target (ByteString.take targetSize result)
+  pure (length records)
 
 applyGBARecs :: ByteString -> [APSGBARecord] -> IO ByteString
 applyGBARecs source [] = pure source
-applyGBARecs source (APSGBARecord off _ _ xorDat : rest) = do
-  let blockOff = fromIntegral off :: Int
+applyGBARecs source (APSGBARecord offset _ _ xorPayload : rest) = do
+  let blockOffset = fromIntegral offset :: Int
       blockSize = 65536
-      before = BS.take blockOff source
-      srcBlock = BS.take blockSize (BS.drop blockOff source)
-      padBlock = if BS.length srcBlock < blockSize
-                 then srcBlock <> BS.replicate (blockSize - BS.length srcBlock) 0
-                 else srcBlock
-      newBlock = BS.packZipWith xor padBlock xorDat
-      after = BS.drop (blockOff + blockSize) source
+      before = ByteString.take blockOffset source
+      srcBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
+      paddedBlock = if ByteString.length srcBlock < blockSize
+                    then srcBlock <> ByteString.replicate (blockSize - ByteString.length srcBlock) 0
+                    else srcBlock
+      newBlock = ByteString.packZipWith xor paddedBlock xorPayload
+      after = ByteString.drop (blockOffset + blockSize) source
       result = before <> newBlock <> after
   applyGBARecs result rest
 
 applyAPSGBAMemory :: APSGBAPatch -> ByteString -> ByteString
-applyAPSGBAMemory (APSGBAPatch hdr recs) source = unsafeCreate tgtSize $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen tgtSize)
-    when (tgtSize > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (tgtSize - srcLen)
-    forM_ recs $ \(APSGBARecord off _ _ xorDat) -> do
-      let blockOff = fromIntegral off :: Int
-      forM_ [0..65535] $ \i -> do
-        let pos = blockOff + i
-        when (pos < tgtSize) $ do
-          old <- peekByteOff ptr pos :: IO Word8
-          pokeByteOff ptr pos (old `xor` BS.index xorDat i)
+applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize $ \targetPointer -> do
+    copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
+    when (targetSize > sourceLength) $
+      fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)
+    forM_ records $ \(APSGBARecord offset _ _ xorPayload) -> do
+      let blockOffset = fromIntegral offset :: Int
+      forM_ [0..65535] $ \index -> do
+        let position = blockOffset + index
+        when (position < targetSize) $ do
+          old <- peekByteOff targetPointer position :: IO Word8
+          pokeByteOff targetPointer position (old `xor` ByteString.index xorPayload index)
   where
-    srcLen = BS.length source
-    tgtSize = fromIntegral (gbaTargetSize hdr)
+    sourceLength = ByteString.length source
+    targetSize = fromIntegral (apsGbaTargetSize header)
 
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
 
 apsGBAMeta :: APSGBAPatch -> [(String, String)]
-apsGBAMeta (APSGBAPatch hdr _) =
-  [ ("source size", show (gbaSourceSize hdr))
-  , ("target size", show (gbaTargetSize hdr))
+apsGBAMeta (APSGBAPatch header _) =
+  [ ("source size", show (apsGbaSourceSize header))
+  , ("target size", show (apsGbaTargetSize header))
   ]
 
 apsGBAInfo :: APSGBAPatch -> String
-apsGBAInfo p@(APSGBAPatch _ recs) = unlines $ filter (not . null) $
+apsGBAInfo patch@(APSGBAPatch _ records) = unlines $ filter (not . null) $
   [ "format:      APS (GBA)" ]
-  ++ map renderField (apsGBAMeta p)
-  ++ [ "blocks:      " ++ show (length recs) ]
+  ++ map renderField (apsGBAMeta patch)
+  ++ [ "blocks:      " ++ show (length records) ]
 
 ----------------------------------------------------------------------------
 -- Create (64KB XOR blocks with CRC16)
 ----------------------------------------------------------------------------
 
 createAPSGBA :: ByteString -> ByteString -> ByteString
-createAPSGBA old new = BL.toStrict $ toLazyByteString $
+createAPSGBA old new = LazyByteString.toStrict $ toLazyByteString $
     byteString "APS1"
-    <> putWord32LE (fromIntegral (BS.length old) :: Word32)
-    <> putWord32LE (fromIntegral (BS.length new) :: Word32)
+    <> putWord32LE (fromIntegral (ByteString.length old) :: Word32)
+    <> putWord32LE (fromIntegral (ByteString.length new) :: Word32)
     <> foldMap (encodeGBABlock old new) changedBlocks
   where
     blockSize = 65536
-    nBlocks = max (blocksOf old) (blocksOf new)
-    blocksOf bs = (BS.length bs + blockSize - 1) `div` blockSize
-    changedBlocks = filter hasChanges [0 .. nBlocks - 1]
-    hasChanges i =
-      let off = i * blockSize
-          srcBlk = padBlock (safeSlice off blockSize old)
-          tgtBlk = padBlock (safeSlice off blockSize new)
+    blockCount = max (blocksOf old) (blocksOf new)
+    blocksOf input = (ByteString.length input + blockSize - 1) `div` blockSize
+    changedBlocks = filter hasChanges [0 .. blockCount - 1]
+    hasChanges blockIndex =
+      let offset = blockIndex * blockSize
+          srcBlk = padBlock (safeSlice offset blockSize old)
+          tgtBlk = padBlock (safeSlice offset blockSize new)
       in srcBlk /= tgtBlk
-    padBlock bs
-      | BS.length bs >= blockSize = BS.take blockSize bs
-      | otherwise = bs <> BS.replicate (blockSize - BS.length bs) 0
+    padBlock input
+      | ByteString.length input >= blockSize = ByteString.take blockSize input
+      | otherwise = input <> ByteString.replicate (blockSize - ByteString.length input) 0
 
 encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
-encodeGBABlock old new i =
-    putWord32LE (fromIntegral off :: Word32)
+encodeGBABlock old new blockIndex =
+    putWord32LE (fromIntegral offset :: Word32)
     <> putWord16LE (crc16 srcBlk)
     <> putWord16LE (crc16 tgtBlk)
-    <> byteString xorDat
+    <> byteString xorPayload
   where
-    off = i * 65536
-    srcBlk = padTo 65536 (safeSlice off 65536 old)
-    tgtBlk = padTo 65536 (safeSlice off 65536 new)
-    xorDat = BS.packZipWith xor srcBlk tgtBlk
-    padTo n bs
-      | BS.length bs >= n = BS.take n bs
-      | otherwise = bs <> BS.replicate (n - BS.length bs) 0
+    offset = blockIndex * 65536
+    srcBlk = padTo 65536 (safeSlice offset 65536 old)
+    tgtBlk = padTo 65536 (safeSlice offset 65536 new)
+    xorPayload = ByteString.packZipWith xor srcBlk tgtBlk
+    padTo size input
+      | ByteString.length input >= size = ByteString.take size input
+      | otherwise = input <> ByteString.replicate (size - ByteString.length input) 0
 
 safeSlice :: Int -> Int -> ByteString -> ByteString
-safeSlice off len bs
-  | off >= BS.length bs = BS.empty
-  | otherwise = BS.take len (BS.drop off bs)
+safeSlice offset sliceLength input
+  | offset >= ByteString.length input = ByteString.empty
+  | otherwise = ByteString.take sliceLength (ByteString.drop offset input)

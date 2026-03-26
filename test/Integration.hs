@@ -13,19 +13,19 @@ import Integration.FailureMode (failureModeTests)
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, forkIO)
 import Data.IORef (newIORef)
 import qualified Data.Map.Strict as Map
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 
 parSequence :: [IO a] -> IO [a]
 parSequence actions = do
-  mvars <- mapM (\act -> do
-    mv <- newEmptyMVar
-    _ <- forkIO (act >>= putMVar mv)
-    pure mv) actions
+  mvars <- mapM (\action -> do
+    mvar <- newEmptyMVar
+    _ <- forkIO (action >>= putMVar mvar)
+    pure mvar) actions
   mapM takeMVar mvars
 
 main :: IO ()
 main = do
-  romCache <- newIORef (Map.empty :: Map.Map FilePath BS.ByteString)
+  romCache <- newIORef (Map.empty :: Map.Map FilePath ByteString.ByteString)
   trees <- parSequence
     [applyTests romCache, createTests romCache, crossValTests romCache,
      convertTests romCache, metadataTests romCache, undoTests romCache,

@@ -16,15 +16,15 @@ module Patch.PMSR
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
-import qualified Patch.Get as G
+import qualified Patch.Get as Get
 
-import Patch.Binary (copyBSRange)
+import Patch.Binary (copyByteStringRange)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
 import Data.ByteString.Internal (unsafeCreate)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
 import Data.Word (Word8, Word64)
 import Control.Monad (forM_, when)
@@ -52,67 +52,67 @@ data PMSRPatch = PMSRPatch
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
 parsePMSR :: ByteString -> Either String PMSRPatch
-parsePMSR bs
-  | BS.length bs < 4 = Left "PMSR: input too short"
-  | BS.take 4 bs /= "PMSR" = Left "not a PMSR file (bad magic)"
-  | otherwise = runGet parsePMSRBody bs
+parsePMSR input
+  | ByteString.length input < 4 = Left "PMSR: input too short"
+  | ByteString.take 4 input /= "PMSR" = Left "not a PMSR file (bad magic)"
+  | otherwise = runGet parsePMSRBody input
 
 parsePMSRBody :: Get PMSRPatch
 parsePMSRBody = do
   skip 4  -- magic
-  count <- fromIntegral <$> G.word32BE
-  recs  <- parseRecords count []
-  pure (PMSRPatch recs)
+  count <- fromIntegral <$> Get.word32BE
+  records  <- parseLoop count []
+  pure (PMSRPatch records)
 
-parseRecords :: Int -> [PMSRRecord] -> Get [PMSRRecord]
-parseRecords 0 acc = pure (reverse acc)
-parseRecords n acc = do
-  off <- fromIntegral <$> G.word32BE
-  len <- fromIntegral <$> G.word32BE
-  avail <- remaining
-  if len > avail
-    then fail ("PMSR record needs " ++ show len ++ " bytes but only "
-               ++ show avail ++ " available")
+parseLoop :: Int -> [PMSRRecord] -> Get [PMSRRecord]
+parseLoop 0 accumulated = pure (reverse accumulated)
+parseLoop count accumulated = do
+  offset <- fromIntegral <$> Get.word32BE
+  dataLength <- fromIntegral <$> Get.word32BE
+  available <- remaining
+  if dataLength > available
+    then fail ("PMSR record needs " ++ show dataLength ++ " bytes but only "
+               ++ show available ++ " available")
     else do
-      dat <- getBytes len
-      parseRecords (n - 1) (PMSRRecord off dat : acc)
+      payload <- getBytes dataLength
+      parseLoop (count - 1) (PMSRRecord offset payload : accumulated)
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
 applyPMSR :: PMSRPatch -> FilePath -> IO Int
-applyPMSR patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  mapM_ (applyOne h) (pmsrRecords patch)
+applyPMSR patch target = withBinaryFile target ReadWriteMode $ \handle -> do
+  mapM_ (applyRecord handle) (pmsrRecords patch)
   pure (length (pmsrRecords patch))
   where
-    applyOne h r = do
-      hSeek h AbsoluteSeek (fromIntegral (pmsrOffset r))
-      BS.hPut h (pmsrData r)
+    applyRecord handle record = do
+      hSeek handle AbsoluteSeek (fromIntegral (pmsrOffset record))
+      ByteString.hPut handle (pmsrData record)
 
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
 applyPMSRMemory :: PMSRPatch -> ByteString -> ByteString
-applyPMSRMemory patch source = unsafeCreate outLen $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen outLen)
-    when (outLen > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
-    forM_ (pmsrRecords patch) $ \r ->
-      copyBSRange ptr (fromIntegral (pmsrOffset r)) (pmsrData r) 0 (BS.length (pmsrData r))
+applyPMSRMemory patch source = unsafeCreate outputSize $ \targetPointer -> do
+    copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
+    when (outputSize > sourceLength) $
+      fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
+    forM_ (pmsrRecords patch) $ \record ->
+      copyByteStringRange targetPointer (fromIntegral (pmsrOffset record)) (pmsrData record) 0 (ByteString.length (pmsrData record))
   where
-    srcLen = BS.length source
-    outLen = foldl' max srcLen
-      [ fromIntegral (pmsrOffset r) + BS.length (pmsrData r) | r <- pmsrRecords patch ]
+    sourceLength = ByteString.length source
+    outputSize = foldl' max sourceLength
+      [ fromIntegral (pmsrOffset record) + ByteString.length (pmsrData record) | record <- pmsrRecords patch ]
 
 encodePMSR :: [(Int, ByteString)] -> ByteString
-encodePMSR recs = BL.toStrict $ toLazyByteString $
+encodePMSR records = LazyByteString.toStrict $ toLazyByteString $
     byteString "PMSR"
-    <> word32BE (fromIntegral (length recs))
-    <> foldMap encodeRec recs
+    <> word32BE (fromIntegral (length records))
+    <> foldMap encodeRecord records
   where
-    encodeRec (off, dat) =
-      word32BE (fromIntegral off)
-      <> word32BE (fromIntegral (BS.length dat))
-      <> byteString dat
+    encodeRecord (offset, payload) =
+      word32BE (fromIntegral offset)
+      <> word32BE (fromIntegral (ByteString.length payload))
+      <> byteString payload
 
 ----------------------------------------------------------------------------
 -- Info
@@ -123,21 +123,21 @@ pmsrMeta :: PMSRPatch -> [(String, String)]
 pmsrMeta _ = []
 
 pmsrInfo :: PMSRPatch -> String
-pmsrInfo p = unlines $ filter (not . null)
+pmsrInfo patch = unlines $ filter (not . null)
   [ "format:      PMSR (Paper Mario Star Rod)"
-  , "records:     " ++ show nRecs
+  , "records:     " ++ show recordCount
   , "total bytes: " ++ show totalBytes
-  , rangeStr
+  , rangeString
   ]
   where
-    nRecs = length (pmsrRecords p)
-    totalBytes = sum (map (BS.length . pmsrData) (pmsrRecords p))
+    recordCount = length (pmsrRecords patch)
+    totalBytes = sum (map (ByteString.length . pmsrData) (pmsrRecords patch))
 
-    rangeStr
-      | null (pmsrRecords p) = "range:       (empty patch)"
+    rangeString
+      | null (pmsrRecords patch) = "range:       (empty patch)"
       | otherwise =
-          let recs = pmsrRecords p
-              lo = minimum (map pmsrOffset recs)
-              hi = maximum (map (\r -> pmsrOffset r + fromIntegral (BS.length (pmsrData r))) recs)
-          in "range:       0x" ++ showHex (fromIntegral lo :: Word64) ""
-             ++ " - 0x" ++ showHex (fromIntegral hi :: Word64) ""
+          let records = pmsrRecords patch
+              lowest = minimum (map pmsrOffset records)
+              highest = maximum (map (\record -> pmsrOffset record + fromIntegral (ByteString.length (pmsrData record))) records)
+          in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
+             ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""

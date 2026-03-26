@@ -4,34 +4,34 @@ module Patch.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
 import Patch.PPF.Types (ImageType(..), fromImageType)
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteStringChar
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe, isJust)
 
 padDescription :: String -> ByteString
-padDescription s =
-  let bs = BC.pack (take 50 s)
-  in bs <> BS.replicate (50 - BS.length bs) 0x20
+padDescription text =
+  let encoded = ByteStringChar.pack (take 50 text)
+  in encoded <> ByteString.replicate (50 - ByteString.length encoded) 0x20
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> ImageType -> Builder
-buildHeader desc blockCheck hasUndo valBlock imgType =
+buildHeader description blockCheck hasUndo validationBlock imageType =
   byteString "PPF30"                                    -- magic + version
   <> word8 0x02                                          -- encoding method
-  <> byteString desc                                     -- 50-byte description
-  <> word8 (fromImageType imgType)                       -- image type
+  <> byteString description                              -- 50-byte description
+  <> word8 (fromImageType imageType)                       -- image type
   <> word8 (if blockCheck then 0x01 else 0x00)           -- block check flag
   <> word8 (if hasUndo then 0x01 else 0x00)              -- undo flag
   <> word8 0x00                                          -- dummy
-  <> if blockCheck then byteString valBlock else mempty  -- 1024-byte validation block
+  <> if blockCheck then byteString validationBlock else mempty  -- 1024-byte validation block
 
 encodeRecord :: Bool -> (Int64, ByteString, ByteString) -> Builder
-encodeRecord hasUndo (off, new, old) =
-  int64LE off
-  <> word8 (fromIntegral (BS.length new))
+encodeRecord hasUndo (offset, new, old) =
+  int64LE offset
+  <> word8 (fromIntegral (ByteString.length new))
   <> byteString new
   <> if hasUndo then byteString old else mempty
 
@@ -44,28 +44,28 @@ encodePPF3 :: [(Int64, ByteString)]
            -> Maybe ByteString
            -> ImageType
            -> ByteString
-encodePPF3 recs desc undoTriples valBlock imgType =
-  let descBytes   = padDescription desc
-      hasValidate = isJust valBlock
+encodePPF3 records description undoTriples validationBlock imageType =
+  let descriptionBytes   = padDescription description
+      hasValidate = isJust validationBlock
       hasUndo     = isJust undoTriples
-      hdr         = buildHeader descBytes hasValidate hasUndo
-                      (fromMaybe BS.empty valBlock) imgType
+      header      = buildHeader descriptionBytes hasValidate hasUndo
+                      (fromMaybe ByteString.empty validationBlock) imageType
       body = case undoTriples of
-        Just trips -> foldMap (encodeRecord True) trips
-        Nothing    -> foldMap encodeWriteRecord recs
-  in BL.toStrict (toLazyByteString (hdr <> body))
+        Just triples -> foldMap (encodeRecord True) triples
+        Nothing      -> foldMap encodeWriteRecord records
+  in LazyByteString.toStrict (toLazyByteString (header <> body))
 
 -- | Encode a write record (no undo data).
 encodeWriteRecord :: (Int64, ByteString) -> Builder
-encodeWriteRecord (off, dat) =
-  int64LE off
-  <> word8 (fromIntegral (BS.length dat))
-  <> byteString dat
+encodeWriteRecord (offset, payload) =
+  int64LE offset
+  <> word8 (fromIntegral (ByteString.length payload))
+  <> byteString payload
 
 -- | Encode a File_ID.diz trailer in PPF3 format (2-byte LE length).
 encodeFileIdDiz :: ByteString -> ByteString
-encodeFileIdDiz content = BL.toStrict $ toLazyByteString $
+encodeFileIdDiz content = LazyByteString.toStrict $ toLazyByteString $
   byteString "@BEGIN_FILE_ID.DIZ"
   <> byteString content
   <> byteString "@END_FILE_ID.DIZ"
-  <> word16LE (fromIntegral (BS.length content))
+  <> word16LE (fromIntegral (ByteString.length content))

@@ -7,8 +7,8 @@ module Patch.Compress
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BSU
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
@@ -42,22 +42,22 @@ callRustyDecompress
   :: String                                                         -- error label
   -> (Ptr Word8 -> CSize -> Ptr (Ptr Word8) -> Ptr CSize -> IO CInt) -- FFI fn
   -> ByteString -> Either String ByteString
-callRustyDecompress _     _   bs | BS.null bs = Right BS.empty
-callRustyDecompress label ffi bs = unsafeDupablePerformIO $
-  BSU.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-    alloca $ \outPtrPtr ->
-      alloca $ \outLenPtr -> do
-        rc <- ffi (castPtr ptr) (fromIntegral len) outPtrPtr outLenPtr
-        if rc /= 0
+callRustyDecompress _     _          input | ByteString.null input = Right ByteString.empty
+callRustyDecompress label decompress input = unsafeDupablePerformIO $
+  UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+    alloca $ \resultAddressPointer ->
+      alloca $ \resultLengthPointer -> do
+        returnCode <- decompress (castPtr dataPointer) (fromIntegral dataLength) resultAddressPointer resultLengthPointer
+        if returnCode /= 0
           then pure $ Left (label ++ " decompression failed")
           else do
-            outPtr <- peek outPtrPtr
-            outLen <- peek outLenPtr
-            if outPtr == nullPtr
-              then pure $ Right BS.empty
+            resultPointer <- peek resultAddressPointer
+            resultLength <- peek resultLengthPointer
+            if resultPointer == nullPtr
+              then pure $ Right ByteString.empty
               else do
-                result <- BS.packCStringLen (castPtr outPtr, fromIntegral outLen)
-                c_free outPtr outLen
+                result <- ByteString.packCStringLen (castPtr resultPointer, fromIntegral resultLength)
+                c_free resultPointer resultLength
                 pure $ Right result
 
 ----------------------------------------------------------------------------
@@ -71,23 +71,23 @@ zlibInflate = callRustyDecompress "zlib" c_zlibInflate
 -- | Zlib (RFC 1950) deflate (default compression level 6).
 -- Compression cannot fail for valid input; crashes on internal error.
 zlibDeflate :: ByteString -> ByteString
-zlibDeflate bs
-  | BS.null bs = BS.empty
+zlibDeflate input
+  | ByteString.null input = ByteString.empty
   | otherwise = unsafeDupablePerformIO $
-      BSU.unsafeUseAsCStringLen bs $ \(ptr, len) ->
-        alloca $ \outPtrPtr ->
-          alloca $ \outLenPtr -> do
-            rc <- c_zlibDeflate (castPtr ptr) (fromIntegral len) 6 outPtrPtr outLenPtr
-            if rc /= 0
+      UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+        alloca $ \resultAddressPointer ->
+          alloca $ \resultLengthPointer -> do
+            returnCode <- c_zlibDeflate (castPtr dataPointer) (fromIntegral dataLength) 6 resultAddressPointer resultLengthPointer
+            if returnCode /= 0
               then error "zlibDeflate: internal error (flate2 compression failed)"
               else do
-                outPtr <- peek outPtrPtr
-                outLen <- peek outLenPtr
-                if outPtr == nullPtr
-                  then pure BS.empty
+                resultPointer <- peek resultAddressPointer
+                resultLength <- peek resultLengthPointer
+                if resultPointer == nullPtr
+                  then pure ByteString.empty
                   else do
-                    result <- BS.packCStringLen (castPtr outPtr, fromIntegral outLen)
-                    c_free outPtr outLen
+                    result <- ByteString.packCStringLen (castPtr resultPointer, fromIntegral resultLength)
+                    c_free resultPointer resultLength
                     pure result
 
 -- | Gzip (RFC 1952) inflate.

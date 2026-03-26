@@ -5,7 +5,7 @@ import Integration.Helpers
    RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
@@ -15,11 +15,11 @@ undoTests :: RomCache -> IO TestTree
 undoTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "undo.txt")
-  tests <- mapM (mkUndoTest romCache repo) (zip [1::Int ..] rows)
+  tests <- mapM (makeUndoTest romCache repo) (zip [1::Int ..] rows)
   pure (testGroup "undo" (concat tests))
 
-mkUndoTest :: RomCache -> FilePath -> (Int, [String]) -> IO [TestTree]
-mkUndoTest romCache repo (_, fields) = case fields of
+makeUndoTest :: RomCache -> FilePath -> (Int, [String]) -> IO [TestTree]
+makeUndoTest romCache repo (_, fields) = case fields of
   (method : basePath : patchPath : baseSha : _) -> do
     let base  = repo </> basePath
         patch = repo </> patchPath
@@ -28,22 +28,22 @@ mkUndoTest romCache repo (_, fields) = case fields of
     if not (baseExists && patchExists)
       then pure []
       else pure [testCase label $ do
-        baseBs  <- cachedReadFile romCache base
-        patchBs <- BS.readFile patch
-        case parseSome patchBs of
-          Left err -> assertFailure ("parseSome failed: " ++ err)
-          Right sp -> do
+        baseBytes  <- cachedReadFile romCache base
+        patchBytes <- ByteString.readFile patch
+        case parseSome patchBytes of
+          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Right parsed -> do
             -- Apply
-            applied <- applyPatch sp baseBs
+            applied <- applyPatch parsed baseBytes
             case applied of
-              Left err -> assertFailure ("apply failed: " ++ err)
-              Right patchedBs -> do
+              Left errorMessage -> assertFailure ("apply failed: " ++ errorMessage)
+              Right patchedBytes -> do
                 -- Undo
-                undone <- undoPatch sp patchedBs
+                undone <- undoPatch parsed patchedBytes
                 case undone of
-                  Left err -> assertFailure ("undo failed: " ++ err)
-                  Right restoredBs ->
-                    assertEqual "SHA1 after undo" baseSha (sha1Hex restoredBs)
+                  Left errorMessage -> assertFailure ("undo failed: " ++ errorMessage)
+                  Right restoredBytes ->
+                    assertEqual "SHA1 after undo" baseSha (sha1Hex restoredBytes)
       ]
     where
       label = method ++ "/" ++ patchPath

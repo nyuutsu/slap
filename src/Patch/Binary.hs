@@ -23,7 +23,7 @@ module Patch.Binary
   , sha1
   , sha256
     -- * Bulk memory operations
-  , copyBSRange
+  , copyByteStringRange
     -- * Diff
   , diffHunks
     -- * Additional builders
@@ -33,8 +33,8 @@ module Patch.Binary
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BSU
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Array (Array, listArray, (!))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
@@ -42,8 +42,8 @@ import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
-import qualified Crypto.Hash as H
-import qualified Data.ByteArray as BA
+import qualified Crypto.Hash as Hash
+import qualified Data.ByteArray as ByteArray
 import Patch.FFI (rustyAdler32)
 
 ----------------------------------------------------------------------------
@@ -51,45 +51,45 @@ import Patch.FFI (rustyAdler32)
 ----------------------------------------------------------------------------
 
 getWord16LE :: Int -> ByteString -> Word16
-getWord16LE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Word16
-  in b 0 .|. (b 1 `shiftL` 8)
+getWord16LE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word16
+  in byteAt 0 .|. (byteAt 1 `shiftL` 8)
 
 getWord32LE :: Int -> ByteString -> Word32
-getWord32LE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Word32
-  in b 0 .|. (b 1 `shiftL` 8) .|. (b 2 `shiftL` 16) .|. (b 3 `shiftL` 24)
+getWord32LE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word32
+  in byteAt 0 .|. (byteAt 1 `shiftL` 8) .|. (byteAt 2 `shiftL` 16) .|. (byteAt 3 `shiftL` 24)
 
 getInt64LE :: Int -> ByteString -> Int64
-getInt64LE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Int64
-  in b 0 .|. (b 1 `shiftL` 8) .|. (b 2 `shiftL` 16) .|. (b 3 `shiftL` 24)
-     .|. (b 4 `shiftL` 32) .|. (b 5 `shiftL` 40) .|. (b 6 `shiftL` 48) .|. (b 7 `shiftL` 56)
+getInt64LE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Int64
+  in byteAt 0 .|. (byteAt 1 `shiftL` 8) .|. (byteAt 2 `shiftL` 16) .|. (byteAt 3 `shiftL` 24)
+     .|. (byteAt 4 `shiftL` 32) .|. (byteAt 5 `shiftL` 40) .|. (byteAt 6 `shiftL` 48) .|. (byteAt 7 `shiftL` 56)
 
 ----------------------------------------------------------------------------
 -- Big-endian readers
 ----------------------------------------------------------------------------
 
 getWord16BE :: Int -> ByteString -> Word16
-getWord16BE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Word16
-  in (b 0 `shiftL` 8) .|. b 1
+getWord16BE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word16
+  in (byteAt 0 `shiftL` 8) .|. byteAt 1
 
 getWord24BE :: Int -> ByteString -> Word32
-getWord24BE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Word32
-  in (b 0 `shiftL` 16) .|. (b 1 `shiftL` 8) .|. b 2
+getWord24BE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word32
+  in (byteAt 0 `shiftL` 16) .|. (byteAt 1 `shiftL` 8) .|. byteAt 2
 
 getWord32BE :: Int -> ByteString -> Word32
-getWord32BE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Word32
-  in (b 0 `shiftL` 24) .|. (b 1 `shiftL` 16) .|. (b 2 `shiftL` 8) .|. b 3
+getWord32BE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Word32
+  in (byteAt 0 `shiftL` 24) .|. (byteAt 1 `shiftL` 16) .|. (byteAt 2 `shiftL` 8) .|. byteAt 3
 
 getInt64BE :: Int -> ByteString -> Int64
-getInt64BE off bs =
-  let b i = fromIntegral (BS.index bs (off + i)) :: Int64
-  in (b 0 `shiftL` 56) .|. (b 1 `shiftL` 48) .|. (b 2 `shiftL` 40) .|. (b 3 `shiftL` 32)
-     .|. (b 4 `shiftL` 24) .|. (b 5 `shiftL` 16) .|. (b 6 `shiftL` 8) .|. b 7
+getInt64BE offset input =
+  let byteAt index = fromIntegral (ByteString.index input (offset + index)) :: Int64
+  in (byteAt 0 `shiftL` 56) .|. (byteAt 1 `shiftL` 48) .|. (byteAt 2 `shiftL` 40) .|. (byteAt 3 `shiftL` 32)
+     .|. (byteAt 4 `shiftL` 24) .|. (byteAt 5 `shiftL` 16) .|. (byteAt 6 `shiftL` 8) .|. byteAt 7
 
 ----------------------------------------------------------------------------
 -- Variable-length integers
@@ -101,108 +101,108 @@ getInt64BE off bs =
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
 -- Returns (value, bytes consumed).
 getByuuVarint :: Int -> ByteString -> (Int64, Int)
-getByuuVarint off bs = go off 0 1
+getByuuVarint offset input = decode offset 0 1
   where
-    len = BS.length bs
-    go i acc shift
-      | i >= len  = (acc, i - off)  -- unterminated; return partial to avoid crash
+    inputLength = ByteString.length input
+    decode position accumulated multiplier
+      | position >= inputLength = (accumulated, position - offset)
       | otherwise =
-          let byte = BS.index bs i
-              val  = fromIntegral (byte .&. 0x7F) :: Int64
-              acc' = acc + val * shift
+          let byte = ByteString.index input position
+              payload = fromIntegral (byte .&. 0x7F) :: Int64
+              total = accumulated + payload * multiplier
           in if testBit byte 7
-             then (acc', i - off + 1)
-             else let shift' = shift `shiftL` 7
-                  in go (i + 1) (acc' + shift') shift'
+             then (total, position - offset + 1)
+             else let nextMultiplier = multiplier `shiftL` 7
+                  in decode (position + 1) (total + nextMultiplier) nextMultiplier
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
 getVcdiffVarint :: Int -> ByteString -> (Int64, Int)
-getVcdiffVarint off bs = go off 0
+getVcdiffVarint offset input = decode offset 0
   where
-    len = BS.length bs
-    go i acc
-      | i >= len  = (acc, i - off)  -- unterminated; return partial to avoid crash
+    inputLength = ByteString.length input
+    decode position accumulated
+      | position >= inputLength = (accumulated, position - offset)
       | otherwise =
-          let byte = BS.index bs i
-              acc' = (acc `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
+          let byte = ByteString.index input position
+              total = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
           in if testBit byte 7
-             then go (i + 1) acc'
-             else (acc', i - off + 1)
+             then decode (position + 1) total
+             else (total, position - offset + 1)
 
 ----------------------------------------------------------------------------
 -- Builders
 ----------------------------------------------------------------------------
 
 putWord16BE :: Int -> Builder
-putWord16BE n =
-  word8 (fromIntegral ((n `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (n .&. 0xFF))
+putWord16BE value =
+  word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (value .&. 0xFF))
 
 putWord32LE :: Word32 -> Builder
-putWord32LE w =
-  word8 (fromIntegral (w .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 24) .&. 0xFF))
+putWord32LE value =
+  word8 (fromIntegral (value .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
 
 -- | Encode a non-negative Int64 as a byuu-style varint.
 putByuuVarint :: Int64 -> Builder
-putByuuVarint = go
+putByuuVarint = encode
   where
-    go v
-      | v <= 0x7F = word8 (fromIntegral v .|. 0x80)
+    encode value
+      | value <= 0x7F = word8 (fromIntegral value .|. 0x80)
       | otherwise =
-          let lo = fromIntegral (v .&. 0x7F) :: Word8
-              v' = (v `shiftR` 7) - 1
-          in word8 lo <> go v'
+          let lowBits = fromIntegral (value .&. 0x7F) :: Word8
+              remaining = (value `shiftR` 7) - 1
+          in word8 lowBits <> encode remaining
 
 ----------------------------------------------------------------------------
 -- Cryptographic hashes
 ----------------------------------------------------------------------------
 
 md5 :: ByteString -> ByteString
-md5 = BA.convert . H.hashWith H.MD5
+md5 = ByteArray.convert . Hash.hashWith Hash.MD5
 
 sha1 :: ByteString -> ByteString
-sha1 = BA.convert . H.hashWith H.SHA1
+sha1 = ByteArray.convert . Hash.hashWith Hash.SHA1
 
 sha256 :: ByteString -> ByteString
-sha256 = BA.convert . H.hashWith H.SHA256
+sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256
 
 ----------------------------------------------------------------------------
 -- Bulk memory operations
 ----------------------------------------------------------------------------
 
--- | Bulk copy @len@ bytes from a ByteString (at @srcOff@) to a raw pointer
--- (at @dstOff@).  Uses memcpy internally.
-copyBSRange :: Ptr Word8 -> Int -> ByteString -> Int -> Int -> IO ()
-copyBSRange _   _      _   _      len | len <= 0 = pure ()
-copyBSRange dst dstOff src srcOff len =
-  BSU.unsafeUseAsCStringLen src $ \(srcPtr, _) ->
-    copyBytes (dst `plusPtr` dstOff) (castPtr srcPtr `plusPtr` srcOff) len
+-- | Bulk copy @copyLength@ bytes from a ByteString (at @sourceOffset@) to a
+-- raw pointer (at @destinationOffset@).  Uses memcpy internally.
+copyByteStringRange :: Ptr Word8 -> Int -> ByteString -> Int -> Int -> IO ()
+copyByteStringRange _           _                 _      _            copyLength | copyLength <= 0 = pure ()
+copyByteStringRange destination destinationOffset source sourceOffset copyLength =
+  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
+    copyBytes (destination `plusPtr` destinationOffset) (castPtr sourcePointer `plusPtr` sourceOffset) copyLength
 
 ----------------------------------------------------------------------------
 -- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)
 ----------------------------------------------------------------------------
 
 crc16 :: ByteString -> Word16
-crc16 = BS.foldl' step 0
+crc16 = ByteString.foldl' step 0
   where
     step :: Word16 -> Word8 -> Word16
-    step crc byte =
-      let idx = fromIntegral ((crc `xor` fromIntegral byte) .&. 0xFF)
-      in (crc `shiftR` 8) `xor` (crc16Table ! idx)
+    step checksum byte =
+      let tableIndex = fromIntegral ((checksum `xor` fromIntegral byte) .&. 0xFF)
+      in (checksum `shiftR` 8) `xor` (crc16Table ! tableIndex)
 
 crc16Table :: Array Word16 Word16
-crc16Table = listArray (0, 255) [mkEntry i | i <- [0..255]]
+crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
   where
-    mkEntry :: Word16 -> Word16
-    mkEntry n = iterate step n !! 8
-    step :: Word16 -> Word16
-    step c
-      | testBit c 0 = (c `shiftR` 1) `xor` 0xA001
-      | otherwise    = c `shiftR` 1
+    computeEntry :: Word16 -> Word16
+    computeEntry initial = iterate reflect initial !! 8
+    reflect :: Word16 -> Word16
+    reflect checksum
+      | testBit checksum 0 = (checksum `shiftR` 1) `xor` 0xA001
+      | otherwise           = checksum `shiftR` 1
 
 ----------------------------------------------------------------------------
 -- Adler-32 (RFC 1950) — via rusty-slap
@@ -219,31 +219,31 @@ adler32 = rustyAdler32
 -- Merges nearby hunks (gap <= 5 bytes) to reduce record count.
 -- Returns [(offset, changedBytes)] from the second ByteString.
 diffHunks :: ByteString -> ByteString -> [(Int, ByteString)]
-diffHunks old new = merge (go 0 ++ extension)
+diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
   where
-    oldLen = BS.length old
-    newLen = BS.length new
-    minLen = min oldLen newLen
+    originalLength = ByteString.length original
+    modifiedLength = ByteString.length modified
+    sharedLength = min originalLength modifiedLength
     extension
-      | newLen > oldLen = [(oldLen, BS.drop oldLen new)]
-      | otherwise       = []
-    go i
-      | i >= minLen = []
-      | BS.index old i == BS.index new i = go (i + 1)
+      | modifiedLength > originalLength = [(originalLength, ByteString.drop originalLength modified)]
+      | otherwise                       = []
+    scanDiffs position
+      | position >= sharedLength = []
+      | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
-          let end = findEnd (i + 1)
-          in (i, BS.take (end - i) (BS.drop i new)) : go end
-    findEnd j
-      | j >= minLen = minLen
-      | BS.index old j /= BS.index new j = findEnd (j + 1)
-      | otherwise = j
-    merge [] = []
-    merge [x] = [x]
-    merge ((o1,d1):(o2,d2):rest)
-      | o2 - o1 - BS.length d1 <= 5 =
-          let merged = BS.take (o2 + BS.length d2 - o1) (BS.drop o1 new)
-          in merge ((o1, merged) : rest)
-      | otherwise = (o1,d1) : merge ((o2,d2):rest)
+          let diffEnd = findDiffEnd (position + 1)
+          in (position, ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+    findDiffEnd position
+      | position >= sharedLength = sharedLength
+      | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
+      | otherwise = position
+    mergeNearby [] = []
+    mergeNearby [hunk] = [hunk]
+    mergeNearby ((firstOffset, firstData):(nextOffset, nextData):rest)
+      | nextOffset - firstOffset - ByteString.length firstData <= 5 =
+          let merged = ByteString.take (nextOffset + ByteString.length nextData - firstOffset) (ByteString.drop firstOffset modified)
+          in mergeNearby ((firstOffset, merged) : rest)
+      | otherwise = (firstOffset, firstData) : mergeNearby ((nextOffset, nextData) : rest)
 
 
 ----------------------------------------------------------------------------
@@ -251,25 +251,25 @@ diffHunks old new = merge (go 0 ++ extension)
 ----------------------------------------------------------------------------
 
 putWord16LE :: Word16 -> Builder
-putWord16LE w =
-  word8 (fromIntegral (w .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
+putWord16LE value =
+  word8 (fromIntegral (value .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
 
 putWord32BE :: Word32 -> Builder
-putWord32BE w =
-  word8 (fromIntegral (w `shiftR` 24))
-  <> word8 (fromIntegral ((w `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (w .&. 0xFF))
+putWord32BE value =
+  word8 (fromIntegral (value `shiftR` 24))
+  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (value .&. 0xFF))
 
 putInt64BE :: Int64 -> Builder
-putInt64BE w =
-  word8 (fromIntegral (w `shiftR` 56))
-  <> word8 (fromIntegral ((w `shiftR` 48) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 40) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 32) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 24) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((w `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (w .&. 0xFF))
+putInt64BE value =
+  word8 (fromIntegral (value `shiftR` 56))
+  <> word8 (fromIntegral ((value `shiftR` 48) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 40) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 32) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (value .&. 0xFF))
 

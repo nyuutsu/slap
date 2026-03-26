@@ -20,9 +20,9 @@ import Control.Monad (when)
 import Patch.Format (showCRC, renderField)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (xor)
 import Data.Int (Int64)
 import Data.Word (Word32)
@@ -42,170 +42,169 @@ data UPSPatch = UPSPatch
   } deriving (Show)
 
 parseUPS :: ByteString -> Either String UPSPatch
-parseUPS bs
-  | BS.length bs < 4 = Left "UPS: input too short"
-  | BS.take 4 bs /= "UPS1" = Left "not a UPS file (bad magic)"
-  | BS.length bs < 16 = Left "UPS: truncated footer"
+parseUPS input
+  | ByteString.length input < 4 = Left "UPS: input too short"
+  | ByteString.take 4 input /= "UPS1" = Left "not a UPS file (bad magic)"
+  | ByteString.length input < 16 = Left "UPS: truncated footer"
   | otherwise = do
       -- Validate patch CRC
-      let storedPatchCRC = getWord32LE (BS.length bs - 4) bs
-          actualPatchCRC = rustyCRC32 (BS.take (BS.length bs - 4) bs)
+      let storedPatchCRC = getWord32LE (ByteString.length input - 4) input
+          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
       if storedPatchCRC /= actualPatchCRC
         then Left ("UPS: patch CRC mismatch (stored " ++ showCRC storedPatchCRC
                     ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
         else pure ()
-      let srcCRC = getWord32LE (BS.length bs - 12) bs
-          tgtCRC = getWord32LE (BS.length bs - 8)  bs
+      let sourceCRC = getWord32LE (ByteString.length input - 12) input
+          targetCRC = getWord32LE (ByteString.length input - 8)  input
           -- Parse body between magic and footer
-          bodyBs = BS.take (BS.length bs - 16) (BS.drop 4 bs)
-      (srcSize, tgtSize, blocks) <- runGet parseUPSBody bodyBs
+          bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
+      (sourceSize, targetSize, blocks) <- runGet parseUPSBody bodyBytes
       Right UPSPatch
-        { upsSourceSize = srcSize
-        , upsTargetSize = tgtSize
+        { upsSourceSize = sourceSize
+        , upsTargetSize = targetSize
         , upsBlocks     = blocks
-        , upsSourceCRC  = srcCRC
-        , upsTargetCRC  = tgtCRC
+        , upsSourceCRC  = sourceCRC
+        , upsTargetCRC  = targetCRC
         , upsPatchCRC   = storedPatchCRC
         }
 
 parseUPSBody :: Get (Int64, Int64, [UPSBlock])
 parseUPSBody = do
-  srcSize <- byuuVarint
-  tgtSize <- byuuVarint
-  when (srcSize < 0) $ failGet "UPS: negative source size"
-  when (tgtSize < 0) $ failGet "UPS: negative target size"
+  sourceSize <- byuuVarint
+  targetSize <- byuuVarint
+  when (sourceSize < 0) $ failGet "UPS: negative source size"
+  when (targetSize < 0) $ failGet "UPS: negative target size"
   blocks  <- parseBlocks
-  pure (srcSize, tgtSize, blocks)
+  pure (sourceSize, targetSize, blocks)
 
 parseBlocks :: Get [UPSBlock]
 parseBlocks = do
   done <- atEnd
   if done then pure []
   else do
-    skipN <- byuuVarint
+    skipCount <- byuuVarint
     xorBytes <- collectXor []
-    rest <- parseBlocks
-    pure (UPSBlock skipN xorBytes : rest)
+    remaining <- parseBlocks
+    pure (UPSBlock skipCount xorBytes : remaining)
   where
     -- Collect nonzero XOR bytes until 0x00 terminator
-    collectXor acc = do
-      b <- getByte
-      if b == 0x00
-        then pure (BS.pack (reverse acc))
-        else collectXor (b : acc)
+    collectXor accumulated = do
+      byte <- getByte
+      if byte == 0x00
+        then pure (ByteString.pack (reverse accumulated))
+        else collectXor (byte : accumulated)
 
 -- Caller is responsible for checksum validation.
 applyUPS :: UPSPatch -> ByteString -> ByteString
 applyUPS patch source =
-  let tgtSize = fromIntegral (upsTargetSize patch)
+  let targetSize = fromIntegral (upsTargetSize patch)
       -- Pad or truncate source to target size for XOR
-      padded = if BS.length source >= tgtSize
-               then BS.take tgtSize source
-               else source <> BS.replicate (tgtSize - BS.length source) 0
-      result = BL.toStrict $ toLazyByteString $ applyBlocks (upsBlocks patch) padded 0
-  in BS.take tgtSize result
+      padded = if ByteString.length source >= targetSize
+               then ByteString.take targetSize source
+               else source <> ByteString.replicate (targetSize - ByteString.length source) 0
+      result = LazyByteString.toStrict $ toLazyByteString $ applyBlocks (upsBlocks patch) padded 0
+  in ByteString.take targetSize result
 
 applyBlocks :: [UPSBlock] -> ByteString -> Int -> Builder
-applyBlocks [] source pos =
+applyBlocks [] source position =
   -- Copy remaining source bytes unchanged
-  byteString (BS.drop pos source)
-applyBlocks (UPSBlock skip xorBytes : rest) source pos =
-  let skipEnd = pos + fromIntegral skip
+  byteString (ByteString.drop position source)
+applyBlocks (UPSBlock skip xorBytes : remaining) source position =
+  let skipEnd = position + fromIntegral skip
       -- Copy 'skip' bytes unchanged from source
-      unchanged = byteString (BS.take (fromIntegral skip) (BS.drop pos source))
+      unchanged = byteString (ByteString.take (fromIntegral skip) (ByteString.drop position source))
       -- XOR the patch bytes with source bytes at skipEnd
-      xorLen = BS.length xorBytes
-      xored = BS.packZipWith xor (BS.take xorLen (BS.drop skipEnd source)) xorBytes
+      xorLength = ByteString.length xorBytes
+      xored = ByteString.packZipWith xor (ByteString.take xorLength (ByteString.drop skipEnd source)) xorBytes
       -- Pad if XOR extends beyond source
-      extraXor = if skipEnd + xorLen > BS.length source
-                 then byteString (BS.drop (BS.length source - skipEnd) xorBytes)
+      extraXor = if skipEnd + xorLength > ByteString.length source
+                 then byteString (ByteString.drop (ByteString.length source - skipEnd) xorBytes)
                  else mempty
       -- The terminator position: in the UPS XOR stream, each non-zero run
       -- is followed by a zero (matching byte). Copy it from source unchanged.
-      termPos = skipEnd + xorLen
-      termByte = if termPos < BS.length source
-                 then byteString (BS.singleton (BS.index source termPos))
+      termPosition = skipEnd + xorLength
+      termByte = if termPosition < ByteString.length source
+                 then byteString (ByteString.singleton (ByteString.index source termPosition))
                  else mempty
   in unchanged <> byteString xored <> extraXor <> termByte
-     <> applyBlocks rest source (termPos + 1)
+     <> applyBlocks remaining source (termPosition + 1)
 
 upsMeta :: UPSPatch -> [(String, String)]
-upsMeta p =
-  [ ("source size", show (upsSourceSize p))
-  , ("target size", show (upsTargetSize p))
-  , ("source CRC", showCRC (upsSourceCRC p))
-  , ("target CRC", showCRC (upsTargetCRC p))
-  , ("patch CRC", showCRC (upsPatchCRC p))
+upsMeta patch =
+  [ ("source size", show (upsSourceSize patch))
+  , ("target size", show (upsTargetSize patch))
+  , ("source CRC", showCRC (upsSourceCRC patch))
+  , ("target CRC", showCRC (upsTargetCRC patch))
+  , ("patch CRC", showCRC (upsPatchCRC patch))
   ]
 
 upsInfo :: UPSPatch -> String
-upsInfo p = unlines $
+upsInfo patch = unlines $
   [ "format:      UPS" ]
-  ++ map renderField (upsMeta p)
-  ++ [ "blocks:      " ++ show (length (upsBlocks p)) ]
+  ++ map renderField (upsMeta patch)
+  ++ [ "blocks:      " ++ show (length (upsBlocks patch)) ]
 
 ----------------------------------------------------------------------------
 -- Create
 ----------------------------------------------------------------------------
 
 createUPS :: ByteString -> ByteString -> ByteString
-createUPS orig modified =
-  let srcCRC = rustyCRC32 orig
-      tgtCRC = rustyCRC32 modified
-      maxLen = max (BS.length orig) (BS.length modified)
-      padSrc = if BS.length orig < maxLen
-               then orig <> BS.replicate (maxLen - BS.length orig) 0
-               else orig
-      padTgt = if BS.length modified < maxLen
-               then modified <> BS.replicate (maxLen - BS.length modified) 0
+createUPS original modified =
+  let sourceCRC = rustyCRC32 original
+      targetCRC = rustyCRC32 modified
+      maxLength = max (ByteString.length original) (ByteString.length modified)
+      paddedSource = if ByteString.length original < maxLength
+               then original <> ByteString.replicate (maxLength - ByteString.length original) 0
+               else original
+      paddedTarget = if ByteString.length modified < maxLength
+               then modified <> ByteString.replicate (maxLength - ByteString.length modified) 0
                else modified
-      xorBytes = BS.packZipWith xor padSrc padTgt
+      xorBytes = ByteString.packZipWith xor paddedSource paddedTarget
       blocks = xorToBlocks xorBytes
       body = byteString "UPS1"
-             <> putByuuVarint (fromIntegral (BS.length orig))
-             <> putByuuVarint (fromIntegral (BS.length modified))
+             <> putByuuVarint (fromIntegral (ByteString.length original))
+             <> putByuuVarint (fromIntegral (ByteString.length modified))
              <> foldMap encodeUPSBlock blocks
-             <> putWord32LE srcCRC
-             <> putWord32LE tgtCRC
-      bodyBs = BL.toStrict (toLazyByteString body)
-      patchCRC = rustyCRC32 bodyBs
-  in bodyBs <> BL.toStrict (toLazyByteString (putWord32LE patchCRC))
+             <> putWord32LE sourceCRC
+             <> putWord32LE targetCRC
+      bodyBytes = LazyByteString.toStrict (toLazyByteString body)
+      patchCRC = rustyCRC32 bodyBytes
+  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE patchCRC))
 
 encodeUPSBlock :: UPSBlock -> Builder
-encodeUPSBlock (UPSBlock skip xd) =
+encodeUPSBlock (UPSBlock skip xorData) =
   putByuuVarint skip
-  <> byteString xd
+  <> byteString xorData
   <> word8 0x00  -- terminator
 
 -- | Convert XOR byte array into UPS blocks (skip + nonzero runs).
 xorToBlocks :: ByteString -> [UPSBlock]
-xorToBlocks bs = go 0
+xorToBlocks input = scanLoop 0
   where
-    len = BS.length bs
+    inputLength = ByteString.length input
 
-    go i
-      | i >= len = []
+    scanLoop position
+      | position >= inputLength = []
       | otherwise =
-          let skip = countZeros i
-              runStart = i + fromIntegral skip
-          in if runStart >= len
+          let skip = countZeros position
+              runStart = position + fromIntegral skip
+          in if runStart >= inputLength
              then []
-             else let (xd, end) = collectNonzero runStart
-                  in UPSBlock skip xd : go end
+             else let (xorData, end) = collectNonzero runStart
+                  in UPSBlock skip xorData : scanLoop end
 
     countZeros :: Int -> Int64
-    countZeros i = countFrom i
+    countZeros startPosition = countFrom startPosition
       where
-        countFrom j
-          | j >= len = fromIntegral (j - i)
-          | BS.index bs j == 0 = countFrom (j + 1)
-          | otherwise = fromIntegral (j - i)
+        countFrom scanPosition
+          | scanPosition >= inputLength = fromIntegral (scanPosition - startPosition)
+          | ByteString.index input scanPosition == 0 = countFrom (scanPosition + 1)
+          | otherwise = fromIntegral (scanPosition - startPosition)
 
     collectNonzero :: Int -> (ByteString, Int)
     collectNonzero start = collectFrom start []
       where
-        collectFrom j acc
-          | j >= len = (BS.pack (reverse acc), j)
-          | BS.index bs j == 0 = (BS.pack (reverse acc), j + 1)  -- +1: consume terminator position
-          | otherwise = collectFrom (j + 1) (BS.index bs j : acc)
-
+        collectFrom scanPosition accumulated
+          | scanPosition >= inputLength = (ByteString.pack (reverse accumulated), scanPosition)
+          | ByteString.index input scanPosition == 0 = (ByteString.pack (reverse accumulated), scanPosition + 1)  -- +1: consume terminator position
+          | otherwise = collectFrom (scanPosition + 1) (ByteString.index input scanPosition : accumulated)

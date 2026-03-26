@@ -20,14 +20,14 @@ module Patch.APS.N64
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
-import Patch.Binary (copyBSRange)
+import Patch.Binary (copyByteStringRange)
 import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.ByteString.Internal (unsafeCreate)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Patch.Binary (putWord32LE)
 import Data.Int (Int64)
@@ -47,7 +47,7 @@ data APSPatchType = APSSimple | APSN64Specific
 toAPSPatchType :: Word8 -> Either String APSPatchType
 toAPSPatchType 0 = Right APSSimple
 toAPSPatchType 1 = Right APSN64Specific
-toAPSPatchType b = Left ("APS-N64: unknown patch type: " ++ show b)
+toAPSPatchType byte = Left ("APS-N64: unknown patch type: " ++ show byte)
 
 fromAPSPatchType :: APSPatchType -> Word8
 fromAPSPatchType APSSimple       = 0
@@ -59,25 +59,25 @@ data APSImageFormat = V64Format | Z64Format | UnknownImageFormat Word8
 toAPSImageFormat :: Word8 -> APSImageFormat
 toAPSImageFormat 0 = V64Format
 toAPSImageFormat 1 = Z64Format
-toAPSImageFormat b = UnknownImageFormat b
+toAPSImageFormat byte = UnknownImageFormat byte
 
 fromAPSImageFormat :: APSImageFormat -> Word8
 fromAPSImageFormat V64Format              = 0
 fromAPSImageFormat Z64Format              = 1
-fromAPSImageFormat (UnknownImageFormat b) = b
+fromAPSImageFormat (UnknownImageFormat byte) = byte
 
 data APSN64Patch = APSN64Patch APSN64Header [APSN64Record]
   deriving (Show)
 
 data APSN64Header = APSN64Header
-  { n64PatchType   :: APSPatchType
-  , n64Encoding    :: Word8        -- encoding method byte (0 in all known patches)
-  , n64Description :: ByteString   -- 50 bytes
-  , n64ImageFormat :: Maybe APSImageFormat
-  , n64CartId      :: Maybe ByteString  -- 2 bytes
-  , n64Country     :: Maybe Word8
-  , n64Crc         :: Maybe ByteString  -- 8 bytes
-  , n64DestSize    :: Word32
+  { apsN64PatchType   :: APSPatchType
+  , apsN64Encoding    :: Word8        -- encoding method byte (0 in all known patches)
+  , apsN64Description :: ByteString   -- 50 bytes
+  , apsN64ImageFormat :: Maybe APSImageFormat
+  , apsN64CartId      :: Maybe ByteString  -- 2 bytes
+  , apsN64Country     :: Maybe Word8
+  , apsN64Crc         :: Maybe ByteString  -- 8 bytes
+  , apsN64DestSize    :: Word32
   } deriving (Show)
 
 data APSN64Record
@@ -90,46 +90,46 @@ data APSN64Record
 ----------------------------------------------------------------------------
 
 parseAPSN64 :: ByteString -> Either String APSN64Patch
-parseAPSN64 bs
-  | BS.length bs < 5 = Left "APS-N64: input too short"
-  | BS.take 5 bs /= "APS10" = Left "not an APS-N64 file (bad magic)"
-  | otherwise = runGet parseN64 bs
+parseAPSN64 input
+  | ByteString.length input < 5 = Left "APS-N64: input too short"
+  | ByteString.take 5 input /= "APS10" = Left "not an APS-N64 file (bad magic)"
+  | otherwise = runGet parseN64 input
 
 parseN64 :: Get APSN64Patch
 parseN64 = do
   skip 5  -- "APS10"
   ptypeByte <- getByte
   case toAPSPatchType ptypeByte of
-    Left err -> fail err
+    Left errorMessage -> fail errorMessage
     Right ptype -> do
       encodingByte <- getByte
-      desc <- getBytes 50
+      description <- getBytes 50
       case ptype of
         APSSimple -> do
           destSize <- word32LE
-          recs <- parseN64Records
+          records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { n64PatchType = ptype, n64Encoding = encodingByte, n64Description = desc
-              , n64ImageFormat = Nothing, n64CartId = Nothing
-              , n64Country = Nothing, n64Crc = Nothing, n64DestSize = destSize
+              { apsN64PatchType = ptype, apsN64Encoding = encodingByte, apsN64Description = description
+              , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
+              , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestSize = destSize
               }
-            recs
+            records
         APSN64Specific -> do
-          imgFmt  <- toAPSImageFormat <$> getByte
+          imageFormat  <- toAPSImageFormat <$> getByte
           cartId  <- getBytes 2
           country <- getByte
           crcVal  <- getBytes 8
           skip 5  -- padding (bytes 69-73)
           destSize <- word32LE
-          recs <- parseN64Records
+          records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { n64PatchType = ptype, n64Encoding = encodingByte, n64Description = desc
-              , n64ImageFormat = Just imgFmt, n64CartId = Just cartId
-              , n64Country = Just country, n64Crc = Just crcVal, n64DestSize = destSize
+              { apsN64PatchType = ptype, apsN64Encoding = encodingByte, apsN64Description = description
+              , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
+              , apsN64Country = Just country, apsN64Crc = Just crcVal, apsN64DestSize = destSize
               }
-            recs
+            records
 
 parseN64Records :: Get [APSN64Record]
 parseN64Records = do
@@ -139,86 +139,86 @@ parseN64Records = do
     avail <- remaining
     if avail < 5 then pure []
     else do
-      off <- fromIntegral <$> word32LE
-      len <- getByte
-      if len == 0
+      offset <- fromIntegral <$> word32LE
+      dataLength <- getByte
+      if dataLength == 0
         then do  -- RLE record
-          val   <- getByte
+          value <- getByte
           count <- getByte
           rest <- parseN64Records
-          pure (APSN64RLE off val count : rest)
+          pure (APSN64RLE offset value count : rest)
         else do  -- Normal record
-          dat <- getBytes (fromIntegral len)
+          payload <- getBytes (fromIntegral dataLength)
           rest <- parseN64Records
-          pure (APSN64Normal off dat : rest)
+          pure (APSN64Normal offset payload : rest)
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
 applyAPSN64 :: APSN64Patch -> FilePath -> IO Int
-applyAPSN64 (APSN64Patch _ recs) target = withBinaryFile target ReadWriteMode $ \h -> do
-  mapM_ (applyN64Record h) recs
-  pure (length recs)
+applyAPSN64 (APSN64Patch _ records) target = withBinaryFile target ReadWriteMode $ \handle -> do
+  mapM_ (applyN64Record handle) records
+  pure (length records)
 
 applyN64Record :: Handle -> APSN64Record -> IO ()
-applyN64Record h (APSN64Normal off dat) = do
-  hSeek h AbsoluteSeek (fromIntegral off)
-  BS.hPut h dat
-applyN64Record h (APSN64RLE off val count) = do
-  hSeek h AbsoluteSeek (fromIntegral off)
-  BS.hPut h (BS.replicate (fromIntegral count) val)
+applyN64Record handle (APSN64Normal offset payload) = do
+  hSeek handle AbsoluteSeek (fromIntegral offset)
+  ByteString.hPut handle payload
+applyN64Record handle (APSN64RLE offset value count) = do
+  hSeek handle AbsoluteSeek (fromIntegral offset)
+  ByteString.hPut handle (ByteString.replicate (fromIntegral count) value)
 
 applyAPSN64Memory :: APSN64Patch -> ByteString -> ByteString
-applyAPSN64Memory (APSN64Patch _ recs) source = unsafeCreate outLen $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen outLen)
-    when (outLen > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
-    forM_ recs $ \case
-      APSN64Normal off dat ->
-        copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
-      APSN64RLE off val count ->
-        fillBytes (ptr `plusPtr` fromIntegral off) val (fromIntegral count)
+applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \targetPointer -> do
+    copyByteStringRange targetPointer 0 source 0 (min sourceLength outputLength)
+    when (outputLength > sourceLength) $
+      fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
+    forM_ records $ \case
+      APSN64Normal offset payload ->
+        copyByteStringRange targetPointer (fromIntegral offset) payload 0 (ByteString.length payload)
+      APSN64RLE offset value count ->
+        fillBytes (targetPointer `plusPtr` fromIntegral offset) value (fromIntegral count)
   where
-    srcLen = BS.length source
-    recEnd (APSN64Normal off dat) = fromIntegral off + BS.length dat
-    recEnd (APSN64RLE off _ cnt)  = fromIntegral off + fromIntegral cnt
-    outLen = foldl' max srcLen (map recEnd recs)
+    sourceLength = ByteString.length source
+    recordEnd (APSN64Normal offset payload) = fromIntegral offset + ByteString.length payload
+    recordEnd (APSN64RLE offset _ cnt)      = fromIntegral offset + fromIntegral cnt
+    outputLength = foldl' max sourceLength (map recordEnd records)
 
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
 
 apsN64Meta :: APSN64Patch -> [(String, String)]
-apsN64Meta (APSN64Patch hdr _) = concat
-  [ [("patch type", patchTypeName (n64PatchType hdr))]
-  , [("encoding", show (n64Encoding hdr)) | n64Encoding hdr /= 0]
-  , descField (n64Description hdr)
-  , fmtField (n64ImageFormat hdr)
-  , cartField (n64CartId hdr)
-  , countryField (n64Country hdr)
-  , [("dest size", show (n64DestSize hdr))]
+apsN64Meta (APSN64Patch header _) = concat
+  [ [("patch type", patchTypeName (apsN64PatchType header))]
+  , [("encoding", show (apsN64Encoding header)) | apsN64Encoding header /= 0]
+  , descriptionField (apsN64Description header)
+  , formatField (apsN64ImageFormat header)
+  , cartField (apsN64CartId header)
+  , countryField (apsN64Country header)
+  , [("dest size", show (apsN64DestSize header))]
   ]
   where
-    descField d
-      | BS.all (\b -> b == 0x20 || b == 0) d = []
-      | otherwise = [("description", show (BS.takeWhile (/= 0) d))]
+    descriptionField description
+      | ByteString.all (\byte -> byte == 0x20 || byte == 0) description = []
+      | otherwise = [("description", show (ByteString.takeWhile (/= 0) description))]
     patchTypeName APSSimple      = "simple"
     patchTypeName APSN64Specific = "N64-specific"
-    fmtField Nothing                       = []
-    fmtField (Just V64Format)              = [("image", "V64 (byteswapped)")]
-    fmtField (Just Z64Format)              = [("image", "Z64 (big-endian)")]
-    fmtField (Just (UnknownImageFormat f)) = [("image", "unknown (" ++ show f ++ ")")]
-    cartField Nothing  = []
-    cartField (Just c) = [("cart ID", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack c))]
-    countryField Nothing  = []
-    countryField (Just c) = [("country", "0x" ++ padHex 2 (fromIntegral c))]
+    formatField Nothing                       = []
+    formatField (Just V64Format)              = [("image", "V64 (byteswapped)")]
+    formatField (Just Z64Format)              = [("image", "Z64 (big-endian)")]
+    formatField (Just (UnknownImageFormat format)) = [("image", "unknown (" ++ show format ++ ")")]
+    cartField Nothing      = []
+    cartField (Just cartId) = [("cart ID", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack cartId))]
+    countryField Nothing        = []
+    countryField (Just country) = [("country", "0x" ++ padHex 2 (fromIntegral country))]
 
 apsN64Info :: APSN64Patch -> String
-apsN64Info p@(APSN64Patch _ recs) = unlines $ filter (not . null) $
+apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $
   [ "format:      APS (N64)" ]
-  ++ map renderField (apsN64Meta p)
-  ++ [ "records:     " ++ show (length recs) ]
+  ++ map renderField (apsN64Meta patch)
+  ++ [ "records:     " ++ show (length records) ]
 
 ----------------------------------------------------------------------------
 -- Create (simple type, raw overwrite records, max 255 bytes each)
@@ -230,28 +230,28 @@ apsN64Info p@(APSN64Patch _ recs) = unlines $ filter (not . null) $
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
 encodeAPSN64 :: [(Int, ByteString)] -> Word32 -> String -> ByteString
-encodeAPSN64 recs destSize desc = BL.toStrict $ toLazyByteString $
+encodeAPSN64 records destSize description = LazyByteString.toStrict $ toLazyByteString $
     byteString "APS10"             -- magic
     <> word8 (fromAPSPatchType APSSimple)  -- patch type: simple
     <> word8 0                     -- encoding: not used
-    <> byteString descBytes        -- 50-byte description
+    <> byteString descriptionBytes        -- 50-byte description
     <> putWord32LE destSize        -- dest size
-    <> foldMap encodeN64Rec (splitLong recs)
+    <> foldMap encodeN64Record (splitLong records)
   where
-    descBytes = let bs = BS8.pack (take 50 desc)
-                in bs <> BS.replicate (50 - BS.length bs) 0
+    descriptionBytes = let padded = ByteString8.pack (take 50 description)
+                in padded <> ByteString.replicate (50 - ByteString.length padded) 0
 
 splitLong :: [(Int, ByteString)] -> [(Int, ByteString)]
-splitLong = concatMap split1
+splitLong = concatMap splitRecord
   where
-    split1 (off, dat)
-      | BS.length dat <= 255 = [(off, dat)]
+    splitRecord (offset, payload)
+      | ByteString.length payload <= 255 = [(offset, payload)]
       | otherwise =
-          let (chunk, rest) = BS.splitAt 255 dat
-          in (off, chunk) : split1 (off + 255, rest)
+          let (chunk, rest) = ByteString.splitAt 255 payload
+          in (offset, chunk) : splitRecord (offset + 255, rest)
 
-encodeN64Rec :: (Int, ByteString) -> Builder
-encodeN64Rec (off, dat) =
-    putWord32LE (fromIntegral off :: Word32)
-    <> word8 (fromIntegral (BS.length dat))
-    <> byteString dat
+encodeN64Record :: (Int, ByteString) -> Builder
+encodeN64Record (offset, payload) =
+    putWord32LE (fromIntegral offset :: Word32)
+    <> word8 (fromIntegral (ByteString.length payload))
+    <> byteString payload

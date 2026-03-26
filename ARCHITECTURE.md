@@ -90,7 +90,7 @@ Main.hs — format modules never check hashes themselves. Three tiers:
 Each target format declares required and accepted fields (`FormatSpec`).
 Each parsed overlay patch exposes its fields (`PatchContents`).
 
-`parseSome` populates `spContents :: Maybe PatchContents` for direct
+`parseSome` populates `patchContents :: Maybe PatchContents` for direct
 formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR, PCHTXT).
 Differential formats set it to `Nothing`. PPF4 sets it to `Nothing`
 when Append records are present (offsets would be wrong).
@@ -99,13 +99,13 @@ when Append records are present (offsets would be wrong).
 satisfy the target spec's required fields, conversion proceeds.
 Otherwise, the error names the missing fields and suggests `--with`.
 
-`conversionNotes` compares `provides pc` against `fsRequired ∪ fsAccepted`
+`conversionNotes` compares `provides pc` against `specRequired ∪ specAccepted`
 to identify surplus fields that will be dropped, emitting notes like
 "dropping source CRC32: 0xDEADBEEF" on stderr.
 
 Two conversion paths:
 
-1. **Direct** (no ROM needed): `spContents` is `Just` and
+1. **Direct** (no ROM needed): `patchContents` is `Just` and
    `canConvert` succeeds. `encodeDirect` dispatches to per-format
    encoders. Offset/size constraints are checked per target (IPS/EBP
    reject offsets > 16 MB, IPS32 splits records > 65535 bytes).

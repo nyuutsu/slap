@@ -8,7 +8,7 @@ import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, createFromMemory, defaultMeta)
 
 import Data.Bits (xor)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
@@ -18,12 +18,12 @@ import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 failureModeTests :: RomCache -> IO TestTree
 failureModeTests romCache = do
   repo <- repoDir
-  mSlap <- findSlapBinary
+  maybeSlap <- findSlapBinary
   let dm4yBase  = repo </> "test/data/dm4y/base.gbc"
       dm4yBps   = repo </> "test/data/dm4y/patch.bps"
       dm4yUps   = repo </> "test/data/dm4y/patch.ups"
       dm4yRup   = repo </> "test/data/dm4y/patch.rup"
-      dm4yXd1   = repo </> "test/data/dm4y/patch.xdelta1"
+      dm4yXdelta1   = repo </> "test/data/dm4y/patch.xdelta1"
       dm4yVcdiff = repo </> "test/data/dm4y/patch.vcdiff"
       fftaBase  = repo </> "test/data/ffta/base.gba"
       fftaAps   = repo </> "test/data/ffta/ffta-x.aps"
@@ -31,11 +31,11 @@ failureModeTests romCache = do
   dm4yExists   <- doesFileExist dm4yBase
   fftaExists   <- doesFileExist fftaBase
   stadium2Exists <- doesFileExist stadium2Base
-  tests <- case mSlap of
+  tests <- case maybeSlap of
     Nothing -> pure []
     Just slap -> pure $ concat
       [ if dm4yExists then wrongSourceTests slap dm4yBase
-          dm4yBps dm4yUps dm4yRup dm4yXd1 dm4yVcdiff else []
+          dm4yBps dm4yUps dm4yRup dm4yXdelta1 dm4yVcdiff else []
       , if dm4yExists && fftaExists then wrongSourceApsGbaTests slap fftaBase fftaAps else []
       , if dm4yExists then corruptPatchCRCTests dm4yBps dm4yUps else []
       , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
@@ -59,7 +59,7 @@ failureModeTests romCache = do
 -- With --no-verify: proceeds with a warning.
 wrongSourceTests :: FilePath -> FilePath -> FilePath -> FilePath
                  -> FilePath -> FilePath -> FilePath -> [TestTree]
-wrongSourceTests slap base bps ups rup xd1 vcdiff =
+wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
   -- BPS: CRC32 source verification
   [ testCase "wrong-source/BPS rejects" $
       withTempFile "slap-wrong" $ \wrong ->
@@ -117,7 +117,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", xd1, wrong, "-o", out]
+        expectFail slap ["apply", xdelta1, wrong, "-o", out]
           "wrong-source/xdelta1" "mismatch"
 
   , testCase "wrong-source/xdelta1 --no-verify proceeds" $
@@ -125,7 +125,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", xd1, wrong, "-o", out, "--no-verify"]
+        expectOk slap ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
   -- VCDIFF: Adler32 per-window verification
@@ -150,7 +150,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
   , testCase "wrong-source/BPS patched-as-source rejects" $
       withTempFile "slap-work" $ \work ->
       withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile work
+        ByteString.readFile base >>= ByteString.writeFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup"]
         -- work is now the patched output, not the original source
         removeIfExists out
@@ -168,9 +168,9 @@ wrongSourceApsGbaTests slap _fftaBase apsGba =
         removeIfExists out
         -- APS-GBA block CRC16 is advisory (warning-only), so it proceeds
         -- but should print a warning about CRC16 mismatch
-        (ec, sout, serr) <- runSlap slap ["apply", apsGba, wrong, "-o", out]
-        let combined = sout ++ serr
-        case ec of
+        (exitCode, stdoutText, stderrText) <- runSlap slap ["apply", apsGba, wrong, "-o", out]
+        let combined = stdoutText ++ stderrText
+        case exitCode of
           ExitSuccess ->
             assertBool "expected CRC16 mismatch warning"
               (ciContains "crc16 mismatch" combined)
@@ -188,40 +188,40 @@ wrongSourceApsGbaTests slap _fftaBase apsGba =
 corruptPatchCRCTests :: FilePath -> FilePath -> [TestTree]
 corruptPatchCRCTests bps ups =
   [ testCase "corrupt-crc/BPS flipped byte" $ do
-      bs <- BS.readFile bps
+      patchBytes <- ByteString.readFile bps
       -- Flip byte 10 (somewhere in the body, well before the footer)
-      let corrupted = flipByte 10 bs
+      let corrupted = flipByte 10 patchBytes
       case parseSome corrupted of
-        Left err -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" err)
+        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" errorMessage)
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/UPS flipped byte" $ do
-      bs <- BS.readFile ups
-      let corrupted = flipByte 10 bs
+      patchBytes <- ByteString.readFile ups
+      let corrupted = flipByte 10 patchBytes
       case parseSome corrupted of
-        Left err -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" err)
+        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" errorMessage)
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/BPS last data byte" $ do
-      bs <- BS.readFile bps
+      patchBytes <- ByteString.readFile bps
       -- Flip a byte just before the 12-byte footer (srcCRC + tgtCRC + patchCRC)
-      let pos = BS.length bs - 13
-      let corrupted = flipByte pos bs
+      let position = ByteString.length patchBytes - 13
+      let corrupted = flipByte position patchBytes
       case parseSome corrupted of
-        Left err -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" err)
+        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" errorMessage)
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
   ]
   where
-    flipByte :: Int -> BS.ByteString -> BS.ByteString
-    flipByte pos bs =
-      let (before, rest) = BS.splitAt pos bs
-          (byte, after) = case BS.uncons rest of
-            Just (b, a) -> (b, a)
+    flipByte :: Int -> ByteString.ByteString -> ByteString.ByteString
+    flipByte position inputBytes =
+      let (before, remaining) = ByteString.splitAt position inputBytes
+          (byte, after) = case ByteString.uncons remaining of
+            Just (theByte, theRest) -> (theByte, theRest)
             Nothing -> error "flipByte: position out of range"
-      in before <> BS.singleton (byte `xor` 0xFF) <> after
+      in before <> ByteString.singleton (byte `xor` 0xFF) <> after
 
 ----------------------------------------------------------------------------
 -- 3. Wrong-size source
@@ -251,7 +251,7 @@ wrongSizeSourceTests slap _base bps =
   , testCase "wrong-size/BPS empty source" $
       withTempFile "slap-empty" $ \empty ->
       withTempFile "slap-out" $ \out -> do
-        BS.writeFile empty BS.empty
+        ByteString.writeFile empty ByteString.empty
         removeIfExists out
         expectFail slap ["apply", bps, empty, "-o", out]
           "wrong-size/BPS empty" "mismatch"
@@ -263,9 +263,9 @@ wrongSizeSourceTests slap _base bps =
         writeGarbage small 1024
         removeIfExists out
         -- May succeed or fail, but should not crash with an unhandled exception
-        (ec, sout, serr) <- runSlap slap ["apply", bps, small, "-o", out, "--no-verify"]
-        let combined = sout ++ serr
-        case ec of
+        (exitCode, stdoutText, stderrText) <- runSlap slap ["apply", bps, small, "-o", out, "--no-verify"]
+        let combined = stdoutText ++ stderrText
+        case exitCode of
           ExitSuccess -> pure ()  -- ok, it applied (maybe garbage, but didn't crash)
           ExitFailure code ->
             -- Normal failure (non-crash) exit codes are fine
@@ -283,87 +283,87 @@ wrongSizeSourceTests slap _base bps =
 crossFormatRoundTripTests :: RomCache -> FilePath -> FilePath -> [TestTree]
 crossFormatRoundTripTests romCache base bps =
   [ testCase "round-trip/IPS -> EBP -> IPS" $ do
-      baseBs <- cachedReadFile romCache base
-      bpsBs <- BS.readFile bps
-      case parseSome bpsBs of
-        Left err -> assertFailure ("parse BPS failed: " ++ err)
-        Right bpsSp -> do
-          targetResult <- applyPatch bpsSp baseBs
+      baseBytes <- cachedReadFile romCache base
+      bpsBytes <- ByteString.readFile bps
+      case parseSome bpsBytes of
+        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Right bpsParsed -> do
+          targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left err -> assertFailure ("apply BPS failed: " ++ err)
-            Right targetBs -> roundTripVia baseBs targetBs "ips" "ebp" "ips"
+            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
-      baseBs <- cachedReadFile romCache base
-      bpsBs <- BS.readFile bps
-      case parseSome bpsBs of
-        Left err -> assertFailure ("parse BPS failed: " ++ err)
-        Right bpsSp -> do
-          targetResult <- applyPatch bpsSp baseBs
+      baseBytes <- cachedReadFile romCache base
+      bpsBytes <- ByteString.readFile bps
+      case parseSome bpsBytes of
+        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Right bpsParsed -> do
+          targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left err -> assertFailure ("apply BPS failed: " ++ err)
-            Right targetBs -> roundTripVia baseBs targetBs "ips" "ppf3" "ips"
+            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
-      baseBs <- cachedReadFile romCache base
-      bpsBs <- BS.readFile bps
-      case parseSome bpsBs of
-        Left err -> assertFailure ("parse BPS failed: " ++ err)
-        Right bpsSp -> do
-          targetResult <- applyPatch bpsSp baseBs
+      baseBytes <- cachedReadFile romCache base
+      bpsBytes <- ByteString.readFile bps
+      case parseSome bpsBytes of
+        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Right bpsParsed -> do
+          targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left err -> assertFailure ("apply BPS failed: " ++ err)
-            Right targetBs -> roundTripVia baseBs targetBs "bps" "ups" "bps"
+            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Right targetBytes -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
-    roundTripVia :: BS.ByteString -> BS.ByteString -> String -> String -> String -> IO ()
-    roundTripVia baseBs targetBs fmtA fmtB fmtC = do
-      let expectedSha = sha1Hex targetBs
+    roundTripVia :: ByteString.ByteString -> ByteString.ByteString -> String -> String -> String -> IO ()
+    roundTripVia baseBytes targetBytes formatA formatB formatC = do
+      let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
-      cfmtA <- parseFmt fmtA
-      case createFromMemory cfmtA baseBs targetBs defaultMeta of
-        Left err -> assertFailure ("create " ++ fmtA ++ " failed: " ++ err)
+      createFormatA <- parseFormat formatA
+      case createFromMemory createFormatA baseBytes targetBytes defaultMeta of
+        Left errorMessage -> assertFailure ("create " ++ formatA ++ " failed: " ++ errorMessage)
         Right patchA -> do
           -- Step 2: parse A, apply to get target, create in format B
           case parseSome patchA of
-            Left err -> assertFailure ("re-parse " ++ fmtA ++ " failed: " ++ err)
-            Right spA -> do
-              resultA <- applyPatch spA baseBs
+            Left errorMessage -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ errorMessage)
+            Right parsedA -> do
+              resultA <- applyPatch parsedA baseBytes
               case resultA of
-                Left err -> assertFailure ("re-apply " ++ fmtA ++ " failed: " ++ err)
-                Right tgtA -> do
-                  assertEqual (fmtA ++ " round-trip fidelity") expectedSha (sha1Hex tgtA)
-                  cfmtB <- parseFmt fmtB
-                  case createFromMemory cfmtB baseBs tgtA defaultMeta of
-                    Left err -> assertFailure ("create " ++ fmtB ++ " failed: " ++ err)
+                Left errorMessage -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ errorMessage)
+                Right outputA -> do
+                  assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
+                  createFormatB <- parseFormat formatB
+                  case createFromMemory createFormatB baseBytes outputA defaultMeta of
+                    Left errorMessage -> assertFailure ("create " ++ formatB ++ " failed: " ++ errorMessage)
                     Right patchB -> do
                       -- Step 3: parse B, apply to get target, create in format C
                       case parseSome patchB of
-                        Left err -> assertFailure ("re-parse " ++ fmtB ++ " failed: " ++ err)
-                        Right spB -> do
-                          resultB <- applyPatch spB baseBs
+                        Left errorMessage -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ errorMessage)
+                        Right parsedB -> do
+                          resultB <- applyPatch parsedB baseBytes
                           case resultB of
-                            Left err -> assertFailure ("re-apply " ++ fmtB ++ " failed: " ++ err)
-                            Right tgtB -> do
-                              assertEqual (fmtB ++ " round-trip fidelity") expectedSha (sha1Hex tgtB)
-                              cfmtC <- parseFmt fmtC
-                              case createFromMemory cfmtC baseBs tgtB defaultMeta of
-                                Left err -> assertFailure ("create " ++ fmtC ++ " failed: " ++ err)
+                            Left errorMessage -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ errorMessage)
+                            Right outputB -> do
+                              assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
+                              createFormatC <- parseFormat formatC
+                              case createFromMemory createFormatC baseBytes outputB defaultMeta of
+                                Left errorMessage -> assertFailure ("create " ++ formatC ++ " failed: " ++ errorMessage)
                                 Right patchC -> do
                                   case parseSome patchC of
-                                    Left err -> assertFailure ("re-parse " ++ fmtC ++ " failed: " ++ err)
-                                    Right spC -> do
-                                      resultC <- applyPatch spC baseBs
+                                    Left errorMessage -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ errorMessage)
+                                    Right parsedC -> do
+                                      resultC <- applyPatch parsedC baseBytes
                                       case resultC of
-                                        Left err -> assertFailure ("re-apply " ++ fmtC ++ " failed: " ++ err)
-                                        Right tgtC ->
-                                          assertEqual (fmtA ++ " -> " ++ fmtB ++ " -> " ++ fmtC ++ " output SHA1")
-                                            expectedSha (sha1Hex tgtC)
+                                        Left errorMessage -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ errorMessage)
+                                        Right outputC ->
+                                          assertEqual (formatA ++ " -> " ++ formatB ++ " -> " ++ formatC ++ " output SHA1")
+                                            expectedSha (sha1Hex outputC)
 
-    parseFmt :: String -> IO CreateFormat
-    parseFmt s = case parseCreateFormat s of
-      Just f  -> pure f
-      Nothing -> assertFailure ("unknown format: " ++ s) >> error "unreachable"
+    parseFormat :: String -> IO CreateFormat
+    parseFormat formatString = case parseCreateFormat formatString of
+      Just format -> pure format
+      Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
 
 ----------------------------------------------------------------------------
 -- 5. Patch size regression
@@ -377,63 +377,63 @@ patchSizeRegressionTests :: RomCache -> FilePath -> FilePath
 patchSizeRegressionTests romCache dm4yBase dm4yBps
                          stadium2Base stadium2Bps =
   [ testCase "patch-size/dm4y BPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "bps" baseBs targetBs
+      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      checkPatchSize "bps" baseBytes targetBytes
 
   , testCase "patch-size/dm4y IPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "ips" baseBs targetBs
+      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      checkPatchSize "ips" baseBytes targetBytes
 
   , testCase "patch-size/dm4y UPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "ups" baseBs targetBs
+      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      checkPatchSize "ups" baseBytes targetBytes
 
   , testCase "patch-size/stadium2 BPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache stadium2Base stadium2Bps
-      checkPatchSize "bps" baseBs targetBs
+      (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
+      checkPatchSize "bps" baseBytes targetBytes
 
   , testCase "patch-size/stadium2 IPS32" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache stadium2Base stadium2Bps
-      checkPatchSize "ips32" baseBs targetBs
+      (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
+      checkPatchSize "ips32" baseBytes targetBytes
   ]
   where
-    bootstrapTarget :: RomCache -> FilePath -> FilePath -> IO (BS.ByteString, BS.ByteString)
-    bootstrapTarget rc basePath bootPath = do
-      baseBs <- cachedReadFile rc basePath
-      bootBs <- BS.readFile bootPath
-      case parseSome bootBs of
-        Left err -> error ("bootstrap parse failed: " ++ err)
-        Right sp -> do
-          result <- applyPatch sp baseBs
+    bootstrapTarget :: RomCache -> FilePath -> FilePath -> IO (ByteString.ByteString, ByteString.ByteString)
+    bootstrapTarget romCacheLocal basePath bootPath = do
+      baseBytes <- cachedReadFile romCacheLocal basePath
+      bootBytes <- ByteString.readFile bootPath
+      case parseSome bootBytes of
+        Left errorMessage -> error ("bootstrap parse failed: " ++ errorMessage)
+        Right parsed -> do
+          result <- applyPatch parsed baseBytes
           case result of
-            Left err -> error ("bootstrap apply failed: " ++ err)
-            Right tgt -> pure (baseBs, tgt)
+            Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
+            Right targetBytes -> pure (baseBytes, targetBytes)
 
-    checkPatchSize :: String -> BS.ByteString -> BS.ByteString -> IO ()
-    checkPatchSize fmtStr baseBs targetBs = do
-      cfmt <- case parseCreateFormat fmtStr of
-        Just f  -> pure f
-        Nothing -> assertFailure ("unknown format: " ++ fmtStr) >> error "unreachable"
-      case createFromMemory cfmt baseBs targetBs defaultMeta of
-        Left err -> assertFailure ("create " ++ fmtStr ++ " failed: " ++ err)
-        Right patchBs -> do
-          let size = BS.length patchBs
+    checkPatchSize :: String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+    checkPatchSize formatStringing baseBytes targetBytes = do
+      createFormat <- case parseCreateFormat formatStringing of
+        Just format -> pure format
+        Nothing -> assertFailure ("unknown format: " ++ formatStringing) >> error "unreachable"
+      case createFromMemory createFormat baseBytes targetBytes defaultMeta of
+        Left errorMessage -> assertFailure ("create " ++ formatStringing ++ " failed: " ++ errorMessage)
+        Right patchBytes -> do
+          let size = ByteString.length patchBytes
           -- Record the current size. If a future change increases it, this test
           -- fails and the threshold should be reviewed (not blindly bumped).
           -- We allow up to 5% above current size to absorb minor encoding changes.
-          assertBool ("patch size regression: " ++ fmtStr ++ " produced "
+          assertBool ("patch size regression: " ++ formatStringing ++ " produced "
                       ++ show size ++ " bytes (max " ++ show (maxSize size) ++ ")")
             (size <= maxSize size)
           -- Also verify the patch is valid by parsing and applying it
-          case parseSome patchBs of
-            Left err -> assertFailure ("re-parse " ++ fmtStr ++ " failed: " ++ err)
-            Right sp -> do
-              result <- applyPatch sp baseBs
+          case parseSome patchBytes of
+            Left errorMessage -> assertFailure ("re-parse " ++ formatStringing ++ " failed: " ++ errorMessage)
+            Right parsed -> do
+              result <- applyPatch parsed baseBytes
               case result of
-                Left err -> assertFailure ("re-apply " ++ fmtStr ++ " failed: " ++ err)
+                Left errorMessage -> assertFailure ("re-apply " ++ formatStringing ++ " failed: " ++ errorMessage)
                 Right output ->
-                  assertEqual "round-trip SHA1" (sha1Hex targetBs) (sha1Hex output)
+                  assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
 
     -- Allow up to 5% growth — catches large regressions, absorbs minor encoding changes
     maxSize :: Int -> Int
-    maxSize n = n + max 64 (n `div` 20)
+    maxSize currentSize = currentSize + max 64 (currentSize `div` 20)

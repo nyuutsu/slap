@@ -3,47 +3,47 @@
 module Patch.Detect (detectFormat) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Patch.Types (PatchFormat(..))
 
 -- | Detect patch format from the first few bytes (magic).
 detectFormat :: ByteString -> Maybe PatchFormat
-detectFormat bs
-  | BS.length bs < 4 = Nothing
-  | BS.take 3 magic4 == "PPF" = Just FmtPPF
-  | magic5 == "PATCH"         = Just FmtIPS
-  | magic5 == "IPS32"         = Just FmtIPS   -- IPS32
-  | magic4 == "BPS1"          = Just FmtBPS
-  | magic4 == "UPS1"          = Just FmtUPS
-  | BS.take 3 magic4 == "\xd6\xc3\xc4" = Just FmtVCDIFF
-  | magic5 == "APS10"         = Just FmtAPSN64
-  | magic4 == "APS1"          = Just FmtAPSGBA
-  | BS.length bs >= 6 && BS.take 6 bs == "NINJA2" = Just FmtRUP
-  | BS.length bs >= 8 && BS.take 6 bs == "NINJA1"  = Just FmtNINJA1
-  | BS.length bs >= 8 && BS.take 8 bs == "BSDIFF40" = Just FmtBSDiff
-  | magic4 == "\xd1\xff\xd1\xff" = Just FmtGDIFF
-  | BS.length bs >= 8 && BS.take 4 bs == "%XDZ" = Just FmtXDelta1
-  | BS.length bs >= 7 && BS.take 7 bs == "%XDELTA" = Just FmtXDelta1
-  | magic4 == "PMSR"          = Just FmtPMSR
-  | detectPCHTXT bs            = Just FmtPCHTXT
+detectFormat input
+  | ByteString.length input < 4 = Nothing
+  | ByteString.take 3 magic4 == "PPF" = Just FormatPPF
+  | magic5 == "PATCH"         = Just FormatIPS
+  | magic5 == "IPS32"         = Just FormatIPS   -- IPS32
+  | magic4 == "BPS1"          = Just FormatBPS
+  | magic4 == "UPS1"          = Just FormatUPS
+  | ByteString.take 3 magic4 == "\xd6\xc3\xc4" = Just FormatVCDIFF
+  | magic5 == "APS10"         = Just FormatAPSN64
+  | magic4 == "APS1"          = Just FormatAPSGBA
+  | ByteString.length input >= 6 && ByteString.take 6 input == "NINJA2" = Just FormatRUP
+  | ByteString.length input >= 8 && ByteString.take 6 input == "NINJA1"  = Just FormatNINJA1
+  | ByteString.length input >= 8 && ByteString.take 8 input == "BSDIFF40" = Just FormatBSDiff
+  | magic4 == "\xd1\xff\xd1\xff" = Just FormatGDIFF
+  | ByteString.length input >= 8 && ByteString.take 4 input == "%XDZ" = Just FormatXDelta1
+  | ByteString.length input >= 7 && ByteString.take 7 input == "%XDELTA" = Just FormatXDelta1
+  | magic4 == "PMSR"          = Just FormatPMSR
+  | detectPCHTXT input        = Just FormatPCHTXT
   | otherwise                 = Nothing
   where
-    magic4 = BS.take 4 bs
-    magic5 = BS.take 5 bs
+    magic4 = ByteString.take 4 input
+    magic5 = ByteString.take 5 input
 
 -- | Detect PCHTXT by scanning for a known directive on the first non-comment line.
 detectPCHTXT :: ByteString -> Bool
-detectPCHTXT raw = check (BS8.lines (BS.take 512 raw))
+detectPCHTXT raw = scanLines (ByteString8.lines (ByteString.take 512 raw))
   where
-    check [] = False
-    check (l:ls)
-      | BS.null s              = check ls
-      | BS.take 1 s == "#"     = check ls
-      | BS.take 1 s == "/"     = check ls
-      | BS.take 7 s == "@nsobid"  = True
-      | BS.take 6 s == "@flag "   = True
-      | BS.take 8 s == "@enabled" = True
-      | BS.take 9 s == "@disabled" = True
-      | otherwise              = False
-      where s = BS8.dropWhile (\c -> c == ' ' || c == '\t' || c == '\r') l
+    scanLines [] = False
+    scanLines (line:rest)
+      | ByteString.null trimmed          = scanLines rest
+      | ByteString.take 1 trimmed == "#" = scanLines rest
+      | ByteString.take 1 trimmed == "/" = scanLines rest
+      | ByteString.take 7 trimmed == "@nsobid"  = True
+      | ByteString.take 6 trimmed == "@flag "   = True
+      | ByteString.take 8 trimmed == "@enabled" = True
+      | ByteString.take 9 trimmed == "@disabled" = True
+      | otherwise                = False
+      where trimmed = ByteString8.dropWhile (\char -> char == ' ' || char == '\t' || char == '\r') line

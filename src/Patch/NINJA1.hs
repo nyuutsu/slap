@@ -22,14 +22,14 @@ module Patch.NINJA1
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import Patch.Binary (putWord32BE, copyBSRange)
+import Patch.Binary (putWord32BE, copyByteStringRange)
 import Patch.Format (showCRC, padHex, renderField)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.ByteString.Internal (unsafeCreate)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Char (toLower)
@@ -47,7 +47,7 @@ import Patch.Compress (zlibInflate, zlibDeflate)
 -- Types
 ----------------------------------------------------------------------------
 
-data NINJA1SubFormat = N1Binary | N1BinaryZ | N1Text | N1TextZ
+data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
   deriving (Show, Eq)
 
 -- | ROM platform type. Values 0-17 are defined by the NINJA1 spec;
@@ -79,7 +79,7 @@ toNINJA1RomType 14 = RomWonderSwanColor
 toNINJA1RomType 15 = RomLynx
 toNINJA1RomType 16 = RomJaguar
 toNINJA1RomType 17 = RomGP32
-toNINJA1RomType  n = RomUnknown n
+toNINJA1RomType  value = RomUnknown value
 
 fromNINJA1RomType :: NINJA1RomType -> Word8
 fromNINJA1RomType RomRAW            = 0
@@ -100,21 +100,21 @@ fromNINJA1RomType RomWonderSwanColor = 14
 fromNINJA1RomType RomLynx           = 15
 fromNINJA1RomType RomJaguar         = 16
 fromNINJA1RomType RomGP32           = 17
-fromNINJA1RomType (RomUnknown n)    = n
+fromNINJA1RomType (RomUnknown value) = value
 
 data NINJA1Patch = NINJA1Patch
-  { n1SubFormat  :: NINJA1SubFormat
-  , n1RomType    :: NINJA1RomType
-  , n1SourceCRC  :: Maybe Word32
-  , n1SourceMD5  :: Maybe ByteString  -- 16 bytes
-  , n1SourceSHA1 :: Maybe ByteString  -- 20 bytes
-  , n1Records    :: [NINJA1Record]
-  , n1CleanEOF   :: Bool              -- binary: True if EOF sentinel found
+  { ninja1SubFormat  :: NINJA1SubFormat
+  , ninja1RomType    :: NINJA1RomType
+  , ninja1SourceCRC  :: Maybe Word32
+  , ninja1SourceMD5  :: Maybe ByteString  -- 16 bytes
+  , ninja1SourceSHA1 :: Maybe ByteString  -- 20 bytes
+  , ninja1Records    :: [NINJA1Record]
+  , ninja1CleanEOF   :: Bool              -- binary: True if EOF sentinel found
   } deriving (Show)
 
 data NINJA1Record = NINJA1Record
-  { n1RecOffset :: Int64
-  , n1RecData   :: ByteString
+  { ninja1RecordOffset :: Int64
+  , ninja1RecordData   :: ByteString
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -122,24 +122,24 @@ data NINJA1Record = NINJA1Record
 ----------------------------------------------------------------------------
 
 parseNINJA1 :: ByteString -> Either String NINJA1Patch
-parseNINJA1 bs
-  | BS.length bs < 8             = Left "NINJA1: input too short"
-  | BS.take 6 bs /= "NINJA1"    = Left "not a NINJA1 file (bad magic)"
-  | subId == "B "                = parseBin N1Binary payload
-  | subId == "BZ"                = zlibDecompress payload >>= parseBin N1BinaryZ
+parseNINJA1 input
+  | ByteString.length input < 8             = Left "NINJA1: input too short"
+  | ByteString.take 6 input /= "NINJA1"    = Left "not a NINJA1 file (bad magic)"
+  | subFormatIdentifier == "B "                = parseBinary Ninja1Binary payload
+  | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= parseBinary Ninja1BinaryCompressed
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
-  | subId == BS.pack [0x54,0x0A] = parseTxt N1Text payload    -- "T\n"
-  | subId == "TZ"                = zlibDecompress payload >>= parseTxt N1TextZ
-  | otherwise                    = Left ("NINJA1: unsupported subformat: " ++ show subId)
+  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = parseText Ninja1Text payload    -- "T\n"
+  | subFormatIdentifier == "TZ"                = zlibDecompress payload >>= parseText Ninja1TextCompressed
+  | otherwise                    = Left ("NINJA1: unsupported subformat: " ++ show subFormatIdentifier)
   where
-    subId   = BS.take 2 (BS.drop 6 bs)
-    payload = BS.drop 8 bs
+    subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
+    payload = ByteString.drop 8 input
 
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
 zlibDecompress :: ByteString -> Either String ByteString
 zlibDecompress compressed = case zlibInflate compressed of
   Left _  -> Left "NINJA1: zlib decompression failed"
-  Right r -> Right r
+  Right result -> Right result
 
 ----------------------------------------------------------------------------
 -- Binary format: 41-byte header + variable-length records + EOF sentinel
@@ -152,57 +152,57 @@ zlibDecompress compressed = case zlibInflate compressed of
 -- Large file hash sampling (>0x1e00000): see ninja1HashInput.
 ----------------------------------------------------------------------------
 
-parseBin :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
-parseBin fmt payload
-  | BS.length payload < 41 = Left "NINJA1: binary payload too short"
-  | otherwise = runGet (parseBinGet fmt) payload
+parseBinary :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
+parseBinary format payload
+  | ByteString.length payload < 41 = Left "NINJA1: binary payload too short"
+  | otherwise = runGet (parseBinaryGet format) payload
 
-parseBinGet :: NINJA1SubFormat -> Get NINJA1Patch
-parseBinGet fmt = do
+parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch
+parseBinaryGet format = do
   romType   <- toNINJA1RomType <$> getByte
   crcBytes  <- getBytes 4
   md5Bytes  <- getBytes 16
   sha1Bytes <- getBytes 20
-  (recs, clean) <- parseBinRecords
-  let crc'  = if BS.all (== 0) crcBytes then Nothing else Just (decodeBE32 crcBytes)
-      md5'  = if BS.all (== 0) md5Bytes then Nothing else Just md5Bytes
-      sha1' = if BS.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
+  (records, clean) <- parseBinaryRecords
+  let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (decodeBigEndian32 crcBytes)
+      parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just md5Bytes
+      parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
   pure NINJA1Patch
-    { n1SubFormat  = fmt
-    , n1RomType    = romType
-    , n1SourceCRC  = crc'
-    , n1SourceMD5  = md5'
-    , n1SourceSHA1 = sha1'
-    , n1Records    = recs
-    , n1CleanEOF   = clean
+    { ninja1SubFormat  = format
+    , ninja1RomType    = romType
+    , ninja1SourceCRC  = parsedCRC
+    , ninja1SourceMD5  = parsedMD5
+    , ninja1SourceSHA1 = parsedSHA1
+    , ninja1Records    = records
+    , ninja1CleanEOF   = clean
     }
 
-decodeBE32 :: ByteString -> Word32
-decodeBE32 = BS.foldl' (\acc b -> acc * 256 + fromIntegral b) 0
+decodeBigEndian32 :: ByteString -> Word32
+decodeBigEndian32 = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
-decodeBE :: ByteString -> Int64
-decodeBE = BS.foldl' (\acc b -> acc * 256 + fromIntegral b) 0
+decodeBigEndian :: ByteString -> Int64
+decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
-parseBinRecords :: Get ([NINJA1Record], Bool)
-parseBinRecords = go []
+parseBinaryRecords :: Get ([NINJA1Record], Bool)
+parseBinaryRecords = parseLoop []
   where
-    go acc = do
+    parseLoop accumulated = do
       avail <- remaining
-      if avail < 1 then pure (reverse acc, False)
+      if avail < 1 then pure (reverse accumulated, False)
       else do
-        offLen <- fromIntegral <$> getByte :: Get Int
-        if offLen == 0 then pure (reverse acc, False)
+        offsetWidth <- fromIntegral <$> getByte :: Get Int
+        if offsetWidth == 0 then pure (reverse accumulated, False)
         else do
-          offBytes <- getBytes offLen
-          if offLen == 3 && offBytes == "EOF"
-            then pure (reverse acc, True)
+          offsetBytes <- getBytes offsetWidth
+          if offsetWidth == 3 && offsetBytes == "EOF"
+            then pure (reverse accumulated, True)
             else do
-              let off = decodeBE offBytes
-              lenLen <- fromIntegral <$> getByte :: Get Int
-              lenBytes <- getBytes lenLen
-              let len = fromIntegral (decodeBE lenBytes) :: Int
-              dat <- getBytes len
-              go (NINJA1Record off dat : acc)
+              let offset = decodeBigEndian offsetBytes
+              dataWidth <- fromIntegral <$> getByte :: Get Int
+              dataLenBytes <- getBytes dataWidth
+              let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
+              payload <- getBytes dataLength
+              parseLoop (NINJA1Record offset payload : accumulated)
 
 ----------------------------------------------------------------------------
 -- Textual format: line-based, # comments, header + hex records
@@ -213,67 +213,67 @@ parseBinRecords = go []
 -- Record lines: OFFSET HEXDATA (both hex strings, no 0x prefix)
 ----------------------------------------------------------------------------
 
-parseTxt :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
-parseTxt fmt payload = do
-  let stripCR = BS8.takeWhile (/= '\r')
-      contentLines = filter (not . isSkippable) (map stripCR (BS8.lines payload))
+parseText :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
+parseText format payload = do
+  let stripCR = ByteString8.takeWhile (/= '\r')
+      contentLines = filter (not . isSkippable) (map stripCR (ByteString8.lines payload))
   case contentLines of
     [] -> Left "NINJA1: empty textual patch"
-    (hdrLine : recLines) -> do
-      let (romType, crc', md5', sha1') = parseTxtHeader hdrLine
-      recs <- mapM parseTxtRecord recLines
+    (headerLine : recordLines) -> do
+      let (romType, parsedCRC, parsedMD5, parsedSHA1) = parseTextHeader headerLine
+      records <- mapM parseTextRecord recordLines
       Right NINJA1Patch
-        { n1SubFormat  = fmt
-        , n1RomType    = romType
-        , n1SourceCRC  = crc'
-        , n1SourceMD5  = md5'
-        , n1SourceSHA1 = sha1'
-        , n1Records    = recs
-        , n1CleanEOF   = True  -- textual format has no EOF sentinel
+        { ninja1SubFormat  = format
+        , ninja1RomType    = romType
+        , ninja1SourceCRC  = parsedCRC
+        , ninja1SourceMD5  = parsedMD5
+        , ninja1SourceSHA1 = parsedSHA1
+        , ninja1Records    = records
+        , ninja1CleanEOF   = True  -- textual format has no EOF sentinel
         }
   where
-    isSkippable line = BS.null line || BS8.head line == '#'
+    isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
-parseTxtHeader :: ByteString -> (NINJA1RomType, Maybe Word32, Maybe ByteString, Maybe ByteString)
-parseTxtHeader line = (romType, crc', md5', sha1')
+parseTextHeader :: ByteString -> (NINJA1RomType, Maybe Word32, Maybe ByteString, Maybe ByteString)
+parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
   where
-    ws = map BS8.unpack (BS8.words line)
-    romType = case ws of
-      (f:_) -> romTypeFromName f
-      _     -> RomRAW
-    isUnk s = s == "unk" || s == "unk."
-    crc' = case ws of
-      (_:c:_) | not (isUnk c) -> case (readHex c :: [(Word32, String)]) of
-        [(n, "")] -> Just n
-        _         -> Nothing
+    tokens = map ByteString8.unpack (ByteString8.words line)
+    romType = case tokens of
+      (formatName:_) -> romTypeFromName formatName
+      _              -> RomRAW
+    isUnknown text = text == "unk" || text == "unk."
+    parsedCRC = case tokens of
+      (_:crcText:_) | not (isUnknown crcText) -> case (readHex crcText :: [(Word32, String)]) of
+        [(value, "")] -> Just value
+        _             -> Nothing
       _ -> Nothing
-    nonEmpty bx = if BS.null bx then Nothing else Just bx
-    md5' = case ws of
-      (_:_:m:_) | not (isUnk m) -> nonEmpty (hexToBS m)
+    nonEmpty bytes = if ByteString.null bytes then Nothing else Just bytes
+    parsedMD5 = case tokens of
+      (_:_:md5Text:_) | not (isUnknown md5Text) -> nonEmpty (hexToBS md5Text)
       _ -> Nothing
-    sha1' = case ws of
-      (_:_:_:s:_) | not (isUnk s) -> nonEmpty (hexToBS s)
+    parsedSHA1 = case tokens of
+      (_:_:_:sha1Text:_) | not (isUnknown sha1Text) -> nonEmpty (hexToBS sha1Text)
       _ -> Nothing
 
-parseTxtRecord :: ByteString -> Either String NINJA1Record
-parseTxtRecord line = case BS8.words line of
-  (offStr : datParts@(_:_)) ->
-    case (readHex (BS8.unpack offStr) :: [(Int64, String)]) of
-      [(off, "")] -> Right (NINJA1Record off (hexToBS (concatMap BS8.unpack datParts)))
-      _ -> Left ("NINJA1: invalid offset in text record: " ++ BS8.unpack offStr)
-  _ -> Left ("NINJA1: malformed text record: " ++ BS8.unpack line)
+parseTextRecord :: ByteString -> Either String NINJA1Record
+parseTextRecord line = case ByteString8.words line of
+  (offsetString : dataParts@(_:_)) ->
+    case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
+      [(offset, "")] -> Right (NINJA1Record offset (hexToBS (concatMap ByteString8.unpack dataParts)))
+      _ -> Left ("NINJA1: invalid offset in text record: " ++ ByteString8.unpack offsetString)
+  _ -> Left ("NINJA1: malformed text record: " ++ ByteString8.unpack line)
 
 hexToBS :: String -> ByteString
-hexToBS s = BS.pack (go s)
+hexToBS text = ByteString.pack (parseHexPairs text)
   where
-    go [] = []
-    go [_] = []
-    go (a:b:rest) = case (readHex [a,b] :: [(Word8, String)]) of
-      [(n, "")] -> n : go rest
-      _         -> []
+    parseHexPairs [] = []
+    parseHexPairs [_] = []
+    parseHexPairs (highNibble:lowNibble:rest) = case (readHex [highNibble,lowNibble] :: [(Word8, String)]) of
+      [(value, "")] -> value : parseHexPairs rest
+      _             -> []
 
 romTypeFromName :: String -> NINJA1RomType
-romTypeFromName s = case map toLower s of
+romTypeFromName text = case map toLower text of
   "raw"  -> RomRAW;   "nes"  -> RomNES;   "snes" -> RomSNES;  "n64"  -> RomN64
   "gb"   -> RomGB;    "gbc"  -> RomGBC;   "gba"  -> RomGBA;   "ngp"  -> RomNGP
   "ngpc" -> RomNGPC;  "sms"  -> RomSMS;   "gg"   -> RomGameGear; "mega" -> RomGenesis
@@ -285,60 +285,60 @@ romTypeFromName s = case map toLower s of
 ----------------------------------------------------------------------------
 
 applyNINJA1 :: NINJA1Patch -> FilePath -> IO Int
-applyNINJA1 patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  mapM_ (applyRecord h) (n1Records patch)
-  pure (length (n1Records patch))
+applyNINJA1 patch target = withBinaryFile target ReadWriteMode $ \handle -> do
+  mapM_ (applyRecord handle) (ninja1Records patch)
+  pure (length (ninja1Records patch))
 
 applyRecord :: Handle -> NINJA1Record -> IO ()
-applyRecord h (NINJA1Record off dat) = do
-  hSeek h AbsoluteSeek (fromIntegral off)
-  BS.hPut h dat
+applyRecord handle (NINJA1Record offset payload) = do
+  hSeek handle AbsoluteSeek (fromIntegral offset)
+  ByteString.hPut handle payload
 
 -- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
 applyNINJA1Memory :: NINJA1Patch -> ByteString -> ByteString
-applyNINJA1Memory patch source = unsafeCreate outLen $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen outLen)
-    when (outLen > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
-    forM_ (n1Records patch) $ \(NINJA1Record off dat) ->
-      copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
+applyNINJA1Memory patch source = unsafeCreate outputSize $ \outputPointer -> do
+    copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
+    when (outputSize > sourceLength) $
+      fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
+    forM_ (ninja1Records patch) $ \(NINJA1Record offset payload) ->
+      copyByteStringRange outputPointer (fromIntegral offset) payload 0 (ByteString.length payload)
   where
-    srcLen = BS.length source
-    outLen = foldl' max srcLen
-      [ fromIntegral (n1RecOffset r) + BS.length (n1RecData r) | r <- n1Records patch ]
+    sourceLength = ByteString.length source
+    outputSize = foldl' max sourceLength
+      [ fromIntegral (ninja1RecordOffset record) + ByteString.length (ninja1RecordData record) | record <- ninja1Records patch ]
 
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
 
 ninja1Meta :: NINJA1Patch -> [(String, String)]
-ninja1Meta p = concat
-  [ [("ROM type", romTypeName (n1RomType p))]
-  , case n1SourceCRC p of
-      Nothing -> []
-      Just c  -> [("source CRC", "0x" ++ showCRC c)]
-  , case n1SourceMD5 p of
-      Nothing -> []
-      Just h  -> [("source MD5", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h))]
-  , case n1SourceSHA1 p of
-      Nothing -> []
-      Just h  -> [("source SHA1", concatMap (\b -> padHex 2 (fromIntegral b)) (BS.unpack h))]
+ninja1Meta patch = concat
+  [ [("ROM type", romTypeName (ninja1RomType patch))]
+  , case ninja1SourceCRC patch of
+      Nothing  -> []
+      Just crc -> [("source CRC", "0x" ++ showCRC crc)]
+  , case ninja1SourceMD5 patch of
+      Nothing   -> []
+      Just hash -> [("source MD5", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+  , case ninja1SourceSHA1 patch of
+      Nothing   -> []
+      Just hash -> [("source SHA1", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
   ]
 
 ninja1Info :: NINJA1Patch -> String
-ninja1Info p = unlines $ filter (not . null) $
-  [ "format:      NINJA1 (" ++ subFmtStr ++ ")" ]
-  ++ map renderField (ninja1Meta p)
-  ++ [ "records:     " ++ show (length (n1Records p))
+ninja1Info patch = unlines $ filter (not . null) $
+  [ "format:      NINJA1 (" ++ subFormatString ++ ")" ]
+  ++ map renderField (ninja1Meta patch)
+  ++ [ "records:     " ++ show (length (ninja1Records patch))
      , "total bytes: " ++ show totalBytes
      ]
   where
-    subFmtStr = case n1SubFormat p of
-      N1Binary  -> "binary"
-      N1BinaryZ -> "binary, compressed"
-      N1Text    -> "text"
-      N1TextZ   -> "text, compressed"
-    totalBytes = sum (map (BS.length . n1RecData) (n1Records p))
+    subFormatString = case ninja1SubFormat patch of
+      Ninja1Binary  -> "binary"
+      Ninja1BinaryCompressed -> "binary, compressed"
+      Ninja1Text    -> "text"
+      Ninja1TextCompressed   -> "text, compressed"
+    totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
 romTypeName :: NINJA1RomType -> String
 romTypeName RomRAW            = "RAW"
@@ -359,7 +359,7 @@ romTypeName RomWonderSwanColor = "WonderSwan Color"
 romTypeName RomLynx           = "Lynx"
 romTypeName RomJaguar         = "Jaguar"
 romTypeName RomGP32           = "GP32"
-romTypeName (RomUnknown n)    = "unknown (" ++ show n ++ ")"
+romTypeName (RomUnknown value) = "unknown (" ++ show value ++ ")"
 
 ----------------------------------------------------------------------------
 -- Encode
@@ -367,42 +367,42 @@ romTypeName (RomUnknown n)    = "unknown (" ++ show n ++ ")"
 
 -- | Encode pre-diffed records as a NINJA1 Binary patch.
 -- When compress is True, zlib-compresses the payload and emits BZ subformat.
-encodeNINJA1 :: [(Int, BS.ByteString)]
+encodeNINJA1 :: [(Int, ByteString.ByteString)]
              -> Word32          -- source CRC32
-             -> BS.ByteString   -- source MD5 (16 bytes)
-             -> BS.ByteString   -- source SHA1 (20 bytes)
+             -> ByteString.ByteString   -- source MD5 (16 bytes)
+             -> ByteString.ByteString   -- source SHA1 (20 bytes)
              -> NINJA1RomType   -- ROM platform type
              -> Bool            -- compress (BZ subformat)
-             -> BS.ByteString
-encodeNINJA1 recs srcCRC srcMD5 srcSHA1 romType doCompress
+             -> ByteString.ByteString
+encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
   | doCompress = "NINJA1BZ" <> zlibDeflate payload
   | otherwise  = "NINJA1B " <> payload
   where
-    payload = BL.toStrict $ toLazyByteString $
+    payload = LazyByteString.toStrict $ toLazyByteString $
         word8 (fromNINJA1RomType romType)
-        <> putWord32BE srcCRC
-        <> byteString srcMD5
-        <> byteString srcSHA1
-        <> foldMap encodeRecord recs
+        <> putWord32BE sourceCRC
+        <> byteString sourceMD5
+        <> byteString sourceSHA1
+        <> foldMap encodeRecordBuilder records
         <> word8 3 <> byteString "EOF"     -- EOF sentinel
 
-encodeRecord :: (Int, BS.ByteString) -> Builder
-encodeRecord (off, dat) =
-    let offBs = encodeBE (fromIntegral off :: Int64)
-        lenBs = encodeBE (fromIntegral (BS.length dat) :: Int64)
-    in word8 (fromIntegral (BS.length offBs))
-       <> byteString offBs
-       <> word8 (fromIntegral (BS.length lenBs))
-       <> byteString lenBs
-       <> byteString dat
+encodeRecordBuilder :: (Int, ByteString.ByteString) -> Builder
+encodeRecordBuilder (offset, payload) =
+    let offsetEncoded = encodeBigEndian (fromIntegral offset :: Int64)
+        lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length payload) :: Int64)
+    in word8 (fromIntegral (ByteString.length offsetEncoded))
+       <> byteString offsetEncoded
+       <> word8 (fromIntegral (ByteString.length lengthEncoded))
+       <> byteString lengthEncoded
+       <> byteString payload
 
 -- | Encode an Int64 as minimal big-endian bytes (at least 1 byte).
-encodeBE :: Int64 -> BS.ByteString
-encodeBE 0 = BS.singleton 0
-encodeBE n = BS.pack (go [] n)
+encodeBigEndian :: Int64 -> ByteString.ByteString
+encodeBigEndian 0 = ByteString.singleton 0
+encodeBigEndian value = ByteString.pack (extractBytes [] value)
   where
-    go acc 0 = acc
-    go acc v = go (fromIntegral (v .&. 0xFF) : acc) (v `shiftR` 8)
+    extractBytes accumulated 0 = accumulated
+    extractBytes accumulated remainder = extractBytes (fromIntegral (remainder .&. 0xFF) : accumulated) (remainder `shiftR` 8)
 
 ----------------------------------------------------------------------------
 -- Large-file hash sampling
@@ -415,11 +415,11 @@ encodeBE n = BS.pack (go [] n)
 -- | Prepare hash input for NINJA1 source verification.
 -- Files >0x1e00000 (30 MiB) use the sampling algorithm from the PHP
 -- reference: first 0x1400000 bytes, last 0xa00000 bytes, decimal size.
-ninja1HashInput :: BS.ByteString -> BS.ByteString
-ninja1HashInput bs
-  | BS.length bs > 0x1e00000 =
-      let first    = BS.take 0x1400000 bs
-          lastPart = BS.drop (BS.length bs - 0xa00000) bs
-          sizeStr  = BS8.pack (show (BS.length bs))
-      in first <> lastPart <> sizeStr
-  | otherwise = bs
+ninja1HashInput :: ByteString.ByteString -> ByteString.ByteString
+ninja1HashInput input
+  | ByteString.length input > 0x1e00000 =
+      let first    = ByteString.take 0x1400000 input
+          lastPart = ByteString.drop (ByteString.length input - 0xa00000) input
+          sizeString  = ByteString8.pack (show (ByteString.length input))
+      in first <> lastPart <> sizeString
+  | otherwise = input

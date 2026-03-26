@@ -12,11 +12,11 @@
 --   Link table (u16 BE entries at link offset)
 --   Chunk/literal data (at chunk offset)
 -- Bit=1: copy literal byte from chunk stream
--- Bit=0: back-reference via link entry (count + distance)
+-- Bit=0: back-reference via link entry (count + distanceance)
 
 module Patch.Yay0 (isYay0, decompressYay0) where
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (testBit, shiftL, shiftR, (.&.), (.|.))
 import Control.Monad (forM_)
@@ -25,83 +25,83 @@ import Data.Word (Word8)
 import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (poke, peekByteOff, pokeByteOff)
 
-isYay0 :: BS.ByteString -> Bool
-isYay0 bs = BS.length bs >= 16 && BS.take 4 bs == "Yay0"
+isYay0 :: ByteString.ByteString -> Bool
+isYay0 input = ByteString.length input >= 16 && ByteString.take 4 input == "Yay0"
 
-decompressYay0 :: BS.ByteString -> Either String BS.ByteString
-decompressYay0 bs
-  | BS.length bs < 16 = Left "Yay0: truncated header"
-  | BS.take 4 bs /= "Yay0" = Left "Yay0: bad magic"
-  | decompSize <= 0 = Left ("Yay0: invalid decompressed size: " ++ show decompSize)
-  | linkOff > BS.length bs = Left ("Yay0: link offset beyond file (offset " ++ show linkOff ++ ", file " ++ show (BS.length bs) ++ " bytes)")
-  | chunkOff > BS.length bs = Left ("Yay0: chunk offset beyond file (offset " ++ show chunkOff ++ ", file " ++ show (BS.length bs) ++ " bytes)")
-  | otherwise = Right $ unsafeCreate decompSize $ \ptr -> do
-      cmdPosRef <- newIORef (0x10 :: Int)
-      cmdBitRef <- newIORef (7 :: Int)
-      linkRef   <- newIORef linkOff
-      chunkRef  <- newIORef chunkOff
+decompressYay0 :: ByteString.ByteString -> Either String ByteString.ByteString
+decompressYay0 input
+  | ByteString.length input < 16 = Left "Yay0: truncated header"
+  | ByteString.take 4 input /= "Yay0" = Left "Yay0: bad magic"
+  | decompressedSize <= 0 = Left ("Yay0: invalid decompressed size: " ++ show decompressedSize)
+  | linkOffset > ByteString.length input = Left ("Yay0: link offset beyond file (offset " ++ show linkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)")
+  | chunkOffset > ByteString.length input = Left ("Yay0: chunk offset beyond file (offset " ++ show chunkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)")
+  | otherwise = Right $ unsafeCreate decompressedSize $ \outputPointer -> do
+      commandPositionReference <- newIORef (0x10 :: Int)
+      commandBitReference <- newIORef (7 :: Int)
+      linkRef   <- newIORef linkOffset
+      chunkRef  <- newIORef chunkOffset
       outRef    <- newIORef (0 :: Int)
 
       let nextBit = do
-            bytePos <- readIORef cmdPosRef
-            bit     <- readIORef cmdBitRef
-            let val = testBit (BS.index bs bytePos) bit
+            bytePosition <- readIORef commandPositionReference
+            bit     <- readIORef commandBitReference
+            let bitValue = testBit (ByteString.index input bytePosition) bit
             if bit == 0
-              then writeIORef cmdPosRef (bytePos + 1) >> writeIORef cmdBitRef 7
-              else writeIORef cmdBitRef (bit - 1)
-            pure val
+              then writeIORef commandPositionReference (bytePosition + 1) >> writeIORef commandBitReference 7
+              else writeIORef commandBitReference (bit - 1)
+            pure bitValue
 
           nextChunk :: IO Word8
           nextChunk = do
-            pos <- readIORef chunkRef
+            position <- readIORef chunkRef
             modifyIORef' chunkRef (+ 1)
-            pure (BS.index bs pos)
+            pure (ByteString.index input position)
 
           nextLink :: IO Int
           nextLink = do
-            pos <- readIORef linkRef
+            position <- readIORef linkRef
             modifyIORef' linkRef (+ 2)
-            let hi = fromIntegral (BS.index bs pos) :: Int
-                lo = fromIntegral (BS.index bs (pos + 1)) :: Int
-            pure ((hi `shiftL` 8) .|. lo)
+            let highByte = fromIntegral (ByteString.index input position) :: Int
+                lowByte  = fromIntegral (ByteString.index input (position + 1)) :: Int
+            pure ((highByte `shiftL` 8) .|. lowByte)
 
-          loop :: IO ()
-          loop = do
-            out <- readIORef outRef
-            if out >= decompSize then pure () else do
-              b <- nextBit
-              if b
+          decompressLoop :: IO ()
+          decompressLoop = do
+            written <- readIORef outRef
+            if written >= decompressedSize then pure () else do
+              isLiteral <- nextBit
+              if isLiteral
                 then do
-                  ch <- nextChunk
-                  poke (ptr `plusPtr` out) ch
-                  writeIORef outRef (out + 1)
-                  loop
+                  literal <- nextChunk
+                  poke (outputPointer `plusPtr` written) literal
+                  writeIORef outRef (written + 1)
+                  decompressLoop
                 else do
                   link <- nextLink
                   let countField = (link `shiftR` 12) .&. 0xF
-                      dist = (link .&. 0xFFF) + 1
+                      distance = (link .&. 0xFFF) + 1
                   count <- if countField == 0
                     then do
                       extra <- nextChunk
                       pure (fromIntegral extra + 0x12 :: Int)
                     else pure (countField + 2)
-                  copyBack ptr out dist count
-                  writeIORef outRef (out + count)
-                  loop
+                  copyBack outputPointer written distance count
+                  writeIORef outRef (written + count)
+                  decompressLoop
 
-      loop
+      decompressLoop
   where
-    r32 off = fromIntegral (BS.index bs off) `shiftL` 24
-          .|. fromIntegral (BS.index bs (off+1)) `shiftL` 16
-          .|. fromIntegral (BS.index bs (off+2)) `shiftL` 8
-          .|. fromIntegral (BS.index bs (off+3)) :: Int
-    decompSize = r32 4
-    linkOff    = r32 8
-    chunkOff   = r32 12
+    readBigEndian32 offset = fromIntegral (ByteString.index input offset) `shiftL` 24
+          .|. fromIntegral (ByteString.index input (offset+1)) `shiftL` 16
+          .|. fromIntegral (ByteString.index input (offset+2)) `shiftL` 8
+          .|. fromIntegral (ByteString.index input (offset+3)) :: Int
+    decompressedSize  = readBigEndian32 4
+    linkOffset  = readBigEndian32 8
+    chunkOffset = readBigEndian32 12
 
 -- Must be byte-by-byte because source and destination can overlap.
 copyBack :: Ptr Word8 -> Int -> Int -> Int -> IO ()
-copyBack ptr out dist count =
-  forM_ [0..count-1] $ \i -> do
-    val <- peekByteOff ptr (out - dist + i) :: IO Word8
-    pokeByteOff ptr (out + i) val
+copyBack outputPointer written distance count =
+  forM_ [0..count-1] $ \index -> do
+    value <- peekByteOff outputPointer (written - distance + index) :: IO Word8
+    pokeByteOff outputPointer (written + index) value

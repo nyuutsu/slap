@@ -20,12 +20,12 @@ module Patch.DPS
 -- Author: Marc de Falco (Deufeufeu); deufeufeu.free.fr is dead.
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import qualified Patch.Get as G
+import qualified Patch.Get as Get
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Patch.Binary (putWord32LE, diffHunks)
 import Patch.Format (renderField)
@@ -42,7 +42,7 @@ data DPSStability = DPSStable | DPSUnstable
 toDPSStability :: Word8 -> Either String DPSStability
 toDPSStability 0 = Right DPSStable
 toDPSStability 1 = Right DPSUnstable
-toDPSStability b = Left ("DPS: unknown stability flag: " ++ show b)
+toDPSStability flagByte = Left ("DPS: unknown stability flag: " ++ show flagByte)
 
 fromDPSStability :: DPSStability -> Word8
 fromDPSStability DPSStable   = 0
@@ -54,7 +54,7 @@ data DPSPatch = DPSPatch
   , dpsVersion    :: ByteString   -- 64 bytes, null-padded
   , dpsStability       :: DPSStability
   , dpsFormatVersion :: Word8        -- must be 1
-  , dpsOrigSize   :: Int64        -- original ROM size
+  , dpsOriginalSize   :: Int64        -- original ROM size
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
 
@@ -62,9 +62,9 @@ data DPSMode = CopyFromROM | EnclosedData
   deriving (Show, Eq)
 
 data DPSRecord = DPSRecord
-  { dpsRecMode      :: DPSMode
-  , dpsRecOutOffset :: Int64       -- write position in output
-  , dpsRecPayload   :: DPSPayload
+  { dpsRecordMode      :: DPSMode
+  , dpsRecordOutputOffset :: Int64       -- write position in output
+  , dpsRecordPayload   :: DPSPayload
   } deriving (Show)
 
 data DPSPayload
@@ -80,27 +80,27 @@ data DPSPayload
 -- printable ASCII in the first 192 bytes, version byte = 1 at
 -- offset 193, flag byte 0 or 1 at offset 192.
 isDPS :: ByteString -> Bool
-isDPS bs
-  | BS.length bs < 198 = False  -- 3×64 header + flag + version + u32 orig_size
-  | BS.index bs 193 /= 1 = False  -- DPS version must be 1
-  | BS.index bs 192 > 1 = False   -- stability flag must be 0 or 1
-  | not (BS.all isHeaderByte (BS.take 192 bs)) = False
+isDPS input
+  | ByteString.length input < 198 = False  -- 3×64 header + flag + version + u32 orig_size
+  | ByteString.index input 193 /= 1 = False  -- DPS version must be 1
+  | ByteString.index input 192 > 1 = False   -- stability flag must be 0 or 1
+  | not (ByteString.all isHeaderByte (ByteString.take 192 input)) = False
   -- Zero-record patch (198 bytes exactly) is valid: identity diff.
   -- When records exist, first byte must be a valid mode (0 or 1).
-  | BS.length bs > 198 = BS.index bs 198 <= 1
+  | ByteString.length input > 198 = ByteString.index input 198 <= 1
   | otherwise = True
   where
-    isHeaderByte b = (b >= 0x20 && b <= 0x7E) || b == 0
+    isHeaderByte headerByte = (headerByte >= 0x20 && headerByte <= 0x7E) || headerByte == 0
 
 ----------------------------------------------------------------------------
 -- Parse
 ----------------------------------------------------------------------------
 
 parseDPS :: ByteString -> Either String DPSPatch
-parseDPS bs
-  | BS.length bs < 198 = Left "DPS: input too short"
-  | BS.index bs 193 /= 1 = Left ("DPS: unsupported version byte: " ++ show (BS.index bs 193))
-  | otherwise = runGet parseDPSBody bs
+parseDPS input
+  | ByteString.length input < 198 = Left "DPS: input too short"
+  | ByteString.index input 193 /= 1 = Left ("DPS: unsupported version byte: " ++ show (ByteString.index input 193))
+  | otherwise = runGet parseDPSBody input
 
 parseDPSBody :: Get DPSPatch
 parseDPSBody = do
@@ -109,43 +109,43 @@ parseDPSBody = do
   version <- trimNull <$> getBytes 64
   flagByte <- getByte
   case toDPSStability flagByte of
-    Left err -> fail err
+    Left errorMessage -> fail errorMessage
     Right flag -> do
-      ver     <- getByte
-      origSz  <- fromIntegral <$> G.word32LE
-      recs    <- parseRecords
+      formatVersion     <- getByte
+      originalSize  <- fromIntegral <$> Get.word32LE
+      records    <- parseRecords
       pure DPSPatch
         { dpsName       = name
         , dpsAuthor     = author
         , dpsVersion    = version
         , dpsStability       = flag
-        , dpsFormatVersion = ver
-        , dpsOrigSize   = origSz
-        , dpsRecords    = recs
+        , dpsFormatVersion = formatVersion
+        , dpsOriginalSize   = originalSize
+        , dpsRecords    = records
         }
 
 parseRecords :: Get [DPSRecord]
 parseRecords = do
-  avail <- remaining
-  if avail < 5 then pure []
+  available <- remaining
+  if available < 5 then pure []
   else do
     mode <- getByte
-    outOff <- fromIntegral <$> G.word32LE
+    outputOffset <- fromIntegral <$> Get.word32LE
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
-    payload <- case mode of
+    record <- case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
-        srcOff <- fromIntegral <$> G.word32LE
-        len    <- fromIntegral <$> G.word32LE
-        pure (DPSRecord CopyFromROM outOff (PayloadCopy srcOff len))
+        sourceOffset <- fromIntegral <$> Get.word32LE
+        dataLength    <- fromIntegral <$> Get.word32LE
+        pure (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset dataLength))
       _ -> do  -- EnclosedData: read length + data from patch
-        len  <- fromIntegral <$> G.word32LE :: Get Int
-        dat  <- getBytes len
-        pure (DPSRecord EnclosedData outOff (PayloadData dat))
+        dataLength  <- fromIntegral <$> Get.word32LE :: Get Int
+        payload  <- getBytes dataLength
+        pure (DPSRecord EnclosedData outputOffset (PayloadData payload))
     rest <- parseRecords
-    pure (payload : rest)
+    pure (record : rest)
 
 trimNull :: ByteString -> ByteString
-trimNull = BS.takeWhile (/= 0)
+trimNull = ByteString.takeWhile (/= 0)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -156,65 +156,65 @@ applyDPS :: DPSPatch -> ByteString -> Either String ByteString
 applyDPS patch source = Right $ buildOutput source (dpsRecords patch)
 
 buildOutput :: ByteString -> [DPSRecord] -> ByteString
-buildOutput source recs =
+buildOutput source records =
   -- DPS builds output by writing chunks at specified offsets.
   -- Start with a copy of the source, then overwrite at each record's offset.
   let base = source
-      apply1 buf (DPSRecord _ outOff (PayloadData dat)) =
-        overwriteAt buf (fromIntegral outOff) dat
-      apply1 buf (DPSRecord _ outOff (PayloadCopy srcOff len)) =
-        let chunk = takePadded (fromIntegral len) (fromIntegral srcOff) source
-        in overwriteAt buf (fromIntegral outOff) chunk
-  in foldl' apply1 base recs
+      applyRecord buffer (DPSRecord _ outputOffset (PayloadData payload)) =
+        overwriteAt buffer (fromIntegral outputOffset) payload
+      applyRecord buffer (DPSRecord _ outputOffset (PayloadCopy sourceOffset dataLength)) =
+        let chunk = takePadded (fromIntegral dataLength) (fromIntegral sourceOffset) source
+        in overwriteAt buffer (fromIntegral outputOffset) chunk
+  in foldl' applyRecord base records
 
 -- | Write bytes at a given offset, extending with zeros if needed.
 overwriteAt :: ByteString -> Int -> ByteString -> ByteString
-overwriteAt buf off dat
-  | off + BS.length dat <= BS.length buf =
-      let (before, rest) = BS.splitAt off buf
-          after = BS.drop (BS.length dat) rest
-      in before <> dat <> after
-  | off <= BS.length buf =
-      BS.take off buf <> dat
+overwriteAt buffer offset payload
+  | offset + ByteString.length payload <= ByteString.length buffer =
+      let (before, rest) = ByteString.splitAt offset buffer
+          after = ByteString.drop (ByteString.length payload) rest
+      in before <> payload <> after
+  | offset <= ByteString.length buffer =
+      ByteString.take offset buffer <> payload
   | otherwise =
-      buf <> BS.replicate (off - BS.length buf) 0 <> dat
+      buffer <> ByteString.replicate (offset - ByteString.length buffer) 0 <> payload
 
 -- | Safe slice from a ByteString, padding with zeros if out of range.
 takePadded :: Int -> Int -> ByteString -> ByteString
-takePadded len off bs
-  | off >= BS.length bs = BS.replicate len 0
-  | off + len > BS.length bs =
-      let available = BS.take (BS.length bs - off) (BS.drop off bs)
-      in available <> BS.replicate (len - BS.length available) 0
-  | otherwise = BS.take len (BS.drop off bs)
+takePadded dataLength offset input
+  | offset >= ByteString.length input = ByteString.replicate dataLength 0
+  | offset + dataLength > ByteString.length input =
+      let available = ByteString.take (ByteString.length input - offset) (ByteString.drop offset input)
+      in available <> ByteString.replicate (dataLength - ByteString.length available) 0
+  | otherwise = ByteString.take dataLength (ByteString.drop offset input)
 
 ----------------------------------------------------------------------------
 -- Info
 ----------------------------------------------------------------------------
 
 dpsMeta :: DPSPatch -> [(String, String)]
-dpsMeta p = concat
-  [ fieldPair "name"    (dpsName p)
-  , fieldPair "author"  (dpsAuthor p)
-  , fieldPair "version" (dpsVersion p)
-  , [("orig size", show (dpsOrigSize p))]
-  , [("flag", "unstable") | dpsStability p == DPSUnstable]
+dpsMeta patch = concat
+  [ fieldPair "name"    (dpsName patch)
+  , fieldPair "author"  (dpsAuthor patch)
+  , fieldPair "version" (dpsVersion patch)
+  , [("orig size", show (dpsOriginalSize patch))]
+  , [("flag", "unstable") | dpsStability patch == DPSUnstable]
   ]
   where
-    fieldPair _ bs | BS.null bs = []
-    fieldPair label bs = [(label, BS8.unpack bs)]
+    fieldPair _ value | ByteString.null value = []
+    fieldPair label value = [(label, ByteString8.unpack value)]
 
 dpsInfo :: DPSPatch -> String
-dpsInfo p = unlines $ filter (not . null) $
+dpsInfo patch = unlines $ filter (not . null) $
   [ "format:      DPS (Deufeufeu Patching System)" ]
-  ++ map renderField (dpsMeta p)
-  ++ [ "records:     " ++ show (length (dpsRecords p))
-     , "  copy:      " ++ show nCopy
-     , "  enclosed:  " ++ show nEnclosed
+  ++ map renderField (dpsMeta patch)
+  ++ [ "records:     " ++ show (length (dpsRecords patch))
+     , "  copy:      " ++ show copyCount
+     , "  enclosed:  " ++ show enclosedCount
      ]
   where
-    nCopy = length [() | DPSRecord CopyFromROM _ _ <- dpsRecords p]
-    nEnclosed = length [() | DPSRecord EnclosedData _ _ <- dpsRecords p]
+    copyCount = length [() | DPSRecord CopyFromROM _ _ <- dpsRecords patch]
+    enclosedCount = length [() | DPSRecord EnclosedData _ _ <- dpsRecords patch]
 
 ----------------------------------------------------------------------------
 -- Create
@@ -223,39 +223,39 @@ dpsInfo p = unlines $ filter (not . null) $
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
 createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> ByteString
-createDPS old new name author version stability = BL.toStrict $ toLazyByteString $
+createDPS old new name author version stability = LazyByteString.toStrict $ toLazyByteString $
     padField 64 name                    -- name
     <> padField 64 author               -- author
     <> padField 64 version              -- version
     <> word8 (fromDPSStability stability)  -- flag
     <> word8 1                          -- DPS version
-    <> putWord32LE (fromIntegral (BS.length old) :: Word32)  -- orig size
-    <> foldMap encodeRec (dpsRecordsFromDiff old new)
+    <> putWord32LE (fromIntegral (ByteString.length old) :: Word32)  -- orig size
+    <> foldMap encodeRecord (dpsRecordsFromDiff old new)
   where
-    padField n s =
-      let bs = BS8.pack (take n s)
-      in byteString bs <> byteString (BS.replicate (n - BS.length bs) 0)
+    padField fieldLength fieldString =
+      let fieldBytes = ByteString8.pack (take fieldLength fieldString)
+      in byteString fieldBytes <> byteString (ByteString.replicate (fieldLength - ByteString.length fieldBytes) 0)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [(Word8, Int, ByteString)]
-dpsRecordsFromDiff old new = go 0 (diffHunks old new)
+dpsRecordsFromDiff old new = buildRecords 0 (diffHunks old new)
   where
-    go _ [] = []
-    go pos ((off, dat) : rest)
-      | off > pos = (0, pos, encCopy pos (off - pos))    -- CopyFromROM gap
-                    : (1, off, dat)                        -- EnclosedData
-                    : go (off + BS.length dat) rest
-      | otherwise = (1, off, dat) : go (off + BS.length dat) rest
-    encCopy srcOff len = BL.toStrict $ toLazyByteString $
-      putWord32LE (fromIntegral srcOff :: Word32)
-      <> putWord32LE (fromIntegral len :: Word32)
+    buildRecords _ [] = []
+    buildRecords position ((hunkOffset, hunkData) : rest)
+      | hunkOffset > position = (0, position, encodeCopy position (hunkOffset - position))    -- CopyFromROM gap
+                    : (1, hunkOffset, hunkData)                        -- EnclosedData
+                    : buildRecords (hunkOffset + ByteString.length hunkData) rest
+      | otherwise = (1, hunkOffset, hunkData) : buildRecords (hunkOffset + ByteString.length hunkData) rest
+    encodeCopy sourceOffset copyLength = LazyByteString.toStrict $ toLazyByteString $
+      putWord32LE (fromIntegral sourceOffset :: Word32)
+      <> putWord32LE (fromIntegral copyLength :: Word32)
 
-encodeRec :: (Word8, Int, ByteString) -> Builder
-encodeRec (0, outOff, copyDat) =  -- CopyFromROM: mode + outOff + srcOff + len (pre-encoded in copyDat)
+encodeRecord :: (Word8, Int, ByteString) -> Builder
+encodeRecord (0, outputOffset, copyPayload) =  -- CopyFromROM: mode + outOff + srcOff + len (pre-encoded in copyPayload)
     word8 0
-    <> putWord32LE (fromIntegral outOff :: Word32)
-    <> byteString copyDat
-encodeRec (_, outOff, dat) =      -- EnclosedData: mode + outOff + len + data
+    <> putWord32LE (fromIntegral outputOffset :: Word32)
+    <> byteString copyPayload
+encodeRecord (_, outputOffset, payload) =      -- EnclosedData: mode + outOff + len + data
     word8 1
-    <> putWord32LE (fromIntegral outOff :: Word32)
-    <> putWord32LE (fromIntegral (BS.length dat) :: Word32)
-    <> byteString dat
+    <> putWord32LE (fromIntegral outputOffset :: Word32)
+    <> putWord32LE (fromIntegral (ByteString.length payload) :: Word32)
+    <> byteString payload

@@ -7,7 +7,7 @@ import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
 import Control.Monad (when)
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
@@ -18,41 +18,41 @@ convertTests :: RomCache -> IO TestTree
 convertTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  tests <- mapM (mkConvertTest romCache repo) rows
+  tests <- mapM (makeConvertTest romCache repo) rows
   pure (testGroup "convert" (concat tests))
 
-mkConvertTest :: RomCache -> FilePath -> [String] -> IO [TestTree]
-mkConvertTest romCache repo fields = case fields of
-  (srcFmt : tgtFmt : patchRel : baseRel : targetSha : result : rest)
+makeConvertTest :: RomCache -> FilePath -> [String] -> IO [TestTree]
+makeConvertTest romCache repo fields = case fields of
+  (sourceFormat : targetFormat : patchRel : baseRel : targetSha : result : rest)
     | "skip:" `isPrefixOf` result -> pure []
     | otherwise -> do
-        let warningsStr = case rest of (w:_) -> w; _ -> ""
-            flagsStr    = case rest of (_:f:_) -> f; _ -> ""
+        let warningsString = case rest of (warning:_) -> warning; _ -> ""
+            flagsString    = case rest of (_:flagField:_) -> flagField; _ -> ""
             patchPath = repo </> patchRel
         patchExists <- doesFileExist patchPath
         if not patchExists then pure [] else
-          case parseCreateFormat tgtFmt of
+          case parseCreateFormat targetFormat of
             Nothing -> pure []
-            Just tgtCfmt -> do
-              let label = srcFmt ++ " -> " ++ tgtFmt ++ " (" ++ patchRel ++ ")"
+            Just targetCreateFormat -> do
+              let label = sourceFormat ++ " -> " ++ targetFormat ++ " (" ++ patchRel ++ ")"
               pure [testCase label $
                 runConvertTest romCache repo patchPath baseRel targetSha result
-                  warningsStr flagsStr tgtCfmt]
+                  warningsString flagsString targetCreateFormat]
   _ -> pure []
 
 runConvertTest :: RomCache -> FilePath -> FilePath -> String -> String -> String
                -> String -> String -> CreateFormat -> IO ()
-runConvertTest romCache repo patchPath baseRel targetSha result warningsStr flagsStr tgtCfmt = do
-  patchBs <- BS.readFile patchPath
-  case parseSome patchBs of
-    Left err -> assertFailure ("parseSome failed: " ++ err)
-    Right sp -> do
-      let flags = words flagsStr
+runConvertTest romCache repo patchPath baseRel targetSha result warningsString flagsString targetCreateFormat = do
+  patchBytes <- ByteString.readFile patchPath
+  case parseSome patchBytes of
+    Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+    Right parsed -> do
+      let flags = words flagsString
           useWith = "--with" `elem` flags
           includeUndo = "--no-undo" `notElem` flags
           includeValidate = "--no-validate" `notElem` flags
 
-      mBase <- if useWith && not (null baseRel)
+      maybeBase <- if useWith && not (null baseRel)
                then do
                  let basePath = repo </> baseRel
                  exists <- doesFileExist basePath
@@ -61,52 +61,52 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsStr flag
                    else pure Nothing
                else pure Nothing
 
-      let meta = defaultMeta { cmUndo = includeUndo, cmValidate = includeValidate }
-      convResult <- attemptConvert sp tgtCfmt mBase meta
+      let meta = defaultMeta { metaUndo = includeUndo, metaValidate = includeValidate }
+      convResult <- attemptConvert parsed targetCreateFormat maybeBase meta
 
       if "reject:" `isPrefixOf` result
         then do
           let expectedPattern = drop 7 result
           case convResult of
             Right _ -> assertFailure "expected rejection but conversion succeeded"
-            Left err -> assertBool
-              ("expected '" ++ expectedPattern ++ "' in error: " ++ err)
-              (matchPattern expectedPattern err)
+            Left errorMessage -> assertBool
+              ("expected '" ++ expectedPattern ++ "' in error: " ++ errorMessage)
+              (matchPattern expectedPattern errorMessage)
         else do
           case convResult of
-            Left err -> assertFailure ("conversion failed: " ++ err)
-            Right (convertedBs, notes) -> do
-              checkWarnings warningsStr notes
+            Left errorMessage -> assertFailure ("conversion failed: " ++ errorMessage)
+            Right (convertedBytes, notes) -> do
+              checkWarnings warningsString notes
               when (not (null targetSha) && not (null baseRel)) $ do
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
-                  baseBs <- maybe (cachedReadFile romCache basePath) pure mBase
-                  case parseSome convertedBs of
-                    Left err -> assertFailure ("re-parse converted failed: " ++ err)
-                    Right sp2 -> do
-                      applied <- applyPatch sp2 baseBs
+                  baseBytes <- maybe (cachedReadFile romCache basePath) pure maybeBase
+                  case parseSome convertedBytes of
+                    Left errorMessage -> assertFailure ("re-parse converted failed: " ++ errorMessage)
+                    Right convertedParsed -> do
+                      applied <- applyPatch convertedParsed baseBytes
                       case applied of
-                        Left err -> assertFailure ("apply converted failed: " ++ err)
+                        Left errorMessage -> assertFailure ("apply converted failed: " ++ errorMessage)
                         Right output ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
 -- | Check that each comma-separated expected pattern matches at least one note.
 checkWarnings :: String -> [String] -> IO ()
 checkWarnings "" _ = pure ()
-checkWarnings warningsStr notes = do
-  let patterns = map trim (splitComma warningsStr)
-  mapM_ (\pat ->
-    when (not (null pat)) $
+checkWarnings warningsString notes = do
+  let patterns = map trim (splitComma warningsString)
+  mapM_ (\pattern ->
+    when (not (null pattern)) $
       assertBool
-        ("expected warning pattern '" ++ pat ++ "' not found in notes: " ++ show notes)
-        (any (matchPattern pat) notes)
+        ("expected warning pattern '" ++ pattern ++ "' not found in notes: " ++ show notes)
+        (any (matchPattern pattern) notes)
     ) patterns
 
 splitComma :: String -> [String]
 splitComma [] = [""]
-splitComma (',':cs) = "" : splitComma cs
-splitComma (c:cs) = case splitComma cs of
-  (x:xs) -> (c:x) : xs
-  []     -> [[c]]
+splitComma (',':rest) = "" : splitComma rest
+splitComma (char:rest) = case splitComma rest of
+  (segment:segments) -> (char:segment) : segments
+  []                 -> [[char]]
 

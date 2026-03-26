@@ -6,8 +6,8 @@ import Integration.Helpers
 import Patch.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (isInfixOf)
 import System.Directory (doesFileExist, findExecutable)
 import System.Exit (ExitCode(..))
@@ -19,13 +19,13 @@ import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 cliTests :: RomCache -> IO TestTree
 cliTests _romCache = do
   repo <- repoDir
-  mSlap <- findSlapBinary
+  maybeSlap <- findSlapBinary
   let inProcess = concat
         [ corruptTests
         , warningTests repo
         , pchtxtDetectTests
         ]
-  subprocessTests <- case mSlap of
+  subprocessTests <- case maybeSlap of
     Nothing -> pure []
     Just slap -> do
       let dm4yBase = repo </> "test/data/dm4y/base.gbc"
@@ -61,26 +61,26 @@ cliTests _romCache = do
 corruptTests :: [TestTree]
 corruptTests =
   [ testCase "corrupt/empty file" $
-      case parseSome BS.empty of
-        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
+      case parseSome ByteString.empty of
+        Left errorMessage -> assertBool "expected 'unknown'" (ciContains "unknown" errorMessage)
         Right _ -> assertFailure "expected parse failure for empty file"
 
   , testCase "corrupt/random garbage" $ do
-      let bs = BS.pack $ take 256 $ map fromIntegral $
-                 iterate (\x -> (x * 1103515245 + 12345) `mod` 256) (42 :: Int)
-      case parseSome bs of
-        Left err -> assertBool "expected 'unknown'" (ciContains "unknown" err)
+      let garbageBytes = ByteString.pack $ take 256 $ map fromIntegral $
+                 iterate (\seed -> (seed * 1103515245 + 12345) `mod` 256) (42 :: Int)
+      case parseSome garbageBytes of
+        Left errorMessage -> assertBool "expected 'unknown'" (ciContains "unknown" errorMessage)
         Right _ -> assertFailure "expected parse failure for random garbage"
 
   , testCase "corrupt/info truncated IPS (graceful)" $ do
-      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome bs of
-        Left err -> assertFailure ("parseSome rejected truncated IPS: " ++ err)
-        Right sp -> assertBool "expected '0' in info" ("0" `isInfixOf` spInfo sp)
+      let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome truncatedIPS of
+        Left errorMessage -> assertFailure ("parseSome rejected truncated IPS: " ++ errorMessage)
+        Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` patchInfo parsed)
 
   , testCase "corrupt/info truncated BPS" $ do
-      let bs = BS.pack [0x42,0x50,0x53,0x31]
-      case parseSome bs of
+      let truncatedBPS = ByteString.pack [0x42,0x50,0x53,0x31]
+      case parseSome truncatedBPS of
         Left _ -> pure ()
         Right _ -> assertFailure "expected parse failure for truncated BPS"
   ]
@@ -106,10 +106,10 @@ dryrunTests slap base bps =
 
   , testCase "dryrun/in-place leaves source untouched" $
       withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
-        beforeSha <- sha1Hex <$> BS.readFile work
+        ByteString.readFile base >>= ByteString.writeFile work
+        beforeSha <- sha1Hex <$> ByteString.readFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup", "--dry-run"]
-        afterSha <- sha1Hex <$> BS.readFile work
+        afterSha <- sha1Hex <$> ByteString.readFile work
         assertEqual "source modified" beforeSha afterSha
   ]
 
@@ -131,9 +131,9 @@ noverifyTests slap _base bps =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4096 * 1024)
         removeIfExists out
-        (ec, sout, serr) <- runSlap slap ["apply", bps, wrong, "-o", out]
-        let combined = sout ++ serr
-        case ec of
+        (exitCode, stdoutText, stderrText) <- runSlap slap ["apply", bps, wrong, "-o", out]
+        let combined = stdoutText ++ stderrText
+        case exitCode of
           ExitFailure _ -> do
             assertBool "expected 'mismatch'" (ciContains "mismatch" combined)
             assertBool "expected '--no-verify'" ("--no-verify" `isInfixOf` combined)
@@ -153,19 +153,19 @@ inplaceTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 inplaceTests slap base ips =
   [ testCase "inplace/creates .bak" $
       withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
+        ByteString.readFile base >>= ByteString.writeFile work
         _ <- runSlap slap ["apply", ips, work, "--in-place"]
-        let bak = work ++ ".bak"
-        exists <- doesFileExist bak
+        let backup = work ++ ".bak"
+        exists <- doesFileExist backup
         assertBool "no .bak created" exists
-        removeIfExists bak
+        removeIfExists backup
 
   , testCase "inplace/--no-backup skips .bak" $
       withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
+        ByteString.readFile base >>= ByteString.writeFile work
         _ <- runSlap slap ["apply", ips, work, "--in-place", "--no-backup"]
-        let bak = work ++ ".bak"
-        exists <- doesFileExist bak
+        let backup = work ++ ".bak"
+        exists <- doesFileExist backup
         assertBool ".bak was created" (not exists)
   ]
 
@@ -173,13 +173,13 @@ collisionTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 collisionTests slap base ips =
   [ testCase "collision/overwrite refused" $
       withTempFile "slap-out" $ \out -> do
-        BS.writeFile out (BS.pack [0])  -- existing file
+        ByteString.writeFile out (ByteString.pack [0])  -- existing file
         expectFail slap ["apply", ips, base, "-o", out]
           "collision/overwrite refused" "already exists"
 
   , testCase "collision/overwrite with --force" $
       withTempFile "slap-out" $ \out -> do
-        BS.writeFile out (BS.pack [0])
+        ByteString.writeFile out (ByteString.pack [0])
         expectOk slap ["apply", ips, base, "-o", out, "--force"]
           "collision/overwrite with --force" "applied"
   ]
@@ -189,10 +189,10 @@ verboseTests slap base ips =
   [ testCase "verbose/prints records" $
       withTempFile "slap-out" $ \out -> do
         removeIfExists out
-        (ec, sout, serr) <- runSlap slap
+        (exitCode, stdoutText, stderrText) <- runSlap slap
           ["apply", ips, base, "-o", out, "--verbose", "--force"]
-        let combined = sout ++ serr
-        case ec of
+        let combined = stdoutText ++ stderrText
+        case exitCode of
           ExitSuccess -> assertBool "expected [1/ in output"
             ("[1/" `isInfixOf` combined)
           _ -> assertFailure ("verbose failed: " ++ combined)
@@ -208,23 +208,23 @@ compoundTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 compoundTests slap base ips bps =
   [ testCase "compound/in-place+force+verbose+no-backup (IPS)" $
       withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
+        ByteString.readFile base >>= ByteString.writeFile work
         expectOk slap ["apply", ips, work, "--in-place", "--force", "--verbose", "--no-backup"]
           "compound/IPS" "applied"
 
   , testCase "compound/dry-run+verbose shows both" $
-      do (_, sout, serr) <- runSlap slap
+      do (_, stdoutText, stderrText) <- runSlap slap
            ["apply", ips, base, "--dry-run", "--verbose"]
-         let combined = sout ++ serr
+         let combined = stdoutText ++ stderrText
          assertBool "missing 'would apply'" ("would apply" `isInfixOf` combined)
          assertBool "missing [1/" ("[1/" `isInfixOf` combined)
 
   , testCase "compound/dry-run+force doesn't modify" $
       withTempFile "slap-work" $ \work -> do
-        BS.readFile base >>= BS.writeFile work
-        beforeSha <- sha1Hex <$> BS.readFile work
+        ByteString.readFile base >>= ByteString.writeFile work
+        beforeSha <- sha1Hex <$> ByteString.readFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--dry-run", "--force"]
-        afterSha <- sha1Hex <$> BS.readFile work
+        afterSha <- sha1Hex <$> ByteString.readFile work
         assertEqual "source modified" beforeSha afterSha
 
   , testCase "compound/explicit -o creates file" $
@@ -240,7 +240,7 @@ createFlagTests slap base bps =
   [ testCase "create/ppf3+undo+validate+desc" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         expectOk slap ["create", "--format", "ppf3", "--undo", "--validate",
                         "-d", "test patch", base, target, patch]
@@ -249,7 +249,7 @@ createFlagTests slap base bps =
   , testCase "create/ppf3 undo data present" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ppf3", "--undo", "--validate",
                            "-d", "test patch", base, target, patch]
@@ -260,7 +260,7 @@ aliasTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 aliasTests slap base ips bps =
   [ testCase "aliases/--yolo overwrites" $
       withTempFile "slap-out" $ \out -> do
-        BS.writeFile out (BS.pack [0])
+        ByteString.writeFile out (ByteString.pack [0])
         expectOk slap ["apply", ips, base, "-o", out, "--yolo"]
           "aliases/--yolo overwrites" "applied"
 
@@ -277,25 +277,25 @@ aliasTests slap base ips bps =
 warningTests :: FilePath -> [TestTree]
 warningTests repo =
   [ testCase "warnings/truncated IPS no EOF" $ do
-      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome bs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> assertBool "expected 'no EOF marker' in warnings"
-                     (any (ciContains "no EOF marker") (spWarnings sp))
+      let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome truncatedIPS of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> assertBool "expected 'no EOF marker' in warnings"
+                     (any (ciContains "no EOF marker") (patchWarnings parsed))
 
   , testCase "warnings/truncated IPS empty" $ do
-      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome bs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> assertBool "expected 'empty patch' in info"
-                     (ciContains "empty patch" (spInfo sp))
+      let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
+      case parseSome truncatedIPS of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> assertBool "expected 'empty patch' in info"
+                     (ciContains "empty patch" (patchInfo parsed))
 
   , testCase "warnings/empty IPS warns empty only" $ do
-      let bs = BS.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
-      case parseSome bs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> do
-          let info = spInfo sp
+      let emptyIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
+      case parseSome emptyIPS of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> do
+          let info = patchInfo parsed
           assertBool "should warn 'empty patch'" ("empty patch" `isInfixOf` info)
           assertBool "should NOT warn 'no EOF'" (not ("no EOF" `isInfixOf` info))
 
@@ -303,82 +303,82 @@ warningTests repo =
       let ipsPath = repo </> "test/data/dm4y/patch.ips"
       exists <- doesFileExist ipsPath
       when exists $ do
-        bs <- BS.readFile ipsPath
-        case parseSome bs of
-          Left err -> assertFailure ("parseSome failed: " ++ err)
-          Right sp -> assertBool "unexpected warning"
-                       (not ("warning" `isInfixOf` spInfo sp))
+        patchBytes <- ByteString.readFile ipsPath
+        case parseSome patchBytes of
+          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Right parsed -> assertBool "unexpected warning"
+                       (not ("warning" `isInfixOf` patchInfo parsed))
   ]
 
 
 archiveTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 archiveTests slap base ips bps =
   [ testCase "archive/apply ZIP-wrapped patch" $
-      withTempDir "slap-arc" $ \tmpDir -> do
+      withTempDir "slap-arc" $ \temporaryDirectory -> do
         hasZip <- findExecutable "zip"
         hasUnzip <- findExecutable "unzip"
         case (hasZip, hasUnzip) of
           (Just _, Just _) -> do
-            let zipFile = tmpDir </> "patch.zip"
-                result  = tmpDir </> "result"
-                direct  = tmpDir </> "direct"
-            (ec, _, _) <- readProcessWithExitCode "zip"
+            let zipFile = temporaryDirectory </> "patch.zip"
+                result  = temporaryDirectory </> "result"
+                direct  = temporaryDirectory </> "direct"
+            (exitCode, _, _) <- readProcessWithExitCode "zip"
               ["-j", zipFile, ips] ""
-            case ec of
+            case exitCode of
               ExitFailure _ -> assertFailure "zip failed"
               ExitSuccess -> do
-                BS.readFile base >>= BS.writeFile result
+                ByteString.readFile base >>= ByteString.writeFile result
                 expectOk slap ["apply", zipFile, result, "--in-place", "--no-backup"]
                   "archive/apply" "applied"
-                BS.readFile base >>= BS.writeFile direct
+                ByteString.readFile base >>= ByteString.writeFile direct
                 _ <- runSlap slap ["apply", ips, direct, "--in-place", "--no-backup"]
-                zipSha    <- sha1Hex <$> BS.readFile result
-                directSha <- sha1Hex <$> BS.readFile direct
+                zipSha    <- sha1Hex <$> ByteString.readFile result
+                directSha <- sha1Hex <$> ByteString.readFile direct
                 assertEqual "SHA1 mismatch" directSha zipSha
           _ -> pure ()
 
   , testCase "archive/info ZIP-wrapped" $
-      withTempDir "slap-arc" $ \tmpDir -> do
+      withTempDir "slap-arc" $ \temporaryDirectory -> do
         hasZip <- findExecutable "zip"
         hasUnzip <- findExecutable "unzip"
         case (hasZip, hasUnzip) of
           (Just _, Just _) -> do
-            let zipFile = tmpDir </> "patch.zip"
+            let zipFile = temporaryDirectory </> "patch.zip"
             _ <- readProcessWithExitCode "zip" ["-j", zipFile, ips] ""
             expectOk slap ["info", zipFile] "archive/info" "IPS"
           _ -> pure ()
 
   , testCase "archive/explain ZIP-wrapped" $
-      withTempDir "slap-arc" $ \tmpDir -> do
+      withTempDir "slap-arc" $ \temporaryDirectory -> do
         hasZip <- findExecutable "zip"
         hasUnzip <- findExecutable "unzip"
         case (hasZip, hasUnzip) of
           (Just _, Just _) -> do
-            let zipFile = tmpDir </> "patch.zip"
+            let zipFile = temporaryDirectory </> "patch.zip"
             _ <- readProcessWithExitCode "zip" ["-j", zipFile, ips] ""
             expectOk slap ["explain", zipFile] "archive/explain" "IPS"
           _ -> pure ()
 
   , testCase "archive/ZIP chaff filters readme" $
-      withTempDir "slap-arc" $ \tmpDir -> do
+      withTempDir "slap-arc" $ \temporaryDirectory -> do
         hasZip <- findExecutable "zip"
         hasUnzip <- findExecutable "unzip"
         case (hasZip, hasUnzip) of
           (Just _, Just _) -> do
-            let chaffZip = tmpDir </> "chaff.zip"
-                readme   = tmpDir </> "readme.txt"
-            BS.writeFile readme (BS.pack [0x52,0x45,0x41,0x44,0x4D,0x45])
+            let chaffZip = temporaryDirectory </> "chaff.zip"
+                readme   = temporaryDirectory </> "readme.txt"
+            ByteString.writeFile readme (ByteString.pack [0x52,0x45,0x41,0x44,0x4D,0x45])
             _ <- readProcessWithExitCode "zip" ["-j", chaffZip, ips, readme] ""
             expectOk slap ["info", chaffZip] "archive/chaff" "IPS"
           _ -> pure ()
 
   , testCase "archive/multi-entry ZIP fails" $
-      withTempDir "slap-arc" $ \tmpDir -> do
+      withTempDir "slap-arc" $ \temporaryDirectory -> do
         hasZip <- findExecutable "zip"
         hasUnzip <- findExecutable "unzip"
         case (hasZip, hasUnzip) of
           (Just _, Just _) -> do
-            let multiZip = tmpDir </> "multi.zip"
+            let multiZip = temporaryDirectory </> "multi.zip"
             _ <- readProcessWithExitCode "zip" ["-j", multiZip, ips, bps] ""
             expectFail slap ["info", multiZip] "archive/multi" "candidate"
           _ -> pure ()
@@ -389,10 +389,10 @@ ipsTruncateTests slap base =
   [ testCase "truncate/IPS truncation in info" $
       withTempFile "slap-small" $ \small ->
       withTempFile "slap-patch" $ \patch -> do
-        baseBs <- BS.readFile base
-        BS.writeFile small (BS.take 65536 baseBs)
-        (ec, _, _) <- runSlap slap ["create", "--format", "ips", base, small, patch]
-        case ec of
+        baseBytes <- ByteString.readFile base
+        ByteString.writeFile small (ByteString.take 65536 baseBytes)
+        (exitCode, _, _) <- runSlap slap ["create", "--format", "ips", base, small, patch]
+        case exitCode of
           ExitSuccess -> expectOk slap ["info", patch] "truncate/info" "truncate"
           _ -> assertFailure "create failed"
 
@@ -400,17 +400,17 @@ ipsTruncateTests slap base =
       withTempFile "slap-small" $ \small ->
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-result" $ \result -> do
-        baseBs <- BS.readFile base
-        let smallBs = BS.take 65536 baseBs
-        BS.writeFile small smallBs
-        (ec, _, _) <- runSlap slap ["create", "--format", "ips", base, small, patch]
-        case ec of
+        baseBytes <- ByteString.readFile base
+        let smallBytes = ByteString.take 65536 baseBytes
+        ByteString.writeFile small smallBytes
+        (exitCode, _, _) <- runSlap slap ["create", "--format", "ips", base, small, patch]
+        case exitCode of
           ExitSuccess -> do
-            BS.writeFile result baseBs
+            ByteString.writeFile result baseBytes
             expectOk slap ["apply", patch, result, "--in-place", "--no-backup", "--force"]
               "truncate/apply" "applied"
-            smallSha  <- pure (sha1Hex smallBs)
-            resultSha <- sha1Hex <$> BS.readFile result
+            smallSha  <- pure (sha1Hex smallBytes)
+            resultSha <- sha1Hex <$> ByteString.readFile result
             assertEqual "SHA1 mismatch" smallSha resultSha
           _ -> assertFailure "create failed"
   ]
@@ -419,28 +419,28 @@ customCodetableTests :: FilePath -> [TestTree]
 customCodetableTests slap =
   [ testCase "custom-codetable/info" $
       withTempFile "slap-vcdiff" $ \patch -> do
-        BS.writeFile patch vcdiffCustom
+        ByteString.writeFile patch vcdiffCustom
         expectOk slap ["info", patch] "custom-codetable/info" "custom"
 
   , testCase "custom-codetable/apply" $
       withTempFile "slap-vcdiff" $ \patch ->
       withTempFile "slap-source" $ \source ->
       withTempFile "slap-result" $ \result -> do
-        BS.writeFile patch vcdiffCustom
+        ByteString.writeFile patch vcdiffCustom
         -- "AABBCCDD"
-        BS.writeFile source (BS.pack [0x41,0x41,0x42,0x42,0x43,0x43,0x44,0x44])
+        ByteString.writeFile source (ByteString.pack [0x41,0x41,0x42,0x42,0x43,0x43,0x44,0x44])
         removeIfExists result
-        (ec, _, serr) <- runSlap slap ["apply", patch, source, "-o", result, "--force"]
-        case ec of
+        (exitCode, _, stderrText) <- runSlap slap ["apply", patch, source, "-o", result, "--force"]
+        case exitCode of
           ExitSuccess -> do
-            got <- BS.readFile result
+            got <- ByteString.readFile result
             -- Expected: "AABBCCDDEE"
             assertEqual "wrong output"
-              (BS.pack [0x41,0x41,0x42,0x42,0x43,0x43,0x44,0x44,0x45,0x45]) got
-          _ -> assertFailure ("apply failed: " ++ serr)
+              (ByteString.pack [0x41,0x41,0x42,0x42,0x43,0x43,0x44,0x44,0x45,0x45]) got
+          _ -> assertFailure ("apply failed: " ++ stderrText)
   ]
   where
-    vcdiffCustom = BS.pack
+    vcdiffCustom = ByteString.pack
       [ 0xd6,0xc3,0xc4,0x00,0x02,0x16,0x05,0x02
       , 0xd6,0xc3,0xc4,0x00,0x00,0x01,0x8c,0x00,0x00,0x0a
       , 0x8c,0x00,0x00,0x00,0x03,0x01,0x13,0x8c,0x00,0x00
@@ -450,12 +450,12 @@ customCodetableTests slap =
 pchtxtDetectTests :: [TestTree]
 pchtxtDetectTests =
   [ testCase "pchtxt-detect/single-slash before directive" $ do
-      let bs = BS.pack (map (fromIntegral . fromEnum)
+      let pchtxtBytes = ByteString.pack (map (fromIntegral . fromEnum)
             "/ block comment\n/ another line\n@enabled\n00000000 FF\n")
-      case parseSome bs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> assertBool "expected 'PCHTXT' in format"
-                     ("PCHTXT" `isInfixOf` spFormat sp)
+      case parseSome pchtxtBytes of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> assertBool "expected 'PCHTXT' in format"
+                     ("PCHTXT" `isInfixOf` patchFormat parsed)
   ]
 
 ninja1VerifyTests :: FilePath -> FilePath -> FilePath -> [TestTree]
@@ -463,7 +463,7 @@ ninja1VerifyTests slap base ips =
   [ testCase "ninja1-verify/info shows source CRC" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         expectOk slap ["info", patch] "ninja1/info" "source CRC"
@@ -472,7 +472,7 @@ ninja1VerifyTests slap base ips =
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         removeIfExists out
@@ -483,7 +483,7 @@ ninja1VerifyTests slap base ips =
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         writeGarbage wrong (4096 * 1024)
@@ -495,7 +495,7 @@ ninja1VerifyTests slap base ips =
       withTempFile "slap-patch" $ \patch ->
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
         writeGarbage wrong (4096 * 1024)
@@ -509,7 +509,7 @@ descriptionTests slap base bps =
   [ testCase "desc/aps-n64 create -d" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         expectOk slap ["create", "--format", "aps-n64", "-d", "Test description",
                         base, target, patch]
@@ -519,47 +519,47 @@ descriptionTests slap base bps =
   , testCase "desc/pchtxt create -d hex nsobid" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         let hexId = "AABBCCDD00112233445566778899AABB"
         expectOk slap ["create", "--format", "pchtxt", "-d", hexId,
                         base, target, patch]
           "desc/pchtxt hex" "wrote"
-        patchStr <- BS8.unpack <$> BS.readFile patch
-        assertBool "expected @nsobid" ("@nsobid" `isInfixOf` patchStr)
+        patchString <- ByteString8.unpack <$> ByteString.readFile patch
+        assertBool "expected @nsobid" ("@nsobid" `isInfixOf` patchString)
 
   , testCase "desc/pchtxt create -d comment" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         expectOk slap ["create", "--format", "pchtxt", "-d", "My cool patch",
                         base, target, patch]
           "desc/pchtxt comment" "wrote"
-        patchStr <- BS8.unpack <$> BS.readFile patch
-        assertBool "expected // comment" ("// My cool patch" `isInfixOf` patchStr)
+        patchString <- ByteString8.unpack <$> ByteString.readFile patch
+        assertBool "expected // comment" ("// My cool patch" `isInfixOf` patchString)
 
   , testCase "desc/pchtxt convert -d override" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch1" $ \patch1 ->
       withTempFile "slap-patch2" $ \patch2 -> do
-        BS.readFile base >>= BS.writeFile target
+        ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "pchtxt", "-d", "original",
                            base, target, patch1]
         expectOk slap ["convert", patch1, "--to", "pchtxt", "-d", "override",
                         "-o", patch2]
           "desc/pchtxt convert" "converted"
-        patchStr <- BS8.unpack <$> BS.readFile patch2
-        assertBool "expected override comment" ("// override" `isInfixOf` patchStr)
+        patchString <- ByteString8.unpack <$> ByteString.readFile patch2
+        assertBool "expected override comment" ("// override" `isInfixOf` patchString)
   ]
 
 explainModeTests :: FilePath -> FilePath -> Maybe (FilePath, FilePath, FilePath) -> [TestTree]
-explainModeTests slap ips mSourceFiles =
+explainModeTests slap ips maybeSourceFiles =
   [ testCase "explain/default is summary" $ do
-      (ec, sout, serr) <- runSlap slap ["explain", ips]
-      let combined = sout ++ serr
-      case ec of
+      (exitCode, stdoutText, stderrText) <- runSlap slap ["explain", ips]
+      let combined = stdoutText ++ stderrText
+      case exitCode of
         ExitSuccess -> do
           assertBool "expected 'records:' in summary"
             ("records:" `isInfixOf` combined)
@@ -569,9 +569,9 @@ explainModeTests slap ips mSourceFiles =
           assertFailure ("explain failed: " ++ combined)
 
   , testCase "explain/--records is dump" $ do
-      (ec, sout, serr) <- runSlap slap ["explain", "--records", ips]
-      let combined = sout ++ serr
-      case ec of
+      (exitCode, stdoutText, stderrText) <- runSlap slap ["explain", "--records", ips]
+      let combined = stdoutText ++ stderrText
+      case exitCode of
         ExitSuccess ->
           -- record dump has numbered entries like "   1  Write"
           assertBool "expected numbered record in dump"
@@ -580,24 +580,24 @@ explainModeTests slap ips mSourceFiles =
           assertFailure ("explain --records failed: " ++ combined)
 
   , testCase "explain/empty patch summary" $
-      withTempFile "slap-ips" $ \fp -> do
+      withTempFile "slap-ips" $ \filePath -> do
         -- "PATCHEOF" — valid IPS with 0 records
-        BS.writeFile fp (BS.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46])
-        (ec, sout, _) <- runSlap slap ["explain", fp]
-        case ec of
+        ByteString.writeFile filePath (ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46])
+        (exitCode, stdoutText, _) <- runSlap slap ["explain", filePath]
+        case exitCode of
           ExitSuccess ->
             assertBool "expected 'records:' even for empty"
-              ("records:" `isInfixOf` sout)
+              ("records:" `isInfixOf` stdoutText)
           ExitFailure _ ->
             assertFailure "explain of empty IPS failed"
-  ] ++ case mSourceFiles of
+  ] ++ case maybeSourceFiles of
     Nothing -> []
     Just (base, ups, bps) ->
       [ testCase "explain/--with resolves XOR" $ do
-          (ec, sout, serr) <- runSlap slap
+          (exitCode, stdoutText, stderrText) <- runSlap slap
             ["explain", "--records", "--with", base, ups]
-          let combined = sout ++ serr
-          case ec of
+          let combined = stdoutText ++ stderrText
+          case exitCode of
             ExitSuccess ->
               assertBool "expected 'resolved:' in output"
                 ("resolved:" `isInfixOf` combined)
@@ -605,10 +605,10 @@ explainModeTests slap ips mSourceFiles =
               assertFailure ("explain --with UPS failed: " ++ combined)
 
       , testCase "explain/--with resolves copy" $ do
-          (ec, sout, serr) <- runSlap slap
+          (exitCode, stdoutText, stderrText) <- runSlap slap
             ["explain", "--records", "--with", base, bps]
-          let combined = sout ++ serr
-          case ec of
+          let combined = stdoutText ++ stderrText
+          case exitCode of
             ExitSuccess ->
               assertBool "expected 'source data:' in output"
                 ("source data:" `isInfixOf` combined)
@@ -616,10 +616,10 @@ explainModeTests slap ips mSourceFiles =
               assertFailure ("explain --with BPS failed: " ++ combined)
 
       , testCase "explain/--with summary note" $ do
-          (ec, sout, serr) <- runSlap slap
+          (exitCode, stdoutText, stderrText) <- runSlap slap
             ["explain", "--with", base, bps]
-          let combined = sout ++ serr
-          case ec of
+          let combined = stdoutText ++ stderrText
+          case exitCode of
             ExitSuccess ->
               assertBool "expected 'source file provided' in output"
                 ("source file provided" `isInfixOf` combined)
@@ -627,10 +627,10 @@ explainModeTests slap ips mSourceFiles =
               assertFailure ("explain --with summary failed: " ++ combined)
 
       , testCase "explain/--with direct format unchanged" $ do
-          (ec, sout, serr) <- runSlap slap
+          (exitCode, stdoutText, stderrText) <- runSlap slap
             ["explain", "--records", "--with", base, ips]
-          let combined = sout ++ serr
-          case ec of
+          let combined = stdoutText ++ stderrText
+          case exitCode of
             ExitSuccess -> do
               assertBool "unexpected 'resolved:' for direct format"
                 (not ("resolved:" `isInfixOf` combined))

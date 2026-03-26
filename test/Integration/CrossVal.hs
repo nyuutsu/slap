@@ -6,7 +6,7 @@ import Integration.Helpers
 import Patch.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import qualified Data.Map.Strict as Map
 import Data.IORef
 import System.Directory (doesFileExist, listDirectory, copyFile, makeAbsolute)
@@ -21,19 +21,19 @@ crossValTests :: RomCache -> IO TestTree
 crossValTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
-  cacheRef <- newIORef (Map.empty :: Map.Map (String, String) BS.ByteString)
-  tests <- mapM (mkCrossValTest romCache repo cacheRef) rows
+  cacheReference <- newIORef (Map.empty :: Map.Map (String, String) ByteString.ByteString)
+  tests <- mapM (mkCrossValTest romCache repo cacheReference) rows
   pure (testGroup "crossval" (concat tests))
 
-mkCrossValTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) BS.ByteString)
+mkCrossValTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) ByteString.ByteString)
                -> [String] -> IO [TestTree]
-mkCrossValTest romCache repo cacheRef fields = case fields of
-  (fmtStr : scenario : baseRel : bootRel : targetSha : toolName : _) -> do
-    case parseCreateFormat fmtStr of
+mkCrossValTest romCache repo cacheReference fields = case fields of
+  (formatString : scenario : baseRelative : bootRelative : targetSha : toolName : _) -> do
+    case parseCreateFormat formatString of
       Nothing -> pure []
-      Just fmt -> do
-        let basePath = repo </> baseRel
-            bootPath = repo </> bootRel
+      Just format -> do
+        let basePath = repo </> baseRelative
+            bootPath = repo </> bootRelative
         baseExists <- doesFileExist basePath
         bootExists <- doesFileExist bootPath
         if not (baseExists && bootExists)
@@ -42,43 +42,43 @@ mkCrossValTest romCache repo cacheRef fields = case fields of
             toolPath <- findTool toolName
             case toolPath of
               Nothing -> pure []
-              Just tool -> pure [testCase (fmtStr ++ "/" ++ scenario) $ do
-                baseBs   <- cachedReadFile romCache basePath
-                targetBs <- getOrBootstrap cacheRef repo (baseRel, bootRel) baseBs bootPath
+              Just tool -> pure [testCase (formatString ++ "/" ++ scenario) $ do
+                baseBytes   <- cachedReadFile romCache basePath
+                targetBytes <- getOrBootstrap cacheReference repo (baseRelative, bootRelative) baseBytes bootPath
                 -- Create patch with slap
-                case createFromMemory fmt baseBs targetBs defaultMeta of
-                  Left err -> assertFailure ("create failed: " ++ err)
-                  Right patchBs ->
+                case createFromMemory format baseBytes targetBytes defaultMeta of
+                  Left errorMessage -> assertFailure ("create failed: " ++ errorMessage)
+                  Right patchBytes ->
                     -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->
                     withTempFile "slap-xv-base" $ \baseFile ->
                     withTempFile "slap-xv-out" $ \outFile -> do
-                      BS.writeFile patchFile patchBs
-                      BS.writeFile baseFile baseBs
-                      applyExternal tool toolName fmt baseFile patchFile outFile
-                      resultBs <- BS.readFile outFile
-                      assertEqual "SHA1 mismatch" targetSha (sha1Hex resultBs)
+                      ByteString.writeFile patchFile patchBytes
+                      ByteString.writeFile baseFile baseBytes
+                      applyExternal tool toolName format baseFile patchFile outFile
+                      resultBytes <- ByteString.readFile outFile
+                      assertEqual "SHA1 mismatch" targetSha (sha1Hex resultBytes)
                 ]
   _ -> pure []
 
-getOrBootstrap :: IORef (Map.Map (String, String) BS.ByteString)
-               -> FilePath -> (String, String) -> BS.ByteString -> FilePath
-               -> IO BS.ByteString
-getOrBootstrap cacheRef _repo key baseBs bootPath = do
-  cache <- readIORef cacheRef
+getOrBootstrap :: IORef (Map.Map (String, String) ByteString.ByteString)
+               -> FilePath -> (String, String) -> ByteString.ByteString -> FilePath
+               -> IO ByteString.ByteString
+getOrBootstrap cacheReference _repo key baseBytes bootPath = do
+  cache <- readIORef cacheReference
   case Map.lookup key cache of
-    Just tgt -> pure tgt
+    Just targetBytes -> pure targetBytes
     Nothing -> do
-      bootBs <- BS.readFile bootPath
-      case parseSome bootBs of
-        Left err -> error ("bootstrap parse failed: " ++ err)
-        Right sp -> do
-          result <- applyPatch sp baseBs
+      bootBytes <- ByteString.readFile bootPath
+      case parseSome bootBytes of
+        Left errorMessage -> error ("bootstrap parse failed: " ++ errorMessage)
+        Right parsed -> do
+          result <- applyPatch parsed baseBytes
           case result of
-            Left err -> error ("bootstrap apply failed: " ++ err)
-            Right tgt -> do
-              atomicModifyIORef' cacheRef (\m -> (Map.insert key tgt m, ()))
-              pure tgt
+            Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
+            Right targetBytes -> do
+              atomicModifyIORef' cacheReference (\existing -> (Map.insert key targetBytes existing, ()))
+              pure targetBytes
 
 findTool :: String -> IO (Maybe FilePath)
 findTool name = do
@@ -91,57 +91,57 @@ findTool name = do
     "xdelta3"    -> lookupTool "XDELTA3"    ["/usr/bin/xdelta3"]
     _            -> pure Nothing
   where
-    lookupTool envVar fallbacks = do
-      menv <- lookupEnv envVar
-      case menv of
-        Just p  -> do
-          exists <- doesFileExist p
-          pure (if exists then Just p else Nothing)
+    lookupTool environmentVariable fallbacks = do
+      maybeEnvironment <- lookupEnv environmentVariable
+      case maybeEnvironment of
+        Just executablePath -> do
+          exists <- doesFileExist executablePath
+          pure (if exists then Just executablePath else Nothing)
         Nothing -> findFirst fallbacks
     findFirst [] = pure Nothing
-    findFirst (p:ps) = do
-      exists <- doesFileExist p
-      if exists then Just <$> makeAbsolute p else findFirst ps
+    findFirst (candidate:candidates) = do
+      exists <- doesFileExist candidate
+      if exists then Just <$> makeAbsolute candidate else findFirst candidates
 
 applyExternal :: FilePath -> String -> CreateFormat -> FilePath -> FilePath -> FilePath -> IO ()
-applyExternal tool toolName _fmt baseFile patchFile outFile = case toolName of
+applyExternal tool toolName _format baseFile patchFile outFile = case toolName of
   "flips" -> do
-    (ec, _, err) <- readProcessWithExitCode tool ["--apply", patchFile, baseFile, outFile] ""
-    case ec of
+    (exitCode, _, errorMessage) <- readProcessWithExitCode tool ["--apply", patchFile, baseFile, outFile] ""
+    case exitCode of
       ExitSuccess -> pure ()
-      _           -> assertFailure ("flips failed: " ++ err)
+      _           -> assertFailure ("flips failed: " ++ errorMessage)
 
-  "rompatcher" -> withTempDir "slap-rp" $ \tmpDir -> do
-    let ext = case takeExtension baseFile of
+  "rompatcher" -> withTempDir "slap-rp" $ \temporaryDirectory -> do
+    let extension = case takeExtension baseFile of
                 "" -> ".bin"  -- RomPatcher.js needs an extension to name the output
-                e  -> e
+                fileExtension -> fileExtension
         stem = "rom"
-        romCopy = tmpDir </> (stem ++ ext)
+        romCopy = temporaryDirectory </> (stem ++ extension)
     copyFile baseFile romCopy
     -- RomPatcher.js outputs relative to CWD
-    let p = (proc "node" [tool, "patch", romCopy, patchFile]) { cwd = Just tmpDir }
-    (ec, out, err) <- readCreateProcessWithExitCode p ""
-    case ec of
+    let processSpec = (proc "node" [tool, "patch", romCopy, patchFile]) { cwd = Just temporaryDirectory }
+    (exitCode, stdoutText, stderrText) <- readCreateProcessWithExitCode processSpec ""
+    case exitCode of
       ExitSuccess -> do
-        files <- listDirectory tmpDir
-        let expected = stem ++ " (patched)" ++ ext
+        files <- listDirectory temporaryDirectory
+        let expected = stem ++ " (patched)" ++ extension
         case filter (== expected) files of
-          (f:_) -> do
-            resultBs <- BS.readFile (tmpDir </> f)
-            BS.writeFile outFile resultBs
+          (outputFile:_) -> do
+            resultBytes <- ByteString.readFile (temporaryDirectory </> outputFile)
+            ByteString.writeFile outFile resultBytes
           [] -> assertFailure ("RomPatcher.js output not found in " ++ show files)
-      _ -> assertFailure ("RomPatcher.js failed: " ++ err ++ out)
+      _ -> assertFailure ("RomPatcher.js failed: " ++ stderrText ++ stdoutText)
 
   "bspatch" -> do
-    (ec, _, err) <- readProcessWithExitCode tool [baseFile, outFile, patchFile] ""
-    case ec of
+    (exitCode, _, errorMessage) <- readProcessWithExitCode tool [baseFile, outFile, patchFile] ""
+    case exitCode of
       ExitSuccess -> pure ()
-      _           -> assertFailure ("bspatch failed: " ++ err)
+      _           -> assertFailure ("bspatch failed: " ++ errorMessage)
 
   "xdelta3" -> do
-    (ec, _, err) <- readProcessWithExitCode tool ["-d", "-s", baseFile, patchFile, outFile] ""
-    case ec of
+    (exitCode, _, errorMessage) <- readProcessWithExitCode tool ["-d", "-s", baseFile, patchFile, outFile] ""
+    case exitCode of
       ExitSuccess -> pure ()
-      _           -> assertFailure ("xdelta3 failed: " ++ err)
+      _           -> assertFailure ("xdelta3 failed: " ++ errorMessage)
 
   _ -> assertFailure ("unknown tool: " ++ toolName)

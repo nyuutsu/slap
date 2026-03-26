@@ -33,8 +33,8 @@ import qualified Patch.Explain as Explain
 import Patch.Explain (ExplainData(..))
 import qualified Patch.Yay0 as Yay0
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word16, Word32)
@@ -48,272 +48,272 @@ data ApplyStrategy
   = InPlace (FilePath -> IO ())
     -- ^ Seek-and-write into a mutable file.
   | InMemory
-      { imApply :: BS.ByteString -> IO (Either String BS.ByteString) }
+      { inMemoryApply :: ByteString.ByteString -> IO (Either String ByteString.ByteString) }
     -- ^ Delta: takes source bytes, returns target bytes.
 
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
 data Verification = Verification
-  { vSourceCRC32  :: Maybe Word32
-  , vSourceMD5    :: Maybe BS.ByteString
-  , vSourceSHA1   :: Maybe BS.ByteString
-  , vTargetCRC32  :: Maybe Word32
-  , vTargetMD5    :: Maybe BS.ByteString
-  , vSourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
-  , vTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
-  , vPPFBlock     :: Maybe (Int64, BS.ByteString)  -- PPF validation block
-  , vFileSize     :: Maybe Word32                  -- expected source file size (advisory)
-  , vWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
-  , vSourceBytes  :: [(Int, BS.ByteString, String)] -- (offset, expected, label) advisory byte checks
-  , vSourcePreHash :: BS.ByteString -> BS.ByteString -- transform source before hashing (NINJA1 sampling)
+  { verifySourceCRC32  :: Maybe Word32
+  , verifySourceMD5    :: Maybe ByteString.ByteString
+  , verifySourceSHA1   :: Maybe ByteString.ByteString
+  , verifyTargetCRC32  :: Maybe Word32
+  , verifyTargetMD5    :: Maybe ByteString.ByteString
+  , verifySourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
+  , verifyTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
+  , verifyPPFBlock     :: Maybe (Int64, ByteString.ByteString)  -- PPF validation block
+  , verifyFileSize     :: Maybe Word32                  -- expected source file size (advisory)
+  , verifyWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
+  , verifySourceBytes  :: [(Int, ByteString.ByteString, String)] -- (offset, expected, label) advisory byte checks
+  , verifySourcePreHash :: ByteString.ByteString -> ByteString.ByteString -- transform source before hashing (NINJA1 sampling)
   }
 
 noVerification :: Verification
 noVerification = Verification
-  { vSourceCRC32 = Nothing, vSourceMD5 = Nothing, vSourceSHA1 = Nothing
-  , vTargetCRC32 = Nothing, vTargetMD5 = Nothing
-  , vSourceBlocks = [], vTargetBlocks = []
-  , vPPFBlock = Nothing, vFileSize = Nothing
-  , vWindowAdler32 = [], vSourceBytes = []
-  , vSourcePreHash = id
+  { verifySourceCRC32 = Nothing, verifySourceMD5 = Nothing, verifySourceSHA1 = Nothing
+  , verifyTargetCRC32 = Nothing, verifyTargetMD5 = Nothing
+  , verifySourceBlocks = [], verifyTargetBlocks = []
+  , verifyPPFBlock = Nothing, verifyFileSize = Nothing
+  , verifyWindowAdler32 = [], verifySourceBytes = []
+  , verifySourcePreHash = id
   }
 
 -- | Strategy for undoing a patch.
 data UndoStrategy
   = UndoInPlace (FilePath -> IO (Either String Int))
-  | UndoInMemory (BS.ByteString -> BS.ByteString)
+  | UndoInMemory (ByteString.ByteString -> ByteString.ByteString)
 
 -- | A parsed patch with all operations pre-bound as closures.
 -- The only dispatch point is 'parseSome'; every consumer works
 -- through these fields, never inspecting the underlying format.
 data SomePatch = SomePatch
-  { spFormat         :: String
-  , spInfo           :: String
-  , spExplain        :: ExplainData
-  , spIsDifferential :: Bool
-  , spApply          :: ApplyStrategy
-  , spUndo           :: Maybe UndoStrategy
-  , spVerification   :: Verification
-  , spVerboseLines   :: [String]
-  , spWarnings       :: [String]
-  , spRecordCount    :: Int
-  , spRecordUnit     :: String
-  , spContents       :: Maybe PatchContents
-  , spSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
-  , spMetadata       :: Maybe BS.ByteString  -- ^ Arbitrary metadata blob (BPS)
+  { patchFormat         :: String
+  , patchInfo           :: String
+  , patchExplain        :: ExplainData
+  , patchIsDifferential :: Bool
+  , patchApply          :: ApplyStrategy
+  , patchUndo           :: Maybe UndoStrategy
+  , patchVerification   :: Verification
+  , patchVerboseLines   :: [String]
+  , patchWarnings       :: [String]
+  , patchRecordCount    :: Int
+  , patchRecordUnit     :: String
+  , patchContents       :: Maybe PatchContents
+  , patchSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
+  , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
   }
 
 ----------------------------------------------------------------------------
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
-parseSome :: BS.ByteString -> Either String SomePatch
-parseSome bs = case detectFormat bs of
+parseSome :: ByteString.ByteString -> Either String SomePatch
+parseSome patchBytes = case detectFormat patchBytes of
   Nothing
     -- Yay0 container: decompress and retry (Star Rod .mod files)
-    | Yay0.isYay0 bs -> case Yay0.decompressYay0 bs of
-        Left err    -> Left ("Yay0 decompression failed: " ++ err)
+    | Yay0.isYay0 patchBytes -> case Yay0.decompressYay0 patchBytes of
+        Left errorMessage   -> Left ("Yay0 decompression failed: " ++ errorMessage)
         Right inner -> case parseSome inner of
-          Left err -> Left err
-          Right sp -> Right sp
-            { spFormat  = spFormat sp ++ "/Yay0"
-            , spInfo    = replaceFirst "PMSR" "PMSR/Yay0" (spInfo sp)
-            , spExplain = (spExplain sp)
-                { edFormat = edFormat (spExplain sp) ++ "/Yay0" }
+          Left errorMessage -> Left errorMessage
+          Right parsed -> Right parsed
+            { patchFormat  = patchFormat parsed ++ "/Yay0"
+            , patchInfo    = replaceFirst "PMSR" "PMSR/Yay0" (patchInfo parsed)
+            , patchExplain = (patchExplain parsed)
+                { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
             }
     -- DPS: no magic bytes, heuristic detection
-    | DPS.isDPS bs -> case DPS.parseDPS bs of
-        Left err -> Left err
-        Right p  ->
-          let recs = DPS.dpsRecords p
+    | DPS.isDPS patchBytes -> case DPS.parseDPS patchBytes of
+        Left errorMessage -> Left errorMessage
+        Right patch  ->
+          let records = DPS.dpsRecords patch
           in Right SomePatch
-            { spFormat         = "DPS"
-            , spInfo           = DPS.dpsInfo p
-            , spExplain        = Explain.explainDPS p
-            , spIsDifferential = True
-            , spApply          = InMemory
-                { imApply     = \source -> pure (DPS.applyDPS p source) }
-            , spVerification   = noVerification
-            , spUndo           = Nothing
-            , spVerboseLines   = numbered recs $ \r -> case DPS.dpsRecPayload r of
-                DPS.PayloadData dat ->
-                  "Write " ++ show (BS.length dat) ++ " bytes at 0x"
-                  ++ padHex 8 (DPS.dpsRecOutOffset r)
-                DPS.PayloadCopy srcOff len ->
-                  "Copy " ++ show len ++ " bytes from 0x"
-                  ++ padHex 8 srcOff ++ " to 0x"
-                  ++ padHex 8 (DPS.dpsRecOutOffset r)
-            , spWarnings       = ["empty patch (0 records)" | null recs]
-            , spRecordCount    = length recs
-            , spRecordUnit     = "records"
-            , spSourceNotes    = []
-            , spContents  = Nothing
-            , spMetadata       = Nothing
+            { patchFormat         = "DPS"
+            , patchInfo           = DPS.dpsInfo patch
+            , patchExplain        = Explain.explainDPS patch
+            , patchIsDifferential = True
+            , patchApply          = InMemory
+                { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
+            , patchVerification   = noVerification
+            , patchUndo           = Nothing
+            , patchVerboseLines   = numbered records $ \record -> case DPS.dpsRecordPayload record of
+                DPS.PayloadData payload ->
+                  "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
+                  ++ padHex 8 (DPS.dpsRecordOutputOffset record)
+                DPS.PayloadCopy sourceOffset dataLength ->
+                  "Copy " ++ show dataLength ++ " bytes from 0x"
+                  ++ padHex 8 sourceOffset ++ " to 0x"
+                  ++ padHex 8 (DPS.dpsRecordOutputOffset record)
+            , patchWarnings       = ["empty patch (0 records)" | null records]
+            , patchRecordCount    = length records
+            , patchRecordUnit     = "records"
+            , patchSourceNotes    = []
+            , patchContents  = Nothing
+            , patchMetadata       = Nothing
             }
     | otherwise -> Left "unknown patch format"
 
-  Just FmtPPF -> case PPF.parsePatch bs of
-    Left err -> Left err
-    Right p  ->
-      let recs = PPF.patchRecords p
-          hasAppend = any (\r -> PPF.recCmd r == PPF.Append) recs
-          ppfV = noVerification
-            { vPPFBlock = case PPF.patchValidation p of
-                Just val -> Just (PPF.validationOffset (PPF.valImageType val), PPF.valBlock val)
+  Just FormatPPF -> case PPF.parsePatch patchBytes of
+    Left errorMessage -> Left errorMessage
+    Right patch  ->
+      let records = PPF.ppfRecords patch
+          hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
+          ppfVerification = noVerification
+            { verifyPPFBlock = case PPF.ppfValidation patch of
+                Just validation -> Just (PPF.validationOffset (PPF.validationImageType validation), PPF.validationBlock validation)
                 Nothing  -> Nothing
-            , vFileSize = PPF.patchFileSize p
+            , verifyFileSize = PPF.ppfFileSize patch
             }
       in Right SomePatch
-        { spFormat         = "PPF"
-        , spInfo           = PPF.ppfInfo p
-        , spExplain        = Explain.explainPPF p
-        , spIsDifferential = False
-        , spApply          = InMemory
-            { imApply = \source -> pure (Right (PPF.applyPatchMemory p source)) }
-        , spUndo           = Just (UndoInPlace $ PPF.undoPatch p)
-        , spVerification   = ppfV
-        , spVerboseLines   = numbered recs $ \r ->
-            "Write " ++ show (BS.length (PPF.recData r)) ++ " bytes at 0x"
-            ++ padHex 8 (PPF.recOffset r)
-        , spWarnings       = ["empty patch (0 records)" | null recs]
-        , spRecordCount    = length recs
-        , spRecordUnit     = "records"
-        , spSourceNotes    = []
-        , spMetadata       = Nothing
-        , spContents  = if hasAppend then Nothing else Just PatchContents
-            { pcRecords     = map (\r -> (PPF.recOffset r, PPF.recData r)) recs
-            , pcDescription = Just (PPF.patchDescription p)
-            , pcSourceCRC32 = Nothing
-            , pcSourceMD5   = Nothing
-            , pcSourceSHA1  = Nothing
-            , pcDestSize    = PPF.patchFileSize p
-            , pcValidation  = fmap PPF.valBlock (PPF.patchValidation p)
-            , pcUndoData    = if PPF.patchHasUndo p
-                              then Just [ (PPF.recOffset r, PPF.recData r, fromMaybe BS.empty (PPF.recUndo r))
-                                        | r <- recs ]
+        { patchFormat         = "PPF"
+        , patchInfo           = PPF.ppfInfo patch
+        , patchExplain        = Explain.explainPPF patch
+        , patchIsDifferential = False
+        , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (PPF.applyPatchMemory patch source)) }
+        , patchUndo           = Just (UndoInPlace $ PPF.undoPatch patch)
+        , patchVerification   = ppfVerification
+        , patchVerboseLines   = numbered records $ \record ->
+            "Write " ++ show (ByteString.length (PPF.recordData record)) ++ " bytes at 0x"
+            ++ padHex 8 (PPF.recordOffset record)
+        , patchWarnings       = ["empty patch (0 records)" | null records]
+        , patchRecordCount    = length records
+        , patchRecordUnit     = "records"
+        , patchSourceNotes    = []
+        , patchMetadata       = Nothing
+        , patchContents  = if hasAppend then Nothing else Just PatchContents
+            { contentsRecords     = map (\record -> (PPF.recordOffset record, PPF.recordData record)) records
+            , contentsDescription = Just (PPF.ppfDescription patch)
+            , contentsSourceCRC32 = Nothing
+            , contentsSourceMD5   = Nothing
+            , contentsSourceSHA1  = Nothing
+            , contentsDestinationSize    = PPF.ppfFileSize patch
+            , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
+            , contentsUndoData    = if PPF.ppfHasUndo patch
+                              then Just [ (PPF.recordOffset record, PPF.recordData record, fromMaybe ByteString.empty (PPF.recordUndo record))
+                                        | record <- records ]
                               else Nothing
-            , pcTruncation  = Nothing
-            , pcEBPMeta     = Nothing
-            , pcRomType     = Nothing
-            , pcImageType   = PPF.patchImageType p
-            , pcFileIdDiz   = fmap PPF.fileIdContent (PPF.patchFileId p)
-            , pcPCHTXTBlocks = Nothing
-            , pcNINJA1Compressed = Nothing
-            , pcMetadata = Nothing
+            , contentsTruncation  = Nothing
+            , contentsEBPMeta     = Nothing
+            , contentsRomType     = Nothing
+            , contentsImageType   = PPF.ppfImageType patch
+            , contentsFileIdDiz   = fmap PPF.fileIdContent (PPF.ppfFileId patch)
+            , contentsPCHTXTBlocks = Nothing
+            , contentsNINJA1Compressed = Nothing
+            , contentsMetadata = Nothing
             }
         }
 
-  Just FmtIPS -> do
-    p <- IPS.parseIPS bs
-    let recs = IPS.ipsRecords p
-        expandIPS (IPS.IPSRecord off dat)        = (off, dat)
-        expandIPS (IPS.IPSRecordRLE off cnt val) = (off, BS.replicate cnt val)
-        name = case (IPS.ipsVariant p, IPS.ipsEBPMeta p) of
+  Just FormatIPS -> do
+    patch <- IPS.parseIPS patchBytes
+    let records = IPS.ipsRecords patch
+        expandIPS (IPS.IPSRecord offset recordData)        = (offset, recordData)
+        expandIPS (IPS.IPSRecordRLE offset count fillByte) = (offset, ByteString.replicate count fillByte)
+        name = case (IPS.ipsVariant patch, IPS.ipsEBPMeta patch) of
           (IPS.StandardIPS, Nothing) -> "IPS"
           (IPS.StandardIPS, Just _)  -> "EBP"
           (IPS.IPS32, _)             -> "IPS32"
-        warns = concat
-          [ ["no EOF marker (patch may be truncated)" | not (IPS.ipsCleanEOF p)]
-          , ["empty patch (0 records)" | null recs]
+        warnings = concat
+          [ ["no EOF marker (patch may be truncated)" | not (IPS.ipsCleanEOF patch)]
+          , ["empty patch (0 records)" | null records]
           ]
     Right SomePatch
-      { spFormat         = name
-      , spInfo           = IPS.ipsInfo p
-      , spExplain        = Explain.explainIPS p
-      , spIsDifferential = False
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (IPS.applyIPSMemory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-      , spVerboseLines   = numbered recs describeIPS
-      , spWarnings       = warns
-      , spRecordCount    = length recs
-      , spRecordUnit     = "records"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Just (emptyContents (map expandIPS recs))
-          { pcTruncation = IPS.ipsTruncate p
-          , pcEBPMeta    = IPS.ipsEBPMeta p
+      { patchFormat         = name
+      , patchInfo           = IPS.ipsInfo patch
+      , patchExplain        = Explain.explainIPS patch
+      , patchIsDifferential = False
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (IPS.applyIPSMemory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchVerboseLines   = numbered records describeIPS
+      , patchWarnings       = warnings
+      , patchRecordCount    = length records
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Just (emptyContents (map expandIPS records))
+          { contentsTruncation = IPS.ipsTruncate patch
+          , contentsEBPMeta    = IPS.ipsEBPMeta patch
           }
       }
 
-  Just FmtBPS -> do
-    p <- BPS.parseBPS bs
-    let acts = BPS.bpsActions p
+  Just FormatBPS -> do
+    patch <- BPS.parseBPS patchBytes
+    let actions = BPS.bpsActions patch
     Right SomePatch
-      { spFormat         = "BPS"
-      , spInfo           = BPS.bpsInfo p
-      , spExplain        = Explain.explainBPS p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (BPS.applyBPS p source) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-          { vSourceCRC32 = Just (BPS.bpsSourceCRC p)
-          , vTargetCRC32 = Just (BPS.bpsTargetCRC p)
+      { patchFormat         = "BPS"
+      , patchInfo           = BPS.bpsInfo patch
+      , patchExplain        = Explain.explainBPS patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (BPS.applyBPS patch source) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+          { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
+          , verifyTargetCRC32 = Just (BPS.bpsTargetCRC patch)
           }
-      , spVerboseLines   = numbered acts describeBPS
-      , spWarnings       = ["empty patch (0 actions)" | null acts]
-      , spRecordCount    = length acts
-      , spRecordUnit     = "actions"
-      , spSourceNotes    = []
-      , spMetadata       = if BS.null (BPS.bpsMetadata p) then Nothing
-                           else Just (BPS.bpsMetadata p)
-      , spContents  = Nothing
+      , patchVerboseLines   = numbered actions describeBPS
+      , patchWarnings       = ["empty patch (0 actions)" | null actions]
+      , patchRecordCount    = length actions
+      , patchRecordUnit     = "actions"
+      , patchSourceNotes    = []
+      , patchMetadata       = if ByteString.null (BPS.bpsMetadata patch) then Nothing
+                           else Just (BPS.bpsMetadata patch)
+      , patchContents  = Nothing
       }
 
-  Just FmtUPS -> do
-    p <- UPS.parseUPS bs
-    let blks = UPS.upsBlocks p
+  Just FormatUPS -> do
+    patch <- UPS.parseUPS patchBytes
+    let blocks = UPS.upsBlocks patch
     Right SomePatch
-      { spFormat         = "UPS"
-      , spInfo           = UPS.upsInfo p
-      , spExplain        = Explain.explainUPS p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (Right (UPS.applyUPS p source)) }
-      , spUndo           = Just (UndoInMemory $ UPS.applyUPS p)
-      , spVerification   = noVerification
-          { vSourceCRC32 = Just (UPS.upsSourceCRC p)
-          , vTargetCRC32 = Just (UPS.upsTargetCRC p)
+      { patchFormat         = "UPS"
+      , patchInfo           = UPS.upsInfo patch
+      , patchExplain        = Explain.explainUPS patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (Right (UPS.applyUPS patch source)) }
+      , patchUndo           = Just (UndoInMemory $ UPS.applyUPS patch)
+      , patchVerification   = noVerification
+          { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
+          , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
           }
-      , spVerboseLines   = numbered blks $ \b ->
-          "XOR " ++ show (BS.length (UPS.upsXorData b))
-          ++ " bytes (skip " ++ show (UPS.upsSkip b) ++ ")"
-      , spWarnings       = ["empty patch (0 blocks)" | null blks]
-      , spRecordCount    = length blks
-      , spRecordUnit     = "blocks"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      , patchVerboseLines   = numbered blocks $ \block ->
+          "XOR " ++ show (ByteString.length (UPS.upsXorData block))
+          ++ " bytes (skip " ++ show (UPS.upsSkip block) ++ ")"
+      , patchWarnings       = ["empty patch (0 blocks)" | null blocks]
+      , patchRecordCount    = length blocks
+      , patchRecordUnit     = "blocks"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
-  Just FmtVCDIFF -> do
-    p <- VCDIFF.parseVCDIFF bs
-    let wins = VCDIFF.vcdWindows p
-        winOffsets = scanl (+) 0 (map VCDIFF.vcdTargetLen wins)
+  Just FormatVCDIFF -> do
+    patch <- VCDIFF.parseVCDIFF patchBytes
+    let windows = VCDIFF.vcdiffWindows patch
+        windowOffsets = scanl (+) 0 (map VCDIFF.vcdiffTargetLength windows)
         adlerChecks =
-          [ (fromIntegral off, fromIntegral (VCDIFF.vcdTargetLen w), a)
-          | (w, off) <- zip wins winOffsets
-          , Just a <- [VCDIFF.vcdAdler32 w]
+          [ (fromIntegral offset, fromIntegral (VCDIFF.vcdiffTargetLength window), checksum)
+          | (window, offset) <- zip windows windowOffsets
+          , Just checksum <- [VCDIFF.vcdiffAdler32 window]
           ]
     Right SomePatch
-      { spFormat         = "VCDIFF"
-      , spInfo           = VCDIFF.vcdiffInfo p
-      , spExplain        = Explain.explainVCDIFF p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (VCDIFF.applyVCDIFF p source) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification { vWindowAdler32 = adlerChecks }
-      , spVerboseLines   = numbered wins $ \w ->
-          "Window " ++ show (VCDIFF.vcdTargetLen w) ++ " bytes target"
-      , spWarnings       = ["empty patch (0 windows)" | null wins]
-      , spRecordCount    = length wins
-      , spRecordUnit     = "windows"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      { patchFormat         = "VCDIFF"
+      , patchInfo           = VCDIFF.vcdiffInfo patch
+      , patchExplain        = Explain.explainVCDIFF patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (VCDIFF.applyVCDIFF patch source) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
+      , patchVerboseLines   = numbered windows $ \window ->
+          "Window " ++ show (VCDIFF.vcdiffTargetLength window) ++ " bytes target"
+      , patchWarnings       = ["empty patch (0 windows)" | null windows]
+      , patchRecordCount    = length windows
+      , patchRecordUnit     = "windows"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
   -- APS N64 and APS GBA are unrelated formats by different authors who
@@ -321,228 +321,228 @@ parseSome bs = case detectFormat bs of
   -- "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
   -- Disambiguate via GBA's fixed record structure (12 + N*65544 bytes,
   -- 64KB-aligned offsets).
-  Just FmtAPSN64
-    | gbaStructure bs -> parseAPSGBABlock bs
+  Just FormatAPSN64
+    | apsGbaStructure patchBytes -> parseAPSGBABlock patchBytes
     | otherwise -> do
-    p@(APSN64.APSN64Patch hdr recs) <- APSN64.parseAPSN64 bs
-    let expandN64 (APSN64.APSN64Normal off dat) = (off, dat)
-        expandN64 (APSN64.APSN64RLE off val n)  = (off, BS.replicate (fromIntegral n) val)
+    patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
+    let expandN64 (APSN64.APSN64Normal offset recordData) = (offset, recordData)
+        expandN64 (APSN64.APSN64RLE offset fillByte count)  = (offset, ByteString.replicate (fromIntegral count) fillByte)
     Right SomePatch
-      { spFormat         = "APS (N64)"
-      , spInfo           = APSN64.apsN64Info p
-      , spExplain        = Explain.explainAPSN64 p
-      , spIsDifferential = False
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (APSN64.applyAPSN64Memory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-            { vSourceBytes = concat
-                [ maybe [] (\c -> [(0x3C, c, "N64 cart ID")]) (APSN64.n64CartId hdr)
-                , maybe [] (\c -> [(0x3E, BS.singleton c, "N64 country")]) (APSN64.n64Country hdr)
-                , maybe [] (\c -> [(0x10, c, "N64 CRC")]) (APSN64.n64Crc hdr)
+      { patchFormat         = "APS (N64)"
+      , patchInfo           = APSN64.apsN64Info patch
+      , patchExplain        = Explain.explainAPSN64 patch
+      , patchIsDifferential = False
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (APSN64.applyAPSN64Memory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+            { verifySourceBytes = concat
+                [ maybe [] (\cartId -> [(0x3C, cartId, "N64 cart ID")]) (APSN64.apsN64CartId header)
+                , maybe [] (\country -> [(0x3E, ByteString.singleton country, "N64 country")]) (APSN64.apsN64Country header)
+                , maybe [] (\crc -> [(0x10, crc, "N64 CRC")]) (APSN64.apsN64Crc header)
                 ]
             }
-      , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 records)" | null recs]
-      , spRecordCount    = length recs
-      , spRecordUnit     = "records"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Just (emptyContents (map expandN64 recs))
-            { pcDescription = Just (APSN64.n64Description hdr)
-            , pcDestSize    = Just (APSN64.n64DestSize hdr)
+      , patchVerboseLines   = []
+      , patchWarnings       = ["empty patch (0 records)" | null records]
+      , patchRecordCount    = length records
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Just (emptyContents (map expandN64 records))
+            { contentsDescription = Just (APSN64.apsN64Description header)
+            , contentsDestinationSize    = Just (APSN64.apsN64DestSize header)
             }
       }
 
-  Just FmtAPSGBA -> parseAPSGBABlock bs
+  Just FormatAPSGBA -> parseAPSGBABlock patchBytes
 
-  Just FmtRUP -> do
-    p <- RUP.parseRUP bs
-    let filterZero (Just h) | BS.all (== 0) h = Nothing
-        filterZero x = x
+  Just FormatRUP -> do
+    patch <- RUP.parseRUP patchBytes
+    let filterZero (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
+        filterZero other = other
     Right SomePatch
-      { spFormat         = "RUP"
-      , spInfo           = RUP.rupInfo p
-      , spExplain        = Explain.explainRUP p
-      , spIsDifferential = True
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (RUP.applyRUPMemory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-          { vSourceMD5 = filterZero (RUP.rupSourceMD5 p)
-          , vTargetMD5 = filterZero (RUP.rupTargetMD5 p)
+      { patchFormat         = "RUP"
+      , patchInfo           = RUP.rupInfo patch
+      , patchExplain        = Explain.explainRUP patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (RUP.applyRUPMemory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+          { verifySourceMD5 = filterZero (RUP.rupSourceMD5 patch)
+          , verifyTargetMD5 = filterZero (RUP.rupTargetMD5 patch)
           }
-      , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords p)]
-      , spRecordCount    = length (RUP.rupRecords p)
-      , spRecordUnit     = "records"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      , patchVerboseLines   = []
+      , patchWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords patch)]
+      , patchRecordCount    = length (RUP.rupRecords patch)
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
-  Just FmtNINJA1 -> do
-    p <- NINJA1.parseNINJA1 bs
-    let recs = NINJA1.n1Records p
-        warns = concat
-          [ ["no EOF marker (patch may be truncated)" | not (NINJA1.n1CleanEOF p)]
-          , ["empty patch (0 records)" | null recs]
+  Just FormatNINJA1 -> do
+    patch <- NINJA1.parseNINJA1 patchBytes
+    let records = NINJA1.ninja1Records patch
+        warnings = concat
+          [ ["no EOF marker (patch may be truncated)" | not (NINJA1.ninja1CleanEOF patch)]
+          , ["empty patch (0 records)" | null records]
           ]
-        compressed = NINJA1.n1SubFormat p `elem` [NINJA1.N1BinaryZ, NINJA1.N1TextZ]
-        srcNotes = case NINJA1.n1SubFormat p of
-          NINJA1.N1Text  -> ["note: NINJA1 text subformat converted to binary (B)"]
-          NINJA1.N1TextZ -> ["note: NINJA1 text subformat converted to compressed binary (BZ)"]
+        compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.Ninja1BinaryCompressed, NINJA1.Ninja1TextCompressed]
+        sourceNotes = case NINJA1.ninja1SubFormat patch of
+          NINJA1.Ninja1Text  -> ["note: NINJA1 text subformat converted to binary (B)"]
+          NINJA1.Ninja1TextCompressed -> ["note: NINJA1 text subformat converted to compressed binary (BZ)"]
           _              -> []
     Right SomePatch
-      { spFormat         = "NINJA1"
-      , spInfo           = NINJA1.ninja1Info p
-      , spExplain        = Explain.explainNINJA1 p
-      , spIsDifferential = False
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (NINJA1.applyNINJA1Memory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-          { vSourceCRC32  = NINJA1.n1SourceCRC p
-          , vSourceMD5    = NINJA1.n1SourceMD5 p
-          , vSourceSHA1   = NINJA1.n1SourceSHA1 p
-          , vSourcePreHash = NINJA1.ninja1HashInput
+      { patchFormat         = "NINJA1"
+      , patchInfo           = NINJA1.ninja1Info patch
+      , patchExplain        = Explain.explainNINJA1 patch
+      , patchIsDifferential = False
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (NINJA1.applyNINJA1Memory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+          { verifySourceCRC32  = NINJA1.ninja1SourceCRC patch
+          , verifySourceMD5    = NINJA1.ninja1SourceMD5 patch
+          , verifySourceSHA1   = NINJA1.ninja1SourceSHA1 patch
+          , verifySourcePreHash = NINJA1.ninja1HashInput
           }
-      , spVerboseLines   = numbered recs $ \r ->
-          "Write " ++ show (BS.length (NINJA1.n1RecData r)) ++ " bytes at 0x"
-          ++ padHex 8 (NINJA1.n1RecOffset r)
-      , spWarnings       = warns
-      , spRecordCount    = length recs
-      , spRecordUnit     = "records"
-      , spSourceNotes    = srcNotes
-      , spMetadata       = Nothing
-      , spContents  = Just (emptyContents (map (\r -> (NINJA1.n1RecOffset r, NINJA1.n1RecData r)) recs))
-          { pcSourceCRC32 = NINJA1.n1SourceCRC p
-          , pcSourceMD5   = NINJA1.n1SourceMD5 p
-          , pcSourceSHA1  = NINJA1.n1SourceSHA1 p
-          , pcRomType     = Just (NINJA1.fromNINJA1RomType (NINJA1.n1RomType p))
-          , pcNINJA1Compressed = Just compressed
+      , patchVerboseLines   = numbered records $ \record ->
+          "Write " ++ show (ByteString.length (NINJA1.ninja1RecordData record)) ++ " bytes at 0x"
+          ++ padHex 8 (NINJA1.ninja1RecordOffset record)
+      , patchWarnings       = warnings
+      , patchRecordCount    = length records
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = sourceNotes
+      , patchMetadata       = Nothing
+      , patchContents  = Just (emptyContents (map (\record -> (NINJA1.ninja1RecordOffset record, NINJA1.ninja1RecordData record)) records))
+          { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
+          , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
+          , contentsSourceSHA1  = NINJA1.ninja1SourceSHA1 patch
+          , contentsRomType     = Just (NINJA1.fromNINJA1RomType (NINJA1.ninja1RomType patch))
+          , contentsNINJA1Compressed = Just compressed
           }
       }
 
-  Just FmtBSDiff -> do
-    p <- BSDiff.parseBSDiff bs
+  Just FormatBSDiff -> do
+    patch <- BSDiff.parseBSDiff patchBytes
     Right SomePatch
-      { spFormat         = "BSDiff"
-      , spInfo           = BSDiff.bsdiffInfo p
-      , spExplain        = Explain.explainBSDiff p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (BSDiff.applyBSDiff p source) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-      , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdControls p)]
-      , spRecordCount    = length (BSDiff.bsdControls p)
-      , spRecordUnit     = "control tuples"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      { patchFormat         = "BSDiff"
+      , patchInfo           = BSDiff.bsdiffInfo patch
+      , patchExplain        = Explain.explainBSDiff patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (BSDiff.applyBSDiff patch source) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchVerboseLines   = []
+      , patchWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdiffControls patch)]
+      , patchRecordCount    = length (BSDiff.bsdiffControls patch)
+      , patchRecordUnit     = "control tuples"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
-  Just FmtGDIFF -> do
-    p <- GDIFF.parseGDIFF bs
+  Just FormatGDIFF -> do
+    patch <- GDIFF.parseGDIFF patchBytes
     Right SomePatch
-      { spFormat         = "GDIFF"
-      , spInfo           = GDIFF.gdiffInfo p
-      , spExplain        = Explain.explainGDIFF p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (GDIFF.applyGDIFF p source) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-      , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCmds p)]
-      , spRecordCount    = length (GDIFF.gdiffCmds p)
-      , spRecordUnit     = "commands"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      { patchFormat         = "GDIFF"
+      , patchInfo           = GDIFF.gdiffInfo patch
+      , patchExplain        = Explain.explainGDIFF patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (GDIFF.applyGDIFF patch source) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchVerboseLines   = []
+      , patchWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCommands patch)]
+      , patchRecordCount    = length (GDIFF.gdiffCommands patch)
+      , patchRecordUnit     = "commands"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
-  Just FmtXDelta1 -> do
-    p <- XDelta1.parseXDelta1 bs
-    let fileSrc = filter (not . XDelta1.xd1SrcIsData) (XDelta1.xd1Sources p)
-        xd1V = noVerification
-          { vSourceMD5 = case fileSrc of
-              (s:_) -> Just (XDelta1.xd1SrcMD5 s)
-              []    -> Nothing
-          , vTargetMD5 = Just (XDelta1.xd1ToMD5 p)
+  Just FormatXDelta1 -> do
+    patch <- XDelta1.parseXDelta1 patchBytes
+    let fileSources = filter (not . XDelta1.xdelta1SourceIsData) (XDelta1.xdelta1Sources patch)
+        xdeltaVerification = noVerification
+          { verifySourceMD5 = case fileSources of
+              (entry:_) -> Just (XDelta1.xdelta1SourceMD5 entry)
+              []        -> Nothing
+          , verifyTargetMD5 = Just (XDelta1.xdelta1ToMD5 patch)
           }
     Right SomePatch
-      { spFormat         = "xdelta1"
-      , spInfo           = XDelta1.xdelta1Info p
-      , spExplain        = Explain.explainXDelta1 p
-      , spIsDifferential = True
-      , spApply          = InMemory
-          { imApply     = \source -> pure (XDelta1.applyXDelta1 p source) }
-      , spUndo           = Nothing
-      , spVerification   = xd1V
-      , spVerboseLines   = []
-      , spWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xd1Instructions p)]
-      , spRecordCount    = length (XDelta1.xd1Instructions p)
-      , spRecordUnit     = "instructions"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Nothing
+      { patchFormat         = "xdelta1"
+      , patchInfo           = XDelta1.xdelta1Info patch
+      , patchExplain        = Explain.explainXDelta1 patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (XDelta1.applyXDelta1 patch source) }
+      , patchUndo           = Nothing
+      , patchVerification   = xdeltaVerification
+      , patchVerboseLines   = []
+      , patchWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xdelta1Instructions patch)]
+      , patchRecordCount    = length (XDelta1.xdelta1Instructions patch)
+      , patchRecordUnit     = "instructions"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Nothing
       }
 
-  Just FmtPMSR -> do
-    p <- PMSR.parsePMSR bs
-    let recs = PMSR.pmsrRecords p
+  Just FormatPMSR -> do
+    patch <- PMSR.parsePMSR patchBytes
+    let records = PMSR.pmsrRecords patch
     Right SomePatch
-      { spFormat         = "PMSR"
-      , spInfo           = PMSR.pmsrInfo p
-      , spExplain        = Explain.explainPMSR p
-      , spIsDifferential = False
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (PMSR.applyPMSRMemory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-      , spVerboseLines   = numbered recs $ \r ->
-          "Write " ++ show (BS.length (PMSR.pmsrData r)) ++ " bytes at 0x"
-          ++ padHex 8 (PMSR.pmsrOffset r)
-      , spWarnings       = ["empty patch (0 records)" | null recs]
-      , spRecordCount    = length recs
-      , spRecordUnit     = "records"
-      , spSourceNotes    = []
-      , spMetadata       = Nothing
-      , spContents  = Just (emptyContents
-          (map (\r -> (PMSR.pmsrOffset r, PMSR.pmsrData r)) recs))
+      { patchFormat         = "PMSR"
+      , patchInfo           = PMSR.pmsrInfo patch
+      , patchExplain        = Explain.explainPMSR patch
+      , patchIsDifferential = False
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (PMSR.applyPMSRMemory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchVerboseLines   = numbered records $ \record ->
+          "Write " ++ show (ByteString.length (PMSR.pmsrData record)) ++ " bytes at 0x"
+          ++ padHex 8 (PMSR.pmsrOffset record)
+      , patchWarnings       = ["empty patch (0 records)" | null records]
+      , patchRecordCount    = length records
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchContents  = Just (emptyContents
+          (map (\record -> (PMSR.pmsrOffset record, PMSR.pmsrData record)) records))
       }
 
-  Just FmtPCHTXT -> do
-    p <- PCHTXT.parsePCHTXT bs
-    let allBlocks = PCHTXT.pchtxtBlocks p
+  Just FormatPCHTXT -> do
+    patch <- PCHTXT.parsePCHTXT patchBytes
+    let allBlocks = PCHTXT.pchtxtBlocks patch
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
-        pcRecs = map (\e -> (PCHTXT.pchtxtOffset e, PCHTXT.pchtxtData e)) entries
-        srcNotes = ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
-                   | PCHTXT.pchtxtHasShift p]
+        contentRecords = map (\entry -> (PCHTXT.pchtxtOffset entry, PCHTXT.pchtxtData entry)) entries
+        sourceNotes = ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
+                   | PCHTXT.pchtxtHasShift patch]
     Right SomePatch
-      { spFormat         = "PCHTXT"
-      , spInfo           = PCHTXT.pchtxtInfo p
-      , spExplain        = Explain.explainPCHTXT p
-      , spIsDifferential = False
-      , spApply          = InMemory
-            { imApply = \source -> pure (Right (PCHTXT.applyPCHTXTMemory p source)) }
-      , spUndo           = Nothing
-      , spVerification   = noVerification
-      , spVerboseLines   = numbered entries $ \e ->
-          "Write " ++ show (BS.length (PCHTXT.pchtxtData e)) ++ " bytes at 0x"
-          ++ padHex 8 (PCHTXT.pchtxtOffset e)
-      , spWarnings       = ["empty patch (0 entries)" | null entries]
-      , spRecordCount    = length entries
-      , spRecordUnit     = "entries"
-      , spSourceNotes    = srcNotes
-      , spMetadata       = Nothing
-      , spContents  = Just (emptyContents pcRecs)
-          { pcDescription = BS8.pack <$> PCHTXT.pchtxtNsobid p
-          , pcPCHTXTBlocks = Just allBlocks
+      { patchFormat         = "PCHTXT"
+      , patchInfo           = PCHTXT.pchtxtInfo patch
+      , patchExplain        = Explain.explainPCHTXT patch
+      , patchIsDifferential = False
+      , patchApply          = InMemory
+            { inMemoryApply = \source -> pure (Right (PCHTXT.applyPCHTXTMemory patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchVerboseLines   = numbered entries $ \entry ->
+          "Write " ++ show (ByteString.length (PCHTXT.pchtxtData entry)) ++ " bytes at 0x"
+          ++ padHex 8 (PCHTXT.pchtxtOffset entry)
+      , patchWarnings       = ["empty patch (0 entries)" | null entries]
+      , patchRecordCount    = length entries
+      , patchRecordUnit     = "entries"
+      , patchSourceNotes    = sourceNotes
+      , patchMetadata       = Nothing
+      , patchContents  = Just (emptyContents contentRecords)
+          { contentsDescription = ByteString8.pack <$> PCHTXT.pchtxtNsobid patch
+          , contentsPCHTXTBlocks = Just allBlocks
           }
       }
 
@@ -550,68 +550,68 @@ parseSome bs = case detectFormat bs of
 -- Helpers
 ----------------------------------------------------------------------------
 
-parseAPSGBABlock :: BS.ByteString -> Either String SomePatch
-parseAPSGBABlock bs = do
-  p@(APSGBA.APSGBAPatch hdr recs) <- APSGBA.parseAPSGBA bs
+parseAPSGBABlock :: ByteString.ByteString -> Either String SomePatch
+parseAPSGBABlock input = do
+  patch@(APSGBA.APSGBAPatch header records) <- APSGBA.parseAPSGBA input
   Right SomePatch
-    { spFormat         = "APS (GBA)"
-    , spInfo           = APSGBA.apsGBAInfo p
-    , spExplain        = Explain.explainAPSGBA p
-    , spIsDifferential = True
-    , spApply          = InMemory
-          { imApply = \source -> pure (Right (APSGBA.applyAPSGBAMemory p source)) }
-    , spUndo           = Nothing
-    , spVerification   = noVerification
-          { vSourceBlocks = map (\r -> (fromIntegral (APSGBA.gbaOffset r), APSGBA.gbaSourceCRC r)) recs
-          , vTargetBlocks = map (\r -> (fromIntegral (APSGBA.gbaOffset r), APSGBA.gbaTargetCRC r)) recs
-          , vFileSize = Just (APSGBA.gbaSourceSize hdr)
+    { patchFormat         = "APS (GBA)"
+    , patchInfo           = APSGBA.apsGBAInfo patch
+    , patchExplain        = Explain.explainAPSGBA patch
+    , patchIsDifferential = True
+    , patchApply          = InMemory
+          { inMemoryApply = \source -> pure (Right (APSGBA.applyAPSGBAMemory patch source)) }
+    , patchUndo           = Nothing
+    , patchVerification   = noVerification
+          { verifySourceBlocks = map (\record -> (fromIntegral (APSGBA.apsGbaOffset record), APSGBA.apsGbaSourceCRC record)) records
+          , verifyTargetBlocks = map (\record -> (fromIntegral (APSGBA.apsGbaOffset record), APSGBA.apsGbaTargetCRC record)) records
+          , verifyFileSize = Just (APSGBA.apsGbaSourceSize header)
           }
-    , spVerboseLines   = []
-    , spWarnings       = ["empty patch (0 blocks)" | null recs]
-    , spRecordCount    = length recs
-    , spRecordUnit     = "blocks"
-    , spSourceNotes    = []
-    , spMetadata       = Nothing
-    , spContents  = Nothing
+    , patchVerboseLines   = []
+    , patchWarnings       = ["empty patch (0 blocks)" | null records]
+    , patchRecordCount    = length records
+    , patchRecordUnit     = "blocks"
+    , patchSourceNotes    = []
+    , patchMetadata       = Nothing
+    , patchContents  = Nothing
     }
 
 -- | Structural check for APS-GBA: 12-byte header + N * 65544-byte records,
 -- each record offset 64KB-aligned.  Used to disambiguate "APS10" (N64) from
 -- "APS1" + source_size when size mod 256 == 48.
-gbaStructure :: BS.ByteString -> Bool
-gbaStructure b =
-  let payload = BS.length b - 12
-      nRecs   = payload `div` 65544
-  in payload == 0
-     || (payload >= 65544 && payload `mod` 65544 == 0
-         && all (\i -> let pos = 12 + i * 65544
-                       in BS.index b pos == 0 && BS.index b (pos + 1) == 0)
-                [0 .. nRecs - 1])
+apsGbaStructure :: ByteString.ByteString -> Bool
+apsGbaStructure input =
+  let dataLength = ByteString.length input - 12
+      recordCount = dataLength `div` 65544
+  in dataLength == 0
+     || (dataLength >= 65544 && dataLength `mod` 65544 == 0
+         && all (\index -> let position = 12 + index * 65544
+                       in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
+                [0 .. recordCount - 1])
 
 describeIPS :: IPS.IPSRecord -> String
-describeIPS (IPS.IPSRecord off dat) =
-  "Write " ++ show (BS.length dat) ++ " bytes at 0x" ++ padHex 6 off
-describeIPS (IPS.IPSRecordRLE off count val) =
-  "Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral val) ++ " at 0x" ++ padHex 6 off
+describeIPS (IPS.IPSRecord offset recordData) =
+  "Write " ++ show (ByteString.length recordData) ++ " bytes at 0x" ++ padHex 6 offset
+describeIPS (IPS.IPSRecordRLE offset count fillByte) =
+  "Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral fillByte) ++ " at 0x" ++ padHex 6 offset
 
 describeBPS :: BPS.BPSAction -> String
-describeBPS (BPS.SourceRead len) = "SourceRead " ++ show len ++ " bytes"
-describeBPS (BPS.TargetRead dat) = "TargetRead " ++ show (BS.length dat) ++ " bytes"
-describeBPS (BPS.SourceCopy len _) = "SourceCopy " ++ show len ++ " bytes"
-describeBPS (BPS.TargetCopy len _) = "TargetCopy " ++ show len ++ " bytes"
+describeBPS (BPS.SourceRead dataLength) = "SourceRead " ++ show dataLength ++ " bytes"
+describeBPS (BPS.TargetRead payload) = "TargetRead " ++ show (ByteString.length payload) ++ " bytes"
+describeBPS (BPS.SourceCopy dataLength _) = "SourceCopy " ++ show dataLength ++ " bytes"
+describeBPS (BPS.TargetCopy dataLength _) = "TargetCopy " ++ show dataLength ++ " bytes"
 
 -- | Pre-render verbose lines with "[i/n]" prefixes.
 numbered :: [a] -> (a -> String) -> [String]
-numbered xs f = zipWith fmt [(1::Int)..] xs
+numbered items formatItem = zipWith render [(1::Int)..] items
   where
-    total = length xs
-    fmt i x = "[" ++ show i ++ "/" ++ show total ++ "] " ++ f x
+    total = length items
+    render index item = "[" ++ show index ++ "/" ++ show total ++ "] " ++ formatItem item
 
 -- | Replace the first occurrence of a substring.  O(n*m) but only called
 -- once for Yay0 format string rewriting, so it doesn't matter.
 replaceFirst :: String -> String -> String -> String
 replaceFirst _ _ [] = []
-replaceFirst needle replacement haystack@(x:xs)
+replaceFirst needle replacement haystack@(char:rest)
   | take (length needle) haystack == needle =
       replacement ++ drop (length needle) haystack
-  | otherwise = x : replaceFirst needle replacement xs
+  | otherwise = char : replaceFirst needle replacement rest

@@ -5,8 +5,8 @@ import Patch.SomePatch (SomePatch(..), parseSome)
 import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Patch.BPS as BPS
 
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf, isInfixOf, find)
 import System.Directory (doesFileExist)
@@ -17,7 +17,7 @@ import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
 metadataTests :: RomCache -> IO TestTree
 metadataTests _romCache = do
   repo <- repoDir
-  groups <- mapM (mkMetadataGroup repo) metadataCases
+  groups <- mapM (makeMetadataGroup repo) metadataCases
   pure (testGroup "metadata" (concat groups ++ [bpsMetadataGroup]))
 
 -- | (format, patch_path_relative, fields_to_check)
@@ -29,36 +29,36 @@ metadataCases =
   , ("ebp",     "test/data/emerald/heavy-diff/patch.ebp",    ["title", "author", "description"])
   ]
 
-mkMetadataGroup :: FilePath -> (String, String, [String]) -> IO [TestTree]
-mkMetadataGroup repo (fmtStr, relPath, fieldNames) = do
+makeMetadataGroup :: FilePath -> (String, String, [String]) -> IO [TestTree]
+makeMetadataGroup repo (formatString, relPath, fieldNames) = do
   let patchPath = repo </> relPath
   exists <- doesFileExist patchPath
   if not exists then pure [] else
-    case parseCreateFormat fmtStr of
+    case parseCreateFormat formatString of
       Nothing -> pure []
-      Just fmt -> pure [testGroup fmtStr (map (mkFieldTest patchPath fmt) fieldNames)]
+      Just format -> pure [testGroup formatString (map (makeFieldTest patchPath format) fieldNames)]
 
-mkFieldTest :: FilePath -> CreateFormat -> String -> TestTree
-mkFieldTest patchPath fmt fieldName = testCase fieldName $ do
-  patchBs <- BS.readFile patchPath
-  case parseSome patchBs of
-    Left err -> assertFailure ("parseSome original failed: " ++ err)
-    Right sp1 -> do
+makeFieldTest :: FilePath -> CreateFormat -> String -> TestTree
+makeFieldTest patchPath format fieldName = testCase fieldName $ do
+  patchBytes <- ByteString.readFile patchPath
+  case parseSome patchBytes of
+    Left errorMessage -> assertFailure ("parseSome original failed: " ++ errorMessage)
+    Right original -> do
       -- Self-convert: convert to same format
-      let meta = case fmt of
-            CfmtPPF3 -> defaultMeta { cmUndo = True, cmValidate = True }
+      let meta = case format of
+            CreatePPF3 -> defaultMeta { metaUndo = True, metaValidate = True }
             _        -> defaultMeta
-      convResult <- attemptConvert sp1 fmt Nothing meta
+      convResult <- attemptConvert original format Nothing meta
       case convResult of
-        Left err -> assertFailure ("self-convert failed: " ++ err)
-        Right (convertedBs, _) -> case parseSome convertedBs of
-          Left err -> assertFailure ("parseSome converted failed: " ++ err)
-          Right sp2 -> do
-            let info1 = spInfo sp1
-                info2 = spInfo sp2
-                val1 = extractField fieldName info1
-                val2 = extractField fieldName info2
-            assertEqual ("field '" ++ fieldName ++ "' mismatch") val1 val2
+        Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
+        Right (convertedBytes, _) -> case parseSome convertedBytes of
+          Left errorMessage -> assertFailure ("parseSome converted failed: " ++ errorMessage)
+          Right converted -> do
+            let info1 = patchInfo original
+                info2 = patchInfo converted
+                value1 = extractField fieldName info1
+                value2 = extractField fieldName info2
+            assertEqual ("field '" ++ fieldName ++ "' mismatch") value1 value2
 
 -- | Extract a field value from info output.
 -- Looks for a line starting with "  fieldName:" (case-insensitive prefix match)
@@ -66,16 +66,16 @@ mkFieldTest patchPath fmt fieldName = testCase fieldName $ do
 extractField :: String -> String -> String
 extractField name info =
   case find (matchesField name) (lines info) of
-    Just l  -> trim (dropField name l)
-    Nothing -> "<not found>"
+    Just line -> trim (dropField name line)
+    Nothing   -> "<not found>"
   where
-    matchesField n line =
-      let stripped = dropWhile isSpace line
+    matchesField fieldName infoLine =
+      let stripped = dropWhile isSpace infoLine
           lower = map toLower stripped
-          target = map toLower n ++ ":"
+          target = map toLower fieldName ++ ":"
       in target `isPrefixOf` lower
-    dropField _n line =
-      let stripped = dropWhile isSpace line
+    dropField _fieldName infoLine =
+      let stripped = dropWhile isSpace infoLine
       in drop 1 (dropWhile (/= ':') stripped)
 
 ----------------------------------------------------------------------------
@@ -84,42 +84,42 @@ extractField name info =
 
 bpsMetadataGroup :: TestTree
 bpsMetadataGroup = testGroup "bps-metadata"
-  [ testCase "round-trip via spMetadata" $ do
-      let src  = BS.pack [0..63]
-          tgt  = BS.pack [64..127]
-          meta = BS8.pack "<patch><title>Test</title></patch>"
-          patchBs = BPS.createBPS src tgt meta
-      case parseSome patchBs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> assertEqual "spMetadata" (Just meta) (spMetadata sp)
+  [ testCase "round-trip via patchMetadata" $ do
+      let source = ByteString.pack [0..63]
+          target = ByteString.pack [64..127]
+          meta   = ByteString8.pack "<patch><title>Test</title></patch>"
+          patchBytes = BPS.createBPS source target meta
+      case parseSome patchBytes of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
 
   , testCase "empty metadata gives Nothing" $ do
-      let src  = BS.pack [0..15]
-          tgt  = BS.pack [16..31]
-          patchBs = BPS.createBPS src tgt BS.empty
-      case parseSome patchBs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> assertEqual "spMetadata" Nothing (spMetadata sp)
+      let source = ByteString.pack [0..15]
+          target = ByteString.pack [16..31]
+          patchBytes = BPS.createBPS source target ByteString.empty
+      case parseSome patchBytes of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
   , testCase "info shows metadata preview" $ do
-      let src  = BS.pack [0..63]
-          tgt  = BS.pack [64..127]
-          meta = BS8.pack "hello-world-metadata"
-          patchBs = BPS.createBPS src tgt meta
-      case parseSome patchBs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp -> do
+      let source = ByteString.pack [0..63]
+          target = ByteString.pack [64..127]
+          meta   = ByteString8.pack "hello-world-metadata"
+          patchBytes = BPS.createBPS source target meta
+      case parseSome patchBytes of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed -> do
           assertBool "info mentions metadata content"
-            ("hello-world-metadata" `isInfixOf` spInfo sp)
+            ("hello-world-metadata" `isInfixOf` patchInfo parsed)
           assertBool "info shows byte count"
-            ("20 bytes" `isInfixOf` spInfo sp)
+            ("20 bytes" `isInfixOf` patchInfo parsed)
 
   , testCase "info shows (none) without metadata" $ do
-      let src  = BS.pack [0..63]
-          tgt  = BS.pack [64..127]
-          patchBs = BPS.createBPS src tgt BS.empty
-      case parseSome patchBs of
-        Left err -> assertFailure ("parseSome failed: " ++ err)
-        Right sp ->
-          assertBool "info shows (none)" ("(none)" `isInfixOf` spInfo sp)
+      let source = ByteString.pack [0..63]
+          target = ByteString.pack [64..127]
+          patchBytes = BPS.createBPS source target ByteString.empty
+      case parseSome patchBytes of
+        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Right parsed ->
+          assertBool "info shows (none)" ("(none)" `isInfixOf` patchInfo parsed)
   ]

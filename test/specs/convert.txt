@@ -51,7 +51,7 @@ aps-n64    | aps-n64 | test/data/stadium2/heavy-diff/patch.aps | test/data/stadi
 ninja1     | pmsr    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
 # PCHTXT encoder — IPS source
 ips        | pchtxt  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept |  |
-# PCHTXT self-convert — pcPCHTXTBlocks preservation
+# PCHTXT self-convert — contentsPCHTXTBlocks preservation
 pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept |  |
 #
 # ============================================================================

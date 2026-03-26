@@ -1,9 +1,9 @@
 module Patch.PPF.Apply (applyPatch, applyPatchMemory, undoPatch) where
 
 import Patch.PPF.Types
-import Patch.Binary (copyBSRange)
+import Patch.Binary (copyByteStringRange)
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Maybe (fromMaybe)
@@ -15,55 +15,54 @@ import System.IO
 
 -- | Apply a parsed PPF patch to a target file.
 applyPatch :: Patch -> FilePath -> IO ([String], Int)
-applyPatch patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  n <- writeRecords h (patchRecords patch) recData
-  pure ([], n)
+applyPatch patch target = withBinaryFile target ReadWriteMode $ \handle -> do
+  written <- writeRecords handle (ppfRecords patch) recordData
+  pure ([], written)
 
 -- | Undo a parsed PPF3 patch (requires undo data).
 undoPatch :: Patch -> FilePath -> IO (Either String Int)
 undoPatch patch target
-  | not (patchHasUndo patch) = pure (Left "PPF: patch has no undo data")
-  | otherwise = withBinaryFile target ReadWriteMode $ \h ->
-      Right <$> writeRecords h (patchRecords patch) (fromMaybe BS.empty . recUndo)
+  | not (ppfHasUndo patch) = pure (Left "PPF: patch has no undo data")
+  | otherwise = withBinaryFile target ReadWriteMode $ \handle ->
+      Right <$> writeRecords handle (ppfRecords patch) (fromMaybe ByteString.empty . recordUndo)
 
 -- Write records to a handle, selecting the data or undo payload per record.
 writeRecords :: Handle -> [Record] -> (Record -> ByteString) -> IO Int
-writeRecords h recs selector = foldM step 0 recs
+writeRecords handle records selector = foldM step 0 records
   where
-    step n r
-      | BS.null dat = pure n
+    step written record
+      | ByteString.null payload = pure written
       | otherwise = do
-          case recCmd r of
-            Append  -> hSeek h SeekFromEnd 0
-            Replace -> hSeek h AbsoluteSeek (fromIntegral (recOffset r))
-          BS.hPut h dat
-          pure (n + 1)
-      where dat = selector r
+          case recordCommand record of
+            Append  -> hSeek handle SeekFromEnd 0
+            Replace -> hSeek handle AbsoluteSeek (fromIntegral (recordOffset record))
+          ByteString.hPut handle payload
+          pure (written + 1)
+      where payload = selector record
 
 -- | Apply a PPF patch in memory.
 -- Simulates file-size tracking for Append records (PPF4).
 applyPatchMemory :: Patch -> ByteString -> ByteString
-applyPatchMemory patch source = unsafeCreate outLen $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen outLen)
-    when (outLen > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
+    copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
+    when (outputLength > sourceLength) $
+      fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
     -- Track current end-of-file position for Append records
-    foldM_ (applyRec ptr) srcLen (patchRecords patch)
+    foldM_ (applyRecord outputPointer) sourceLength (ppfRecords patch)
   where
-    srcLen = BS.length source
+    sourceLength = ByteString.length source
     -- Compute output size: simulate file growth from Replace and Append
-    outLen = foldl' step srcLen (patchRecords patch)
-    step curSize r = case recCmd r of
-      Replace -> max curSize (fromIntegral (recOffset r) + BS.length (recData r))
-      Append  -> curSize + BS.length (recData r)
-    applyRec ptr curEnd r
-      | BS.null (recData r) = pure curEnd
-      | otherwise = case recCmd r of
+    outputLength = foldl' step sourceLength (ppfRecords patch)
+    step currentSize record = case recordCommand record of
+      Replace -> max currentSize (fromIntegral (recordOffset record) + ByteString.length (recordData record))
+      Append  -> currentSize + ByteString.length (recordData record)
+    applyRecord outputPointer currentEnd record
+      | ByteString.null (recordData record) = pure currentEnd
+      | otherwise = case recordCommand record of
           Replace -> do
-            let off = fromIntegral (recOffset r) :: Int
-            copyBSRange ptr off (recData r) 0 (BS.length (recData r))
-            pure (max curEnd (off + BS.length (recData r)))
+            let offset = fromIntegral (recordOffset record) :: Int
+            copyByteStringRange outputPointer offset (recordData record) 0 (ByteString.length (recordData record))
+            pure (max currentEnd (offset + ByteString.length (recordData record)))
           Append -> do
-            copyBSRange ptr curEnd (recData r) 0 (BS.length (recData r))
-            pure (curEnd + BS.length (recData r))
-
+            copyByteStringRange outputPointer currentEnd (recordData record) 0 (ByteString.length (recordData record))
+            pure (currentEnd + ByteString.length (recordData record))

@@ -5,7 +5,7 @@ import Integration.Helpers
    sha1Hex, applyPatch, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import Data.List (sort)
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath ((</>), takeExtension)
@@ -16,43 +16,43 @@ applyTests :: RomCache -> IO TestTree
 applyTests romCache = do
   repo <- repoDir
   let suitesDir = repo </> "test" </> "suites"
-  files <- sort . filter (\f -> takeExtension f == ".suite")
+  files <- sort . filter (\fileName -> takeExtension fileName == ".suite")
            <$> listDirectory suitesDir
-  groups <- mapM (mkSuiteGroup romCache repo suitesDir) files
+  groups <- mapM (makeSuiteGroup romCache repo suitesDir) files
   pure (testGroup "apply" (concat groups))
 
-mkSuiteGroup :: RomCache -> FilePath -> FilePath -> String -> IO [TestTree]
-mkSuiteGroup romCache repo suitesDir name = do
+makeSuiteGroup :: RomCache -> FilePath -> FilePath -> String -> IO [TestTree]
+makeSuiteGroup romCache repo suitesDir name = do
   let path = suitesDir </> name
-  (hdr, entries) <- parseSuiteFile path
-  let basePath = repo </> shBase hdr
-      expectedSha = shSha1 hdr
+  (header, entries) <- parseSuiteFile path
+  let basePath = repo </> suiteBase header
+      expectedSha = suiteSha1 header
   baseExists <- doesFileExist basePath
   if not baseExists
     then pure []  -- skip suite if base ROM missing
     else do
       let validEntries = filter isTestable entries
       pure [testGroup suiteName
-              (map (mkPatchTest romCache repo basePath expectedSha) validEntries)]
+              (map (makePatchTest romCache repo basePath expectedSha) validEntries)]
   where
     suiteName = take (length name - 6) name  -- strip .suite
-    isTestable e = seConfidence e /= "broken"
+    isTestable entry = entryConfidence entry /= "broken"
 
-mkPatchTest :: RomCache -> FilePath -> FilePath -> String -> SuiteEntry -> TestTree
-mkPatchTest romCache repo basePath expectedSha entry =
-  testCase (seFormat entry) $ do
-    let patchPath = repo </> sePatch entry
+makePatchTest :: RomCache -> FilePath -> FilePath -> String -> SuiteEntry -> TestTree
+makePatchTest romCache repo basePath expectedSha entry =
+  testCase (entryFormat entry) $ do
+    let patchPath = repo </> entryPatch entry
     patchExists <- doesFileExist patchPath
-    if not patchExists && seConfidence entry == "untested"
+    if not patchExists && entryConfidence entry == "untested"
       then pure ()  -- silently skip untested entries with missing files
       else do
-        baseBs <- cachedReadFile romCache basePath
-        patchBs <- BS.readFile patchPath
-        case parseSome patchBs of
-          Left err -> assertFailure ("parseSome failed: " ++ err)
-          Right sp -> do
-            result <- applyPatch sp baseBs
+        baseBytes <- cachedReadFile romCache basePath
+        patchBytes <- ByteString.readFile patchPath
+        case parseSome patchBytes of
+          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Right parsed -> do
+            result <- applyPatch parsed baseBytes
             case result of
-              Left err -> assertFailure ("apply failed: " ++ err)
+              Left errorMessage -> assertFailure ("apply failed: " ++ errorMessage)
               Right output -> assertEqual "SHA1 mismatch"
                 expectedSha (sha1Hex output)

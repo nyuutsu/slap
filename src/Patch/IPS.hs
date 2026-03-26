@@ -23,17 +23,17 @@ module Patch.IPS
 -- Canonical reference: https://zerosoft.zophar.net/ips.php (Z.e.r.o, ZeroSoft, 1998-2002)
 -- No formal spec exists.
 
-import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyBSRange)
+import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyByteStringRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
-import qualified Patch.Get as G
+import qualified Patch.Get as Get
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BS8
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.ByteString.Builder
 import Data.ByteString.Internal (unsafeCreate)
-import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Char (toLower)
 import Data.Int (Int64)
 import Patch.Format (padHex, renderField)
@@ -68,240 +68,241 @@ data IPSPatch = IPSPatch
   } deriving (Show)
 
 parseIPS :: ByteString -> Either String IPSPatch
-parseIPS bs
-  | BS.take 5 bs == "PATCH" = runGet (skip 5 >> parseRecords StandardIPS 3 0x454F46) bs
-  | BS.take 5 bs == "IPS32" = runGet (skip 5 >> parseRecords IPS32 4 0x45454F46) bs
+parseIPS input
+  | ByteString.take 5 input == "PATCH" = runGet (skip 5 >> parseRecords StandardIPS 3 0x454F46) input
+  | ByteString.take 5 input == "IPS32" = runGet (skip 5 >> parseRecords IPS32 4 0x45454F46) input
   | otherwise = Left "not an IPS file (bad magic)"
 
 parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
-parseRecords variant offWidth eofMarker = go []
+parseRecords variant offWidth eofMarker = parseLoop []
   where
     -- Peek at the next offWidth bytes to check for EOF marker without consuming.
     peekEOF :: Get (Maybe Bool)
     peekEOF = do
-      avail <- remaining
-      if avail < offWidth then pure Nothing
+      available <- remaining
+      if available < offWidth then pure Nothing
       else do
-        pos <- getPosition
-        input <- getInput
+        position <- getPosition
+        inputBytes <- getInput
         pure $ Just $ if offWidth == 3
-               then getWord24BE pos input == eofMarker
-               else getWord32BE pos input == eofMarker
+               then getWord24BE position inputBytes == eofMarker
+               else getWord32BE position inputBytes == eofMarker
 
-    readOff :: Get Int64
-    readOff
-      | offWidth == 3 = fromIntegral <$> G.word24BE
-      | otherwise     = fromIntegral <$> G.word32BE
+    readOffset :: Get Int64
+    readOffset
+      | offWidth == 3 = fromIntegral <$> Get.word24BE
+      | otherwise     = fromIntegral <$> Get.word32BE
 
-    go acc = do
+    parseLoop accumulated = do
       eof <- peekEOF
       case eof of
-        Nothing -> finish acc False       -- ran out of bytes, no EOF marker
+        Nothing -> finish accumulated False       -- ran out of bytes, no EOF marker
         Just True -> do
           skip offWidth
-          finish acc True                 -- proper EOF marker found
+          finish accumulated True                 -- proper EOF marker found
         Just False -> do
-          off  <- readOff
-          size <- fromIntegral <$> G.word16BE :: Get Int
+          offset <- readOffset
+          size   <- fromIntegral <$> Get.word16BE :: Get Int
           if size == 0
             then do  -- RLE record
-              rleCount <- fromIntegral <$> G.word16BE
+              rleCount <- fromIntegral <$> Get.word16BE
               when (rleCount == 0) $
                 fail ("IPS: RLE record with count 0 at offset 0x"
-                      ++ showHex (fromIntegral off :: Word64) "")
-              rleVal   <- getByte
-              go (IPSRecordRLE off rleCount rleVal : acc)
+                      ++ showHex (fromIntegral offset :: Word64) "")
+              rleFill  <- getByte
+              parseLoop (IPSRecordRLE offset rleCount rleFill : accumulated)
             else do  -- Normal record
-              dat <- getBytes size
-              go (IPSRecord off dat : acc)
+              payload <- getBytes size
+              parseLoop (IPSRecord offset payload : accumulated)
 
-    finish acc clean = do
-      avail <- remaining
-      if avail > 0
+    finish accumulated clean = do
+      available <- remaining
+      if available > 0
         then do
-          pos <- getPosition
-          input <- getInput
-          let rest = BS.drop pos input
-          if BS.index rest 0 == 0x7B  -- '{' → EBP JSON metadata (no truncation)
-            then pure (IPSPatch variant (reverse acc) Nothing (Just rest) clean)
+          position <- getPosition
+          inputBytes <- getInput
+          let trailing = ByteString.drop position inputBytes
+          if ByteString.index trailing 0 == 0x7B  -- '{' → EBP JSON metadata (no truncation)
+            then pure (IPSPatch variant (reverse accumulated) Nothing (Just trailing) clean)
             else
               -- Try truncation marker, then check for trailing EBP JSON
-              let trunc = if avail >= offWidth
+              let truncation = if available >= offWidth
                           then Just (fromIntegral (if offWidth == 3
-                                 then getWord24BE pos input
-                                 else getWord32BE pos input))
+                                 then getWord24BE position inputBytes
+                                 else getWord32BE position inputBytes))
                           else Nothing
-                  jsonOff = if avail >= offWidth then offWidth else avail
-                  rest' = BS.drop jsonOff rest
-                  ebpMeta = if not (BS.null rest') && BS.index rest' 0 == 0x7B
-                            then Just rest'
+                  jsonStart = if available >= offWidth then offWidth else available
+                  afterTruncation = ByteString.drop jsonStart trailing
+                  ebpMeta = if not (ByteString.null afterTruncation) && ByteString.index afterTruncation 0 == 0x7B
+                            then Just afterTruncation
                             else Nothing
-              in pure (IPSPatch variant (reverse acc) trunc ebpMeta clean)
-        else pure (IPSPatch variant (reverse acc) Nothing Nothing clean)
+              in pure (IPSPatch variant (reverse accumulated) truncation ebpMeta clean)
+        else pure (IPSPatch variant (reverse accumulated) Nothing Nothing clean)
 
 -- | Apply an IPS patch to a target file (seek-and-write).
 applyIPS :: IPSPatch -> FilePath -> IO Int
-applyIPS patch target = withBinaryFile target ReadWriteMode $ \h -> do
-  n <- applyRecords h (ipsRecords patch)
+applyIPS patch target = withBinaryFile target ReadWriteMode $ \handle -> do
+  written <- applyRecords handle (ipsRecords patch)
   case ipsTruncate patch of
-    Just sz -> hSetFileSize h (fromIntegral sz)
-    Nothing -> pure ()
-  pure n
+    Just truncSize -> hSetFileSize handle (fromIntegral truncSize)
+    Nothing        -> pure ()
+  pure written
 
 applyRecords :: Handle -> [IPSRecord] -> IO Int
-applyRecords h recs = do
-  mapM_ applyOne recs
-  pure (length recs)
+applyRecords handle records = do
+  mapM_ applyOne records
+  pure (length records)
   where
-    applyOne (IPSRecord off dat) = do
-      hSeek h AbsoluteSeek (fromIntegral off)
-      BS.hPut h dat
-    applyOne (IPSRecordRLE off count val) = do
-      hSeek h AbsoluteSeek (fromIntegral off)
-      BS.hPut h (BS.replicate count val)
+    applyOne (IPSRecord offset payload) = do
+      hSeek handle AbsoluteSeek (fromIntegral offset)
+      ByteString.hPut handle payload
+    applyOne (IPSRecordRLE offset count fillValue) = do
+      hSeek handle AbsoluteSeek (fromIntegral offset)
+      ByteString.hPut handle (ByteString.replicate count fillValue)
 
 -- | Apply an IPS patch in memory. Supports truncation (ipsTruncate) and
 -- RLE records — both are optional IPS features that many patchers omit.
 applyIPSMemory :: IPSPatch -> ByteString -> ByteString
-applyIPSMemory patch source = unsafeCreate outLen $ \ptr -> do
-    copyBSRange ptr 0 source 0 (min srcLen outLen)
-    when (outLen > srcLen) $
-      fillBytes (ptr `plusPtr` srcLen) (0 :: Word8) (outLen - srcLen)
+applyIPSMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
+    copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
+    when (outputLength > sourceLength) $
+      fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
     forM_ (ipsRecords patch) $ \case
-      IPSRecord off dat ->
-        copyBSRange ptr (fromIntegral off) dat 0 (BS.length dat)
-      IPSRecordRLE off count val ->
-        fillBytes (ptr `plusPtr` fromIntegral off) val count
+      IPSRecord offset payload ->
+        copyByteStringRange outputPointer (fromIntegral offset) payload 0 (ByteString.length payload)
+      IPSRecordRLE offset count fillValue ->
+        fillBytes (outputPointer `plusPtr` fromIntegral offset) fillValue count
   where
-    srcLen = BS.length source
-    recEnd (IPSRecord off dat)       = fromIntegral off + BS.length dat
-    recEnd (IPSRecordRLE off cnt _)  = fromIntegral off + cnt
-    maxRecEnd = foldl' max srcLen (map recEnd (ipsRecords patch))
-    outLen = case ipsTruncate patch of
-      Just sz -> fromIntegral sz
-      Nothing -> maxRecEnd
+    sourceLength = ByteString.length source
+    recordEnd (IPSRecord offset payload)          = fromIntegral offset + ByteString.length payload
+    recordEnd (IPSRecordRLE offset count _)       = fromIntegral offset + count
+    maxRecordEnd = foldl' max sourceLength (map recordEnd (ipsRecords patch))
+    outputLength = case ipsTruncate patch of
+      Just truncSize -> fromIntegral truncSize
+      Nothing        -> maxRecordEnd
 
 ipsMeta :: IPSPatch -> [(String, String)]
-ipsMeta p = concat
-  [ case ipsTruncate p of
-      Nothing -> []
-      Just sz -> [("truncate", show sz ++ " bytes")]
+ipsMeta patch = concat
+  [ case ipsTruncate patch of
+      Nothing        -> []
+      Just truncSize -> [("truncate", show truncSize ++ " bytes")]
   , ebpFields
   ]
   where
-    ebpFields = case ipsEBPMeta p of
-      Nothing -> []
+    ebpFields = case ipsEBPMeta patch of
+      Nothing   -> []
       Just meta ->
         let pairs = jsonPairs meta
             known = ["patcher", "title", "author", "description"]
-            knownFields = [ (k, v) | k <- known
-                          , Just v <- [jsonFieldCI pairs k]
-                          , not (null v) ]
+            knownFields = [ (key, value) | key <- known
+                          , Just value <- [jsonFieldCI pairs key]
+                          , not (null value) ]
             unknownFields = sortBy (comparing fst)
-                          [ (k, v) | (k, v) <- pairs
-                          , map toLower k `notElem` known
-                          , not (null v) ]
+                          [ (key, value) | (key, value) <- pairs
+                          , map toLower key `notElem` known
+                          , not (null value) ]
         in knownFields ++ unknownFields
 
 ipsInfo :: IPSPatch -> String
-ipsInfo p = unlines $ filter (not . null) $
-  [ "format:      " ++ case ipsVariant p of
-      StandardIPS -> case ipsEBPMeta p of
+ipsInfo patch = unlines $ filter (not . null) $
+  [ "format:      " ++ case ipsVariant patch of
+      StandardIPS -> case ipsEBPMeta patch of
         Nothing -> "IPS"
         Just _  -> "IPS (EBP)"
       IPS32       -> "IPS32"
   ]
-  ++ map renderField (ipsMeta p)
-  ++ [ "records:     " ++ show (length (ipsRecords p))
+  ++ map renderField (ipsMeta patch)
+  ++ [ "records:     " ++ show (length (ipsRecords patch))
      , "total bytes: " ++ show totalBytes
-     , rangeStr
+     , rangeString
      ]
   where
-    totalBytes = sum (map recSize (ipsRecords p))
-    recSize (IPSRecord _ d)       = BS.length d
-    recSize (IPSRecordRLE _ c _)  = c
+    totalBytes = sum (map recordSize (ipsRecords patch))
+    recordSize (IPSRecord _ payload)          = ByteString.length payload
+    recordSize (IPSRecordRLE _ count _)       = count
 
-    rangeStr
-      | null (ipsRecords p) = "range:       (empty patch)"
+    rangeString
+      | null (ipsRecords patch) = "range:       (empty patch)"
       | otherwise =
-          let lo = minimum [ recOff r | r <- ipsRecords p ]
-              hi = maximum [ recOff r + fromIntegral (recSize r) | r <- ipsRecords p ]
-          in "range:       0x" ++ showHex (fromIntegral lo :: Word64) ""
-             ++ " - 0x" ++ showHex (fromIntegral hi :: Word64) ""
+          let lowest  = minimum [ recordOffset record | record <- ipsRecords patch ]
+              highest = maximum [ recordOffset record + fromIntegral (recordSize record)
+                                | record <- ipsRecords patch ]
+          in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
+             ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 
-    recOff (IPSRecord o _)       = o
-    recOff (IPSRecordRLE o _ _)  = o
+    recordOffset (IPSRecord offset _)       = offset
+    recordOffset (IPSRecordRLE offset _ _)  = offset
 
 -- | Extract all string key-value pairs from a flat JSON object.
 jsonPairs :: ByteString -> [(String, String)]
-jsonPairs = parsePairs . BS8.unpack
+jsonPairs = extractPairs . ByteString8.unpack
   where
-    parsePairs s = case dropWhile (/= '{') s of
-      ('{':rest) -> go rest
+    extractPairs text = case dropWhile (/= '{') text of
+      ('{':rest) -> scanEntries rest
       _          -> []
-    go s = case dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r') s of
+    scanEntries text = case dropWhile (\char -> char == ' ' || char == ',' || char == '\n' || char == '\r') text of
       ('}':_)    -> []
       ('"':rest) -> case takeQuoted rest of
-        (key, afterKey) -> case dropWhile (\c -> c == ' ' || c == ':') afterKey of
-          ('"':valRest) -> case takeQuoted valRest of
-            (val, afterVal) -> (key, val) : go afterVal
-          other -> go other   -- non-string value, skip
+        (key, afterKey) -> case dropWhile (\char -> char == ' ' || char == ':') afterKey of
+          ('"':valueRest) -> case takeQuoted valueRest of
+            (value, afterValue) -> (key, value) : scanEntries afterValue
+          other -> scanEntries other   -- non-string value, skip
       _ -> []
     takeQuoted = scanQuoted []
       where
-        scanQuoted acc ('"' : rest)         = (reverse acc, rest)
-        scanQuoted acc ('\\' : '"' : rest)  = scanQuoted ('"' : acc) rest
-        scanQuoted acc ('\\' : '\\' : rest) = scanQuoted ('\\' : acc) rest
-        scanQuoted acc ('\\' : c : rest)    = scanQuoted (c : acc) rest
-        scanQuoted acc (c : rest)           = scanQuoted (c : acc) rest
-        scanQuoted acc []                   = (reverse acc, [])
+        scanQuoted accumulated ('"' : rest)         = (reverse accumulated, rest)
+        scanQuoted accumulated ('\\' : '"' : rest)  = scanQuoted ('"' : accumulated) rest
+        scanQuoted accumulated ('\\' : '\\' : rest) = scanQuoted ('\\' : accumulated) rest
+        scanQuoted accumulated ('\\' : char : rest) = scanQuoted (char : accumulated) rest
+        scanQuoted accumulated (char : rest)        = scanQuoted (char : accumulated) rest
+        scanQuoted accumulated []                   = (reverse accumulated, [])
 
 -- | Case-insensitive key lookup in extracted JSON pairs.
 jsonFieldCI :: [(String, String)] -> String -> Maybe String
 jsonFieldCI pairs key =
-  let lk = map toLower key
-  in lookup lk [(map toLower k, v) | (k, v) <- pairs]
+  let lowerKey = map toLower key
+  in lookup lowerKey [(map toLower entryKey, value) | (entryKey, value) <- pairs]
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
-encodeIPSRecord offWidth (off, dat) =
-  encodeOffset offWidth off
+encodeIPSRecord offWidth (offset, payload) =
+  encodeOffset offWidth offset
   -- Check for RLE: all same byte and length >= 3
-  <> if BS.length dat >= 3 && allSame dat
+  <> if ByteString.length payload >= 3 && allSame payload
      then -- RLE record: size=0, then rle_count, rle_value
        word8 0 <> word8 0
-       <> putWord16BE (BS.length dat)
-       <> word8 (BS.index dat 0)
+       <> putWord16BE (ByteString.length payload)
+       <> word8 (ByteString.index payload 0)
      else -- Normal record: size, data
-       putWord16BE (BS.length dat)
-       <> byteString dat
+       putWord16BE (ByteString.length payload)
+       <> byteString payload
 
 -- | Encode an offset as big-endian bytes (3 for IPS, 4 for IPS32).
 encodeOffset :: Int -> Int -> Builder
-encodeOffset 3 off =
-  word8 (fromIntegral (off `shiftR` 16))
-  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (off .&. 0xFF))
-encodeOffset _ off =
-  word8 (fromIntegral (off `shiftR` 24))
-  <> word8 (fromIntegral ((off `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((off `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (off .&. 0xFF))
+encodeOffset 3 offset =
+  word8 (fromIntegral (offset `shiftR` 16))
+  <> word8 (fromIntegral ((offset `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (offset .&. 0xFF))
+encodeOffset _ offset =
+  word8 (fromIntegral (offset `shiftR` 24))
+  <> word8 (fromIntegral ((offset `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((offset `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (offset .&. 0xFF))
 
 allSame :: ByteString -> Bool
-allSame bs
-  | BS.null bs = True
-  | otherwise  = BS.all (== BS.index bs 0) bs
+allSame input
+  | ByteString.null input = True
+  | otherwise     = ByteString.all (== ByteString.index input 0) input
 
 -- | Shift any record that starts exactly at a sentinel offset back by one byte,
 -- prepending the source byte at (off-1) so the encoder never emits the sentinel
 -- as a record offset.  No-op when the source is too short for the lookup.
 avoidSentinel :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-avoidSentinel sentinel src = map fix
+avoidSentinel sentinel source = map fix
   where
-    fix (off, dat)
-      | off == sentinel, off > 0, off - 1 < BS.length src =
-          (off - 1, BS.cons (BS.index src (off - 1)) dat)
-      | otherwise = (off, dat)
+    fix (offset, payload)
+      | offset == sentinel, offset > 0, offset - 1 < ByteString.length source =
+          (offset - 1, ByteString.cons (ByteString.index source (offset - 1)) payload)
+      | otherwise = (offset, payload)
 
 ----------------------------------------------------------------------------
 -- Encode from pre-split records (used by direct conversion)
@@ -310,56 +311,56 @@ avoidSentinel sentinel src = map fix
 -- | Encode pre-split records as an IPS patch. Records must have offsets
 -- ≤ 0xFFFFFF and data ≤ 65535 bytes each.
 encodeIPS :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
-encodeIPS src recs trunc = BL.toStrict $ toLazyByteString $
+encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncOffset 3) trunc
+  <> maybe mempty (truncationOffset 3) truncation
 
 -- | Encode pre-split records as an IPS32 patch. Records must have data
 -- ≤ 65535 bytes each.
 encodeIPS32 :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
-encodeIPS32 src recs trunc = BL.toStrict $ toLazyByteString $
+encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "IPS32"
-  <> foldMap (encodeIPSRecord 4) (avoidSentinel 0x45454F46 src recs)
+  <> foldMap (encodeIPSRecord 4) (avoidSentinel 0x45454F46 source records)
   <> byteString "EEOF"
-  <> maybe mempty (truncOffset 4) trunc
+  <> maybe mempty (truncationOffset 4) truncation
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
 -- Truncation marker (if any) goes between EOF and JSON.
 encodeEBP :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> String -> String -> String -> ByteString
-encodeEBP src recs trunc title author desc = BL.toStrict $ toLazyByteString $
+encodeEBP source records truncation title author description = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncOffset 3) trunc
-  <> byteString (ebpJson title author desc)
+  <> maybe mempty (truncationOffset 3) truncation
+  <> byteString (ebpJson title author description)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
 -- Used by direct conversion to preserve source EBP metadata as-is.
 encodeEBPRaw :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString -> ByteString
-encodeEBPRaw src recs trunc meta = BL.toStrict $ toLazyByteString $
+encodeEBPRaw source records truncation meta = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 src recs)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncOffset 3) trunc
+  <> maybe mempty (truncationOffset 3) truncation
   <> byteString meta
 
-truncOffset :: Int -> Int64 -> Builder
-truncOffset w off = encodeOffset w (fromIntegral off)
+truncationOffset :: Int -> Int64 -> Builder
+truncationOffset width offset = encodeOffset width (fromIntegral offset)
 
 ebpJson :: String -> String -> String -> ByteString
-ebpJson t a d = BS8.pack $
-  "{\"patcher\":\"slap\",\"title\":\"" ++ escapeJson t
-  ++ "\",\"author\":\"" ++ escapeJson a
-  ++ "\",\"description\":\"" ++ escapeJson d ++ "\"}"
+ebpJson title author description = ByteString8.pack $
+  "{\"patcher\":\"slap\",\"title\":\"" ++ escapeJson title
+  ++ "\",\"author\":\"" ++ escapeJson author
+  ++ "\",\"description\":\"" ++ escapeJson description ++ "\"}"
   where
     escapeJson [] = []
-    escapeJson ('"':cs)  = '\\' : '"'  : escapeJson cs
-    escapeJson ('\\':cs) = '\\' : '\\' : escapeJson cs
-    escapeJson (c:cs)
-      | c < ' '   = "\\u00" ++ padHex 2 (fromIntegral (fromEnum c)) ++ escapeJson cs
-      | otherwise  = c : escapeJson cs
+    escapeJson ('"':rest)  = '\\' : '"'  : escapeJson rest
+    escapeJson ('\\':rest) = '\\' : '\\' : escapeJson rest
+    escapeJson (char:rest)
+      | char < ' ' = "\\u00" ++ padHex 2 (fromIntegral (fromEnum char)) ++ escapeJson rest
+      | otherwise  = char : escapeJson rest
 
 ----------------------------------------------------------------------------
 -- Optimal IPS record generation via DP
@@ -369,140 +370,139 @@ ebpJson t a d = BS8.pack $
 -- Considers RLE extraction and gap merging with format-aware thresholds.
 -- offWidth is 3 for IPS/EBP, 4 for IPS32.
 optimalIPSRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
-optimalIPSRecords offWidth src tgt =
-  concatMap (partitionOptimal offWidth) (mergeGaps offWidth tgt (diffRaw src tgt))
+optimalIPSRecords offWidth source target =
+  concatMap (partitionOptimal offWidth) (mergeGaps offWidth target (diffRaw source target))
 
 -- | Diff without gap merging — raw changed regions.
 diffRaw :: ByteString -> ByteString -> [(Int, ByteString)]
-diffRaw old new = go 0 ++ extension
+diffRaw original modified = scanDiffs 0 ++ extension
   where
-    oldLen = BS.length old
-    newLen = BS.length new
-    minLen = min oldLen newLen
+    originalLength = ByteString.length original
+    modifiedLength = ByteString.length modified
+    sharedLength = min originalLength modifiedLength
     extension
-      | newLen > oldLen = [(oldLen, BS.drop oldLen new)]
-      | otherwise       = []
-    go i
-      | i >= minLen = []
-      | BS.index old i == BS.index new i = go (i + 1)
+      | modifiedLength > originalLength = [(originalLength, ByteString.drop originalLength modified)]
+      | otherwise                       = []
+    scanDiffs position
+      | position >= sharedLength = []
+      | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
-          let end = findEnd (i + 1)
-          in (i, BS.take (end - i) (BS.drop i new)) : go end
-    findEnd j
-      | j >= minLen = minLen
-      | BS.index old j /= BS.index new j = findEnd (j + 1)
-      | otherwise = j
+          let diffEnd = findDiffEnd (position + 1)
+          in (position, ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+    findDiffEnd position
+      | position >= sharedLength = sharedLength
+      | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
+      | otherwise = position
 
 -- | Merge hunks with gaps <= offWidth+1 (the break-even for separate records).
 mergeGaps :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
 mergeGaps _ _ [] = []
-mergeGaps _ _ [x] = [x]
-mergeGaps offWidth tgt ((o1,d1):(o2,d2):rest)
-  | o2 - (o1 + BS.length d1) <= offWidth + 1 =
-      let merged = BS.take (o2 + BS.length d2 - o1) (BS.drop o1 tgt)
-      in mergeGaps offWidth tgt ((o1, merged) : rest)
-  | otherwise = (o1,d1) : mergeGaps offWidth tgt ((o2,d2):rest)
+mergeGaps _ _ [hunk] = [hunk]
+mergeGaps offWidth target ((firstOffset, firstData):(nextOffset, nextData):rest)
+  | nextOffset - (firstOffset + ByteString.length firstData) <= offWidth + 1 =
+      let merged = ByteString.take (nextOffset + ByteString.length nextData - firstOffset) (ByteString.drop firstOffset target)
+      in mergeGaps offWidth target ((firstOffset, merged) : rest)
+  | otherwise = (firstOffset, firstData) : mergeGaps offWidth target ((nextOffset, nextData) : rest)
 
 -- | DP within a single block to find optimal Copy/RLE record partition.
 -- Returns records with absolute offsets and data <= 65535 bytes each.
 partitionOptimal :: Int -> (Int, ByteString) -> [(Int, ByteString)]
-partitionOptimal offWidth (blockOff, blockData)
-  | BS.null blockData = []
-  | otherwise = runST go
+partitionOptimal offWidth (blockOffset, blockData)
+  | ByteString.null blockData = []
+  | otherwise = runST buildOptimal
   where
-    n = BS.length blockData
-    inf = n * (offWidth + 7) + 1
+    blockLength = ByteString.length blockData
+    upperBound = blockLength * (offWidth + 7) + 1
     runs = findByteRuns blockData
-    rawPos = dedup . sort $
-      [0, n] ++ concatMap (\(a, b) -> [a, b]) runs
-    positions = ensureMaxGap 0xFFFF rawPos
-    k = length positions
-    posArr = listArray (0, k - 1) positions :: Array Int Int
-    rlePreds = listArray (0, k - 1) (computeRLEPreds positions runs)
-                 :: Array Int Int
+    rawPositions = dedup . sort $
+      [0, blockLength] ++ concatMap (\(runStart, runEnd) -> [runStart, runEnd]) runs
+    positions = ensureMaxGap 0xFFFF rawPositions
+    positionCount = length positions
+    positionArray = listArray (0, positionCount - 1) positions :: Array Int Int
+    rlePredecessors = listArray (0, positionCount - 1) (computeRLEPredecessors positions runs)
+                       :: Array Int Int
 
-    go :: forall s. ST s [(Int, ByteString)]
-    go = do
-      costA <- newArray (0, k - 1) inf :: ST s (STUArray s Int Int)
-      predA <- newArray (0, k - 1) (-1) :: ST s (STUArray s Int Int)
-      writeArray costA 0 0
+    buildOptimal :: forall s. ST s [(Int, ByteString)]
+    buildOptimal = do
+      costArray <- newArray (0, positionCount - 1) upperBound :: ST s (STUArray s Int Int)
+      predecessorArray <- newArray (0, positionCount - 1) (-1) :: ST s (STUArray s Int Int)
+      writeArray costArray 0 0
 
-      forM_ [1 .. k - 1] $ \j -> do
-        let pj = posArr ! j
+      forM_ [1 .. positionCount - 1] $ \targetIndex -> do
+        let targetPosition = positionArray ! targetIndex
 
         -- Copy: scan backward within 65535 window
-        let scanCopy best bestI i
-              | i < 0 = pure (best, bestI)
-              | pj - (posArr ! i) > 0xFFFF = pure (best, bestI)
+        let scanCopy bestCost bestSource sourceIndex
+              | sourceIndex < 0 = pure (bestCost, bestSource)
+              | targetPosition - (positionArray ! sourceIndex) > 0xFFFF = pure (bestCost, bestSource)
               | otherwise = do
-                  ci <- readArray costA i
-                  let c = ci + offWidth + 2 + pj - (posArr ! i)
-                  if c < best
-                    then scanCopy c i (i - 1)
-                    else scanCopy best bestI (i - 1)
-        (copyCost, copyIdx) <- scanCopy inf (-1) (j - 1)
+                  sourceCost <- readArray costArray sourceIndex
+                  let candidateCost = sourceCost + offWidth + 2 + targetPosition - (positionArray ! sourceIndex)
+                  if candidateCost < bestCost
+                    then scanCopy candidateCost sourceIndex (sourceIndex - 1)
+                    else scanCopy bestCost bestSource (sourceIndex - 1)
+        (copyCost, copySource) <- scanCopy upperBound (-1) (targetIndex - 1)
 
         -- RLE option
-        let rp = rlePreds ! j
-        (bestCost, bestIdx) <-
-          if rp >= 0 && pj - (posArr ! rp) > 3 then do
-            cr <- readArray costA rp
-            let rleCost = cr + offWidth + 5
+        let rlePredecessor = rlePredecessors ! targetIndex
+        (bestCost, bestSource) <-
+          if rlePredecessor >= 0 && targetPosition - (positionArray ! rlePredecessor) > 3 then do
+            rlePredecessorCost <- readArray costArray rlePredecessor
+            let rleCost = rlePredecessorCost + offWidth + 5
             pure $ if rleCost < copyCost
-              then (rleCost, rp)
-              else (copyCost, copyIdx)
-          else pure (copyCost, copyIdx)
+              then (rleCost, rlePredecessor)
+              else (copyCost, copySource)
+          else pure (copyCost, copySource)
 
-        writeArray costA j bestCost
-        writeArray predA j bestIdx
+        writeArray costArray targetIndex bestCost
+        writeArray predecessorArray targetIndex bestSource
 
       -- Backtrack from final position to extract records in order
-      let extract j acc
-            | j <= 0 = pure acc
+      let extract targetIndex accumulated
+            | targetIndex <= 0 = pure accumulated
             | otherwise = do
-                p <- readArray predA j
-                let st = posArr ! p
-                    en = posArr ! j
-                    dat = BS.take (en - st) (BS.drop st blockData)
-                extract p ((blockOff + st, dat) : acc)
+                sourceIndex <- readArray predecessorArray targetIndex
+                let startPosition = positionArray ! sourceIndex
+                    endPosition   = positionArray ! targetIndex
+                    payload  = ByteString.take (endPosition - startPosition) (ByteString.drop startPosition blockData)
+                extract sourceIndex ((blockOffset + startPosition, payload) : accumulated)
 
-      extract (k - 1) []
+      extract (positionCount - 1) []
 
 -- | Find maximal same-byte runs >= 4 bytes.  Returns [(start, end)].
 findByteRuns :: ByteString -> [(Int, Int)]
-findByteRuns bs
-  | BS.null bs = []
-  | otherwise  = go 0 (BS.index bs 0) 1
+findByteRuns input
+  | ByteString.null input = []
+  | otherwise     = scanRuns 0 (ByteString.index input 0) 1
   where
-    n = BS.length bs
-    go start byte i
-      | i >= n    = [(start, n) | n - start >= 4]
-      | BS.index bs i == byte = go start byte (i + 1)
-      | otherwise = [(start, i) | i - start >= 4]
-                    ++ go i (BS.index bs i) (i + 1)
+    inputLength = ByteString.length input
+    scanRuns runStart runByte position
+      | position >= inputLength = [(runStart, inputLength) | inputLength - runStart >= 4]
+      | ByteString.index input position == runByte = scanRuns runStart runByte (position + 1)
+      | otherwise = [(runStart, position) | position - runStart >= 4]
+                    ++ scanRuns position (ByteString.index input position) (position + 1)
 
 -- | Ensure no two consecutive positions are more than maxGap apart.
 ensureMaxGap :: Int -> [Int] -> [Int]
 ensureMaxGap _ [] = []
-ensureMaxGap _ [x] = [x]
-ensureMaxGap mg (a:b:rest)
-  | b - a <= mg = a : ensureMaxGap mg (b : rest)
-  | otherwise   = a : ensureMaxGap mg ((a + mg) : b : rest)
+ensureMaxGap _ [single] = [single]
+ensureMaxGap maxGap (first:second:rest)
+  | second - first <= maxGap = first : ensureMaxGap maxGap (second : rest)
+  | otherwise                = first : ensureMaxGap maxGap ((first + maxGap) : second : rest)
 
 -- | Remove consecutive duplicates from a sorted list.
 dedup :: (Eq a) => [a] -> [a]
 dedup [] = []
-dedup [x] = [x]
-dedup (x:y:rest)
-  | x == y    = dedup (y : rest)
-  | otherwise = x : dedup (y : rest)
+dedup [single] = [single]
+dedup (first:second:rest)
+  | first == second = dedup (second : rest)
+  | otherwise       = first : dedup (second : rest)
 
 -- | For each position, find the RLE predecessor (previous position in same
 -- maximal run), or -1 if none.
-computeRLEPreds :: [Int] -> [(Int, Int)] -> [Int]
-computeRLEPreds positions runs =
-  (-1) : [ if sameRun prev cur then j - 1 else (-1)
-         | (j, (prev, cur)) <- zip [1..] (zip positions (drop 1 positions)) ]
+computeRLEPredecessors :: [Int] -> [(Int, Int)] -> [Int]
+computeRLEPredecessors positions runs =
+  (-1) : [ if sameRun previous current then positionIndex - 1 else (-1)
+         | (positionIndex, (previous, current)) <- zip [1..] (zip positions (drop 1 positions)) ]
   where
-    sameRun p q = any (\(rs, re) -> rs <= p && q <= re) runs
-
+    sameRun previous current = any (\(runStart, runEnd) -> runStart <= previous && current <= runEnd) runs

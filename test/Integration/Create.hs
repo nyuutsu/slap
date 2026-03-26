@@ -6,7 +6,7 @@ import Integration.Helpers
 import Patch.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
 
-import qualified Data.ByteString as BS
+import qualified Data.ByteString as ByteString
 import qualified Data.Map.Strict as Map
 import Data.IORef
 import System.Directory (doesFileExist)
@@ -19,61 +19,61 @@ createTests romCache = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
   -- Cache bootstrapped targets by (base, bootstrap_patch)
-  cacheRef <- newIORef (Map.empty :: Map.Map (String, String) BS.ByteString)
-  tests <- mapM (mkCreateTest romCache repo cacheRef) rows
+  cacheReference <- newIORef (Map.empty :: Map.Map (String, String) ByteString.ByteString)
+  tests <- mapM (makeCreateTest romCache repo cacheReference) rows
   pure (testGroup "create" (concat tests))
 
-mkCreateTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) BS.ByteString)
+makeCreateTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) ByteString.ByteString)
              -> [String] -> IO [TestTree]
-mkCreateTest romCache repo cacheRef fields = case fields of
-  (fmtStr : scenario : basePath : bootstrapPath : targetSha : _) -> do
-    case parseCreateFormat fmtStr of
+makeCreateTest romCache repo cacheReference fields = case fields of
+  (formatString : scenario : basePath : bootstrapPath : targetSha : _) -> do
+    case parseCreateFormat formatString of
       Nothing -> pure []
-      Just fmt -> do
+      Just format -> do
         let base = repo </> basePath
             boot = repo </> bootstrapPath
         baseExists <- doesFileExist base
         bootExists <- doesFileExist boot
         if not (baseExists && bootExists)
           then pure []
-          else pure [testCase (fmtStr ++ "/" ++ scenario) $ do
-            baseBs   <- cachedReadFile romCache base
-            targetBs <- getOrBootstrap cacheRef (basePath, bootstrapPath) baseBs boot
-            roundTrip fmt baseBs targetBs targetSha
+          else pure [testCase (formatString ++ "/" ++ scenario) $ do
+            baseBytes   <- cachedReadFile romCache base
+            targetBytes <- getOrBootstrap cacheReference (basePath, bootstrapPath) baseBytes boot
+            roundTrip format baseBytes targetBytes targetSha
           ]
   _ -> pure []
 
 -- | Bootstrap: apply patch to base, cache result.
 -- Uses atomicModifyIORef' to avoid redundant bootstrapping under parallelism.
-getOrBootstrap :: IORef (Map.Map (String, String) BS.ByteString)
-               -> (String, String) -> BS.ByteString -> FilePath
-               -> IO BS.ByteString
-getOrBootstrap cacheRef key baseBs bootPath = do
-  cache <- readIORef cacheRef
+getOrBootstrap :: IORef (Map.Map (String, String) ByteString.ByteString)
+               -> (String, String) -> ByteString.ByteString -> FilePath
+               -> IO ByteString.ByteString
+getOrBootstrap cacheReference key baseBytes bootPath = do
+  cache <- readIORef cacheReference
   case Map.lookup key cache of
-    Just tgt -> pure tgt
+    Just targetBytes -> pure targetBytes
     Nothing -> do
-      bootBs <- BS.readFile bootPath
-      case parseSome bootBs of
-        Left err -> error ("bootstrap parse failed: " ++ err)
-        Right sp -> do
-          result <- applyPatch sp baseBs
+      bootBytes <- ByteString.readFile bootPath
+      case parseSome bootBytes of
+        Left errorMessage -> error ("bootstrap parse failed: " ++ errorMessage)
+        Right parsed -> do
+          result <- applyPatch parsed baseBytes
           case result of
-            Left err -> error ("bootstrap apply failed: " ++ err)
-            Right tgt -> do
-              atomicModifyIORef' cacheRef (\m -> (Map.insert key tgt m, ()))
-              pure tgt
+            Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
+            Right targetBytes -> do
+              atomicModifyIORef' cacheReference (\existing -> (Map.insert key targetBytes existing, ()))
+              pure targetBytes
 
 -- | Create a patch, parse it back, apply to base, verify SHA1.
-roundTrip :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> IO ()
-roundTrip fmt baseBs targetBs expectedSha = do
-  case createFromMemory fmt baseBs targetBs defaultMeta of
-    Left err -> assertFailure ("create failed: " ++ err)
-    Right patchBs -> case parseSome patchBs of
-      Left err -> assertFailure ("re-parse failed: " ++ err)
-      Right sp -> do
-        result <- applyPatch sp baseBs
+roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> String -> IO ()
+roundTrip format baseBytes targetBytes expectedSha = do
+  case createFromMemory format baseBytes targetBytes defaultMeta of
+    Left errorMessage -> assertFailure ("create failed: " ++ errorMessage)
+    Right patchBytes -> case parseSome patchBytes of
+      Left errorMessage -> assertFailure ("re-parse failed: " ++ errorMessage)
+      Right parsed -> do
+        result <- applyPatch parsed baseBytes
         case result of
-          Left err -> assertFailure ("re-apply failed: " ++ err)
+          Left errorMessage -> assertFailure ("re-apply failed: " ++ errorMessage)
           Right output ->
             assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)
