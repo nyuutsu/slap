@@ -1,5 +1,5 @@
 # Tetris (World) — Rosy Retrospection v1.2
-# Real-world BDF + UPS from the same mod. Cross-validation: gold.
+# Real-world BDF + UPS from the same mod. Cross-validated.
 
 base:   test/data/tetris/base.gb
 sha1:   d5b779df8b5fe20c09e2d1cf0312120f56ce7847

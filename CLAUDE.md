@@ -177,9 +177,10 @@ This means:
   gets a conversion over the line, good. If the program quietly
   fills in a zero and pretends, bad.
 
-Every committed test patch is either `gold` (real-world) or `verified`
-(created by a named external tool). slap never creates its own test
-inputs.
+Every committed test patch is either `real` (real-world), `converted`
+(real patch re-diffed in a new format by an external tool), or
+`synthetic` (fabricated target, diffed by an external tool). slap
+never creates its own test inputs (except NINJA1, pending replacement).
 
 ## Rust code style (rusty-slap)
 

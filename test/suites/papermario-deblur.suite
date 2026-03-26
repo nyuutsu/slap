@@ -1,6 +1,6 @@
 # Paper Mario (USA) — N64 deblur patches
 # Two independent patch formats (APS N64 type=1 + IPS) that produce the
-# same target. Cross-validation makes these gold confidence.
+# same target. Cross-validated.
 
 base:   test/data/paper-mario/base.z64
 sha1:   246c8d9be4164524e6e0c7736b2e8777d6c8812d
