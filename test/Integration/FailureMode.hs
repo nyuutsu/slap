@@ -1,7 +1,7 @@
 module Integration.FailureMode (failureModeTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha256Hex, applyPatch,
+  (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, RomCache, cachedReadFile, parseCreateFormat,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Patch.SomePatch (parseSome)
@@ -19,33 +19,33 @@ failureModeTests :: RomCache -> IO TestTree
 failureModeTests romCache = do
   repo <- repoDir
   mSlap <- findSlapBinary
-  let dm4kBase  = repo </> "test/data/dm4k/base.gbc"
-      dm4kBps   = repo </> "test/data/dm4k/patch.bps"
-      dm4kUps   = repo </> "test/data/dm4k/patch.ups"
-      dm4kRup   = repo </> "test/data/dm4k/patch.rup"
-      dm4kXd1   = repo </> "test/data/dm4k/patch.xdelta1"
-      dm4kVcdiff = repo </> "test/data/dm4k/patch.vcdiff"
+  let dm4yBase  = repo </> "test/data/dm4y/base.gbc"
+      dm4yBps   = repo </> "test/data/dm4y/patch.bps"
+      dm4yUps   = repo </> "test/data/dm4y/patch.ups"
+      dm4yRup   = repo </> "test/data/dm4y/patch.rup"
+      dm4yXd1   = repo </> "test/data/dm4y/patch.xdelta1"
+      dm4yVcdiff = repo </> "test/data/dm4y/patch.vcdiff"
       fftaBase  = repo </> "test/data/ffta/base.gba"
       fftaAps   = repo </> "test/data/ffta/ffta-x.aps"
-      emeraldBase = repo </> "test/data/emerald/base.gba"
-  dm4kExists   <- doesFileExist dm4kBase
+      stadium2Base = repo </> "test/data/stadium2/base.z64"
+  dm4yExists   <- doesFileExist dm4yBase
   fftaExists   <- doesFileExist fftaBase
-  emeraldExists <- doesFileExist emeraldBase
+  stadium2Exists <- doesFileExist stadium2Base
   tests <- case mSlap of
     Nothing -> pure []
     Just slap -> pure $ concat
-      [ if dm4kExists then wrongSourceTests slap dm4kBase
-          dm4kBps dm4kUps dm4kRup dm4kXd1 dm4kVcdiff else []
-      , if dm4kExists && fftaExists then wrongSourceApsGbaTests slap fftaBase fftaAps else []
-      , if dm4kExists then corruptPatchCRCTests dm4kBps dm4kUps else []
-      , if dm4kExists then wrongSizeSourceTests slap dm4kBase dm4kBps else []
+      [ if dm4yExists then wrongSourceTests slap dm4yBase
+          dm4yBps dm4yUps dm4yRup dm4yXd1 dm4yVcdiff else []
+      , if dm4yExists && fftaExists then wrongSourceApsGbaTests slap fftaBase fftaAps else []
+      , if dm4yExists then corruptPatchCRCTests dm4yBps dm4yUps else []
+      , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
       ]
   let inProcessTests = concat
-        [ if dm4kExists then crossFormatRoundTripTests romCache dm4kBase dm4kBps else []
-        , if dm4kExists && emeraldExists
+        [ if dm4yExists then crossFormatRoundTripTests romCache dm4yBase dm4yBps else []
+        , if dm4yExists && stadium2Exists
           then patchSizeRegressionTests romCache
-                 dm4kBase dm4kBps
-                 emeraldBase (repo </> "test/data/emerald/heavy-diff/patch.bps")
+                 dm4yBase dm4yBps
+                 stadium2Base (repo </> "test/data/stadium2/heavy-diff/patch.bps")
           else []
         ]
   pure $ testGroup "failure-mode" (tests ++ inProcessTests)
@@ -64,7 +64,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
   [ testCase "wrong-source/BPS rejects" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
-        writeGarbage wrong (4 * 1024 * 1024)  -- same size as dm4k
+        writeGarbage wrong (4 * 1024 * 1024)  -- same size as dm4y
         removeIfExists out
         expectFail slap ["apply", bps, wrong, "-o", out]
           "wrong-source/BPS" "mismatch"
@@ -145,7 +145,7 @@ wrongSourceTests slap base bps ups rup xd1 vcdiff =
         expectOk slap ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
           "wrong-source/VCDIFF --no-verify" "applied"
 
-  -- Swapped ROM: apply dm4k BPS patch to dm4k base (which IS the right source)
+  -- Swapped ROM: apply dm4y BPS patch to dm4y base (which IS the right source)
   -- then try applying it to the PATCHED output — verification should fail
   , testCase "wrong-source/BPS patched-as-source rejects" $
       withTempFile "slap-work" $ \work ->
@@ -233,7 +233,7 @@ wrongSizeSourceTests slap _base bps =
   [ testCase "wrong-size/BPS too small" $
       withTempFile "slap-small" $ \small ->
       withTempFile "slap-out" $ \out -> do
-        -- dm4k is 4 MB, give it 1 KB
+        -- dm4y is 4 MB, give it 1 KB
         writeGarbage small 1024
         removeIfExists out
         expectFail slap ["apply", bps, small, "-o", out]
@@ -242,7 +242,7 @@ wrongSizeSourceTests slap _base bps =
   , testCase "wrong-size/BPS too large" $
       withTempFile "slap-large" $ \large ->
       withTempFile "slap-out" $ \out -> do
-        -- dm4k is 4 MB, give it 8 MB
+        -- dm4y is 4 MB, give it 8 MB
         writeGarbage large (8 * 1024 * 1024)
         removeIfExists out
         expectFail slap ["apply", bps, large, "-o", out]
@@ -318,7 +318,7 @@ crossFormatRoundTripTests romCache base bps =
   where
     roundTripVia :: BS.ByteString -> BS.ByteString -> String -> String -> String -> IO ()
     roundTripVia baseBs targetBs fmtA fmtB fmtC = do
-      let expectedSha = sha256Hex targetBs
+      let expectedSha = sha1Hex targetBs
       -- Step 1: create in format A
       cfmtA <- parseFmt fmtA
       case createFromMemory cfmtA baseBs targetBs defaultMeta of
@@ -332,7 +332,7 @@ crossFormatRoundTripTests romCache base bps =
               case resultA of
                 Left err -> assertFailure ("re-apply " ++ fmtA ++ " failed: " ++ err)
                 Right tgtA -> do
-                  assertEqual (fmtA ++ " round-trip fidelity") expectedSha (sha256Hex tgtA)
+                  assertEqual (fmtA ++ " round-trip fidelity") expectedSha (sha1Hex tgtA)
                   cfmtB <- parseFmt fmtB
                   case createFromMemory cfmtB baseBs tgtA defaultMeta of
                     Left err -> assertFailure ("create " ++ fmtB ++ " failed: " ++ err)
@@ -345,7 +345,7 @@ crossFormatRoundTripTests romCache base bps =
                           case resultB of
                             Left err -> assertFailure ("re-apply " ++ fmtB ++ " failed: " ++ err)
                             Right tgtB -> do
-                              assertEqual (fmtB ++ " round-trip fidelity") expectedSha (sha256Hex tgtB)
+                              assertEqual (fmtB ++ " round-trip fidelity") expectedSha (sha1Hex tgtB)
                               cfmtC <- parseFmt fmtC
                               case createFromMemory cfmtC baseBs tgtB defaultMeta of
                                 Left err -> assertFailure ("create " ++ fmtC ++ " failed: " ++ err)
@@ -357,8 +357,8 @@ crossFormatRoundTripTests romCache base bps =
                                       case resultC of
                                         Left err -> assertFailure ("re-apply " ++ fmtC ++ " failed: " ++ err)
                                         Right tgtC ->
-                                          assertEqual (fmtA ++ " -> " ++ fmtB ++ " -> " ++ fmtC ++ " output SHA256")
-                                            expectedSha (sha256Hex tgtC)
+                                          assertEqual (fmtA ++ " -> " ++ fmtB ++ " -> " ++ fmtC ++ " output SHA1")
+                                            expectedSha (sha1Hex tgtC)
 
     parseFmt :: String -> IO CreateFormat
     parseFmt s = case parseCreateFormat s of
@@ -374,27 +374,27 @@ crossFormatRoundTripTests romCache base bps =
 -- patches larger, this test catches it.
 patchSizeRegressionTests :: RomCache -> FilePath -> FilePath
                          -> FilePath -> FilePath -> [TestTree]
-patchSizeRegressionTests romCache dm4kBase dm4kBps
-                         emeraldBase emeraldBps =
-  [ testCase "patch-size/dm4k BPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4kBase dm4kBps
+patchSizeRegressionTests romCache dm4yBase dm4yBps
+                         stadium2Base stadium2Bps =
+  [ testCase "patch-size/dm4y BPS" $ do
+      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
       checkPatchSize "bps" baseBs targetBs
 
-  , testCase "patch-size/dm4k IPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4kBase dm4kBps
+  , testCase "patch-size/dm4y IPS" $ do
+      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
       checkPatchSize "ips" baseBs targetBs
 
-  , testCase "patch-size/dm4k UPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache dm4kBase dm4kBps
+  , testCase "patch-size/dm4y UPS" $ do
+      (baseBs, targetBs) <- bootstrapTarget romCache dm4yBase dm4yBps
       checkPatchSize "ups" baseBs targetBs
 
-  , testCase "patch-size/emerald BPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache emeraldBase emeraldBps
+  , testCase "patch-size/stadium2 BPS" $ do
+      (baseBs, targetBs) <- bootstrapTarget romCache stadium2Base stadium2Bps
       checkPatchSize "bps" baseBs targetBs
 
-  , testCase "patch-size/emerald IPS" $ do
-      (baseBs, targetBs) <- bootstrapTarget romCache emeraldBase emeraldBps
-      checkPatchSize "ips" baseBs targetBs
+  , testCase "patch-size/stadium2 IPS32" $ do
+      (baseBs, targetBs) <- bootstrapTarget romCache stadium2Base stadium2Bps
+      checkPatchSize "ips32" baseBs targetBs
   ]
   where
     bootstrapTarget :: RomCache -> FilePath -> FilePath -> IO (BS.ByteString, BS.ByteString)
@@ -432,7 +432,7 @@ patchSizeRegressionTests romCache dm4kBase dm4kBps
               case result of
                 Left err -> assertFailure ("re-apply " ++ fmtStr ++ " failed: " ++ err)
                 Right output ->
-                  assertEqual "round-trip SHA256" (sha256Hex targetBs) (sha256Hex output)
+                  assertEqual "round-trip SHA1" (sha1Hex targetBs) (sha1Hex output)
 
     -- Allow up to 5% growth — catches large regressions, absorbs minor encoding changes
     maxSize :: Int -> Int

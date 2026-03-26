@@ -84,6 +84,7 @@ test-suite props
     , directory             >= 1.3
     , tasty                >= 1.4
     , tasty-quickcheck     >= 0.10
+    , tasty-hunit          >= 0.10
     , QuickCheck           >= 2.14
     , slap:slap-internal
     , containers           >= 0.6

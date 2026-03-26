@@ -33,6 +33,7 @@ import qualified Data.Set as Set
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openBinaryTempFile)
 import Test.Tasty
+import Test.Tasty.HUnit (testCase, assertBool)
 import Test.Tasty.QuickCheck
 
 main :: IO ()
@@ -87,7 +88,9 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "parse-truncated" prop_gdiffTrunc ]
   , testGroup "PCHTXT"
       [ testProperty "round-trip" prop_pchtxt
-      , testProperty "parse-truncated" prop_pchtxtTrunc ]
+      , testProperty "parse-truncated" prop_pchtxtTrunc
+      , testCase "parse-escapes" parsePchtxtEscapes
+      , testCase "parse-sphinx" parsePchtxtSphinx ]
   , testGroup "VCDIFF"
       [ testProperty "parse-truncated" prop_vcdiffTrunc ]
   , testGroup "BSDiff"
@@ -212,7 +215,7 @@ genEofPair = do
   pure (src, tgt)
 
 prop_ipsEofCollision :: Property
-prop_ipsEofCollision = withMaxSuccess 20 $ forAll genEofPair $ \(src, tgt) ->
+prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(src, tgt) ->
   case createFromMemory CfmtIPS src tgt defaultMeta of
     Left err -> counterexample ("create: " ++ err) $ property False
     Right patch -> case IPS.parseIPS patch of
@@ -732,6 +735,27 @@ prop_pchtxtTrunc = forAll genPairNoShrink $ \(src, tgt) ->
     Left _ -> discard
     Right patch -> truncated PCHTXT.parsePCHTXT patch
 
+-- | Parse escapes.pchtxt: exercises quoted string escapes (\n, \t, \\, \").
+parsePchtxtEscapes :: IO ()
+parsePchtxtEscapes = do
+  raw <- BS.readFile "test/data/pchtxt/escapes.pchtxt"
+  case PCHTXT.parsePCHTXT raw of
+    Left err -> assertBool ("parse failed: " ++ err) False
+    Right p  -> assertBool "expected 2 entries"
+      (length (concatMap PCHTXT.pchtxtBlockEntries (PCHTXT.pchtxtBlocks p)) == 2)
+
+-- | Parse sphinx.pchtxt: exercises @nsobid, @flag offset_shift, @disabled, @stop.
+parsePchtxtSphinx :: IO ()
+parsePchtxtSphinx = do
+  raw <- BS.readFile "test/data/pchtxt/sphinx.pchtxt"
+  case PCHTXT.parsePCHTXT raw of
+    Left err -> assertBool ("parse failed: " ++ err) False
+    Right p  -> do
+      assertBool "expected nsobid" (PCHTXT.pchtxtNsobid p /= Nothing)
+      case PCHTXT.pchtxtBlocks p of
+        [block] -> assertBool "block should be disabled" (not (PCHTXT.pchtxtBlockEnabled block))
+        blocks  -> assertBool ("expected 1 block, got " ++ show (length blocks)) False
+
 ----------------------------------------------------------------------------
 -- Consume-only formats: truncation on real test data
 ----------------------------------------------------------------------------
@@ -747,10 +771,10 @@ truncatedFile parse path = ioProperty $ do
       Right _ -> property True
 
 prop_vcdiffTrunc :: Property
-prop_vcdiffTrunc = truncatedFile VCDIFF.parseVCDIFF "test/data/dm4k/patch.vcdiff"
+prop_vcdiffTrunc = truncatedFile VCDIFF.parseVCDIFF "test/data/dm4y/patch.vcdiff"
 
 prop_bsdiffTrunc :: Property
-prop_bsdiffTrunc = truncatedFile BSDiff.parseBSDiff "test/data/dm4k/patch.bsdiff"
+prop_bsdiffTrunc = truncatedFile BSDiff.parseBSDiff "test/data/dm4y/patch.bsdiff"
 
 prop_xdelta1Trunc :: Property
-prop_xdelta1Trunc = truncatedFile XDelta1.parseXDelta1 "test/data/dm4k/patch.xdelta1"
+prop_xdelta1Trunc = truncatedFile XDelta1.parseXDelta1 "test/data/dm4y/patch.xdelta1"

@@ -1,7 +1,7 @@
 module Integration.Convert (convertTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha256Hex,
+  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
@@ -89,7 +89,7 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsStr flag
                       case applied of
                         Left err -> assertFailure ("apply converted failed: " ++ err)
                         Right output ->
-                          assertEqual "SHA256 mismatch" targetSha (sha256Hex output)
+                          assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
 -- | Check that each comma-separated expected pattern matches at least one note.
 checkWarnings :: String -> [String] -> IO ()

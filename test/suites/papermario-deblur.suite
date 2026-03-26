@@ -3,8 +3,8 @@
 # same target. Cross-validation makes these gold confidence.
 
 base:   test/data/paper-mario/base.z64
-sha256: d8459c173d27f0834eca511a60f604e2aed17560da154cdda3a411de56345089
+sha1:   246c8d9be4164524e6e0c7736b2e8777d6c8812d
 desc:   paper mario deblur (real-world APS-N64 + IPS, cross-validated)
 
-APS-N64  | test/data/paper-mario/deblur.aps | gold | N64 NTSC deblur (nointro set); cross-validated with IPS
-IPS      | test/data/paper-mario/deblur.ips | gold | N64 deblur IPS (CRC-named); cross-validated with APS
+APS-N64  | test/data/paper-mario/deblur.aps | real | N64 NTSC deblur (nointro set); cross-validated with IPS
+IPS      | test/data/paper-mario/deblur.ips | real | N64 deblur IPS (CRC-named); cross-validated with APS

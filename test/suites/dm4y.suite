@@ -1,0 +1,22 @@
+# Yu-Gi-Oh! Duel Monsters 4: Yuugi Deck (Japan) — dm4-hacking translation
+# 4 MB GBC ROM. Primary small-ROM test fixture: 14 format patches,
+# exercises CLI behavior, failure modes, and format coverage.
+
+base:   test/data/dm4y/base.gbc
+sha1:   10f5981bca3660127d308778b60a343e2e44dec7
+desc:   dm4y translation (4 MB GBC, 14 formats)
+
+BPS      | test/data/dm4y/patch.bps       | real      | dm4-hacking translation project
+IPS      | test/data/dm4y/patch.ips       | converted | Flips
+IPS32    | test/data/dm4y/patch.ips32     | converted | sips
+UPS      | test/data/dm4y/patch.ups       | converted | Go ups
+PPF3     | test/data/dm4y/patch.ppf       | converted | MakePPF3
+PPF1     | test/data/dm4y/patch.ppf1  | converted | RomPatcher.js
+PPF2     | test/data/dm4y/patch.ppf2  | converted | RomPatcher.js
+EBP      | test/data/dm4y/patch.ebp       | converted | RomPatcher.js
+APS-N64  | test/data/dm4y/patch.aps       | converted | RomPatcher.js
+RUP      | test/data/dm4y/patch.rup       | converted | RomPatcher.js
+VCDIFF   | test/data/dm4y/patch.vcdiff    | converted | xdelta3 -S none
+bsdiff   | test/data/dm4y/patch.bsdiff    | converted | bsdiff
+xdelta1  | test/data/dm4y/patch.xdelta1   | converted | xdelta 1.1.4
+GDIFF    | test/data/dm4y/patch.gdiff     | converted | javaxdelta

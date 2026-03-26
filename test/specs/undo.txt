@@ -1,10 +1,10 @@
 # Undo test specs
-# method | base | patch | base_sha256 | provenance
+# method | base | patch | base_sha1 | provenance
 #
 # UPS self-inverse: apply then undo with same patch
-ups-self       | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.ups       | 8160abe7d4b9734317000c44e9f882efefe4cc6359eacded98be62f2811e40a9 | RomPatcher.js
-ups-self       | test/data/stadium2/base.z64 | test/data/stadium2/rle/patch.ups              | 8160abe7d4b9734317000c44e9f882efefe4cc6359eacded98be62f2811e40a9 | RomPatcher.js
+ups-self       | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.ups       | d8343e69a7dc63b869cf6361d87cde64444281d3 | RomPatcher.js
+ups-self       | test/data/stadium2/base.z64 | test/data/stadium2/rle/patch.ups              | d8343e69a7dc63b869cf6361d87cde64444281d3 | RomPatcher.js
 #
 # PPF3 committed undo: apply then undo with patch containing undo data
-ppf3-committed | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch-undo.ppf  | 8160abe7d4b9734317000c44e9f882efefe4cc6359eacded98be62f2811e40a9 | makeppf3 -u
-ppf3-committed | test/data/stadium2/base.z64 | test/data/stadium2/rle/patch-undo.ppf         | 8160abe7d4b9734317000c44e9f882efefe4cc6359eacded98be62f2811e40a9 | makeppf3 -u
+ppf3-committed | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch-undo.ppf  | d8343e69a7dc63b869cf6361d87cde64444281d3 | makeppf3 -u
+ppf3-committed | test/data/stadium2/base.z64 | test/data/stadium2/rle/patch-undo.ppf         | d8343e69a7dc63b869cf6361d87cde64444281d3 | makeppf3 -u

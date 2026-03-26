@@ -2,7 +2,7 @@ module Integration.Apply (applyTests) where
 
 import Integration.Helpers
   (repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
-   sha256Hex, applyPatch, RomCache, cachedReadFile)
+   sha1Hex, applyPatch, RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 
 import qualified Data.ByteString as BS
@@ -26,7 +26,7 @@ mkSuiteGroup romCache repo suitesDir name = do
   let path = suitesDir </> name
   (hdr, entries) <- parseSuiteFile path
   let basePath = repo </> shBase hdr
-      expectedSha = shSha256 hdr
+      expectedSha = shSha1 hdr
   baseExists <- doesFileExist basePath
   if not baseExists
     then pure []  -- skip suite if base ROM missing
@@ -54,5 +54,5 @@ mkPatchTest romCache repo basePath expectedSha entry =
             result <- applyPatch sp baseBs
             case result of
               Left err -> assertFailure ("apply failed: " ++ err)
-              Right output -> assertEqual "SHA256 mismatch"
-                expectedSha (sha256Hex output)
+              Right output -> assertEqual "SHA1 mismatch"
+                expectedSha (sha1Hex output)

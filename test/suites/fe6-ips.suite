@@ -1,9 +1,9 @@
 # Fire Emblem: Fuuin no Tsurugi (Japan) — English translation patch
 # IPS stress test: 7639 records, 572 KB data, offsets up to 0x1000000
-# (the 16 MB IPS ceiling). Much larger than dm4k's few-record patches.
+# (the 16 MB IPS ceiling). Exercises the 16 MB offset ceiling that smaller ROMs never reach.
 
 base:   test/data/fe6/base.gba
-sha256: 2c2191ab5b9b3e3b19a4a8e2ba2531c1aa09f533e477ebfde02dce56af96184c
+sha1:   75d99f9be8c5f454622a5414bb1186b7c32a544c
 desc:   FE6 english translation (real-world IPS, 7639 records)
 
-IPS      | test/data/fe6/fe6.ips | gold | Fire Emblem 6 english translation; IPS stress test
+IPS      | test/data/fe6/fe6.ips | real | Fire Emblem 6 english translation; IPS stress test

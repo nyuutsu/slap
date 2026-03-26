@@ -1,22 +1,22 @@
 # Create round-trip specs
-# Each line: create a patch with slap, apply it back, verify SHA256.
-# format | scenario | base | bootstrap_patch | target_sha256 | provenance
+# Each line: create a patch with slap, apply it back, verify SHA1.
+# format | scenario | base | bootstrap_patch | target_sha1 | provenance
 #
 # --- Stadium2 (64 MB) — primary, bootstrap from VCDIFF ---
-bps        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-ips32      | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-ups        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-ppf3       | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-pmsr       | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-ninja1     | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-dps        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-rup        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-aps-n64    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-aps-gba    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
-gdiff      | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | xdelta3
+bps        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+ips32      | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+ups        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+ppf3       | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+pmsr       | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+ninja1     | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+dps        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+rup        | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+aps-n64    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+aps-gba    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
+gdiff      | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | xdelta3
 # --- Emerald (16 MB) — IPS/EBP need ≤16 MB offsets, bootstrap from BPS ---
-ips        | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | Flips
-ebp        | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | Flips
+ips        | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | Flips
+ebp        | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | Flips
 # --- Size-change (64→128 MB), bootstrap from VCDIFF ---
-bps        | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | xdelta3
-ups        | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | xdelta3
+bps        | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 1155bbd39201617638aab3f3b1087d3a11413b08 | xdelta3
+ups        | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 1155bbd39201617638aab3f3b1087d3a11413b08 | xdelta3

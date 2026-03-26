@@ -3,7 +3,7 @@
 # PS1 disc image (Akumajou Dracula X, Rev 2, Track 1).
 
 base:   test/data/sotn/base-track1.bin
-sha256: 3e51d5dce954d2f07c778bbe9fefffbf771830083363e918a2b5233a28071ea9
+sha1:   3ef656b04d490b66f2babfbf601e1cc6b73b30e2
 desc:   SotN english translation (real-world PPF3, PS1 disc image)
 
-PPF3     | test/data/sotn/eng-translation.ppf | gold | Dracula X english v1.0 translation patch
+PPF3     | test/data/sotn/eng-translation.ppf | real | Dracula X english v1.0 translation patch

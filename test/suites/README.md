@@ -11,22 +11,24 @@ Format
     # Blank lines are ignored
 
     base:   path/to/base.rom
-    sha256: <expected target SHA256>
+    sha1:   <expected target SHA1>
     desc:   Human-readable description of this test scenario
 
     # Then one line per patch:
     # FORMAT | PATH | CONFIDENCE | PROVENANCE
     #
     # CONFIDENCE is one of:
-    #   gold      — real-world patch from an actual project, verified
-    #   verified  — generated or converted, SHA256-verified round-trip
-    #   untested  — present but not yet verified by slap
-    #   broken    — known broken, skipped by runner (with reason in provenance)
+    #   real       — real patch from a real project, used as-is
+    #   converted  — real patch applied to get a target, then re-diffed
+    #                in a new format by an external tool
+    #   synthetic  — target fabricated for testing, then diffed by an
+    #                external tool
+    #   broken     — known broken, skipped by runner (with reason in provenance)
     #
     # Lines with confidence "broken" are skipped, not counted as failures.
 
-    IPS   | test/dm4k/dm4k-patch.ips | verified | Flips
-    BPS   | test/dm4k/dm4k-patch.bps | verified | Flips
+    IPS   | test/dm4y/dm4y-patch.ips | synthetic | Flips
+    BPS   | test/dm4y/dm4y-patch.bps | real      | dm4-hacking translation project
 
 Paths are relative to the repository root.
 

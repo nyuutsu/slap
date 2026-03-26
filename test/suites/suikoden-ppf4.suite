@@ -4,7 +4,7 @@
 # bribe.ppf is the largest patch (19 records, 56 bytes).
 
 base:   test/data/suikoden/base.bin
-sha256: 497fb15ee0a6a7184ebaf655a6dd8994ee1a575fa44dfae0c73c93a51680ad04
+sha1:   2366c6e47545b5a7356c8322a58c8274b361deb5
 desc:   suikoden bribe bugfix (real-world PPF4, PS1 disc image)
 
-PPF4     | test/data/suikoden/bribe.ppf | gold | Pyriel GS1 Patch bribe fix; first PPF4 validation
+PPF4     | test/data/suikoden/bribe.ppf | real | Pyriel GS1 Patch bribe fix; first PPF4 validation

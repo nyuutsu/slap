@@ -101,7 +101,7 @@ defaultCodeTable = listArray (0, 255) $
   -- 163-234: ADD 1..4, COPY 4..6, modes 0..5  → 72 entries
   ++ [(VcdAdd a, VcdCopy c m) | m <- [0..5], a <- [1..4], c <- [4..6]]
   -- 235-246: ADD 1..4, COPY 4, modes 6..8  → 12 entries
-  ++ [(VcdAdd a, VcdCopy 4 m) | a <- [1..4], m <- [6..8]]
+  ++ [(VcdAdd a, VcdCopy 4 m) | m <- [6..8], a <- [1..4]]
   -- 247-255: COPY 4, ADD 1, modes 0..8  → 9 entries
   ++ [(VcdCopy 4 m, VcdAdd 1) | m <- [0..8]]
 

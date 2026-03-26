@@ -1,7 +1,7 @@
 module Integration.Undo (undoTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, sha256Hex, applyPatch, undoPatch,
+  (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch,
    RomCache, cachedReadFile)
 import Patch.SomePatch (parseSome)
 
@@ -43,7 +43,7 @@ mkUndoTest romCache repo (_, fields) = case fields of
                 case undone of
                   Left err -> assertFailure ("undo failed: " ++ err)
                   Right restoredBs ->
-                    assertEqual "SHA256 after undo" baseSha (sha256Hex restoredBs)
+                    assertEqual "SHA1 after undo" baseSha (sha1Hex restoredBs)
       ]
     where
       label = method ++ "/" ++ patchPath

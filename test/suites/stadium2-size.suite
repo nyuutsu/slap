@@ -2,12 +2,12 @@
 # Only formats that support file growth.
 
 base:   test/data/stadium2/base.z64
-sha256: 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8
+sha1:   1155bbd39201617638aab3f3b1087d3a11413b08
 desc:   stadium2 size-change (64 MB -> 128 MB)
 
-BPS      | test/data/stadium2/size-change/patch.bps      | verified | Flips
-UPS      | test/data/stadium2/size-change/patch.ups       | verified | Go ups
-VCDIFF   | test/data/stadium2/size-change/patch.vcdiff    | verified | xdelta3
-bsdiff   | test/data/stadium2/size-change/patch.bsdiff    | verified | bsdiff
-xdelta1  | test/data/stadium2/size-change/patch.xdelta1   | verified | xdelta 1.1.4
-GDIFF    | test/data/stadium2/size-change/patch.gdiff     | verified | javaxdelta
+BPS      | test/data/stadium2/size-change/patch.bps      | synthetic | Flips
+UPS      | test/data/stadium2/size-change/patch.ups       | synthetic | Go ups
+VCDIFF   | test/data/stadium2/size-change/patch.vcdiff    | synthetic | xdelta3
+bsdiff   | test/data/stadium2/size-change/patch.bsdiff    | synthetic | bsdiff
+xdelta1  | test/data/stadium2/size-change/patch.xdelta1   | synthetic | xdelta 1.1.4
+GDIFF    | test/data/stadium2/size-change/patch.gdiff     | synthetic | javaxdelta

@@ -1,7 +1,7 @@
 module Integration.CrossVal (crossValTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha256Hex, applyPatch,
+  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    withTempFile, withTempDir, RomCache, cachedReadFile)
 import Patch.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
@@ -49,7 +49,7 @@ mkCrossValTest romCache repo cacheRef fields = case fields of
                 case createFromMemory fmt baseBs targetBs defaultMeta of
                   Left err -> assertFailure ("create failed: " ++ err)
                   Right patchBs ->
-                    -- Apply with external tool, verify SHA256
+                    -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->
                     withTempFile "slap-xv-base" $ \baseFile ->
                     withTempFile "slap-xv-out" $ \outFile -> do
@@ -57,7 +57,7 @@ mkCrossValTest romCache repo cacheRef fields = case fields of
                       BS.writeFile baseFile baseBs
                       applyExternal tool toolName fmt baseFile patchFile outFile
                       resultBs <- BS.readFile outFile
-                      assertEqual "SHA256 mismatch" targetSha (sha256Hex resultBs)
+                      assertEqual "SHA1 mismatch" targetSha (sha1Hex resultBs)
                 ]
   _ -> pure []
 

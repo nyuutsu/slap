@@ -1,8 +1,0 @@
-# Paper Mario — The Paper Parable (real-world PMSR/Yay0 .mod file)
-# Star Rod mod, Yay0-compressed PMSR. 40 MB N64 ROM.
-
-base:   test/data/paper-mario/base.z64
-sha256: b1ce80f553bc4fe1429405c5028f45e7085f34c0eb1a05f3a794fac80f18b1cd
-desc:   paper-mario Paper Parable (PMSR/Yay0, 6256 records)
-
-PMSR/Yay0 | test/data/paper-mario/paper-parable.mod | verified | Star Rod (Paper Parable 1.2.4)

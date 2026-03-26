@@ -1,12 +1,12 @@
 # Conversion tests — one per code path, not pairwise
-# source | target | source_patch | base | target_sha | result | expected_warnings | flags
+# source | target | source_patch | base | target_sha1 | result | expected_warnings | flags
 #
-# SHA256:
-#   stadium2-heavy target: 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a
-#   stadium2-size target:  2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8
-#   emerald-heavy target:  520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56
-#   paper-mario pmmq target: d8787f049f4fe5b3a23f482f43b777d904d05f37193b539f863337ff589f9dd6
-#   dm4k target:           e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8
+# SHA1:
+#   stadium2-heavy target: beba35ad698ba6d58c475051d7b69a444669ac17
+#   stadium2-size target:  1155bbd39201617638aab3f3b1087d3a11413b08
+#   emerald-heavy target:  51a34cd5b7702deb75dc57811fc00b4e10ce8a17
+#   paper-mario pmmq target: 50e583fca0d58173a6b3dbd7ae9aa0783e281ff2
+#   dm4y target:           10f5981bca3660127d308778b60a343e2e44dec7
 #
 # ============================================================================
 # Rejections (one per reason)
@@ -32,42 +32,42 @@ ips        | bps     | test/data/emerald/heavy-diff/patch.ips      |            
 # ============================================================================
 #
 # IPS32 encoder — PPF3 source drops description, validation, undo
-ppf3       | ips32   | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept | dropping description,dropping.*validation,dropping undo |
+ppf3       | ips32   | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | beba35ad698ba6d58c475051d7b69a444669ac17 | accept | dropping description,dropping.*validation,dropping undo |
 # PPF3 encoder — self-convert preserves everything
-ppf3       | ppf3    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+ppf3       | ppf3    | test/data/stadium2/heavy-diff/patch.ppf     | test/data/stadium2/base.z64     | beba35ad698ba6d58c475051d7b69a444669ac17 | accept |  |
 # IPS encoder — NINJA1 source drops all hashes
-ninja1     | ips     | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | ips     | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
 # EBP encoder — self-convert preserves EBP metadata
-ebp        | ebp     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ebp        | ebp     | test/data/emerald/heavy-diff/patch.ebp  | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept |  |
 # EBP → IPS drops EBP metadata
-ebp        | ips     | test/data/emerald/heavy-diff/patch.ebp.ebp  | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping EBP metadata |
+ebp        | ips     | test/data/emerald/heavy-diff/patch.ebp  | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept | dropping EBP metadata |
 # PPF3 encoder — bare source with flag gating
-ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  | --no-undo --no-validate
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept |  | --no-undo --no-validate
 # NINJA1 encoder — self-convert preserves hashes
-ninja1     | ninja1  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ninja1     | ninja1  | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept |  |
 # APS-N64 encoder — self-convert preserves dest_size
-aps-n64    | aps-n64 | test/data/stadium2/heavy-diff/patch.aps.aps | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  |
+aps-n64    | aps-n64 | test/data/stadium2/heavy-diff/patch.aps | test/data/stadium2/base.z64     | beba35ad698ba6d58c475051d7b69a444669ac17 | accept |  |
 # PMSR encoder — NINJA1 source drops hashes
-ninja1     | pmsr    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
+ninja1     | pmsr    | test/data/emerald/heavy-diff/patch.ninja1   | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept | dropping source CRC32,dropping source MD5,dropping source SHA1 |
 # PCHTXT encoder — IPS source
-ips        | pchtxt  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 520836dfaf21f1a68762d6a4807f63b226cad716ea29431e798069f15273ec56 | accept |  |
+ips        | pchtxt  | test/data/emerald/heavy-diff/patch.ips      | test/data/emerald/base.gba      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | accept |  |
 # PCHTXT self-convert — pcPCHTXTBlocks preservation
 pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept |  |
 #
 # ============================================================================
 # Supplementary: PPF2 fileSize satisfies APS-N64 dest_size
 # ============================================================================
-ppf2       | aps-n64 | test/data/dm4k/patch.ppf2.ppf               | test/data/dm4k/base.gbc         | e750c0c7ea5dc9f1751c04164ff362cc7eabad60ded46e0ec55b9de92e6c43e8 | accept | dropping.*validation |
+ppf2       | aps-n64 | test/data/dm4y/patch.ppf2               | test/data/dm4y/base.gbc         | 10f5981bca3660127d308778b60a343e2e44dec7 | accept | dropping.*validation |
 #
 # ============================================================================
 # --with bypass (apply-then-create)
 # ============================================================================
-bps        | ips32   | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | 7ee56c46e5da170c602350826d0d91558ed7656efa40b21a008189910905371a | accept |  | --with
+bps        | ips32   | test/data/stadium2/heavy-diff/patch.bps     | test/data/stadium2/base.z64     | beba35ad698ba6d58c475051d7b69a444669ac17 | accept |  | --with
 #
 # ============================================================================
 # Size-change via --with (stadium2, 64→128 MB)
 # ============================================================================
 bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:16 MB                     |  | --with
-bps        | ips32   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
-bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with
-bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 2a2f7850f3124afe8fcfc090c6712d9323b4cd8ae75a7c90bc468082676a29c8 | accept |  | --with --no-undo --no-validate
+bps        | ips32   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
+bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
+bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with --no-undo --no-validate

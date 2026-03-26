@@ -3,7 +3,7 @@ module Integration.Helpers
     RomCache
   , cachedReadFile
     -- * Hashing
-  , sha256Hex
+  , sha1Hex
     -- * Spec/suite parsing
   , parseSpecFile
   , SuiteHeader(..)
@@ -37,7 +37,7 @@ module Integration.Helpers
   , withTempDir
   ) where
 
-import Patch.Binary (sha256)
+import Patch.Binary (sha1)
 import Patch.Format (padHex)
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
 import Patch.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
@@ -77,9 +77,9 @@ cachedReadFile ref fp = do
 -- Hashing
 ----------------------------------------------------------------------------
 
-sha256Hex :: BS.ByteString -> String
-sha256Hex bs =
-  let digest = sha256 bs
+sha1Hex :: BS.ByteString -> String
+sha1Hex bs =
+  let digest = sha1 bs
   in concatMap (\b -> padHex 2 (fromIntegral b :: Int64)) (BS.unpack digest)
 
 ----------------------------------------------------------------------------
@@ -111,7 +111,7 @@ splitOn sep = go
 
 data SuiteHeader = SuiteHeader
   { shBase   :: FilePath
-  , shSha256 :: String
+  , shSha1 :: String
   , shDesc   :: String
   } deriving (Show)
 
@@ -137,7 +137,7 @@ parseSuiteFile path = do
 
     parseHeader ls = SuiteHeader
       { shBase   = extractField "base:" ls
-      , shSha256 = extractField "sha256:" ls
+      , shSha1 = extractField "sha1:" ls
       , shDesc   = extractField "desc:" ls
       }
 

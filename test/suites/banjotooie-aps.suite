@@ -3,7 +3,7 @@
 # Large patch (1786 records), exercises N64-specific APS fields.
 
 base:   test/data/banjo-tooie/base.z64
-sha256: a97d50f6dd9e5b85316341564d7fc29e1a6ac56972e01a17349e38779919f6d6
+sha1:   0a514683432cfe7839f197ef3a09b6bfeedfd183
 desc:   banjo-tooie dextrose (real-world APS-N64 type=1)
 
-APS-N64  | test/data/banjo-tooie/dextrose.aps | gold | Dextrose scene release; real N64-specific APS
+APS-N64  | test/data/banjo-tooie/dextrose.aps | real | Dextrose scene release; real N64-specific APS

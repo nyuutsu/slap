@@ -1,7 +1,7 @@
 module Integration.CLI (cliTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha256Hex, withTempFile, withTempDir, RomCache,
+  (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir, RomCache,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Patch.SomePatch (SomePatch(..), parseSome)
 
@@ -28,29 +28,29 @@ cliTests _romCache = do
   subprocessTests <- case mSlap of
     Nothing -> pure []
     Just slap -> do
-      let dm4kBase = repo </> "test/data/dm4k/base.gbc"
-          dm4kBps  = repo </> "test/data/dm4k/patch.bps"
-          dm4kIps  = repo </> "test/data/dm4k/patch.ips"
-          dm4kUps  = repo </> "test/data/dm4k/patch.ups"
-      baseExists <- doesFileExist dm4kBase
+      let dm4yBase = repo </> "test/data/dm4y/base.gbc"
+          dm4yBps  = repo </> "test/data/dm4y/patch.bps"
+          dm4yIps  = repo </> "test/data/dm4y/patch.ips"
+          dm4yUps  = repo </> "test/data/dm4y/patch.ups"
+      baseExists <- doesFileExist dm4yBase
       pure $ concat
-        [ if baseExists then dryrunTests slap dm4kBase dm4kBps else []
-        , if baseExists then forceTests slap dm4kBase dm4kUps else []
-        , if baseExists then noverifyTests slap dm4kBase dm4kBps else []
-        , if baseExists then inplaceTests slap dm4kBase dm4kIps else []
-        , if baseExists then collisionTests slap dm4kBase dm4kIps else []
-        , if baseExists then verboseTests slap dm4kBase dm4kIps else []
-        , if baseExists then undoErrorTests slap dm4kBase dm4kIps dm4kBps else []
-        , if baseExists then compoundTests slap dm4kBase dm4kIps dm4kBps else []
-        , if baseExists then createFlagTests slap dm4kBase dm4kBps else []
-        , if baseExists then aliasTests slap dm4kBase dm4kIps dm4kBps else []
-        , if baseExists then archiveTests slap dm4kBase dm4kIps dm4kBps else []
-        , if baseExists then ipsTruncateTests slap dm4kBase else []
+        [ if baseExists then dryrunTests slap dm4yBase dm4yBps else []
+        , if baseExists then forceTests slap dm4yBase dm4yUps else []
+        , if baseExists then noverifyTests slap dm4yBase dm4yBps else []
+        , if baseExists then inplaceTests slap dm4yBase dm4yIps else []
+        , if baseExists then collisionTests slap dm4yBase dm4yIps else []
+        , if baseExists then verboseTests slap dm4yBase dm4yIps else []
+        , if baseExists then undoErrorTests slap dm4yBase dm4yIps dm4yBps else []
+        , if baseExists then compoundTests slap dm4yBase dm4yIps dm4yBps else []
+        , if baseExists then createFlagTests slap dm4yBase dm4yBps else []
+        , if baseExists then aliasTests slap dm4yBase dm4yIps dm4yBps else []
+        , if baseExists then archiveTests slap dm4yBase dm4yIps dm4yBps else []
+        , if baseExists then ipsTruncateTests slap dm4yBase else []
         , customCodetableTests slap
-        , if baseExists then ninja1VerifyTests slap dm4kBase dm4kIps else []
-        , if baseExists then descriptionTests slap dm4kBase dm4kBps else []
-        , explainModeTests slap dm4kIps
-            (if baseExists then Just (dm4kBase, dm4kUps, dm4kBps) else Nothing)
+        , if baseExists then ninja1VerifyTests slap dm4yBase dm4yIps else []
+        , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
+        , explainModeTests slap dm4yIps
+            (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
         ]
   pure $ testGroup "cli" (inProcess ++ subprocessTests)
 
@@ -107,9 +107,9 @@ dryrunTests slap base bps =
   , testCase "dryrun/in-place leaves source untouched" $
       withTempFile "slap-work" $ \work -> do
         BS.readFile base >>= BS.writeFile work
-        beforeSha <- sha256Hex <$> BS.readFile work
+        beforeSha <- sha1Hex <$> BS.readFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup", "--dry-run"]
-        afterSha <- sha256Hex <$> BS.readFile work
+        afterSha <- sha1Hex <$> BS.readFile work
         assertEqual "source modified" beforeSha afterSha
   ]
 
@@ -222,9 +222,9 @@ compoundTests slap base ips bps =
   , testCase "compound/dry-run+force doesn't modify" $
       withTempFile "slap-work" $ \work -> do
         BS.readFile base >>= BS.writeFile work
-        beforeSha <- sha256Hex <$> BS.readFile work
+        beforeSha <- sha1Hex <$> BS.readFile work
         _ <- runSlap slap ["apply", bps, work, "--in-place", "--dry-run", "--force"]
-        afterSha <- sha256Hex <$> BS.readFile work
+        afterSha <- sha1Hex <$> BS.readFile work
         assertEqual "source modified" beforeSha afterSha
 
   , testCase "compound/explicit -o creates file" $
@@ -300,7 +300,7 @@ warningTests repo =
           assertBool "should NOT warn 'no EOF'" (not ("no EOF" `isInfixOf` info))
 
   , testCase "warnings/normal IPS no warnings" $ do
-      let ipsPath = repo </> "test/data/dm4k/patch.ips"
+      let ipsPath = repo </> "test/data/dm4y/patch.ips"
       exists <- doesFileExist ipsPath
       when exists $ do
         bs <- BS.readFile ipsPath
@@ -332,9 +332,9 @@ archiveTests slap base ips bps =
                   "archive/apply" "applied"
                 BS.readFile base >>= BS.writeFile direct
                 _ <- runSlap slap ["apply", ips, direct, "--in-place", "--no-backup"]
-                zipSha    <- sha256Hex <$> BS.readFile result
-                directSha <- sha256Hex <$> BS.readFile direct
-                assertEqual "SHA256 mismatch" directSha zipSha
+                zipSha    <- sha1Hex <$> BS.readFile result
+                directSha <- sha1Hex <$> BS.readFile direct
+                assertEqual "SHA1 mismatch" directSha zipSha
           _ -> pure ()
 
   , testCase "archive/info ZIP-wrapped" $
@@ -409,9 +409,9 @@ ipsTruncateTests slap base =
             BS.writeFile result baseBs
             expectOk slap ["apply", patch, result, "--in-place", "--no-backup", "--force"]
               "truncate/apply" "applied"
-            smallSha  <- pure (sha256Hex smallBs)
-            resultSha <- sha256Hex <$> BS.readFile result
-            assertEqual "SHA256 mismatch" smallSha resultSha
+            smallSha  <- pure (sha1Hex smallBs)
+            resultSha <- sha1Hex <$> BS.readFile result
+            assertEqual "SHA1 mismatch" smallSha resultSha
           _ -> assertFailure "create failed"
   ]
 

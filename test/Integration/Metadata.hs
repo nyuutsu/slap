@@ -25,8 +25,8 @@ metadataCases :: [(String, String, [String])]
 metadataCases =
   [ ("ppf3",    "test/data/stadium2/heavy-diff/patch.ppf",       ["description", "undo data", "validation"])
   , ("ninja1",  "test/data/emerald/heavy-diff/patch.ninja1",     ["source CRC", "source MD5", "source SHA1"])
-  , ("aps-n64", "test/data/stadium2/heavy-diff/patch.aps.aps",   ["dest size", "description"])
-  , ("ebp",     "test/data/emerald/heavy-diff/patch.ebp.ebp",    ["title", "author", "description"])
+  , ("aps-n64", "test/data/stadium2/heavy-diff/patch.aps",   ["dest size", "description"])
+  , ("ebp",     "test/data/emerald/heavy-diff/patch.ebp",    ["title", "author", "description"])
   ]
 
 mkMetadataGroup :: FilePath -> (String, String, [String]) -> IO [TestTree]

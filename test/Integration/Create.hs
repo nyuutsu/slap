@@ -1,7 +1,7 @@
 module Integration.Create (createTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha256Hex, applyPatch,
+  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    RomCache, cachedReadFile)
 import Patch.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Patch.SomePatch (parseSome)
@@ -64,7 +64,7 @@ getOrBootstrap cacheRef key baseBs bootPath = do
               atomicModifyIORef' cacheRef (\m -> (Map.insert key tgt m, ()))
               pure tgt
 
--- | Create a patch, parse it back, apply to base, verify SHA256.
+-- | Create a patch, parse it back, apply to base, verify SHA1.
 roundTrip :: CreateFormat -> BS.ByteString -> BS.ByteString -> String -> IO ()
 roundTrip fmt baseBs targetBs expectedSha = do
   case createFromMemory fmt baseBs targetBs defaultMeta of
@@ -76,4 +76,4 @@ roundTrip fmt baseBs targetBs expectedSha = do
         case result of
           Left err -> assertFailure ("re-apply failed: " ++ err)
           Right output ->
-            assertEqual "SHA256 mismatch" expectedSha (sha256Hex output)
+            assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

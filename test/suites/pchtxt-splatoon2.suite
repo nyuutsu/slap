@@ -2,7 +2,7 @@
 # OatmealDome's PCHTXT patches, single-slash comments
 
 base:   test/data/splatoon2/base.nso
-sha256: 553d526659f64e91e2f8395b8c843b670755bc1d7cca82ac06ba0a129aca2236
+sha1:   31d02d20d9047968826cf99559a51165900045fa
 desc:   Splatoon 2 v5.0.0 PCHTXT (OatmealDome)
 
-PCHTXT   | test/data/splatoon2/splatoon2.pchtxt  | gold | OatmealDome
+PCHTXT   | test/data/splatoon2/splatoon2.pchtxt  | real | OatmealDome
