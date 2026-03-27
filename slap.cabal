@@ -29,6 +29,7 @@ library slap-internal
     , Patch.Explain
     , Patch.GDIFF
     , Patch.IPS
+    , Patch.Measure
     , Patch.Convert
     , Patch.PCHTXT
     , Patch.PMSR
