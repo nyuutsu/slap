@@ -92,24 +92,24 @@ applyAPSGBA (APSGBAPatch header records) target = do
       padded = if ByteString.length source < targetSize
                then source <> ByteString.replicate (targetSize - ByteString.length source) 0
                else source
-  result <- applyGBARecs padded records
+  result <- applyGBARecords padded records
   ByteString.writeFile target (ByteString.take targetSize result)
   pure (length records)
 
-applyGBARecs :: ByteString -> [APSGBARecord] -> IO ByteString
-applyGBARecs source [] = pure source
-applyGBARecs source (APSGBARecord offset _ _ xorPayload : rest) = do
+applyGBARecords :: ByteString -> [APSGBARecord] -> IO ByteString
+applyGBARecords source [] = pure source
+applyGBARecords source (APSGBARecord offset _ _ xorPayload : rest) = do
   let blockOffset = fromIntegral offset :: Int
       blockSize = 65536
       before = ByteString.take blockOffset source
-      srcBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
-      paddedBlock = if ByteString.length srcBlock < blockSize
-                    then srcBlock <> ByteString.replicate (blockSize - ByteString.length srcBlock) 0
-                    else srcBlock
-      newBlock = ByteString.packZipWith xor paddedBlock xorPayload
+      sourceBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
+      paddedBlock = if ByteString.length sourceBlock < blockSize
+                    then sourceBlock <> ByteString.replicate (blockSize - ByteString.length sourceBlock) 0
+                    else sourceBlock
+      patchedBlock = ByteString.packZipWith xor paddedBlock xorPayload
       after = ByteString.drop (blockOffset + blockSize) source
-      result = before <> newBlock <> after
-  applyGBARecs result rest
+      result = before <> patchedBlock <> after
+  applyGBARecords result rest
 
 applyAPSGBAMemory :: APSGBAPatch -> ByteString -> ByteString
 applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize $ \targetPointer -> do
@@ -121,8 +121,8 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
       forM_ [0..65535] $ \index -> do
         let position = blockOffset + index
         when (position < targetSize) $ do
-          old <- peekByteOff targetPointer position :: IO Word8
-          pokeByteOff targetPointer position (old `xor` ByteString.index xorPayload index)
+          original <- peekByteOff targetPointer position :: IO Word8
+          pokeByteOff targetPointer position (original `xor` ByteString.index xorPayload index)
   where
     sourceLength = ByteString.length source
     targetSize = fromIntegral (apsGbaTargetSize header)
@@ -148,37 +148,37 @@ apsGBAInfo patch@(APSGBAPatch _ records) = unlines $ filter (not . null) $
 ----------------------------------------------------------------------------
 
 createAPSGBA :: ByteString -> ByteString -> ByteString
-createAPSGBA old new = LazyByteString.toStrict $ toLazyByteString $
+createAPSGBA original modified = LazyByteString.toStrict $ toLazyByteString $
     byteString "APS1"
-    <> putWord32LE (fromIntegral (ByteString.length old) :: Word32)
-    <> putWord32LE (fromIntegral (ByteString.length new) :: Word32)
-    <> foldMap (encodeGBABlock old new) changedBlocks
+    <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
+    <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
+    <> foldMap (encodeGBABlock original modified) changedBlocks
   where
     blockSize = 65536
-    blockCount = max (blocksOf old) (blocksOf new)
+    blockCount = max (blocksOf original) (blocksOf modified)
     blocksOf input = (ByteString.length input + blockSize - 1) `div` blockSize
     changedBlocks = filter hasChanges [0 .. blockCount - 1]
     hasChanges blockIndex =
       let offset = blockIndex * blockSize
-          srcBlk = padBlock (safeSlice offset blockSize old)
-          tgtBlk = padBlock (safeSlice offset blockSize new)
-      in srcBlk /= tgtBlk
+          sourceBlock = padBlock (safeSlice offset blockSize original)
+          targetBlock = padBlock (safeSlice offset blockSize modified)
+      in sourceBlock /= targetBlock
     padBlock input
       | ByteString.length input >= blockSize = ByteString.take blockSize input
       | otherwise = input <> ByteString.replicate (blockSize - ByteString.length input) 0
 
 encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
-encodeGBABlock old new blockIndex =
+encodeGBABlock original modified blockIndex =
     putWord32LE (fromIntegral offset :: Word32)
-    <> putWord16LE (crc16 srcBlk)
-    <> putWord16LE (crc16 tgtBlk)
+    <> putWord16LE (crc16 sourceBlock)
+    <> putWord16LE (crc16 targetBlock)
     <> byteString xorPayload
   where
     offset = blockIndex * 65536
-    srcBlk = padTo 65536 (safeSlice offset 65536 old)
-    tgtBlk = padTo 65536 (safeSlice offset 65536 new)
-    xorPayload = ByteString.packZipWith xor srcBlk tgtBlk
-    padTo size input
+    sourceBlock = zeroPadTo 65536 (safeSlice offset 65536 original)
+    targetBlock = zeroPadTo 65536 (safeSlice offset 65536 modified)
+    xorPayload = ByteString.packZipWith xor sourceBlock targetBlock
+    zeroPadTo size input
       | ByteString.length input >= size = ByteString.take size input
       | otherwise = input <> ByteString.replicate (size - ByteString.length input) 0
 

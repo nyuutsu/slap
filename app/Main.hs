@@ -129,14 +129,14 @@ explainParser = CommandExplain
   <*> rawFlag
 
 applyParser :: Parser Command
-applyParser = make
+applyParser = constructApplyCommand
   <$> forceFlag <*> noVerifyFlag <*> yoloFlag
   <*> verboseFlag <*> inPlaceFlag <*> backupFlag <*> dryRunFlag <*> rawFlag
   <*> argument str (metavar "PATCH"  <> help "Patch file")
   <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
   <*> outputOption
   where
-    make force noVerify yolo = CommandApply (force || yolo) (noVerify || yolo)
+    constructApplyCommand force noVerify yolo = CommandApply (force || yolo) (noVerify || yolo)
     outputOption = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
                   <> help "Write patched output to FILE"))
             <|> optional (argument str (metavar "OUTPUT"))
@@ -202,7 +202,7 @@ createParser = CommandCreate
       <> help "Metadata file to embed (BPS)"))
 
 convertParser :: Parser Command
-convertParser = make
+convertParser = constructConvertCommand
   <$> argument str (metavar "PATCH" <> help "Patch file to convert")
   <*> option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
       <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
@@ -230,7 +230,7 @@ convertParser = make
   <*> optional (option str (long "metadata" <> metavar "FILE"
       <> help "Metadata file to embed (BPS)"))
   where
-    make patch targetFormat output conversionSource raw description title author undo validate noVerify yolo version unstable romType imageType metadata =
+    constructConvertCommand patch targetFormat output conversionSource raw description title author undo validate noVerify yolo version unstable romType imageType metadata =
       CommandConvert patch targetFormat output conversionSource raw description title author undo validate
         (noVerify || yolo) version unstable romType imageType metadata
 
@@ -305,9 +305,9 @@ readUnwrap path = do
       result <- unwrapArchive format path
       case result of
         Left errorMessage -> die errorMessage
-        Right (inner, name) -> do
-          hPutStrLn stderr ("slap: unwrapped " ++ path ++ " \8594 " ++ name)
-          pure inner
+        Right (unwrappedBytes, entryName) -> do
+          hPutStrLn stderr ("slap: unwrapped " ++ path ++ " \8594 " ++ entryName)
+          pure unwrappedBytes
 
 -- | Read a file, skipping unwrap if raw=True.
 readMaybeUnwrap :: Bool -> FilePath -> IO ByteString.ByteString
@@ -330,8 +330,8 @@ doInfo action = do
         Nothing -> pure ()
         Just outPath -> case patchMetadata parsed of
           Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
-          Just meta -> do
-            ByteString.writeFile outPath meta
+          Just metadataBytes -> do
+            ByteString.writeFile outPath metadataBytes
             putStrLn ("wrote metadata to " ++ outPath)
 
 doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
@@ -343,8 +343,8 @@ doExplain patchFile records maybeWithPath raw = do
       maybeSource <- case maybeWithPath of
         Nothing   -> pure Nothing
         Just path -> Just <$> readMaybeUnwrap raw path
-      let render = if records then renderExplain else renderSummary
-      putStr (render maybeSource (patchExplain parsed))
+      let renderFunction = if records then renderExplain else renderSummary
+      putStr (renderFunction maybeSource (patchExplain parsed))
       emitWarnings parsed
 
 ----------------------------------------------------------------------------
@@ -456,7 +456,7 @@ doCreate action = do
   maybeMeta <- case commandMetadata action of
     Nothing   -> pure Nothing
     Just path -> Just <$> ByteString.readFile path
-  let meta = CreateMeta
+  let createMeta = CreateMeta
         { metaTitle       = commandTitle action
         , metaAuthor      = commandAuthor action
         , metaDescription        = commandDescription action
@@ -468,9 +468,9 @@ doCreate action = do
         , metaImageType   = commandImageType action
         , metaBPSMetadata = maybeMeta
         }
-  let defaultNotes = createDefaultNotes (commandCreateFormat action) meta
+  let defaultNotes = createDefaultNotes (commandCreateFormat action) createMeta
   forM_ defaultNotes $ \note -> hPutStrLn stderr ("slap: " ++ note)
-  case createFromMemory (commandCreateFormat action) originalBytes modifiedBytes meta of
+  case createFromMemory (commandCreateFormat action) originalBytes modifiedBytes createMeta of
     Left errorMessage -> die errorMessage
     Right patchBytes -> do
       ByteString.writeFile (commandCreateOutput action) patchBytes
@@ -487,11 +487,11 @@ doConvert action = do
     Left errorMessage -> die errorMessage
     Right parsed -> do
       emitWarnings parsed
-      let outFile = fromMaybe (replaceExtension (commandConvertPatch action) (formatExtension (commandConvertTo action))) (commandConvertOutput action)
+      let outputFile = fromMaybe (replaceExtension (commandConvertPatch action) (formatExtension (commandConvertTo action))) (commandConvertOutput action)
       maybeMetadata <- case commandConvertMetadata action of
         Nothing   -> pure Nothing
         Just path -> Just <$> ByteString.readFile path
-      let meta = CreateMeta
+      let createMeta = CreateMeta
             { metaTitle       = commandConvertTitle action
             , metaAuthor      = commandConvertAuthor action
             , metaDescription        = commandConvertDescription action
@@ -510,7 +510,7 @@ doConvert action = do
               let metaSize = ByteString.length metaBytes
               in if commandConvertTo action == CreateBPS
                  then ["note: source has " ++ show metaSize ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
-                      | isNothing (metaBPSMetadata meta)]
+                      | isNothing (metaBPSMetadata createMeta)]
                  else ["note: dropping BPS metadata (" ++ show metaSize ++ " bytes)"]
       case commandConvertSource action of
         Just sourcePath -> do
@@ -518,20 +518,20 @@ doConvert action = do
           sourceBytes <- readMaybeUnwrap (commandRaw action) sourcePath
           verifySource (commandNoVerify action) (patchVerification parsed) sourceBytes
           targetBytes <- applyForConvert parsed sourceBytes
-          case createFromMemory (commandConvertTo action) sourceBytes targetBytes meta of
+          case createFromMemory (commandConvertTo action) sourceBytes targetBytes createMeta of
             Left errorMessage -> die errorMessage
             Right result -> do
-              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo action) meta)
-              ByteString.writeFile outFile result
-              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outFile)
+              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo action) createMeta)
+              ByteString.writeFile outputFile result
+              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
-          Just contents -> case convertDirect contents (commandConvertTo action) meta of
+          Just contents -> case convertDirect contents (commandConvertTo action) createMeta of
             Left errorMessage -> die errorMessage
             Right (result, notes) -> do
               printNotes (patchSourceNotes parsed ++ notes)
-              ByteString.writeFile outFile result
-              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outFile)
+              ByteString.writeFile outputFile result
+              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> ByteString.ByteString -> IO ByteString.ByteString

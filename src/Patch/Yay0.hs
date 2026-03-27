@@ -38,9 +38,9 @@ decompressYay0 input
   | otherwise = Right $ unsafeCreate decompressedSize $ \outputPointer -> do
       commandPositionReference <- newIORef (0x10 :: Int)
       commandBitReference <- newIORef (7 :: Int)
-      linkRef   <- newIORef linkOffset
-      chunkRef  <- newIORef chunkOffset
-      outRef    <- newIORef (0 :: Int)
+      linkPositionReference   <- newIORef linkOffset
+      chunkPositionReference  <- newIORef chunkOffset
+      outputPositionReference    <- newIORef (0 :: Int)
 
       let nextBit = do
             bytePosition <- readIORef commandPositionReference
@@ -53,28 +53,28 @@ decompressYay0 input
 
           nextChunk :: IO Word8
           nextChunk = do
-            position <- readIORef chunkRef
-            modifyIORef' chunkRef (+ 1)
+            position <- readIORef chunkPositionReference
+            modifyIORef' chunkPositionReference (+ 1)
             pure (ByteString.index input position)
 
           nextLink :: IO Int
           nextLink = do
-            position <- readIORef linkRef
-            modifyIORef' linkRef (+ 2)
+            position <- readIORef linkPositionReference
+            modifyIORef' linkPositionReference (+ 2)
             let highByte = fromIntegral (ByteString.index input position) :: Int
                 lowByte  = fromIntegral (ByteString.index input (position + 1)) :: Int
             pure ((highByte `shiftL` 8) .|. lowByte)
 
           decompressLoop :: IO ()
           decompressLoop = do
-            written <- readIORef outRef
+            written <- readIORef outputPositionReference
             if written >= decompressedSize then pure () else do
               isLiteral <- nextBit
               if isLiteral
                 then do
                   literal <- nextChunk
                   poke (outputPointer `plusPtr` written) literal
-                  writeIORef outRef (written + 1)
+                  writeIORef outputPositionReference (written + 1)
                   decompressLoop
                 else do
                   link <- nextLink
@@ -86,7 +86,7 @@ decompressYay0 input
                       pure (fromIntegral extra + 0x12 :: Int)
                     else pure (countField + 2)
                   copyBack outputPointer written distance count
-                  writeIORef outRef (written + count)
+                  writeIORef outputPositionReference (written + count)
                   decompressLoop
 
       decompressLoop

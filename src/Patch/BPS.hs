@@ -94,9 +94,9 @@ parseActions = do
   if done then pure []
   else do
     encoded <- byuuVarint
-    let command = encoded .&. 3
+    let commandCode = encoded .&. 3
         dataLength = fromIntegral (shiftR encoded 2) + 1
-    action <- case command of
+    action <- case commandCode of
       0 -> pure (SourceRead dataLength)
       1 -> TargetRead <$> getBytes dataLength
       2 -> SourceCopy dataLength . decodeSignedVarint <$> byuuVarint
@@ -140,16 +140,16 @@ applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
             sourceOffset  = fromIntegral nextSourceRelative :: Int
             count   = min copyLength (targetLength - outputPosition)
             -- Clamp to the portion that falls within the source ByteString
-            clipStart = max 0 (negate sourceOffset)
-            inStart   = max 0 sourceOffset
-            inBounds  = max 0 (min (count - clipStart) (sourceLength - inStart))
+            leadingClipLength = max 0 (negate sourceOffset)
+            safeSourceStart   = max 0 sourceOffset
+            safeSourceLength  = max 0 (min (count - leadingClipLength) (sourceLength - safeSourceStart))
         -- Zero-fill any leading out-of-bounds bytes
-        when (clipStart > 0) $
-          fillBytes (outputPointer `plusPtr` outputPosition) 0 (min clipStart count)
+        when (leadingClipLength > 0) $
+          fillBytes (outputPointer `plusPtr` outputPosition) 0 (min leadingClipLength count)
         -- Bulk copy the in-bounds portion
-        copyByteStringRange outputPointer (outputPosition + clipStart) source inStart inBounds
+        copyByteStringRange outputPointer (outputPosition + leadingClipLength) source safeSourceStart safeSourceLength
         -- Zero-fill any trailing out-of-bounds bytes
-        let copied = clipStart + inBounds
+        let copied = leadingClipLength + safeSourceLength
         when (copied < count) $
           fillBytes (outputPointer `plusPtr` (outputPosition + copied)) 0 (count - copied)
         applyLoop outputPointer (outputPosition + count) (nextSourceRelative + fromIntegral count) targetRelative remaining

@@ -113,7 +113,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     -- Yay0 container: decompress and retry (Star Rod .mod files)
     | Yay0.isYay0 patchBytes -> case Yay0.decompressYay0 patchBytes of
         Left errorMessage   -> Left ("Yay0 decompression failed: " ++ errorMessage)
-        Right inner -> case parseSome inner of
+        Right decompressedBytes -> case parseSome decompressedBytes of
           Left errorMessage -> Left errorMessage
           Right parsed -> Right parsed
             { patchFormat  = patchFormat parsed ++ "/Yay0"
@@ -350,7 +350,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchMetadata       = Nothing
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
-            , contentsDestinationSize    = Just (APSN64.apsN64DestSize header)
+            , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
             }
       }
 

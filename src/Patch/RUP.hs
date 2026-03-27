@@ -324,42 +324,42 @@ rupInfo patch = unlines $ filter (not . null) $
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
 createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> ByteString
-createRUP old new info romType = LazyByteString.toStrict $ toLazyByteString $
+createRUP original modified info romType = LazyByteString.toStrict $ toLazyByteString $
     byteString "NINJA2"                  -- magic (6 bytes)
     <> word8 0                           -- text encoding
     <> byteString (encodeFixedHeader info)  -- rest of 2048-byte header
     <> word8 0x01                        -- OPEN_NEW_FILE command
     <> putVLV 0                          -- filename length (empty)
     <> word8 romType                     -- ROM type byte
-    <> putVLV (fromIntegral (ByteString.length old))   -- source size
-    <> putVLV (fromIntegral (ByteString.length new))   -- target size
-    <> byteString (md5 old)              -- source MD5
-    <> byteString (md5 new)              -- target MD5
+    <> putVLV (fromIntegral (ByteString.length original))   -- source size
+    <> putVLV (fromIntegral (ByteString.length modified))   -- target size
+    <> byteString (md5 original)              -- source MD5
+    <> byteString (md5 modified)              -- target MD5
     <> overflowPart
     <> foldMap encodeXorRecord xorHunks
     <> word8 0x00                        -- END command
   where
     -- XOR hunks over the shared region
-    minimumLength = min (ByteString.length old) (ByteString.length new)
-    oldTrim = ByteString.take minimumLength old
-    newTrim = ByteString.take minimumLength new
+    minimumLength = min (ByteString.length original) (ByteString.length modified)
+    sourceTrimmed = ByteString.take minimumLength original
+    targetTrimmed = ByteString.take minimumLength modified
     -- diffHunks finds changed regions; we then XOR old and new at those positions
-    xorHunks = map toXor (diffHunks oldTrim newTrim)
-    toXor (offset, newData) =
-      let oldData = ByteString.take (ByteString.length newData) (ByteString.drop offset oldTrim)
+    xorHunks = map computeXorHunk (diffHunks sourceTrimmed targetTrimmed)
+    computeXorHunk (offset, newData) =
+      let oldData = ByteString.take (ByteString.length newData) (ByteString.drop offset sourceTrimmed)
       in (offset, ByteString.packZipWith xor oldData newData)
 
     -- Overflow section: emitted whenever sizes differ (parser expects it).
     -- Type byte: 'A' (0x41) = append, 'M' (0x4D) = truncate/minify.
     -- Data is XOR'd with 0xFF on disk (RomPatcher.js convention).
     overflowPart
-      | ByteString.length new > ByteString.length old =
-          let extra = ByteString.drop (ByteString.length old) new
+      | ByteString.length modified > ByteString.length original =
+          let extra = ByteString.drop (ByteString.length original) modified
           in word8 (fromOverflowMode OverflowAppend)
              <> putVLV (fromIntegral (ByteString.length extra))
              <> byteString (ByteString.map (xor 0xFF) extra)
-      | ByteString.length new < ByteString.length old =
-          let extra = ByteString.drop (ByteString.length new) old
+      | ByteString.length modified < ByteString.length original =
+          let extra = ByteString.drop (ByteString.length modified) original
           in word8 (fromOverflowMode OverflowTruncate)
              <> putVLV (fromIntegral (ByteString.length extra))
              <> byteString (ByteString.map (xor 0xFF) extra)
@@ -376,11 +376,11 @@ encodeFixedHeader info = ByteString.pack $ map byteAt [0 .. headerSize - 8]
     byteAt index = case lookup index fieldBytes of
       Just byte -> byte
       Nothing   -> 0
-    fieldBytes = concatMap expand fields
-    expand (fieldOffset, fieldLength, maybeValue) = case maybeValue of
+    fieldBytes = concatMap expandField fields
+    expandField (fieldOffset, fieldLength, maybeValue) = case maybeValue of
       Nothing    -> []
-      Just value -> zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (padTo fieldLength value))
-    padTo count input = ByteString.take count input <> ByteString.replicate (max 0 (count - ByteString.length input)) 0
+      Just value -> zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (zeroPadTo fieldLength value))
+    zeroPadTo count input = ByteString.take count input <> ByteString.replicate (max 0 (count - ByteString.length input)) 0
     fields =
       [ (0x007 - 7, 84,   rupAuthor info)
       , (0x05B - 7, 11,   rupVersion info)

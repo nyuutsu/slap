@@ -110,7 +110,7 @@ parseDPSBody = do
   flagByte <- getByte
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage
-    Right flag -> do
+    Right stability -> do
       formatVersion     <- getByte
       originalSize  <- fromIntegral <$> Get.word32LE
       records    <- parseRecords
@@ -118,7 +118,7 @@ parseDPSBody = do
         { dpsName       = name
         , dpsAuthor     = author
         , dpsVersion    = version
-        , dpsStability       = flag
+        , dpsStability       = stability
         , dpsFormatVersion = formatVersion
         , dpsOriginalSize   = originalSize
         , dpsRecords    = records
@@ -223,21 +223,21 @@ dpsInfo patch = unlines $ filter (not . null) $
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
 createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> ByteString
-createDPS old new name author version stability = LazyByteString.toStrict $ toLazyByteString $
+createDPS original modified name author version stability = LazyByteString.toStrict $ toLazyByteString $
     padField 64 name                    -- name
     <> padField 64 author               -- author
     <> padField 64 version              -- version
     <> word8 (fromDPSStability stability)  -- flag
     <> word8 1                          -- DPS version
-    <> putWord32LE (fromIntegral (ByteString.length old) :: Word32)  -- orig size
-    <> foldMap encodeRecord (dpsRecordsFromDiff old new)
+    <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)  -- orig size
+    <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
   where
     padField fieldLength fieldString =
       let fieldBytes = ByteString8.pack (take fieldLength fieldString)
       in byteString fieldBytes <> byteString (ByteString.replicate (fieldLength - ByteString.length fieldBytes) 0)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [(Word8, Int, ByteString)]
-dpsRecordsFromDiff old new = buildRecords 0 (diffHunks old new)
+dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modified)
   where
     buildRecords _ [] = []
     buildRecords position ((hunkOffset, hunkData) : rest)

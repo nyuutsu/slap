@@ -52,8 +52,8 @@ applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
   where
     sourceLength = ByteString.length source
     -- Compute output size: simulate file growth from Replace and Append
-    outputLength = foldl' step sourceLength (ppfRecords patch)
-    step currentSize record = case recordCommand record of
+    outputLength = foldl' accumulateSize sourceLength (ppfRecords patch)
+    accumulateSize currentSize record = case recordCommand record of
       Replace -> max currentSize (fromIntegral (recordOffset record) + ByteString.length (recordData record))
       Append  -> currentSize + ByteString.length (recordData record)
     applyRecord outputPointer currentEnd record

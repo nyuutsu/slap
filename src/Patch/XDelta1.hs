@@ -135,13 +135,13 @@ parseSources :: Int -> Get [XDelta1Source]
 parseSources 0 = pure []
 parseSources count = do
   nameLength <- fromIntegral <$> edsioVarint
-  name <- getBytes nameLength
-  md5 <- getBytes 16
+  sourceName <- getBytes nameLength
+  md5Bytes <- getBytes 16
   sourceLength <- edsioVarint
-  isdata <- (/= 0) <$> getByte
-  sequential <- (/= 0) <$> getByte
+  isDataSource <- (/= 0) <$> getByte
+  isSequential <- (/= 0) <$> getByte
   rest <- parseSources (count - 1)
-  pure (XDelta1Source name md5 sourceLength isdata sequential : rest)
+  pure (XDelta1Source sourceName md5Bytes sourceLength isDataSource isSequential : rest)
 
 parseInstructions :: Int -> Get [XDelta1Instruction]
 parseInstructions 0 = pure []

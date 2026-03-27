@@ -122,12 +122,12 @@ applyBlocks (UPSBlock skip xorBytes : remaining) source position =
                  else mempty
       -- The terminator position: in the UPS XOR stream, each non-zero run
       -- is followed by a zero (matching byte). Copy it from source unchanged.
-      termPosition = skipEnd + xorLength
-      termByte = if termPosition < ByteString.length source
-                 then byteString (ByteString.singleton (ByteString.index source termPosition))
+      terminatorPosition = skipEnd + xorLength
+      terminatorByte = if terminatorPosition < ByteString.length source
+                 then byteString (ByteString.singleton (ByteString.index source terminatorPosition))
                  else mempty
-  in unchanged <> byteString xored <> extraXor <> termByte
-     <> applyBlocks remaining source (termPosition + 1)
+  in unchanged <> byteString xored <> extraXor <> terminatorByte
+     <> applyBlocks remaining source (terminatorPosition + 1)
 
 upsMeta :: UPSPatch -> [(String, String)]
 upsMeta patch =

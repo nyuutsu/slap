@@ -54,11 +54,11 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
         Right (convertedBytes, _) -> case parseSome convertedBytes of
           Left errorMessage -> assertFailure ("parseSome converted failed: " ++ errorMessage)
           Right converted -> do
-            let info1 = patchInfo original
-                info2 = patchInfo converted
-                value1 = extractField fieldName info1
-                value2 = extractField fieldName info2
-            assertEqual ("field '" ++ fieldName ++ "' mismatch") value1 value2
+            let originalInfo = patchInfo original
+                convertedInfo = patchInfo converted
+                originalValue = extractField fieldName originalInfo
+                convertedValue = extractField fieldName convertedInfo
+            assertEqual ("field '" ++ fieldName ++ "' mismatch") originalValue convertedValue
 
 -- | Extract a field value from info output.
 -- Looks for a line starting with "  fieldName:" (case-insensitive prefix match)

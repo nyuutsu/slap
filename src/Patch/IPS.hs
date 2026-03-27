@@ -74,23 +74,23 @@ parseIPS input
   | otherwise = Left "not an IPS file (bad magic)"
 
 parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
-parseRecords variant offWidth eofMarker = parseLoop []
+parseRecords variant offsetWidth eofMarker = parseLoop []
   where
-    -- Peek at the next offWidth bytes to check for EOF marker without consuming.
+    -- Peek at the next offsetWidth bytes to check for EOF marker without consuming.
     peekEOF :: Get (Maybe Bool)
     peekEOF = do
       available <- remaining
-      if available < offWidth then pure Nothing
+      if available < offsetWidth then pure Nothing
       else do
         position <- getPosition
         inputBytes <- getInput
-        pure $ Just $ if offWidth == 3
+        pure $ Just $ if offsetWidth == 3
                then getWord24BE position inputBytes == eofMarker
                else getWord32BE position inputBytes == eofMarker
 
     readOffset :: Get Int64
     readOffset
-      | offWidth == 3 = fromIntegral <$> Get.word24BE
+      | offsetWidth == 3 = fromIntegral <$> Get.word24BE
       | otherwise     = fromIntegral <$> Get.word32BE
 
     parseLoop accumulated = do
@@ -98,7 +98,7 @@ parseRecords variant offWidth eofMarker = parseLoop []
       case eof of
         Nothing -> finish accumulated False       -- ran out of bytes, no EOF marker
         Just True -> do
-          skip offWidth
+          skip offsetWidth
           finish accumulated True                 -- proper EOF marker found
         Just False -> do
           offset <- readOffset
@@ -109,8 +109,8 @@ parseRecords variant offWidth eofMarker = parseLoop []
               when (rleCount == 0) $
                 fail ("IPS: RLE record with count 0 at offset 0x"
                       ++ showHex (fromIntegral offset :: Word64) "")
-              rleFill  <- getByte
-              parseLoop (IPSRecordRLE offset rleCount rleFill : accumulated)
+              rleFillByte  <- getByte
+              parseLoop (IPSRecordRLE offset rleCount rleFillByte : accumulated)
             else do  -- Normal record
               payload <- getBytes size
               parseLoop (IPSRecord offset payload : accumulated)
@@ -126,12 +126,12 @@ parseRecords variant offWidth eofMarker = parseLoop []
             then pure (IPSPatch variant (reverse accumulated) Nothing (Just trailing) clean)
             else
               -- Try truncation marker, then check for trailing EBP JSON
-              let truncation = if available >= offWidth
-                          then Just (fromIntegral (if offWidth == 3
+              let truncation = if available >= offsetWidth
+                          then Just (fromIntegral (if offsetWidth == 3
                                  then getWord24BE position inputBytes
                                  else getWord32BE position inputBytes))
                           else Nothing
-                  jsonStart = if available >= offWidth then offWidth else available
+                  jsonStart = if available >= offsetWidth then offsetWidth else available
                   afterTruncation = ByteString.drop jsonStart trailing
                   ebpMeta = if not (ByteString.null afterTruncation) && ByteString.index afterTruncation 0 == 0x7B
                             then Just afterTruncation
@@ -264,8 +264,8 @@ jsonFieldCI pairs key =
   in lookup lowerKey [(map toLower entryKey, value) | (entryKey, value) <- pairs]
 
 encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
-encodeIPSRecord offWidth (offset, payload) =
-  encodeOffset offWidth offset
+encodeIPSRecord offsetWidth (offset, payload) =
+  encodeOffset offsetWidth offset
   -- Check for RLE: all same byte and length >= 3
   <> if ByteString.length payload >= 3 && allSame payload
      then -- RLE record: size=0, then rle_count, rle_value
@@ -297,9 +297,9 @@ allSame input
 -- prepending the source byte at (off-1) so the encoder never emits the sentinel
 -- as a record offset.  No-op when the source is too short for the lookup.
 avoidSentinel :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
-avoidSentinel sentinel source = map fix
+avoidSentinel sentinel source = map adjustRecord
   where
-    fix (offset, payload)
+    adjustRecord (offset, payload)
       | offset == sentinel, offset > 0, offset - 1 < ByteString.length source =
           (offset - 1, ByteString.cons (ByteString.index source (offset - 1)) payload)
       | otherwise = (offset, payload)
@@ -368,10 +368,10 @@ ebpJson title author description = ByteString8.pack $
 
 -- | Compute optimal IPS record set via DP.
 -- Considers RLE extraction and gap merging with format-aware thresholds.
--- offWidth is 3 for IPS/EBP, 4 for IPS32.
+-- offsetWidth is 3 for IPS/EBP, 4 for IPS32.
 optimalIPSRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
-optimalIPSRecords offWidth source target =
-  concatMap (partitionOptimal offWidth) (mergeGaps offWidth target (diffRaw source target))
+optimalIPSRecords offsetWidth source target =
+  concatMap (partitionOptimal offsetWidth) (mergeGaps offsetWidth target (diffRaw source target))
 
 -- | Diff without gap merging — raw changed regions.
 diffRaw :: ByteString -> ByteString -> [(Int, ByteString)]
@@ -394,27 +394,27 @@ diffRaw original modified = scanDiffs 0 ++ extension
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
       | otherwise = position
 
--- | Merge hunks with gaps <= offWidth+1 (the break-even for separate records).
+-- | Merge hunks with gaps <= offsetWidth+1 (the break-even for separate records).
 mergeGaps :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
 mergeGaps _ _ [] = []
 mergeGaps _ _ [hunk] = [hunk]
-mergeGaps offWidth target ((firstOffset, firstData):(nextOffset, nextData):rest)
-  | nextOffset - (firstOffset + ByteString.length firstData) <= offWidth + 1 =
+mergeGaps offsetWidth target ((firstOffset, firstData):(nextOffset, nextData):rest)
+  | nextOffset - (firstOffset + ByteString.length firstData) <= offsetWidth + 1 =
       let merged = ByteString.take (nextOffset + ByteString.length nextData - firstOffset) (ByteString.drop firstOffset target)
-      in mergeGaps offWidth target ((firstOffset, merged) : rest)
-  | otherwise = (firstOffset, firstData) : mergeGaps offWidth target ((nextOffset, nextData) : rest)
+      in mergeGaps offsetWidth target ((firstOffset, merged) : rest)
+  | otherwise = (firstOffset, firstData) : mergeGaps offsetWidth target ((nextOffset, nextData) : rest)
 
 -- | DP within a single block to find optimal Copy/RLE record partition.
 -- Returns records with absolute offsets and data <= 65535 bytes each.
 partitionOptimal :: Int -> (Int, ByteString) -> [(Int, ByteString)]
-partitionOptimal offWidth (blockOffset, blockData)
+partitionOptimal offsetWidth (blockOffset, blockData)
   | ByteString.null blockData = []
   | otherwise = runST buildOptimal
   where
     blockLength = ByteString.length blockData
-    upperBound = blockLength * (offWidth + 7) + 1
+    upperBound = blockLength * (offsetWidth + 7) + 1
     runs = findByteRuns blockData
-    rawPositions = dedup . sort $
+    rawPositions = deduplicate . sort $
       [0, blockLength] ++ concatMap (\(runStart, runEnd) -> [runStart, runEnd]) runs
     positions = ensureMaxGap 0xFFFF rawPositions
     positionCount = length positions
@@ -437,7 +437,7 @@ partitionOptimal offWidth (blockOffset, blockData)
               | targetPosition - (positionArray ! sourceIndex) > 0xFFFF = pure (bestCost, bestSource)
               | otherwise = do
                   sourceCost <- readArray costArray sourceIndex
-                  let candidateCost = sourceCost + offWidth + 2 + targetPosition - (positionArray ! sourceIndex)
+                  let candidateCost = sourceCost + offsetWidth + 2 + targetPosition - (positionArray ! sourceIndex)
                   if candidateCost < bestCost
                     then scanCopy candidateCost sourceIndex (sourceIndex - 1)
                     else scanCopy bestCost bestSource (sourceIndex - 1)
@@ -448,7 +448,7 @@ partitionOptimal offWidth (blockOffset, blockData)
         (bestCost, bestSource) <-
           if rlePredecessor >= 0 && targetPosition - (positionArray ! rlePredecessor) > 3 then do
             rlePredecessorCost <- readArray costArray rlePredecessor
-            let rleCost = rlePredecessorCost + offWidth + 5
+            let rleCost = rlePredecessorCost + offsetWidth + 5
             pure $ if rleCost < copyCost
               then (rleCost, rlePredecessor)
               else (copyCost, copySource)
@@ -491,12 +491,12 @@ ensureMaxGap maxGap (first:second:rest)
   | otherwise                = first : ensureMaxGap maxGap ((first + maxGap) : second : rest)
 
 -- | Remove consecutive duplicates from a sorted list.
-dedup :: (Eq a) => [a] -> [a]
-dedup [] = []
-dedup [single] = [single]
-dedup (first:second:rest)
-  | first == second = dedup (second : rest)
-  | otherwise       = first : dedup (second : rest)
+deduplicate :: (Eq a) => [a] -> [a]
+deduplicate [] = []
+deduplicate [single] = [single]
+deduplicate (first:second:rest)
+  | first == second = deduplicate (second : rest)
+  | otherwise       = first : deduplicate (second : rest)
 
 -- | For each position, find the RLE predecessor (previous position in same
 -- maximal run), or -1 if none.

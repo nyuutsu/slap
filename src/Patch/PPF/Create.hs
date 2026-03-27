@@ -29,11 +29,11 @@ buildHeader description blockCheck hasUndo validationBlock imageType =
   <> if blockCheck then byteString validationBlock else mempty  -- 1024-byte validation block
 
 encodeRecord :: Bool -> (Int64, ByteString, ByteString) -> Builder
-encodeRecord hasUndo (offset, new, old) =
+encodeRecord hasUndo (offset, patchData, undoData) =
   int64LE offset
-  <> word8 (fromIntegral (ByteString.length new))
-  <> byteString new
-  <> if hasUndo then byteString old else mempty
+  <> word8 (fromIntegral (ByteString.length patchData))
+  <> byteString patchData
+  <> if hasUndo then byteString undoData else mempty
 
 -- | Encode a PPF3 patch from pre-split records.
 -- Records: [(offset, data)], each data ≤ 255 bytes.

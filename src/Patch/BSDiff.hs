@@ -78,18 +78,18 @@ parseBSDiff :: ByteString -> Either String BSDiffPatch
 parseBSDiff input
   | ByteString.length input < 32 = Left "BSDiff: input too short"
   | ByteString.take 8 input /= "BSDIFF40" = Left "not a BSDiff file (bad magic)"
-  | controlSize < 0 || diffSize < 0 || newSize < 0 = Left "BSDiff: invalid header (negative size)"
+  | controlSize < 0 || diffSize < 0 || targetSize < 0 = Left "BSDiff: invalid header (negative size)"
   | otherwise = do
       controlData  <- safeDecompressBZip "control" controlCompressed
       diffData  <- safeDecompressBZip "diff" diffCompressed
       extraData <- safeDecompressBZip "extra" extraCompressed
       let controls = parseControls controlData
           extraSize = fromIntegral (ByteString.length input) - 32 - controlSize - diffSize
-      Right (BSDiffPatch controlSize diffSize extraSize newSize controls diffData extraData)
+      Right (BSDiffPatch controlSize diffSize extraSize targetSize controls diffData extraData)
   where
     controlSize = getSignMagnitude64 8 input
     diffSize = getSignMagnitude64 16 input
-    newSize  = getSignMagnitude64 24 input
+    targetSize  = getSignMagnitude64 24 input
     controlOffset  = 32
     diffOffset  = 32 + fromIntegral controlSize
     extraOffset = diffOffset + fromIntegral diffSize
@@ -123,26 +123,26 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     extraLength = ByteString.length extraBytes
 
     applyLoop :: Ptr Word8 -> Int -> Int -> Int -> Int -> [BSDiffControl] -> IO ()
-    applyLoop _targetPointer _diffOffset _extraOffset _originalPosition _newPosition [] = pure ()
-    applyLoop targetPointer diffOffset extraOffset originalPosition newPosition (control:rest) = do
+    applyLoop _targetPointer _diffOffset _extraOffset _originalPosition _outputPosition [] = pure ()
+    applyLoop targetPointer diffOffset extraOffset originalPosition outputPosition (control:rest) = do
       -- Clamp add/copy lengths to remaining output buffer space
-      let addLength = max 0 $ min (fromIntegral (controlAdd control)) (outputSize - newPosition)
-          copyLength  = max 0 $ min (fromIntegral (controlCopy control)) (outputSize - newPosition - addLength)
+      let addLength = max 0 $ min (fromIntegral (controlAdd control)) (outputSize - outputPosition)
+          copyLength  = max 0 $ min (fromIntegral (controlCopy control)) (outputSize - outputPosition - addLength)
           seekOffset     = fromIntegral (controlSeek control)
-      -- Add: target[newPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
+      -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
       mapM_ (\index -> do
         let sourceByte = if originalPosition + index >= 0 && originalPosition + index < sourceLength
                 then ByteString.index source (originalPosition + index) else 0
             diffByte = if diffOffset + index >= 0 && diffOffset + index < diffLength
                 then ByteString.index diffBytes (diffOffset + index) else 0
-        pokeByteOff targetPointer (newPosition + index) (sourceByte + diffByte :: Word8)) [0..addLength-1]
-      -- Copy: target[newPosition+addLength..] = extra[extraOffset..]
+        pokeByteOff targetPointer (outputPosition + index) (sourceByte + diffByte :: Word8)) [0..addLength-1]
+      -- Copy: target[outputPosition+addLength..] = extra[extraOffset..]
       let safeCopyLength = if extraOffset >= 0 && extraOffset < extraLength
                       then min copyLength (extraLength - extraOffset)
                       else 0
-      copyByteStringRange targetPointer (newPosition + addLength) extraBytes extraOffset safeCopyLength
+      copyByteStringRange targetPointer (outputPosition + addLength) extraBytes extraOffset safeCopyLength
       applyLoop targetPointer (diffOffset + addLength) (extraOffset + copyLength)
-        (originalPosition + addLength + seekOffset) (newPosition + addLength + copyLength) rest
+        (originalPosition + addLength + seekOffset) (outputPosition + addLength + copyLength) rest
 
 ----------------------------------------------------------------------------
 -- Info

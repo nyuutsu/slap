@@ -156,10 +156,10 @@ parseHexBytes text =
   let hexChars = takeWhile isHexDigit text
   in if odd (length hexChars)
      then Left ("PCHTXT: odd number of hex digits: " ++ text)
-     else Right (ByteString.pack (pairUp hexChars))
+     else Right (ByteString.pack (decodeHexPairs hexChars))
   where
-    pairUp (highNibble:lowNibble:rest) = fromIntegral (digitToInt highNibble * 16 + digitToInt lowNibble) : pairUp rest
-    pairUp _ = []
+    decodeHexPairs (highNibble:lowNibble:rest) = fromIntegral (digitToInt highNibble * 16 + digitToInt lowNibble) : decodeHexPairs rest
+    decodeHexPairs _ = []
 
 parseQuotedString :: String -> Either String ByteString
 parseQuotedString = fmap ByteString.pack . parseEscaped

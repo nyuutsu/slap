@@ -418,8 +418,8 @@ encodeBigEndian value = ByteString.pack (extractBytes [] value)
 ninja1HashInput :: ByteString.ByteString -> ByteString.ByteString
 ninja1HashInput input
   | ByteString.length input > 0x1e00000 =
-      let first    = ByteString.take 0x1400000 input
-          lastPart = ByteString.drop (ByteString.length input - 0xa00000) input
+      let headSample = ByteString.take 0x1400000 input
+          tailSample  = ByteString.drop (ByteString.length input - 0xa00000) input
           sizeString  = ByteString8.pack (show (ByteString.length input))
-      in first <> lastPart <> sizeString
+      in headSample <> tailSample <> sizeString
   | otherwise = input

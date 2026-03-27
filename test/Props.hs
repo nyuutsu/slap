@@ -640,11 +640,11 @@ prop_bpsBlockMove = once $
   let blockSize = 4096
       -- Distinctive block content that won't match surrounding zeros
       block = ByteString.pack [fromIntegral ((index * 7 + 3) `mod` 251) | index <- [0..blockSize-1] :: [Int]]
-      pad1  = 0x1000
-      pad2  = 0x8000
-      sourceLength = pad2 + blockSize
-      source = ByteString.replicate pad1 0 <> block <> ByteString.replicate (sourceLength - pad1 - blockSize) 0
-      target = ByteString.replicate pad2 0 <> block
+      padding1  = 0x1000
+      padding2  = 0x8000
+      sourceLength = padding2 + blockSize
+      source = ByteString.replicate padding1 0 <> block <> ByteString.replicate (sourceLength - padding1 - blockSize) 0
+      target = ByteString.replicate padding2 0 <> block
       patch  = BPS.createBPS source target ByteString.empty
   in counterexample ("patch size: " ++ show (ByteString.length patch)
                       ++ " (block: " ++ show blockSize ++ ")") $

@@ -187,10 +187,10 @@ copyByteStringRange destination destinationOffset source sourceOffset copyLength
 ----------------------------------------------------------------------------
 
 crc16 :: ByteString -> Word16
-crc16 = ByteString.foldl' step 0
+crc16 = ByteString.foldl' updateChecksum 0
   where
-    step :: Word16 -> Word8 -> Word16
-    step checksum byte =
+    updateChecksum :: Word16 -> Word8 -> Word16
+    updateChecksum checksum byte =
       let tableIndex = fromIntegral ((checksum `xor` fromIntegral byte) .&. 0xFF)
       in (checksum `shiftR` 8) `xor` (crc16Table ! tableIndex)
 

@@ -399,13 +399,13 @@ checkSentinelCollision target records = case sentinel of
 -- | Encode PatchContents into the target format.
 encodeDirect :: PatchContents -> ByteString.ByteString -> CreateFormat -> CreateMeta -> ByteString.ByteString
 encodeDirect contents source target meta = case target of
-  CreateIPS    -> IPS.encodeIPS source splitIPS (contentsTruncation contents)
-  CreateIPS32  -> IPS.encodeIPS32 source (splitRecords 0xFFFF intRecords) (contentsTruncation contents)
+  CreateIPS    -> IPS.encodeIPS source splitIPSRecords (contentsTruncation contents)
+  CreateIPS32  -> IPS.encodeIPS32 source (splitRecords 0xFFFF intOffsetRecords) (contentsTruncation contents)
   CreateEBP    -> let passthrough = if null cliDescription && null cliTitle && null cliAuthor
                                   then contentsEBPMeta contents else Nothing
                  in case passthrough of
-                      Just raw -> IPS.encodeEBPRaw source splitIPS (contentsTruncation contents) raw
-                      Nothing  -> IPS.encodeEBP source splitIPS (contentsTruncation contents)
+                      Just raw -> IPS.encodeEBPRaw source splitIPSRecords (contentsTruncation contents) raw
+                      Nothing  -> IPS.encodeEBP source splitIPSRecords (contentsTruncation contents)
                                     ebpTitle ebpAuthor description
   CreatePPF3   -> let base = PPF.encodePPF3 (splitRecords 255 (contentsRecords contents)) description
                               (contentsUndoData contents) (contentsValidation contents) imageType
@@ -414,15 +414,15 @@ encodeDirect contents source target meta = case target of
                       Just diz -> base <> PPF.encodeFileIdDiz diz
   CreateNINJA1 -> case (contentsSourceCRC32 contents, contentsSourceMD5 contents, contentsSourceSHA1 contents) of
                    (Just crc, Just md5Hash, Just sha1Hash) ->
-                     NINJA1.encodeNINJA1 intRecords crc md5Hash sha1Hash romType
+                     NINJA1.encodeNINJA1 intOffsetRecords crc md5Hash sha1Hash romType
                        (fromMaybe False (contentsNINJA1Compressed contents))
                    _ -> error "unreachable: canConvert verified"
-  CreatePMSR   -> PMSR.encodePMSR intRecords
+  CreatePMSR   -> PMSR.encodePMSR intOffsetRecords
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
                    Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription
-                   Nothing     -> PCHTXT.encodePCHTXT intRecords pchtxtDescription
+                   Nothing     -> PCHTXT.encodePCHTXT intOffsetRecords pchtxtDescription
   CreateAPSN64 -> case contentsDestinationSize contents of
-                  Just targetSize -> APSN64.encodeAPSN64 intRecords targetSize apsDescription
+                  Just targetSize -> APSN64.encodeAPSN64 intOffsetRecords targetSize apsDescription
                   Nothing -> error "unreachable: canConvert verified FDestinationSize"
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
@@ -430,8 +430,8 @@ encodeDirect contents source target meta = case target of
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
-    intRecords   = toIntPairs (contentsRecords contents)
-    splitIPS  = splitRecords 0xFFFF intRecords
+    intOffsetRecords   = toIntPairs (contentsRecords contents)
+    splitIPSRecords  = splitRecords 0xFFFF intOffsetRecords
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
     pchtxtDescription
@@ -464,12 +464,12 @@ createFromMemory format source target meta
                      (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
       CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
         where rupInfo = RUP.RUPInfo
-                { RUP.rupAuthor = toMaybe (metaAuthor meta), RUP.rupVersion = toMaybe (metaVersion meta)
-                , RUP.rupTitle = toMaybe (metaTitle meta), RUP.rupGenre = Nothing
+                { RUP.rupAuthor = nonEmptyToMaybe (metaAuthor meta), RUP.rupVersion = nonEmptyToMaybe (metaVersion meta)
+                , RUP.rupTitle = nonEmptyToMaybe (metaTitle meta), RUP.rupGenre = Nothing
                 , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
-                , RUP.rupWebsite = Nothing, RUP.rupDescription = toMaybe (metaDescription meta)
+                , RUP.rupWebsite = Nothing, RUP.rupDescription = nonEmptyToMaybe (metaDescription meta)
                 }
-              toMaybe value = if null value then Nothing else Just (ByteString8.pack value)
+              nonEmptyToMaybe value = if null value then Nothing else Just (ByteString8.pack value)
       CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
       CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
       _          -> error "unreachable: all formats handled"

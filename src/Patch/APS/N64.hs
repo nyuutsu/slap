@@ -77,7 +77,7 @@ data APSN64Header = APSN64Header
   , apsN64CartId      :: Maybe ByteString  -- 2 bytes
   , apsN64Country     :: Maybe Word8
   , apsN64Crc         :: Maybe ByteString  -- 8 bytes
-  , apsN64DestSize    :: Word32
+  , apsN64DestinationSize    :: Word32
   } deriving (Show)
 
 data APSN64Record
@@ -98,36 +98,36 @@ parseAPSN64 input
 parseN64 :: Get APSN64Patch
 parseN64 = do
   skip 5  -- "APS10"
-  ptypeByte <- getByte
-  case toAPSPatchType ptypeByte of
+  patchTypeByte <- getByte
+  case toAPSPatchType patchTypeByte of
     Left errorMessage -> fail errorMessage
-    Right ptype -> do
+    Right patchType -> do
       encodingByte <- getByte
       description <- getBytes 50
-      case ptype of
+      case patchType of
         APSSimple -> do
-          destSize <- word32LE
+          destinationSize <- word32LE
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { apsN64PatchType = ptype, apsN64Encoding = encodingByte, apsN64Description = description
+              { apsN64PatchType = patchType, apsN64Encoding = encodingByte, apsN64Description = description
               , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
-              , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestSize = destSize
+              , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
               }
             records
         APSN64Specific -> do
           imageFormat  <- toAPSImageFormat <$> getByte
           cartId  <- getBytes 2
           country <- getByte
-          crcVal  <- getBytes 8
+          crcBytes  <- getBytes 8
           skip 5  -- padding (bytes 69-73)
-          destSize <- word32LE
+          destinationSize <- word32LE
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { apsN64PatchType = ptype, apsN64Encoding = encodingByte, apsN64Description = description
+              { apsN64PatchType = patchType, apsN64Encoding = encodingByte, apsN64Description = description
               , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
-              , apsN64Country = Just country, apsN64Crc = Just crcVal, apsN64DestSize = destSize
+              , apsN64Country = Just country, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
               }
             records
 
@@ -182,7 +182,7 @@ applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \
   where
     sourceLength = ByteString.length source
     recordEnd (APSN64Normal offset payload) = fromIntegral offset + ByteString.length payload
-    recordEnd (APSN64RLE offset _ cnt)      = fromIntegral offset + fromIntegral cnt
+    recordEnd (APSN64RLE offset _ count)     = fromIntegral offset + fromIntegral count
     outputLength = foldl' max sourceLength (map recordEnd records)
 
 ----------------------------------------------------------------------------
@@ -197,7 +197,7 @@ apsN64Meta (APSN64Patch header _) = concat
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)
   , countryField (apsN64Country header)
-  , [("dest size", show (apsN64DestSize header))]
+  , [("dest size", show (apsN64DestinationSize header))]
   ]
   where
     descriptionField description
@@ -230,12 +230,12 @@ apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
 encodeAPSN64 :: [(Int, ByteString)] -> Word32 -> String -> ByteString
-encodeAPSN64 records destSize description = LazyByteString.toStrict $ toLazyByteString $
+encodeAPSN64 records destinationSize description = LazyByteString.toStrict $ toLazyByteString $
     byteString "APS10"             -- magic
     <> word8 (fromAPSPatchType APSSimple)  -- patch type: simple
     <> word8 0                     -- encoding: not used
     <> byteString descriptionBytes        -- 50-byte description
-    <> putWord32LE destSize        -- dest size
+    <> putWord32LE destinationSize -- dest size
     <> foldMap encodeN64Record (splitLong records)
   where
     descriptionBytes = let padded = ByteString8.pack (take 50 description)

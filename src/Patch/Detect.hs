@@ -34,7 +34,7 @@ detectFormat input
 
 -- | Detect PCHTXT by scanning for a known directive on the first non-comment line.
 detectPCHTXT :: ByteString -> Bool
-detectPCHTXT raw = scanLines (ByteString8.lines (ByteString.take 512 raw))
+detectPCHTXT inputBytes = scanLines (ByteString8.lines (ByteString.take 512 inputBytes))
   where
     scanLines [] = False
     scanLines (line:rest)
