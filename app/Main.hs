@@ -56,12 +56,12 @@ data Command
       , commandOriginal   :: FilePath
       , commandModified   :: FilePath
       , commandCreateOutput  :: FilePath
-      , commandDescription       :: String
-      , commandTitle      :: String
-      , commandAuthor     :: String
+      , commandDescription       :: Maybe String
+      , commandTitle      :: Maybe String
+      , commandAuthor     :: Maybe String
       , commandUndo       :: Bool
       , commandValidate   :: Bool
-      , commandVersion    :: String
+      , commandVersion    :: Maybe String
       , commandUnstable   :: Bool
       , commandRomType    :: Maybe Word8
       , commandImageType  :: Maybe ImageType
@@ -73,13 +73,13 @@ data Command
       , commandConvertOutput    :: Maybe FilePath
       , commandConvertSource      :: Maybe FilePath
       , commandRaw           :: Bool
-      , commandConvertDescription      :: String
-      , commandConvertTitle     :: String
-      , commandConvertAuthor    :: String
+      , commandConvertDescription      :: Maybe String
+      , commandConvertTitle     :: Maybe String
+      , commandConvertAuthor    :: Maybe String
       , commandConvertUndo      :: Bool
       , commandConvertValidate  :: Bool
       , commandNoVerify      :: Bool
-      , commandConvertVersion   :: String
+      , commandConvertVersion   :: Maybe String
       , commandConvertUnstable  :: Bool
       , commandConvertRomType   :: Maybe Word8
       , commandConvertImageType :: Maybe ImageType
@@ -94,11 +94,11 @@ data Command
 
 main :: IO ()
 main = execParser options >>= \case
-  action@CommandApply{}   -> doApply action
-  action@CommandUndo{}    -> doUndo action
-  action@CommandCreate{}  -> doCreate action
-  action@CommandConvert{} -> doConvert action
-  action@CommandInfo{}    -> doInfo action
+  parsedCommand@CommandApply{}   -> doApply parsedCommand
+  parsedCommand@CommandUndo{}    -> doUndo parsedCommand
+  parsedCommand@CommandCreate{}  -> doCreate parsedCommand
+  parsedCommand@CommandConvert{} -> doConvert parsedCommand
+  parsedCommand@CommandInfo{}    -> doInfo parsedCommand
   CommandExplain patchFile records maybeWithPath raw -> doExplain patchFile records maybeWithPath raw
 
 options :: ParserInfo Command
@@ -183,16 +183,16 @@ createParser = CommandCreate
   <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
   <*> argument str (metavar "MODIFIED" <> help "Modified file")
   <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
-  <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)")
-  <*> option str (long "title" <> metavar "TEXT" <> value ""
-      <> help "Patch title (EBP/RUP)")
-  <*> option str (long "author" <> metavar "TEXT" <> value ""
-      <> help "Patch author (EBP/DPS/RUP)")
+  <*> optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+  <*> optional (option str (long "title" <> metavar "TEXT"
+      <> help "Patch title (EBP/RUP)"))
+  <*> optional (option str (long "author" <> metavar "TEXT"
+      <> help "Patch author (EBP/DPS/RUP)"))
   <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
   <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
-  <*> option str (long "version" <> metavar "TEXT" <> value ""
-      <> help "Patch version (DPS/RUP)")
+  <*> optional (option str (long "version" <> metavar "TEXT"
+      <> help "Patch version (DPS/RUP)"))
   <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
   <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
       <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
@@ -211,17 +211,17 @@ convertParser = constructConvertCommand
   <*> optional (option str (long "with" <> metavar "SOURCE"
       <> help "Source ROM (required for differential formats)"))
   <*> rawFlag
-  <*> option str (long "description" <> short 'd' <> metavar "TEXT" <> value ""
-      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)")
-  <*> option str (long "title" <> metavar "TEXT" <> value ""
-      <> help "Patch title (EBP/RUP)")
-  <*> option str (long "author" <> metavar "TEXT" <> value ""
-      <> help "Patch author (EBP/DPS/RUP)")
+  <*> optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+  <*> optional (option str (long "title" <> metavar "TEXT"
+      <> help "Patch title (EBP/RUP)"))
+  <*> optional (option str (long "author" <> metavar "TEXT"
+      <> help "Patch author (EBP/DPS/RUP)"))
   <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
   <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
   <*> noVerifyFlag <*> yoloFlag
-  <*> option str (long "version" <> metavar "TEXT" <> value ""
-      <> help "Patch version (DPS/RUP)")
+  <*> optional (option str (long "version" <> metavar "TEXT"
+      <> help "Patch version (DPS/RUP)"))
   <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
   <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
       <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
@@ -319,14 +319,14 @@ readMaybeUnwrap False = readUnwrap
 ----------------------------------------------------------------------------
 
 doInfo :: Command -> IO ()
-doInfo action = do
-  patchBytes <- readUnwrap (commandPatch action)
+doInfo parsedCommand = do
+  patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
     Left errorMessage -> die errorMessage
     Right parsed -> do
       putStr (patchInfo parsed)
       emitWarnings parsed
-      case commandExtractMetadata action of
+      case commandExtractMetadata parsedCommand of
         Nothing -> pure ()
         Just outPath -> case patchMetadata parsed of
           Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
@@ -352,29 +352,29 @@ doExplain patchFile records maybeWithPath raw = do
 ----------------------------------------------------------------------------
 
 doApply :: Command -> IO ()
-doApply action = do
-  patchBytes <- readUnwrap (commandPatch action)
+doApply parsedCommand = do
+  patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
     Left errorMessage -> die errorMessage
     Right parsed -> do
       emitWarnings parsed
-      when (commandVerbose action) $
+      when (commandVerbose parsedCommand) $
         mapM_ (hPutStrLn stderr) (patchVerboseLines parsed)
 
       let outputPath
-            | commandInPlace action         = commandSource action
-            | Just destination <- commandOutput action = destination
-            | otherwise              = deriveOutput (commandPatch action) (commandSource action)
+            | commandInPlace parsedCommand         = commandSource parsedCommand
+            | Just destination <- commandOutput parsedCommand = destination
+            | otherwise              = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
           verification = patchVerification parsed
-          noVerify = commandNoVerify action
+          noVerify = commandNoVerify parsedCommand
 
       -- Dry run: report and exit
-      when (commandDryRun action) $ do
+      when (commandDryRun parsedCommand) $ do
         putStrLn $ "would apply " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
                 ++ " \8594 " ++ outputPath
         case verifySourceCRC32 verification of
           Just expected -> do
-            sourceBytes <- readMaybeUnwrap (commandRaw action) (commandSource action)
+            sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
             let actual = rustyCRC32 sourceBytes
             putStrLn $ "source CRC: " ++ formatCRC actual
               ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
@@ -382,34 +382,34 @@ doApply action = do
         exitSuccess
 
       -- Refuse to overwrite unless --force or --in-place
-      unless (commandInPlace action || commandForce action) $ do
+      unless (commandInPlace parsedCommand || commandForce parsedCommand) $ do
         exists <- doesFileExist outputPath
         when exists $
           die (outputPath ++ " already exists (use --force to overwrite)")
 
       -- Backup for --in-place
-      when (commandInPlace action && commandBackup action) $ do
-        let backup = commandSource action ++ ".bak"
-        copyFile (commandSource action) backup
+      when (commandInPlace parsedCommand && commandBackup parsedCommand) $ do
+        let backup = commandSource parsedCommand ++ ".bak"
+        copyFile (commandSource parsedCommand) backup
         hPutStrLn stderr ("slap: backup: " ++ backup)
 
       case patchApply parsed of
         InPlace applyInPlace -> do
           -- Read source for pre-apply verification if needed
           when (hasSourceVerification verification) $ do
-            sourceBytes <- readMaybeUnwrap (commandRaw action) (commandSource action)
+            sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
             verifySource noVerify verification sourceBytes
-          unless (commandInPlace action) $
-            copyFile (commandSource action) outputPath
-          applyInPlace (if commandInPlace action then commandSource action else outputPath)
+          unless (commandInPlace parsedCommand) $
+            copyFile (commandSource parsedCommand) outputPath
+          applyInPlace (if commandInPlace parsedCommand then commandSource parsedCommand else outputPath)
           -- Post-apply target verification if needed
           when (hasTargetVerification verification) $ do
-            targetBytes <- ByteString.readFile (if commandInPlace action then commandSource action else outputPath)
+            targetBytes <- ByteString.readFile (if commandInPlace parsedCommand then commandSource parsedCommand else outputPath)
             verifyTarget noVerify verification targetBytes
           putStrLn $ "applied " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
                   ++ " \8594 " ++ outputPath
         InMemory { inMemoryApply = apply } -> do
-          sourceBytes <- readMaybeUnwrap (commandRaw action) (commandSource action)
+          sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
           verifySource noVerify verification sourceBytes
           result <- apply sourceBytes
           case result of
@@ -425,8 +425,8 @@ doApply action = do
 ----------------------------------------------------------------------------
 
 doUndo :: Command -> IO ()
-doUndo action = do
-  patchBytes <- readUnwrap (commandPatch action)
+doUndo parsedCommand = do
+  patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
     Left errorMessage -> die errorMessage
     Right parsed -> do
@@ -434,15 +434,15 @@ doUndo action = do
       case patchUndo parsed of
         Nothing -> die "undo not supported for this format"
         Just (UndoInPlace undoInPlace) -> do
-          undoPath <- resolveOutput (commandSource action) (commandOutput action)
+          undoPath <- resolveOutput (commandSource parsedCommand) (commandOutput parsedCommand)
           result <- undoInPlace undoPath
           case result of
             Left errorMessage -> die errorMessage
             Right count -> putStrLn ("reverted " ++ show count ++ " records")
         Just (UndoInMemory revert) -> do
-          modified <- ByteString.readFile (commandSource action)
+          modified <- ByteString.readFile (commandSource parsedCommand)
           let result = revert modified
-          ByteString.writeFile (fromMaybe (commandSource action) (commandOutput action)) result
+          ByteString.writeFile (fromMaybe (commandSource parsedCommand) (commandOutput parsedCommand)) result
           putStrLn "reverted (UPS self-inverse)"
 
 ----------------------------------------------------------------------------
@@ -450,57 +450,57 @@ doUndo action = do
 ----------------------------------------------------------------------------
 
 doCreate :: Command -> IO ()
-doCreate action = do
-  originalBytes <- readMaybeUnwrap (commandRaw action) (commandOriginal action)
-  modifiedBytes <- readMaybeUnwrap (commandRaw action) (commandModified action)
-  maybeMeta <- case commandMetadata action of
+doCreate parsedCommand = do
+  originalBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandOriginal parsedCommand)
+  modifiedBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandModified parsedCommand)
+  maybeMeta <- case commandMetadata parsedCommand of
     Nothing   -> pure Nothing
     Just path -> Just <$> ByteString.readFile path
   let createMeta = CreateMeta
-        { metaTitle       = commandTitle action
-        , metaAuthor      = commandAuthor action
-        , metaDescription        = commandDescription action
-        , metaVersion     = commandVersion action
-        , metaUndo        = commandUndo action
-        , metaValidate    = commandValidate action
-        , metaUnstable    = commandUnstable action
-        , metaRomType     = commandRomType action
-        , metaImageType   = commandImageType action
+        { metaTitle       = commandTitle parsedCommand
+        , metaAuthor      = commandAuthor parsedCommand
+        , metaDescription        = commandDescription parsedCommand
+        , metaVersion     = commandVersion parsedCommand
+        , metaUndo        = commandUndo parsedCommand
+        , metaValidate    = commandValidate parsedCommand
+        , metaUnstable    = commandUnstable parsedCommand
+        , metaRomType     = commandRomType parsedCommand
+        , metaImageType   = commandImageType parsedCommand
         , metaBPSMetadata = maybeMeta
         }
-  let defaultNotes = createDefaultNotes (commandCreateFormat action) createMeta
+  let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultNotes $ \note -> hPutStrLn stderr ("slap: " ++ note)
-  case createFromMemory (commandCreateFormat action) originalBytes modifiedBytes createMeta of
+  case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta of
     Left errorMessage -> die errorMessage
     Right patchBytes -> do
-      ByteString.writeFile (commandCreateOutput action) patchBytes
-      putStrLn ("wrote " ++ commandCreateOutput action)
+      ByteString.writeFile (commandCreateOutput parsedCommand) patchBytes
+      putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
 
 ----------------------------------------------------------------------------
 -- Convert
 ----------------------------------------------------------------------------
 
 doConvert :: Command -> IO ()
-doConvert action = do
-  patchBytes <- readUnwrap (commandConvertPatch action)
+doConvert parsedCommand = do
+  patchBytes <- readUnwrap (commandConvertPatch parsedCommand)
   case parseSome patchBytes of
     Left errorMessage -> die errorMessage
     Right parsed -> do
       emitWarnings parsed
-      let outputFile = fromMaybe (replaceExtension (commandConvertPatch action) (formatExtension (commandConvertTo action))) (commandConvertOutput action)
-      maybeMetadata <- case commandConvertMetadata action of
+      let outputFile = fromMaybe (replaceExtension (commandConvertPatch parsedCommand) (formatExtension (commandConvertTo parsedCommand))) (commandConvertOutput parsedCommand)
+      maybeMetadata <- case commandConvertMetadata parsedCommand of
         Nothing   -> pure Nothing
         Just path -> Just <$> ByteString.readFile path
       let createMeta = CreateMeta
-            { metaTitle       = commandConvertTitle action
-            , metaAuthor      = commandConvertAuthor action
-            , metaDescription        = commandConvertDescription action
-            , metaVersion     = commandConvertVersion action
-            , metaUndo        = commandConvertUndo action
-            , metaValidate    = commandConvertValidate action
-            , metaUnstable    = commandConvertUnstable action
-            , metaRomType     = commandConvertRomType action
-            , metaImageType   = commandConvertImageType action
+            { metaTitle       = commandConvertTitle parsedCommand
+            , metaAuthor      = commandConvertAuthor parsedCommand
+            , metaDescription        = commandConvertDescription parsedCommand
+            , metaVersion     = commandConvertVersion parsedCommand
+            , metaUndo        = commandConvertUndo parsedCommand
+            , metaValidate    = commandConvertValidate parsedCommand
+            , metaUnstable    = commandConvertUnstable parsedCommand
+            , metaRomType     = commandConvertRomType parsedCommand
+            , metaImageType   = commandConvertImageType parsedCommand
             , metaBPSMetadata = maybeMetadata
             }
       let printNotes notes = forM_ notes $ \note -> hPutStrLn stderr ("slap: " ++ note)
@@ -508,30 +508,30 @@ doConvert action = do
             Nothing -> []
             Just metaBytes ->
               let metaSize = ByteString.length metaBytes
-              in if commandConvertTo action == CreateBPS
+              in if commandConvertTo parsedCommand == CreateBPS
                  then ["note: source has " ++ show metaSize ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
                       | isNothing (metaBPSMetadata createMeta)]
                  else ["note: dropping BPS metadata (" ++ show metaSize ++ " bytes)"]
-      case commandConvertSource action of
+      case commandConvertSource parsedCommand of
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
-          sourceBytes <- readMaybeUnwrap (commandRaw action) sourcePath
-          verifySource (commandNoVerify action) (patchVerification parsed) sourceBytes
+          sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) sourcePath
+          verifySource (commandNoVerify parsedCommand) (patchVerification parsed) sourceBytes
           targetBytes <- applyForConvert parsed sourceBytes
-          case createFromMemory (commandConvertTo action) sourceBytes targetBytes createMeta of
+          case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes createMeta of
             Left errorMessage -> die errorMessage
             Right result -> do
-              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo action) createMeta)
+              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo parsedCommand) createMeta)
               ByteString.writeFile outputFile result
-              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outputFile)
+              putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
-          Just contents -> case convertDirect contents (commandConvertTo action) createMeta of
+          Just contents -> case convertDirect contents (commandConvertTo parsedCommand) createMeta of
             Left errorMessage -> die errorMessage
             Right (result, notes) -> do
               printNotes (patchSourceNotes parsed ++ notes)
               ByteString.writeFile outputFile result
-              putStrLn ("converted to " ++ formatName (commandConvertTo action) ++ ": " ++ outputFile)
+              putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> ByteString.ByteString -> IO ByteString.ByteString

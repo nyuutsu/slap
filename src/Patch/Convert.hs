@@ -44,7 +44,7 @@ import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (intercalate)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
 import Data.Word (Word8, Word32)
 
@@ -105,10 +105,10 @@ data CreateFormat
   deriving (Show, Eq)
 
 data CreateMeta = CreateMeta
-  { metaTitle       :: String
-  , metaAuthor      :: String
-  , metaDescription        :: String
-  , metaVersion     :: String
+  { metaTitle       :: Maybe String
+  , metaAuthor      :: Maybe String
+  , metaDescription        :: Maybe String
+  , metaVersion     :: Maybe String
   , metaUndo        :: Bool
   , metaValidate    :: Bool
   , metaUnstable    :: Bool
@@ -123,10 +123,10 @@ data CreateMeta = CreateMeta
 
 defaultMeta :: CreateMeta
 defaultMeta = CreateMeta
-  { metaTitle       = ""
-  , metaAuthor      = ""
-  , metaDescription        = ""
-  , metaVersion     = ""
+  { metaTitle       = Nothing
+  , metaAuthor      = Nothing
+  , metaDescription        = Nothing
+  , metaVersion     = Nothing
   , metaUndo        = False
   , metaValidate    = False
   , metaUnstable    = False
@@ -266,7 +266,7 @@ ebpTruncMetaNote contents CreateEBP meta
   = ["note: EBP truncation + metadata together; may not be compatible with RomPatcher.js"]
   where
     hasMeta = isJust (contentsEBPMeta contents) || isJust (contentsDescription contents)
-           || not (null (metaDescription meta)) || not (null (metaTitle meta)) || not (null (metaAuthor meta))
+           || isJust (metaDescription meta) || isJust (metaTitle meta) || isJust (metaAuthor meta)
 ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
@@ -381,7 +381,7 @@ encodeDirect :: PatchContents -> ByteString.ByteString -> CreateFormat -> Create
 encodeDirect contents source target meta = case target of
   CreateIPS    -> IPS.encodeIPS source splitIPSRecords (contentsTruncation contents)
   CreateIPS32  -> IPS.encodeIPS32 source (narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))) (contentsTruncation contents)
-  CreateEBP    -> let passthrough = if null cliDescription && null cliTitle && null cliAuthor
+  CreateEBP    -> let passthrough = if isNothing cliDescription && isNothing cliTitle && isNothing cliAuthor
                                   then contentsEBPMeta contents else Nothing
                  in case passthrough of
                       Just raw -> IPS.encodeEBPRaw source splitIPSRecords (contentsTruncation contents) raw
@@ -414,9 +414,7 @@ encodeDirect contents source target meta = case target of
     splitIPSRecords  = narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
-    pchtxtDescription
-      | not (null cliDescription) = Just (ByteString8.pack cliDescription)
-      | otherwise          = contentsDescription contents
+    pchtxtDescription = fmap ByteString8.pack cliDescription <|> contentsDescription contents
     ebpFieldPairs = maybe [] jsonPairs (contentsEBPMeta contents)
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
@@ -443,17 +441,16 @@ createFromMemory format source target meta
       CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
       CreateUPS    -> Right (UPS.createUPS source target)
       CreateDPS    -> Right (DPS.createDPS source target
-                     (if null (metaTitle meta) then metaDescription meta else metaTitle meta)
-                     (metaAuthor meta) (metaVersion meta)
+                     (fromMaybe "" (metaTitle meta <|> metaDescription meta))
+                     (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
                      (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
       CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
         where rupInfo = RUP.RUPInfo
-                { RUP.rupAuthor = nonEmptyToMaybe (metaAuthor meta), RUP.rupVersion = nonEmptyToMaybe (metaVersion meta)
-                , RUP.rupTitle = nonEmptyToMaybe (metaTitle meta), RUP.rupGenre = Nothing
+                { RUP.rupAuthor = fmap ByteString8.pack (metaAuthor meta), RUP.rupVersion = fmap ByteString8.pack (metaVersion meta)
+                , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = Nothing
                 , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
-                , RUP.rupWebsite = Nothing, RUP.rupDescription = nonEmptyToMaybe (metaDescription meta)
+                , RUP.rupWebsite = Nothing, RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
                 }
-              nonEmptyToMaybe value = if null value then Nothing else Just (ByteString8.pack value)
       CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
       CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
       _          -> error "unreachable: all formats handled"
@@ -554,9 +551,9 @@ splitHunks maxSize = concatMap splitOne
           in Hunk hunkOffset chunk : splitOne (Hunk nextOffset rest)
 
 -- | Resolve a description from CLI flag, EBP metadata, raw description, or default.
-resolveDescription :: String -> Maybe ByteString.ByteString -> Maybe ByteString.ByteString -> String -> String
+resolveDescription :: Maybe String -> Maybe ByteString.ByteString -> Maybe ByteString.ByteString -> String -> String
 resolveDescription cliDescription ebpMeta rawDescription fallback
-  | not (null cliDescription) = cliDescription
+  | Just description <- cliDescription = description
   | Just meta <- ebpMeta
   , Just description <- jsonFieldCI (jsonPairs meta) "description"
   , not (null description) = description
@@ -564,9 +561,9 @@ resolveDescription cliDescription ebpMeta rawDescription fallback
   | otherwise              = fallback
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
-resolveField :: String -> [(String, String)] -> String -> String
+resolveField :: Maybe String -> [(String, String)] -> String -> String
 resolveField cliValue pairs key
-  | not (null cliValue) = cliValue
+  | Just provided <- cliValue = provided
   | Just value <- jsonFieldCI pairs key = value
   | otherwise = ""
 
