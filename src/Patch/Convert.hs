@@ -35,7 +35,9 @@ import qualified Patch.PCHTXT as PCHTXT
 import Patch.Binary (diffHunks, md5, sha1)
 import Patch.FFI (rustyCRC32)
 import Patch.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
-                      EncodedHunk(..), narrowHunksUnbounded)
+                      EncodedHunk(..), EncodingLimits(..),
+                      narrowHunks, narrowHunksUnbounded,
+                      ipsLimits, ips32Limits, ebpLimits)
 import Patch.Format (showCRC, padHex)
 
 import Control.Applicative ((<|>))
@@ -44,8 +46,7 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
-import Data.Word (Word8, Word32, Word64)
-import Numeric (showHex)
+import Data.Word (Word8, Word32)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -353,47 +354,27 @@ convertDirect contents target meta = case target of
   CreateRUP    -> Left (diffOnlyMsg CreateRUP)
   CreateAPSGBA -> Left (diffOnlyMsg CreateAPSGBA)
   CreateGDIFF  -> Left (diffOnlyMsg CreateGDIFF)
-  -- Direct targets: contract check → offset check → sentinel check → encode
+  -- Direct targets: contract check → narrow (validates limits) → encode
   _ -> do
     let spec = formatSpecification target (metaUndo meta) (metaValidate meta)
     case canConvert contents spec of
       Left missing -> Left (formatMissing target missing)
       Right () -> do
-        checkOffsetLimits target (contentsRecords contents)
-        checkSentinelCollision target (contentsRecords contents)
+        _ <- case encodingLimits target of
+               Just limits -> narrowHunks limits (contentsRecords contents)
+               Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
         let notes = conversionNotes contents target spec meta
         Right (encodeDirect contents ByteString.empty target meta, notes)
 
 diffOnlyMsg :: CreateFormat -> String
 diffOnlyMsg format = formatName format ++ " requires source+target diff data\nuse --with SOURCE"
 
--- | Check that offsets fit in IPS/EBP 24-bit range.
-checkOffsetLimits :: CreateFormat -> [Hunk] -> Either String ()
-checkOffsetLimits target records
-  | target `elem` [CreateIPS, CreateEBP]
-  , any (\hunk -> unOffset (hunkOffset hunk) > 0xFFFFFF) records
-  = Left ("patch has offsets > 16 MB \8212 cannot convert to " ++ formatName target
-       ++ "\nuse --to ips32, or --with SOURCE to re-diff")
-  | otherwise = Right ()
-
--- | Reject direct conversion to IPS/IPS32/EBP when a record starts at the
--- EOF sentinel offset.  Without source bytes, avoidSentinel can't shift the
--- record back safely.
-checkSentinelCollision :: CreateFormat -> [Hunk] -> Either String ()
-checkSentinelCollision target records = case sentinel of
-    Nothing -> Right ()
-    Just sentinelValue
-      | any (\hunk -> unOffset (hunkOffset hunk) == sentinelValue) records ->
-          Left (formatName target ++ ": record at offset 0x"
-             ++ showHex (fromIntegral sentinelValue :: Word64) ""
-             ++ " collides with EOF marker; use --with SOURCE to provide source bytes for safe encoding")
-      | otherwise -> Right ()
-  where
-    sentinel = case target of
-      CreateIPS   -> Just 0x454F46
-      CreateEBP   -> Just 0x454F46
-      CreateIPS32 -> Just 0x45454F46
-      _         -> Nothing
+-- | Encoding limits for formats with constrained offset ranges and sentinels.
+encodingLimits :: CreateFormat -> Maybe EncodingLimits
+encodingLimits CreateIPS   = Just ipsLimits
+encodingLimits CreateIPS32 = Just ips32Limits
+encodingLimits CreateEBP   = Just ebpLimits
+encodingLimits _           = Nothing
 
 -- | Encode PatchContents into the target format.
 encodeDirect :: PatchContents -> ByteString.ByteString -> CreateFormat -> CreateMeta -> ByteString.ByteString
@@ -452,8 +433,12 @@ createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteStri
 createFromMemory format source target meta
   | isDirect format =
       let contents = buildContents format source target meta
-      in checkOffsetLimits format (contentsRecords contents)
-         >> Right (encodeDirect contents source format meta)
+          -- Source bytes available: avoidSentinel handles sentinel collisions
+          -- at encode time, so only validate offset limits here.
+          offsetLimits = case encodingLimits format of
+            Just limits -> narrowHunks (limits { sentinelOffset = Nothing }) (contentsRecords contents)
+            Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
+      in offsetLimits >> Right (encodeDirect contents source format meta)
   | otherwise = case format of
       CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
       CreateUPS    -> Right (UPS.createUPS source target)

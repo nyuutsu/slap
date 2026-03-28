@@ -588,7 +588,7 @@ prop_ipsSentinelDirect :: Property
 prop_ipsSentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent CreateIPS defaultMeta of
-       Left errorMessage -> "EOF marker" `isInfixOf` errorMessage
+       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
        Right _  -> False
 
 -- | Direct conversion to IPS32 must reject a record at the EEOF sentinel offset.
@@ -596,7 +596,7 @@ prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent CreateIPS32 defaultMeta of
-       Left errorMessage -> "EOF marker" `isInfixOf` errorMessage
+       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
        Right _  -> False
 
 -- | Create path (with source bytes) must handle the sentinel offset correctly.
