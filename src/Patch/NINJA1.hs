@@ -188,8 +188,8 @@ parseBinaryRecords :: Get ([NINJA1Record], Bool)
 parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
-      avail <- remaining
-      if unLength avail < 1 then pure (reverse accumulated, False)
+      remainingLength <- remaining
+      if unLength remainingLength < 1 then pure (reverse accumulated, False)
       else do
         offsetWidth <- fromIntegral <$> getByte :: Get Int
         if offsetWidth == 0 then pure (reverse accumulated, False)

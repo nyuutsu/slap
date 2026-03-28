@@ -136,8 +136,8 @@ parseN64Records = do
   done <- atEnd
   if done then pure []
   else do
-    avail <- remaining
-    if unLength avail < 5 then pure []
+    remainingLength <- remaining
+    if unLength remainingLength < 5 then pure []
     else do
       offset <- Offset . fromIntegral <$> word32LE
       dataLength <- getByte

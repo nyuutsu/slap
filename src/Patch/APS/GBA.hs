@@ -72,8 +72,8 @@ parseGBA = do
 
 parseGBARecords :: Get [APSGBARecord]
 parseGBARecords = do
-  avail <- remaining
-  if unLength avail < 65544 then pure []
+  remainingLength <- remaining
+  if unLength remainingLength < 65544 then pure []
   else do
     offset <- word32LE
     sourceCrc <- word16LE

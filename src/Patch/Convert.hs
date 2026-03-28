@@ -181,21 +181,21 @@ provides contents = Set.fromList $ [FRecords]
 
 formatSpecification :: CreateFormat -> Bool -> Bool -> FormatSpecification
 formatSpecification target includeUndo includeValidation = case target of
-  CreateIPS     -> FormatSpecification (req []) (acc [FTruncation])
-  CreateIPS32   -> FormatSpecification (req []) (acc [FTruncation])
-  CreateEBP     -> FormatSpecification (req []) (acc [FDescription, FTruncation, FEBPMeta])
-  CreatePPF3    -> FormatSpecification (req $ [FUndoData  | includeUndo]
+  CreateIPS     -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
+  CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
+  CreateEBP     -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FTruncation, FEBPMeta])
+  CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData  | includeUndo]
                                  ++ [FValidation | includeValidation])
-                             (acc [FDescription, FImageType, FFileIdDiz])
-  CreateNINJA1  -> FormatSpecification (req [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acc [FRomType])
-  CreatePMSR    -> FormatSpecification (req []) (acc [])
-  CreatePCHTXT  -> FormatSpecification (req []) (acc [FDescription, FPCHTXTBlocks])
-  CreateAPSN64  -> FormatSpecification (req [FDestinationSize]) (acc [FDescription])
+                             (acceptedFields [FDescription, FImageType, FFileIdDiz])
+  CreateNINJA1  -> FormatSpecification (requiredFields [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acceptedFields [FRomType])
+  CreatePMSR    -> FormatSpecification (requiredFields []) (acceptedFields [])
+  CreatePCHTXT  -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
+  CreateAPSN64  -> FormatSpecification (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
   -- Differential formats: specs unused (rejected before contract check)
-  _           -> FormatSpecification (req []) (acc [])
+  _           -> FormatSpecification (requiredFields []) (acceptedFields [])
   where
-    req extra = Set.fromList (FRecords : extra)
-    acc = Set.fromList
+    requiredFields extra = Set.fromList (FRecords : extra)
+    acceptedFields = Set.fromList
 
 ----------------------------------------------------------------------------
 -- Contract checking

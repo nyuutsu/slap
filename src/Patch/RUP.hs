@@ -94,8 +94,8 @@ data RUPRecord = RUPRecord
 -- VLV: Variable Length Value (1-byte length prefix, then N LE bytes)
 ----------------------------------------------------------------------------
 
-packedInt :: Get Int64
-packedInt = do
+parsePackedInteger :: Get Int64
+parsePackedInteger = do
   count <- fromIntegral <$> getByte
   bytes <- getBytes (Length count)
   -- Only interpret first 8 bytes (enough for Int64); extra bytes are
@@ -104,9 +104,9 @@ packedInt = do
   pure $ foldl' (\accumulated index ->
     accumulated + fromIntegral (ByteString.index bytes index) * (256 ^ index)) 0 [0..clampedCount-1]
 
-packedBS :: Get ByteString
-packedBS = do
-  dataLength <- fromIntegral <$> packedInt
+parsePackedByteString :: Get ByteString
+parsePackedByteString = do
+  dataLength <- fromIntegral <$> parsePackedInteger
   getBytes (Length dataLength)
 
 ----------------------------------------------------------------------------
@@ -179,10 +179,10 @@ parseCommands patch = do
 -- | Command 0x01: OPEN_NEW_FILE
 parseFileCommand :: RUPPatch -> Get RUPPatch
 parseFileCommand patch = do
-  _filename <- packedBS
+  _filename <- parsePackedByteString
   romTypeByte <- getByte  -- ROM type byte
-  sourceSize <- FileSize <$> packedInt
-  targetSize <- FileSize <$> packedInt
+  sourceSize <- FileSize <$> parsePackedInteger
+  targetSize <- FileSize <$> parsePackedInteger
   sourceMD5 <- getBytes (Length 16)
   targetMD5 <- getBytes (Length 16)
   (overflowType, overflowData) <- if sourceSize /= targetSize
@@ -191,7 +191,7 @@ parseFileCommand patch = do
       case toOverflowMode typeByte of
         Left errorMessage -> fail errorMessage
         Right mode -> do
-          payload <- packedBS
+          payload <- parsePackedByteString
           pure (Just mode, Just payload)
     else pure (Nothing, Nothing)
   pure patch { rupSourceMD5    = Just sourceMD5
@@ -206,8 +206,8 @@ parseFileCommand patch = do
 -- | Command 0x02: XOR record
 parseXorRecord :: RUPPatch -> Get RUPPatch
 parseXorRecord patch = do
-  recordOffset <- Offset <$> packedInt
-  xorPayload <- packedBS
+  recordOffset <- Offset <$> parsePackedInteger
+  xorPayload <- parsePackedByteString
   pure patch { rupRecords = RUPRecord recordOffset xorPayload : rupRecords patch }
 
 ----------------------------------------------------------------------------
@@ -329,10 +329,10 @@ createRUP original modified info romType = LazyByteString.toStrict $ toLazyByteS
     <> word8 0                           -- text encoding
     <> byteString (encodeFixedHeader info)  -- rest of 2048-byte header
     <> word8 0x01                        -- OPEN_NEW_FILE command
-    <> putVLV 0                          -- filename length (empty)
+    <> encodeVariableLengthValue 0                          -- filename length (empty)
     <> word8 romType                     -- ROM type byte
-    <> putVLV (fromIntegral (ByteString.length original))   -- source size
-    <> putVLV (fromIntegral (ByteString.length modified))   -- target size
+    <> encodeVariableLengthValue (fromIntegral (ByteString.length original))   -- source size
+    <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))   -- target size
     <> byteString (md5 original)              -- source MD5
     <> byteString (md5 modified)              -- target MD5
     <> overflowPart
@@ -357,12 +357,12 @@ createRUP original modified info romType = LazyByteString.toStrict $ toLazyByteS
       | ByteString.length modified > ByteString.length original =
           let extra = ByteString.drop (ByteString.length original) modified
           in word8 (fromOverflowMode OverflowAppend)
-             <> putVLV (fromIntegral (ByteString.length extra))
+             <> encodeVariableLengthValue (fromIntegral (ByteString.length extra))
              <> byteString (ByteString.map (xor 0xFF) extra)
       | ByteString.length modified < ByteString.length original =
           let extra = ByteString.drop (ByteString.length modified) original
           in word8 (fromOverflowMode OverflowTruncate)
-             <> putVLV (fromIntegral (ByteString.length extra))
+             <> encodeVariableLengthValue (fromIntegral (ByteString.length extra))
              <> byteString (ByteString.map (xor 0xFF) extra)
       | otherwise = mempty
 
@@ -396,17 +396,17 @@ encodeFixedHeader info = ByteString.pack $ map byteAt [0 .. headerSize - 8]
 encodeXorRecord :: (Int, ByteString) -> Builder
 encodeXorRecord (offset, payload) =
     word8 0x02                                    -- XOR command
-    <> putVLV (fromIntegral offset)               -- offset
-    <> putVLV (fromIntegral (ByteString.length payload))  -- length
+    <> encodeVariableLengthValue (fromIntegral offset)               -- offset
+    <> encodeVariableLengthValue (fromIntegral (ByteString.length payload))  -- length
     <> byteString payload                         -- XOR data
 
 -- | VLV: 1-byte length prefix, then N bytes little-endian.
-putVLV :: Int64 -> Builder
-putVLV 0 = word8 1 <> word8 0
-putVLV value =
-  let bytes = vlvBytes value
+encodeVariableLengthValue :: Int64 -> Builder
+encodeVariableLengthValue 0 = word8 1 <> word8 0
+encodeVariableLengthValue value =
+  let bytes = variableLengthValueBytes value
   in word8 (fromIntegral (length bytes)) <> foldMap word8 bytes
 
-vlvBytes :: Int64 -> [Word8]
-vlvBytes 0 = []
-vlvBytes value = fromIntegral (value .&. 0xFF) : vlvBytes (value `shiftR` 8)
+variableLengthValueBytes :: Int64 -> [Word8]
+variableLengthValueBytes 0 = []
+variableLengthValueBytes value = fromIntegral (value .&. 0xFF) : variableLengthValueBytes (value `shiftR` 8)
