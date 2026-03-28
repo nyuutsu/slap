@@ -61,9 +61,9 @@ instance Applicative Get where
   pure result = Get $ \_ position -> Right (result, position)
   Get parseFunction <*> Get parseArgument = Get $ \input position -> case parseFunction input position of
     Left errorMessage                     -> Left errorMessage
-    Right (f, positionAfterFunction)      -> case parseArgument input positionAfterFunction of
+    Right (parsedFunction, positionAfterFunction) -> case parseArgument input positionAfterFunction of
       Left errorMessage                   -> Left errorMessage
-      Right (result, positionAfterArgument)     -> Right (f result, positionAfterArgument)
+      Right (result, positionAfterArgument)     -> Right (parsedFunction result, positionAfterArgument)
 
 instance Monad Get where
   Get parseArgument >>= continuation = Get $ \input position -> case parseArgument input position of
