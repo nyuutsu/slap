@@ -2,7 +2,8 @@
 
 module Main (main) where
 
-import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), parseSome)
+import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
+import Patch.Measure (Offset(..), Length(..), FileSize(..))
 import Patch.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
 import Patch.PPF.Types (ImageType(..))
 import Patch.NINJA1 (NINJA1RomType(..), fromNINJA1RomType)
@@ -15,7 +16,6 @@ import Patch.Format (showCRC, padHex)
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
-import Data.Int (Int64)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Word (Word8, Word16, Word32)
 import Options.Applicative
@@ -596,14 +596,14 @@ verifySource noVerify verification sourceBytes = do
     checkHash noVerify "source SHA1" expected (sha1 preprocessed)
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
   unless noVerify $ do
-    forM_ (verifySourceBlocks verification) $ \(offset, expected) ->
-      warnBlock "source" offset expected (crc16 (safeSlice offset 0x10000 sourceBytes))
-    forM_ (verifyPPFBlock verification) $ \(offset, expected) ->
-      warnPPFBlock offset expected sourceBytes
-    forM_ (verifyFileSize verification) $ \expected ->
-      warnFileSize expected (fromIntegral (ByteString.length sourceBytes))
-    forM_ (verifySourceBytes verification) $ \(offset, expected, label) ->
-      warnSourceBytes label offset expected sourceBytes
+    forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+      warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+    forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
+      warnPPFBlock blockOffset expectedData sourceBytes
+    forM_ (verifyFileSize verification) $ \expectedSize ->
+      warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
+      warnSourceBytes checkLabel checkOffset expectedData sourceBytes
 
 verifyTarget :: Bool -> Verification -> ByteString.ByteString -> IO ()
 verifyTarget noVerify verification targetBytes = do
@@ -612,10 +612,10 @@ verifyTarget noVerify verification targetBytes = do
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash noVerify "target MD5" expected (md5 targetBytes)
   unless noVerify $
-    forM_ (verifyTargetBlocks verification) $ \(offset, expected) ->
-      warnBlock "target" offset expected (crc16 (safeSlice offset 0x10000 targetBytes))
-  forM_ (verifyWindowAdler32 verification) $ \(offset, windowLength, expected) ->
-    checkAdler noVerify offset expected (adler32 (safeSlice offset windowLength targetBytes))
+    forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+      warnBlock "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
+  forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
+    checkAdler noVerify windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
 hasSourceVerification :: Verification -> Bool
 hasSourceVerification verification = or
@@ -645,35 +645,35 @@ checkHash noVerify label expected actual
   | noVerify = warn (label ++ " mismatch")
   | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
 
-checkAdler :: Bool -> Int -> Word32 -> Word32 -> IO ()
-checkAdler noVerify offset expected actual
+checkAdler :: Bool -> Offset -> Word32 -> Word32 -> IO ()
+checkAdler noVerify windowOffset expected actual
   | expected == actual = pure ()
   | noVerify = warn message
   | otherwise = die (message ++ "\n  use --no-verify to apply anyway")
-  where message = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral offset)
+  where message = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral (unOffset windowOffset))
             ++ " (expected " ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")"
 
-warnBlock :: String -> Int -> Word16 -> Word16 -> IO ()
-warnBlock label offset expected actual
+warnBlock :: String -> Offset -> Word16 -> Word16 -> IO ()
+warnBlock label blockOffset expected actual
   | expected == actual = pure ()
-  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (fromIntegral offset))
+  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset blockOffset)))
 
-warnPPFBlock :: Int64 -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-warnPPFBlock offset expected sourceBytes =
-  let actual = safeSlice (fromIntegral offset) (ByteString.length expected) sourceBytes
-  in when (actual /= expected) $
-       warn ("validation block mismatch at 0x" ++ padHex 8 (fromIntegral offset))
+warnPPFBlock :: Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+warnPPFBlock blockOffset expectedData sourceBytes =
+  let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
+  in when (actual /= expectedData) $
+       warn ("validation block mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset blockOffset)))
 
-warnFileSize :: Word32 -> Word32 -> IO ()
-warnFileSize expected actual =
-  when (expected /= actual) $
-    warn ("file size mismatch (expected " ++ show expected ++ ", got " ++ show actual ++ ")")
+warnFileSize :: FileSize -> FileSize -> IO ()
+warnFileSize (FileSize expectedSize) (FileSize actualSize) =
+  when (expectedSize /= actualSize) $
+    warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
 
-warnSourceBytes :: String -> Int -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-warnSourceBytes label offset expected sourceBytes =
-  let actual = safeSlice offset (ByteString.length expected) sourceBytes
-  in when (actual /= expected) $
-       warn (label ++ " mismatch at 0x" ++ padHex 8 (fromIntegral offset))
+warnSourceBytes :: String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+warnSourceBytes label checkOffset expectedData sourceBytes =
+  let actual = safeSlice (fromIntegral (unOffset checkOffset)) (ByteString.length expectedData) sourceBytes
+  in when (actual /= expectedData) $
+       warn (label ++ " mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset checkOffset)))
 
 safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
 safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)

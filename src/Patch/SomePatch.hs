@@ -3,6 +3,10 @@ module Patch.SomePatch
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , Verification(..)
+  , BlockCheck(..)
+  , ValidationBlock(..)
+  , WindowCheck(..)
+  , ByteCheck(..)
   , noVerification
   , parseSome
   ) where
@@ -36,7 +40,6 @@ import qualified Patch.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word16, Word32)
 
@@ -60,14 +63,40 @@ data Verification = Verification
   , verifySourceSHA1   :: Maybe ByteString.ByteString
   , verifyTargetCRC32  :: Maybe Word32
   , verifyTargetMD5    :: Maybe ByteString.ByteString
-  , verifySourceBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
-  , verifyTargetBlocks :: [(Int, Word16)]     -- APS-GBA per-block CRC16
-  , verifyPPFBlock     :: Maybe (Int64, ByteString.ByteString)  -- PPF validation block
-  , verifyFileSize     :: Maybe Word32                  -- expected source file size (advisory)
-  , verifyWindowAdler32 :: [(Int, Int, Word32)]         -- VCDIFF per-window (offset, length, expected)
-  , verifySourceBytes  :: [(Int, ByteString.ByteString, String)] -- (offset, expected, label) advisory byte checks
+  , verifySourceBlocks  :: [BlockCheck]
+  , verifyTargetBlocks  :: [BlockCheck]
+  , verifyPPFBlock      :: Maybe ValidationBlock
+  , verifyFileSize      :: Maybe FileSize
+  , verifyWindowAdler32 :: [WindowCheck]
+  , verifySourceBytes   :: [ByteCheck]
   , verifySourcePreHash :: ByteString.ByteString -> ByteString.ByteString -- transform source before hashing (NINJA1 sampling)
   }
+
+-- | Per-block CRC16 check (APS-GBA).
+data BlockCheck = BlockCheck
+  { blockCheckOffset :: !Offset
+  , blockCheckCRC16  :: !Word16
+  } deriving (Show)
+
+-- | Validation block comparison (PPF).
+data ValidationBlock = ValidationBlock
+  { validationBlockOffset :: !Offset
+  , validationBlockData   :: !ByteString.ByteString
+  } deriving (Show)
+
+-- | Per-window Adler32 check (VCDIFF).
+data WindowCheck = WindowCheck
+  { windowCheckOffset   :: !Offset
+  , windowCheckLength   :: !Length
+  , windowCheckExpected :: !Word32
+  } deriving (Show)
+
+-- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
+data ByteCheck = ByteCheck
+  { byteCheckOffset   :: !Offset
+  , byteCheckExpected :: !ByteString.ByteString
+  , byteCheckLabel    :: !String
+  } deriving (Show)
 
 noVerification :: Verification
 noVerification = Verification
@@ -160,9 +189,9 @@ parseSome patchBytes = case detectFormat patchBytes of
           hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
           ppfVerification = noVerification
             { verifyPPFBlock = case PPF.ppfValidation patch of
-                Just validation -> Just (unOffset (PPF.validationOffset (PPF.validationImageType validation)), PPF.validationBlock validation)
+                Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
                 Nothing  -> Nothing
-            , verifyFileSize = PPF.ppfFileSize patch
+            , verifyFileSize = fmap (FileSize . fromIntegral) (PPF.ppfFileSize patch)
             }
       in Right SomePatch
         { patchFormat         = "PPF"
@@ -294,7 +323,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     let windows = VCDIFF.vcdiffWindows patch
         windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
         adlerChecks =
-          [ (fromIntegral windowOffset, fromIntegral (unFileSize (VCDIFF.vcdiffTargetLength window)), checksum)
+          [ WindowCheck (Offset windowOffset) (Length (fromIntegral (unFileSize (VCDIFF.vcdiffTargetLength window)))) checksum
           | (window, windowOffset) <- zip windows windowOffsets
           , Just checksum <- [VCDIFF.vcdiffAdler32 window]
           ]
@@ -338,9 +367,9 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchUndo           = Nothing
       , patchVerification   = noVerification
             { verifySourceBytes = concat
-                [ maybe [] (\cartId -> [(0x3C, cartId, "N64 cart ID")]) (APSN64.apsN64CartId header)
-                , maybe [] (\country -> [(0x3E, ByteString.singleton country, "N64 country")]) (APSN64.apsN64Country header)
-                , maybe [] (\crc -> [(0x10, crc, "N64 CRC")]) (APSN64.apsN64Crc header)
+                [ maybe [] (\cartId -> [ByteCheck (Offset 0x3C) cartId "N64 cart ID"]) (APSN64.apsN64CartId header)
+                , maybe [] (\country -> [ByteCheck (Offset 0x3E) (ByteString.singleton country) "N64 country"]) (APSN64.apsN64Country header)
+                , maybe [] (\crc -> [ByteCheck (Offset 0x10) crc "N64 CRC"]) (APSN64.apsN64Crc header)
                 ]
             }
       , patchVerboseLines   = []
@@ -563,9 +592,9 @@ parseAPSGBABlock input = do
           { inMemoryApply = \source -> pure (Right (APSGBA.applyAPSGBAMemory patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-          { verifySourceBlocks = map (\record -> (fromIntegral (APSGBA.apsGbaOffset record), APSGBA.apsGbaSourceCRC record)) records
-          , verifyTargetBlocks = map (\record -> (fromIntegral (APSGBA.apsGbaOffset record), APSGBA.apsGbaTargetCRC record)) records
-          , verifyFileSize = Just (APSGBA.apsGbaSourceSize header)
+          { verifySourceBlocks = map (\record -> BlockCheck (Offset (fromIntegral (APSGBA.apsGbaOffset record))) (APSGBA.apsGbaSourceCRC record)) records
+          , verifyTargetBlocks = map (\record -> BlockCheck (Offset (fromIntegral (APSGBA.apsGbaOffset record))) (APSGBA.apsGbaTargetCRC record)) records
+          , verifyFileSize = Just (FileSize (fromIntegral (APSGBA.apsGbaSourceSize header)))
           }
     , patchVerboseLines   = []
     , patchWarnings       = ["empty patch (0 blocks)" | null records]
