@@ -47,7 +47,37 @@ import Data.Word (Word16, Word32)
 -- Types
 ----------------------------------------------------------------------------
 
--- | Strategy for applying a patch to a target.
+-- | Strategy for applying a patch to a target file.
+--
+-- The two constructors map to a real domain distinction:
+--
+-- __Direct formats__ (IPS, PPF, NINJA1, PMSR, PCHTXT, APS) say "write
+-- these bytes at offset X." They don't need to read the source file —
+-- they open the target, seek, write, repeat. The format module receives
+-- a file handle and mutates it. This is 'InPlace'.
+--
+-- __Differential formats__ (BPS, UPS, VCDIFF, XDelta1, BSDiff, GDIFF,
+-- DPS, RUP) say "given source bytes and these instructions, compute
+-- target bytes." They need the entire source in memory. The output is
+-- a fresh ByteString, constructed atomically. This is 'InMemory'.
+--
+-- The error handling asymmetry follows from this distinction:
+--
+-- * 'InMemory' returns @Either String ByteString@ because failure is
+--   clean — nothing was written. Errors are domain-level: "BPS: source
+--   CRC mismatch", "VCDIFF: negative window target size."
+--
+-- * 'InPlace' returns @IO ()@ and throws on IO failure because mutation
+--   is non-atomic. If write 7 of 12 succeeds and write 8 fails, the file
+--   is partially modified. Main.hs handles this with a single @try@ at
+--   the call site and an honest error message. Wrapping every format's
+--   apply loop in Either boilerplate would add noise without improving
+--   the failure mode.
+--
+-- Main.hs mitigates the mutation risk by copying the source to the
+-- output path first (default) or offering @--backup@ (for @--in-place@).
+-- The format module doesn't know or care whether it's mutating the
+-- original or a copy.
 data ApplyStrategy
   = InPlace (FilePath -> IO ())
     -- ^ Seek-and-write into a mutable file.
