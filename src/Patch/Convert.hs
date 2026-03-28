@@ -84,7 +84,7 @@ data PatchContents = PatchContents
   , contentsSourceCRC32 :: Maybe Word32
   , contentsSourceMD5   :: Maybe ByteString.ByteString
   , contentsSourceSHA1  :: Maybe ByteString.ByteString
-  , contentsDestinationSize    :: Maybe Word32
+  , contentsDestinationSize    :: Maybe FileSize
   , contentsValidation  :: Maybe ByteString.ByteString
   , contentsUndoData    :: Maybe [UndoHunk]
   , contentsTruncation  :: Maybe FileSize
@@ -309,7 +309,7 @@ fieldNote contents field = case field of
       ["note: dropping 1024-byte validation block"]
   FDestinationSize
     | Just targetSize <- contentsDestinationSize contents ->
-      ["note: dropping file size: " ++ show targetSize ++ " bytes"]
+      ["note: dropping file size: " ++ show (unFileSize targetSize) ++ " bytes"]
   FTruncation
     | isJust (contentsTruncation contents) ->
       ["note: dropping truncation marker"]
@@ -402,7 +402,7 @@ encodeDirect contents source target meta = case target of
                    Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription
                    Nothing     -> PCHTXT.encodePCHTXT encodedRecords pchtxtDescription
   CreateAPSN64 -> case contentsDestinationSize contents of
-                  Just targetSize -> APSN64.encodeAPSN64 encodedRecords targetSize apsDescription
+                  Just targetSize -> APSN64.encodeAPSN64 encodedRecords (fromIntegral (unFileSize targetSize)) apsDescription
                   Nothing -> error "unreachable: canConvert verified FDestinationSize"
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
@@ -480,7 +480,7 @@ buildContents format source target meta = PatchContents
   , contentsSourceMD5   = if needs FSourceMD5   then Just (md5 hashSource)   else Nothing
   , contentsSourceSHA1  = if needs FSourceSHA1  then Just (sha1 hashSource)  else Nothing
   , contentsDestinationSize    = if needs FDestinationSize
-                    then Just (fromIntegral (ByteString.length target))
+                    then Just (FileSize (fromIntegral (ByteString.length target)))
                     else Nothing
   , contentsValidation  = if needs FValidation && ByteString.length source > validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))

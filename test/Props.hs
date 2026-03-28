@@ -19,7 +19,7 @@ import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Binary (md5, sha1, diffHunks)
-import Patch.Measure (Offset(..), Length(..), FileSize(..), Delta(..),
+import Patch.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Patch.FFI (rustyCRC32)
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
@@ -517,7 +517,7 @@ fullContents = PatchContents
   , contentsSourceCRC32 = Just 0xDEADBEEF
   , contentsSourceMD5   = Just (ByteString.replicate 16 0xAA)
   , contentsSourceSHA1  = Just (ByteString.replicate 20 0xBB)
-  , contentsDestinationSize    = Just 1024
+  , contentsDestinationSize    = Just (FileSize 1024)
   , contentsValidation  = Just (ByteString.replicate 1024 0)
   , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
   , contentsTruncation  = Just (FileSize 512)

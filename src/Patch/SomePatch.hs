@@ -216,7 +216,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             , contentsSourceCRC32 = Nothing
             , contentsSourceMD5   = Nothing
             , contentsSourceSHA1  = Nothing
-            , contentsDestinationSize    = PPF.ppfFileSize patch
+            , contentsDestinationSize    = fmap (FileSize . fromIntegral) (PPF.ppfFileSize patch)
             , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
             , contentsUndoData    = if PPF.ppfHasUndo patch
                               then Just [ UndoHunk (PPF.recordOffset record) (PPF.recordData record) (fromMaybe ByteString.empty (PPF.recordUndo record))
@@ -380,7 +380,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchMetadata       = Nothing
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
-            , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
+            , contentsDestinationSize    = Just (FileSize (fromIntegral (APSN64.apsN64DestinationSize header)))
             }
       }
 
