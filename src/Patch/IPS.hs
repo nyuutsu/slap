@@ -26,6 +26,7 @@ module Patch.IPS
 import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyByteStringRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
+import Patch.Measure (Position(..), Length(..))
 import qualified Patch.Get as Get
 
 import Data.ByteString (ByteString)
@@ -69,8 +70,8 @@ data IPSPatch = IPSPatch
 
 parseIPS :: ByteString -> Either String IPSPatch
 parseIPS input
-  | ByteString.take 5 input == "PATCH" = runGet (skip 5 >> parseRecords StandardIPS 3 0x454F46) input
-  | ByteString.take 5 input == "IPS32" = runGet (skip 5 >> parseRecords IPS32 4 0x45454F46) input
+  | ByteString.take 5 input == "PATCH" = runGet (skip (Length 5) >> parseRecords StandardIPS 3 0x454F46) input
+  | ByteString.take 5 input == "IPS32" = runGet (skip (Length 5) >> parseRecords IPS32 4 0x45454F46) input
   | otherwise = Left "not an IPS file (bad magic)"
 
 parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
@@ -80,13 +81,13 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
     peekEOF :: Get (Maybe Bool)
     peekEOF = do
       available <- remaining
-      if available < offsetWidth then pure Nothing
+      if unLength available < offsetWidth then pure Nothing
       else do
         position <- getPosition
         inputBytes <- getInput
         pure $ Just $ if offsetWidth == 3
-               then getWord24BE position inputBytes == eofMarker
-               else getWord32BE position inputBytes == eofMarker
+               then getWord24BE (unPosition position) inputBytes == eofMarker
+               else getWord32BE (unPosition position) inputBytes == eofMarker
 
     readOffset :: Get Int64
     readOffset
@@ -98,7 +99,7 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
       case eof of
         Nothing -> finish accumulated False       -- ran out of bytes, no EOF marker
         Just True -> do
-          skip offsetWidth
+          skip (Length offsetWidth)
           finish accumulated True                 -- proper EOF marker found
         Just False -> do
           offset <- readOffset
@@ -112,26 +113,26 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
               rleFillByte  <- getByte
               parseLoop (IPSRecordRLE offset rleCount rleFillByte : accumulated)
             else do  -- Normal record
-              payload <- getBytes size
+              payload <- getBytes (Length size)
               parseLoop (IPSRecord offset payload : accumulated)
 
     finish accumulated clean = do
       available <- remaining
-      if available > 0
+      if unLength available > 0
         then do
           position <- getPosition
           inputBytes <- getInput
-          let trailing = ByteString.drop position inputBytes
+          let trailing = ByteString.drop (unPosition position) inputBytes
           if ByteString.index trailing 0 == 0x7B  -- '{' → EBP JSON metadata (no truncation)
             then pure (IPSPatch variant (reverse accumulated) Nothing (Just trailing) clean)
             else
               -- Try truncation marker, then check for trailing EBP JSON
-              let truncation = if available >= offsetWidth
+              let truncation = if unLength available >= offsetWidth
                           then Just (fromIntegral (if offsetWidth == 3
-                                 then getWord24BE position inputBytes
-                                 else getWord32BE position inputBytes))
+                                 then getWord24BE (unPosition position) inputBytes
+                                 else getWord32BE (unPosition position) inputBytes))
                           else Nothing
-                  jsonStart = if available >= offsetWidth then offsetWidth else available
+                  jsonStart = if unLength available >= offsetWidth then offsetWidth else unLength available
                   afterTruncation = ByteString.drop jsonStart trailing
                   ebpMeta = if not (ByteString.null afterTruncation) && ByteString.index afterTruncation 0 == 0x7B
                             then Just afterTruncation

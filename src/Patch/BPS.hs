@@ -16,6 +16,7 @@ module Patch.BPS
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, copyByteStringRange)
 import Patch.FFI (rustyCRC32, rustyBpsDiff)
 import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
+import Patch.Measure (Length(..))
 import Control.Monad (when)
 import Patch.Format (showCRC, renderField)
 
@@ -84,7 +85,7 @@ parseBPSBody = do
   when (sourceSize < 0) $ failGet "BPS: negative source size"
   when (targetSize < 0) $ failGet "BPS: negative target size"
   metadataLength <- fromIntegral <$> byuuVarint
-  metadata       <- getBytes metadataLength
+  metadata       <- getBytes (Length metadataLength)
   actions <- parseActions
   pure (sourceSize, targetSize, metadata, actions)
 
@@ -98,7 +99,7 @@ parseActions = do
         dataLength = fromIntegral (shiftR encoded 2) + 1
     action <- case commandCode of
       0 -> pure (SourceRead dataLength)
-      1 -> TargetRead <$> getBytes dataLength
+      1 -> TargetRead <$> getBytes (Length dataLength)
       2 -> SourceCopy dataLength . decodeSignedVarint <$> byuuVarint
       3 -> TargetCopy dataLength . decodeSignedVarint <$> byuuVarint
       _ -> error "unreachable"  -- (.&. 3) is always 0-3; GHC can't see this

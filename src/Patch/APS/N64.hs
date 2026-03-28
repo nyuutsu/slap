@@ -20,6 +20,7 @@ module Patch.APS.N64
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
+import Patch.Measure (Length(..))
 import Patch.Binary (copyByteStringRange)
 import Patch.Format (padHex, renderField)
 
@@ -97,13 +98,13 @@ parseAPSN64 input
 
 parseN64 :: Get APSN64Patch
 parseN64 = do
-  skip 5  -- "APS10"
+  skip (Length 5)  -- "APS10"
   patchTypeByte <- getByte
   case toAPSPatchType patchTypeByte of
     Left errorMessage -> fail errorMessage
     Right patchType -> do
       encodingByte <- getByte
-      description <- getBytes 50
+      description <- getBytes (Length 50)
       case patchType of
         APSSimple -> do
           destinationSize <- word32LE
@@ -117,10 +118,10 @@ parseN64 = do
             records
         APSN64Specific -> do
           imageFormat  <- toAPSImageFormat <$> getByte
-          cartId  <- getBytes 2
+          cartId  <- getBytes (Length 2)
           country <- getByte
-          crcBytes  <- getBytes 8
-          skip 5  -- padding (bytes 69-73)
+          crcBytes  <- getBytes (Length 8)
+          skip (Length 5)  -- padding (bytes 69-73)
           destinationSize <- word32LE
           records <- parseN64Records
           pure $ APSN64Patch
@@ -137,7 +138,7 @@ parseN64Records = do
   if done then pure []
   else do
     avail <- remaining
-    if avail < 5 then pure []
+    if unLength avail < 5 then pure []
     else do
       offset <- fromIntegral <$> word32LE
       dataLength <- getByte
@@ -148,7 +149,7 @@ parseN64Records = do
           rest <- parseN64Records
           pure (APSN64RLE offset value count : rest)
         else do  -- Normal record
-          payload <- getBytes (fromIntegral dataLength)
+          payload <- getBytes (Length (fromIntegral dataLength))
           rest <- parseN64Records
           pure (APSN64Normal offset payload : rest)
 

@@ -17,6 +17,7 @@ module Patch.APS.GBA
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_gba.js
 
 import Patch.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
+import Patch.Measure (Length(..))
 import Patch.Binary (crc16, copyByteStringRange, putWord32LE, putWord16LE)
 import Patch.Format (renderField)
 
@@ -63,7 +64,7 @@ parseAPSGBA input
 
 parseGBA :: Get APSGBAPatch
 parseGBA = do
-  skip 4  -- "APS1"
+  skip (Length 4)  -- "APS1"
   sourceSize <- word32LE
   targetSize <- word32LE
   records <- parseGBARecords
@@ -72,12 +73,12 @@ parseGBA = do
 parseGBARecords :: Get [APSGBARecord]
 parseGBARecords = do
   avail <- remaining
-  if avail < 65544 then pure []
+  if unLength avail < 65544 then pure []
   else do
     offset <- word32LE
     sourceCrc <- word16LE
     targetCrc <- word16LE
-    xorPayload <- getBytes 65536
+    xorPayload <- getBytes (Length 65536)
     rest <- parseGBARecords
     pure (APSGBARecord offset sourceCrc targetCrc xorPayload : rest)
 

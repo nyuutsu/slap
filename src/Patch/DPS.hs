@@ -21,6 +21,7 @@ module Patch.DPS
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Patch.Get as Get
+import Patch.Measure (Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -104,9 +105,9 @@ parseDPS input
 
 parseDPSBody :: Get DPSPatch
 parseDPSBody = do
-  name    <- trimNull <$> getBytes 64
-  author  <- trimNull <$> getBytes 64
-  version <- trimNull <$> getBytes 64
+  name    <- trimNull <$> getBytes (Length 64)
+  author  <- trimNull <$> getBytes (Length 64)
+  version <- trimNull <$> getBytes (Length 64)
   flagByte <- getByte
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage
@@ -127,7 +128,7 @@ parseDPSBody = do
 parseRecords :: Get [DPSRecord]
 parseRecords = do
   available <- remaining
-  if available < 5 then pure []
+  if unLength available < 5 then pure []
   else do
     mode <- getByte
     outputOffset <- fromIntegral <$> Get.word32LE
@@ -139,7 +140,7 @@ parseRecords = do
         pure (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset dataLength))
       _ -> do  -- EnclosedData: read length + data from patch
         dataLength  <- fromIntegral <$> Get.word32LE :: Get Int
-        payload  <- getBytes dataLength
+        payload  <- getBytes (Length dataLength)
         pure (DPSRecord EnclosedData outputOffset (PayloadData payload))
     rest <- parseRecords
     pure (record : rest)

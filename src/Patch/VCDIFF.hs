@@ -19,6 +19,7 @@ import Patch.Binary (getVcdiffVarint, copyByteStringRange)
 import Patch.Format (renderField)
 import Patch.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
+import Patch.Measure (Position(..), Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -279,7 +280,7 @@ parseVCDIFFWith allowCustom input
           Right (VCDIFFPatch header windows table nearSize sameSize)
   where
     parseHeader = do
-      skip 3  -- magic
+      skip (Length 3)  -- magic
       version <- getByte
       when (version /= 0 && version /= 0x53) $  -- 0x53 = 'S', xdelta3 version indicator
         failGet ("unsupported VCDIFF version: " ++ show version)
@@ -294,12 +295,12 @@ parseVCDIFFWith allowCustom input
           when (not allowCustom) $
             failGet "nested custom code tables are not allowed"
           tableLength <- fromIntegral <$> vcdiffVarint
-          Just <$> getBytes tableLength
+          Just <$> getBytes (Length tableLength)
         else pure Nothing
       -- Skip optional application data (xdelta3 extension)
       when (testBit headerIndicator 2) $ do
         applicationLength <- fromIntegral <$> vcdiffVarint
-        skip applicationLength
+        skip (Length applicationLength)
       let header = VCDIFFHeader version compressorIdentifier hasCodeTable
       windows <- parseWindows (version == 0x53)
       pure (mTableBytes, header, windows)
@@ -321,7 +322,7 @@ parseVCDIFFWith allowCustom input
       -- Delta encoding length
       deltaLength <- vcdiffVarint
       deltaStart <- getPosition
-      let deltaEnd = deltaStart + fromIntegral deltaLength
+      let deltaEnd = Position (unPosition deltaStart + fromIntegral deltaLength)
       -- Inside the delta body:
       targetSize  <- vcdiffVarint
       when (targetSize < 0) $ failGet "VCDIFF: negative window target size"
@@ -339,18 +340,18 @@ parseVCDIFFWith allowCustom input
       -- backwards from the known end avoids guessing what's between lengths
       -- and data.
       afterLengths <- getPosition
-      let dataStart = deltaEnd
+      let dataStart = Position (unPosition deltaEnd
                       - fromIntegral addRunLength
                       - fromIntegral instructionLength
-                      - fromIntegral addressLength
-      adlerChecksum <- if dataStart == afterLengths + 4
+                      - fromIntegral addressLength)
+      adlerChecksum <- if unPosition dataStart == unPosition afterLengths + 4
         then Just <$> word32BE
         else pure Nothing
       -- Jump to data start and slice the three data streams
       setPosition dataStart
-      addRunData <- getBytes (fromIntegral addRunLength)
-      instructionData   <- getBytes (fromIntegral instructionLength)
-      addressData   <- getBytes (fromIntegral addressLength)
+      addRunData <- getBytes (Length (fromIntegral addRunLength))
+      instructionData   <- getBytes (Length (fromIntegral instructionLength))
+      addressData   <- getBytes (Length (fromIntegral addressLength))
       setPosition deltaEnd
       pure VCDIFFWindow
         { vcdiffWindowIndicator = windowIndicator

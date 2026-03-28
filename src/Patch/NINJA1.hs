@@ -22,6 +22,7 @@ module Patch.NINJA1
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
+import Patch.Measure (Length(..))
 import Patch.Binary (putWord32BE, copyByteStringRange)
 import Patch.Format (showCRC, padHex, renderField)
 
@@ -160,9 +161,9 @@ parseBinary format payload
 parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch
 parseBinaryGet format = do
   romType   <- toNINJA1RomType <$> getByte
-  crcBytes  <- getBytes 4
-  md5Bytes  <- getBytes 16
-  sha1Bytes <- getBytes 20
+  crcBytes  <- getBytes (Length 4)
+  md5Bytes  <- getBytes (Length 16)
+  sha1Bytes <- getBytes (Length 20)
   (records, clean) <- parseBinaryRecords
   let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (decodeBigEndian32 crcBytes)
       parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just md5Bytes
@@ -188,20 +189,20 @@ parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
       avail <- remaining
-      if avail < 1 then pure (reverse accumulated, False)
+      if unLength avail < 1 then pure (reverse accumulated, False)
       else do
         offsetWidth <- fromIntegral <$> getByte :: Get Int
         if offsetWidth == 0 then pure (reverse accumulated, False)
         else do
-          offsetBytes <- getBytes offsetWidth
+          offsetBytes <- getBytes (Length offsetWidth)
           if offsetWidth == 3 && offsetBytes == "EOF"
             then pure (reverse accumulated, True)
             else do
               let offset = decodeBigEndian offsetBytes
               dataWidth <- fromIntegral <$> getByte :: Get Int
-              dataLenBytes <- getBytes dataWidth
+              dataLenBytes <- getBytes (Length dataWidth)
               let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
-              payload <- getBytes dataLength
+              payload <- getBytes (Length dataLength)
               parseLoop (NINJA1Record offset payload : accumulated)
 
 ----------------------------------------------------------------------------

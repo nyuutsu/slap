@@ -17,6 +17,7 @@ module Patch.PMSR
 
 import Patch.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Patch.Get as Get
+import Patch.Measure (Length(..))
 
 import Patch.Binary (copyByteStringRange)
 
@@ -59,7 +60,7 @@ parsePMSR input
 
 parsePMSRBody :: Get PMSRPatch
 parsePMSRBody = do
-  skip 4  -- magic
+  skip (Length 4)  -- magic
   count <- fromIntegral <$> Get.word32BE
   records  <- parseLoop count []
   pure (PMSRPatch records)
@@ -70,11 +71,11 @@ parseLoop count accumulated = do
   offset <- fromIntegral <$> Get.word32BE
   dataLength <- fromIntegral <$> Get.word32BE
   available <- remaining
-  if dataLength > available
+  if dataLength > unLength available
     then fail ("PMSR record needs " ++ show dataLength ++ " bytes but only "
-               ++ show available ++ " available")
+               ++ show (unLength available) ++ " available")
     else do
-      payload <- getBytes dataLength
+      payload <- getBytes (Length dataLength)
       parseLoop (count - 1) (PMSRRecord offset payload : accumulated)
 
 ----------------------------------------------------------------------------

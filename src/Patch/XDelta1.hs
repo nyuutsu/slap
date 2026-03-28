@@ -15,6 +15,7 @@ module Patch.XDelta1
 
 import Patch.Binary (getWord32BE, copyByteStringRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
+import Patch.Measure (Length(..))
 import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
@@ -120,10 +121,10 @@ parseControl version controlSegment dataSegment fromName toName
   where
     parseControlBody :: Get XDelta1Patch
     parseControlBody = do
-      skip 8  -- type tag + allocation (deprecated)
-      toMD5 <- getBytes 16
+      skip (Length 8)  -- type tag + allocation (deprecated)
+      toMD5 <- getBytes (Length 16)
       targetLength <- edsioVarint
-      skip 1  -- has_data boolean
+      skip (Length 1)  -- has_data boolean
       sourceCount <- fromIntegral <$> edsioVarint
       sources <- parseSources sourceCount
       instructionCount <- fromIntegral <$> edsioVarint
@@ -135,8 +136,8 @@ parseSources :: Int -> Get [XDelta1Source]
 parseSources 0 = pure []
 parseSources count = do
   nameLength <- fromIntegral <$> edsioVarint
-  sourceName <- getBytes nameLength
-  md5Bytes <- getBytes 16
+  sourceName <- getBytes (Length nameLength)
+  md5Bytes <- getBytes (Length 16)
   sourceLength <- edsioVarint
   isDataSource <- (/= 0) <$> getByte
   isSequential <- (/= 0) <$> getByte

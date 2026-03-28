@@ -35,6 +35,7 @@ import Patch.Binary
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
   )
+import Patch.Measure (Position(..), Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -46,10 +47,10 @@ import Data.Word (Word8, Word16, Word32)
 -- The Get monad: position-threading over a ByteString
 ----------------------------------------------------------------------------
 
-newtype Get a = Get (ByteString -> Int -> Either String (a, Int))
+newtype Get a = Get (ByteString -> Position -> Either String (a, Position))
 
 runGet :: Get a -> ByteString -> Either String a
-runGet (Get parser) input = fst <$> parser input 0
+runGet (Get parser) input = fst <$> parser input (Position 0)
 
 instance Functor Get where
   fmap function (Get parser) = Get $ \input position -> case parser input position of
@@ -77,45 +78,44 @@ instance MonadFail Get where
 ----------------------------------------------------------------------------
 
 getByte :: Get Word8
-getByte = Get $ \input position ->
-  if position < ByteString.length input
-  then Right (ByteString.index input position, position + 1)
-  else Left ("getByte: offset " ++ show position ++ " out of bounds (length " ++ show (ByteString.length input) ++ ")")
+getByte = do
+  singleByte <- getBytes (Length 1)
+  pure (ByteString.index singleByte 0)
 
-getBytes :: Int -> Get ByteString
-getBytes count
+getBytes :: Length -> Get ByteString
+getBytes (Length count)
   | count < 0 = Get $ \_ _ -> Left ("getBytes: negative length " ++ show count)
-  | otherwise  = Get $ \input position ->
+  | otherwise  = Get $ \input (Position position) ->
       if position + count <= ByteString.length input
-      then Right (ByteString.take count (ByteString.drop position input), position + count)
+      then Right (ByteString.take count (ByteString.drop position input), Position (position + count))
       else Left ("getBytes: need " ++ show count ++ " bytes at offset " ++ show position ++ " but only " ++ show (ByteString.length input - position) ++ " available")
 
-skip :: Int -> Get ()
-skip count
+skip :: Length -> Get ()
+skip (Length count)
   | count < 0 = Get $ \_ _ -> Left ("skip: negative count " ++ show count)
-  | otherwise  = Get $ \input position ->
+  | otherwise  = Get $ \input (Position position) ->
       let newPosition = position + count
       in if newPosition <= ByteString.length input
-         then Right ((), newPosition)
+         then Right ((), Position newPosition)
          else Left ("skip: offset " ++ show newPosition ++ " out of bounds")
 
-getPosition :: Get Int
+getPosition :: Get Position
 getPosition = Get $ \_ position -> Right (position, position)
 
-setPosition :: Int -> Get ()
-setPosition target = Get $ \input _ ->
-  if target >= 0 && target <= ByteString.length input
+setPosition :: Position -> Get ()
+setPosition target@(Position targetValue) = Get $ \input _ ->
+  if targetValue >= 0 && targetValue <= ByteString.length input
   then Right ((), target)
-  else Left ("setPosition: " ++ show target ++ " out of bounds")
+  else Left ("setPosition: " ++ show targetValue ++ " out of bounds")
 
 getInput :: Get ByteString
 getInput = Get $ \input position -> Right (input, position)
 
 atEnd :: Get Bool
-atEnd = Get $ \input position -> Right (position >= ByteString.length input, position)
+atEnd = Get $ \input (Position position) -> Right (position >= ByteString.length input, Position position)
 
-remaining :: Get Int
-remaining = Get $ \input position -> Right (ByteString.length input - position, position)
+remaining :: Get Length
+remaining = Get $ \input (Position position) -> Right (Length (ByteString.length input - position), Position position)
 
 failGet :: String -> Get a
 failGet = fail
@@ -124,41 +124,41 @@ failGet = fail
 -- Fixed-width readers (lifted from Patch.Binary)
 ----------------------------------------------------------------------------
 
-liftRead :: Int -> (Int -> ByteString -> a) -> Get a
-liftRead width reader = Get $ \input position ->
+liftRead :: Length -> (Int -> ByteString -> a) -> Get a
+liftRead (Length width) reader = Get $ \input (Position position) ->
   if position + width <= ByteString.length input
-  then Right (reader position input, position + width)
+  then Right (reader position input, Position (position + width))
   else Left ("liftRead: need " ++ show width ++ " bytes at offset " ++ show position)
 
 liftReadVarint :: (Int -> ByteString -> (a, Int)) -> Get a
-liftReadVarint reader = Get $ \input position ->
+liftReadVarint reader = Get $ \input (Position position) ->
   if position >= ByteString.length input
   then Left ("liftReadVarint: read past end at offset " ++ show position)
   else let (result, consumed) = reader position input
        in if position + consumed > ByteString.length input
           then Left ("liftReadVarint: varint overran buffer at offset " ++ show position)
-          else Right (result, position + consumed)
+          else Right (result, Position (position + consumed))
 
 word16LE :: Get Word16
-word16LE = liftRead 2 getWord16LE
+word16LE = liftRead (Length 2) getWord16LE
 
 word32LE :: Get Word32
-word32LE = liftRead 4 getWord32LE
+word32LE = liftRead (Length 4) getWord32LE
 
 int64LE :: Get Int64
-int64LE = liftRead 8 getInt64LE
+int64LE = liftRead (Length 8) getInt64LE
 
 word16BE :: Get Word16
-word16BE = liftRead 2 getWord16BE
+word16BE = liftRead (Length 2) getWord16BE
 
 word24BE :: Get Word32
-word24BE = liftRead 3 getWord24BE
+word24BE = liftRead (Length 3) getWord24BE
 
 word32BE :: Get Word32
-word32BE = liftRead 4 getWord32BE
+word32BE = liftRead (Length 4) getWord32BE
 
 int64BE :: Get Int64
-int64BE = liftRead 8 getInt64BE
+int64BE = liftRead (Length 8) getInt64BE
 
 ----------------------------------------------------------------------------
 -- Variable-length readers

@@ -21,6 +21,7 @@ module Patch.RUP
 -- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
 
 import Patch.Get (Get, runGet, getByte, getBytes, atEnd)
+import Patch.Measure (Length(..))
 import Patch.Binary (diffHunks, md5, copyByteStringRange)
 import Patch.Format (padHex, renderField)
 
@@ -96,7 +97,7 @@ data RUPRecord = RUPRecord
 packedInt :: Get Int64
 packedInt = do
   count <- fromIntegral <$> getByte
-  bytes <- getBytes count
+  bytes <- getBytes (Length count)
   -- Only interpret first 8 bytes (enough for Int64); extra bytes are
   -- consumed from the stream but don't contribute to the value.
   let clampedCount = min count 8
@@ -106,7 +107,7 @@ packedInt = do
 packedBS :: Get ByteString
 packedBS = do
   dataLength <- fromIntegral <$> packedInt
-  getBytes dataLength
+  getBytes (Length dataLength)
 
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes): NINJA2 format
@@ -151,7 +152,7 @@ parseRUP input
   where
     parseRUPBody :: Get RUPPatch
     parseRUPBody = do
-      headerBytes <- getBytes headerSize
+      headerBytes <- getBytes (Length headerSize)
       let meta = parseFixedHeader headerBytes
           encoding = ByteString.index headerBytes 6  -- PATCH_ENC byte
       patch <- parseCommands (emptyPatch meta encoding)
@@ -182,8 +183,8 @@ parseFileCommand patch = do
   romTypeByte <- getByte  -- ROM type byte
   sourceSize <- packedInt
   targetSize <- packedInt
-  sourceMD5 <- getBytes 16
-  targetMD5 <- getBytes 16
+  sourceMD5 <- getBytes (Length 16)
+  targetMD5 <- getBytes (Length 16)
   (overflowType, overflowData) <- if sourceSize /= targetSize
     then do
       typeByte <- getByte
