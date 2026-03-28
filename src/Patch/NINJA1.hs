@@ -22,7 +22,7 @@ module Patch.NINJA1
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), Offset(..), EncodedHunk(..), seekTo, offsetToInt)
 import Patch.Binary (putWord32BE, copyByteStringRange)
 import Patch.Format (showCRC, padHex, renderField)
 
@@ -114,8 +114,8 @@ data NINJA1Patch = NINJA1Patch
   } deriving (Show)
 
 data NINJA1Record = NINJA1Record
-  { ninja1RecordOffset :: Int64
-  , ninja1RecordData   :: ByteString
+  { ninja1RecordOffset :: !Offset
+  , ninja1RecordData   :: !ByteString
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -198,12 +198,12 @@ parseBinaryRecords = parseLoop []
           if offsetWidth == 3 && offsetBytes == "EOF"
             then pure (reverse accumulated, True)
             else do
-              let offset = decodeBigEndian offsetBytes
+              let recordOffset = Offset (decodeBigEndian offsetBytes)
               dataWidth <- fromIntegral <$> getByte :: Get Int
               dataLenBytes <- getBytes (Length dataWidth)
               let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
               payload <- getBytes (Length dataLength)
-              parseLoop (NINJA1Record offset payload : accumulated)
+              parseLoop (NINJA1Record recordOffset payload : accumulated)
 
 ----------------------------------------------------------------------------
 -- Textual format: line-based, # comments, header + hex records
@@ -260,7 +260,7 @@ parseTextRecord :: ByteString -> Either String NINJA1Record
 parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
-      [(offset, "")] -> Right (NINJA1Record offset (hexToBS (concatMap ByteString8.unpack dataParts)))
+      [(offset, "")] -> Right (NINJA1Record (Offset offset) (hexToBS (concatMap ByteString8.unpack dataParts)))
       _ -> Left ("NINJA1: invalid offset in text record: " ++ ByteString8.unpack offsetString)
   _ -> Left ("NINJA1: malformed text record: " ++ ByteString8.unpack line)
 
@@ -291,9 +291,9 @@ applyNINJA1 patch target = withBinaryFile target ReadWriteMode $ \handle -> do
   pure (length (ninja1Records patch))
 
 applyRecord :: Handle -> NINJA1Record -> IO ()
-applyRecord handle (NINJA1Record offset payload) = do
-  hSeek handle AbsoluteSeek (fromIntegral offset)
-  ByteString.hPut handle payload
+applyRecord handle (NINJA1Record writeOffset writePayload) = do
+  seekTo handle writeOffset
+  ByteString.hPut handle writePayload
 
 -- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
 applyNINJA1Memory :: NINJA1Patch -> ByteString -> ByteString
@@ -301,12 +301,12 @@ applyNINJA1Memory patch source = unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
-    forM_ (ninja1Records patch) $ \(NINJA1Record offset payload) ->
-      copyByteStringRange outputPointer (fromIntegral offset) payload 0 (ByteString.length payload)
+    forM_ (ninja1Records patch) $ \(NINJA1Record writeOffset writePayload) ->
+      copyByteStringRange outputPointer (offsetToInt writeOffset) writePayload 0 (ByteString.length writePayload)
   where
     sourceLength = ByteString.length source
     outputSize = foldl' max sourceLength
-      [ fromIntegral (ninja1RecordOffset record) + ByteString.length (ninja1RecordData record) | record <- ninja1Records patch ]
+      [ offsetToInt (ninja1RecordOffset record) + ByteString.length (ninja1RecordData record) | record <- ninja1Records patch ]
 
 ----------------------------------------------------------------------------
 -- Info
@@ -368,7 +368,7 @@ romTypeName (RomUnknown value) = "unknown (" ++ show value ++ ")"
 
 -- | Encode pre-diffed records as a NINJA1 Binary patch.
 -- When compress is True, zlib-compresses the payload and emits BZ subformat.
-encodeNINJA1 :: [(Int, ByteString.ByteString)]
+encodeNINJA1 :: [EncodedHunk]
              -> Word32          -- source CRC32
              -> ByteString.ByteString   -- source MD5 (16 bytes)
              -> ByteString.ByteString   -- source SHA1 (20 bytes)
@@ -387,15 +387,15 @@ encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
         <> foldMap encodeRecordBuilder records
         <> word8 3 <> byteString "EOF"     -- EOF sentinel
 
-encodeRecordBuilder :: (Int, ByteString.ByteString) -> Builder
-encodeRecordBuilder (offset, payload) =
-    let offsetEncoded = encodeBigEndian (fromIntegral offset :: Int64)
-        lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length payload) :: Int64)
+encodeRecordBuilder :: EncodedHunk -> Builder
+encodeRecordBuilder (EncodedHunk hunkOffset hunkPayload) =
+    let offsetEncoded = encodeBigEndian (fromIntegral hunkOffset :: Int64)
+        lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length hunkPayload) :: Int64)
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded
        <> word8 (fromIntegral (ByteString.length lengthEncoded))
        <> byteString lengthEncoded
-       <> byteString payload
+       <> byteString hunkPayload
 
 -- | Encode an Int64 as minimal big-endian bytes (at least 1 byte).
 encodeBigEndian :: Int64 -> ByteString.ByteString

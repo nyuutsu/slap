@@ -3,8 +3,8 @@
 module Patch.PPF.Types where
 
 import Data.ByteString (ByteString)
-import Data.Int (Int64)
 import Data.Word (Word8, Word32)
+import Patch.Measure (Offset(..), Length(..))
 
 -- | PPF format version.
 data Version = PPF1 | PPF2 | PPF3 | PPF4
@@ -31,10 +31,10 @@ data RecordCommand = Replace | Append
 
 -- | A single patch record.
 data Record = Record
-  { recordOffset :: Int64             -- ^ Byte offset in target file
-  , recordData   :: ByteString        -- ^ Replacement bytes
-  , recordUndo   :: Maybe ByteString  -- ^ Original bytes (PPF3 only, if undo data present)
-  , recordCommand :: RecordCommand     -- ^ Replace or Append (PPF4 only; always Replace for PPF1/2/3)
+  { recordOffset  :: !Offset           -- ^ Byte offset in target file
+  , recordData    :: !ByteString       -- ^ Replacement bytes
+  , recordUndo    :: !(Maybe ByteString) -- ^ Original bytes (PPF3 only, if undo data present)
+  , recordCommand :: !RecordCommand    -- ^ Replace or Append (PPF4 only; always Replace for PPF1/2/3)
   } deriving (Show)
 
 -- | Optional File_ID.diz content appended to PPF2/PPF3 files.
@@ -54,10 +54,10 @@ data Patch = Patch
   } deriving (Show)
 
 -- | Offset in target file where validation block is read from.
-validationOffset :: ImageType -> Int64
-validationOffset BIN = 0x9320
-validationOffset GI  = 0x80A0
+validationOffset :: ImageType -> Offset
+validationOffset BIN = Offset 0x9320
+validationOffset GI  = Offset 0x80A0
 
 -- | Size of the validation block.
-validationSize :: Int
-validationSize = 1024
+validationSize :: Length
+validationSize = Length 1024

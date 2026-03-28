@@ -21,7 +21,7 @@ module Patch.RUP
 -- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
 
 import Patch.Get (Get, runGet, getByte, getBytes, atEnd)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), Offset(..), FileSize(..), Hunk(..), offsetToInt)
 import Patch.Binary (diffHunks, md5, copyByteStringRange)
 import Patch.Format (padHex, renderField)
 
@@ -67,8 +67,8 @@ data RUPPatch = RUPPatch
   , rupOverflowType :: Maybe OverflowMode
   , rupSourceMD5    :: Maybe ByteString  -- 16 bytes
   , rupTargetMD5    :: Maybe ByteString  -- 16 bytes
-  , rupSourceSize     :: Int64
-  , rupTargetSize     :: Int64
+  , rupSourceSize     :: !FileSize
+  , rupTargetSize     :: !FileSize
   , rupPatchEncoding     :: Word8             -- PATCH_ENC (text encoding, byte 6)
   , rupRomType      :: Word8             -- ROM type byte from OPEN_NEW_FILE command
   } deriving (Show)
@@ -85,8 +85,8 @@ data RUPInfo = RUPInfo
   } deriving (Show)
 
 data RUPRecord = RUPRecord
-  { rupRecordOffset :: Int64
-  , rupRecordXor    :: ByteString
+  { rupRecordOffset :: !Offset
+  , rupRecordXor    :: !ByteString
   } deriving (Show)
 
 
@@ -161,7 +161,7 @@ parseRUP input
     emptyPatch meta encoding = RUPPatch
       { rupHeader = meta, rupRecords = [], rupOverflow = Nothing
       , rupOverflowType = Nothing, rupSourceMD5 = Nothing, rupTargetMD5 = Nothing
-      , rupSourceSize = 0, rupTargetSize = 0, rupPatchEncoding = encoding, rupRomType = 0
+      , rupSourceSize = FileSize 0, rupTargetSize = FileSize 0, rupPatchEncoding = encoding, rupRomType = 0
       }
 
 parseCommands :: RUPPatch -> Get RUPPatch
@@ -181,8 +181,8 @@ parseFileCommand :: RUPPatch -> Get RUPPatch
 parseFileCommand patch = do
   _filename <- packedBS
   romTypeByte <- getByte  -- ROM type byte
-  sourceSize <- packedInt
-  targetSize <- packedInt
+  sourceSize <- FileSize <$> packedInt
+  targetSize <- FileSize <$> packedInt
   sourceMD5 <- getBytes (Length 16)
   targetMD5 <- getBytes (Length 16)
   (overflowType, overflowData) <- if sourceSize /= targetSize
@@ -206,9 +206,9 @@ parseFileCommand patch = do
 -- | Command 0x02: XOR record
 parseXorRecord :: RUPPatch -> Get RUPPatch
 parseXorRecord patch = do
-  offset <- packedInt
+  recordOffset <- Offset <$> packedInt
   xorPayload <- packedBS
-  pure patch { rupRecords = RUPRecord offset xorPayload : rupRecords patch }
+  pure patch { rupRecords = RUPRecord recordOffset xorPayload : rupRecords patch }
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -223,23 +223,22 @@ applyRUP patch target = do
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPosition = rupSourceSize patch
-        hSeek handle AbsoluteSeek (fromIntegral appendPosition)
+        hSeek handle AbsoluteSeek (fromIntegral (unFileSize (rupSourceSize patch)))
         ByteString.hPut handle (ByteString.map (xor 0xFF) overflow)
     -- Handle truncation (if target is smaller than source)
     when (rupTargetSize patch < rupSourceSize patch) $
-      hSetFileSize handle (fromIntegral (rupTargetSize patch))
+      hSetFileSize handle (fromIntegral (unFileSize (rupTargetSize patch)))
   pure (length (rupRecords patch))
 
 applyRecord :: Handle -> RUPRecord -> IO ()
-applyRecord handle (RUPRecord offset xorPayload) = do
-  hSeek handle AbsoluteSeek (fromIntegral offset)
+applyRecord handle (RUPRecord writeOffset xorPayload) = do
+  hSeek handle AbsoluteSeek (fromIntegral (unOffset writeOffset))
   sourceBytes <- ByteString.hGet handle (ByteString.length xorPayload)
   let padded = if ByteString.length sourceBytes < ByteString.length xorPayload
                then sourceBytes <> ByteString.replicate (ByteString.length xorPayload - ByteString.length sourceBytes) 0
                else sourceBytes
       result = ByteString.packZipWith xor padded xorPayload
-  hSeek handle AbsoluteSeek (fromIntegral offset)
+  hSeek handle AbsoluteSeek (fromIntegral (unOffset writeOffset))
   ByteString.hPut handle result
 
 -- | Apply a RUP patch in memory: XOR records + overflow handling.
@@ -250,23 +249,23 @@ applyRUPMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     when (outputLength > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
     -- XOR records: read from buffer, XOR, write back
-    forM_ (rupRecords patch) $ \(RUPRecord offset xorPayload) -> do
-      let recordOffset = fromIntegral offset :: Int
+    forM_ (rupRecords patch) $ \(RUPRecord writeOffset xorPayload) -> do
+      let writePosition = offsetToInt writeOffset
           recordLength = ByteString.length xorPayload
       forM_ [0..recordLength-1] $ \position -> do
-        let bytePosition = recordOffset + position
+        let bytePosition = writePosition + position
         original <- peekByteOff outputPointer bytePosition :: IO Word8
         pokeByteOff outputPointer bytePosition (original `xor` ByteString.index xorPayload position)
     -- Overflow: decoded data (XOR'd with 0xFF on disk) written at source end
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPosition = fromIntegral (rupSourceSize patch) :: Int
+        let appendPosition = fromIntegral (unFileSize (rupSourceSize patch)) :: Int
             decoded = ByteString.map (xor 0xFF) overflow
         copyByteStringRange outputPointer appendPosition decoded 0 (ByteString.length decoded)
   where
     sourceLength = ByteString.length source
-    targetLength = fromIntegral (rupTargetSize patch) :: Int
+    targetLength = fromIntegral (unFileSize (rupTargetSize patch)) :: Int
     outputLength = if targetLength > 0 then targetLength else sourceLength
 
 ----------------------------------------------------------------------------
@@ -298,9 +297,9 @@ rupMeta patch = concat
       | otherwise = [("ROM type", show (rupRomType patch))]
 
     sizeFields
-      | rupSourceSize patch == 0 && rupTargetSize patch == 0 = []
-      | otherwise = [ ("source size", show (rupSourceSize patch))
-                     , ("target size", show (rupTargetSize patch)) ]
+      | unFileSize (rupSourceSize patch) == 0 && unFileSize (rupTargetSize patch) == 0 = []
+      | otherwise = [ ("source size", show (unFileSize (rupSourceSize patch)))
+                     , ("target size", show (unFileSize (rupTargetSize patch))) ]
 
     md5Field _ Nothing = []
     md5Field label (Just hash) =
@@ -346,9 +345,10 @@ createRUP original modified info romType = LazyByteString.toStrict $ toLazyByteS
     targetTrimmed = ByteString.take minimumLength modified
     -- diffHunks finds changed regions; we then XOR old and new at those positions
     xorHunks = map computeXorHunk (diffHunks sourceTrimmed targetTrimmed)
-    computeXorHunk (offset, newData) =
-      let oldData = ByteString.take (ByteString.length newData) (ByteString.drop offset sourceTrimmed)
-      in (offset, ByteString.packZipWith xor oldData newData)
+    computeXorHunk (Hunk hunkOffset newData) =
+      let intOffset = fromIntegral (unOffset hunkOffset) :: Int
+          oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)
+      in (intOffset, ByteString.packZipWith xor oldData newData)
 
     -- Overflow section: emitted whenever sizes differ (parser expects it).
     -- Type byte: 'A' (0x41) = append, 'M' (0x4D) = truncate/minify.

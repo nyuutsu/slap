@@ -45,6 +45,7 @@ import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Patch.FFI (rustyAdler32)
+import Patch.Measure (Offset(..), Hunk(..))
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -217,33 +218,34 @@ adler32 = rustyAdler32
 
 -- | Find contiguous regions where two ByteStrings differ.
 -- Merges nearby hunks (gap <= 5 bytes) to reduce record count.
--- Returns [(offset, changedBytes)] from the second ByteString.
-diffHunks :: ByteString -> ByteString -> [(Int, ByteString)]
+-- Returns [Hunk] from the second ByteString.
+diffHunks :: ByteString -> ByteString -> [Hunk]
 diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
   where
     originalLength = ByteString.length original
     modifiedLength = ByteString.length modified
     sharedLength = min originalLength modifiedLength
     extension
-      | modifiedLength > originalLength = [(originalLength, ByteString.drop originalLength modified)]
+      | modifiedLength > originalLength = [Hunk (Offset (fromIntegral originalLength)) (ByteString.drop originalLength modified)]
       | otherwise                       = []
     scanDiffs position
       | position >= sharedLength = []
       | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
           let diffEnd = findDiffEnd (position + 1)
-          in (position, ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+          in Hunk (Offset (fromIntegral position)) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
     findDiffEnd position
       | position >= sharedLength = sharedLength
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
       | otherwise = position
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
-    mergeNearby ((firstOffset, firstData):(nextOffset, nextData):rest)
-      | nextOffset - firstOffset - ByteString.length firstData <= 5 =
-          let merged = ByteString.take (nextOffset + ByteString.length nextData - firstOffset) (ByteString.drop firstOffset modified)
-          in mergeNearby ((firstOffset, merged) : rest)
-      | otherwise = (firstOffset, firstData) : mergeNearby ((nextOffset, nextData) : rest)
+    mergeNearby (Hunk firstOffset firstData : Hunk nextOffset nextData : rest)
+      | unOffset nextOffset - unOffset firstOffset - fromIntegral (ByteString.length firstData) <= 5 =
+          let merged = ByteString.take (fromIntegral (unOffset nextOffset) + ByteString.length nextData - fromIntegral (unOffset firstOffset))
+                         (ByteString.drop (fromIntegral (unOffset firstOffset)) modified)
+          in mergeNearby (Hunk firstOffset merged : rest)
+      | otherwise = Hunk firstOffset firstData : mergeNearby (Hunk nextOffset nextData : rest)
 
 
 ----------------------------------------------------------------------------

@@ -15,7 +15,7 @@ module Patch.GDIFF
 
 import Patch.Binary (copyByteStringRange, diffHunks, putWord16BE, putWord32BE, putInt64BE)
 import Patch.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), Offset(..), FileSize(..), Hunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -31,8 +31,8 @@ import Foreign.Ptr (Ptr)
 ----------------------------------------------------------------------------
 
 data GDiffCommand
-  = GDiffData ByteString       -- literal data to append
-  | GDiffCopy Int64 Int64      -- offset into source, length
+  = GDiffData ByteString                             -- literal data to append
+  | GDiffCopy { gdiffCopyOffset :: !Offset, gdiffCopyLength :: !FileSize }  -- offset into source, length
   deriving (Show)
 
 data GDiffPatch = GDiffPatch
@@ -73,43 +73,43 @@ parseGDIFF input
         -- COPY ushort offset, ubyte length
         249 -> do offset <- fromIntegral <$> word16BE
                   copyLength <- fromIntegral <$> getByte
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY ushort offset, ushort length
         250 -> do offset <- fromIntegral <$> word16BE
                   copyLength <- fromIntegral <$> word16BE
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY ushort offset, int length
         251 -> do offset <- fromIntegral <$> word16BE
                   copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY int offset, ubyte length
         252 -> do offset <- fromIntegral <$> word32BE
                   copyLength <- fromIntegral <$> getByte
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY int offset, ushort length
         253 -> do offset <- fromIntegral <$> word32BE
                   copyLength <- fromIntegral <$> word16BE
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY int offset, int length
         254 -> do offset <- fromIntegral <$> word32BE
                   copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY long offset, int length
         255 -> do offset <- int64BE
                   copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCopy offset copyLength : accumulated)
+                  parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         _ -> fail "impossible GDIFF opcode"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
 
 commandOutputSize :: GDiffCommand -> Int64
 commandOutputSize (GDiffData payload)       = fromIntegral (ByteString.length payload)
-commandOutputSize (GDiffCopy _ copyLength) = copyLength
+commandOutputSize (GDiffCopy _ copyLength) = unFileSize copyLength
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -131,8 +131,8 @@ applyGDIFF patch source
         copyByteStringRange outputPointer position payload 0 dataLength
         applyLoop outputPointer (position + dataLength) remaining
       GDiffCopy sourceOffset copyLength -> do
-        let sourceStart = fromIntegral sourceOffset
-            count = fromIntegral copyLength :: Int
+        let sourceStart = fromIntegral (unOffset sourceOffset)
+            count = fromIntegral (unFileSize copyLength) :: Int
         copyByteStringRange outputPointer position source sourceStart count
         applyLoop outputPointer (position + count) remaining
 
@@ -156,7 +156,7 @@ gdiffInfo patch = unlines $ filter (not . null)
     commands = gdiffCommands patch
     commandCount = length commands
     dataCount = length [() | GDiffData _ <- commands]
-    copyCount = length [() | GDiffCopy _ _ <- commands]
+    copyCount = length [() | GDiffCopy{} <- commands]
     dataBytes = sum [ByteString.length payload | GDiffData payload <- commands]
     totalOut = sum (map commandOutputSize commands)
 
@@ -177,11 +177,12 @@ createGDIFF original modified = LazyByteString.toStrict $ toLazyByteString $
       -- trailing unchanged region
       if position < minLength then encodeCopy (fromIntegral position) (fromIntegral (minLength - position))
       else mempty
-    buildCommands position ((offset, payload) : remaining) =
-      let gap = offset - position
+    buildCommands position (Hunk hunkOffset hunkPayload : remaining) =
+      let intOffset = fromIntegral (unOffset hunkOffset) :: Int
+          gap = intOffset - position
           copyPart = if gap > 0 then encodeCopy (fromIntegral position) (fromIntegral gap) else mempty
-          dataBuilder = encodeData payload
-      in copyPart <> dataBuilder <> buildCommands (offset + ByteString.length payload) remaining
+          dataBuilder = encodeData hunkPayload
+      in copyPart <> dataBuilder <> buildCommands (intOffset + ByteString.length hunkPayload) remaining
 
 -- | Encode a DATA command, splitting into chunks if > 2^31.
 encodeData :: ByteString -> Builder

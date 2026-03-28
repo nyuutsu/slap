@@ -40,13 +40,13 @@ module Patch.Measure
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Int (Int64)
 import Data.Word (Word8)
-import Foreign.Ptr (Ptr)
+import Foreign.Marshal.Utils (copyBytes)
+import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import Numeric (showHex)
 import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
-
-import Patch.Binary (copyByteStringRange)
 
 ----------------------------------------------------------------------------
 -- Newtypes
@@ -76,7 +76,7 @@ data UndoHunk = UndoHunk
 data EncodedHunk = EncodedHunk
   { encodedOffset  :: !Int
   , encodedPayload :: !ByteString
-  } deriving (Show)
+  } deriving (Eq, Show)
 
 data EncodingLimits = EncodingLimits
   { maximumOffset  :: !Offset
@@ -180,13 +180,12 @@ narrowHunksUnbounded = map narrowHunkUnbounded
 ----------------------------------------------------------------------------
 
 copyRegion :: Ptr Word8 -> Offset -> ByteString -> Int -> Length -> IO ()
+copyRegion _           _                 _      _              regionLength | unLength regionLength <= 0 = pure ()
 copyRegion destination destinationOffset source sourcePosition regionLength =
-  copyByteStringRange
-    destination
-    (fromIntegral (unOffset destinationOffset))
-    source
-    sourcePosition
-    (unLength regionLength)
+  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
+    copyBytes (destination `plusPtr` fromIntegral (unOffset destinationOffset))
+              (castPtr sourcePointer `plusPtr` sourcePosition)
+              (unLength regionLength)
 
 ----------------------------------------------------------------------------
 -- Encoding limits

@@ -26,7 +26,8 @@ module Patch.IPS
 import Patch.Binary (getWord24BE, getWord32BE, putWord16BE, copyByteStringRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
-import Patch.Measure (Position(..), Length(..))
+import Patch.Measure (Position(..), Length(..), Offset(..), FileSize(..),
+                      EncodedHunk(..), seekTo, offsetToInt)
 import qualified Patch.Get as Get
 
 import Data.ByteString (ByteString)
@@ -56,14 +57,14 @@ data IPSVariant = StandardIPS | IPS32
   deriving (Show, Eq)
 
 data IPSRecord
-  = IPSRecord    Int64 ByteString        -- offset, data
-  | IPSRecordRLE Int64 Int Word8          -- offset, count, fill value
+  = IPSRecord    { ipsRecordOffset :: !Offset, ipsRecordPayload :: !ByteString }
+  | IPSRecordRLE { ipsRleOffset :: !Offset, ipsRleCount :: !Length, ipsRleFill :: !Word8 }
   deriving (Show)
 
 data IPSPatch = IPSPatch
   { ipsVariant   :: IPSVariant
   , ipsRecords   :: [IPSRecord]
-  , ipsTruncate  :: Maybe Int64
+  , ipsTruncate  :: Maybe FileSize
   , ipsEBPMeta   :: Maybe ByteString  -- raw JSON metadata (EBP format)
   , ipsCleanEOF  :: Bool              -- True if proper EOF/EEOF marker was found
   } deriving (Show)
@@ -102,19 +103,19 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
           skip (Length offsetWidth)
           finish accumulated True                 -- proper EOF marker found
         Just False -> do
-          offset <- readOffset
+          recordOffset <- Offset <$> readOffset
           size   <- fromIntegral <$> Get.word16BE :: Get Int
           if size == 0
             then do  -- RLE record
               rleCount <- fromIntegral <$> Get.word16BE
               when (rleCount == 0) $
                 fail ("IPS: RLE record with count 0 at offset 0x"
-                      ++ showHex (fromIntegral offset :: Word64) "")
+                      ++ showHex (fromIntegral (unOffset recordOffset) :: Word64) "")
               rleFillByte  <- getByte
-              parseLoop (IPSRecordRLE offset rleCount rleFillByte : accumulated)
+              parseLoop (IPSRecordRLE recordOffset (Length rleCount) rleFillByte : accumulated)
             else do  -- Normal record
               payload <- getBytes (Length size)
-              parseLoop (IPSRecord offset payload : accumulated)
+              parseLoop (IPSRecord recordOffset payload : accumulated)
 
     finish accumulated clean = do
       available <- remaining
@@ -128,9 +129,9 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
             else
               -- Try truncation marker, then check for trailing EBP JSON
               let truncation = if unLength available >= offsetWidth
-                          then Just (fromIntegral (if offsetWidth == 3
+                          then Just (FileSize (fromIntegral (if offsetWidth == 3
                                  then getWord24BE (unPosition position) inputBytes
-                                 else getWord32BE (unPosition position) inputBytes))
+                                 else getWord32BE (unPosition position) inputBytes)))
                           else Nothing
                   jsonStart = if unLength available >= offsetWidth then offsetWidth else unLength available
                   afterTruncation = ByteString.drop jsonStart trailing
@@ -145,7 +146,7 @@ applyIPS :: IPSPatch -> FilePath -> IO Int
 applyIPS patch target = withBinaryFile target ReadWriteMode $ \handle -> do
   written <- applyRecords handle (ipsRecords patch)
   case ipsTruncate patch of
-    Just truncSize -> hSetFileSize handle (fromIntegral truncSize)
+    Just truncSize -> hSetFileSize handle (fromIntegral (unFileSize truncSize))
     Nothing        -> pure ()
   pure written
 
@@ -154,12 +155,12 @@ applyRecords handle records = do
   mapM_ applyOne records
   pure (length records)
   where
-    applyOne (IPSRecord offset payload) = do
-      hSeek handle AbsoluteSeek (fromIntegral offset)
-      ByteString.hPut handle payload
-    applyOne (IPSRecordRLE offset count fillValue) = do
-      hSeek handle AbsoluteSeek (fromIntegral offset)
-      ByteString.hPut handle (ByteString.replicate count fillValue)
+    applyOne (IPSRecord writeOffset writePayload) = do
+      seekTo handle writeOffset
+      ByteString.hPut handle writePayload
+    applyOne (IPSRecordRLE writeOffset fillCount fillValue) = do
+      seekTo handle writeOffset
+      ByteString.hPut handle (ByteString.replicate (unLength fillCount) fillValue)
 
 -- | Apply an IPS patch in memory. Supports truncation (ipsTruncate) and
 -- RLE records — both are optional IPS features that many patchers omit.
@@ -169,24 +170,24 @@ applyIPSMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     when (outputLength > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
     forM_ (ipsRecords patch) $ \case
-      IPSRecord offset payload ->
-        copyByteStringRange outputPointer (fromIntegral offset) payload 0 (ByteString.length payload)
-      IPSRecordRLE offset count fillValue ->
-        fillBytes (outputPointer `plusPtr` fromIntegral offset) fillValue count
+      IPSRecord writeOffset writePayload ->
+        copyByteStringRange outputPointer (offsetToInt writeOffset) writePayload 0 (ByteString.length writePayload)
+      IPSRecordRLE writeOffset fillCount fillValue ->
+        fillBytes (outputPointer `plusPtr` offsetToInt writeOffset) fillValue (unLength fillCount)
   where
     sourceLength = ByteString.length source
-    recordEnd (IPSRecord offset payload)          = fromIntegral offset + ByteString.length payload
-    recordEnd (IPSRecordRLE offset count _)       = fromIntegral offset + count
+    recordEnd (IPSRecord recordOffset recordPayload) = offsetToInt recordOffset + ByteString.length recordPayload
+    recordEnd (IPSRecordRLE recordOffset fillCount _) = offsetToInt recordOffset + unLength fillCount
     maxRecordEnd = foldl' max sourceLength (map recordEnd (ipsRecords patch))
     outputLength = case ipsTruncate patch of
-      Just truncSize -> fromIntegral truncSize
+      Just truncSize -> fromIntegral (unFileSize truncSize)
       Nothing        -> maxRecordEnd
 
 ipsMeta :: IPSPatch -> [(String, String)]
 ipsMeta patch = concat
   [ case ipsTruncate patch of
       Nothing        -> []
-      Just truncSize -> [("truncate", show truncSize ++ " bytes")]
+      Just truncSize -> [("truncate", show (unFileSize truncSize) ++ " bytes")]
   , ebpFields
   ]
   where
@@ -218,21 +219,21 @@ ipsInfo patch = unlines $ filter (not . null) $
      , rangeString
      ]
   where
-    totalBytes = sum (map recordSize (ipsRecords patch))
-    recordSize (IPSRecord _ payload)          = ByteString.length payload
-    recordSize (IPSRecordRLE _ count _)       = count
+    totalBytes = sum (map ipsPayloadSize (ipsRecords patch))
+    ipsPayloadSize (IPSRecord _ payload)          = ByteString.length payload
+    ipsPayloadSize (IPSRecordRLE _ fillCount _)   = unLength fillCount
 
     rangeString
       | null (ipsRecords patch) = "range:       (empty patch)"
       | otherwise =
-          let lowest  = minimum [ recordOffset record | record <- ipsRecords patch ]
-              highest = maximum [ recordOffset record + fromIntegral (recordSize record)
+          let lowest  = minimum [ unOffset (ipsOffset record) | record <- ipsRecords patch ]
+              highest = maximum [ unOffset (ipsOffset record) + fromIntegral (ipsPayloadSize record)
                                 | record <- ipsRecords patch ]
           in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
              ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 
-    recordOffset (IPSRecord offset _)       = offset
-    recordOffset (IPSRecordRLE offset _ _)  = offset
+    ipsOffset (IPSRecord recordOffset _)       = recordOffset
+    ipsOffset (IPSRecordRLE recordOffset _ _)  = recordOffset
 
 -- | Extract all string key-value pairs from a flat JSON object.
 jsonPairs :: ByteString -> [(String, String)]
@@ -264,8 +265,8 @@ jsonFieldCI pairs key =
   let lowerKey = map toLower key
   in lookup lowerKey [(map toLower entryKey, value) | (entryKey, value) <- pairs]
 
-encodeIPSRecord :: Int -> (Int, ByteString) -> Builder
-encodeIPSRecord offsetWidth (offset, payload) =
+encodeIPSRecord :: Int -> EncodedHunk -> Builder
+encodeIPSRecord offsetWidth (EncodedHunk offset payload) =
   encodeOffset offsetWidth offset
   -- Check for RLE: all same byte and length >= 3
   <> if ByteString.length payload >= 3 && allSame payload
@@ -297,13 +298,13 @@ allSame input
 -- | Shift any record that starts exactly at a sentinel offset back by one byte,
 -- prepending the source byte at (off-1) so the encoder never emits the sentinel
 -- as a record offset.  No-op when the source is too short for the lookup.
-avoidSentinel :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
+avoidSentinel :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
 avoidSentinel sentinel source = map adjustRecord
   where
-    adjustRecord (offset, payload)
-      | offset == sentinel, offset > 0, offset - 1 < ByteString.length source =
-          (offset - 1, ByteString.cons (ByteString.index source (offset - 1)) payload)
-      | otherwise = (offset, payload)
+    adjustRecord (EncodedHunk hunkOffset hunkPayload)
+      | hunkOffset == sentinel, hunkOffset > 0, hunkOffset - 1 < ByteString.length source =
+          EncodedHunk (hunkOffset - 1) (ByteString.cons (ByteString.index source (hunkOffset - 1)) hunkPayload)
+      | otherwise = EncodedHunk hunkOffset hunkPayload
 
 ----------------------------------------------------------------------------
 -- Encode from pre-split records (used by direct conversion)
@@ -311,44 +312,44 @@ avoidSentinel sentinel source = map adjustRecord
 
 -- | Encode pre-split records as an IPS patch. Records must have offsets
 -- ≤ 0xFFFFFF and data ≤ 65535 bytes each.
-encodeIPS :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncationOffset 3) truncation
+  <> maybe mempty (encodeTruncation 3) truncation
 
 -- | Encode pre-split records as an IPS32 patch. Records must have data
 -- ≤ 65535 bytes each.
-encodeIPS32 :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString
+encodeIPS32 :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "IPS32"
   <> foldMap (encodeIPSRecord 4) (avoidSentinel 0x45454F46 source records)
   <> byteString "EEOF"
-  <> maybe mempty (truncationOffset 4) truncation
+  <> maybe mempty (encodeTruncation 4) truncation
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
 -- Truncation marker (if any) goes between EOF and JSON.
-encodeEBP :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> String -> String -> String -> ByteString
+encodeEBP :: ByteString -> [EncodedHunk] -> Maybe FileSize -> String -> String -> String -> ByteString
 encodeEBP source records truncation title author description = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncationOffset 3) truncation
+  <> maybe mempty (encodeTruncation 3) truncation
   <> byteString (ebpJson title author description)
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
 -- Used by direct conversion to preserve source EBP metadata as-is.
-encodeEBPRaw :: ByteString -> [(Int, ByteString)] -> Maybe Int64 -> ByteString -> ByteString
+encodeEBPRaw :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString -> ByteString
 encodeEBPRaw source records truncation meta = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
   <> byteString "EOF"
-  <> maybe mempty (truncationOffset 3) truncation
+  <> maybe mempty (encodeTruncation 3) truncation
   <> byteString meta
 
-truncationOffset :: Int -> Int64 -> Builder
-truncationOffset width offset = encodeOffset width (fromIntegral offset)
+encodeTruncation :: Int -> FileSize -> Builder
+encodeTruncation width truncSize = encodeOffset width (fromIntegral (unFileSize truncSize))
 
 ebpJson :: String -> String -> String -> ByteString
 ebpJson title author description = ByteString8.pack $
@@ -370,8 +371,9 @@ ebpJson title author description = ByteString8.pack $
 -- | Compute optimal IPS record set via DP.
 -- Considers RLE extraction and gap merging with format-aware thresholds.
 -- offsetWidth is 3 for IPS/EBP, 4 for IPS32.
-optimalIPSRecords :: Int -> ByteString -> ByteString -> [(Int, ByteString)]
+optimalIPSRecords :: Int -> ByteString -> ByteString -> [EncodedHunk]
 optimalIPSRecords offsetWidth source target =
+  map (uncurry EncodedHunk) $
   concatMap (partitionOptimal offsetWidth) (mergeGaps offsetWidth target (diffRaw source target))
 
 -- | Diff without gap merging — raw changed regions.

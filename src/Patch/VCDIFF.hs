@@ -19,7 +19,7 @@ import Patch.Binary (getVcdiffVarint, copyByteStringRange)
 import Patch.Format (renderField)
 import Patch.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
-import Patch.Measure (Position(..), Length(..))
+import Patch.Measure (Position(..), Length(..), FileSize(..), Offset(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -52,9 +52,9 @@ data VCDIFFHeader = VCDIFFHeader
 
 data VCDIFFWindow = VCDIFFWindow
   { vcdiffWindowIndicator :: Word8
-  , vcdiffSourceLength    :: Int64
-  , vcdiffSourcePosition  :: Int64
-  , vcdiffTargetLength    :: Int64
+  , vcdiffSourceLength    :: FileSize
+  , vcdiffSourcePosition  :: Offset
+  , vcdiffTargetLength    :: FileSize
   , vcdiffDeltaIndicator  :: Word8
   , vcdiffAdler32         :: Maybe Word32
   , vcdiffAddRunData      :: ByteString   -- literal data stream
@@ -317,15 +317,16 @@ parseVCDIFFWith allowCustom input
       windowIndicator <- getByte
       let hasSource = testBit windowIndicator 0 || testBit windowIndicator 1
       (sourceLength, sourcePosition) <- if hasSource
-        then (,) <$> vcdiffVarint <*> vcdiffVarint
-        else pure (0, 0)
+        then (\rawLength rawPosition -> (FileSize rawLength, Offset rawPosition)) <$> vcdiffVarint <*> vcdiffVarint
+        else pure (FileSize 0, Offset 0)
       -- Delta encoding length
       deltaLength <- vcdiffVarint
       deltaStart <- getPosition
       let deltaEnd = Position (unPosition deltaStart + fromIntegral deltaLength)
       -- Inside the delta body:
-      targetSize  <- vcdiffVarint
-      when (targetSize < 0) $ failGet "VCDIFF: negative window target size"
+      rawTargetSize <- vcdiffVarint
+      when (rawTargetSize < 0) $ failGet "VCDIFF: negative window target size"
+      let targetSize = FileSize rawTargetSize
       deltaIndicator  <- getByte
       addRunLength <- vcdiffVarint
       instructionLength   <- vcdiffVarint
@@ -378,7 +379,7 @@ applyVCDIFF patch source
         globalOutputOffsetRef <- newIORef (0 :: Int)
         mapM_ (applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef (fromIntegral totalSize)) (vcdiffWindows patch)
   where
-    totalSize = sum (map vcdiffTargetLength (vcdiffWindows patch))
+    totalSize = sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))
     codeTable = vcdiffCodeTable patch
     nearSize = vcdiffNearSize patch
     sameSize = vcdiffSameSize patch
@@ -387,9 +388,9 @@ applyWindow :: Array Word8 CodeEntry -> Int -> Int
             -> ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
 applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalTargetLength window = do
   globalOutputOffset <- readIORef globalOutputOffsetRef
-  let targetLength = fromIntegral (vcdiffTargetLength window) :: Int
-      sourceSegmentLength = fromIntegral (vcdiffSourceLength window) :: Int
-      sourceSegmentOffset = fromIntegral (vcdiffSourcePosition window) :: Int
+  let targetLength = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
+      sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
+      sourceSegmentOffset = fromIntegral (unOffset (vcdiffSourcePosition window)) :: Int
       hasSource = testBit (vcdiffWindowIndicator window) 0
       hasTarget = testBit (vcdiffWindowIndicator window) 1
 
@@ -519,8 +520,8 @@ decodeWindowInstructions :: Array Word8 CodeEntry -> Int -> Int
                          -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
 decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
   where
-    targetLength    = fromIntegral (vcdiffTargetLength window) :: Int
-    sourceSegmentLength = fromIntegral (vcdiffSourceLength window) :: Int
+    targetLength    = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
+    sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
     hasSource = testBit (vcdiffWindowIndicator window) 0
     instructionBytes    = vcdiffInstructions window
     addRunBytes     = vcdiffAddRunData window
@@ -644,7 +645,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             address <- decodeAddressessST mode here
             when (count > 0) $ do
               let maybeSourceOffset = if address < fromIntegral sourceSegmentLength && hasSource
-                            then Just (vcdiffSourcePosition window + address)
+                            then Just (unOffset (vcdiffSourcePosition window) + address)
                             else Nothing
               emit (DecodedCopy (fromIntegral windowOffset) count maybeSourceOffset)
             writeSTRef windowOffsetReference (windowOffset + count)
@@ -666,7 +667,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
       windowOffset <- readSTRef windowOffsetReference
       when (hasSource && windowOffset < targetLength) $
         emit (DecodedCopy (fromIntegral windowOffset) (targetLength - windowOffset)
-                     (Just (vcdiffSourcePosition window + fromIntegral windowOffset)))
+                     (Just (unOffset (vcdiffSourcePosition window) + fromIntegral windowOffset)))
 
       reverse <$> readSTRef resultReference
 
@@ -684,7 +685,7 @@ vcdiffMeta patch = concat
     then [("code table", "custom (near=" ++ show (vcdiffNearSize patch)
           ++ ", same=" ++ show (vcdiffSameSize patch) ++ ")")]
     else []
-  , [("target size", show (sum (map vcdiffTargetLength (vcdiffWindows patch))))]
+  , [("target size", show (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
   , if any ((/= Nothing) . vcdiffAdler32) (vcdiffWindows patch)
     then [("checksums", "Adler32 (xdelta3)")]
     else []

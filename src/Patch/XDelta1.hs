@@ -15,7 +15,7 @@ module Patch.XDelta1
 
 import Patch.Binary (getWord32BE, copyByteStringRange)
 import Patch.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), FileSize(..), Offset(..))
 import Patch.Format (padHex, renderField)
 
 import Data.ByteString (ByteString)
@@ -40,7 +40,7 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1FromName     :: ByteString
   , xdelta1ToName       :: ByteString
   , xdelta1ToMD5        :: ByteString  -- 16 bytes
-  , xdelta1TargetLength :: Int64
+  , xdelta1TargetLength :: FileSize
   , xdelta1Sources      :: [XDelta1Source]
   , xdelta1Instructions :: [XDelta1Instruction]
   , xdelta1DataSegment  :: ByteString  -- decompressed literal data
@@ -49,15 +49,15 @@ data XDelta1Patch = XDelta1Patch
 data XDelta1Source = XDelta1Source
   { xdelta1SourceName       :: ByteString
   , xdelta1SourceMD5        :: ByteString  -- 16 bytes
-  , xdelta1SourceLength     :: Int64
+  , xdelta1SourceLength     :: FileSize
   , xdelta1SourceIsData     :: Bool
   , xdelta1SourceSequential :: Bool
   } deriving (Show)
 
 data XDelta1Instruction = XDelta1Instruction
-  { xdelta1InstructionIndex  :: Int64
-  , xdelta1InstructionOffset :: Int64
-  , xdelta1InstructionLength :: Int64
+  { xdelta1InstructionIndex  :: Int64     -- array index, stays Int64
+  , xdelta1InstructionOffset :: Offset
+  , xdelta1InstructionLength :: FileSize
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -130,7 +130,7 @@ parseControl version controlSegment dataSegment fromName toName
       instructionCount <- fromIntegral <$> edsioVarint
       instructions <- parseInstructions instructionCount
       let fixedInstructions = fixSequentialOffsets sources instructions
-      pure (XDelta1Patch version fromName toName toMD5 targetLength sources fixedInstructions dataSegment)
+      pure (XDelta1Patch version fromName toName toMD5 (FileSize targetLength) sources fixedInstructions dataSegment)
 
 parseSources :: Int -> Get [XDelta1Source]
 parseSources 0 = pure []
@@ -142,14 +142,14 @@ parseSources count = do
   isDataSource <- (/= 0) <$> getByte
   isSequential <- (/= 0) <$> getByte
   rest <- parseSources (count - 1)
-  pure (XDelta1Source sourceName md5Bytes sourceLength isDataSource isSequential : rest)
+  pure (XDelta1Source sourceName md5Bytes (FileSize sourceLength) isDataSource isSequential : rest)
 
 parseInstructions :: Int -> Get [XDelta1Instruction]
 parseInstructions 0 = pure []
 parseInstructions count = do
   index <- edsioVarint
-  offset <- edsioVarint
-  instructionLength <- edsioVarint
+  offset <- Offset <$> edsioVarint
+  instructionLength <- FileSize <$> edsioVarint
   rest <- parseInstructions (count - 1)
   pure (XDelta1Instruction index offset instructionLength : rest)
 
@@ -163,9 +163,9 @@ fixSequentialOffsets sources = reverse . snd . foldl' step (initialPositions, []
     step (positions, accumulated) instruction =
       let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
       in if IntSet.member index sequentialIndices
-         then let offset          = IntMap.findWithDefault 0 index positions
-                  updatedPositions = IntMap.insert index (offset + xdelta1InstructionLength instruction) positions
-              in (updatedPositions, instruction { xdelta1InstructionOffset = offset } : accumulated)
+         then let rawOffset       = IntMap.findWithDefault 0 index positions
+                  updatedPositions = IntMap.insert index (rawOffset + unFileSize (xdelta1InstructionLength instruction)) positions
+              in (updatedPositions, instruction { xdelta1InstructionOffset = Offset rawOffset } : accumulated)
          else (positions, instruction : accumulated)
 
 ----------------------------------------------------------------------------
@@ -174,12 +174,12 @@ fixSequentialOffsets sources = reverse . snd . foldl' step (initialPositions, []
 
 applyXDelta1 :: XDelta1Patch -> ByteString -> Either String ByteString
 applyXDelta1 patch _source
-  | xdelta1TargetLength patch == 0 = Right ByteString.empty
-  | xdelta1TargetLength patch < 0  = Left "xdelta1: negative target size"
+  | unFileSize (xdelta1TargetLength patch) == 0 = Right ByteString.empty
+  | unFileSize (xdelta1TargetLength patch) < 0  = Left "xdelta1: negative target size"
 applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     applyLoop targetPointer 0 (xdelta1Instructions patch)
   where
-    outputSize = fromIntegral (xdelta1TargetLength patch)
+    outputSize = fromIntegral (unFileSize (xdelta1TargetLength patch))
     sourceList    = xdelta1Sources patch
     dataSegment    = xdelta1DataSegment patch
 
@@ -190,8 +190,8 @@ applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
           sourceBytes = if index < length sourceList && xdelta1SourceIsData (sourceList !! index)
                         then dataSegment
                         else source
-          instructionOffset = fromIntegral (xdelta1InstructionOffset instruction)
-          instructionLength = fromIntegral (xdelta1InstructionLength instruction) :: Int
+          instructionOffset = fromIntegral (unOffset (xdelta1InstructionOffset instruction))
+          instructionLength = fromIntegral (unFileSize (xdelta1InstructionLength instruction)) :: Int
           -- Clamp to remaining output buffer
           safeLength = max 0 $ min instructionLength (outputSize - position)
           -- Clamp source read to available data
@@ -210,7 +210,7 @@ xdelta1Meta patch =
   [ ("version", xdelta1Version patch) ]
   ++ [ ("from", ByteString8.unpack (xdelta1FromName patch))
      , ("to", ByteString8.unpack (xdelta1ToName patch))
-     , ("target size", show (xdelta1TargetLength patch))
+     , ("target size", show (unFileSize (xdelta1TargetLength patch)))
      , ("target MD5", md5Hex (xdelta1ToMD5 patch))
      , ("sources", show (length sources))
      ]
@@ -236,7 +236,7 @@ xdelta1Info patch = unlines $ filter (not . null) $
       [ "  [" ++ show index ++ "] " ++ ByteString8.unpack (xdelta1SourceName entry)
         ++ (if xdelta1SourceIsData entry then " (data)" else " (file)")
         ++ (if xdelta1SourceSequential entry then " seq" else "")
-        ++ "  " ++ show (xdelta1SourceLength entry) ++ " bytes"
+        ++ "  " ++ show (unFileSize (xdelta1SourceLength entry)) ++ " bytes"
         ++ "  MD5:" ++ md5Hex (xdelta1SourceMD5 entry)
       | (index, entry) <- zip [(0::Int)..] (xdelta1Sources patch) ]
     md5Hex = concatMap (\byte -> padHex 2 (fromIntegral byte)) . ByteString.unpack

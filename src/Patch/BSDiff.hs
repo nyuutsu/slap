@@ -19,6 +19,7 @@ import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Patch.Binary (copyByteStringRange)
 import Patch.Compress (bz2Decompress)
+import Patch.Measure (FileSize(..), Delta(..))
 import Patch.Format (renderField)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
@@ -29,19 +30,19 @@ import Foreign.Storable (pokeByteOff)
 ----------------------------------------------------------------------------
 
 data BSDiffPatch = BSDiffPatch
-  { bsdiffControlSize :: Int64       -- compressed control block size
-  , bsdiffDiffSize    :: Int64       -- compressed diff block size
-  , bsdiffExtraSize   :: Int64       -- compressed extra block size
-  , bsdiffTargetSize  :: Int64       -- target file size
+  { bsdiffControlSize :: !FileSize   -- compressed control block size
+  , bsdiffDiffSize    :: !FileSize   -- compressed diff block size
+  , bsdiffExtraSize   :: !FileSize   -- compressed extra block size
+  , bsdiffTargetSize  :: !FileSize   -- target file size
   , bsdiffControls    :: [BSDiffControl]
   , bsdiffDiffData    :: ByteString  -- decompressed diff stream
   , bsdiffExtraData   :: ByteString  -- decompressed extra stream
   } deriving (Show)
 
 data BSDiffControl = BSDiffControl
-  { controlAdd  :: Int64   -- bytes to add from diff stream to source
-  , controlCopy :: Int64   -- bytes to copy from extra stream
-  , controlSeek :: Int64   -- signed seek offset in source
+  { controlAdd  :: !Int64  -- bytes to add from diff stream to source
+  , controlCopy :: !Int64  -- bytes to copy from extra stream
+  , controlSeek :: !Delta  -- signed seek offset in source
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -78,30 +79,30 @@ parseBSDiff :: ByteString -> Either String BSDiffPatch
 parseBSDiff input
   | ByteString.length input < 32 = Left "BSDiff: input too short"
   | ByteString.take 8 input /= "BSDIFF40" = Left "not a BSDiff file (bad magic)"
-  | controlSize < 0 || diffSize < 0 || targetSize < 0 = Left "BSDiff: invalid header (negative size)"
+  | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left "BSDiff: invalid header (negative size)"
   | otherwise = do
       controlData  <- safeDecompressBZip "control" controlCompressed
       diffData  <- safeDecompressBZip "diff" diffCompressed
       extraData <- safeDecompressBZip "extra" extraCompressed
       let controls = parseControls controlData
-          extraSize = fromIntegral (ByteString.length input) - 32 - controlSize - diffSize
-      Right (BSDiffPatch controlSize diffSize extraSize targetSize controls diffData extraData)
+          rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
+      Right (BSDiffPatch (FileSize rawControlSize) (FileSize rawDiffSize) (FileSize rawExtraSize) (FileSize rawTargetSize) controls diffData extraData)
   where
-    controlSize = getSignMagnitude64 8 input
-    diffSize = getSignMagnitude64 16 input
-    targetSize  = getSignMagnitude64 24 input
+    rawControlSize = getSignMagnitude64 8 input
+    rawDiffSize = getSignMagnitude64 16 input
+    rawTargetSize  = getSignMagnitude64 24 input
     controlOffset  = 32
-    diffOffset  = 32 + fromIntegral controlSize
-    extraOffset = diffOffset + fromIntegral diffSize
-    controlCompressed  = ByteString.take (fromIntegral controlSize) (ByteString.drop controlOffset input)
-    diffCompressed  = ByteString.take (fromIntegral diffSize) (ByteString.drop diffOffset input)
+    diffOffset  = 32 + fromIntegral rawControlSize
+    extraOffset = diffOffset + fromIntegral rawDiffSize
+    controlCompressed  = ByteString.take (fromIntegral rawControlSize) (ByteString.drop controlOffset input)
+    diffCompressed  = ByteString.take (fromIntegral rawDiffSize) (ByteString.drop diffOffset input)
     extraCompressed = ByteString.drop extraOffset input
 
 parseControls :: ByteString -> [BSDiffControl]
 parseControls input
   | ByteString.length input < 24 = []
   | otherwise =
-      BSDiffControl (getSignMagnitude64 0 input) (getSignMagnitude64 8 input) (getSignMagnitude64 16 input)
+      BSDiffControl (getSignMagnitude64 0 input) (getSignMagnitude64 8 input) (Delta (getSignMagnitude64 16 input))
         : parseControls (ByteString.drop 24 input)
 
 ----------------------------------------------------------------------------
@@ -110,12 +111,12 @@ parseControls input
 
 applyBSDiff :: BSDiffPatch -> ByteString -> Either String ByteString
 applyBSDiff patch _source
-  | bsdiffTargetSize patch == 0 = Right ByteString.empty
-  | bsdiffTargetSize patch < 0  = Left "BSDiff: negative target size"
+  | unFileSize (bsdiffTargetSize patch) == 0 = Right ByteString.empty
+  | unFileSize (bsdiffTargetSize patch) < 0  = Left "BSDiff: negative target size"
 applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
   applyLoop targetPointer 0 0 0 0 (bsdiffControls patch)
   where
-    outputSize = fromIntegral (bsdiffTargetSize patch)
+    outputSize = fromIntegral (unFileSize (bsdiffTargetSize patch))
     sourceLength  = ByteString.length source
     diffBytes  = bsdiffDiffData patch
     extraBytes = bsdiffExtraData patch
@@ -128,7 +129,7 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
       -- Clamp add/copy lengths to remaining output buffer space
       let addLength = max 0 $ min (fromIntegral (controlAdd control)) (outputSize - outputPosition)
           copyLength  = max 0 $ min (fromIntegral (controlCopy control)) (outputSize - outputPosition - addLength)
-          seekOffset     = fromIntegral (controlSeek control)
+          seekOffset     = fromIntegral (unDelta (controlSeek control))
       -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
       mapM_ (\index -> do
         let sourceByte = if originalPosition + index >= 0 && originalPosition + index < sourceLength
@@ -150,10 +151,10 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
 
 bsdiffMeta :: BSDiffPatch -> [(String, String)]
 bsdiffMeta patch =
-  [ ("new size", show (bsdiffTargetSize patch))
-  , ("ctrl block", show (bsdiffControlSize patch) ++ " bytes (compressed)")
-  , ("diff block", show (bsdiffDiffSize patch) ++ " bytes (compressed)")
-  , ("extra block", show (bsdiffExtraSize patch) ++ " bytes (compressed)")
+  [ ("new size", show (unFileSize (bsdiffTargetSize patch)))
+  , ("ctrl block", show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
+  , ("diff block", show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
+  , ("extra block", show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
   ]
 
 bsdiffInfo :: BSDiffPatch -> String

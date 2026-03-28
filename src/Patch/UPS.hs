@@ -16,6 +16,7 @@ module Patch.UPS
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint)
 import Patch.FFI (rustyCRC32)
 import Patch.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
+import Patch.Measure (FileSize(..), Delta(..))
 import Control.Monad (when)
 import Patch.Format (showCRC, renderField)
 
@@ -28,13 +29,13 @@ import Data.Int (Int64)
 import Data.Word (Word32)
 
 data UPSBlock = UPSBlock
-  { upsSkip    :: Int64       -- bytes to skip (copy from source unchanged)
-  , upsXorData :: ByteString  -- nonzero XOR bytes (terminated by 0x00 in file)
+  { upsSkip    :: !Delta      -- bytes to skip (copy from source unchanged)
+  , upsXorData :: !ByteString -- nonzero XOR bytes (terminated by 0x00 in file)
   } deriving (Show)
 
 data UPSPatch = UPSPatch
-  { upsSourceSize :: Int64
-  , upsTargetSize :: Int64
+  { upsSourceSize :: !FileSize
+  , upsTargetSize :: !FileSize
   , upsBlocks     :: [UPSBlock]
   , upsSourceCRC  :: Word32
   , upsTargetCRC  :: Word32
@@ -68,21 +69,21 @@ parseUPS input
         , upsPatchCRC   = storedPatchCRC
         }
 
-parseUPSBody :: Get (Int64, Int64, [UPSBlock])
+parseUPSBody :: Get (FileSize, FileSize, [UPSBlock])
 parseUPSBody = do
-  sourceSize <- byuuVarint
-  targetSize <- byuuVarint
-  when (sourceSize < 0) $ failGet "UPS: negative source size"
-  when (targetSize < 0) $ failGet "UPS: negative target size"
+  rawSourceSize <- byuuVarint
+  rawTargetSize <- byuuVarint
+  when (rawSourceSize < 0) $ failGet "UPS: negative source size"
+  when (rawTargetSize < 0) $ failGet "UPS: negative target size"
   blocks  <- parseBlocks
-  pure (sourceSize, targetSize, blocks)
+  pure (FileSize rawSourceSize, FileSize rawTargetSize, blocks)
 
 parseBlocks :: Get [UPSBlock]
 parseBlocks = do
   done <- atEnd
   if done then pure []
   else do
-    skipCount <- byuuVarint
+    skipCount <- Delta <$> byuuVarint
     xorBytes <- collectXor []
     remaining <- parseBlocks
     pure (UPSBlock skipCount xorBytes : remaining)
@@ -97,7 +98,7 @@ parseBlocks = do
 -- Caller is responsible for checksum validation.
 applyUPS :: UPSPatch -> ByteString -> ByteString
 applyUPS patch source =
-  let targetSize = fromIntegral (upsTargetSize patch)
+  let targetSize = fromIntegral (unFileSize (upsTargetSize patch))
       -- Pad or truncate source to target size for XOR
       padded = if ByteString.length source >= targetSize
                then ByteString.take targetSize source
@@ -109,10 +110,11 @@ applyBlocks :: [UPSBlock] -> ByteString -> Int -> Builder
 applyBlocks [] source position =
   -- Copy remaining source bytes unchanged
   byteString (ByteString.drop position source)
-applyBlocks (UPSBlock skip xorBytes : remaining) source position =
-  let skipEnd = position + fromIntegral skip
+applyBlocks (UPSBlock skipDelta xorBytes : remaining) source position =
+  let skipAmount = fromIntegral (unDelta skipDelta)
+      skipEnd = position + skipAmount
       -- Copy 'skip' bytes unchanged from source
-      unchanged = byteString (ByteString.take (fromIntegral skip) (ByteString.drop position source))
+      unchanged = byteString (ByteString.take skipAmount (ByteString.drop position source))
       -- XOR the patch bytes with source bytes at skipEnd
       xorLength = ByteString.length xorBytes
       xored = ByteString.packZipWith xor (ByteString.take xorLength (ByteString.drop skipEnd source)) xorBytes
@@ -131,8 +133,8 @@ applyBlocks (UPSBlock skip xorBytes : remaining) source position =
 
 upsMeta :: UPSPatch -> [(String, String)]
 upsMeta patch =
-  [ ("source size", show (upsSourceSize patch))
-  , ("target size", show (upsTargetSize patch))
+  [ ("source size", show (unFileSize (upsSourceSize patch)))
+  , ("target size", show (unFileSize (upsTargetSize patch)))
   , ("source CRC", showCRC (upsSourceCRC patch))
   , ("target CRC", showCRC (upsTargetCRC patch))
   , ("patch CRC", showCRC (upsPatchCRC patch))
@@ -172,8 +174,8 @@ createUPS original modified =
   in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE patchCRC))
 
 encodeUPSBlock :: UPSBlock -> Builder
-encodeUPSBlock (UPSBlock skip xorData) =
-  putByuuVarint skip
+encodeUPSBlock (UPSBlock skipDelta xorData) =
+  putByuuVarint (unDelta skipDelta)
   <> byteString xorData
   <> word8 0x00  -- terminator
 
@@ -191,7 +193,7 @@ xorToBlocks input = scanLoop 0
           in if runStart >= inputLength
              then []
              else let (xorData, end) = collectNonzero runStart
-                  in UPSBlock skip xorData : scanLoop end
+                  in UPSBlock (Delta skip) xorData : scanLoop end
 
     countZeros :: Int -> Int64
     countZeros startPosition = countFrom startPosition

@@ -2,6 +2,7 @@ module Patch.PPF.Apply (applyPatch, applyPatchMemory, undoPatch) where
 
 import Patch.PPF.Types
 import Patch.Binary (copyByteStringRange)
+import Patch.Measure (seekTo, offsetToInt)
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
@@ -35,7 +36,7 @@ writeRecords handle records selector = foldM step 0 records
       | otherwise = do
           case recordCommand record of
             Append  -> hSeek handle SeekFromEnd 0
-            Replace -> hSeek handle AbsoluteSeek (fromIntegral (recordOffset record))
+            Replace -> seekTo handle (recordOffset record)
           ByteString.hPut handle payload
           pure (written + 1)
       where payload = selector record
@@ -54,15 +55,15 @@ applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     -- Compute output size: simulate file growth from Replace and Append
     outputLength = foldl' accumulateSize sourceLength (ppfRecords patch)
     accumulateSize currentSize record = case recordCommand record of
-      Replace -> max currentSize (fromIntegral (recordOffset record) + ByteString.length (recordData record))
+      Replace -> max currentSize (offsetToInt (recordOffset record) + ByteString.length (recordData record))
       Append  -> currentSize + ByteString.length (recordData record)
     applyRecord outputPointer currentEnd record
       | ByteString.null (recordData record) = pure currentEnd
       | otherwise = case recordCommand record of
           Replace -> do
-            let offset = fromIntegral (recordOffset record) :: Int
-            copyByteStringRange outputPointer offset (recordData record) 0 (ByteString.length (recordData record))
-            pure (max currentEnd (offset + ByteString.length (recordData record)))
+            let writePosition = offsetToInt (recordOffset record)
+            copyByteStringRange outputPointer writePosition (recordData record) 0 (ByteString.length (recordData record))
+            pure (max currentEnd (writePosition + ByteString.length (recordData record)))
           Append -> do
             copyByteStringRange outputPointer currentEnd (recordData record) 0 (ByteString.length (recordData record))
             pure (currentEnd + ByteString.length (recordData record))

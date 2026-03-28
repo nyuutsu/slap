@@ -7,10 +7,10 @@ module Patch.PPF.Parse (parsePatch) where
 
 import Patch.PPF.Types
 import Patch.Binary (getWord16LE, getWord32LE, getInt64LE)
+import Patch.Measure (Offset(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 import Data.Word (Word8)
 import Numeric (showHex)
 
@@ -143,10 +143,10 @@ parseRecords32 = parseLoop []
           Left ("PPF1/2: truncated record (need " ++ show (5 + count)
                 ++ " bytes, have " ++ show (ByteString.length input) ++ ")")
       | otherwise =
-          parseLoop (Record offset (ByteString.take count (ByteString.drop 5 input)) Nothing Replace : accumulated)
+          parseLoop (Record recordOffset (ByteString.take count (ByteString.drop 5 input)) Nothing Replace : accumulated)
                     (ByteString.drop (5 + count) input)
       where
-        offset = fromIntegral (getWord32LE 0 input) :: Int64
+        recordOffset = Offset (fromIntegral (getWord32LE 0 input))
         count  = fromIntegral (ByteString.index input 4) :: Int
 
 -- Parse PPF3 records (8-byte offset, 1-byte count, N bytes data, optional undo).
@@ -159,9 +159,9 @@ parseRecords64 hasUndo = parseLoop []
           Left ("PPF3: truncated record (need " ++ show need
                 ++ " bytes, have " ++ show (ByteString.length input) ++ ")")
       | otherwise =
-          parseLoop (Record offset payload undoData Replace : accumulated) (ByteString.drop need input)
+          parseLoop (Record recordOffset payload undoData Replace : accumulated) (ByteString.drop need input)
       where
-        offset  = getInt64LE 0 input
+        recordOffset = Offset (getInt64LE 0 input)
         count   = fromIntegral (ByteString.index input 8) :: Int
         payload = ByteString.take count (ByteString.drop 9 input)
         undoData = if hasUndo
@@ -179,11 +179,11 @@ parseRecords4 = parseLoop []
           Left ("PPF4: truncated record (need " ++ show (6 + count)
                 ++ " bytes, have " ++ show (ByteString.length input) ++ ")")
       | otherwise =
-          parseLoop (Record offset (ByteString.take count (ByteString.drop 6 input)) Nothing command : accumulated)
+          parseLoop (Record recordOffset (ByteString.take count (ByteString.drop 6 input)) Nothing command : accumulated)
                     (ByteString.drop (6 + count) input)
       where
         command = if ByteString.index input 0 == 1 then Append else Replace
-        offset  = fromIntegral (getWord32LE 1 input) :: Int64
+        recordOffset = Offset (fromIntegral (getWord32LE 1 input))
         count   = fromIntegral (ByteString.index input 5) :: Int
 
 -- File_ID.diz detection, parameterised by length-field reader and width.

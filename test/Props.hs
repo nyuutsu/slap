@@ -19,6 +19,8 @@ import qualified Patch.XDelta1 as XDelta1
 import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Binary (md5, sha1, diffHunks)
+import Patch.Measure (Offset(..), Length(..), FileSize(..), Delta(..),
+                      Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Patch.FFI (rustyCRC32)
 import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
 import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
@@ -229,34 +231,35 @@ prop_avoidSentinel = property $
   let source = ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7]
   in conjoin
     [ -- Record at sentinel is shifted back
-      avoidSentinel 5 source [(5, ByteString.pack [0xFF])]
-        === [(4, ByteString.pack [4, 0xFF])]
+      avoidSentinel 5 source [EncodedHunk 5 (ByteString.pack [0xFF])]
+        === [EncodedHunk 4 (ByteString.pack [4, 0xFF])]
     , -- Record NOT at sentinel is unchanged
-      avoidSentinel 5 source [(3, ByteString.pack [0xAA])]
-        === [(3, ByteString.pack [0xAA])]
+      avoidSentinel 5 source [EncodedHunk 3 (ByteString.pack [0xAA])]
+        === [EncodedHunk 3 (ByteString.pack [0xAA])]
     , -- Source too short: no-op
-      avoidSentinel 5 ByteString.empty [(5, ByteString.pack [0xFF])]
-        === [(5, ByteString.pack [0xFF])]
+      avoidSentinel 5 ByteString.empty [EncodedHunk 5 (ByteString.pack [0xFF])]
+        === [EncodedHunk 5 (ByteString.pack [0xFF])]
     , -- Sentinel at offset 0: can't extend backward, no-op
-      avoidSentinel 0 source [(0, ByteString.pack [0xFF])]
-        === [(0, ByteString.pack [0xFF])]
+      avoidSentinel 0 source [EncodedHunk 0 (ByteString.pack [0xFF])]
+        === [EncodedHunk 0 (ByteString.pack [0xFF])]
     ]
 
--- | Split records at maxSize boundaries (same logic as Patch.Convert.splitRecords).
-splitMax :: Int -> [(Int, ByteString)] -> [(Int, ByteString)]
-splitMax maxRecordSize = concatMap splitRecord
+-- | Split hunks at maxSize boundaries (same logic as Patch.Convert.splitHunks).
+splitMax :: Int -> [Hunk] -> [EncodedHunk]
+splitMax maxRecordSize = concatMap splitRecord . map hunkToEncoded
   where
-    splitRecord (offset, payload)
-      | ByteString.length payload <= maxRecordSize = [(offset, payload)]
+    hunkToEncoded (Hunk hunkOffset hunkPayload) = EncodedHunk (fromIntegral (unOffset hunkOffset)) hunkPayload
+    splitRecord (EncodedHunk hunkOffset hunkPayload)
+      | ByteString.length hunkPayload <= maxRecordSize = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
-          let (chunk, remaining) = ByteString.splitAt maxRecordSize payload
-          in (offset, chunk) : splitRecord (offset + maxRecordSize, remaining)
+          let (chunk, remaining) = ByteString.splitAt maxRecordSize hunkPayload
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (hunkOffset + maxRecordSize) remaining)
 
 -- | Total encoded IPS record size (excluding magic/EOF marker).
-ipsEncodedSize :: Int -> [(Int, ByteString)] -> Int
+ipsEncodedSize :: Int -> [EncodedHunk] -> Int
 ipsEncodedSize offWidth = sum . map recordSize
   where
-    recordSize (_, payload)
+    recordSize (EncodedHunk _ payload)
       | ByteString.length payload >= 3, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
       | otherwise = offWidth + 2 + ByteString.length payload
 
@@ -509,15 +512,15 @@ directFormats =
 -- | PatchContents with every field populated.
 fullContents :: PatchContents
 fullContents = PatchContents
-  { contentsRecords     = [(0, ByteString.pack [0xFF])]
+  { contentsRecords     = [Hunk (Offset 0) (ByteString.pack [0xFF])]
   , contentsDescription = Just (ByteString.pack [0x74, 0x65, 0x73, 0x74])
   , contentsSourceCRC32 = Just 0xDEADBEEF
   , contentsSourceMD5   = Just (ByteString.replicate 16 0xAA)
   , contentsSourceSHA1  = Just (ByteString.replicate 20 0xBB)
   , contentsDestinationSize    = Just 1024
   , contentsValidation  = Just (ByteString.replicate 1024 0)
-  , contentsUndoData    = Just [(0, ByteString.pack [0x00], ByteString.pack [0xFF])]
-  , contentsTruncation  = Just 512
+  , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
+  , contentsTruncation  = Just (FileSize 512)
   , contentsEBPMeta     = Just (ByteString.pack [0x7B, 0x7D])
   , contentsRomType     = Just 0
   , contentsImageType   = Nothing
@@ -583,7 +586,7 @@ prop_ppf3ValidateRejectsEmpty =
 -- | Direct conversion to IPS must reject a record at the EOF sentinel offset.
 prop_ipsSentinelDirect :: Property
 prop_ipsSentinelDirect =
-  let patchContent = emptyContents [(0x454F46, ByteString.pack [0xFF])]
+  let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent CreateIPS defaultMeta of
        Left errorMessage -> "EOF marker" `isInfixOf` errorMessage
        Right _  -> False
@@ -591,7 +594,7 @@ prop_ipsSentinelDirect =
 -- | Direct conversion to IPS32 must reject a record at the EEOF sentinel offset.
 prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
-  let patchContent = emptyContents [(0x45454F46, ByteString.pack [0xFF])]
+  let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent CreateIPS32 defaultMeta of
        Left errorMessage -> "EOF marker" `isInfixOf` errorMessage
        Right _  -> False

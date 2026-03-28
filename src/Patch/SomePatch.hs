@@ -11,6 +11,7 @@ import Patch.Types (PatchFormat(..))
 import Patch.Detect (detectFormat)
 import Patch.Format (padHex)
 import Patch.Convert (PatchContents(..), emptyContents)
+import Patch.Measure (Offset(..), Length(..), FileSize(..), Delta(..), Hunk(..), UndoHunk(..))
 import qualified Patch.PPF.Types as PPF
 import qualified Patch.PPF.Parse as PPF
 import qualified Patch.PPF.Apply as PPF
@@ -138,11 +139,11 @@ parseSome patchBytes = case detectFormat patchBytes of
             , patchVerboseLines   = numbered records $ \record -> case DPS.dpsRecordPayload record of
                 DPS.PayloadData payload ->
                   "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
-                  ++ padHex 8 (DPS.dpsRecordOutputOffset record)
+                  ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
                 DPS.PayloadCopy sourceOffset dataLength ->
                   "Copy " ++ show dataLength ++ " bytes from 0x"
                   ++ padHex 8 sourceOffset ++ " to 0x"
-                  ++ padHex 8 (DPS.dpsRecordOutputOffset record)
+                  ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
             , patchWarnings       = ["empty patch (0 records)" | null records]
             , patchRecordCount    = length records
             , patchRecordUnit     = "records"
@@ -159,7 +160,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
           ppfVerification = noVerification
             { verifyPPFBlock = case PPF.ppfValidation patch of
-                Just validation -> Just (PPF.validationOffset (PPF.validationImageType validation), PPF.validationBlock validation)
+                Just validation -> Just (unOffset (PPF.validationOffset (PPF.validationImageType validation)), PPF.validationBlock validation)
                 Nothing  -> Nothing
             , verifyFileSize = PPF.ppfFileSize patch
             }
@@ -174,14 +175,14 @@ parseSome patchBytes = case detectFormat patchBytes of
         , patchVerification   = ppfVerification
         , patchVerboseLines   = numbered records $ \record ->
             "Write " ++ show (ByteString.length (PPF.recordData record)) ++ " bytes at 0x"
-            ++ padHex 8 (PPF.recordOffset record)
+            ++ padHex 8 (unOffset (PPF.recordOffset record))
         , patchWarnings       = ["empty patch (0 records)" | null records]
         , patchRecordCount    = length records
         , patchRecordUnit     = "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchContents  = if hasAppend then Nothing else Just PatchContents
-            { contentsRecords     = map (\record -> (PPF.recordOffset record, PPF.recordData record)) records
+            { contentsRecords     = map (\record -> Hunk (PPF.recordOffset record) (PPF.recordData record)) records
             , contentsDescription = Just (PPF.ppfDescription patch)
             , contentsSourceCRC32 = Nothing
             , contentsSourceMD5   = Nothing
@@ -189,7 +190,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             , contentsDestinationSize    = PPF.ppfFileSize patch
             , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
             , contentsUndoData    = if PPF.ppfHasUndo patch
-                              then Just [ (PPF.recordOffset record, PPF.recordData record, fromMaybe ByteString.empty (PPF.recordUndo record))
+                              then Just [ UndoHunk (PPF.recordOffset record) (PPF.recordData record) (fromMaybe ByteString.empty (PPF.recordUndo record))
                                         | record <- records ]
                               else Nothing
             , contentsTruncation  = Nothing
@@ -206,8 +207,8 @@ parseSome patchBytes = case detectFormat patchBytes of
   Just FormatIPS -> do
     patch <- IPS.parseIPS patchBytes
     let records = IPS.ipsRecords patch
-        expandIPS (IPS.IPSRecord offset recordData)        = (offset, recordData)
-        expandIPS (IPS.IPSRecordRLE offset count fillByte) = (offset, ByteString.replicate count fillByte)
+        expandIPS (IPS.IPSRecord recordOffset recordPayload) = Hunk recordOffset recordPayload
+        expandIPS (IPS.IPSRecordRLE recordOffset fillCount fillByte) = Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte)
         name = case (IPS.ipsVariant patch, IPS.ipsEBPMeta patch) of
           (IPS.StandardIPS, Nothing) -> "IPS"
           (IPS.StandardIPS, Just _)  -> "EBP"
@@ -279,7 +280,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       , patchVerboseLines   = numbered blocks $ \block ->
           "XOR " ++ show (ByteString.length (UPS.upsXorData block))
-          ++ " bytes (skip " ++ show (UPS.upsSkip block) ++ ")"
+          ++ " bytes (skip " ++ show (unDelta (UPS.upsSkip block)) ++ ")"
       , patchWarnings       = ["empty patch (0 blocks)" | null blocks]
       , patchRecordCount    = length blocks
       , patchRecordUnit     = "blocks"
@@ -291,10 +292,10 @@ parseSome patchBytes = case detectFormat patchBytes of
   Just FormatVCDIFF -> do
     patch <- VCDIFF.parseVCDIFF patchBytes
     let windows = VCDIFF.vcdiffWindows patch
-        windowOffsets = scanl (+) 0 (map VCDIFF.vcdiffTargetLength windows)
+        windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
         adlerChecks =
-          [ (fromIntegral offset, fromIntegral (VCDIFF.vcdiffTargetLength window), checksum)
-          | (window, offset) <- zip windows windowOffsets
+          [ (fromIntegral windowOffset, fromIntegral (unFileSize (VCDIFF.vcdiffTargetLength window)), checksum)
+          | (window, windowOffset) <- zip windows windowOffsets
           , Just checksum <- [VCDIFF.vcdiffAdler32 window]
           ]
     Right SomePatch
@@ -307,7 +308,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchUndo           = Nothing
       , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
       , patchVerboseLines   = numbered windows $ \window ->
-          "Window " ++ show (VCDIFF.vcdiffTargetLength window) ++ " bytes target"
+          "Window " ++ show (unFileSize (VCDIFF.vcdiffTargetLength window)) ++ " bytes target"
       , patchWarnings       = ["empty patch (0 windows)" | null windows]
       , patchRecordCount    = length windows
       , patchRecordUnit     = "windows"
@@ -325,8 +326,8 @@ parseSome patchBytes = case detectFormat patchBytes of
     | apsGbaStructure patchBytes -> parseAPSGBABlock patchBytes
     | otherwise -> do
     patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
-    let expandN64 (APSN64.APSN64Normal offset recordData) = (offset, recordData)
-        expandN64 (APSN64.APSN64RLE offset fillByte count)  = (offset, ByteString.replicate (fromIntegral count) fillByte)
+    let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
+        expandN64 (APSN64.APSN64RLE recordOffset fillByte fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillByte)
     Right SomePatch
       { patchFormat         = "APS (N64)"
       , patchInfo           = APSN64.apsN64Info patch
@@ -409,13 +410,13 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       , patchVerboseLines   = numbered records $ \record ->
           "Write " ++ show (ByteString.length (NINJA1.ninja1RecordData record)) ++ " bytes at 0x"
-          ++ padHex 8 (NINJA1.ninja1RecordOffset record)
+          ++ padHex 8 (unOffset (NINJA1.ninja1RecordOffset record))
       , patchWarnings       = warnings
       , patchRecordCount    = length records
       , patchRecordUnit     = "records"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
-      , patchContents  = Just (emptyContents (map (\record -> (NINJA1.ninja1RecordOffset record, NINJA1.ninja1RecordData record)) records))
+      , patchContents  = Just (emptyContents (map (\record -> Hunk (NINJA1.ninja1RecordOffset record) (NINJA1.ninja1RecordData record)) records))
           { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
           , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
           , contentsSourceSHA1  = NINJA1.ninja1SourceSHA1 patch
@@ -505,14 +506,14 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = noVerification
       , patchVerboseLines   = numbered records $ \record ->
           "Write " ++ show (ByteString.length (PMSR.pmsrData record)) ++ " bytes at 0x"
-          ++ padHex 8 (PMSR.pmsrOffset record)
+          ++ padHex 8 (unOffset (PMSR.pmsrOffset record))
       , patchWarnings       = ["empty patch (0 records)" | null records]
       , patchRecordCount    = length records
       , patchRecordUnit     = "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchContents  = Just (emptyContents
-          (map (\record -> (PMSR.pmsrOffset record, PMSR.pmsrData record)) records))
+          (map (\record -> Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)) records))
       }
 
   Just FormatPCHTXT -> do
@@ -520,7 +521,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     let allBlocks = PCHTXT.pchtxtBlocks patch
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
-        contentRecords = map (\entry -> (PCHTXT.pchtxtOffset entry, PCHTXT.pchtxtData entry)) entries
+        contentRecords = map (\entry -> Hunk (PCHTXT.pchtxtOffset entry) (PCHTXT.pchtxtData entry)) entries
         sourceNotes = ["PCHTXT: offset_shift applied to absolute offsets (no @flag directive in output)"
                    | PCHTXT.pchtxtHasShift patch]
     Right SomePatch
@@ -534,7 +535,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = noVerification
       , patchVerboseLines   = numbered entries $ \entry ->
           "Write " ++ show (ByteString.length (PCHTXT.pchtxtData entry)) ++ " bytes at 0x"
-          ++ padHex 8 (PCHTXT.pchtxtOffset entry)
+          ++ padHex 8 (unOffset (PCHTXT.pchtxtOffset entry))
       , patchWarnings       = ["empty patch (0 entries)" | null entries]
       , patchRecordCount    = length entries
       , patchRecordUnit     = "entries"
@@ -589,16 +590,16 @@ apsGbaStructure input =
                 [0 .. recordCount - 1])
 
 describeIPS :: IPS.IPSRecord -> String
-describeIPS (IPS.IPSRecord offset recordData) =
-  "Write " ++ show (ByteString.length recordData) ++ " bytes at 0x" ++ padHex 6 offset
-describeIPS (IPS.IPSRecordRLE offset count fillByte) =
-  "Fill " ++ show count ++ " x 0x" ++ padHex 2 (fromIntegral fillByte) ++ " at 0x" ++ padHex 6 offset
+describeIPS (IPS.IPSRecord recordOffset recordPayload) =
+  "Write " ++ show (ByteString.length recordPayload) ++ " bytes at 0x" ++ padHex 6 (unOffset recordOffset)
+describeIPS (IPS.IPSRecordRLE recordOffset fillCount fillByte) =
+  "Fill " ++ show (unLength fillCount) ++ " x 0x" ++ padHex 2 (fromIntegral fillByte) ++ " at 0x" ++ padHex 6 (unOffset recordOffset)
 
 describeBPS :: BPS.BPSAction -> String
-describeBPS (BPS.SourceRead dataLength) = "SourceRead " ++ show dataLength ++ " bytes"
+describeBPS (BPS.SourceRead actionLength) = "SourceRead " ++ show (unLength actionLength) ++ " bytes"
 describeBPS (BPS.TargetRead payload) = "TargetRead " ++ show (ByteString.length payload) ++ " bytes"
-describeBPS (BPS.SourceCopy dataLength _) = "SourceCopy " ++ show dataLength ++ " bytes"
-describeBPS (BPS.TargetCopy dataLength _) = "TargetCopy " ++ show dataLength ++ " bytes"
+describeBPS (BPS.SourceCopy actionLength _) = "SourceCopy " ++ show (unLength actionLength) ++ " bytes"
+describeBPS (BPS.TargetCopy actionLength _) = "TargetCopy " ++ show (unLength actionLength) ++ " bytes"
 
 -- | Pre-render verbose lines with "[i/n]" prefixes.
 numbered :: [a] -> (a -> String) -> [String]

@@ -26,6 +26,7 @@ import Data.Char (digitToInt, intToDigit, isHexDigit, isSpace, toUpper)
 import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
+import Patch.Measure (Offset(..), EncodedHunk(..), seekTo, offsetToInt)
 import Patch.Format (renderField)
 import Data.Int (Int64)
 import Data.List (dropWhileEnd, isPrefixOf)
@@ -39,8 +40,8 @@ import System.IO
 
 -- | A single PCHTXT patch entry: absolute offset + data to write.
 data PCHTXTEntry = PCHTXTEntry
-  { pchtxtOffset :: Int64
-  , pchtxtData   :: ByteString
+  { pchtxtOffset :: !Offset
+  , pchtxtData   :: !ByteString
   } deriving (Show)
 
 -- | A patch block: enabled/disabled, optional description, entries.
@@ -149,7 +150,7 @@ parsePatchLine line shift = do
           payload <- case dataString of
                    '"':quotedRest -> parseQuotedString quotedRest
                    _              -> parseHexBytes dataString
-          Right (PCHTXTEntry (offset + shift) payload)
+          Right (PCHTXTEntry (Offset (offset + shift)) payload)
 
 parseHexBytes :: String -> Either String ByteString
 parseHexBytes text =
@@ -182,7 +183,7 @@ applyPCHTXT patch target = withBinaryFile target ReadWriteMode $ \handle -> do
   let entries = concatMap pchtxtBlockEntries
                   (filter pchtxtBlockEnabled (pchtxtBlocks patch))
   mapM_ (\entry -> do
-    hSeek handle AbsoluteSeek (fromIntegral (pchtxtOffset entry))
+    seekTo handle (pchtxtOffset entry)
     ByteString.hPut handle (pchtxtData entry)) entries
   pure (length entries)
 
@@ -193,13 +194,13 @@ applyPCHTXTMemory patch source = unsafeCreate outputSize $ \outputPointer -> do
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
     forM_ entries $ \entry ->
-      copyByteStringRange outputPointer (fromIntegral (pchtxtOffset entry)) (pchtxtData entry) 0 (ByteString.length (pchtxtData entry))
+      copyByteStringRange outputPointer (offsetToInt (pchtxtOffset entry)) (pchtxtData entry) 0 (ByteString.length (pchtxtData entry))
   where
     entries = concatMap pchtxtBlockEntries
                 (filter pchtxtBlockEnabled (pchtxtBlocks patch))
     sourceLength = ByteString.length source
     outputSize = foldl' max sourceLength
-      [ fromIntegral (pchtxtOffset entry) + ByteString.length (pchtxtData entry) | entry <- entries ]
+      [ offsetToInt (pchtxtOffset entry) + ByteString.length (pchtxtData entry) | entry <- entries ]
 
 ----------------------------------------------------------------------------
 -- Create / Encode
@@ -208,9 +209,9 @@ applyPCHTXTMemory patch source = unsafeCreate outputSize $ \outputPointer -> do
 -- | Encode records as PCHTXT text (for direct conversion and create).
 -- If a description is provided and looks like a hex build ID (all hex, 32+ chars),
 -- emit @nsobid-<id>; otherwise emit // <description> as a comment.
-encodePCHTXT :: [(Int, ByteString)] -> Maybe ByteString -> ByteString
+encodePCHTXT :: [EncodedHunk] -> Maybe ByteString -> ByteString
 encodePCHTXT records maybeDescription = ByteString8.pack $ unlines $
-  descLines ++ "@enabled" : map encodeEntry records
+  descLines ++ "@enabled" : map encodeHunkEntry records
   where
     descLines = case maybeDescription of
       Nothing -> []
@@ -220,7 +221,7 @@ encodePCHTXT records maybeDescription = ByteString8.pack $ unlines $
                          then ["@nsobid-" ++ text, ""]
                          else ["// " ++ text, ""]
     trimNull = reverse . dropWhile (\character -> character == ' ' || character == '\0') . reverse
-    encodeEntry (offset, payload) = hexPad 8 (fromIntegral offset) ++ " " ++ hexBytes payload
+    encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (fromIntegral hunkOffset) ++ " " ++ hexBytes hunkPayload
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
 encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe ByteString -> ByteString
@@ -241,7 +242,7 @@ encodePCHTXTBlocks blocks maybeDescription = ByteString8.pack $ unlines $
             Just text  -> ["// " ++ text]
             Nothing -> []
       in description ++ [header] ++ map encodeEntry (pchtxtBlockEntries block)
-    encodeEntry entry = hexPad 8 (pchtxtOffset entry) ++ " " ++ hexBytes (pchtxtData entry)
+    encodeEntry entry = hexPad 8 (unOffset (pchtxtOffset entry)) ++ " " ++ hexBytes (pchtxtData entry)
 
 hexPad :: Int -> Int64 -> String
 hexPad width value =
@@ -285,6 +286,6 @@ pchtxtInfo patch = unlines $ filter (not . null) $
     rangeString
       | null enabledEntries = "range:       (empty patch)"
       | otherwise =
-          let lowest = minimum (map pchtxtOffset enabledEntries)
-              highest = maximum (map (\entry -> pchtxtOffset entry + fromIntegral (ByteString.length (pchtxtData entry))) enabledEntries)
+          let lowest = minimum (map (unOffset . pchtxtOffset) enabledEntries)
+              highest = maximum (map (\entry -> unOffset (pchtxtOffset entry) + fromIntegral (ByteString.length (pchtxtData entry))) enabledEntries)
           in "range:       0x" ++ hexPad 8 lowest ++ " - 0x" ++ hexPad 8 highest

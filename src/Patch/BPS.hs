@@ -16,7 +16,7 @@ module Patch.BPS
 import Patch.Binary (getWord32LE, putWord32LE, putByuuVarint, copyByteStringRange)
 import Patch.FFI (rustyCRC32, rustyBpsDiff)
 import Patch.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), FileSize(..), Delta(..))
 import Control.Monad (when)
 import Patch.Format (showCRC, renderField)
 
@@ -34,15 +34,15 @@ import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 data BPSAction
-  = SourceRead Int           -- length (implicit: read from source at output offset)
-  | TargetRead ByteString    -- literal data
-  | SourceCopy Int Int64     -- length, signed offset delta
-  | TargetCopy Int Int64     -- length, signed offset delta
+  = SourceRead { sourceReadLength :: !Length }
+  | TargetRead { targetReadPayload :: !ByteString }
+  | SourceCopy { sourceCopyLength :: !Length, sourceCopyDelta :: !Delta }
+  | TargetCopy { targetCopyLength :: !Length, targetCopyDelta :: !Delta }
   deriving (Show)
 
 data BPSPatch = BPSPatch
-  { bpsSourceSize :: Int64
-  , bpsTargetSize :: Int64
+  { bpsSourceSize :: !FileSize
+  , bpsTargetSize :: !FileSize
   , bpsMetadata   :: ByteString
   , bpsActions    :: [BPSAction]
   , bpsSourceCRC  :: Word32
@@ -78,12 +78,14 @@ parseBPS input
         , bpsPatchCRC   = storedPatchCRC
         }
 
-parseBPSBody :: Get (Int64, Int64, ByteString, [BPSAction])
+parseBPSBody :: Get (FileSize, FileSize, ByteString, [BPSAction])
 parseBPSBody = do
-  sourceSize <- byuuVarint
-  targetSize <- byuuVarint
-  when (sourceSize < 0) $ failGet "BPS: negative source size"
-  when (targetSize < 0) $ failGet "BPS: negative target size"
+  rawSourceSize <- byuuVarint
+  rawTargetSize <- byuuVarint
+  when (rawSourceSize < 0) $ failGet "BPS: negative source size"
+  when (rawTargetSize < 0) $ failGet "BPS: negative target size"
+  let sourceSize = FileSize rawSourceSize
+      targetSize = FileSize rawTargetSize
   metadataLength <- fromIntegral <$> byuuVarint
   metadata       <- getBytes (Length metadataLength)
   actions <- parseActions
@@ -98,10 +100,10 @@ parseActions = do
     let commandCode = encoded .&. 3
         dataLength = fromIntegral (shiftR encoded 2) + 1
     action <- case commandCode of
-      0 -> pure (SourceRead dataLength)
+      0 -> pure (SourceRead (Length dataLength))
       1 -> TargetRead <$> getBytes (Length dataLength)
-      2 -> SourceCopy dataLength . decodeSignedVarint <$> byuuVarint
-      3 -> TargetCopy dataLength . decodeSignedVarint <$> byuuVarint
+      2 -> SourceCopy (Length dataLength) . Delta . decodeSignedVarint <$> byuuVarint
+      3 -> TargetCopy (Length dataLength) . Delta . decodeSignedVarint <$> byuuVarint
       _ -> error "unreachable"  -- (.&. 3) is always 0-3; GHC can't see this
     remaining <- parseActions
     pure (action : remaining)
@@ -117,14 +119,15 @@ applyBPS :: BPSPatch -> ByteString -> Either String ByteString
 applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
   applyLoop outputPointer 0 0 0 (bpsActions patch)
   where
-    targetLength = fromIntegral (bpsTargetSize patch)
+    targetLength = fromIntegral (unFileSize (bpsTargetSize patch))
     sourceLength = ByteString.length source
 
     applyLoop :: Ptr Word8 -> Int -> Int64 -> Int64 -> [BPSAction] -> IO ()
     applyLoop _             _              _              _              []           = pure ()
     applyLoop outputPointer outputPosition sourceRelative targetRelative (action:remaining) = case action of
-      SourceRead copyLength -> do
-        let count = min copyLength (targetLength - outputPosition)
+      SourceRead actionLength -> do
+        let copyLength = unLength actionLength
+            count = min copyLength (targetLength - outputPosition)
             inBounds = max 0 (min count (sourceLength - outputPosition))
         copyByteStringRange outputPointer outputPosition source outputPosition inBounds
         when (inBounds < count) $
@@ -136,8 +139,9 @@ applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
         copyByteStringRange outputPointer outputPosition payload 0 count
         applyLoop outputPointer (outputPosition + count) sourceRelative targetRelative remaining
 
-      SourceCopy copyLength delta -> do
-        let nextSourceRelative = sourceRelative + delta
+      SourceCopy actionLength actionDelta -> do
+        let copyLength = unLength actionLength
+            nextSourceRelative = sourceRelative + unDelta actionDelta
             sourceOffset  = fromIntegral nextSourceRelative :: Int
             count   = min copyLength (targetLength - outputPosition)
             -- Clamp to the portion that falls within the source ByteString
@@ -155,8 +159,9 @@ applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
           fillBytes (outputPointer `plusPtr` (outputPosition + copied)) 0 (count - copied)
         applyLoop outputPointer (outputPosition + count) (nextSourceRelative + fromIntegral count) targetRelative remaining
 
-      TargetCopy copyLength delta -> do
-        let nextTargetRelative = targetRelative + delta
+      TargetCopy actionLength actionDelta -> do
+        let copyLength = unLength actionLength
+            nextTargetRelative = targetRelative + unDelta actionDelta
             count   = min copyLength (targetLength - outputPosition)
             readOffset = fromIntegral nextTargetRelative
         -- Byte-by-byte: source region may overlap with destination
@@ -170,8 +175,8 @@ applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
 
 bpsMeta :: BPSPatch -> [(String, String)]
 bpsMeta patch = concat
-  [ [("source size", show (bpsSourceSize patch))]
-  , [("target size", show (bpsTargetSize patch))]
+  [ [("source size", show (unFileSize (bpsSourceSize patch)))]
+  , [("target size", show (unFileSize (bpsTargetSize patch)))]
   , [("metadata", metadataDisplay)]
   , [("source CRC", showCRC (bpsSourceCRC patch))]
   , [("target CRC", showCRC (bpsTargetCRC patch))]

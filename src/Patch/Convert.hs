@@ -34,12 +34,13 @@ import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
 import Patch.Binary (diffHunks, md5, sha1)
 import Patch.FFI (rustyCRC32)
+import Patch.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
+                      EncodedHunk(..), narrowHunksUnbounded)
 import Patch.Format (showCRC, padHex)
 
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Data.Int (Int64)
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
@@ -77,15 +78,15 @@ data FormatSpecification = FormatSpecification
 
 -- | Universal representation of a direct patch's contents.
 data PatchContents = PatchContents
-  { contentsRecords     :: [(Int64, ByteString.ByteString)]
+  { contentsRecords     :: [Hunk]
   , contentsDescription :: Maybe ByteString.ByteString
   , contentsSourceCRC32 :: Maybe Word32
   , contentsSourceMD5   :: Maybe ByteString.ByteString
   , contentsSourceSHA1  :: Maybe ByteString.ByteString
   , contentsDestinationSize    :: Maybe Word32
   , contentsValidation  :: Maybe ByteString.ByteString
-  , contentsUndoData    :: Maybe [(Int64, ByteString.ByteString, ByteString.ByteString)]
-  , contentsTruncation  :: Maybe Int64
+  , contentsUndoData    :: Maybe [UndoHunk]
+  , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
   , contentsRomType     :: Maybe Word8
     -- ^ See metaRomType comment: Word8 is intentional (NINJA1 vs RUP semantics).
@@ -137,7 +138,7 @@ defaultMeta = CreateMeta
 -- PatchContents helpers
 ----------------------------------------------------------------------------
 
-emptyContents :: [(Int64, ByteString.ByteString)] -> PatchContents
+emptyContents :: [Hunk] -> PatchContents
 emptyContents records = PatchContents
   { contentsRecords     = records
   , contentsDescription = Nothing
@@ -367,10 +368,10 @@ diffOnlyMsg :: CreateFormat -> String
 diffOnlyMsg format = formatName format ++ " requires source+target diff data\nuse --with SOURCE"
 
 -- | Check that offsets fit in IPS/EBP 24-bit range.
-checkOffsetLimits :: CreateFormat -> [(Int64, ByteString.ByteString)] -> Either String ()
+checkOffsetLimits :: CreateFormat -> [Hunk] -> Either String ()
 checkOffsetLimits target records
   | target `elem` [CreateIPS, CreateEBP]
-  , any (\(offset, _) -> offset > 0xFFFFFF) records
+  , any (\hunk -> unOffset (hunkOffset hunk) > 0xFFFFFF) records
   = Left ("patch has offsets > 16 MB \8212 cannot convert to " ++ formatName target
        ++ "\nuse --to ips32, or --with SOURCE to re-diff")
   | otherwise = Right ()
@@ -378,13 +379,13 @@ checkOffsetLimits target records
 -- | Reject direct conversion to IPS/IPS32/EBP when a record starts at the
 -- EOF sentinel offset.  Without source bytes, avoidSentinel can't shift the
 -- record back safely.
-checkSentinelCollision :: CreateFormat -> [(Int64, ByteString.ByteString)] -> Either String ()
+checkSentinelCollision :: CreateFormat -> [Hunk] -> Either String ()
 checkSentinelCollision target records = case sentinel of
     Nothing -> Right ()
-    Just sentinelOffset
-      | any (\(offset, _) -> offset == sentinelOffset) records ->
+    Just sentinelValue
+      | any (\hunk -> unOffset (hunkOffset hunk) == sentinelValue) records ->
           Left (formatName target ++ ": record at offset 0x"
-             ++ showHexInt64 sentinelOffset
+             ++ showHex (fromIntegral sentinelValue :: Word64) ""
              ++ " collides with EOF marker; use --with SOURCE to provide source bytes for safe encoding")
       | otherwise -> Right ()
   where
@@ -393,36 +394,34 @@ checkSentinelCollision target records = case sentinel of
       CreateEBP   -> Just 0x454F46
       CreateIPS32 -> Just 0x45454F46
       _         -> Nothing
-    showHexInt64 :: Int64 -> String
-    showHexInt64 number = showHex (fromIntegral number :: Word64) ""
 
 -- | Encode PatchContents into the target format.
 encodeDirect :: PatchContents -> ByteString.ByteString -> CreateFormat -> CreateMeta -> ByteString.ByteString
 encodeDirect contents source target meta = case target of
   CreateIPS    -> IPS.encodeIPS source splitIPSRecords (contentsTruncation contents)
-  CreateIPS32  -> IPS.encodeIPS32 source (splitRecords 0xFFFF intOffsetRecords) (contentsTruncation contents)
+  CreateIPS32  -> IPS.encodeIPS32 source (narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))) (contentsTruncation contents)
   CreateEBP    -> let passthrough = if null cliDescription && null cliTitle && null cliAuthor
                                   then contentsEBPMeta contents else Nothing
                  in case passthrough of
                       Just raw -> IPS.encodeEBPRaw source splitIPSRecords (contentsTruncation contents) raw
                       Nothing  -> IPS.encodeEBP source splitIPSRecords (contentsTruncation contents)
                                     ebpTitle ebpAuthor description
-  CreatePPF3   -> let base = PPF.encodePPF3 (splitRecords 255 (contentsRecords contents)) description
+  CreatePPF3   -> let base = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
                               (contentsUndoData contents) (contentsValidation contents) imageType
                  in case contentsFileIdDiz contents of
                       Nothing  -> base
                       Just diz -> base <> PPF.encodeFileIdDiz diz
   CreateNINJA1 -> case (contentsSourceCRC32 contents, contentsSourceMD5 contents, contentsSourceSHA1 contents) of
                    (Just crc, Just md5Hash, Just sha1Hash) ->
-                     NINJA1.encodeNINJA1 intOffsetRecords crc md5Hash sha1Hash romType
+                     NINJA1.encodeNINJA1 encodedRecords crc md5Hash sha1Hash romType
                        (fromMaybe False (contentsNINJA1Compressed contents))
                    _ -> error "unreachable: canConvert verified"
-  CreatePMSR   -> PMSR.encodePMSR intOffsetRecords
+  CreatePMSR   -> PMSR.encodePMSR encodedRecords
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
                    Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription
-                   Nothing     -> PCHTXT.encodePCHTXT intOffsetRecords pchtxtDescription
+                   Nothing     -> PCHTXT.encodePCHTXT encodedRecords pchtxtDescription
   CreateAPSN64 -> case contentsDestinationSize contents of
-                  Just targetSize -> APSN64.encodeAPSN64 intOffsetRecords targetSize apsDescription
+                  Just targetSize -> APSN64.encodeAPSN64 encodedRecords targetSize apsDescription
                   Nothing -> error "unreachable: canConvert verified FDestinationSize"
   -- Differential formats handled in convertDirect, never reach here
   _          -> error "unreachable: differential format in encodeDirect"
@@ -430,8 +429,8 @@ encodeDirect contents source target meta = case target of
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
-    intOffsetRecords   = toIntPairs (contentsRecords contents)
-    splitIPSRecords  = splitRecords 0xFFFF intOffsetRecords
+    encodedRecords   = narrowHunksUnbounded (contentsRecords contents)
+    splitIPSRecords  = narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
     pchtxtDescription
@@ -490,7 +489,7 @@ isDirect _          = False
 buildContents :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
               -> CreateMeta -> PatchContents
 buildContents format source target meta = PatchContents
-  { contentsRecords     = int64Records
+  { contentsRecords     = patchHunks
   , contentsDescription = Nothing
   , contentsSourceCRC32 = if needs FSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
   , contentsSourceMD5   = if needs FSourceMD5   then Just (md5 hashSource)   else Nothing
@@ -502,10 +501,10 @@ buildContents format source target meta = PatchContents
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing
   , contentsUndoData    = if needs FUndoData
-                    then Just (computeUndo source int64Records)
+                    then Just (computeUndo source patchHunks)
                     else Nothing
   , contentsTruncation  = if needs FTruncation && ByteString.length target < ByteString.length source
-                    then Just (fromIntegral (ByteString.length target))
+                    then Just (FileSize (fromIntegral (ByteString.length target)))
                     else Nothing
   , contentsEBPMeta     = Nothing
   , contentsRomType     = Nothing
@@ -516,12 +515,12 @@ buildContents format source target meta = PatchContents
   , contentsMetadata = Nothing
   }
   where
-    hunks     = case format of
-      CreateIPS   -> IPS.optimalIPSRecords 3 source target
-      CreateIPS32 -> IPS.optimalIPSRecords 4 source target
-      CreateEBP   -> IPS.optimalIPSRecords 3 source target
+    encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk (Offset (fromIntegral hunkOffset)) hunkPayload
+    patchHunks = case format of
+      CreateIPS   -> map encodedToHunk (IPS.optimalIPSRecords 3 source target)
+      CreateIPS32 -> map encodedToHunk (IPS.optimalIPSRecords 4 source target)
+      CreateEBP   -> map encodedToHunk (IPS.optimalIPSRecords 3 source target)
       _         -> diffHunks source target
-    int64Records = map (\(offset, payload) -> (fromIntegral offset, payload)) hunks
     hashSource   = case format of
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       _          -> source
@@ -532,22 +531,21 @@ buildContents format source target meta = PatchContents
     allFields = specificationRequired spec `Set.union` specificationAccepted spec
     needs field = field `Set.member` allFields
 
--- | Compute undo triples from source bytes and diff records.
+-- | Compute undo hunks from source bytes and diff records.
 -- Each record is split at 255 bytes (PPF3 record size limit).
-computeUndo :: ByteString.ByteString -> [(Int64, ByteString.ByteString)]
-            -> [(Int64, ByteString.ByteString, ByteString.ByteString)]
+computeUndo :: ByteString.ByteString -> [Hunk] -> [UndoHunk]
 computeUndo source = concatMap splitUndo
   where
     sourceLength = ByteString.length source
-    splitUndo (offset, payload)
-      | ByteString.null payload = []
-      | ByteString.length payload <= 255 =
-          [(offset, payload, oldBytes (fromIntegral offset) (ByteString.length payload))]
+    splitUndo (Hunk hunkOffset hunkPayload)
+      | ByteString.null hunkPayload = []
+      | ByteString.length hunkPayload <= 255 =
+          [UndoHunk hunkOffset hunkPayload (oldBytes (fromIntegral (unOffset hunkOffset)) (ByteString.length hunkPayload))]
       | otherwise =
-          let chunk = ByteString.take 255 payload
-              intOffset = fromIntegral offset
-          in (offset, chunk, oldBytes intOffset 255)
-             : splitUndo (offset + 255, ByteString.drop 255 payload)
+          let chunk = ByteString.take 255 hunkPayload
+              intOffset = fromIntegral (unOffset hunkOffset)
+          in UndoHunk hunkOffset chunk (oldBytes intOffset 255)
+             : splitUndo (Hunk (Offset (unOffset hunkOffset + 255)) (ByteString.drop 255 hunkPayload))
     oldBytes position chunkLength
       | position >= sourceLength = ByteString.replicate chunkLength 0
       | position + chunkLength > sourceLength =
@@ -559,19 +557,16 @@ computeUndo source = concatMap splitUndo
 -- Internal helpers
 ----------------------------------------------------------------------------
 
--- | Split records so each data chunk is ≤ maxSize bytes.
-splitRecords :: (Integral a) => Int -> [(a, ByteString.ByteString)] -> [(a, ByteString.ByteString)]
-splitRecords maxSize = concatMap splitOne
+-- | Split hunks so each payload is ≤ maxSize bytes.
+splitHunks :: Int -> [Hunk] -> [Hunk]
+splitHunks maxSize = concatMap splitOne
   where
-    splitOne (offset, payload)
-      | ByteString.length payload <= maxSize = [(offset, payload)]
+    splitOne (Hunk hunkOffset hunkPayload)
+      | ByteString.length hunkPayload <= maxSize = [Hunk hunkOffset hunkPayload]
       | otherwise =
-          let (chunk, rest) = ByteString.splitAt maxSize payload
-          in (offset, chunk) : splitOne (offset + fromIntegral maxSize, rest)
-
--- | Convert Int64 offset pairs to Int pairs for format encoders.
-toIntPairs :: [(Int64, ByteString.ByteString)] -> [(Int, ByteString.ByteString)]
-toIntPairs = map (\(offset, payload) -> (fromIntegral offset, payload))
+          let (chunk, rest) = ByteString.splitAt maxSize hunkPayload
+              nextOffset = Offset (unOffset hunkOffset + fromIntegral maxSize)
+          in Hunk hunkOffset chunk : splitOne (Hunk nextOffset rest)
 
 -- | Resolve a description from CLI flag, EBP metadata, raw description, or default.
 resolveDescription :: String -> Maybe ByteString.ByteString -> Maybe ByteString.ByteString -> String -> String

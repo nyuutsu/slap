@@ -21,7 +21,7 @@ module Patch.DPS
 
 import Patch.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Patch.Get as Get
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), Offset(..), FileSize(..), Hunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -55,7 +55,7 @@ data DPSPatch = DPSPatch
   , dpsVersion    :: ByteString   -- 64 bytes, null-padded
   , dpsStability       :: DPSStability
   , dpsFormatVersion :: Word8        -- must be 1
-  , dpsOriginalSize   :: Int64        -- original ROM size
+  , dpsOriginalSize   :: !FileSize    -- original ROM size
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
 
@@ -64,7 +64,7 @@ data DPSMode = CopyFromROM | EnclosedData
 
 data DPSRecord = DPSRecord
   { dpsRecordMode      :: DPSMode
-  , dpsRecordOutputOffset :: Int64       -- write position in output
+  , dpsRecordOutputOffset :: !Offset     -- write position in output
   , dpsRecordPayload   :: DPSPayload
   } deriving (Show)
 
@@ -113,7 +113,7 @@ parseDPSBody = do
     Left errorMessage -> fail errorMessage
     Right stability -> do
       formatVersion     <- getByte
-      originalSize  <- fromIntegral <$> Get.word32LE
+      originalSize  <- FileSize . fromIntegral <$> Get.word32LE
       records    <- parseRecords
       pure DPSPatch
         { dpsName       = name
@@ -131,7 +131,7 @@ parseRecords = do
   if unLength available < 5 then pure []
   else do
     mode <- getByte
-    outputOffset <- fromIntegral <$> Get.word32LE
+    outputOffset <- Offset . fromIntegral <$> Get.word32LE
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
     record <- case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
@@ -162,10 +162,10 @@ buildOutput source records =
   -- Start with a copy of the source, then overwrite at each record's offset.
   let base = source
       applyRecord buffer (DPSRecord _ outputOffset (PayloadData payload)) =
-        overwriteAt buffer (fromIntegral outputOffset) payload
+        overwriteAt buffer (fromIntegral (unOffset outputOffset)) payload
       applyRecord buffer (DPSRecord _ outputOffset (PayloadCopy sourceOffset dataLength)) =
         let chunk = takePadded (fromIntegral dataLength) (fromIntegral sourceOffset) source
-        in overwriteAt buffer (fromIntegral outputOffset) chunk
+        in overwriteAt buffer (fromIntegral (unOffset outputOffset)) chunk
   in foldl' applyRecord base records
 
 -- | Write bytes at a given offset, extending with zeros if needed.
@@ -198,7 +198,7 @@ dpsMeta patch = concat
   [ fieldPair "name"    (dpsName patch)
   , fieldPair "author"  (dpsAuthor patch)
   , fieldPair "version" (dpsVersion patch)
-  , [("orig size", show (dpsOriginalSize patch))]
+  , [("orig size", show (unFileSize (dpsOriginalSize patch)))]
   , [("flag", "unstable") | dpsStability patch == DPSUnstable]
   ]
   where
@@ -241,11 +241,13 @@ dpsRecordsFromDiff :: ByteString -> ByteString -> [(Word8, Int, ByteString)]
 dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modified)
   where
     buildRecords _ [] = []
-    buildRecords position ((hunkOffset, hunkData) : rest)
-      | hunkOffset > position = (0, position, encodeCopy position (hunkOffset - position))    -- CopyFromROM gap
-                    : (1, hunkOffset, hunkData)                        -- EnclosedData
-                    : buildRecords (hunkOffset + ByteString.length hunkData) rest
-      | otherwise = (1, hunkOffset, hunkData) : buildRecords (hunkOffset + ByteString.length hunkData) rest
+    buildRecords position (Hunk rawOffset rawData : rest) =
+      let intOffset = fromIntegral (unOffset rawOffset) :: Int
+      in if intOffset > position
+         then (0, position, encodeCopy position (intOffset - position))  -- CopyFromROM gap
+              : (1, intOffset, rawData)                                  -- EnclosedData
+              : buildRecords (intOffset + ByteString.length rawData) rest
+         else (1, intOffset, rawData) : buildRecords (intOffset + ByteString.length rawData) rest
     encodeCopy sourceOffset copyLength = LazyByteString.toStrict $ toLazyByteString $
       putWord32LE (fromIntegral sourceOffset :: Word32)
       <> putWord32LE (fromIntegral copyLength :: Word32)

@@ -3,14 +3,14 @@
 module Patch.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
 import Patch.PPF.Types (ImageType(..), fromImageType)
+import Patch.Measure (Offset(..), Hunk(..), UndoHunk(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteStringChar
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Int (Int64)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 
 padDescription :: String -> ByteString
 padDescription text =
@@ -28,39 +28,40 @@ buildHeader description blockCheck hasUndo validationBlock imageType =
   <> word8 0x00                                          -- dummy
   <> if blockCheck then byteString validationBlock else mempty  -- 1024-byte validation block
 
-encodeRecord :: Bool -> (Int64, ByteString, ByteString) -> Builder
-encodeRecord hasUndo (offset, patchData, undoData) =
-  int64LE offset
-  <> word8 (fromIntegral (ByteString.length patchData))
-  <> byteString patchData
-  <> if hasUndo then byteString undoData else mempty
+encodeUndoRecord :: Bool -> UndoHunk -> Builder
+encodeUndoRecord hasUndo (UndoHunk hunkOffset hunkPayload hunkOriginal) =
+  int64LE (unOffset hunkOffset)
+  <> word8 (fromIntegral (ByteString.length hunkPayload))
+  <> byteString hunkPayload
+  <> if hasUndo then byteString hunkOriginal else mempty
 
 -- | Encode a PPF3 patch from pre-split records.
--- Records: [(offset, data)], each data ≤ 255 bytes.
--- Undo triples (if provided): [(offset, new, old)], each ≤ 255 bytes.
-encodePPF3 :: [(Int64, ByteString)]
+-- Records: [Hunk], each payload ≤ 255 bytes.
+-- Undo hunks (if provided): [UndoHunk], each ≤ 255 bytes.
+encodePPF3 :: [Hunk]
            -> String
-           -> Maybe [(Int64, ByteString, ByteString)]
+           -> Maybe [UndoHunk]
            -> Maybe ByteString
            -> ImageType
            -> ByteString
-encodePPF3 records description undoTriples validationBlock imageType =
+encodePPF3 records description undoHunks validationBlock imageType =
   let descriptionBytes   = padDescription description
       hasValidate = isJust validationBlock
-      hasUndo     = isJust undoTriples
+      hasUndo     = isJust undoHunks
+      validationBytes = maybe ByteString.empty id validationBlock
       header      = buildHeader descriptionBytes hasValidate hasUndo
-                      (fromMaybe ByteString.empty validationBlock) imageType
-      body = case undoTriples of
-        Just triples -> foldMap (encodeRecord True) triples
-        Nothing      -> foldMap encodeWriteRecord records
+                      validationBytes imageType
+      body = case undoHunks of
+        Just hunks -> foldMap (encodeUndoRecord True) hunks
+        Nothing    -> foldMap encodeWriteRecord records
   in LazyByteString.toStrict (toLazyByteString (header <> body))
 
 -- | Encode a write record (no undo data).
-encodeWriteRecord :: (Int64, ByteString) -> Builder
-encodeWriteRecord (offset, payload) =
-  int64LE offset
-  <> word8 (fromIntegral (ByteString.length payload))
-  <> byteString payload
+encodeWriteRecord :: Hunk -> Builder
+encodeWriteRecord (Hunk hunkOffset hunkPayload) =
+  int64LE (unOffset hunkOffset)
+  <> word8 (fromIntegral (ByteString.length hunkPayload))
+  <> byteString hunkPayload
 
 -- | Encode a File_ID.diz trailer in PPF3 format (2-byte LE length).
 encodeFileIdDiz :: ByteString -> ByteString

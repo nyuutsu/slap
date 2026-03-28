@@ -1,6 +1,7 @@
 module Patch.PPF.Info (ppfInfo, ppfMeta) where
 
 import Patch.PPF.Types
+import Patch.Measure (Offset(..))
 import Patch.Format (renderField)
 
 import qualified Data.ByteString as ByteString
@@ -26,7 +27,7 @@ ppfMeta patch = concat
     validationString Nothing = "none"
     validationString (Just validation) =
       show (validationImageType validation)
-      ++ " block at 0x" ++ showHex (fromIntegral (validationOffset (validationImageType validation)) :: Word64) ""
+      ++ " block at 0x" ++ showHex (fromIntegral (unOffset (validationOffset (validationImageType validation))) :: Word64) ""
       ++ " (" ++ show (ByteString.length (validationBlock validation)) ++ " bytes)"
 
 -- | Format a human-readable summary of a parsed PPF patch.
@@ -54,8 +55,8 @@ bytesInfo records =
 rangeInfo :: [Record] -> String
 rangeInfo [] = "range:       (empty patch)"
 rangeInfo records =
-  let lowest  = minimum (map recordOffset records)
-      highest = maximum (map (\record -> recordOffset record + fromIntegral (ByteString.length (recordData record))) records)
+  let lowest  = minimum (map (unOffset . recordOffset) records)
+      highest = maximum (map (\record -> unOffset (recordOffset record) + fromIntegral (ByteString.length (recordData record))) records)
   in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
      ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 

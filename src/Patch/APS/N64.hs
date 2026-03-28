@@ -20,7 +20,7 @@ module Patch.APS.N64
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
 import Patch.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
-import Patch.Measure (Length(..))
+import Patch.Measure (Length(..), Offset(..), EncodedHunk(..), seekTo, offsetToInt)
 import Patch.Binary (copyByteStringRange)
 import Patch.Format (padHex, renderField)
 
@@ -31,7 +31,6 @@ import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Patch.Binary (putWord32LE)
-import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
@@ -82,8 +81,8 @@ data APSN64Header = APSN64Header
   } deriving (Show)
 
 data APSN64Record
-  = APSN64Normal Int64 ByteString    -- offset, data
-  | APSN64RLE    Int64 Word8 Word8   -- offset, value, count
+  = APSN64Normal Offset ByteString    -- offset, data
+  | APSN64RLE    Offset Word8 Word8   -- offset, value, count
   deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -140,7 +139,7 @@ parseN64Records = do
     avail <- remaining
     if unLength avail < 5 then pure []
     else do
-      offset <- fromIntegral <$> word32LE
+      offset <- Offset . fromIntegral <$> word32LE
       dataLength <- getByte
       if dataLength == 0
         then do  -- RLE record
@@ -163,12 +162,12 @@ applyAPSN64 (APSN64Patch _ records) target = withBinaryFile target ReadWriteMode
   pure (length records)
 
 applyN64Record :: Handle -> APSN64Record -> IO ()
-applyN64Record handle (APSN64Normal offset payload) = do
-  hSeek handle AbsoluteSeek (fromIntegral offset)
-  ByteString.hPut handle payload
-applyN64Record handle (APSN64RLE offset value count) = do
-  hSeek handle AbsoluteSeek (fromIntegral offset)
-  ByteString.hPut handle (ByteString.replicate (fromIntegral count) value)
+applyN64Record handle (APSN64Normal writeOffset writePayload) = do
+  seekTo handle writeOffset
+  ByteString.hPut handle writePayload
+applyN64Record handle (APSN64RLE writeOffset fillValue fillCount) = do
+  seekTo handle writeOffset
+  ByteString.hPut handle (ByteString.replicate (fromIntegral fillCount) fillValue)
 
 applyAPSN64Memory :: APSN64Patch -> ByteString -> ByteString
 applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \targetPointer -> do
@@ -176,14 +175,14 @@ applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \
     when (outputLength > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
     forM_ records $ \case
-      APSN64Normal offset payload ->
-        copyByteStringRange targetPointer (fromIntegral offset) payload 0 (ByteString.length payload)
-      APSN64RLE offset value count ->
-        fillBytes (targetPointer `plusPtr` fromIntegral offset) value (fromIntegral count)
+      APSN64Normal writeOffset writePayload ->
+        copyByteStringRange targetPointer (offsetToInt writeOffset) writePayload 0 (ByteString.length writePayload)
+      APSN64RLE writeOffset fillValue fillCount ->
+        fillBytes (targetPointer `plusPtr` offsetToInt writeOffset) fillValue (fromIntegral fillCount)
   where
     sourceLength = ByteString.length source
-    recordEnd (APSN64Normal offset payload) = fromIntegral offset + ByteString.length payload
-    recordEnd (APSN64RLE offset _ count)     = fromIntegral offset + fromIntegral count
+    recordEnd (APSN64Normal recordOffset recordPayload) = offsetToInt recordOffset + ByteString.length recordPayload
+    recordEnd (APSN64RLE recordOffset _ recordCount)     = offsetToInt recordOffset + fromIntegral recordCount
     outputLength = foldl' max sourceLength (map recordEnd records)
 
 ----------------------------------------------------------------------------
@@ -230,7 +229,7 @@ apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $
 -- Patch type: APSSimple matches the simple-record structure we emit.
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
-encodeAPSN64 :: [(Int, ByteString)] -> Word32 -> String -> ByteString
+encodeAPSN64 :: [EncodedHunk] -> Word32 -> String -> ByteString
 encodeAPSN64 records destinationSize description = LazyByteString.toStrict $ toLazyByteString $
     byteString "APS10"             -- magic
     <> word8 (fromAPSPatchType APSSimple)  -- patch type: simple
@@ -242,17 +241,17 @@ encodeAPSN64 records destinationSize description = LazyByteString.toStrict $ toL
     descriptionBytes = let padded = ByteString8.pack (take 50 description)
                 in padded <> ByteString.replicate (50 - ByteString.length padded) 0
 
-splitLong :: [(Int, ByteString)] -> [(Int, ByteString)]
+splitLong :: [EncodedHunk] -> [EncodedHunk]
 splitLong = concatMap splitRecord
   where
-    splitRecord (offset, payload)
-      | ByteString.length payload <= 255 = [(offset, payload)]
+    splitRecord (EncodedHunk hunkOffset hunkPayload)
+      | ByteString.length hunkPayload <= 255 = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
-          let (chunk, rest) = ByteString.splitAt 255 payload
-          in (offset, chunk) : splitRecord (offset + 255, rest)
+          let (chunk, rest) = ByteString.splitAt 255 hunkPayload
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (hunkOffset + 255) rest)
 
-encodeN64Record :: (Int, ByteString) -> Builder
-encodeN64Record (offset, payload) =
-    putWord32LE (fromIntegral offset :: Word32)
-    <> word8 (fromIntegral (ByteString.length payload))
-    <> byteString payload
+encodeN64Record :: EncodedHunk -> Builder
+encodeN64Record (EncodedHunk hunkOffset hunkPayload) =
+    putWord32LE (fromIntegral hunkOffset :: Word32)
+    <> word8 (fromIntegral (ByteString.length hunkPayload))
+    <> byteString hunkPayload

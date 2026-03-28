@@ -45,6 +45,7 @@ import qualified Patch.NINJA1 as NINJA1
 import qualified Patch.PCHTXT as PCHTXT
 
 import Patch.Format (padHex, padNum, padRight, showSigned, hexDump, renderField)
+import Patch.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 import qualified Patch.PPF.Info as PPFInfo
 
 import Data.Array (accumArray, elems)
@@ -76,8 +77,8 @@ data ExplainSection
   | SectionText String                          -- free text line
 
 data ExplainRegion = ExplainRegion
-  { regionOffset     :: Int64              -- primary offset (output or target)
-  , regionSize       :: Int                -- bytes affected
+  { regionOffset     :: Offset             -- primary offset (output or target)
+  , regionSize       :: Length             -- bytes affected
   , regionLabel      :: String             -- operation label with trailing space
   , regionPayload    :: ExplainPayload
   , regionAnnotation :: Annotation         -- structured trailing metadata
@@ -102,17 +103,17 @@ data SummaryBytes = BytesTotal | BytesTotalOutput
 
 data Annotation
   = AnnotNone                                    -- no annotation (PCHTXT)
-  | AnnotAt OffsetKind Int64 [AnnotDetail]       -- offset display + details
-  | AnnotBSDiff Int64 Int64 Int64                -- add, copy, seek
+  | AnnotAt OffsetKind Offset [AnnotDetail]      -- offset display + details
+  | AnnotBSDiff FileSize FileSize Delta          -- add, copy, seek
 
 data OffsetKind = AtOffset | AtOutput
 
 data AnnotDetail
   = DetailRLE                   -- "(RLE)"
   | DetailUndo                  -- "(undo data)"
-  | DetailDelta Int64           -- "(delta +N)"
-  | DetailSkip Int64            -- "(skip N)"
-  | DetailSource Int64          -- "(source 0xN)"
+  | DetailDelta Delta           -- "(delta +N)"
+  | DetailSkip Delta            -- "(skip N)"
+  | DetailSource Offset         -- "(source 0xN)"
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
   | DetailCRC16 Int64 Int64     -- "(src CRC16 0xN, tgt CRC16 0xN)"
 
@@ -146,8 +147,8 @@ renderExplain mSource explainData = unlines $
       "  " ++ key ++ ":" ++ replicate (max 1 (18 - length key - 3)) ' ' ++ value
 
     renderBlockEntry region =
-      "    " ++ padHex 8 (regionOffset region) ++ "  " ++ regionLabel region
-      ++ padRight 10 (show (regionSize region) ++ " B")
+      "    " ++ padHex 8 (unOffset (regionOffset region)) ++ "  " ++ regionLabel region
+      ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
       ++ "\n" ++ hexDump (payloadBytes (regionPayload region))
 
     payloadBytes (PayloadWrite writeData) = writeData
@@ -157,7 +158,7 @@ renderExplain mSource explainData = unlines $
 
     renderRegion index region = case regionPayload region of
       PayloadWrite writeData ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (regionSize region) ++ " B")
+        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
         ++ annotation region
         ++ "\n" ++ hexDump writeData
       PayloadFill fillByte count ->
@@ -165,16 +166,16 @@ renderExplain mSource explainData = unlines $
         ++ padHex 2 (fromIntegral fillByte :: Int64)
         ++ annotation region
       PayloadCopy _ ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (regionSize region) ++ " B")
+        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
         ++ annotation region
         ++ renderCopySource mSource region
       PayloadXOR (Just deltaBytes) ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (regionSize region) ++ " B")
+        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
         ++ annotation region
         ++ "\n" ++ labeledHexDump "delta" deltaBytes
-        ++ renderResolvedXOR mSource (regionOffset region) deltaBytes
+        ++ renderResolvedXOR mSource (unOffset (regionOffset region)) deltaBytes
       PayloadXOR Nothing ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (regionSize region) ++ " B")
+        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
         ++ annotation region
       PayloadMeta _ ->
         padNum index ++ "  " ++ regionLabel region ++ annotation region
@@ -196,12 +197,12 @@ renderBytesSuffix BytesTotalOutput = "bytes total output"
 
 renderAnnotation :: Annotation -> String
 renderAnnotation AnnotNone = ""
-renderAnnotation (AnnotBSDiff add copy seek) =
-  "add " ++ padRight 10 (show add ++ " B")
-  ++ "  copy " ++ padRight 10 (show copy ++ " B")
-  ++ "  seek " ++ showSigned seek
+renderAnnotation (AnnotBSDiff addSize copySize seekDelta) =
+  "add " ++ padRight 10 (show (unFileSize addSize) ++ " B")
+  ++ "  copy " ++ padRight 10 (show (unFileSize copySize) ++ " B")
+  ++ "  seek " ++ showSigned (unDelta seekDelta)
 renderAnnotation (AnnotAt kind offset details) =
-  sourcePrefix ++ "  " ++ kindString kind ++ "0x" ++ padHex 6 offset
+  sourcePrefix ++ "  " ++ kindString kind ++ "0x" ++ padHex 6 (unOffset offset)
   ++ concatMap renderDetail remaining
   where
     (sourceIndices, remaining) = partition isSourceIndex details
@@ -216,12 +217,12 @@ renderAnnotation (AnnotAt kind offset details) =
 renderDetail :: AnnotDetail -> String
 renderDetail DetailRLE                      = "  (RLE)"
 renderDetail DetailUndo                     = "  (undo data)"
-renderDetail (DetailDelta delta)            = "  (delta " ++ showSigned delta ++ ")"
-renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show skipAmount ++ ")"
-renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 sourceOffset ++ ")"
+renderDetail (DetailDelta delta)            = "  (delta " ++ showSigned (unDelta delta) ++ ")"
+renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show (unDelta skipAmount) ++ ")"
+renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 (unOffset sourceOffset) ++ ")"
 renderDetail (DetailSourceIndex _)          = ""
-renderDetail (DetailCRC16 source target) =
-  "  (src CRC16 " ++ padHex 4 source ++ ", tgt CRC16 " ++ padHex 4 target ++ ")"
+renderDetail (DetailCRC16 sourceCrc targetCrc) =
+  "  (src CRC16 " ++ padHex 4 sourceCrc ++ ", tgt CRC16 " ++ padHex 4 targetCrc ++ ")"
 
 ----------------------------------------------------------------------------
 -- Source-aware helpers
@@ -237,7 +238,7 @@ resolveXOR source offset deltaBytes =
       padded = sourceSlice <> ByteString.replicate (ByteString.length deltaBytes - ByteString.length sourceSlice) 0
   in ByteString.pack (ByteString.zipWith xor padded deltaBytes)
 
-findSourceOffset :: Annotation -> Maybe Int64
+findSourceOffset :: Annotation -> Maybe Offset
 findSourceOffset (AnnotAt _ _ details) = searchDetails details
   where
     searchDetails []                           = Nothing
@@ -256,7 +257,7 @@ renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
     Nothing          -> ""
     Just sourceOffset ->
-      let slice = ByteString.take (regionSize region) (ByteString.drop (fromIntegral sourceOffset) source)
+      let slice = ByteString.take (unLength (regionSize region)) (ByteString.drop (fromIntegral (unOffset sourceOffset)) source)
       in "\n" ++ labeledHexDump "source data" slice
 
 ----------------------------------------------------------------------------
@@ -288,7 +289,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     sectionRegions (SectionText _)      = []
 
     -- Modified bytes breakdown
-    totalModified = sum (map regionSize allRegions)
+    totalModified = sum (map (unLength . regionSize) allRegions)
     payloadCounts = foldl' countPayload (0,0,0,0,0) allRegions
     countPayload (!writes,!fills,!copies,!xors,!metas) region = case regionPayload region of
       PayloadWrite _  -> (writes+1,fills,copies,xors,metas)
@@ -312,9 +313,9 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
                      ++ " bytes" ++ breakdownString]
 
     -- Offset range
-    offsets = map regionOffset allRegions
+    offsets = map (unOffset . regionOffset) allRegions
     lowestOffset = minimum offsets
-    highestEnd = maximum [ regionOffset region + fromIntegral (regionSize region)
+    highestEnd = maximum [ unOffset (regionOffset region) + fromIntegral (unLength (regionSize region))
                      | region <- allRegions ]
     rangeLine
       | totalRecords == 0 = ["range:       (empty patch)"]
@@ -355,9 +356,9 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
 
     toBucket region =
-      let startBucket = fromIntegral ((regionOffset region - lowestOffset) `div` bucketSize)
-          endBucket   = fromIntegral (((regionOffset region + fromIntegral (regionSize region) - 1) - lowestOffset) `div` bucketSize)
-      in [ (bucket, regionSize region) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
+      let startBucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
+          endBucket   = fromIntegral (((unOffset (regionOffset region) + fromIntegral (unLength (regionSize region)) - 1) - lowestOffset) `div` bucketSize)
+      in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
     bucketSums :: [Int]
     bucketSums
@@ -385,14 +386,14 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       | totalRecords == 0 = []
       | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
                      [ (bucket, 1 :: Int) | region <- allRegions
-                     , let bucket = fromIntegral ((regionOffset region - lowestOffset) `div` bucketSize)
+                     , let bucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
                      , bucket >= 0, bucket < bucketCount ])
     bucketBytes :: [Int]
     bucketBytes
       | totalRecords == 0 = []
       | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
-                     [ (bucket, regionSize region) | region <- allRegions
-                     , let bucket = fromIntegral ((regionOffset region - lowestOffset) `div` bucketSize)
+                     [ (bucket, unLength (regionSize region)) | region <- allRegions
+                     , let bucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
                      , bucket >= 0, bucket < bucketCount ])
 
     regionsBlock
@@ -423,7 +424,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       in padRight 6 (wholeString ++ "." ++ fractional ++ "%")
 
     -- Record size distribution
-    sizes = sort (map regionSize allRegions)
+    sizes = sort (map (unLength . regionSize) allRegions)
     recordSizeLine = case sizes of
       []        -> []
       (uniform:_) | all (== uniform) sizes ->
@@ -497,7 +498,7 @@ ppfVersionString PPF.PPF4 = "PPF4 (Pyriel internal format)"
 makePPFRegion :: Int -> PPF.Record -> ExplainRegion
 makePPFRegion _ record = ExplainRegion
   { regionOffset     = PPF.recordOffset record
-  , regionSize       = ByteString.length (PPF.recordData record)
+  , regionSize       = Length (ByteString.length (PPF.recordData record))
   , regionLabel      = commandString
   , regionPayload    = PayloadWrite (PPF.recordData record)
   , regionAnnotation = AnnotAt AtOffset (PPF.recordOffset record) undoDetail
@@ -531,27 +532,27 @@ explainIPS patch = ExplainData
     totalBytes = sum (map ipsRecordSize (IPS.ipsRecords patch))
     truncNote = case IPS.ipsTruncate patch of
       Nothing         -> []
-      Just outputSize -> ["truncate to " ++ show outputSize ++ " bytes"]
+      Just outputSize -> ["truncate to " ++ show (unFileSize outputSize) ++ " bytes"]
 
 makeIPSRegion :: IPS.IPSRecord -> ExplainRegion
-makeIPSRegion (IPS.IPSRecord offset payload) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = ByteString.length payload
+makeIPSRegion (IPS.IPSRecord recordOffset recordPayload) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite payload
-  , regionAnnotation = AnnotAt AtOffset offset []
+  , regionPayload    = PayloadWrite recordPayload
+  , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
-makeIPSRegion (IPS.IPSRecordRLE offset count fillByte) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = count
+makeIPSRegion (IPS.IPSRecordRLE recordOffset fillCount fillByte) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = fillCount
   , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill fillByte count
-  , regionAnnotation = AnnotAt AtOffset offset [DetailRLE]
+  , regionPayload    = PayloadFill fillByte (unLength fillCount)
+  , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
   }
 
 ipsRecordSize :: IPS.IPSRecord -> Int
-ipsRecordSize (IPS.IPSRecord _ payload)      = ByteString.length payload
-ipsRecordSize (IPS.IPSRecordRLE _ count _)   = count
+ipsRecordSize (IPS.IPSRecord _ recordPayload) = ByteString.length recordPayload
+ipsRecordSize (IPS.IPSRecordRLE _ fillCount _) = unLength fillCount
 
 ----------------------------------------------------------------------------
 -- BPS
@@ -562,7 +563,7 @@ explainBPS patch = ExplainData
   { explainFormat   = "BPS"
   , explainHeader   = BPS.bpsMeta patch
   , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (BPS.bpsActions patch)))]
-  , explainSummary  = Summary actionCount "actions" (Just (fromIntegral (BPS.bpsTargetSize patch), BytesTotalOutput))
+  , explainSummary  = Summary actionCount "actions" (Just (fromIntegral (unFileSize (BPS.bpsTargetSize patch)), BytesTotalOutput))
   , explainNotes    = []
   }
   where
@@ -570,28 +571,31 @@ explainBPS patch = ExplainData
 
 makeBPSRegion :: (Int64, Int64) -> BPS.BPSAction -> ((Int64, Int64), ExplainRegion)
 makeBPSRegion (outputPosition, sourceRelative) action = case action of
-  BPS.SourceRead dataLength ->
-    ( (outputPosition + fromIntegral dataLength, sourceRelative)
-    , ExplainRegion outputPosition dataLength "SourceRead " (PayloadCopy FromSource)
-        (AnnotAt AtOutput outputPosition [DetailSource outputPosition])
-    )
+  BPS.SourceRead actionLength ->
+    let dataLength = unLength actionLength
+    in ( (outputPosition + fromIntegral dataLength, sourceRelative)
+       , ExplainRegion (Offset outputPosition) actionLength "SourceRead " (PayloadCopy FromSource)
+           (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset outputPosition)])
+       )
   BPS.TargetRead payload ->
     let dataLength = ByteString.length payload
     in ( (outputPosition + fromIntegral dataLength, sourceRelative)
-       , ExplainRegion outputPosition dataLength "TargetRead " (PayloadWrite payload)
-           (AnnotAt AtOutput outputPosition [])
+       , ExplainRegion (Offset outputPosition) (Length dataLength) "TargetRead " (PayloadWrite payload)
+           (AnnotAt AtOutput (Offset outputPosition) [])
        )
-  BPS.SourceCopy dataLength delta ->
-    let nextSourceRelative = sourceRelative + delta
+  BPS.SourceCopy actionLength actionDelta ->
+    let dataLength = unLength actionLength
+        nextSourceRelative = sourceRelative + unDelta actionDelta
     in ( (outputPosition + fromIntegral dataLength, nextSourceRelative + fromIntegral dataLength)
-       , ExplainRegion outputPosition dataLength "SourceCopy " (PayloadCopy FromSource)
-           (AnnotAt AtOutput outputPosition [DetailSource nextSourceRelative, DetailDelta delta])
+       , ExplainRegion (Offset outputPosition) actionLength "SourceCopy " (PayloadCopy FromSource)
+           (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset nextSourceRelative), DetailDelta actionDelta])
        )
-  BPS.TargetCopy dataLength delta ->
-    ( (outputPosition + fromIntegral dataLength, sourceRelative)
-    , ExplainRegion outputPosition dataLength "TargetCopy " (PayloadCopy FromTarget)
-        (AnnotAt AtOutput outputPosition [DetailDelta delta])
-    )
+  BPS.TargetCopy actionLength actionDelta ->
+    let dataLength = unLength actionLength
+    in ( (outputPosition + fromIntegral dataLength, sourceRelative)
+       , ExplainRegion (Offset outputPosition) actionLength "TargetCopy " (PayloadCopy FromTarget)
+           (AnnotAt AtOutput (Offset outputPosition) [DetailDelta actionDelta])
+       )
 
 ----------------------------------------------------------------------------
 -- UPS
@@ -601,20 +605,21 @@ explainUPS :: UPS.UPSPatch -> ExplainData
 explainUPS patch = ExplainData
   { explainFormat   = "UPS"
   , explainHeader   = UPS.upsMeta patch
-  , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion 0 (UPS.upsBlocks patch)))]
+  , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion (Offset 0) (UPS.upsBlocks patch)))]
   , explainSummary  = Summary blockCount "blocks" Nothing
   , explainNotes    = []
   }
   where
     blockCount = length (UPS.upsBlocks patch)
 
-makeUPSRegion :: Int64 -> UPS.UPSBlock -> (Int64, ExplainRegion)
-makeUPSRegion position (UPS.UPSBlock skip deltaBytes) =
-  let xorOffset = position + skip
+makeUPSRegion :: Offset -> UPS.UPSBlock -> (Offset, ExplainRegion)
+makeUPSRegion position (UPS.UPSBlock skipDelta deltaBytes) =
+  let xorOffset = Offset (unOffset position + unDelta skipDelta)
       dataLength = ByteString.length deltaBytes
-  in ( xorOffset + fromIntegral dataLength + 1  -- +1 for 0x00 terminator byte
-     , ExplainRegion xorOffset dataLength "XOR  " (PayloadXOR (Just deltaBytes))
-         (AnnotAt AtOffset xorOffset [DetailSkip skip])
+      nextPosition = Offset (unOffset xorOffset + fromIntegral dataLength + 1)  -- +1 for 0x00 terminator byte
+  in ( nextPosition
+     , ExplainRegion xorOffset (Length dataLength) "XOR  " (PayloadXOR (Just deltaBytes))
+         (AnnotAt AtOffset xorOffset [DetailSkip skipDelta])
      )
 
 ----------------------------------------------------------------------------
@@ -633,23 +638,23 @@ explainVCDIFF patch = ExplainData
   }
   where
     windows = VCDIFF.vcdiffWindows patch
-    totalTarget = sum (map VCDIFF.vcdiffTargetLength windows)
+    totalTarget = sum (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
     codeTable  = VCDIFF.vcdiffCodeTable patch
     nearSize = VCDIFF.vcdiffNearSize patch
     sameSize = VCDIFF.vcdiffSameSize patch
     decoded    = map (VCDIFF.decodeWindowInstructions codeTable nearSize sameSize) windows
     totalInstructions = sum (map length decoded)
-    globalOffsets = scanl (+) 0 (map VCDIFF.vcdiffTargetLength windows)
+    globalOffsets = map Offset (scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows))
     windowSections = [ makeVCDIFFSection index globalOffset window decodedInstructions
                      | (index, (globalOffset, window, decodedInstructions)) <- zip [1..] (zip3 globalOffsets windows decoded) ]
 
-makeVCDIFFSection :: Int -> Int64 -> VCDIFF.VCDIFFWindow -> [VCDIFF.VCDIFFDecodedInstruction]
+makeVCDIFFSection :: Int -> Offset -> VCDIFF.VCDIFFWindow -> [VCDIFF.VCDIFFDecodedInstruction]
                 -> [ExplainSection]
 makeVCDIFFSection index globalOffset window instructions =
   [ SectionLabeled ("window " ++ show index ++ ":")
-      ( [ ("target size", show (VCDIFF.vcdiffTargetLength window))
-        , ("source segment", show (VCDIFF.vcdiffSourceLength window) ++ " bytes at 0x"
-            ++ padHex 6 (VCDIFF.vcdiffSourcePosition window))
+      ( [ ("target size", show (unFileSize (VCDIFF.vcdiffTargetLength window)))
+        , ("source segment", show (unFileSize (VCDIFF.vcdiffSourceLength window)) ++ " bytes at 0x"
+            ++ padHex 6 (unOffset (VCDIFF.vcdiffSourcePosition window)))
         , ("add/run data", show (ByteString.length (VCDIFF.vcdiffAddRunData window)) ++ " bytes")
         , ("instructions", show (ByteString.length (VCDIFF.vcdiffInstructions window)) ++ " bytes")
         , ("addresses", show (ByteString.length (VCDIFF.vcdiffAddresses window)) ++ " bytes")
@@ -662,38 +667,38 @@ makeVCDIFFSection index globalOffset window instructions =
       Nothing      -> []
       Just adler   -> [("adler32", "0x" ++ padHex 8 (fromIntegral adler :: Int64))]
 
-decodedToRegion :: Int64 -> VCDIFF.VCDIFFDecodedInstruction -> ExplainRegion
+decodedToRegion :: Offset -> VCDIFF.VCDIFFDecodedInstruction -> ExplainRegion
 decodedToRegion globalOffset instruction = case instruction of
   VCDIFF.DecodedAdd windowOffset payload -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = ByteString.length payload
+    , regionSize       = Length (ByteString.length payload)
     , regionLabel      = "Add    "
     , regionPayload    = PayloadWrite payload
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
     }
   VCDIFF.DecodedRun windowOffset fillByte count -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = count
+    , regionSize       = Length count
     , regionLabel      = "Run  "
     , regionPayload    = PayloadFill fillByte count
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
     }
   VCDIFF.DecodedCopy windowOffset copySize (Just sourceOffset) -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = copySize
+    , regionSize       = Length copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource sourceOffset]
+    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource (Offset sourceOffset)]
     }
   VCDIFF.DecodedCopy windowOffset copySize Nothing -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = copySize
+    , regionSize       = Length copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromTarget
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
     }
   where
-    absoluteOffset windowOffset = globalOffset + windowOffset
+    absoluteOffset windowOffset = Offset (unOffset globalOffset + windowOffset)
 
 ----------------------------------------------------------------------------
 -- APS
@@ -718,28 +723,28 @@ explainAPSGBA patch@(APSGBA.APSGBAPatch _header records) = ExplainData
   }
 
 makeN64Region :: APSN64.APSN64Record -> ExplainRegion
-makeN64Region (APSN64.APSN64Normal offset payload) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = ByteString.length payload
+makeN64Region (APSN64.APSN64Normal recordOffset recordPayload) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite payload
-  , regionAnnotation = AnnotAt AtOffset offset []
+  , regionPayload    = PayloadWrite recordPayload
+  , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
-makeN64Region (APSN64.APSN64RLE offset fillByte count) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = fromIntegral count
+makeN64Region (APSN64.APSN64RLE recordOffset fillByte fillCount) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (fromIntegral fillCount)
   , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill fillByte (fromIntegral count)
-  , regionAnnotation = AnnotAt AtOffset offset [DetailRLE]
+  , regionPayload    = PayloadFill fillByte (fromIntegral fillCount)
+  , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
   }
 
 makeGBARegion :: APSGBA.APSGBARecord -> ExplainRegion
 makeGBARegion record = ExplainRegion
-  { regionOffset     = fromIntegral (APSGBA.apsGbaOffset record)
-  , regionSize       = 65536
+  { regionOffset     = Offset (fromIntegral (APSGBA.apsGbaOffset record))
+  , regionSize       = Length 65536
   , regionLabel      = "XOR block  "
   , regionPayload    = PayloadXOR (Just (APSGBA.apsGbaXorData record))
-  , regionAnnotation = AnnotAt AtOffset (fromIntegral (APSGBA.apsGbaOffset record))
+  , regionAnnotation = AnnotAt AtOffset (Offset (fromIntegral (APSGBA.apsGbaOffset record)))
       [DetailCRC16 (fromIntegral (APSGBA.apsGbaSourceCRC record)) (fromIntegral (APSGBA.apsGbaTargetCRC record))]
   }
 
@@ -759,12 +764,12 @@ explainRUP patch = ExplainData
     recordCount = length (RUP.rupRecords patch)
 
 makeRUPRegion :: RUP.RUPRecord -> ExplainRegion
-makeRUPRegion (RUP.RUPRecord offset deltaBytes) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = ByteString.length deltaBytes
+makeRUPRegion (RUP.RUPRecord recordOffset deltaBytes) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (ByteString.length deltaBytes)
   , regionLabel      = "XOR  "
   , regionPayload    = PayloadXOR (Just deltaBytes)
-  , regionAnnotation = AnnotAt AtOffset offset []
+  , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
 
 ----------------------------------------------------------------------------
@@ -775,25 +780,25 @@ explainGDIFF :: GDIFF.GDiffPatch -> ExplainData
 explainGDIFF patch = ExplainData
   { explainFormat   = "GDIFF (W3C)"
   , explainHeader   = GDIFF.gdiffMeta patch
-  , explainSections = [SectionRegions (snd (mapAccumL makeGDIFFRegion 0 (GDIFF.gdiffCommands patch)))]
+  , explainSections = [SectionRegions (snd (mapAccumL makeGDIFFRegion (Offset 0) (GDIFF.gdiffCommands patch)))]
   , explainSummary  = Summary commandCount "commands" Nothing
   , explainNotes    = []
   }
   where
     commandCount = length (GDIFF.gdiffCommands patch)
 
-makeGDIFFRegion :: Int64 -> GDIFF.GDiffCommand -> (Int64, ExplainRegion)
+makeGDIFFRegion :: Offset -> GDIFF.GDiffCommand -> (Offset, ExplainRegion)
 makeGDIFFRegion outputPosition command = case command of
   GDIFF.GDiffData payload ->
     let dataLength = ByteString.length payload
-    in ( outputPosition + fromIntegral dataLength
-       , ExplainRegion outputPosition dataLength "DATA  " (PayloadWrite payload)
+    in ( Offset (unOffset outputPosition + fromIntegral dataLength)
+       , ExplainRegion outputPosition (Length dataLength) "DATA  " (PayloadWrite payload)
            (AnnotAt AtOutput outputPosition [])
        )
-  GDIFF.GDiffCopy offset copyLength ->
-    ( outputPosition + copyLength
-    , ExplainRegion outputPosition (fromIntegral copyLength) "COPY  " (PayloadCopy FromSource)
-        (AnnotAt AtOutput outputPosition [DetailSource offset])
+  GDIFF.GDiffCopy sourceOffset copyLength ->
+    ( Offset (unOffset outputPosition + unFileSize copyLength)
+    , ExplainRegion outputPosition (Length (fromIntegral (unFileSize copyLength))) "COPY  " (PayloadCopy FromSource)
+        (AnnotAt AtOutput outputPosition [DetailSource sourceOffset])
     )
 
 ----------------------------------------------------------------------------
@@ -806,24 +811,24 @@ explainBSDiff patch = ExplainData
   , explainHeader   = BSDiff.bsdiffMeta patch
   , explainSections = if null (BSDiff.bsdiffControls patch)
                  then [SectionText "(control data not decoded)"]
-                 else [SectionRegions (snd (mapAccumL makeBSDiffRegion 0 (BSDiff.bsdiffControls patch)))]
+                 else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (BSDiff.bsdiffControls patch)))]
   , explainSummary  = if null (BSDiff.bsdiffControls patch)
                  then SummaryNone
                  else Summary (length (BSDiff.bsdiffControls patch)) "control tuples" Nothing
   , explainNotes    = []
   }
 
-makeBSDiffRegion :: Int64 -> BSDiff.BSDiffControl -> (Int64, ExplainRegion)
+makeBSDiffRegion :: Offset -> BSDiff.BSDiffControl -> (Offset, ExplainRegion)
 makeBSDiffRegion outputPosition control =
   let addLength = BSDiff.controlAdd control
       copyLength = BSDiff.controlCopy control
-  in ( outputPosition + addLength + copyLength
+  in ( Offset (unOffset outputPosition + addLength + copyLength)
      , ExplainRegion
        { regionOffset     = outputPosition
-       , regionSize       = fromIntegral (addLength + copyLength)
+       , regionSize       = Length (fromIntegral (addLength + copyLength))
        , regionLabel      = ""
        , regionPayload    = PayloadMeta []
-       , regionAnnotation = AnnotBSDiff addLength copyLength (BSDiff.controlSeek control)
+       , regionAnnotation = AnnotBSDiff (FileSize addLength) (FileSize copyLength) (BSDiff.controlSeek control)
        }
      )
 
@@ -838,7 +843,7 @@ explainXDelta1 patch = ExplainData
   , explainSections = map makeXDelta1SourceText (zip [0..] (XDelta1.xdelta1Sources patch))
       ++ [SectionText "", SectionText ("instructions: " ++ show instructionCount), SectionText ""]
       ++ [SectionRegions (map makeXDelta1Region (XDelta1.xdelta1Instructions patch))]
-  , explainSummary  = Summary instructionCount "instructions" (Just (fromIntegral (XDelta1.xdelta1TargetLength patch), BytesTotalOutput))
+  , explainSummary  = Summary instructionCount "instructions" (Just (fromIntegral (unFileSize (XDelta1.xdelta1TargetLength patch)), BytesTotalOutput))
   , explainNotes    = []
   }
   where
@@ -849,13 +854,13 @@ makeXDelta1SourceText (index, sourceEntry) = SectionText $
   "  [" ++ show index ++ "] " ++ ByteString8.unpack (XDelta1.xdelta1SourceName sourceEntry)
   ++ (if XDelta1.xdelta1SourceIsData sourceEntry then " (data)" else " (file)")
   ++ (if XDelta1.xdelta1SourceSequential sourceEntry then " seq" else "")
-  ++ "  " ++ show (XDelta1.xdelta1SourceLength sourceEntry) ++ " bytes"
+  ++ "  " ++ show (unFileSize (XDelta1.xdelta1SourceLength sourceEntry)) ++ " bytes"
   ++ "  MD5:" ++ concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack (XDelta1.xdelta1SourceMD5 sourceEntry))
 
 makeXDelta1Region :: XDelta1.XDelta1Instruction -> ExplainRegion
 makeXDelta1Region instruction = ExplainRegion
   { regionOffset     = XDelta1.xdelta1InstructionOffset instruction
-  , regionSize       = fromIntegral (XDelta1.xdelta1InstructionLength instruction)
+  , regionSize       = Length (fromIntegral (unFileSize (XDelta1.xdelta1InstructionLength instruction)))
   , regionLabel      = "Copy  "
   , regionPayload    = PayloadCopy FromSource
   , regionAnnotation = AnnotAt AtOffset (XDelta1.xdelta1InstructionOffset instruction)
@@ -881,7 +886,7 @@ explainPMSR patch = ExplainData
 makePMSRRegion :: PMSR.PMSRRecord -> ExplainRegion
 makePMSRRegion record = ExplainRegion
   { regionOffset     = PMSR.pmsrOffset record
-  , regionSize       = ByteString.length (PMSR.pmsrData record)
+  , regionSize       = Length (ByteString.length (PMSR.pmsrData record))
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (PMSR.pmsrData record)
   , regionAnnotation = AnnotAt AtOffset (PMSR.pmsrOffset record) []
@@ -910,17 +915,17 @@ makeDPSRegion :: DPS.DPSRecord -> ExplainRegion
 makeDPSRegion record = case DPS.dpsRecordPayload record of
   DPS.PayloadData payload -> ExplainRegion
     { regionOffset     = DPS.dpsRecordOutputOffset record
-    , regionSize       = ByteString.length payload
+    , regionSize       = Length (ByteString.length payload)
     , regionLabel      = "Data   "
     , regionPayload    = PayloadWrite payload
     , regionAnnotation = AnnotAt AtOffset (DPS.dpsRecordOutputOffset record) []
     }
   DPS.PayloadCopy sourceOffset copyLength -> ExplainRegion
     { regionOffset     = DPS.dpsRecordOutputOffset record
-    , regionSize       = fromIntegral copyLength
+    , regionSize       = Length (fromIntegral copyLength)
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOffset (DPS.dpsRecordOutputOffset record) [DetailSource sourceOffset]
+    , regionAnnotation = AnnotAt AtOffset (DPS.dpsRecordOutputOffset record) [DetailSource (Offset sourceOffset)]
     }
 
 ----------------------------------------------------------------------------
@@ -945,12 +950,12 @@ explainNINJA1 patch = ExplainData
     totalBytes = sum (map (ByteString.length . NINJA1.ninja1RecordData) (NINJA1.ninja1Records patch))
 
 makeNINJA1Region :: NINJA1.NINJA1Record -> ExplainRegion
-makeNINJA1Region (NINJA1.NINJA1Record offset payload) = ExplainRegion
-  { regionOffset     = offset
-  , regionSize       = ByteString.length payload
+makeNINJA1Region (NINJA1.NINJA1Record recordOffset recordPayload) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite payload
-  , regionAnnotation = AnnotAt AtOffset offset []
+  , regionPayload    = PayloadWrite recordPayload
+  , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
 
 ----------------------------------------------------------------------------
@@ -981,7 +986,7 @@ makePCHTXTBlock (index, block) =
 makePCHTXTEntry :: PCHTXT.PCHTXTEntry -> ExplainRegion
 makePCHTXTEntry entry = ExplainRegion
   { regionOffset     = PCHTXT.pchtxtOffset entry
-  , regionSize       = ByteString.length (PCHTXT.pchtxtData entry)
+  , regionSize       = Length (ByteString.length (PCHTXT.pchtxtData entry))
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (PCHTXT.pchtxtData entry)
   , regionAnnotation = AnnotNone
