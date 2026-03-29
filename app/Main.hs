@@ -5,7 +5,7 @@ module Main (main) where
 
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Explain (renderExplain, renderSummary)
@@ -198,7 +198,7 @@ undoParser = do
 
 createParser :: Parser Command
 createParser = do
-    createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value CreateBPS
+    createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
         <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
     raw <- rawFlag
     original <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
@@ -288,24 +288,24 @@ convertParser = do
 
 parseCreateFormat :: String -> Either String CreateFormat
 parseCreateFormat formatString = case map toLower formatString of
-  "bps"     -> Right CreateBPS
-  "ips"     -> Right CreateIPS
-  "ips32"   -> Right CreateIPS32
-  "ebp"     -> Right CreateEBP
-  "ups"     -> Right CreateUPS
-  "ppf3"    -> Right CreatePPF3
-  "ppf"     -> Right CreatePPF3
-  "pmsr"    -> Right CreatePMSR
-  "ninja1"  -> Right CreateNINJA1
-  "dps"     -> Right CreateDPS
-  "rup"     -> Right CreateRUP
-  "ninja2"  -> Right CreateRUP
-  "aps-n64" -> Right CreateAPSN64
-  "apsn64"  -> Right CreateAPSN64
-  "aps-gba" -> Right CreateAPSGBA
-  "apsgba"  -> Right CreateAPSGBA
-  "gdiff"   -> Right CreateGDIFF
-  "pchtxt"  -> Right CreatePCHTXT
+  "bps"     -> Right (CreateDiff CreateBPS)
+  "ips"     -> Right (CreateDirect CreateIPS)
+  "ips32"   -> Right (CreateDirect CreateIPS32)
+  "ebp"     -> Right (CreateDirect CreateEBP)
+  "ups"     -> Right (CreateDiff CreateUPS)
+  "ppf3"    -> Right (CreateDirect CreatePPF3)
+  "ppf"     -> Right (CreateDirect CreatePPF3)
+  "pmsr"    -> Right (CreateDirect CreatePMSR)
+  "ninja1"  -> Right (CreateDirect CreateNINJA1)
+  "dps"     -> Right (CreateDiff CreateDPS)
+  "rup"     -> Right (CreateDiff CreateRUP)
+  "ninja2"  -> Right (CreateDiff CreateRUP)
+  "aps-n64" -> Right (CreateDirect CreateAPSN64)
+  "apsn64"  -> Right (CreateDirect CreateAPSN64)
+  "aps-gba" -> Right (CreateDiff CreateAPSGBA)
+  "apsgba"  -> Right (CreateDiff CreateAPSGBA)
+  "gdiff"   -> Right (CreateDiff CreateGDIFF)
+  "pchtxt"  -> Right (CreateDirect CreatePCHTXT)
   _ -> Left ("unknown format: " ++ formatString ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
 
 parseRomType :: String -> Either String Word8
@@ -564,7 +564,7 @@ doConvert parsedCommand = do
             Nothing -> []
             Just metaBytes ->
               let metaSize = ByteString.length metaBytes
-              in if commandConvertTo parsedCommand == CreateBPS
+              in if commandConvertTo parsedCommand == CreateDiff CreateBPS
                  then ["note: source has " ++ show metaSize ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
                       | isNothing (metaBPSMetadata createMeta)]
                  else ["note: dropping BPS metadata (" ++ show metaSize ++ " bytes)"]

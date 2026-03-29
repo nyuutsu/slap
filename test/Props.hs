@@ -45,7 +45,7 @@ import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
-import Slap.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
+import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), CreateFormat(..), PatchField(..),
                       FormatSpecification(..), CreateMeta(..),
                       emptyContents, formatSpecification, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
@@ -220,7 +220,7 @@ prop_ups = forAll genPair $ \(source, target) ->
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateIPS source target defaultMeta of
+  case createFromMemory (CreateDirect CreateIPS) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -240,7 +240,7 @@ genEofPair = do
 
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
-  case createFromMemory CreateIPS source target defaultMeta of
+  case createFromMemory (CreateDirect CreateIPS) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -327,7 +327,7 @@ prop_apsGba = forAll genPair $ \(source, target) ->
 
 prop_ips32 :: Property
 prop_ips32 = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateIPS32 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -337,7 +337,7 @@ prop_ips32 = forAll genPair $ \(source, target) ->
 
 prop_ebp :: Property
 prop_ebp = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateEBP source target defaultMeta of
+  case createFromMemory (CreateDirect CreateEBP) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -348,7 +348,7 @@ prop_ebp = forAll genPair $ \(source, target) ->
 -- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePPF3 source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PPF.parsePatch patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -358,7 +358,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePMSR source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PMSR.parsePMSR patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -368,7 +368,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreateNINJA1 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -379,7 +379,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
-  case createFromMemory CreateNINJA1 source source defaultMeta of
+  case createFromMemory (CreateDirect CreateNINJA1) source source defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -417,7 +417,7 @@ prop_rupHashes = forAll genPair $ \(source, target) ->
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePCHTXT source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PCHTXT.parsePCHTXT patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -428,7 +428,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreateAPSN64 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case APSN64.parseAPSN64 patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -442,20 +442,20 @@ prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
 
 allCreateFormats :: [(String, CreateFormat)]
 allCreateFormats =
-  [ ("BPS",     CreateBPS)
-  , ("IPS",     CreateIPS)
-  , ("IPS32",   CreateIPS32)
-  , ("EBP",     CreateEBP)
-  , ("UPS",     CreateUPS)
-  , ("PPF3",    CreatePPF3)
-  , ("PMSR",    CreatePMSR)
-  , ("NINJA1",  CreateNINJA1)
-  , ("DPS",     CreateDPS)
-  , ("RUP",     CreateRUP)
-  , ("APS-N64", CreateAPSN64)
-  , ("APS-GBA", CreateAPSGBA)
-  , ("GDIFF",   CreateGDIFF)
-  , ("PCHTXT",  CreatePCHTXT)
+  [ ("BPS",     CreateDiff CreateBPS)
+  , ("IPS",     CreateDirect CreateIPS)
+  , ("IPS32",   CreateDirect CreateIPS32)
+  , ("EBP",     CreateDirect CreateEBP)
+  , ("UPS",     CreateDiff CreateUPS)
+  , ("PPF3",    CreateDirect CreatePPF3)
+  , ("PMSR",    CreateDirect CreatePMSR)
+  , ("NINJA1",  CreateDirect CreateNINJA1)
+  , ("DPS",     CreateDiff CreateDPS)
+  , ("RUP",     CreateDiff CreateRUP)
+  , ("APS-N64", CreateDirect CreateAPSN64)
+  , ("APS-GBA", CreateDiff CreateAPSGBA)
+  , ("GDIFF",   CreateDiff CreateGDIFF)
+  , ("PCHTXT",  CreateDirect CreatePCHTXT)
   ]
 
 -- | For any non-empty source, create(src, src) should be an identity patch.
@@ -496,7 +496,7 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
 -- truncate the file, so growth is irreversible.
 prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
-  case createFromMemory CreatePPF3 source target (defaultMeta { metaUndo = True }) of
+  case createFromMemory (CreateDirect CreatePPF3) source target (defaultMeta { metaUndo = True }) of
     Left _ -> discard
     Right patch -> case PPF.parsePatch patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -527,7 +527,7 @@ undoViaFile undoFunction target = do
 ----------------------------------------------------------------------------
 
 -- | Direct formats that go through buildContents -> encodeDirect.
-directFormats :: [CreateFormat]
+directFormats :: [DirectCreate]
 directFormats =
   [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3, CreateNINJA1, CreatePMSR, CreatePCHTXT, CreateAPSN64]
 
@@ -609,7 +609,7 @@ prop_ppf3ValidateRejectsEmpty =
 prop_ipsSentinelDirect :: Property
 prop_ipsSentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
-  in property $ case convertDirect patchContent CreateIPS defaultMeta of
+  in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
        Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
        Right _  -> False
 
@@ -617,7 +617,7 @@ prop_ipsSentinelDirect =
 prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
-  in property $ case convertDirect patchContent CreateIPS32 defaultMeta of
+  in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
        Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
        Right _  -> False
 
@@ -627,7 +627,7 @@ prop_ipsSentinelWithSource =
   let eofOffset = 0x454F46
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
-  in case createFromMemory CreateIPS source target defaultMeta of
+  in case createFromMemory (CreateDirect CreateIPS) source target defaultMeta of
        Left errorMessage -> counterexample ("create should succeed: " ++ errorMessage) $ property False
        Right patch -> case IPS.parseIPS patch of
          Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
@@ -694,19 +694,19 @@ prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateIPS source target defaultMeta of
+  case createFromMemory (CreateDirect CreateIPS) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
 prop_ips32Trunc = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateIPS32 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
 prop_ebpTrunc = forAll genPair $ \(source, target) ->
-  case createFromMemory CreateEBP source target defaultMeta of
+  case createFromMemory (CreateDirect CreateEBP) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
 
@@ -716,19 +716,19 @@ prop_upsTrunc = forAll genPair $ \(source, target) ->
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePPF3 source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated PPF.parsePatch patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePMSR source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated PMSR.parsePMSR patch
 
 prop_ninja1Trunc :: Property
 prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreateNINJA1 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated NINJA1.parseNINJA1 patch
 
@@ -742,7 +742,7 @@ prop_rupTrunc = forAll genPair $ \(source, target) ->
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreateAPSN64 source target defaultMeta of
+  case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated APSN64.parseAPSN64 patch
 
@@ -756,7 +756,7 @@ prop_gdiffTrunc = forAll genPair $ \(source, target) ->
 
 prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createFromMemory CreatePCHTXT source target defaultMeta of
+  case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta of
     Left _ -> discard
     Right patch -> truncated PCHTXT.parsePCHTXT patch
 

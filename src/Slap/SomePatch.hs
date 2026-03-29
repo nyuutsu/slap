@@ -11,7 +11,7 @@ module Slap.SomePatch
   , parseSome
   ) where
 
-import Slap.Types (PatchFormat(..))
+import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Format (padHex)
 import Slap.Convert (PatchContents(..), emptyContents)
@@ -223,38 +223,9 @@ parseSome patchBytes = case detectFormat patchBytes of
             , patchExplain = (patchExplain parsed)
                 { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
             }
-    -- DPS: no magic bytes, heuristic detection
-    | DPS.isDPS patchBytes -> case DPS.parseDPS patchBytes of
-        Left errorMessage -> Left errorMessage
-        Right patch  ->
-          let records = DPS.dpsRecords patch
-          in Right SomePatch
-            { patchFormat         = "DPS"
-            , patchInfo           = DPS.dpsInfo patch
-            , patchExplain        = DPS.explainDPS patch
-            , patchIsDifferential = True
-            , patchApply          = InMemory
-                { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
-            , patchVerification   = noVerification
-            , patchUndo           = Nothing
-            , patchVerboseLines   = numbered records $ \record -> case DPS.dpsRecordPayload record of
-                DPS.PayloadData payload ->
-                  "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
-                  ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
-                DPS.PayloadCopy sourceOffset dataLength ->
-                  "Copy " ++ show dataLength ++ " bytes from 0x"
-                  ++ padHex 8 sourceOffset ++ " to 0x"
-                  ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
-            , patchWarnings       = ["empty patch (0 records)" | null records]
-            , patchRecordCount    = length records
-            , patchRecordUnit     = "records"
-            , patchSourceNotes    = []
-            , patchContents  = Nothing
-            , patchMetadata       = Nothing
-            }
     | otherwise -> Left "unknown patch format"
 
-  Just FormatPPF -> case PPF.parsePatch patchBytes of
+  Just (PatchDirect FormatPPF) -> case PPF.parsePatch patchBytes of
     Left errorMessage -> Left errorMessage
     Right patch  ->
       let records = PPF.ppfRecords patch
@@ -305,7 +276,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             }
         }
 
-  Just FormatIPS -> do
+  Just (PatchDirect FormatIPS) -> do
     patch <- IPS.parseIPS patchBytes
     let records = IPS.ipsRecords patch
         expandIPS (IPS.IPSRecord recordOffset recordPayload) = Hunk recordOffset recordPayload
@@ -339,7 +310,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       }
 
-  Just FormatBPS -> do
+  Just (PatchDiff FormatBPS) -> do
     patch <- BPS.parseBPS patchBytes
     let actions = BPS.bpsActions patch
     Right SomePatch
@@ -364,7 +335,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatUPS -> do
+  Just (PatchDiff FormatUPS) -> do
     patch <- UPS.parseUPS patchBytes
     let blocks = UPS.upsBlocks patch
     Right SomePatch
@@ -390,7 +361,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatVCDIFF -> do
+  Just (PatchDiff FormatVCDIFF) -> do
     patch <- VCDIFF.parseVCDIFF patchBytes
     let windows = VCDIFF.vcdiffWindows patch
         windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
@@ -423,7 +394,7 @@ parseSome patchBytes = case detectFormat patchBytes of
   -- "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
   -- Disambiguate via GBA's fixed record structure (12 + N*65544 bytes,
   -- 64KB-aligned offsets).
-  Just FormatAPSN64
+  Just (PatchDirect FormatAPSN64)
     | apsGbaStructure patchBytes -> parseAPSGBABlock patchBytes
     | otherwise -> do
     patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
@@ -456,9 +427,9 @@ parseSome patchBytes = case detectFormat patchBytes of
             }
       }
 
-  Just FormatAPSGBA -> parseAPSGBABlock patchBytes
+  Just (PatchDiff FormatAPSGBA) -> parseAPSGBABlock patchBytes
 
-  Just FormatRUP -> do
+  Just (PatchDiff FormatRUP) -> do
     patch <- RUP.parseRUP patchBytes
     let filterZero (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
         filterZero other = other
@@ -483,7 +454,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatNINJA1 -> do
+  Just (PatchDirect FormatNINJA1) -> do
     patch <- NINJA1.parseNINJA1 patchBytes
     let records = NINJA1.ninja1Records patch
         warnings = concat
@@ -526,7 +497,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       }
 
-  Just FormatBSDiff -> do
+  Just (PatchDiff FormatBSDiff) -> do
     patch <- BSDiff.parseBSDiff patchBytes
     Right SomePatch
       { patchFormat         = "BSDiff"
@@ -546,7 +517,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatGDIFF -> do
+  Just (PatchDiff FormatGDIFF) -> do
     patch <- GDIFF.parseGDIFF patchBytes
     Right SomePatch
       { patchFormat         = "GDIFF"
@@ -566,7 +537,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatXDelta1 -> do
+  Just (PatchDiff FormatXDelta1) -> do
     patch <- XDelta1.parseXDelta1 patchBytes
     let fileSources = filter (not . XDelta1.xdelta1SourceIsData) (XDelta1.xdelta1Sources patch)
         xdeltaVerification = noVerification
@@ -593,7 +564,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchContents  = Nothing
       }
 
-  Just FormatPMSR -> do
+  Just (PatchDirect FormatPMSR) -> do
     patch <- PMSR.parsePMSR patchBytes
     let records = PMSR.pmsrRecords patch
     Right SomePatch
@@ -617,7 +588,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           (map (\record -> Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)) records))
       }
 
-  Just FormatPCHTXT -> do
+  Just (PatchDirect FormatPCHTXT) -> do
     patch <- PCHTXT.parsePCHTXT patchBytes
     let allBlocks = PCHTXT.pchtxtBlocks patch
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
@@ -648,9 +619,41 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       }
 
+  Just (PatchDiff FormatDPS) -> parseDPSBlock patchBytes
+
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
+
+parseDPSBlock :: ByteString.ByteString -> Either String SomePatch
+parseDPSBlock input = case DPS.parseDPS input of
+  Left errorMessage -> Left errorMessage
+  Right patch  ->
+    let records = DPS.dpsRecords patch
+    in Right SomePatch
+      { patchFormat         = "DPS"
+      , patchInfo           = DPS.dpsInfo patch
+      , patchExplain        = DPS.explainDPS patch
+      , patchIsDifferential = True
+      , patchApply          = InMemory
+          { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
+      , patchVerification   = noVerification
+      , patchUndo           = Nothing
+      , patchVerboseLines   = numbered records $ \record -> case DPS.dpsRecordPayload record of
+          DPS.PayloadData payload ->
+            "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
+            ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
+          DPS.PayloadCopy sourceOffset dataLength ->
+            "Copy " ++ show dataLength ++ " bytes from 0x"
+            ++ padHex 8 sourceOffset ++ " to 0x"
+            ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
+      , patchWarnings       = ["empty patch (0 records)" | null records]
+      , patchRecordCount    = length records
+      , patchRecordUnit     = "records"
+      , patchSourceNotes    = []
+      , patchContents  = Nothing
+      , patchMetadata       = Nothing
+      }
 
 parseAPSGBABlock :: ByteString.ByteString -> Either String SomePatch
 parseAPSGBABlock input = do

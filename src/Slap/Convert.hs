@@ -1,5 +1,7 @@
 module Slap.Convert
   ( PatchContents(..)
+  , DirectCreate(..)
+  , DiffCreate(..)
   , CreateFormat(..)
   , CreateMeta(..)
   , defaultMeta
@@ -104,9 +106,26 @@ data PatchContents = PatchContents
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
 
+-- | Direct creation target.  Some format families have multiple creation
+-- variants: IPS has three (IPS, IPS32, EBP) distinguished by offset width
+-- and metadata; PPF exposes only version 3.
+data DirectCreate
+  = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF3
+  | CreateNINJA1 | CreatePMSR | CreatePCHTXT | CreateAPSN64
+  deriving (Show, Eq)
+
+-- | Differential creation target.  Formats slap can parse but not yet
+-- create (VCDIFF, BSDiff, XDelta1) belong to DiffFormat (the format
+-- taxonomy) but not here (slap's current creation capability).
+data DiffCreate
+  = CreateBPS | CreateUPS | CreateDPS | CreateRUP
+  | CreateAPSGBA | CreateGDIFF
+  deriving (Show, Eq)
+
+-- | Target format for patch creation or conversion.
 data CreateFormat
-  = CreateBPS | CreateIPS | CreateIPS32 | CreateEBP | CreateUPS | CreatePPF3 | CreatePMSR
-  | CreateNINJA1 | CreateDPS | CreateRUP | CreateAPSN64 | CreateAPSGBA | CreateGDIFF | CreatePCHTXT
+  = CreateDirect DirectCreate
+  | CreateDiff DiffCreate
   deriving (Show, Eq)
 
 data CreateMeta = CreateMeta
@@ -185,7 +204,7 @@ provides contents = Set.fromList $ [FRecords]
 -- Format specs
 ----------------------------------------------------------------------------
 
-formatSpecification :: CreateFormat -> Bool -> Bool -> FormatSpecification
+formatSpecification :: DirectCreate -> Bool -> Bool -> FormatSpecification
 formatSpecification target includeUndo includeValidation = case target of
   CreateIPS     -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
   CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
@@ -197,8 +216,6 @@ formatSpecification target includeUndo includeValidation = case target of
   CreatePMSR    -> FormatSpecification (requiredFields []) (acceptedFields [])
   CreatePCHTXT  -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
   CreateAPSN64  -> FormatSpecification (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
-  -- Differential formats: specs unused (rejected before contract check)
-  _           -> FormatSpecification (requiredFields []) (acceptedFields [])
   where
     requiredFields extra = Set.fromList (FRecords : extra)
     acceptedFields = Set.fromList
@@ -214,10 +231,10 @@ canConvert contents spec =
       missing = need `Set.difference` have
   in if Set.null missing then Right () else Left missing
 
-formatMissing :: CreateFormat -> Set.Set PatchField -> String
+formatMissing :: DirectCreate -> Set.Set PatchField -> String
 formatMissing target missing = header ++ skipHint ++ withHint
   where
-    header = "cannot convert to " ++ formatName target ++ ": source lacks "
+    header = "cannot convert to " ++ directName target ++ ": source lacks "
           ++ intercalate ", " (map fieldName (Set.toList missing))
     skipHint
       | FUndoData `Set.member` missing, FValidation `Set.member` missing
@@ -253,7 +270,7 @@ fieldName FMetadata     = "metadata"
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> CreateFormat -> FormatSpecification -> CreateMeta -> [String]
+conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> CreateMeta -> [String]
 conversionNotes contents target spec meta =
   let have = provides contents
       kept = specificationRequired spec `Set.union` specificationAccepted spec
@@ -265,7 +282,7 @@ conversionNotes contents target spec meta =
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
 -- treats them as mutually exclusive.
-ebpTruncMetaNote :: PatchContents -> CreateFormat -> CreateMeta -> [String]
+ebpTruncMetaNote :: PatchContents -> DirectCreate -> CreateMeta -> [String]
 ebpTruncMetaNote contents CreateEBP meta
   | isJust (contentsTruncation contents), hasMeta
   = ["note: EBP truncation + metadata together; may not be compatible with RomPatcher.js"]
@@ -276,7 +293,7 @@ ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: CreateFormat -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [String]
+defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [String]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
   [ [ "note: assuming raw ROM type (use --rom-type to specify)"
     | target == CreateNINJA1
@@ -289,7 +306,8 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available.
 createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
-createDefaultNotes target meta = defaultAssumptionNotes target meta Nothing Nothing
+createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
+createDefaultNotes (CreateDiff _) _ = []
 
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote contents field = case field of
@@ -351,38 +369,30 @@ fieldNote contents field = case field of
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> CreateMeta
               -> Either String (ByteString.ByteString, [String])
-convertDirect contents target meta = case target of
-  -- Differential formats always need --with
-  CreateBPS    -> Left (diffOnlyMsg CreateBPS)
-  CreateUPS    -> Left (diffOnlyMsg CreateUPS)
-  CreateDPS    -> Left (diffOnlyMsg CreateDPS)
-  CreateRUP    -> Left (diffOnlyMsg CreateRUP)
-  CreateAPSGBA -> Left (diffOnlyMsg CreateAPSGBA)
-  CreateGDIFF  -> Left (diffOnlyMsg CreateGDIFF)
-  -- Direct targets: contract check → narrow (validates limits) → encode
-  _ -> do
-    let spec = formatSpecification target (metaUndo meta) (metaValidate meta)
-    case canConvert contents spec of
-      Left missing -> Left (formatMissing target missing)
-      Right () -> do
-        _ <- case encodingLimits target of
-               Just limits -> narrowHunks limits (contentsRecords contents)
-               Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
-        let notes = conversionNotes contents target spec meta
-        Right (encodeDirect contents ByteString.empty target meta, notes)
+convertDirect _ (CreateDiff target) _ = Left (diffOnlyMsg target)
+convertDirect contents (CreateDirect target) meta = do
+  let spec = formatSpecification target (metaUndo meta) (metaValidate meta)
+  case canConvert contents spec of
+    Left missing -> Left (formatMissing target missing)
+    Right () -> do
+      _ <- case encodingLimits target of
+             Just limits -> narrowHunks limits (contentsRecords contents)
+             Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
+      let notes = conversionNotes contents target spec meta
+      Right (encodeDirect contents ByteString.empty target meta, notes)
 
-diffOnlyMsg :: CreateFormat -> String
-diffOnlyMsg format = formatName format ++ " requires source+target diff data\nuse --with SOURCE"
+diffOnlyMsg :: DiffCreate -> String
+diffOnlyMsg format = diffName format ++ " requires source+target diff data\nuse --with SOURCE"
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
-encodingLimits :: CreateFormat -> Maybe EncodingLimits
+encodingLimits :: DirectCreate -> Maybe EncodingLimits
 encodingLimits CreateIPS   = Just ipsLimits
 encodingLimits CreateIPS32 = Just ips32Limits
 encodingLimits CreateEBP   = Just ebpLimits
 encodingLimits _           = Nothing
 
 -- | Encode PatchContents into the target format.
-encodeDirect :: PatchContents -> ByteString.ByteString -> CreateFormat -> CreateMeta -> ByteString.ByteString
+encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta -> ByteString.ByteString
 encodeDirect contents source target meta = case target of
   CreateIPS    -> IPS.encodeIPS source splitIPSRecords (contentsTruncation contents)
   CreateIPS32  -> IPS.encodeIPS32 source (narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))) (contentsTruncation contents)
@@ -409,8 +419,6 @@ encodeDirect contents source target meta = case target of
   CreateAPSN64 -> case contentsDestinationSize contents of
                   Just targetSize -> APSN64.encodeAPSN64 encodedRecords (fromIntegral (unFileSize targetSize)) apsDescription
                   Nothing -> error "unreachable: canConvert verified FDestinationSize"
-  -- Differential formats handled in convertDirect, never reach here
-  _          -> error "unreachable: differential format in encodeDirect"
   where
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
@@ -433,47 +441,33 @@ encodeDirect contents source target meta = case target of
 
 -- | Create a patch from source and target bytes.
 createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> CreateMeta -> Either String ByteString.ByteString
-createFromMemory format source target meta
-  | isDirect format =
-      let contents = buildContents format source target meta
-          -- Source bytes available: avoidSentinel handles sentinel collisions
-          -- at encode time, so only validate offset limits here.
-          offsetLimits = case encodingLimits format of
-            Just limits -> narrowHunks (limits { sentinelOffset = Nothing }) (contentsRecords contents)
-            Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
-      in offsetLimits >> Right (encodeDirect contents source format meta)
-  | otherwise = case format of
-      CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
-      CreateUPS    -> Right (UPS.createUPS source target)
-      CreateDPS    -> Right (DPS.createDPS source target
-                     (fromMaybe "" (metaTitle meta <|> metaDescription meta))
-                     (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
-                     (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
-      CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
-        where rupInfo = RUP.RUPInfo
-                { RUP.rupAuthor = fmap ByteString8.pack (metaAuthor meta), RUP.rupVersion = fmap ByteString8.pack (metaVersion meta)
-                , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = Nothing
-                , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
-                , RUP.rupWebsite = Nothing, RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
-                }
-      CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
-      CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
-      _          -> error "unreachable: all formats handled"
-
--- | Direct formats that go through PatchContents → encodeDirect.
-isDirect :: CreateFormat -> Bool
-isDirect CreateIPS    = True
-isDirect CreateIPS32  = True
-isDirect CreateEBP    = True
-isDirect CreatePPF3   = True
-isDirect CreateNINJA1 = True
-isDirect CreatePMSR   = True
-isDirect CreatePCHTXT = True
-isDirect CreateAPSN64 = True
-isDirect _          = False
+createFromMemory (CreateDirect format) source target meta =
+  let contents = buildContents format source target meta
+      -- Source bytes available: avoidSentinel handles sentinel collisions
+      -- at encode time, so only validate offset limits here.
+      offsetLimits = case encodingLimits format of
+        Just limits -> narrowHunks (limits { sentinelOffset = Nothing }) (contentsRecords contents)
+        Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
+  in offsetLimits >> Right (encodeDirect contents source format meta)
+createFromMemory (CreateDiff format) source target meta = case format of
+  CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
+  CreateUPS    -> Right (UPS.createUPS source target)
+  CreateDPS    -> Right (DPS.createDPS source target
+                   (fromMaybe "" (metaTitle meta <|> metaDescription meta))
+                   (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
+                   (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
+  CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
+    where rupInfo = RUP.RUPInfo
+            { RUP.rupAuthor = fmap ByteString8.pack (metaAuthor meta), RUP.rupVersion = fmap ByteString8.pack (metaVersion meta)
+            , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = Nothing
+            , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
+            , RUP.rupWebsite = Nothing, RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
+            }
+  CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
+  CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
 
 -- | Build PatchContents from source and target bytes for a direct format.
-buildContents :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
+buildContents :: DirectCreate -> ByteString.ByteString -> ByteString.ByteString
               -> CreateMeta -> PatchContents
 buildContents format source target meta = PatchContents
   { contentsRecords     = patchHunks
@@ -572,33 +566,45 @@ trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . rev
 ----------------------------------------------------------------------------
 
 formatExtension :: CreateFormat -> String
-formatExtension CreateBPS    = ".bps"
-formatExtension CreateIPS    = ".ips"
-formatExtension CreateIPS32  = ".ips"
-formatExtension CreateEBP    = ".ebp"
-formatExtension CreateUPS    = ".ups"
-formatExtension CreatePPF3   = ".ppf"
-formatExtension CreatePMSR   = ".pmsr"
-formatExtension CreateNINJA1 = ".rup"
-formatExtension CreateDPS    = ".dps"
-formatExtension CreateRUP    = ".rup"
-formatExtension CreateAPSN64 = ".aps"
-formatExtension CreateAPSGBA = ".aps"
-formatExtension CreateGDIFF  = ".gdiff"
-formatExtension CreatePCHTXT = ".pchtxt"
+formatExtension (CreateDirect format) = directExtension format
+formatExtension (CreateDiff format) = diffExtension format
 
 formatName :: CreateFormat -> String
-formatName CreateBPS    = "BPS"
-formatName CreateIPS    = "IPS"
-formatName CreateIPS32  = "IPS32"
-formatName CreateEBP    = "EBP"
-formatName CreateUPS    = "UPS"
-formatName CreatePPF3   = "PPF3"
-formatName CreatePMSR   = "PMSR"
-formatName CreateNINJA1 = "NINJA1"
-formatName CreateDPS    = "DPS"
-formatName CreateRUP    = "RUP"
-formatName CreateAPSN64 = "APS (N64)"
-formatName CreateAPSGBA = "APS (GBA)"
-formatName CreateGDIFF  = "GDIFF"
-formatName CreatePCHTXT = "PCHTXT"
+formatName (CreateDirect format) = directName format
+formatName (CreateDiff format) = diffName format
+
+directExtension :: DirectCreate -> String
+directExtension CreateIPS    = ".ips"
+directExtension CreateIPS32  = ".ips"
+directExtension CreateEBP    = ".ebp"
+directExtension CreatePPF3   = ".ppf"
+directExtension CreateNINJA1 = ".rup"
+directExtension CreatePMSR   = ".pmsr"
+directExtension CreatePCHTXT = ".pchtxt"
+directExtension CreateAPSN64 = ".aps"
+
+diffExtension :: DiffCreate -> String
+diffExtension CreateBPS    = ".bps"
+diffExtension CreateUPS    = ".ups"
+diffExtension CreateDPS    = ".dps"
+diffExtension CreateRUP    = ".rup"
+diffExtension CreateAPSGBA = ".aps"
+diffExtension CreateGDIFF  = ".gdiff"
+
+directName :: DirectCreate -> String
+directName CreateIPS    = "IPS"
+directName CreateIPS32  = "IPS32"
+directName CreateEBP    = "EBP"
+directName CreatePPF3   = "PPF3"
+directName CreateNINJA1 = "NINJA1"
+directName CreatePMSR   = "PMSR"
+directName CreatePCHTXT = "PCHTXT"
+directName CreateAPSN64 = "APS (N64)"
+
+diffName :: DiffCreate -> String
+diffName CreateBPS    = "BPS"
+diffName CreateUPS    = "UPS"
+diffName CreateDPS    = "DPS"
+diffName CreateRUP    = "RUP"
+diffName CreateAPSGBA = "APS (GBA)"
+diffName CreateGDIFF  = "GDIFF"

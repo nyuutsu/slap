@@ -2,7 +2,7 @@ module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
 import Slap.SomePatch (SomePatch(..), parseSome)
-import Slap.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
+import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Slap.BPS.Create as BPS
 
 import qualified Data.ByteString as ByteString
@@ -46,8 +46,8 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
     Right original -> do
       -- Self-convert: convert to same format
       let meta = case format of
-            CreatePPF3 -> defaultMeta { metaUndo = True, metaValidate = True }
-            _        -> defaultMeta
+            CreateDirect CreatePPF3 -> defaultMeta { metaUndo = True, metaValidate = True }
+            _                       -> defaultMeta
       convResult <- attemptConvert original format Nothing meta
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)

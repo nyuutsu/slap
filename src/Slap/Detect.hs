@@ -5,28 +5,30 @@ module Slap.Detect (detectFormat) where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Slap.Types (PatchFormat(..))
+import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
+import qualified Slap.DPS.Parse as DPS
 
 -- | Detect patch format from the first few bytes (magic).
 detectFormat :: ByteString -> Maybe PatchFormat
 detectFormat input
   | ByteString.length input < 4 = Nothing
-  | ByteString.take 3 magic4 == "PPF" = Just FormatPPF
-  | magic5 == "PATCH"         = Just FormatIPS
-  | magic5 == "IPS32"         = Just FormatIPS   -- IPS32
-  | magic4 == "BPS1"          = Just FormatBPS
-  | magic4 == "UPS1"          = Just FormatUPS
-  | ByteString.take 3 magic4 == "\xd6\xc3\xc4" = Just FormatVCDIFF
-  | magic5 == "APS10"         = Just FormatAPSN64
-  | magic4 == "APS1"          = Just FormatAPSGBA
-  | ByteString.length input >= 6 && ByteString.take 6 input == "NINJA2" = Just FormatRUP
-  | ByteString.length input >= 8 && ByteString.take 6 input == "NINJA1"  = Just FormatNINJA1
-  | ByteString.length input >= 8 && ByteString.take 8 input == "BSDIFF40" = Just FormatBSDiff
-  | magic4 == "\xd1\xff\xd1\xff" = Just FormatGDIFF
-  | ByteString.length input >= 8 && ByteString.take 4 input == "%XDZ" = Just FormatXDelta1
-  | ByteString.length input >= 7 && ByteString.take 7 input == "%XDELTA" = Just FormatXDelta1
-  | magic4 == "PMSR"          = Just FormatPMSR
-  | detectPCHTXT input        = Just FormatPCHTXT
+  | ByteString.take 3 magic4 == "PPF" = Just (PatchDirect FormatPPF)
+  | magic5 == "PATCH"         = Just (PatchDirect FormatIPS)
+  | magic5 == "IPS32"         = Just (PatchDirect FormatIPS)   -- IPS32
+  | magic4 == "BPS1"          = Just (PatchDiff FormatBPS)
+  | magic4 == "UPS1"          = Just (PatchDiff FormatUPS)
+  | ByteString.take 3 magic4 == "\xd6\xc3\xc4" = Just (PatchDiff FormatVCDIFF)
+  | magic5 == "APS10"         = Just (PatchDirect FormatAPSN64)
+  | magic4 == "APS1"          = Just (PatchDiff FormatAPSGBA)
+  | ByteString.length input >= 6 && ByteString.take 6 input == "NINJA2" = Just (PatchDiff FormatRUP)
+  | ByteString.length input >= 8 && ByteString.take 6 input == "NINJA1"  = Just (PatchDirect FormatNINJA1)
+  | ByteString.length input >= 8 && ByteString.take 8 input == "BSDIFF40" = Just (PatchDiff FormatBSDiff)
+  | magic4 == "\xd1\xff\xd1\xff" = Just (PatchDiff FormatGDIFF)
+  | ByteString.length input >= 8 && ByteString.take 4 input == "%XDZ" = Just (PatchDiff FormatXDelta1)
+  | ByteString.length input >= 7 && ByteString.take 7 input == "%XDELTA" = Just (PatchDiff FormatXDelta1)
+  | magic4 == "PMSR"          = Just (PatchDirect FormatPMSR)
+  | detectPCHTXT input        = Just (PatchDirect FormatPCHTXT)
+  | DPS.isDPS input           = Just (PatchDiff FormatDPS)
   | otherwise                 = Nothing
   where
     magic4 = ByteString.take 4 input

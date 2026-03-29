@@ -40,7 +40,7 @@ module Integration.Helpers
 import Slap.Binary (sha1)
 import Slap.Format (padHex)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
-import Slap.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, finally, IOException)
 import qualified Data.ByteString as ByteString
@@ -154,24 +154,24 @@ parseSuiteFile path = do
 -- | Parse a create format string (mirrors Main.hs parseCfmt).
 parseCreateFormat :: String -> Maybe CreateFormat
 parseCreateFormat formatString = case map toLower formatString of
-  "bps"     -> Just CreateBPS
-  "ips"     -> Just CreateIPS
-  "ips32"   -> Just CreateIPS32
-  "ebp"     -> Just CreateEBP
-  "ups"     -> Just CreateUPS
-  "ppf3"    -> Just CreatePPF3
-  "ppf"     -> Just CreatePPF3
-  "pmsr"    -> Just CreatePMSR
-  "ninja1"  -> Just CreateNINJA1
-  "dps"     -> Just CreateDPS
-  "rup"     -> Just CreateRUP
-  "ninja2"  -> Just CreateRUP
-  "aps-n64" -> Just CreateAPSN64
-  "apsn64"  -> Just CreateAPSN64
-  "aps-gba" -> Just CreateAPSGBA
-  "apsgba"  -> Just CreateAPSGBA
-  "gdiff"   -> Just CreateGDIFF
-  "pchtxt"  -> Just CreatePCHTXT
+  "bps"     -> Just (CreateDiff CreateBPS)
+  "ips"     -> Just (CreateDirect CreateIPS)
+  "ips32"   -> Just (CreateDirect CreateIPS32)
+  "ebp"     -> Just (CreateDirect CreateEBP)
+  "ups"     -> Just (CreateDiff CreateUPS)
+  "ppf3"    -> Just (CreateDirect CreatePPF3)
+  "ppf"     -> Just (CreateDirect CreatePPF3)
+  "pmsr"    -> Just (CreateDirect CreatePMSR)
+  "ninja1"  -> Just (CreateDirect CreateNINJA1)
+  "dps"     -> Just (CreateDiff CreateDPS)
+  "rup"     -> Just (CreateDiff CreateRUP)
+  "ninja2"  -> Just (CreateDiff CreateRUP)
+  "aps-n64" -> Just (CreateDirect CreateAPSN64)
+  "apsn64"  -> Just (CreateDirect CreateAPSN64)
+  "aps-gba" -> Just (CreateDiff CreateAPSGBA)
+  "apsgba"  -> Just (CreateDiff CreateAPSGBA)
+  "gdiff"   -> Just (CreateDiff CreateGDIFF)
+  "pchtxt"  -> Just (CreateDirect CreatePCHTXT)
   _         -> Nothing
 
 ----------------------------------------------------------------------------
