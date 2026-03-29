@@ -43,7 +43,6 @@ cliTests _romCache = do
         , if baseExists then undoErrorTests slap dm4yBase dm4yIps dm4yBps else []
         , if baseExists then compoundTests slap dm4yBase dm4yIps dm4yBps else []
         , if baseExists then createFlagTests slap dm4yBase dm4yBps else []
-        , if baseExists then aliasTests slap dm4yBase dm4yIps dm4yBps else []
         , if baseExists then archiveTests slap dm4yBase dm4yIps dm4yBps else []
         , if baseExists then ipsTruncateTests slap dm4yBase else []
         , customCodetableTests slap
@@ -254,24 +253,6 @@ createFlagTests slap base bps =
         _ <- runSlap slap ["create", "--format", "ppf3", "--undo", "--validate",
                            "-d", "test patch", base, target, patch]
         expectOk slap ["info", patch] "create/ppf3 undo" "undo"
-  ]
-
-aliasTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
-aliasTests slap base ips bps =
-  [ testCase "aliases/--yolo overwrites" $
-      withTempFile "slap-out" $ \out -> do
-        ByteString.writeFile out (ByteString.pack [0])
-        expectOk slap ["apply", ips, base, "-o", out, "--yolo"]
-          "aliases/--yolo overwrites" "applied"
-
-  , testCase "aliases/--yolo bypasses CRC" $
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        writeGarbage wrong (4096 * 1024)
-        removeIfExists out
-        expectOk slap ["apply", bps, wrong, "-o", out, "--yolo"]
-          "aliases/--yolo bypasses CRC" "applied"
-
   ]
 
 warningTests :: FilePath -> [TestTree]

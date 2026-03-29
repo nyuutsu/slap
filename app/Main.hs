@@ -1,3 +1,4 @@
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
@@ -129,14 +130,30 @@ explainParser = CommandExplain
   <*> rawFlag
 
 applyParser :: Parser Command
-applyParser = constructApplyCommand
-  <$> forceFlag <*> noVerifyFlag <*> yoloFlag
-  <*> verboseFlag <*> inPlaceFlag <*> backupFlag <*> dryRunFlag <*> rawFlag
-  <*> argument str (metavar "PATCH"  <> help "Patch file")
-  <*> argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
-  <*> outputOption
+applyParser = do
+    force <- forceFlag
+    noVerify <- noVerifyFlag
+    verbose <- verboseFlag
+    inPlace <- inPlaceFlag
+    backup <- backupFlag
+    dryRun <- dryRunFlag
+    raw <- rawFlag
+    patch <- argument str (metavar "PATCH" <> help "Patch file")
+    source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
+    output <- outputOption
+    pure CommandApply
+      { commandForce = force
+      , commandNoVerify = noVerify
+      , commandVerbose = verbose
+      , commandInPlace = inPlace
+      , commandBackup = backup
+      , commandDryRun = dryRun
+      , commandRaw = raw
+      , commandPatch = patch
+      , commandSource = source
+      , commandOutput = output
+      }
   where
-    constructApplyCommand force noVerify yolo = CommandApply (force || yolo) (noVerify || yolo)
     outputOption = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
                   <> help "Write patched output to FILE"))
             <|> optional (argument str (metavar "OUTPUT"))
@@ -146,9 +163,6 @@ forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output
 
 noVerifyFlag :: Parser Bool
 noVerifyFlag = switch (long "no-verify" <> help "Skip checksum validation (mismatches become warnings)")
-
-yoloFlag :: Parser Bool
-yoloFlag = switch (long "yolo" <> hidden)
 
 verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
@@ -167,72 +181,110 @@ rawFlag :: Parser Bool
 rawFlag = switch (long "raw" <> help "Treat files as raw bytes (skip archive unwrapping)")
 
 undoParser :: Parser Command
-undoParser = CommandUndo
-  <$> verboseFlag
-  <*> rawFlag
-  <*> argument str (metavar "PATCH"  <> help "Patch file")
-  <*> argument str (metavar "SOURCE" <> help "File to restore")
-  <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
-      <> help "Write restored output to FILE instead of modifying SOURCE in place"))
+undoParser = do
+    verbose <- verboseFlag
+    raw <- rawFlag
+    patch <- argument str (metavar "PATCH" <> help "Patch file")
+    source <- argument str (metavar "SOURCE" <> help "File to restore")
+    output <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
+        <> help "Write restored output to FILE instead of modifying SOURCE in place"))
+    pure CommandUndo
+      { commandVerbose = verbose
+      , commandRaw = raw
+      , commandPatch = patch
+      , commandSource = source
+      , commandOutput = output
+      }
 
 createParser :: Parser Command
-createParser = CommandCreate
-  <$> option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value CreateBPS
-      <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
-  <*> rawFlag
-  <*> argument str (metavar "ORIGINAL" <> help "Original unmodified file")
-  <*> argument str (metavar "MODIFIED" <> help "Modified file")
-  <*> argument str (metavar "OUTPUT"   <> help "Output patch file")
-  <*> optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
-  <*> optional (option str (long "title" <> metavar "TEXT"
-      <> help "Patch title (EBP/RUP)"))
-  <*> optional (option str (long "author" <> metavar "TEXT"
-      <> help "Patch author (EBP/DPS/RUP)"))
-  <*> switch (long "undo"     <> short 'u' <> help "Include undo data (PPF3 only)")
-  <*> switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
-  <*> optional (option str (long "version" <> metavar "TEXT"
-      <> help "Patch version (DPS/RUP)"))
-  <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
-  <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-      <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
-  <*> optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
-      <> help "Image type (PPF3): bin, gi"))
-  <*> optional (option str (long "metadata" <> metavar "FILE"
-      <> help "Metadata file to embed (BPS)"))
+createParser = do
+    createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value CreateBPS
+        <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+    raw <- rawFlag
+    original <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
+    modified <- argument str (metavar "MODIFIED" <> help "Modified file")
+    outputFile <- argument str (metavar "OUTPUT" <> help "Output patch file")
+    description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+        <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+    title <- optional (option str (long "title" <> metavar "TEXT"
+        <> help "Patch title (EBP/RUP)"))
+    author <- optional (option str (long "author" <> metavar "TEXT"
+        <> help "Patch author (EBP/DPS/RUP)"))
+    includeUndo <- switch (long "undo" <> short 'u' <> help "Include undo data (PPF3 only)")
+    includeValidation <- switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
+    version <- optional (option str (long "version" <> metavar "TEXT"
+        <> help "Patch version (DPS/RUP)"))
+    unstable <- switch (long "unstable" <> help "Mark patch unstable (DPS)")
+    romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
+        <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+    imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
+        <> help "Image type (PPF3): bin, gi"))
+    metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
+        <> help "Metadata file to embed (BPS)"))
+    pure CommandCreate
+      { commandCreateFormat = createFormat
+      , commandRaw = raw
+      , commandOriginal = original
+      , commandModified = modified
+      , commandCreateOutput = outputFile
+      , commandDescription = description
+      , commandTitle = title
+      , commandAuthor = author
+      , commandUndo = includeUndo
+      , commandValidate = includeValidation
+      , commandVersion = version
+      , commandUnstable = unstable
+      , commandRomType = romType
+      , commandImageType = imageType
+      , commandMetadata = metadataFile
+      }
 
 convertParser :: Parser Command
-convertParser = constructConvertCommand
-  <$> argument str (metavar "PATCH" <> help "Patch file to convert")
-  <*> option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
-      <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
-  <*> optional (option str (long "output" <> short 'o' <> metavar "FILE"
-      <> help "Output file (default: replace input extension)"))
-  <*> optional (option str (long "with" <> metavar "SOURCE"
-      <> help "Source ROM (required for differential formats)"))
-  <*> rawFlag
-  <*> optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-      <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
-  <*> optional (option str (long "title" <> metavar "TEXT"
-      <> help "Patch title (EBP/RUP)"))
-  <*> optional (option str (long "author" <> metavar "TEXT"
-      <> help "Patch author (EBP/DPS/RUP)"))
-  <*> flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
-  <*> flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
-  <*> noVerifyFlag <*> yoloFlag
-  <*> optional (option str (long "version" <> metavar "TEXT"
-      <> help "Patch version (DPS/RUP)"))
-  <*> switch (long "unstable" <> help "Mark patch unstable (DPS)")
-  <*> optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-      <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
-  <*> optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
-      <> help "Image type (PPF3): bin, gi"))
-  <*> optional (option str (long "metadata" <> metavar "FILE"
-      <> help "Metadata file to embed (BPS)"))
-  where
-    constructConvertCommand patch targetFormat output conversionSource raw description title author undo validate noVerify yolo version unstable romType imageType metadata =
-      CommandConvert patch targetFormat output conversionSource raw description title author undo validate
-        (noVerify || yolo) version unstable romType imageType metadata
+convertParser = do
+    patchFile <- argument str (metavar "PATCH" <> help "Patch file to convert")
+    targetFormat <- option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
+        <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+    outputFile <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
+        <> help "Output file (default: replace input extension)"))
+    conversionSource <- optional (option str (long "with" <> metavar "SOURCE"
+        <> help "Source ROM (required for differential formats)"))
+    raw <- rawFlag
+    description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+        <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+    title <- optional (option str (long "title" <> metavar "TEXT"
+        <> help "Patch title (EBP/RUP)"))
+    author <- optional (option str (long "author" <> metavar "TEXT"
+        <> help "Patch author (EBP/DPS/RUP)"))
+    includeUndo <- flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
+    includeValidation <- flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
+    noVerify <- noVerifyFlag
+    version <- optional (option str (long "version" <> metavar "TEXT"
+        <> help "Patch version (DPS/RUP)"))
+    unstable <- switch (long "unstable" <> help "Mark patch unstable (DPS)")
+    romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
+        <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+    imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
+        <> help "Image type (PPF3): bin, gi"))
+    metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
+        <> help "Metadata file to embed (BPS)"))
+    pure CommandConvert
+      { commandConvertPatch = patchFile
+      , commandConvertTo = targetFormat
+      , commandConvertOutput = outputFile
+      , commandConvertSource = conversionSource
+      , commandRaw = raw
+      , commandConvertDescription = description
+      , commandConvertTitle = title
+      , commandConvertAuthor = author
+      , commandConvertUndo = includeUndo
+      , commandConvertValidate = includeValidation
+      , commandNoVerify = noVerify
+      , commandConvertVersion = version
+      , commandConvertUnstable = unstable
+      , commandConvertRomType = romType
+      , commandConvertImageType = imageType
+      , commandConvertMetadata = metadataFile
+      }
 
 parseCreateFormat :: String -> Either String CreateFormat
 parseCreateFormat formatString = case map toLower formatString of
@@ -286,10 +338,14 @@ parseImageType typeString = case map toLower typeString of
   _ -> Left ("unknown image type: " ++ typeString ++ "\n  expected: bin, gi")
 
 patchInfoParser :: Parser Command
-patchInfoParser = CommandInfo
-  <$> argument str (metavar "PATCH" <> help "Patch file to inspect")
-  <*> optional (option str (long "extract-metadata" <> metavar "FILE"
-      <> help "Write embedded metadata to FILE (BPS)"))
+patchInfoParser = do
+    patchFile <- argument str (metavar "PATCH" <> help "Patch file to inspect")
+    extractMetadataPath <- optional (option str (long "extract-metadata" <> metavar "FILE"
+        <> help "Write embedded metadata to FILE (BPS)"))
+    pure CommandInfo
+      { commandPatch = patchFile
+      , commandExtractMetadata = extractMetadataPath
+      }
 
 ----------------------------------------------------------------------------
 -- Archive-aware file reading
