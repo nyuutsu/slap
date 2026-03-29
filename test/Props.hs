@@ -138,6 +138,8 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "ppf3-validate-rejects-empty" prop_ppf3ValidateRejectsEmpty
       , testProperty "ips-sentinel-collision-direct" prop_ipsSentinelDirect
       , testProperty "ips32-sentinel-collision-direct" prop_ips32SentinelDirect
+      , testProperty "ips-sentinel-split-direct" prop_ipsSentinelSplitDirect
+      , testProperty "ips32-sentinel-split-direct" prop_ips32SentinelSplitDirect
       , testProperty "ips-sentinel-with-source" prop_ipsSentinelWithSource
       ]
   ]
@@ -617,6 +619,28 @@ prop_ipsSentinelDirect =
 prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
+  in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
+       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Right _  -> False
+
+-- | A hunk that doesn't start at the sentinel but produces a split fragment
+-- at the sentinel offset must be rejected.  Splitting at 0xFFFF turns a hunk
+-- at 0x444F47 into chunks at 0x444F47 and 0x454F46 (the EOF sentinel).
+prop_ipsSentinelSplitDirect :: Property
+prop_ipsSentinelSplitDirect =
+  let startOffset = 0x454F46 - 0xFFFF  -- 0x444F47: split fragment lands on sentinel
+      payload = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces split
+      patchContent = emptyContents [Hunk (Offset startOffset) payload]
+  in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
+       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Right _  -> False
+
+-- | Same as above for IPS32: split fragment at EEOF sentinel 0x45454F46.
+prop_ips32SentinelSplitDirect :: Property
+prop_ips32SentinelSplitDirect =
+  let startOffset = 0x45454F46 - 0xFFFF
+      payload = ByteString.replicate 0x10000 0xFF
+      patchContent = emptyContents [Hunk (Offset startOffset) payload]
   in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
        Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
        Right _  -> False

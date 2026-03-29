@@ -375,11 +375,11 @@ convertDirect contents (CreateDirect target) meta = do
   case canConvert contents spec of
     Left missing -> Left (formatMissing target missing)
     Right () -> do
-      _ <- case encodingLimits target of
-             Just limits -> narrowHunks limits (contentsRecords contents)
-             Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
+      -- Full limits including sentinel: convertDirect has no source bytes,
+      -- so avoidSentinel can't fix collisions at encode time.
       let notes = conversionNotes contents target spec meta
-      Right (encodeDirect contents ByteString.empty target meta, notes)
+      result <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
+      Right (result, notes)
 
 diffOnlyMsg :: DiffCreate -> String
 diffOnlyMsg format = diffName format ++ " requires source+target diff data\nuse --with SOURCE"
@@ -392,39 +392,60 @@ encodingLimits CreateEBP   = Just ebpLimits
 encodingLimits _           = Nothing
 
 -- | Encode PatchContents into the target format.
-encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta -> ByteString.ByteString
-encodeDirect contents source target meta = case target of
-  CreateIPS    -> IPS.encodeIPS source splitIPSRecords (contentsTruncation contents)
-  CreateIPS32  -> IPS.encodeIPS32 source (narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))) (contentsTruncation contents)
-  CreateEBP    -> let passthrough = if isNothing cliDescription && isNothing cliTitle && isNothing cliAuthor
-                                  then contentsEBPMeta contents else Nothing
-                 in case passthrough of
-                      Just raw -> IPS.encodeEBPRaw source splitIPSRecords (contentsTruncation contents) raw
-                      Nothing  -> IPS.encodeEBP source splitIPSRecords (contentsTruncation contents)
-                                    ebpTitle ebpAuthor description
-  CreatePPF3   -> let base = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
-                              (contentsUndoData contents) (contentsValidation contents) imageType
-                 in case contentsFileIdDiz contents of
-                      Nothing  -> base
-                      Just diz -> base <> PPF.encodeFileIdDiz diz
-  CreateNINJA1 -> case (contentsSourceCRC32 contents, contentsSourceMD5 contents, contentsSourceSHA1 contents) of
-                   (Just crc, Just md5Hash, Just sha1Hash) ->
-                     NINJA1.encodeNINJA1 encodedRecords crc md5Hash sha1Hash romType
-                       (fromMaybe False (contentsNINJA1Compressed contents))
-                   _ -> error "unreachable: canConvert verified"
-  CreatePMSR   -> PMSR.encodePMSR encodedRecords
+-- Validation (offset range, sentinel collision) runs after format-specific
+-- splitting, so split-induced sentinel collisions are caught.
+encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta
+             -> Maybe EncodingLimits -> Either String ByteString.ByteString
+encodeDirect contents source target meta limits = case target of
+  CreateIPS -> do
+    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    Right (IPS.encodeIPS source records (contentsTruncation contents))
+  CreateIPS32 -> do
+    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    Right (IPS.encodeIPS32 source records (contentsTruncation contents))
+  CreateEBP -> do
+    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    let passthrough = if isNothing cliDescription && isNothing cliTitle && isNothing cliAuthor
+                        then contentsEBPMeta contents else Nothing
+    Right $ case passthrough of
+      Just raw -> IPS.encodeEBPRaw source records (contentsTruncation contents) raw
+      Nothing  -> IPS.encodeEBP source records (contentsTruncation contents)
+                    ebpTitle ebpAuthor description
+  CreatePPF3 ->
+    -- PPF3 has no encoding limits and takes [Hunk] directly.
+    let base = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
+                  (contentsUndoData contents) (contentsValidation contents) imageType
+    in Right $ case contentsFileIdDiz contents of
+         Nothing  -> base
+         Just diz -> base <> PPF.encodeFileIdDiz diz
+  CreateNINJA1 -> do
+    records <- narrow (contentsRecords contents)
+    case (contentsSourceCRC32 contents, contentsSourceMD5 contents, contentsSourceSHA1 contents) of
+      (Just crc, Just md5Hash, Just sha1Hash) ->
+        Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
+                 (fromMaybe False (contentsNINJA1Compressed contents)))
+      _ -> error "unreachable: canConvert verified"
+  CreatePMSR -> do
+    records <- narrow (contentsRecords contents)
+    Right (PMSR.encodePMSR records)
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
-                   Just blocks -> PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription
-                   Nothing     -> PCHTXT.encodePCHTXT encodedRecords pchtxtDescription
-  CreateAPSN64 -> case contentsDestinationSize contents of
-                  Just targetSize -> APSN64.encodeAPSN64 encodedRecords (fromIntegral (unFileSize targetSize)) apsDescription
-                  Nothing -> error "unreachable: canConvert verified FDestinationSize"
+    Just blocks -> Right (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription)
+    Nothing -> do
+      records <- narrow (contentsRecords contents)
+      Right (PCHTXT.encodePCHTXT records pchtxtDescription)
+  CreateAPSN64 -> do
+    records <- narrow (contentsRecords contents)
+    case contentsDestinationSize contents of
+      Just targetSize -> Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
+      Nothing -> error "unreachable: canConvert verified FDestinationSize"
   where
+    narrow :: [Hunk] -> Either String [EncodedHunk]
+    narrow = case limits of
+      Nothing  -> Right . narrowHunksUnbounded
+      Just lim -> narrowHunks lim
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
-    encodedRecords   = narrowHunksUnbounded (contentsRecords contents)
-    splitIPSRecords  = narrowHunksUnbounded (splitHunks 0xFFFF (contentsRecords contents))
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
     pchtxtDescription = fmap ByteString8.pack cliDescription <|> contentsDescription contents
@@ -444,11 +465,9 @@ createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteStri
 createFromMemory (CreateDirect format) source target meta =
   let contents = buildContents format source target meta
       -- Source bytes available: avoidSentinel handles sentinel collisions
-      -- at encode time, so only validate offset limits here.
-      offsetLimits = case encodingLimits format of
-        Just limits -> narrowHunks (limits { sentinelOffset = Nothing }) (contentsRecords contents)
-        Nothing     -> Right (narrowHunksUnbounded (contentsRecords contents))
-  in offsetLimits >> Right (encodeDirect contents source format meta)
+      -- at encode time, so only validate offset ranges here (sentinel stripped).
+      strippedLimits = fmap (\lim -> lim { sentinelOffset = Nothing }) (encodingLimits format)
+  in encodeDirect contents source format meta strippedLimits
 createFromMemory (CreateDiff format) source target meta = case format of
   CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
   CreateUPS    -> Right (UPS.createUPS source target)
