@@ -83,6 +83,13 @@ data AnnotDetail
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
   | DetailCRC16 Int64 Int64     -- "(src CRC16 0xN, tgt CRC16 0xN)"
 
+-- | Byte offset range for a non-empty set of regions.
+-- 'rangeStart' is the first modified byte; 'rangeEnd' is one past the last.
+data OffsetRange = OffsetRange
+  { rangeStart :: !Int64
+  , rangeEnd   :: !Int64
+  }
+
 ----------------------------------------------------------------------------
 -- Renderer
 ----------------------------------------------------------------------------
@@ -278,15 +285,19 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       | otherwise = ["modified:    " ++ commaNum totalModified
                      ++ " bytes" ++ breakdownString]
 
-    -- Offset range
-    offsets = map (unOffset . regionOffset) allRegions
-    lowestOffset = minimum offsets
-    highestEnd = maximum [ unOffset (regionOffset region) + fromIntegral (unLength (regionSize region))
-                     | region <- allRegions ]
-    rangeLine
-      | totalRecords == 0 = ["range:       (empty patch)"]
-      | otherwise = ["range:       0x" ++ padHex 6 lowestOffset
-                     ++ " \8211 0x" ++ padHex 6 (highestEnd - 1)]
+    -- Offset range (Nothing for empty patches — no partial minimum/maximum)
+    offsetRange :: Maybe OffsetRange
+    offsetRange
+      | null allRegions = Nothing
+      | otherwise = Just OffsetRange
+          { rangeStart = minimum (map (unOffset . regionOffset) allRegions)
+          , rangeEnd   = maximum [ unOffset (regionOffset region) + fromIntegral (unLength (regionSize region))
+                                 | region <- allRegions ]
+          }
+    rangeLine = case offsetRange of
+      Nothing    -> ["range:       (empty patch)"]
+      Just range -> ["range:       0x" ++ padHex 6 (rangeStart range)
+                     ++ " \8211 0x" ++ padHex 6 (rangeEnd range - 1)]
 
     -- Size change from header
     sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
@@ -318,19 +329,31 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     -- Bucket-based analysis
     bucketCount = 56 :: Int  -- terminal sparkline width
 
-    rangeSize = max 1 (highestEnd - lowestOffset)
-    bucketSize = max 1 (rangeSize `div` fromIntegral bucketCount)
+    bucketWidth :: OffsetRange -> Int64
+    bucketWidth range = max 1 (max 1 (rangeEnd range - rangeStart range) `div` fromIntegral bucketCount)
 
-    toBucket region =
-      let startBucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
-          endBucket   = fromIntegral (((unOffset (regionOffset region) + fromIntegral (unLength (regionSize region)) - 1) - lowestOffset) `div` bucketSize)
+    toBucket :: OffsetRange -> ExplainRegion -> [(Int, Int)]
+    toBucket range region =
+      let width = bucketWidth range
+          startBucket = fromIntegral ((unOffset (regionOffset region) - rangeStart range) `div` width)
+          endBucket   = fromIntegral (((unOffset (regionOffset region) + fromIntegral (unLength (regionSize region)) - 1) - rangeStart range) `div` width)
       in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
-    bucketSums :: [Int]
-    bucketSums
-      | totalRecords == 0 = []
-      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
-                             (concatMap toBucket allRegions))
+    -- Bucket arrays: sums (for sparkline/run detection), counts, bytes.
+    -- All three are empty when offsetRange is Nothing; computed together otherwise.
+    (bucketSums, bucketCounts, bucketBytes) = case offsetRange of
+      Nothing -> ([], [], [])
+      Just range ->
+        let width = bucketWidth range
+            regionBucket region = fromIntegral ((unOffset (regionOffset region) - rangeStart range) `div` width)
+            sums   = elems (accumArray (+) 0 (0, bucketCount - 1) (concatMap (toBucket range) allRegions))
+            counts = elems (accumArray (+) 0 (0, bucketCount - 1)
+                      [ (bucket, 1 :: Int) | region <- allRegions
+                      , let bucket = regionBucket region, bucket >= 0, bucket < bucketCount ])
+            bytes  = elems (accumArray (+) 0 (0, bucketCount - 1)
+                      [ (bucket, unLength (regionSize region)) | region <- allRegions
+                      , let bucket = regionBucket region, bucket >= 0, bucket < bucketCount ])
+        in (sums, counts, bytes)
 
     -- Contiguous runs of non-empty buckets, as (startIdx, endIdx) pairs
     findRuns :: [Int] -> [(Int, Int)]
@@ -346,29 +369,14 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
           | sums !! position > 0 = scanRuns (position+1) (Just runStart) accumulated
           | otherwise            = scanRuns (position+1) Nothing ((runStart, position-1) : accumulated)
 
-    -- Per-bucket record counts and byte sums, computed in one pass each
-    bucketCounts :: [Int]
-    bucketCounts
-      | totalRecords == 0 = []
-      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
-                     [ (bucket, 1 :: Int) | region <- allRegions
-                     , let bucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
-                     , bucket >= 0, bucket < bucketCount ])
-    bucketBytes :: [Int]
-    bucketBytes
-      | totalRecords == 0 = []
-      | otherwise = elems (accumArray (+) 0 (0, bucketCount - 1)
-                     [ (bucket, unLength (regionSize region)) | region <- allRegions
-                     , let bucket = fromIntegral ((unOffset (regionOffset region) - lowestOffset) `div` bucketSize)
-                     , bucket >= 0, bucket < bucketCount ])
-
-    regionsBlock
-      | totalRecords == 0 = []
-      | otherwise =
-          let runs = findRuns bucketSums
+    regionsBlock = case offsetRange of
+      Nothing -> []
+      Just range ->
+          let width = bucketWidth range
+              runs = findRuns bucketSums
               formatRun (runStart, runEnd) =
-                let startOffset = lowestOffset + fromIntegral runStart * bucketSize
-                    endOffset = lowestOffset + fromIntegral (runEnd + 1) * bucketSize - 1
+                let startOffset = rangeStart range + fromIntegral runStart * width
+                    endOffset = rangeStart range + fromIntegral (runEnd + 1) * width - 1
                     recordsInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketCounts))
                     bytesInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketBytes))
                     percentage = if totalModified > 0
@@ -405,12 +413,12 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
               ++ ", mean " ++ commaNum meanSize ++ ")"]
 
     -- Sparkline
-    sparkline
-      | totalRecords == 0 = []
-      | otherwise =
+    sparkline = case offsetRange of
+      Nothing -> []
+      Just range ->
           let chars = map (\entry -> if entry > 0 then '#' else '.') bucketSums
-              leftLabel = "0x" ++ padHex 6 lowestOffset
-              rightLabel = "0x" ++ padHex 6 (highestEnd - 1)
+              leftLabel = "0x" ++ padHex 6 (rangeStart range)
+              rightLabel = "0x" ++ padHex 6 (rangeEnd range - 1)
               barLine = "[" ++ chars ++ "]"
               -- right-align rightLabel to closing bracket
               gap = max 1 (length barLine - length leftLabel - length rightLabel)
