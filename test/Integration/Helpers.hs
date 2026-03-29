@@ -37,10 +37,10 @@ module Integration.Helpers
   , withTempDir
   ) where
 
-import Patch.Binary (sha1)
-import Patch.Format (padHex)
-import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
-import Patch.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
+import Slap.Binary (sha1)
+import Slap.Format (padHex)
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
+import Slap.Convert (CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, finally, IOException)
 import qualified Data.ByteString as ByteString

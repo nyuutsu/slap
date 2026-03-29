@@ -3,8 +3,8 @@ module Integration.Create (createTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    RomCache, cachedReadFile)
-import Patch.Convert (CreateFormat, defaultMeta, createFromMemory)
-import Patch.SomePatch (parseSome)
+import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
+import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Map.Strict as Map

@@ -1,29 +1,51 @@
 module Main (main) where
 
-import qualified Patch.BPS as BPS
-import qualified Patch.IPS as IPS
-import Patch.IPS (avoidSentinel, optimalIPSRecords)
-import qualified Patch.UPS as UPS
-import qualified Patch.PMSR as PMSR
-import qualified Patch.NINJA1 as NINJA1
-import qualified Patch.DPS as DPS
-import qualified Patch.RUP as RUP
-import qualified Patch.APS.N64 as APSN64
-import qualified Patch.APS.GBA as APSGBA
-import qualified Patch.GDIFF as GDIFF
-import qualified Patch.PPF.Parse as PPF
-import qualified Patch.PPF.Apply as PPF
-import qualified Patch.VCDIFF as VCDIFF
-import qualified Patch.BSDiff as BSDiff
-import qualified Patch.XDelta1 as XDelta1
-import qualified Patch.PCHTXT as PCHTXT
+import qualified Slap.BPS.Apply as BPS
+import qualified Slap.BPS.Create as BPS
+import qualified Slap.BPS.Parse as BPS
+import qualified Slap.BPS.Types as BPS
+import qualified Slap.IPS.Apply as IPS
+import qualified Slap.IPS.Parse as IPS
+import Slap.IPS.Create (avoidSentinel, optimalIPSRecords)
+import qualified Slap.UPS.Apply as UPS
+import qualified Slap.UPS.Create as UPS
+import qualified Slap.UPS.Parse as UPS
+import qualified Slap.PMSR.Parse as PMSR
+import qualified Slap.PMSR.Apply as PMSR
+import qualified Slap.NINJA1.Types as NINJA1
+import qualified Slap.NINJA1.Parse as NINJA1
+import qualified Slap.NINJA1.Apply as NINJA1
+import qualified Slap.DPS.Types as DPS
+import qualified Slap.DPS.Parse as DPS
+import qualified Slap.DPS.Apply as DPS
+import qualified Slap.DPS.Create as DPS
+import qualified Slap.RUP.Types as RUP
+import qualified Slap.RUP.Parse as RUP
+import qualified Slap.RUP.Apply as RUP
+import qualified Slap.RUP.Create as RUP
+import qualified Slap.APSN64.Parse as APSN64
+import qualified Slap.APSN64.Apply as APSN64
+import qualified Slap.APSGBA.Parse as APSGBA
+import qualified Slap.APSGBA.Apply as APSGBA
+import qualified Slap.APSGBA.Create as APSGBA
+import qualified Slap.GDIFF.Parse as GDIFF
+import qualified Slap.GDIFF.Apply as GDIFF
+import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.PPF.Parse as PPF
+import qualified Slap.PPF.Apply as PPF
+import qualified Slap.VCDIFF.Parse as VCDIFF
+import qualified Slap.BSDiff.Parse as BSDiff
+import qualified Slap.XDelta1.Parse as XDelta1
+import qualified Slap.PCHTXT.Types as PCHTXT
+import qualified Slap.PCHTXT.Parse as PCHTXT
+import qualified Slap.PCHTXT.Apply as PCHTXT
 
-import Patch.Binary (md5, sha1, diffHunks)
-import Patch.Measure (Offset(..), FileSize(..),
+import Slap.Binary (md5, sha1, diffHunks)
+import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
-import Patch.FFI (rustyCRC32)
-import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
-import Patch.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
+import Slap.FFI (rustyCRC32)
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
+import Slap.Convert (PatchContents(..), CreateFormat(..), PatchField(..),
                       FormatSpecification(..), CreateMeta(..),
                       emptyContents, formatSpecification, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
@@ -244,7 +266,7 @@ prop_avoidSentinel = property $
         === [EncodedHunk 0 (ByteString.pack [0xFF])]
     ]
 
--- | Split hunks at maxSize boundaries (same logic as Patch.Convert.splitHunks).
+-- | Split hunks at maxSize boundaries (same logic as Slap.Convert.splitHunks).
 splitMax :: Int -> [Hunk] -> [EncodedHunk]
 splitMax maxRecordSize = concatMap splitRecord . map hunkToEncoded
   where

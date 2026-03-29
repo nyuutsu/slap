@@ -1,9 +1,9 @@
 module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
-import Patch.SomePatch (SomePatch(..), parseSome)
-import Patch.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
-import qualified Patch.BPS as BPS
+import Slap.SomePatch (SomePatch(..), parseSome)
+import Slap.Convert (CreateFormat(..), CreateMeta(..), defaultMeta)
+import qualified Slap.BPS.Create as BPS
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8

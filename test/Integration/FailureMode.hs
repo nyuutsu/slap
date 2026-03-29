@@ -4,8 +4,8 @@ import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, RomCache, cachedReadFile, parseCreateFormat,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
-import Patch.SomePatch (parseSome)
-import Patch.Convert (CreateFormat, createFromMemory, defaultMeta)
+import Slap.SomePatch (parseSome)
+import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
 import Data.Bits (xor)
 import qualified Data.ByteString as ByteString

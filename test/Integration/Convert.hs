@@ -3,8 +3,8 @@ module Integration.Convert (convertTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
-import Patch.SomePatch (parseSome)
-import Patch.Convert (CreateFormat, CreateMeta(..), defaultMeta)
+import Slap.SomePatch (parseSome)
+import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString

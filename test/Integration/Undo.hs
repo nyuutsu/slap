@@ -3,7 +3,7 @@ module Integration.Undo (undoTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch,
    RomCache, cachedReadFile)
-import Patch.SomePatch (parseSome)
+import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
 import System.Directory (doesFileExist)

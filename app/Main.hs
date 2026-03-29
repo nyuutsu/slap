@@ -2,16 +2,16 @@
 
 module Main (main) where
 
-import Patch.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
-import Patch.Measure (Offset(..), Length(..), FileSize(..))
-import Patch.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
-import Patch.PPF.Types (ImageType(..))
-import Patch.NINJA1 (NINJA1RomType(..), fromNINJA1RomType)
-import Patch.Explain (renderExplain, renderSummary)
-import Patch.Archive (detectArchive, unwrapArchive)
-import Patch.Binary (crc16, md5, sha1, adler32)
-import Patch.FFI (rustyCRC32)
-import Patch.Format (showCRC, padHex)
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
+import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Convert (CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
+import Slap.PPF.Types (ImageType(..))
+import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
+import Slap.Explain (renderExplain, renderSummary)
+import Slap.Archive (detectArchive, unwrapArchive)
+import Slap.Binary (crc16, md5, sha1, adler32)
+import Slap.FFI (rustyCRC32)
+import Slap.Format (showCRC, padHex)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)

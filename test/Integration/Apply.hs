@@ -3,7 +3,7 @@ module Integration.Apply (applyTests) where
 import Integration.Helpers
   (repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
    sha1Hex, applyPatch, RomCache, cachedReadFile)
-import Patch.SomePatch (parseSome)
+import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
 import Data.List (sort)

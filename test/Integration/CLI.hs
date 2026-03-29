@@ -3,7 +3,7 @@ module Integration.CLI (cliTests) where
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir, RomCache,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
-import Patch.SomePatch (SomePatch(..), parseSome)
+import Slap.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString

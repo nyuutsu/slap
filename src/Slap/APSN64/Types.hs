@@ -1,0 +1,61 @@
+{-# LANGUAGE StrictData #-}
+
+module Slap.APSN64.Types
+  ( APSN64Patch(..)
+  , APSN64Record(..)
+  , APSN64Header(..)
+  , APSPatchType(..)
+  , APSImageFormat(..)
+  , toAPSPatchType
+  , fromAPSPatchType
+  , toAPSImageFormat
+  , fromAPSImageFormat
+  ) where
+
+import Data.ByteString (ByteString)
+import Data.Word (Word8, Word32)
+import Slap.Measure (Offset(..))
+
+data APSPatchType = APSSimple | APSN64Specific
+  deriving (Show, Eq)
+
+toAPSPatchType :: Word8 -> Either String APSPatchType
+toAPSPatchType 0 = Right APSSimple
+toAPSPatchType 1 = Right APSN64Specific
+toAPSPatchType byte = Left ("APS-N64: unknown patch type: " ++ show byte)
+
+fromAPSPatchType :: APSPatchType -> Word8
+fromAPSPatchType APSSimple       = 0
+fromAPSPatchType APSN64Specific  = 1
+
+data APSImageFormat = V64Format | Z64Format | UnknownImageFormat Word8
+  deriving (Show, Eq)
+
+toAPSImageFormat :: Word8 -> APSImageFormat
+toAPSImageFormat 0 = V64Format
+toAPSImageFormat 1 = Z64Format
+toAPSImageFormat byte = UnknownImageFormat byte
+
+fromAPSImageFormat :: APSImageFormat -> Word8
+fromAPSImageFormat V64Format              = 0
+fromAPSImageFormat Z64Format              = 1
+fromAPSImageFormat (UnknownImageFormat byte) = byte
+
+data APSN64Patch = APSN64Patch APSN64Header [APSN64Record]
+  deriving (Show)
+
+data APSN64Header = APSN64Header
+  { apsN64PatchType   :: APSPatchType
+  , apsN64Encoding    :: Word8        -- encoding method byte (0 in all known patches)
+  , apsN64Description :: ByteString   -- 50 bytes
+  , apsN64ImageFormat :: Maybe APSImageFormat
+  , apsN64CartId      :: Maybe ByteString  -- 2 bytes
+  , apsN64Country     :: Maybe Word8
+  , apsN64Crc         :: Maybe ByteString  -- 8 bytes
+  , apsN64DestinationSize    :: Word32
+  } deriving (Show)
+
+data APSN64Record
+  = APSN64Normal Offset ByteString    -- offset, data
+  | APSN64RLE    Offset Word8 Word8   -- offset, value, count
+  deriving (Show)
