@@ -212,17 +212,7 @@ data SomePatch = SomePatch
 parseSome :: ByteString.ByteString -> Either String SomePatch
 parseSome patchBytes = case detectFormat patchBytes of
   Nothing
-    -- Yay0 container: decompress and retry (Star Rod .mod files)
-    | Yay0.isYay0 patchBytes -> case Yay0.decompressYay0 patchBytes of
-        Left errorMessage   -> Left ("Yay0 decompression failed: " ++ errorMessage)
-        Right decompressedBytes -> case parseSome decompressedBytes of
-          Left errorMessage -> Left errorMessage
-          Right parsed -> Right parsed
-            { patchFormat  = patchFormat parsed ++ "/Yay0"
-            , patchInfo    = replaceFirst "PMSR" "PMSR/Yay0" (patchInfo parsed)
-            , patchExplain = (patchExplain parsed)
-                { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
-            }
+    | Yay0.isYay0 patchBytes -> parseYay0Container patchBytes
     | otherwise -> Left "unknown patch format"
 
   Just (PatchDirect FormatPPF) -> case PPF.parsePatch patchBytes of
@@ -653,6 +643,20 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchSourceNotes    = []
       , patchContents  = Nothing
       , patchMetadata       = Nothing
+      }
+
+-- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
+-- Decompress the envelope and recurse into parseSome on the inner bytes.
+parseYay0Container :: ByteString.ByteString -> Either String SomePatch
+parseYay0Container input = case Yay0.decompressYay0 input of
+  Left errorMessage   -> Left ("Yay0 decompression failed: " ++ errorMessage)
+  Right decompressedBytes -> case parseSome decompressedBytes of
+    Left errorMessage -> Left errorMessage
+    Right parsed -> Right parsed
+      { patchFormat  = patchFormat parsed ++ "/Yay0"
+      , patchInfo    = replaceFirst "PMSR" "PMSR/Yay0" (patchInfo parsed)
+      , patchExplain = (patchExplain parsed)
+          { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
       }
 
 parseAPSGBABlock :: ByteString.ByteString -> Either String SomePatch
