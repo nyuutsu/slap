@@ -135,10 +135,10 @@ getVcdiffVarint offset input = decode offset 0
 -- Builders
 ----------------------------------------------------------------------------
 
-putWord16BE :: Int -> Builder
+putWord16BE :: Word16 -> Builder
 putWord16BE value =
-  word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (value .&. 0xFF))
+  word8 (fromIntegral (value `shiftR` 8))
+  <> word8 (fromIntegral value)
 
 putWord32LE :: Word32 -> Builder
 putWord32LE value =

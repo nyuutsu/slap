@@ -13,7 +13,6 @@ module Integration.Helpers
     -- * Patch application
   , applyPatch
   , undoPatch
-  , applyViaTemp
     -- * Conversion
   , attemptConvert
     -- * File discovery
@@ -42,7 +41,7 @@ import Slap.Format (padHex)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
-import Control.Exception (catch, finally, IOException)
+import Control.Exception (catch, IOException)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
@@ -53,7 +52,7 @@ import System.Directory (removeFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
 import Test.Tasty.HUnit (assertBool, assertFailure)
-import System.IO (hClose, openBinaryTempFile)
+import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
 
@@ -178,38 +177,15 @@ parseCreateFormat formatString = case map toLower formatString of
 -- Patch application
 ----------------------------------------------------------------------------
 
--- | Apply a parsed patch to source bytes, handling both InMemory and InPlace.
+-- | Apply a parsed patch to source bytes.
 applyPatch :: SomePatch -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
-applyPatch somePatch source = case patchApply somePatch of
-  InMemory { inMemoryApply = apply } -> apply source
-  InPlace action -> Right <$> applyViaTemp source action
-
--- | Apply an InPlace action via a temp file.
-applyViaTemp :: ByteString.ByteString -> (FilePath -> IO ()) -> IO ByteString.ByteString
-applyViaTemp source action = do
-  (temporary, handle) <- openBinaryTempFile "/tmp" "slap-int"
-  hClose handle
-  flip finally (removeIfExists temporary) $ do
-    ByteString.writeFile temporary source
-    action temporary
-    ByteString.readFile temporary
+applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
 undoPatch :: SomePatch -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 undoPatch somePatch patched = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
   Just (UndoInMemory undoFunction) -> pure (Right (undoFunction patched))
-  Just (UndoInPlace undoFunction)  -> do
-    (temporary, handle) <- openBinaryTempFile "/tmp" "slap-undo"
-    hClose handle
-    ByteString.writeFile temporary patched
-    result <- undoFunction temporary
-    case result of
-      Left errorMessage -> removeIfExists temporary >> pure (Left errorMessage)
-      Right _  -> do
-        restoredBytes <- ByteString.readFile temporary
-        removeIfExists temporary
-        pure (Right restoredBytes)
 
 removeIfExists :: FilePath -> IO ()
 removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pure ())

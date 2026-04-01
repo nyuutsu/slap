@@ -13,7 +13,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
 
 -- | Unchanged regions become COPY commands; changed regions become DATA commands.
 createGDIFF :: ByteString -> ByteString -> ByteString
@@ -35,14 +35,30 @@ createGDIFF original modified = LazyByteString.toStrict $ toLazyByteString $
           dataBuilder = encodeData hunkPayload
       in copyPart <> dataBuilder <> buildCommands (intOffset + ByteString.length hunkPayload) remaining
 
--- | Encode a DATA command, splitting into chunks if > 2^31.
+-- | Encode a DATA command. Payloads larger than 2^31-1 bytes are split into
+-- multiple DATA 248 commands. The W3C GDIFF spec defines int as signed 32-bit,
+-- so a single DATA command can carry at most 2,147,483,647 bytes.
 encodeData :: ByteString -> Builder
 encodeData payload
   | ByteString.null payload = mempty
-  | payloadLength <= 246  = word8 (fromIntegral payloadLength) <> byteString payload
-  | payloadLength <= 0xFFFF = word8 247 <> putWord16BE payloadLength <> byteString payload
-  | otherwise     = word8 248 <> putWord32BE (fromIntegral payloadLength) <> byteString payload
-  where payloadLength = ByteString.length payload
+  | payloadLength <= 246       = word8 (fromIntegral payloadLength) <> byteString payload
+  | payloadLength <= 0xFFFF    = word8 247 <> putWord16BE (fromIntegral payloadLength) <> byteString payload
+  | payloadLength <= maxChunk  = word8 248 <> putWord32BE (fromIntegral payloadLength) <> byteString payload
+  | otherwise                  = splitData payload
+  where
+    payloadLength = ByteString.length payload
+    maxChunk = fromIntegral (maxBound :: Int32)  -- 2,147,483,647
+
+-- | Split a large payload into multiple DATA 248 commands.
+splitData :: ByteString -> Builder
+splitData remaining
+  | ByteString.null remaining = mempty
+  | otherwise =
+      let chunkSize = min maxChunk (ByteString.length remaining)
+          (chunk, rest) = ByteString.splitAt chunkSize remaining
+      in word8 248 <> putWord32BE (fromIntegral chunkSize) <> byteString chunk
+         <> splitData rest
+  where maxChunk = fromIntegral (maxBound :: Int32)
 
 -- | Encode a COPY command with optimal opcode selection.
 encodeCopy :: Int64 -> Int64 -> Builder

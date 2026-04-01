@@ -1,45 +1,17 @@
-module Slap.PPF.Apply (applyPatch, applyPatchMemory, undoPatch) where
+module Slap.PPF.Apply (applyPatchMemory, undoPatchMemory) where
 
 import Slap.PPF.Types
 import Slap.Binary (copyByteStringRange)
-import Slap.Measure (seekTo, offsetToInt)
+import Slap.Measure (offsetToInt)
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Maybe (fromMaybe)
-import Control.Monad (foldM, foldM_, when)
+import Control.Monad (foldM_, when, unless)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
-import System.IO
-
--- | Apply a parsed PPF patch to a target file.
-applyPatch :: Patch -> FilePath -> IO ([String], Int)
-applyPatch patch target = withBinaryFile target ReadWriteMode $ \handle -> do
-  written <- writeRecords handle (ppfRecords patch) recordData
-  pure ([], written)
-
--- | Undo a parsed PPF3 patch (requires undo data).
-undoPatch :: Patch -> FilePath -> IO (Either String Int)
-undoPatch patch target
-  | not (ppfHasUndo patch) = pure (Left "PPF: patch has no undo data")
-  | otherwise = withBinaryFile target ReadWriteMode $ \handle ->
-      Right <$> writeRecords handle (ppfRecords patch) (fromMaybe ByteString.empty . recordUndo)
-
--- Write records to a handle, selecting the data or undo payload per record.
-writeRecords :: Handle -> [Record] -> (Record -> ByteString) -> IO Int
-writeRecords handle records selector = foldM step 0 records
-  where
-    step written record
-      | ByteString.null payload = pure written
-      | otherwise = do
-          case recordCommand record of
-            Append  -> hSeek handle SeekFromEnd 0
-            Replace -> seekTo handle (recordOffset record)
-          ByteString.hPut handle payload
-          pure (written + 1)
-      where payload = selector record
 
 -- | Apply a PPF patch in memory.
 -- Simulates file-size tracking for Append records (PPF4).
@@ -67,3 +39,19 @@ applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
           Append -> do
             copyByteStringRange outputPointer currentEnd (recordData record) 0 (ByteString.length (recordData record))
             pure (currentEnd + ByteString.length (recordData record))
+
+-- | Undo a PPF patch in memory.
+-- Restores original bytes at each record offset using stored undo data.
+undoPatchMemory :: Patch -> ByteString -> ByteString
+undoPatchMemory patch input = unsafeCreate inputLength $ \outputPointer -> do
+    copyByteStringRange outputPointer 0 input 0 inputLength
+    mapM_ (undoRecord outputPointer) (ppfRecords patch)
+  where
+    inputLength = ByteString.length input
+    undoRecord outputPointer record = case recordCommand record of
+      Replace ->
+        let undoPayload = fromMaybe ByteString.empty (recordUndo record)
+        in unless (ByteString.null undoPayload) $
+             copyByteStringRange outputPointer (offsetToInt (recordOffset record))
+               undoPayload 0 (ByteString.length undoPayload)
+      Append -> pure ()

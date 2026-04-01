@@ -30,9 +30,7 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (shiftR, (.&.))
-import Data.List (sort, sortBy)
-import Data.Ord (comparing)
-import Data.Word (Word8, Word32, Word64)
+import Data.List (sort)
 import Control.Monad (forM_)
 import Control.Monad.ST (ST, runST)
 import Data.Array (Array, listArray, (!))
@@ -46,10 +44,10 @@ encodeIPSRecord offsetWidth (EncodedHunk offset payload) =
   <> if ByteString.length payload >= 3 && allSame payload
      then -- RLE record: size=0, then rle_count, rle_value
        word8 0 <> word8 0
-       <> putWord16BE (ByteString.length payload)
+       <> putWord16BE (fromIntegral (ByteString.length payload))
        <> word8 (ByteString.index payload 0)
      else -- Normal record: size, data
-       putWord16BE (ByteString.length payload)
+       putWord16BE (fromIntegral (ByteString.length payload))
        <> byteString payload
 
 -- | Encode an offset as big-endian bytes (3 for IPS, 4 for IPS32).

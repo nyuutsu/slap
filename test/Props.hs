@@ -354,9 +354,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PPF.parsePatch patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
-       Right parsed -> ioProperty $ do
-         result <- applyViaFile PPF.applyPatch parsed source
-         pure $ result === target
+       Right parsed -> PPF.applyPatchMemory parsed source === target
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
@@ -473,11 +471,9 @@ prop_identity format = forAll genByteString $ \source -> not (ByteString.null so
           Left errorMessage  -> counterexample ("apply: " ++ errorMessage) $ property False
           Right out -> out === source
 
--- | Apply through the SomePatch closure, handling both InMemory and InPlace.
+-- | Apply through the SomePatch closure.
 applySomePatch :: SomePatch -> ByteString -> IO (Either String ByteString)
-applySomePatch somePatch source = case patchApply somePatch of
-  InMemory { inMemoryApply = apply } -> apply source
-  InPlace action -> Right <$> applyViaFile (\() filePath -> action filePath) () source
+applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 ----------------------------------------------------------------------------
 -- Undo: create -> apply -> undo == original
@@ -502,27 +498,9 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
     Left _ -> discard
     Right patch -> case PPF.parsePatch patch of
       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
-      Right parsed -> ioProperty $ do
+      Right parsed ->
         let applied = PPF.applyPatchMemory parsed source
-        result <- undoViaFile (PPF.undoPatch parsed) applied
-        pure $ case result of
-          Left errorMessage  -> counterexample ("undo: " ++ errorMessage) $ property False
-          Right out -> out === source
-
--- | Write bytes to a temp file, run an undo function, read back.
-undoViaFile :: (FilePath -> IO (Either String Int)) -> ByteString -> IO (Either String ByteString)
-undoViaFile undoFunction target = do
-  directory <- getTemporaryDirectory
-  (temporary, handle) <- openBinaryTempFile directory "slap-undo"
-  ByteString.hPut handle target
-  hClose handle
-  result <- undoFunction temporary
-  case result of
-    Left errorMessage -> removeFile temporary >> pure (Left errorMessage)
-    Right _  -> do
-      output <- ByteString.readFile temporary
-      removeFile temporary
-      pure (Right output)
+        in PPF.undoPatchMemory parsed applied === source
 
 ----------------------------------------------------------------------------
 -- Contract properties

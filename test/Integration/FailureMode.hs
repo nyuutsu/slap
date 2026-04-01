@@ -43,7 +43,7 @@ failureModeTests romCache = do
   let inProcessTests = concat
         [ if dm4yExists then crossFormatRoundTripTests romCache dm4yBase dm4yBps else []
         , if dm4yExists && stadium2Exists
-          then patchSizeRegressionTests romCache
+          then createRoundTripTests romCache
                  dm4yBase dm4yBps
                  stadium2Base (repo </> "test/data/stadium2/heavy-diff/patch.bps")
           else []
@@ -366,35 +366,35 @@ crossFormatRoundTripTests romCache base bps =
       Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
 
 ----------------------------------------------------------------------------
--- 5. Patch size regression
+-- 5. Create round-trip on real ROMs
 ----------------------------------------------------------------------------
 
--- | Record output patch sizes and assert no regression.
--- These thresholds are the current output sizes; if a future change makes
--- patches larger, this test catches it.
-patchSizeRegressionTests :: RomCache -> FilePath -> FilePath
-                         -> FilePath -> FilePath -> [TestTree]
-patchSizeRegressionTests romCache dm4yBase dm4yBps
-                         stadium2Base stadium2Bps =
-  [ testCase "patch-size/dm4y BPS" $ do
+-- | Create a patch from real ROM pairs, parse it back, apply, and verify
+-- the output matches the original target. Exercises create+parse+apply at
+-- realistic scale — something the QuickCheck property tests can't cover.
+createRoundTripTests :: RomCache -> FilePath -> FilePath
+                     -> FilePath -> FilePath -> [TestTree]
+createRoundTripTests romCache dm4yBase dm4yBps
+                     stadium2Base stadium2Bps =
+  [ testCase "create-round-trip/dm4y BPS" $ do
       (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "bps" baseBytes targetBytes
+      createAndVerify "bps" baseBytes targetBytes
 
-  , testCase "patch-size/dm4y IPS" $ do
+  , testCase "create-round-trip/dm4y IPS" $ do
       (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "ips" baseBytes targetBytes
+      createAndVerify "ips" baseBytes targetBytes
 
-  , testCase "patch-size/dm4y UPS" $ do
+  , testCase "create-round-trip/dm4y UPS" $ do
       (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
-      checkPatchSize "ups" baseBytes targetBytes
+      createAndVerify "ups" baseBytes targetBytes
 
-  , testCase "patch-size/stadium2 BPS" $ do
+  , testCase "create-round-trip/stadium2 BPS" $ do
       (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
-      checkPatchSize "bps" baseBytes targetBytes
+      createAndVerify "bps" baseBytes targetBytes
 
-  , testCase "patch-size/stadium2 IPS32" $ do
+  , testCase "create-round-trip/stadium2 IPS32" $ do
       (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
-      checkPatchSize "ips32" baseBytes targetBytes
+      createAndVerify "ips32" baseBytes targetBytes
   ]
   where
     bootstrapTarget :: RomCache -> FilePath -> FilePath -> IO (ByteString.ByteString, ByteString.ByteString)
@@ -409,31 +409,19 @@ patchSizeRegressionTests romCache dm4yBase dm4yBps
             Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
             Right targetBytes -> pure (baseBytes, targetBytes)
 
-    checkPatchSize :: String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-    checkPatchSize formatStringing baseBytes targetBytes = do
-      createFormat <- case parseCreateFormat formatStringing of
+    createAndVerify :: String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+    createAndVerify formatString baseBytes targetBytes = do
+      createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
-        Nothing -> assertFailure ("unknown format: " ++ formatStringing) >> error "unreachable"
+        Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
       case createFromMemory createFormat baseBytes targetBytes defaultMeta of
-        Left errorMessage -> assertFailure ("create " ++ formatStringing ++ " failed: " ++ errorMessage)
-        Right patchBytes -> do
-          let size = ByteString.length patchBytes
-          -- Record the current size. If a future change increases it, this test
-          -- fails and the threshold should be reviewed (not blindly bumped).
-          -- We allow up to 5% above current size to absorb minor encoding changes.
-          assertBool ("patch size regression: " ++ formatStringing ++ " produced "
-                      ++ show size ++ " bytes (max " ++ show (maxSize size) ++ ")")
-            (size <= maxSize size)
-          -- Also verify the patch is valid by parsing and applying it
+        Left errorMessage -> assertFailure ("create " ++ formatString ++ " failed: " ++ errorMessage)
+        Right patchBytes ->
           case parseSome patchBytes of
-            Left errorMessage -> assertFailure ("re-parse " ++ formatStringing ++ " failed: " ++ errorMessage)
+            Left errorMessage -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ errorMessage)
             Right parsed -> do
               result <- applyPatch parsed baseBytes
               case result of
-                Left errorMessage -> assertFailure ("re-apply " ++ formatStringing ++ " failed: " ++ errorMessage)
+                Left errorMessage -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ errorMessage)
                 Right output ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
-
-    -- Allow up to 5% growth — catches large regressions, absorbs minor encoding changes
-    maxSize :: Int -> Int
-    maxSize currentSize = currentSize + max 64 (currentSize `div` 20)

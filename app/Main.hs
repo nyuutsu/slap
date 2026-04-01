@@ -17,15 +17,14 @@ import Slap.Format (showCRC, padHex)
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
-import Data.Maybe (fromMaybe, isJust, isNothing)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Word (Word8, Word16, Word32)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
-import System.Directory (copyFile, doesFileExist, removeFile)
+import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import Control.Exception (IOException, catch, finally)
-import System.IO (hClose, hPutStrLn, openBinaryTempFile, stderr)
+import System.IO (hPutStrLn, stderr)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -449,32 +448,17 @@ doApply parsedCommand = do
         copyFile (commandSource parsedCommand) backup
         hPutStrLn stderr ("slap: backup: " ++ backup)
 
-      case patchApply parsed of
-        InPlace applyInPlace -> do
-          -- Read source for pre-apply verification if needed
-          when (hasSourceVerification verification) $ do
-            sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
-            verifySource noVerify verification sourceBytes
-          unless (commandInPlace parsedCommand) $
-            copyFile (commandSource parsedCommand) outputPath
-          applyInPlace (if commandInPlace parsedCommand then commandSource parsedCommand else outputPath)
-          -- Post-apply target verification if needed
-          when (hasTargetVerification verification) $ do
-            targetBytes <- ByteString.readFile (if commandInPlace parsedCommand then commandSource parsedCommand else outputPath)
-            verifyTarget noVerify verification targetBytes
+      let apply = inMemoryApply (patchApply parsed)
+      sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
+      verifySource noVerify verification sourceBytes
+      result <- apply sourceBytes
+      case result of
+        Left errorMessage -> die errorMessage
+        Right target -> do
+          verifyTarget noVerify verification target
+          ByteString.writeFile outputPath target
           putStrLn $ "applied " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
                   ++ " \8594 " ++ outputPath
-        InMemory { inMemoryApply = apply } -> do
-          sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
-          verifySource noVerify verification sourceBytes
-          result <- apply sourceBytes
-          case result of
-            Left errorMessage -> die errorMessage
-            Right target -> do
-              verifyTarget noVerify verification target
-              ByteString.writeFile outputPath target
-              putStrLn $ "applied " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
-                      ++ " \8594 " ++ outputPath
 
 ----------------------------------------------------------------------------
 -- Undo
@@ -489,17 +473,11 @@ doUndo parsedCommand = do
       emitWarnings parsed
       case patchUndo parsed of
         Nothing -> die "undo not supported for this format"
-        Just (UndoInPlace undoInPlace) -> do
-          undoPath <- resolveOutput (commandSource parsedCommand) (commandOutput parsedCommand)
-          result <- undoInPlace undoPath
-          case result of
-            Left errorMessage -> die errorMessage
-            Right count -> putStrLn ("reverted " ++ show count ++ " records")
         Just (UndoInMemory revert) -> do
           modified <- ByteString.readFile (commandSource parsedCommand)
           let result = revert modified
           ByteString.writeFile (fromMaybe (commandSource parsedCommand) (commandOutput parsedCommand)) result
-          putStrLn "reverted (UPS self-inverse)"
+          putStrLn "reverted"
 
 ----------------------------------------------------------------------------
 -- Create
@@ -591,23 +569,11 @@ doConvert parsedCommand = do
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> ByteString.ByteString -> IO ByteString.ByteString
-applyForConvert somePatch sourceBytes = case patchApply somePatch of
-  InMemory { inMemoryApply = apply } -> do
-    result <- apply sourceBytes
-    case result of
-      Left errorMessage -> die errorMessage
-      Right target      -> pure target
-  InPlace applyInPlace -> applyViaTemporary sourceBytes applyInPlace
-
--- | Apply a file-handle patch via a temporary file and read back the result.
-applyViaTemporary :: ByteString.ByteString -> (FilePath -> IO ()) -> IO ByteString.ByteString
-applyViaTemporary sourceBytes apply = do
-  (temporaryPath, handle) <- openBinaryTempFile "/tmp" "slap.tmp"
-  hClose handle
-  flip finally (removeFile temporaryPath `catch` (\(_ :: IOException) -> pure ())) $ do
-    ByteString.writeFile temporaryPath sourceBytes
-    apply temporaryPath
-    ByteString.readFile temporaryPath
+applyForConvert somePatch sourceBytes = do
+  result <- inMemoryApply (patchApply somePatch) sourceBytes
+  case result of
+    Left errorMessage -> die errorMessage
+    Right target      -> pure target
 
 -- | Error message when --with is required but not provided.
 needSourceMessage :: SomePatch -> String
@@ -617,7 +583,7 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
     name = patchFormat somePatch
     reason
       | patchIsDifferential somePatch = "stores differential data, not raw bytes"
-      | otherwise                  = "applies in-place to the target file"
+      | otherwise                  = "does not carry extractable records"
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -628,14 +594,6 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
   dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
-
-resolveOutput :: FilePath -> Maybe FilePath -> IO FilePath
-resolveOutput source Nothing    = pure source
-resolveOutput source (Just out) = do
-  exists <- doesFileExist source
-  if exists
-    then copyFile source out >> pure out
-    else die ("source file not found: " ++ source)
 
 ----------------------------------------------------------------------------
 -- Verification helpers
@@ -672,19 +630,6 @@ verifyTarget noVerify verification targetBytes = do
       warnBlock "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler noVerify windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
-
-hasSourceVerification :: Verification -> Bool
-hasSourceVerification verification = or
-  [ isJust (verifySourceCRC32 verification), isJust (verifySourceMD5 verification), isJust (verifySourceSHA1 verification)
-  , not (null (verifySourceBlocks verification)), isJust (verifyPPFBlock verification), isJust (verifyFileSize verification)
-  , not (null (verifySourceBytes verification))
-  ]
-
-hasTargetVerification :: Verification -> Bool
-hasTargetVerification verification = or
-  [ isJust (verifyTargetCRC32 verification), isJust (verifyTargetMD5 verification)
-  , not (null (verifyTargetBlocks verification)), not (null (verifyWindowAdler32 verification))
-  ]
 
 checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
 checkCRC noVerify label expected actual
