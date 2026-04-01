@@ -68,7 +68,7 @@ callRustyDecompress label decompress input = unsafeDupablePerformIO $
 zlibInflate :: ByteString -> Either String ByteString
 zlibInflate = callRustyDecompress "zlib" c_zlibInflate
 
--- | Zlib (RFC 1950) deflate (default compression level 6).
+-- | Zlib (RFC 1950) deflate (hardcoded compression level 6).
 -- Compression cannot fail for valid input; crashes on internal error.
 zlibDeflate :: ByteString -> ByteString
 zlibDeflate input

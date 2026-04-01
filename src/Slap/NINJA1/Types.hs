@@ -76,7 +76,7 @@ data NINJA1Patch = NINJA1Patch
   , ninja1SourceMD5  :: Maybe ByteString  -- 16 bytes
   , ninja1SourceSHA1 :: Maybe ByteString  -- 20 bytes
   , ninja1Records    :: [NINJA1Record]
-  , ninja1CleanEOF   :: Bool              -- binary: True if EOF sentinel found
+  , ninja1CleanEOF   :: Bool              -- parse completed cleanly (binary: EOF sentinel found; text: always True)
   } deriving (Show)
 
 data NINJA1Record = NINJA1Record

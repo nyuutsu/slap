@@ -153,6 +153,8 @@ noVerification = Verification
 
 -- | Strategy for undoing a patch.
 -- The undo function takes modified bytes and returns the original.
+-- For self-inverse formats like UPS (XOR-based), the apply function
+-- itself serves as the undo, so UndoInMemory simply wraps it.
 newtype UndoStrategy = UndoInMemory (ByteString.ByteString -> ByteString.ByteString)
 
 -- | A parsed patch with all operations pre-bound as closures.

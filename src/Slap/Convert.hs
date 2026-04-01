@@ -101,7 +101,7 @@ data PatchContents = PatchContents
   , contentsImageType   :: Maybe ImageType
   , contentsFileIdDiz   :: Maybe ByteString.ByteString
   , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
-  , contentsNINJA1Compressed :: Maybe Bool  -- source was BZ/TZ (compressed)
+  , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
