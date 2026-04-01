@@ -24,6 +24,7 @@ module Integration.Helpers
     -- * Subprocess assertions
   , expectFail
   , expectOk
+  , expectOkWithWarning
     -- * Test data
   , writeGarbage
     -- * String helpers
@@ -150,7 +151,7 @@ parseSuiteFile path = do
       (formatString:patch:confidence:_)      -> SuiteEntry formatString patch confidence ""
       _                             -> SuiteEntry "" "" "" ""
 
--- | Parse a create format string (mirrors Main.hs parseCfmt).
+-- | Parse a create format string (mirrors Main.hs parseCreateFormat).
 parseCreateFormat :: String -> Maybe CreateFormat
 parseCreateFormat formatString = case map toLower formatString of
   "bps"     -> Just (CreateDiff CreateBPS)
@@ -309,6 +310,20 @@ expectOk slap arguments label pattern = do
     ExitSuccess ->
       assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
         (map toLower pattern `isInfixOf` map toLower combined)
+    ExitFailure _ ->
+      assertFailure (label ++ ": expected success but got failure: " ++ combined)
+
+-- | Like expectOk, but also asserts that a warning was emitted.
+expectOkWithWarning :: FilePath -> [String] -> String -> String -> IO ()
+expectOkWithWarning slap arguments label pattern = do
+  (exitCode, stdoutText, stderrText) <- runSlap slap arguments
+  let combined = stdoutText ++ stderrText
+  case exitCode of
+    ExitSuccess -> do
+      assertBool (label ++ ": expected '" ++ pattern ++ "' in: " ++ combined)
+        (map toLower pattern `isInfixOf` map toLower combined)
+      assertBool (label ++ ": expected warning in output: " ++ combined)
+        ("warning" `isInfixOf` map toLower combined)
     ExitFailure _ ->
       assertFailure (label ++ ": expected success but got failure: " ++ combined)
 

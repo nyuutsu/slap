@@ -166,8 +166,8 @@ genPair :: Gen (ByteString, ByteString)
 genPair = (,) <$> genByteString <*> genByteString
 
 -- | (source, target) where len(target) >= len(source).
--- Pure direct formats that lack truncation support can only grow or stay same-size.
--- Affected: PPF3, PMSR, NINJA1, DPS, APS-N64.
+-- Formats that lack truncation support can only grow or stay same-size.
+-- Affected: PPF3, PMSR, NINJA1, APS-N64, PCHTXT (direct), DPS (differential).
 genPairNoShrink :: Gen (ByteString, ByteString)
 genPairNoShrink = do
   shorter <- genByteString
@@ -182,7 +182,7 @@ genSameSizePair = do
   target <- ByteString.pack <$> vectorOf (ByteString.length source) arbitrary
   pure (source, target)
 
--- | Apply a direct-format patch via temp file, return result bytes.
+-- | Apply a patch via temp file, return result bytes.
 applyViaFile :: (patch -> FilePath -> IO result) -> patch -> ByteString -> IO ByteString
 applyViaFile applyFunction parsed source = do
   directory <- getTemporaryDirectory
@@ -388,7 +388,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
          NINJA1.ninja1SourceSHA1 parsed === Just (sha1 source)
 
--- DPS: direct with extension, but no truncation
+-- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
   let patch = DPS.createDPS source target "" "" "" DPS.DPSStable

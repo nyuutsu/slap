@@ -20,7 +20,7 @@ import System.Process (readProcessWithExitCode)
 data ArchiveFormat = ArchiveZIP | ArchiveRAR | Archive7z
   deriving (Show, Eq)
 
--- | Check first 8 bytes for archive magic.
+-- | Check for archive magic (ZIP: 4 bytes, RAR: 6 bytes, 7z: 6 bytes).
 detectArchive :: ByteString -> Maybe ArchiveFormat
 detectArchive input
   | ByteString.length input < 4 = Nothing

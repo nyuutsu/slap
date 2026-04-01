@@ -12,7 +12,7 @@
 --   Link table (u16 BE entries at link offset)
 --   Chunk/literal data (at chunk offset)
 -- Bit=1: copy literal byte from chunk stream
--- Bit=0: back-reference via link entry (count + distanceance)
+-- Bit=0: back-reference via link entry (count + distance)
 
 module Slap.Yay0 (isYay0, decompressYay0) where
 

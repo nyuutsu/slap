@@ -3,7 +3,7 @@ module Integration.FailureMode (failureModeTests) where
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, RomCache, cachedReadFile, parseCreateFormat,
-   expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
+   expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
@@ -56,7 +56,8 @@ failureModeTests romCache = do
 
 -- | For each format with source verification, apply to the wrong ROM.
 -- Without --no-verify: fails with verification error.
--- With --no-verify: proceeds with a warning.
+-- With --no-verify: succeeds with a warning (test checks exit code,
+-- output pattern, and that "warning" appears in the output).
 wrongSourceTests :: FilePath -> FilePath -> FilePath -> FilePath
                  -> FilePath -> FilePath -> FilePath -> [TestTree]
 wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
@@ -74,7 +75,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", bps, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning slap ["apply", bps, wrong, "-o", out, "--no-verify"]
           "wrong-source/BPS --no-verify" "applied"
 
   -- UPS: CRC32 source verification
@@ -91,7 +92,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", ups, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning slap ["apply", ups, wrong, "-o", out, "--no-verify"]
           "wrong-source/UPS --no-verify" "applied"
 
   -- RUP: CRC32 source verification
@@ -108,7 +109,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", rup, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning slap ["apply", rup, wrong, "-o", out, "--no-verify"]
           "wrong-source/RUP --no-verify" "applied"
 
   -- xdelta1: CRC32 source verification
@@ -125,7 +126,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning slap ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
   -- VCDIFF: Adler32 per-window verification
@@ -142,7 +143,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOk slap ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning slap ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
           "wrong-source/VCDIFF --no-verify" "applied"
 
   -- Swapped ROM: apply dm4y BPS patch to dm4y base (which IS the right source)
@@ -278,7 +279,7 @@ wrongSizeSourceTests slap _base bps =
 -- 4. Cross-format record preservation
 ----------------------------------------------------------------------------
 
--- | Convert IPS -> EBP -> IPS and IPS -> PPF3 -> IPS.
+-- | Convert IPS -> EBP -> IPS, IPS -> PPF3 -> IPS, and BPS -> UPS -> BPS.
 -- Apply round-tripped patch, verify same output as original.
 crossFormatRoundTripTests :: RomCache -> FilePath -> FilePath -> [TestTree]
 crossFormatRoundTripTests romCache base bps =

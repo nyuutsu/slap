@@ -32,7 +32,7 @@ fromImageType GI  = 0x01
 -- | Validation data embedded in PPF2/PPF3 headers.
 data Validation = Validation
   { validationImageType :: ImageType
-  , validationBlock     :: ByteString  -- ^ 1024 bytes from the target image
+  , validationBlock     :: ByteString  -- ^ 1024 bytes stored in the patch (copied from the target image at creation time)
   } deriving (Show)
 
 -- | Record command type.  Replace is standard for PPF1/2/3; Append exists

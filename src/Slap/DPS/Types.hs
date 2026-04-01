@@ -30,9 +30,9 @@ fromDPSStability DPSStable   = 0
 fromDPSStability DPSUnstable = 1
 
 data DPSPatch = DPSPatch
-  { dpsName       :: ByteString   -- 64 bytes, null-padded
-  , dpsAuthor     :: ByteString   -- 64 bytes, null-padded
-  , dpsVersion    :: ByteString   -- 64 bytes, null-padded
+  { dpsName       :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
+  , dpsAuthor     :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
+  , dpsVersion    :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
   , dpsStability       :: DPSStability
   , dpsFormatVersion :: Word8        -- must be 1
   , dpsOriginalSize   :: !FileSize    -- original ROM size

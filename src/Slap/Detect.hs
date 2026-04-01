@@ -8,7 +8,10 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import qualified Slap.DPS.Parse as DPS
 
--- | Detect patch format from the first few bytes (magic).
+-- | Detect patch format.  Most formats are identified by magic bytes.
+-- DPS uses a structural heuristic (printable ASCII + null padding in
+-- the 192-byte header, version and stability flag bytes).  PCHTXT
+-- scans the first 512 bytes for known directives.
 detectFormat :: ByteString -> Maybe PatchFormat
 detectFormat input
   | ByteString.length input < 4 = Nothing

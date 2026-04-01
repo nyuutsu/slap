@@ -51,8 +51,8 @@ fn encode_delta(prev: usize, next: usize) -> u64 {
 }
 
 /// Length of the common prefix between two slices.
-/// Profiled: iterator and manual while-loop within 3% on 16MB emerald diff;
-/// keeping idiomatic iterator version.
+/// Iterator version chosen over manual loop after profiling showed no
+/// meaningful difference.
 #[inline]
 #[must_use]
 fn match_len(a: &[u8], b: &[u8]) -> usize {

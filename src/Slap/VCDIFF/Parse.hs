@@ -61,7 +61,7 @@ parseVCDIFFWith allowCustom input
           tableLength <- fromIntegral <$> vcdiffVarint
           Just <$> getBytes (Length tableLength)
         else pure Nothing
-      -- Skip optional application data (xdelta3 extension)
+      -- Skip optional application data (VCD_APPHEADER, RFC 3284 §4.1)
       when (testBit headerIndicator 2) $ do
         applicationLength <- fromIntegral <$> vcdiffVarint
         skip (Length applicationLength)

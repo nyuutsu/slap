@@ -57,7 +57,7 @@ updateCache cache address = do
     writeIORef (cacheSame cache ! sameIndex) address
 
 -- | Decode an address given the mode, current "here" position,
---   and a function to read from the address stream.
+--   an IORef tracking the read position, and the address stream bytes.
 decodeAddress :: AddressCache -> Int -> Int64 -> IORef Int -> ByteString -> IO Int64
 decodeAddress cache mode here addressPositionReference addressBytes
   | mode == 0 = do
@@ -133,7 +133,7 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
       hasSource = testBit (vcdiffWindowIndicator window) 0
       hasTarget = testBit (vcdiffWindowIndicator window) 1
 
-  -- Build the source window (COPY address space = source segment ++ target-so-far).
+  -- Initialize stream position counters for this window.
 
   cache <- newAddressCache nearSize sameSize
   addRunPositionReference <- newIORef (0 :: Int)

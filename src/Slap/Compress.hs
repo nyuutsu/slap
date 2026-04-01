@@ -1,4 +1,4 @@
--- | Compression via rusty-slap (flate2 + bzip2-rs, pure Rust).
+-- | Compression and decompression via rusty-slap (flate2 + bzip2-rs, pure Rust).
 module Slap.Compress
   ( zlibInflate
   , zlibDeflate

@@ -3,7 +3,7 @@ mod compress;
 mod crc32;
 mod sa;
 
-/// CRC-32 (standard reflected polynomial 0xEDB88320) with hardware acceleration.
+/// CRC-32 with hardware acceleration via crc32fast.
 ///
 /// # Safety
 /// `data` must point to `len` readable bytes.

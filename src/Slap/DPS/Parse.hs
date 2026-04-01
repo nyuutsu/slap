@@ -23,8 +23,9 @@ import qualified Data.ByteString as ByteString
 ----------------------------------------------------------------------------
 
 -- | Heuristic detection: DPS files have a 198-byte header with
--- printable ASCII in the first 192 bytes, version byte = 1 at
--- offset 193, flag byte 0 or 1 at offset 192.
+-- printable ASCII and null padding in the first 192 bytes (three
+-- 64-byte string fields), version byte = 1 at offset 193,
+-- flag byte 0 or 1 at offset 192.
 isDPS :: ByteString -> Bool
 isDPS input
   | ByteString.length input < 198 = False  -- 3×64 header + flag + version + u32 orig_size
