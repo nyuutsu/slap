@@ -6,7 +6,8 @@ import qualified Slap.BPS.Parse as BPS
 import qualified Slap.BPS.Types as BPS
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
-import Slap.IPS.Create (avoidSentinel, optimalIPSRecords)
+import Slap.IPS.Create (avoidSentinel, optimalIPSRecords, ebpJson)
+import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
@@ -59,7 +60,7 @@ import qualified Data.Text.Encoding as Text
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openBinaryTempFile)
 import Test.Tasty
-import Test.Tasty.HUnit (testCase, assertBool)
+import Test.Tasty.HUnit (testCase, assertBool, assertEqual)
 import Test.Tasty.QuickCheck
 
 main :: IO ()
@@ -82,7 +83,8 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "parse-truncated" prop_ips32Trunc ]
   , testGroup "EBP"
       [ testProperty "round-trip" prop_ebp
-      , testProperty "parse-truncated" prop_ebpTrunc ]
+      , testProperty "parse-truncated" prop_ebpTrunc
+      , testCase "non-ascii-utf8" test_ebpUtf8 ]
   , testGroup "UPS"
       [ testProperty "round-trip" prop_ups
       , testProperty "parse-truncated" prop_upsTrunc ]
@@ -731,6 +733,15 @@ prop_ebpTrunc = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) source target defaultMeta Nothing of
     Left _ -> discard
     Right patch -> truncated IPS.parseIPS patch
+
+-- | EBP JSON metadata must round-trip non-ASCII characters through UTF-8.
+test_ebpUtf8 :: IO ()
+test_ebpUtf8 = do
+  let json = ebpJson "Pokémon" "André" "Ünïcödé ™"
+      pairs = jsonPairs json
+  assertEqual "title" (Just "Pokémon") (jsonFieldCI pairs "title")
+  assertEqual "author" (Just "André") (jsonFieldCI pairs "author")
+  assertEqual "description" (Just "Ünïcödé ™") (jsonFieldCI pairs "description")
 
 prop_upsTrunc :: Property
 prop_upsTrunc = forAll genPair $ \(source, target) ->

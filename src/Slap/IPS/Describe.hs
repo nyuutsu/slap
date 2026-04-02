@@ -16,8 +16,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (toLower)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.List (sortBy)
 import Data.Ord (comparing)
 import Data.Word (Word64)
@@ -77,7 +78,7 @@ ipsInfo patch = unlines $ filter (not . null) $
 
 -- | Extract all string key-value pairs from a flat JSON object.
 jsonPairs :: ByteString -> [(String, String)]
-jsonPairs = extractPairs . ByteString8.unpack
+jsonPairs = extractPairs . Text.unpack . Text.decodeUtf8Lenient
   where
     extractPairs text = case dropWhile (/= '{') text of
       ('{':rest) -> scanEntries rest

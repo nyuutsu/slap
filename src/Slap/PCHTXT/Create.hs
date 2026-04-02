@@ -12,8 +12,9 @@ import Slap.Measure (Offset(..), EncodedHunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (intToDigit, isHexDigit, toUpper)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Int (Int64)
 import Data.Word (Word64)
 import Numeric (showHex)
@@ -22,12 +23,12 @@ import Numeric (showHex)
 -- If a description is provided and looks like a hex build ID (all hex, 32+ chars),
 -- emit @nsobid-<id>; otherwise emit // <description> as a comment.
 encodePCHTXT :: [EncodedHunk] -> Maybe ByteString -> ByteString
-encodePCHTXT records maybeDescription = ByteString8.pack $ unlines $
+encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ "@enabled" : map encodeHunkEntry records
   where
     descriptionLines = case maybeDescription of
       Nothing -> []
-      Just rawDescription -> let text = trimNull (ByteString8.unpack rawDescription)
+      Just rawDescription -> let text = trimNull (Text.unpack (Text.decodeUtf8Lenient rawDescription))
                  in if null text then []
                     else if length text >= 32 && all isHexDigit text
                          then ["@nsobid-" ++ text, ""]
@@ -37,12 +38,12 @@ encodePCHTXT records maybeDescription = ByteString8.pack $ unlines $
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
 encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe ByteString -> ByteString
-encodePCHTXTBlocks blocks maybeDescription = ByteString8.pack $ unlines $
+encodePCHTXTBlocks blocks maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ concatMap encodeBlock blocks
   where
     descriptionLines = case maybeDescription of
       Nothing -> []
-      Just rawDescription -> let text = trimNull (ByteString8.unpack rawDescription)
+      Just rawDescription -> let text = trimNull (Text.unpack (Text.decodeUtf8Lenient rawDescription))
                  in if null text then []
                     else if length text >= 32 && all isHexDigit text
                          then ["@nsobid-" ++ text, ""]

@@ -26,8 +26,9 @@ import Slap.Format (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.ByteString.Builder
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (shiftR, (.&.))
 import Data.List (sort)
@@ -124,7 +125,7 @@ encodeTruncation :: Int -> FileSize -> Builder
 encodeTruncation width truncSize = encodeOffset width (fromIntegral (unFileSize truncSize))
 
 ebpJson :: String -> String -> String -> ByteString
-ebpJson title author description = ByteString8.pack $
+ebpJson title author description = Text.encodeUtf8 $ Text.pack $
   "{\"patcher\":\"slap\",\"title\":\"" ++ escapeJson title
   ++ "\",\"author\":\"" ++ escapeJson author
   ++ "\",\"description\":\"" ++ escapeJson description ++ "\"}"

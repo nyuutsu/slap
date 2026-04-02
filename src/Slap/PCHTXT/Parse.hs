@@ -17,13 +17,15 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (digitToInt, isHexDigit, isSpace)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Int (Int64)
 import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Word (Word8)
 import Numeric (readHex)
 
 parsePCHTXT :: ByteString -> Either String PCHTXTPatch
-parsePCHTXT input = parseLines (map ByteString8.unpack (ByteString8.lines input)) Nothing [] Nothing 0 False Nothing
+parsePCHTXT input = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (ByteString8.lines input)) Nothing [] Nothing 0 False Nothing
   where
     -- parseLines lines nsobid finishedBlocks lastComment shift shifted currentBlock
     -- currentBlock = Maybe (enabled, description, reversedEntries)
@@ -122,13 +124,13 @@ decodeHexPairs (highNibble:lowNibble:rest) = fromIntegral (digitToInt highNibble
 decodeHexPairs _ = []
 
 parseQuotedString :: String -> Either String ByteString
-parseQuotedString = fmap ByteString.pack . parseEscaped
+parseQuotedString = fmap (Text.encodeUtf8 . Text.pack) . parseEscaped
   where
     parseEscaped [] = Left "PCHTXT: unterminated quoted string"
     parseEscaped ('"':_) = Right []
-    parseEscaped ('\\':'n':rest) = (0x0A :) <$> parseEscaped rest
-    parseEscaped ('\\':'t':rest) = (0x09 :) <$> parseEscaped rest
-    parseEscaped ('\\':'\\':rest) = (0x5C :) <$> parseEscaped rest
-    parseEscaped ('\\':'"':rest) = (0x22 :) <$> parseEscaped rest
-    parseEscaped ('\\':character:rest) = (fromIntegral (fromEnum character) :) <$> parseEscaped rest
-    parseEscaped (character:rest) = (fromIntegral (fromEnum character) :) <$> parseEscaped rest
+    parseEscaped ('\\':'n':rest) = ('\n' :) <$> parseEscaped rest
+    parseEscaped ('\\':'t':rest) = ('\t' :) <$> parseEscaped rest
+    parseEscaped ('\\':'\\':rest) = ('\\' :) <$> parseEscaped rest
+    parseEscaped ('\\':'"':rest) = ('"' :) <$> parseEscaped rest
+    parseEscaped ('\\':character:rest) = (character :) <$> parseEscaped rest
+    parseEscaped (character:rest) = (character :) <$> parseEscaped rest

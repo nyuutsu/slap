@@ -53,10 +53,11 @@ import Slap.Format (showCRC, padHex)
 
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import Data.Word (Word8, Word32)
 
 ----------------------------------------------------------------------------
@@ -401,7 +402,7 @@ fieldNote contents field = case field of
   FDescription
     | Just description <- contentsDescription contents
     , not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      ["note: dropping description: \"" ++ trimNullSpace (ByteString8.unpack description) ++ "\""]
+      ["note: dropping description: \"" ++ trimNullSpace (Text.unpack (Text.decodeUtf8Lenient description)) ++ "\""]
   FUndoData
     | Just undoRecords <- contentsUndoData contents ->
       ["note: dropping undo data (" ++ show (length undoRecords) ++ " records)"]
@@ -540,7 +541,7 @@ encodeDirect contents source target meta limits = case target of
     cliAuthor = metaAuthor meta
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
-    pchtxtDescription = fmap ByteString8.pack cliDescription <|> contentsDescription contents
+    pchtxtDescription = fmap (Text.encodeUtf8 . Text.pack) cliDescription <|> contentsDescription contents
     ebpFieldPairs = maybe [] jsonPairs (contentsEBPMeta contents)
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
@@ -660,7 +661,7 @@ resolveDescription cliDescription ebpMeta rawDescription fallback
   | Just meta <- ebpMeta
   , Just description <- jsonFieldCI (jsonPairs meta) "description"
   , not (null description) = description
-  | Just raw <- rawDescription    = trimNullSpace (ByteString8.unpack raw)
+  | Just raw <- rawDescription    = trimNullSpace (Text.unpack (Text.decodeUtf8Lenient raw))
   | otherwise              = fallback
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
