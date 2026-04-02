@@ -9,6 +9,7 @@ module Slap.Binary
   , getWord32BE
   , getInt64BE
     -- * Variable-length integers
+  , VarintResult(..)
   , getByuuVarint
   , getVcdiffVarint
     -- * Builders
@@ -26,6 +27,8 @@ module Slap.Binary
   , copyByteStringRange
     -- * Diff
   , diffHunks
+    -- * String utilities
+  , trimNull
     -- * Additional builders
   , putWord16LE
   , putWord32BE
@@ -274,4 +277,22 @@ putInt64BE value =
   <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
   <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (value .&. 0xFF))
+
+----------------------------------------------------------------------------
+-- Variable-length integer result
+----------------------------------------------------------------------------
+
+-- | Result of decoding a variable-length integer.
+data VarintResult = VarintResult
+  { varintValue    :: !Int64
+  , varintConsumed :: !Int     -- bytes consumed from the input
+  } deriving (Show)
+
+----------------------------------------------------------------------------
+-- String utilities
+----------------------------------------------------------------------------
+
+-- | Strip trailing null bytes from a ByteString.
+trimNull :: ByteString -> ByteString
+trimNull = ByteString.takeWhile (/= 0)
 
