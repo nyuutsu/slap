@@ -16,11 +16,11 @@ import Slap.Explain
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
     , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
+import Slap.Checksum (Adler32(..), showAdler32)
 import Slap.Format (padHex, renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 
 ----------------------------------------------------------------------------
 -- Info
@@ -92,7 +92,7 @@ makeVCDIFFSection index globalOffset window instructions =
   where
     adlerPair = case vcdiffAdler32 window of
       Nothing      -> []
-      Just adler   -> [("adler32", "0x" ++ padHex 8 (fromIntegral adler :: Int64))]
+      Just adler   -> [("adler32", "0x" ++ showAdler32 adler)]
 
 decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> ExplainRegion
 decodedToRegion globalOffset instruction = case instruction of

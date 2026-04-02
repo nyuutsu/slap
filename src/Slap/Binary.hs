@@ -47,6 +47,7 @@ import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
+import Slap.Checksum (Adler32)
 import Slap.FFI (rustyAdler32)
 import Slap.Measure (Offset(..), Hunk(..))
 
@@ -212,7 +213,7 @@ crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
 -- Adler-32 (RFC 1950) — via rusty-slap
 ----------------------------------------------------------------------------
 
-adler32 :: ByteString -> Word32
+adler32 :: ByteString -> Adler32
 adler32 = rustyAdler32
 
 ----------------------------------------------------------------------------

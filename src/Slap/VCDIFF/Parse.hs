@@ -11,6 +11,7 @@ import Slap.VCDIFF.Types
     , serializedDefaultTable, decodeCustomTable
     )
 import Slap.VCDIFF.Apply (applyVCDIFF)
+import Slap.Checksum (Adler32(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
 import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..))
@@ -110,7 +111,7 @@ parseVCDIFFWith allowCustom input
                       - fromIntegral instructionLength
                       - fromIntegral addressLength)
       adlerChecksum <- if unPosition dataStart == unPosition afterLengths + 4
-        then Just <$> word32BE
+        then Just . Adler32 <$> word32BE
         else pure Nothing
       -- Jump to data start and slice the three data streams
       setPosition dataStart

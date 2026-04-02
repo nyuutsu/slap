@@ -10,10 +10,10 @@ module Slap.UPS.Parse
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
 import Slap.Binary (getWord32LE)
+import Slap.Checksum (CRC32(..), showCRC32)
 import Slap.FFI (rustyCRC32)
 import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
 import Slap.Measure (FileSize(..), Delta(..))
-import Slap.Format (showCRC)
 import Control.Monad (when)
 
 import Data.ByteString (ByteString)
@@ -26,14 +26,14 @@ parseUPS input
   | ByteString.length input < 16 = Left "UPS: truncated footer"
   | otherwise = do
       -- Validate patch CRC
-      let storedPatchCRC = getWord32LE (ByteString.length input - 4) input
+      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
           actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
       if storedPatchCRC /= actualPatchCRC
-        then Left ("UPS: patch CRC mismatch (stored " ++ showCRC storedPatchCRC
-                    ++ ", computed " ++ showCRC actualPatchCRC ++ ")")
+        then Left ("UPS: patch CRC mismatch (stored " ++ showCRC32 storedPatchCRC
+                    ++ ", computed " ++ showCRC32 actualPatchCRC ++ ")")
         else pure ()
-      let sourceCRC = getWord32LE (ByteString.length input - 12) input
-          targetCRC = getWord32LE (ByteString.length input - 8)  input
+      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - 12) input)
+          targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
       (sourceSize, targetSize, blocks) <- runGet parseUPSBody bodyBytes

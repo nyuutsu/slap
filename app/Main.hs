@@ -11,14 +11,15 @@ import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Explain (renderExplain, renderSummary)
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
+import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
-import Slap.Format (showCRC, padHex)
+import Slap.Format (padHex)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
 import Data.Maybe (fromMaybe, isNothing)
-import Data.Word (Word8, Word16, Word32)
+import Data.Word (Word8)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -678,7 +679,7 @@ verifySource noVerify verification sourceBytes = do
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
   unless noVerify $ do
     forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-      warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+      warnBlock "source" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes)))
     forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
       warnPPFBlock blockOffset expectedData sourceBytes
     forM_ (verifyFileSize verification) $ \expectedSize ->
@@ -694,11 +695,11 @@ verifyTarget noVerify verification targetBytes = do
     checkHash noVerify "target MD5" expected (md5 targetBytes)
   unless noVerify $
     forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-      warnBlock "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
+      warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler noVerify windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
-checkCRC :: Bool -> String -> Word32 -> Word32 -> IO ()
+checkCRC :: Bool -> String -> CRC32 -> CRC32 -> IO ()
 checkCRC noVerify label expected actual
   | expected == actual = pure ()
   | noVerify = warn (label ++ " CRC mismatch (expected "
@@ -713,15 +714,16 @@ checkHash noVerify label expected actual
   | noVerify = warn (label ++ " mismatch")
   | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
 
-checkAdler :: Bool -> Offset -> Word32 -> Word32 -> IO ()
+checkAdler :: Bool -> Offset -> Adler32 -> Adler32 -> IO ()
 checkAdler noVerify windowOffset expected actual
   | expected == actual = pure ()
   | noVerify = warn message
   | otherwise = die (message ++ "\n  use --no-verify to apply anyway")
   where message = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral (unOffset windowOffset))
-            ++ " (expected " ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")"
+            ++ " (expected 0x" ++ showAdler32 expected
+            ++ ", got 0x" ++ showAdler32 actual ++ ")"
 
-warnBlock :: String -> Offset -> Word16 -> Word16 -> IO ()
+warnBlock :: String -> Offset -> CRC16 -> CRC16 -> IO ()
 warnBlock label blockOffset expected actual
   | expected == actual = pure ()
   | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset blockOffset)))
@@ -746,8 +748,8 @@ warnSourceBytes label checkOffset expectedData sourceBytes =
 safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
 safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)
 
-formatCRC :: Word32 -> String
-formatCRC crcValue = "0x" ++ showCRC crcValue
+formatCRC :: CRC32 -> String
+formatCRC crcValue = "0x" ++ showCRC32 crcValue
 
 emitWarnings :: SomePatch -> IO ()
 emitWarnings somePatch = forM_ (patchWarnings somePatch) $ \warning ->

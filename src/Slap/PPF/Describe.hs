@@ -1,7 +1,7 @@
 module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
 import Slap.PPF.Types
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Format (renderField)
 import Slap.Explain
   ( ExplainData(..)
@@ -27,7 +27,7 @@ ppfMeta patch = concat
     in [("description", description) | not (null description)]
   , case ppfFileSize patch of
       Nothing   -> []
-      Just size -> [("file size", show size ++ " bytes (validation)")]
+      Just size -> [("file size", show (unFileSize size) ++ " bytes (validation)")]
   , [("validation", validationString (ppfValidation patch))]
   , [("undo data", if ppfHasUndo patch then "yes" else "no")]
   , case ppfFileId patch of

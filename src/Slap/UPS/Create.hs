@@ -8,6 +8,7 @@ module Slap.UPS.Create
 
 import Slap.UPS.Types (UPSBlock(..))
 import Slap.Binary (putWord32LE, putByuuVarint)
+import Slap.Checksum (CRC32(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Delta(..))
 
@@ -35,11 +36,11 @@ createUPS original modified =
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
              <> foldMap encodeUPSBlock blocks
-             <> putWord32LE sourceCRC
-             <> putWord32LE targetCRC
+             <> putWord32LE (unCRC32 sourceCRC)
+             <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE patchCRC))
+  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipDelta xorData) =

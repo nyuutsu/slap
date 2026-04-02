@@ -10,8 +10,9 @@ module Slap.APSGBA.Parse
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_gba.js
 
 import Slap.APSGBA.Types
+import Slap.Checksum (CRC16(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
-import Slap.Measure (Length(..))
+import Slap.Measure (Length(..), FileSize(..), Offset(..))
 
 import qualified Data.ByteString as ByteString
 
@@ -24,8 +25,8 @@ parseAPSGBA input
 parseGBA :: Get APSGBAPatch
 parseGBA = do
   skip (Length 4)  -- "APS1"
-  sourceSize <- word32LE
-  targetSize <- word32LE
+  sourceSize <- FileSize . fromIntegral <$> word32LE
+  targetSize <- FileSize . fromIntegral <$> word32LE
   records <- parseGBARecords
   pure $ APSGBAPatch (APSGBAHeader sourceSize targetSize) records
 
@@ -34,9 +35,9 @@ parseGBARecords = do
   remainingLength <- remaining
   if unLength remainingLength < 65544 then pure []
   else do
-    offset <- word32LE
-    sourceCrc <- word16LE
-    targetCrc <- word16LE
+    offset <- Offset . fromIntegral <$> word32LE
+    sourceCrc <- CRC16 <$> word16LE
+    targetCrc <- CRC16 <$> word16LE
     xorPayload <- getBytes (Length 65536)
     rest <- parseGBARecords
     pure (APSGBARecord offset sourceCrc targetCrc xorPayload : rest)

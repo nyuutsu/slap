@@ -44,12 +44,13 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
+import Slap.Checksum (CRC32(..), showCRC32)
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
                       narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
-import Slap.Format (showCRC, padHex)
+import Slap.Format (padHex)
 
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
@@ -58,7 +59,7 @@ import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import Data.Word (Word8, Word32)
+import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -93,7 +94,7 @@ data FormatSpecification = FormatSpecification
 data PatchContents = PatchContents
   { contentsRecords     :: [Hunk]
   , contentsDescription :: Maybe ByteString.ByteString
-  , contentsSourceCRC32 :: Maybe Word32
+  , contentsSourceCRC32 :: Maybe CRC32
   , contentsSourceMD5   :: Maybe ByteString.ByteString
   , contentsSourceSHA1  :: Maybe ByteString.ByteString
   , contentsDestinationSize    :: Maybe FileSize
@@ -391,8 +392,8 @@ ninja1HashNotes _ _ = []
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote contents field = case field of
   FSourceCRC32
-    | Just crc <- contentsSourceCRC32 contents, crc /= 0 ->
-      ["note: dropping source CRC32: 0x" ++ showCRC crc]
+    | Just crc <- contentsSourceCRC32 contents, crc /= CRC32 0 ->
+      ["note: dropping source CRC32: 0x" ++ showCRC32 crc]
   FSourceMD5
     | Just md5Hash <- contentsSourceMD5 contents, not (ByteString.all (== 0) md5Hash) ->
       ["note: dropping source MD5: " ++ hexByteString md5Hash]
@@ -513,7 +514,7 @@ encodeDirect contents source target meta limits = case target of
          Just diz -> base <> PPF.encodeFileIdDiz diz
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
-    let crc      = fromMaybe 0 (contentsSourceCRC32 contents)
+    let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (ByteString.replicate 16 0) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (ByteString.replicate 20 0) (contentsSourceSHA1 contents)
     Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType

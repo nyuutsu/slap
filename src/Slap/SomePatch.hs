@@ -83,7 +83,7 @@ import qualified Slap.Yay0 as Yay0
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Maybe (fromMaybe, isJust)
-import Data.Word (Word16, Word32)
+import Slap.Checksum (CRC32, CRC16, Adler32)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -101,10 +101,10 @@ newtype ApplyStrategy = InMemory
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
 data Verification = Verification
-  { verifySourceCRC32  :: Maybe Word32
+  { verifySourceCRC32  :: Maybe CRC32
   , verifySourceMD5    :: Maybe ByteString.ByteString
   , verifySourceSHA1   :: Maybe ByteString.ByteString
-  , verifyTargetCRC32  :: Maybe Word32
+  , verifyTargetCRC32  :: Maybe CRC32
   , verifyTargetMD5    :: Maybe ByteString.ByteString
   , verifySourceBlocks  :: [BlockCheck]
   , verifyTargetBlocks  :: [BlockCheck]
@@ -118,7 +118,7 @@ data Verification = Verification
 -- | Per-block CRC16 check (APS-GBA).
 data BlockCheck = BlockCheck
   { blockCheckOffset :: !Offset
-  , blockCheckCRC16  :: !Word16
+  , blockCheckCRC16  :: !CRC16
   } deriving (Show)
 
 -- | Validation block comparison (PPF).
@@ -131,7 +131,7 @@ data ValidationBlock = ValidationBlock
 data WindowCheck = WindowCheck
   { windowCheckOffset   :: !Offset
   , windowCheckLength   :: !Length
-  , windowCheckExpected :: !Word32
+  , windowCheckExpected :: !Adler32
   } deriving (Show)
 
 -- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
@@ -197,7 +197,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             { verifyPPFBlock = case PPF.ppfValidation patch of
                 Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
                 Nothing  -> Nothing
-            , verifyFileSize = fmap (FileSize . fromIntegral) (PPF.ppfFileSize patch)
+            , verifyFileSize = PPF.ppfFileSize patch
             }
       in Right SomePatch
         { patchFormat         = "PPF"
@@ -231,7 +231,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             , contentsSourceCRC32 = Nothing
             , contentsSourceMD5   = Nothing
             , contentsSourceSHA1  = Nothing
-            , contentsDestinationSize    = fmap (FileSize . fromIntegral) (PPF.ppfFileSize patch)
+            , contentsDestinationSize    = PPF.ppfFileSize patch
             , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
             , contentsUndoData    = if PPF.ppfHasUndo patch
                               then Just [ UndoHunk (PPF.recordOffset record) (PPF.recordData record) (fromMaybe ByteString.empty (PPF.recordUndo record))
@@ -410,7 +410,7 @@ parseSome patchBytes = case detectFormat patchBytes of
                                 { metaDescription = if null desc then Nothing else Just desc }
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
-            , contentsDestinationSize    = Just (FileSize (fromIntegral (APSN64.apsN64DestinationSize header)))
+            , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
             }
       }
 
@@ -700,9 +700,9 @@ parseAPSGBABlock input = do
           { inMemoryApply = \source -> pure (Right (APSGBA.applyAPSGBAMemory patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-          { verifySourceBlocks = map (\record -> BlockCheck (Offset (fromIntegral (APSGBA.apsGbaOffset record))) (APSGBA.apsGbaSourceCRC record)) records
-          , verifyTargetBlocks = map (\record -> BlockCheck (Offset (fromIntegral (APSGBA.apsGbaOffset record))) (APSGBA.apsGbaTargetCRC record)) records
-          , verifyFileSize = Just (FileSize (fromIntegral (APSGBA.apsGbaSourceSize header)))
+          { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records
+          , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
+          , verifyFileSize = Just (APSGBA.apsGbaSourceSize header)
           }
     , patchVerboseLines   = []
     , patchWarnings       = ["empty patch (0 blocks)" | null records]

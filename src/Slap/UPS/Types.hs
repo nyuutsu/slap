@@ -5,10 +5,10 @@ module Slap.UPS.Types
   , UPSPatch(..)
   ) where
 
+import Slap.Checksum (CRC32)
 import Slap.Measure (FileSize(..), Delta(..))
 
 import Data.ByteString (ByteString)
-import Data.Word (Word32)
 
 data UPSBlock = UPSBlock
   { upsSkip    :: !Delta      -- bytes to skip (copy from source unchanged)
@@ -19,7 +19,7 @@ data UPSPatch = UPSPatch
   { upsSourceSize :: !FileSize
   , upsTargetSize :: !FileSize
   , upsBlocks     :: [UPSBlock]
-  , upsSourceCRC  :: Word32
-  , upsTargetCRC  :: Word32
-  , upsPatchCRC   :: Word32
+  , upsSourceCRC  :: CRC32
+  , upsTargetCRC  :: CRC32
+  , upsPatchCRC   :: CRC32
   } deriving (Show)

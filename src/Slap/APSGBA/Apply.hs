@@ -9,6 +9,7 @@ module Slap.APSGBA.Apply
 
 import Slap.APSGBA.Types
 import Slap.Binary (copyByteStringRange)
+import Slap.Measure (FileSize(..), Offset(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -23,7 +24,7 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 applyAPSGBA :: APSGBAPatch -> FilePath -> IO Int
 applyAPSGBA (APSGBAPatch header records) target = do
   source <- ByteString.readFile target
-  let targetSize = fromIntegral (apsGbaTargetSize header) :: Int
+  let targetSize = fromIntegral (unFileSize (apsGbaTargetSize header)) :: Int
       padded = if ByteString.length source < targetSize
                then source <> ByteString.replicate (targetSize - ByteString.length source) 0
                else source
@@ -33,8 +34,8 @@ applyAPSGBA (APSGBAPatch header records) target = do
 
 applyGBARecords :: ByteString -> [APSGBARecord] -> IO ByteString
 applyGBARecords source [] = pure source
-applyGBARecords source (APSGBARecord offset _ _ xorPayload : rest) = do
-  let blockOffset = fromIntegral offset :: Int
+applyGBARecords source (APSGBARecord recordOffset _ _ xorPayload : rest) = do
+  let blockOffset = fromIntegral (unOffset recordOffset) :: Int
       blockSize = 65536
       before = ByteString.take blockOffset source
       sourceBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
@@ -51,8 +52,8 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
     copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
     when (targetSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)
-    forM_ records $ \(APSGBARecord offset _ _ xorPayload) -> do
-      let blockOffset = fromIntegral offset :: Int
+    forM_ records $ \(APSGBARecord recordOffset _ _ xorPayload) -> do
+      let blockOffset = fromIntegral (unOffset recordOffset) :: Int
       forM_ [0..65535] $ \index -> do
         let position = blockOffset + index
         when (position < targetSize) $ do
@@ -60,7 +61,7 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
           pokeByteOff targetPointer position (original `xor` ByteString.index xorPayload index)
   where
     sourceLength = ByteString.length source
-    targetSize = fromIntegral (apsGbaTargetSize header)
+    targetSize = fromIntegral (unFileSize (apsGbaTargetSize header))
 
 safeSlice :: Int -> Int -> ByteString -> ByteString
 safeSlice offset sliceLength input

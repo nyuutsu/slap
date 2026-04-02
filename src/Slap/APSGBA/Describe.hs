@@ -10,12 +10,12 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), Annotation(..),
                      OffsetKind(..), AnnotDetail(..))
 import Slap.Format (renderField)
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Measure (Length(..), FileSize(..))
 
 apsGBAMeta :: APSGBAPatch -> [(String, String)]
 apsGBAMeta (APSGBAPatch header _) =
-  [ ("source size", show (apsGbaSourceSize header))
-  , ("target size", show (apsGbaTargetSize header))
+  [ ("source size", show (unFileSize (apsGbaSourceSize header)))
+  , ("target size", show (unFileSize (apsGbaTargetSize header)))
   ]
 
 apsGBAInfo :: APSGBAPatch -> String
@@ -35,10 +35,10 @@ explainAPSGBA patch@(APSGBAPatch _header records) = ExplainData
 
 makeGBARegion :: APSGBARecord -> ExplainRegion
 makeGBARegion record = ExplainRegion
-  { regionOffset     = Offset (fromIntegral (apsGbaOffset record))
+  { regionOffset     = apsGbaOffset record
   , regionSize       = Length 65536
   , regionLabel      = "XOR block  "
   , regionPayload    = PayloadXOR (Just (apsGbaXorData record))
-  , regionAnnotation = AnnotAt AtOffset (Offset (fromIntegral (apsGbaOffset record)))
-      [DetailCRC16 (fromIntegral (apsGbaSourceCRC record)) (fromIntegral (apsGbaTargetCRC record))]
+  , regionAnnotation = AnnotAt AtOffset (apsGbaOffset record)
+      [DetailCRC16 (apsGbaSourceCRC record) (apsGbaTargetCRC record)]
   }

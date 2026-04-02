@@ -10,7 +10,8 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       ExplainPayload(..), ExplainSummary(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
-import Slap.Format (showCRC, padHex, renderField)
+import Slap.Checksum (showCRC32)
+import Slap.Format (padHex, renderField)
 import Slap.Measure (Length(..))
 
 import qualified Data.ByteString as ByteString
@@ -24,7 +25,7 @@ ninja1Meta patch = concat
   [ [("ROM type", romTypeName (ninja1RomType patch))]
   , case ninja1SourceCRC patch of
       Nothing  -> []
-      Just crc -> [("source CRC", "0x" ++ showCRC crc)]
+      Just crc -> [("source CRC", "0x" ++ showCRC32 crc)]
   , case ninja1SourceMD5 patch of
       Nothing   -> []
       Just hash -> [("source MD5", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]

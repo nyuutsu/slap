@@ -11,7 +11,8 @@ import Slap.Explain
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
     , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Format (showCRC, renderField)
+import Slap.Checksum (showCRC32)
+import Slap.Format (renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 
 import qualified Data.ByteString as ByteString
@@ -24,9 +25,9 @@ bpsMeta patch = concat
   [ [("source size", show (unFileSize (bpsSourceSize patch)))]
   , [("target size", show (unFileSize (bpsTargetSize patch)))]
   , [("metadata", metadataDisplay)]
-  , [("source CRC", showCRC (bpsSourceCRC patch))]
-  , [("target CRC", showCRC (bpsTargetCRC patch))]
-  , [("patch CRC", showCRC (bpsPatchCRC patch))]
+  , [("source CRC", showCRC32 (bpsSourceCRC patch))]
+  , [("target CRC", showCRC32 (bpsTargetCRC patch))]
+  , [("patch CRC", showCRC32 (bpsPatchCRC patch))]
   ]
   where
     metadata = bpsMetadata patch

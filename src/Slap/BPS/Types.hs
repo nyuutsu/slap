@@ -9,7 +9,7 @@ module Slap.BPS.Types
 import Data.Bits (shiftR, testBit)
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
-import Data.Word (Word32)
+import Slap.Checksum (CRC32)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
 data BPSAction
@@ -24,9 +24,9 @@ data BPSPatch = BPSPatch
   , bpsTargetSize :: !FileSize
   , bpsMetadata   :: ByteString
   , bpsActions    :: [BPSAction]
-  , bpsSourceCRC  :: Word32
-  , bpsTargetCRC  :: Word32
-  , bpsPatchCRC   :: Word32
+  , bpsSourceCRC  :: CRC32
+  , bpsTargetCRC  :: CRC32
+  , bpsPatchCRC   :: CRC32
   } deriving (Show)
 
 -- Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.

@@ -13,8 +13,8 @@ module Slap.APSN64.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word32)
-import Slap.Measure (Offset(..))
+import Data.Word (Word8)
+import Slap.Measure (FileSize, Offset(..))
 
 data APSPatchType = APSSimple | APSN64Specific
   deriving (Show, Eq)
@@ -52,7 +52,7 @@ data APSN64Header = APSN64Header
   , apsN64CartId      :: Maybe ByteString  -- 2 bytes
   , apsN64Country     :: Maybe Word8
   , apsN64Crc         :: Maybe ByteString  -- 8 bytes
-  , apsN64DestinationSize    :: Word32
+  , apsN64DestinationSize    :: FileSize
   } deriving (Show)
 
 data APSN64Record

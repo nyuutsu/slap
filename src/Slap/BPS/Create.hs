@@ -5,6 +5,7 @@ module Slap.BPS.Create
   ) where
 
 import Slap.Binary (putWord32LE, putByuuVarint)
+import Slap.Checksum (CRC32(..))
 import Slap.FFI (rustyCRC32, rustyBpsDiff)
 
 import Data.ByteString (ByteString)
@@ -24,8 +25,8 @@ createBPS original modified metadata =
              <> putByuuVarint (fromIntegral (ByteString.length metadata))
              <> byteString metadata
              <> byteString actionBytes
-             <> putWord32LE sourceCRC
-             <> putWord32LE targetCRC
+             <> putWord32LE (unCRC32 sourceCRC)
+             <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE patchCRC))
+  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))

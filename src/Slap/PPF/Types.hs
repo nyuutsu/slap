@@ -14,8 +14,8 @@ module Slap.PPF.Types
     ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word32)
-import Slap.Measure (Offset(..), Length(..))
+import Data.Word (Word8)
+import Slap.Measure (Offset(..), Length(..), FileSize)
 
 -- | PPF format version.
 data Version = PPF1 | PPF2 | PPF3 | PPF4
@@ -56,7 +56,7 @@ newtype FileId = FileId { fileIdContent :: ByteString }
 data Patch = Patch
   { ppfVersion     :: Version
   , ppfDescription :: ByteString      -- ^ 50-byte description field
-  , ppfFileSize    :: Maybe Word32     -- ^ Expected target size (PPF2 only)
+  , ppfFileSize    :: Maybe FileSize   -- ^ Expected target size (PPF2 only)
   , ppfValidation  :: Maybe Validation -- ^ Block check data (PPF2 always, PPF3 optional)
   , ppfHasUndo     :: Bool             -- ^ Whether undo data is present (PPF3 only)
   , ppfImageType   :: Maybe ImageType  -- ^ PPF3 only (byte 56)

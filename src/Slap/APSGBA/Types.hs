@@ -7,19 +7,20 @@ module Slap.APSGBA.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word16, Word32)
+import Slap.Checksum (CRC16)
+import Slap.Measure (FileSize, Offset)
 
 data APSGBAPatch = APSGBAPatch APSGBAHeader [APSGBARecord]
   deriving (Show)
 
 data APSGBAHeader = APSGBAHeader
-  { apsGbaSourceSize :: Word32
-  , apsGbaTargetSize :: Word32
+  { apsGbaSourceSize :: FileSize
+  , apsGbaTargetSize :: FileSize
   } deriving (Show)
 
 data APSGBARecord = APSGBARecord
-  { apsGbaOffset    :: Word32
-  , apsGbaSourceCRC :: Word16
-  , apsGbaTargetCRC :: Word16
+  { apsGbaOffset    :: Offset
+  , apsGbaSourceCRC :: CRC16
+  , apsGbaTargetCRC :: CRC16
   , apsGbaXorData   :: ByteString  -- 65536 bytes
   } deriving (Show)

@@ -11,7 +11,8 @@ module Slap.NINJA1.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word8, Word32)
+import Data.Word (Word8)
+import Slap.Checksum (CRC32)
 import Slap.Measure (Offset(..))
 
 data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
@@ -72,7 +73,7 @@ fromNINJA1RomType (RomUnknown value) = value
 data NINJA1Patch = NINJA1Patch
   { ninja1SubFormat  :: NINJA1SubFormat
   , ninja1RomType    :: NINJA1RomType
-  , ninja1SourceCRC  :: Maybe Word32
+  , ninja1SourceCRC  :: Maybe CRC32
   , ninja1SourceMD5  :: Maybe ByteString  -- 16 bytes
   , ninja1SourceSHA1 :: Maybe ByteString  -- 20 bytes
   , ninja1Records    :: [NINJA1Record]

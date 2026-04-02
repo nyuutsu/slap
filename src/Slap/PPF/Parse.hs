@@ -7,7 +7,7 @@ module Slap.PPF.Parse (parsePatch) where
 
 import Slap.PPF.Types
 import Slap.Binary (getWord16LE, getWord32LE, getInt64LE)
-import Slap.Measure (Offset(..))
+import Slap.Measure (Offset(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -78,7 +78,7 @@ parsePPF2 input = do
   Right Patch
     { ppfVersion     = PPF2
     , ppfDescription = ByteString.take 50 (ByteString.drop 6 input)
-    , ppfFileSize    = Just (getWord32LE 56 input)
+    , ppfFileSize    = Just (FileSize (fromIntegral (getWord32LE 56 input)))
     , ppfValidation  = Just (Validation BIN (ByteString.take 1024 (ByteString.drop 60 input)))
     , ppfHasUndo     = False
     , ppfImageType   = Nothing

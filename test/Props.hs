@@ -42,6 +42,7 @@ import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.PCHTXT.Apply as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
+import Slap.Checksum (CRC32(..))
 import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
@@ -534,7 +535,7 @@ fullContents :: PatchContents
 fullContents = PatchContents
   { contentsRecords     = [Hunk (Offset 0) (ByteString.pack [0xFF])]
   , contentsDescription = Just (ByteString.pack [0x74, 0x65, 0x73, 0x74])
-  , contentsSourceCRC32 = Just 0xDEADBEEF
+  , contentsSourceCRC32 = Just (CRC32 0xDEADBEEF)
   , contentsSourceMD5   = Just (ByteString.replicate 16 0xAA)
   , contentsSourceSHA1  = Just (ByteString.replicate 20 0xBB)
   , contentsDestinationSize    = Just (FileSize 1024)

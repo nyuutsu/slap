@@ -32,6 +32,7 @@ import Data.Char (toLower)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
+import Slap.Checksum (CRC32(..))
 
 parseNINJA1 :: ByteString -> Either String NINJA1Patch
 parseNINJA1 input
@@ -76,7 +77,7 @@ parseBinaryGet format = do
   md5Bytes  <- getBytes (Length 16)
   sha1Bytes <- getBytes (Length 20)
   (records, clean) <- parseBinaryRecords
-  let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (decodeBigEndian32 crcBytes)
+  let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (CRC32 (decodeBigEndian32 crcBytes))
       parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just md5Bytes
       parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
   pure NINJA1Patch
@@ -146,7 +147,7 @@ parseText format payload = do
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
-parseTextHeader :: ByteString -> (NINJA1RomType, Maybe Word32, Maybe ByteString, Maybe ByteString)
+parseTextHeader :: ByteString -> (NINJA1RomType, Maybe CRC32, Maybe ByteString, Maybe ByteString)
 parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
   where
     tokens = map ByteString8.unpack (ByteString8.words line)
@@ -156,7 +157,7 @@ parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
     isUnknown text = text == "unk" || text == "unk."
     parsedCRC = case tokens of
       (_:crcText:_) | not (isUnknown crcText) -> case (readHex crcText :: [(Word32, String)]) of
-        [(value, "")] -> Just value
+        [(value, "")] -> Just (CRC32 value)
         _             -> Nothing
       _ -> Nothing
     nonEmpty bytes = if ByteString.null bytes then Nothing else Just bytes

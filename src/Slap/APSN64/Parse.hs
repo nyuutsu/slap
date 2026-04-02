@@ -11,7 +11,7 @@ module Slap.APSN64.Parse
 
 import Slap.APSN64.Types
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (Length(..), FileSize(..), Offset(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -33,7 +33,7 @@ parseN64 = do
       description <- getBytes (Length 50)
       case patchType of
         APSSimple -> do
-          destinationSize <- word32LE
+          destinationSize <- FileSize . fromIntegral <$> word32LE
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
@@ -48,7 +48,7 @@ parseN64 = do
           country <- getByte
           crcBytes  <- getBytes (Length 8)
           skip (Length 5)  -- padding (bytes 69-73)
-          destinationSize <- word32LE
+          destinationSize <- FileSize . fromIntegral <$> word32LE
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header

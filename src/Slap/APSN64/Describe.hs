@@ -10,7 +10,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), Annotation(..),
                      OffsetKind(..), AnnotDetail(..))
 import Slap.Format (padHex, renderField)
-import Slap.Measure (Length(..))
+import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
 
@@ -22,7 +22,7 @@ apsN64Meta (APSN64Patch header _) = concat
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)
   , countryField (apsN64Country header)
-  , [("dest size", show (apsN64DestinationSize header))]
+  , [("dest size", show (unFileSize (apsN64DestinationSize header)))]
   ]
   where
     descriptionField description

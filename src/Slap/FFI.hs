@@ -8,6 +8,7 @@ import Foreign.C.Types (CSize(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
+import Slap.Checksum (CRC32(..), Adler32(..))
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 foreign import ccall unsafe "rusty_crc32"
@@ -24,14 +25,14 @@ foreign import ccall unsafe "rusty_free"
   c_free :: Ptr Word8 -> CSize -> IO ()
 
 -- | CRC-32 via rusty-slap (hardware-accelerated crc32fast).
-rustyCRC32 :: ByteString -> Word32
-rustyCRC32 input = unsafeDupablePerformIO $
+rustyCRC32 :: ByteString -> CRC32
+rustyCRC32 input = CRC32 $ unsafeDupablePerformIO $
   UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
     pure $ c_rustyCRC32 (castPtr dataPointer) (fromIntegral dataLength)
 
 -- | Adler-32 via rusty-slap (RFC 1950).
-rustyAdler32 :: ByteString -> Word32
-rustyAdler32 input = unsafeDupablePerformIO $
+rustyAdler32 :: ByteString -> Adler32
+rustyAdler32 input = Adler32 $ unsafeDupablePerformIO $
   UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
     pure $ c_rustyAdler32 (castPtr dataPointer) (fromIntegral dataLength)
 

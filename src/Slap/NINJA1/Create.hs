@@ -9,6 +9,7 @@ module Slap.NINJA1.Create
 
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
+import Slap.Checksum (CRC32(..))
 import Slap.Measure (EncodedHunk(..))
 import Slap.Compress (zlibDeflate)
 
@@ -19,12 +20,11 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Int (Int64)
-import Data.Word (Word32)
 
 -- | Encode pre-diffed records as a NINJA1 Binary patch.
 -- When compress is True, zlib-compresses the payload and emits BZ subformat.
 encodeNINJA1 :: [EncodedHunk]
-             -> Word32          -- source CRC32
+             -> CRC32           -- source CRC32
              -> ByteString      -- source MD5 (16 bytes)
              -> ByteString      -- source SHA1 (20 bytes)
              -> NINJA1RomType   -- ROM platform type
@@ -36,7 +36,7 @@ encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
   where
     payload = LazyByteString.toStrict $ toLazyByteString $
         word8 (fromNINJA1RomType romType)
-        <> putWord32BE sourceCRC
+        <> putWord32BE (unCRC32 sourceCRC)
         <> byteString sourceMD5
         <> byteString sourceSHA1
         <> foldMap encodeRecordBuilder records

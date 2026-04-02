@@ -13,6 +13,7 @@ module Slap.Explain
   , renderSummary
   ) where
 
+import Slap.Checksum (CRC16, showCRC16)
 import Slap.Format (padHex, padNum, padRight, showSigned, hexDump, renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 import Data.Array (accumArray, elems)
@@ -81,7 +82,7 @@ data AnnotDetail
   | DetailSkip Delta            -- "(skip N)"
   | DetailSource Offset         -- "(source 0xN)"
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
-  | DetailCRC16 Int64 Int64     -- "(src CRC16 0xN, tgt CRC16 0xN)"
+  | DetailCRC16 CRC16 CRC16     -- "(src CRC16 0xN, tgt CRC16 0xN)"
 
 -- | Byte offset range for a non-empty set of regions.
 -- 'rangeStart' is the first modified byte; 'rangeEnd' is one past the last.
@@ -195,7 +196,7 @@ renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show (unDelta skipAm
 renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 (unOffset sourceOffset) ++ ")"
 renderDetail (DetailSourceIndex _)          = ""
 renderDetail (DetailCRC16 sourceCrc targetCrc) =
-  "  (src CRC16 " ++ padHex 4 sourceCrc ++ ", tgt CRC16 " ++ padHex 4 targetCrc ++ ")"
+  "  (src CRC16 " ++ showCRC16 sourceCrc ++ ", tgt CRC16 " ++ showCRC16 targetCrc ++ ")"
 
 ----------------------------------------------------------------------------
 -- Source-aware helpers

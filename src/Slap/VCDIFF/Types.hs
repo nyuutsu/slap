@@ -21,6 +21,7 @@ module Slap.VCDIFF.Types
 
 -- Canonical reference: RFC 3284
 
+import Slap.Checksum (Adler32)
 import Slap.Measure (Offset(..), FileSize(..))
 
 import Control.Monad (when)
@@ -29,7 +30,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.IORef
 import Data.Int (Int64)
-import Data.Word (Word8, Word32)
+import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -51,7 +52,7 @@ data VCDIFFWindow = VCDIFFWindow
   , vcdiffSourcePosition  :: Offset
   , vcdiffTargetLength    :: FileSize
   , vcdiffDeltaIndicator  :: Word8
-  , vcdiffAdler32         :: Maybe Word32
+  , vcdiffAdler32         :: Maybe Adler32
   , vcdiffAddRunData      :: ByteString   -- literal data stream
   , vcdiffInstructions    :: ByteString   -- instruction stream (code + sizes)
   , vcdiffAddresses       :: ByteString   -- address stream
