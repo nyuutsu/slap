@@ -4,6 +4,7 @@ module Slap.RUP.Create
   ( createRUP
   , encodeFixedHeader
   , encodeXorRecord
+  , rupTruncationNotes
   ) where
 
 import Slap.RUP.Types
@@ -20,12 +21,11 @@ import Data.Word (Word8)
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
 createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> PatchEncoding -> Either String ByteString
-createRUP original modified info romType encoding = do
-    header <- encodeFixedHeader encoding info
+createRUP original modified info romType encoding =
     Right $ LazyByteString.toStrict $ toLazyByteString $
       byteString "NINJA2"                     -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
-      <> byteString header                    -- rest of 2048-byte header
+      <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header
       <> word8 0x01                           -- OPEN_NEW_FILE command
       <> encodeVariableLengthValue 0          -- filename length (empty)
       <> word8 romType                        -- ROM type byte
@@ -68,35 +68,89 @@ createRUP original modified info romType encoding = do
 -- Mirrors parseFixedHeader layout: author@0x007/84, version@0x05B/11,
 -- title@0x066/256, genre@0x166/48, language@0x196/48, date@0x1C6/8,
 -- website@0x1CE/512, description@0x3CE/1074.
--- Rejects any field whose encoded bytes exceed the field width.
-encodeFixedHeader :: PatchEncoding -> RUPInfo -> Either String ByteString
-encodeFixedHeader encoding info = do
-    mapM_ validateField fields
-    Right $ ByteString.pack $ map byteAt [0 .. headerSize - 8]
+-- Fields that exceed their byte width are truncated at the last complete
+-- codepoint boundary (UTF-8) or byte boundary (system encoding).
+encodeFixedHeader :: PatchEncoding -> RUPInfo -> ByteString
+encodeFixedHeader encoding info =
+    ByteString.pack $ map byteAt [0 .. headerSize - 8]
   where
     byteAt index = case lookup index fieldBytes of
       Just byte -> byte
       Nothing   -> 0
     fieldBytes = concatMap expandField fields
-    expandField (fieldOffset, fieldLength, _, maybeValue) = case maybeValue of
+    expandField (fieldOffset, fieldLength, maybeValue) = case maybeValue of
       Nothing    -> []
-      Just value -> zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (zeroPadTo fieldLength value))
+      Just value ->
+        let truncated = truncateField encoding fieldLength value
+        in zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (zeroPadTo fieldLength truncated))
     zeroPadTo count input = ByteString.take count input <> ByteString.replicate (max 0 (count - ByteString.length input)) 0
-    validateField (_, fieldLength, fieldName, Just value)
-      | ByteString.length value > fieldLength =
-          Left ("RUP " ++ fieldName ++ " exceeds " ++ show fieldLength
-                ++ "-byte field limit (got " ++ show (ByteString.length value)
-                ++ " bytes as " ++ patchEncodingName encoding ++ ")")
-    validateField _ = Right ()
     fields =
-      [ (0x007 - 7, 84,   "author",      rupAuthor info)
-      , (0x05B - 7, 11,   "version",     rupVersion info)
-      , (0x066 - 7, 256,  "title",       rupTitle info)
-      , (0x166 - 7, 48,   "genre",       rupGenre info)
-      , (0x196 - 7, 48,   "language",    rupLanguage info)
-      , (0x1C6 - 7, 8,    "date",        rupDate info)
-      , (0x1CE - 7, 512,  "website",     rupWebsite info)
-      , (0x3CE - 7, 1074, "description", rupDescription info)
+      [ (0x007 - 7, 84,   rupAuthor info)
+      , (0x05B - 7, 11,   rupVersion info)
+      , (0x066 - 7, 256,  rupTitle info)
+      , (0x166 - 7, 48,   rupGenre info)
+      , (0x196 - 7, 48,   rupLanguage info)
+      , (0x1C6 - 7, 8,    rupDate info)
+      , (0x1CE - 7, 512,  rupWebsite info)
+      , (0x3CE - 7, 1074, rupDescription info)
+      ]
+
+-- | Truncate a field value to fit within the given byte width.
+-- For UTF-8: walks backward from the limit to find the last complete
+-- codepoint boundary.  For system encoding: truncates at the byte boundary.
+truncateField :: PatchEncoding -> Int -> ByteString -> ByteString
+truncateField _ fieldLength value
+  | ByteString.length value <= fieldLength = value
+truncateField PatchEncodingSystem fieldLength value = ByteString.take fieldLength value
+truncateField PatchEncodingUTF8 fieldLength value = truncateUTF8 fieldLength value
+
+-- | Truncate a UTF-8 ByteString to fit within maxBytes, ensuring the
+-- result ends at a complete codepoint boundary.
+truncateUTF8 :: Int -> ByteString -> ByteString
+truncateUTF8 maxBytes value =
+    let candidate = ByteString.take maxBytes value
+        candidateLength = ByteString.length candidate
+        startIndex = findCodepointStart candidate (candidateLength - 1)
+        startByte = ByteString.index candidate startIndex
+        expectedLength = utf8CharLength startByte
+        availableLength = candidateLength - startIndex
+    in if availableLength >= expectedLength
+       then candidate
+       else ByteString.take startIndex candidate
+  where
+    -- Walk backward past continuation bytes (0x80–0xBF) to the start byte.
+    findCodepointStart bytes index
+      | index <= 0                               = 0
+      | isUTF8Continuation (ByteString.index bytes index) = findCodepointStart bytes (index - 1)
+      | otherwise                                = index
+    isUTF8Continuation byte = byte >= 0x80 && byte <= 0xBF
+    utf8CharLength byte
+      | byte < 0x80 = 1
+      | byte < 0xC0 = 1  -- bare continuation byte; treat as single
+      | byte < 0xE0 = 2
+      | byte < 0xF0 = 3
+      | otherwise   = 4
+
+-- | Check which RUPInfo fields would be truncated by encodeFixedHeader,
+-- and return a warning note for each one.
+rupTruncationNotes :: PatchEncoding -> RUPInfo -> [String]
+rupTruncationNotes encoding info = concatMap checkField fields
+  where
+    checkField (fieldLength, fieldLabel, maybeValue) = case maybeValue of
+      Just value | ByteString.length value > fieldLength ->
+        ["note: RUP " ++ fieldLabel ++ " truncated to fit " ++ show fieldLength
+         ++ "-byte field (was " ++ show (ByteString.length value)
+         ++ " bytes as " ++ patchEncodingName encoding ++ ")"]
+      _ -> []
+    fields =
+      [ (84,   "author",      rupAuthor info)
+      , (11,   "version",     rupVersion info)
+      , (256,  "title",       rupTitle info)
+      , (48,   "genre",       rupGenre info)
+      , (48,   "language",    rupLanguage info)
+      , (8,    "date",        rupDate info)
+      , (512,  "website",     rupWebsite info)
+      , (1074, "description", rupDescription info)
       ]
 
 encodeXorRecord :: (Int, ByteString) -> Builder

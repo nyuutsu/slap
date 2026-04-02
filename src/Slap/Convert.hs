@@ -345,6 +345,16 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
+createDefaultNotes (CreateDiff CreateRUP) meta = RUP.rupTruncationNotes enc rupInfo
+  where
+    enc = metaPatchEncoding meta
+    encode = RUP.encodeRUPString enc
+    rupInfo = RUP.RUPInfo
+      { RUP.rupAuthor = fmap encode (metaAuthor meta), RUP.rupVersion = fmap encode (metaVersion meta)
+      , RUP.rupTitle = fmap encode (metaTitle meta), RUP.rupGenre = fmap encode (metaGenre meta)
+      , RUP.rupLanguage = fmap encode (metaLanguage meta), RUP.rupDate = fmap encode (metaDate meta)
+      , RUP.rupWebsite = fmap encode (metaWebsite meta), RUP.rupDescription = fmap encode (metaDescription meta)
+      }
 createDefaultNotes (CreateDiff _) _ = []
 
 -- | Warn when undo/validation are included by default (no CLI flag, no

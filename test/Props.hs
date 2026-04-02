@@ -52,8 +52,10 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), Create
 
 import Data.ByteString (ByteString)
 import Data.List (isInfixOf, isPrefixOf)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString as ByteString
 import qualified Data.Set as Set
+import qualified Data.Text.Encoding as Text
 import System.Directory (getTemporaryDirectory, removeFile)
 import System.IO (hClose, openBinaryTempFile)
 import Test.Tasty
@@ -104,7 +106,7 @@ main = defaultMain $ testGroup "Properties"
       , testProperty "round-trip-utf8" prop_rupUTF8RoundTrip
       , testProperty "round-trip-system" prop_rupSystemRoundTrip
       , testProperty "non-ascii-utf8" prop_rupNonAsciiUTF8
-      , testProperty "field-overflow-rejected" prop_rupFieldOverflow
+      , testProperty "field-overflow-truncated" prop_rupFieldOverflow
       , testProperty "patch-enc-byte-utf8" prop_rupPatchEncByteUTF8
       , testProperty "patch-enc-byte-system" prop_rupPatchEncByteSystem
       , testProperty "utf8-decode-round-trip" prop_rupUTF8Decode ]
@@ -153,6 +155,11 @@ main = defaultMain $ testGroup "Properties"
 
 emptyRupInfo :: RUP.RUPInfo
 emptyRupInfo = RUP.RUPInfo Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+
+isValidUTF8 :: ByteString -> Bool
+isValidUTF8 bytes = case Text.decodeUtf8' bytes of
+  Right _ -> True
+  Left _  -> False
 
 ----------------------------------------------------------------------------
 -- Generators
@@ -797,17 +804,24 @@ prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
--- Rejection: title whose UTF-8 encoding exceeds 256 bytes
+-- Truncation: title whose UTF-8 encoding exceeds 256 bytes is silently truncated
 prop_rupFieldOverflow :: Property
 prop_rupFieldOverflow = once $
-  let longTitle = replicate 257 'A' -- 257 ASCII bytes = 257 UTF-8 bytes > 256
-      info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 longTitle) }
+  let longTitle = replicate 128 '\233' ++ "X" -- 128 × 2-byte 'é' + 1 ASCII = 257 UTF-8 bytes > 256
+      encodedTitle = RUP.encodeRUPString RUP.PatchEncodingUTF8 longTitle
+      info = emptyRupInfo { RUP.rupTitle = Just encodedTitle }
       source = ByteString.pack [0]
       target = ByteString.pack [1]
   in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample errorMessage $
-      property ("exceeds" `isInfixOf` errorMessage && "256" `isInfixOf` errorMessage)
-    Right _ -> counterexample "expected field overflow rejection" $ property False
+    Left errorMessage -> counterexample ("unexpected failure: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed ->
+        let titleBytes = fromMaybe ByteString.empty (RUP.rupTitle (RUP.rupHeader parsed))
+        in counterexample ("title length: " ++ show (ByteString.length titleBytes)) $
+           ByteString.length titleBytes <= 256 .&&.
+           ByteString.isPrefixOf titleBytes encodedTitle .&&.
+           isValidUTF8 titleBytes
 
 -- PATCH_ENC byte is 1 for UTF-8
 prop_rupPatchEncByteUTF8 :: Property

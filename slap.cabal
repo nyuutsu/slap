@@ -145,6 +145,7 @@ test-suite props
     , containers           >= 0.6
     , crypton              >= 0.31
     , ram                  >= 0.21
+    , text                 >= 2.0
 
 test-suite integration
   type:             exitcode-stdio-1.0
