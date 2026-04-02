@@ -5,13 +5,12 @@ module Slap.PCHTXT.Apply
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Measure (Offset(..), seekTo, offsetToInt)
+import Slap.Measure (seekTo, offsetToInt)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Control.Monad (forM_, when)
-import Data.List (foldl')
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)

@@ -65,6 +65,10 @@ data Command
       , commandUnstable   :: Bool
       , commandRomType    :: Maybe Word8
       , commandImageType  :: Maybe ImageType
+      , commandGenre      :: Maybe String
+      , commandLanguage   :: Maybe String
+      , commandDate       :: Maybe String
+      , commandWebsite    :: Maybe String
       , commandMetadata   :: Maybe FilePath
       }
   | CommandConvert
@@ -83,6 +87,10 @@ data Command
       , commandConvertUnstable  :: Bool
       , commandConvertRomType   :: Maybe Word8
       , commandConvertImageType :: Maybe ImageType
+      , commandConvertGenre     :: Maybe String
+      , commandConvertLanguage  :: Maybe String
+      , commandConvertDate      :: Maybe String
+      , commandConvertWebsite   :: Maybe String
       , commandConvertMetadata  :: Maybe FilePath
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
@@ -218,6 +226,14 @@ createParser = do
         <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
+    genre <- optional (option str (long "genre" <> metavar "TEXT"
+        <> help "Genre (RUP)"))
+    language <- optional (option str (long "language" <> metavar "TEXT"
+        <> help "Language (RUP)"))
+    date <- optional (option str (long "date" <> metavar "YYYYMMDD"
+        <> help "Date (RUP)"))
+    website <- optional (option str (long "website" <> metavar "URL"
+        <> help "Website (RUP)"))
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandCreate
@@ -235,6 +251,10 @@ createParser = do
       , commandUnstable = unstable
       , commandRomType = romType
       , commandImageType = imageType
+      , commandGenre = genre
+      , commandLanguage = language
+      , commandDate = date
+      , commandWebsite = website
       , commandMetadata = metadataFile
       }
 
@@ -264,6 +284,14 @@ convertParser = do
         <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
+    genre <- optional (option str (long "genre" <> metavar "TEXT"
+        <> help "Genre (RUP)"))
+    language <- optional (option str (long "language" <> metavar "TEXT"
+        <> help "Language (RUP)"))
+    date <- optional (option str (long "date" <> metavar "YYYYMMDD"
+        <> help "Date (RUP)"))
+    website <- optional (option str (long "website" <> metavar "URL"
+        <> help "Website (RUP)"))
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandConvert
@@ -282,6 +310,10 @@ convertParser = do
       , commandConvertUnstable = unstable
       , commandConvertRomType = romType
       , commandConvertImageType = imageType
+      , commandConvertGenre = genre
+      , commandConvertLanguage = language
+      , commandConvertDate = date
+      , commandConvertWebsite = website
       , commandConvertMetadata = metadataFile
       }
 
@@ -500,6 +532,10 @@ doCreate parsedCommand = do
         , metaUnstable    = commandUnstable parsedCommand
         , metaRomType     = commandRomType parsedCommand
         , metaImageType   = commandImageType parsedCommand
+        , metaGenre       = commandGenre parsedCommand
+        , metaLanguage    = commandLanguage parsedCommand
+        , metaDate        = commandDate parsedCommand
+        , metaWebsite     = commandWebsite parsedCommand
         , metaBPSMetadata = maybeMeta
         }
   let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
@@ -535,6 +571,10 @@ doConvert parsedCommand = do
             , metaUnstable    = commandConvertUnstable parsedCommand
             , metaRomType     = commandConvertRomType parsedCommand
             , metaImageType   = commandConvertImageType parsedCommand
+            , metaGenre       = commandConvertGenre parsedCommand
+            , metaLanguage    = commandConvertLanguage parsedCommand
+            , metaDate        = commandConvertDate parsedCommand
+            , metaWebsite     = commandConvertWebsite parsedCommand
             , metaBPSMetadata = maybeMetadata
             }
       let printNotes notes = forM_ notes $ \note -> hPutStrLn stderr ("slap: " ++ note)

@@ -142,6 +142,10 @@ data CreateMeta = CreateMeta
     -- converts at its boundary via toNINJA1RomType; RUP passes through raw.
     -- A shared sum type would force NINJA1 labels onto RUP values.
   , metaImageType   :: Maybe ImageType
+  , metaGenre       :: Maybe String
+  , metaLanguage    :: Maybe String
+  , metaDate        :: Maybe String
+  , metaWebsite     :: Maybe String
   , metaBPSMetadata :: Maybe ByteString.ByteString
   }
 
@@ -156,6 +160,10 @@ defaultMeta = CreateMeta
   , metaUnstable    = False
   , metaRomType     = Nothing
   , metaImageType   = Nothing
+  , metaGenre       = Nothing
+  , metaLanguage    = Nothing
+  , metaDate        = Nothing
+  , metaWebsite     = Nothing
   , metaBPSMetadata = Nothing
   }
 
@@ -488,9 +496,9 @@ createFromMemory (CreateDiff format) source target meta = case format of
   CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
     where rupInfo = RUP.RUPInfo
             { RUP.rupAuthor = fmap ByteString8.pack (metaAuthor meta), RUP.rupVersion = fmap ByteString8.pack (metaVersion meta)
-            , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = Nothing
-            , RUP.rupLanguage = Nothing, RUP.rupDate = Nothing
-            , RUP.rupWebsite = Nothing, RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
+            , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = fmap ByteString8.pack (metaGenre meta)
+            , RUP.rupLanguage = fmap ByteString8.pack (metaLanguage meta), RUP.rupDate = fmap ByteString8.pack (metaDate meta)
+            , RUP.rupWebsite = fmap ByteString8.pack (metaWebsite meta), RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
             }
   CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
   CreateGDIFF  -> Right (GDIFF.createGDIFF source target)

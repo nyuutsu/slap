@@ -6,7 +6,7 @@ module Slap.IPS.Apply
 
 import Slap.IPS.Types (IPSRecord(..), IPSPatch(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), seekTo, offsetToInt)
+import Slap.Measure (Length(..), FileSize(..), seekTo, offsetToInt)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
