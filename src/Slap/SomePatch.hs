@@ -14,7 +14,7 @@ module Slap.SomePatch
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Format (padHex)
-import Slap.Convert (PatchContents(..), emptyContents)
+import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), Hunk(..), UndoHunk(..))
 import qualified Slap.PPF.Types as PPF
 import qualified Slap.PPF.Parse as PPF
@@ -82,7 +82,7 @@ import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Word (Word16, Word32)
 
 ----------------------------------------------------------------------------
@@ -175,6 +175,7 @@ data SomePatch = SomePatch
   , patchContents       :: Maybe PatchContents
   , patchSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
+  , patchExtractedMeta  :: CreateMeta  -- ^ Text metadata extracted at parse time for conversion
   }
 
 ----------------------------------------------------------------------------
@@ -217,6 +218,13 @@ parseSome patchBytes = case detectFormat patchBytes of
         , patchRecordUnit     = "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
+        , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (PPF.ppfDescription patch))
+                                in defaultMeta
+                                  { metaDescription = if null desc then Nothing else Just desc
+                                  , metaImageType   = PPF.ppfImageType patch
+                                  , metaUndo        = if PPF.ppfHasUndo patch then Just True else Nothing
+                                  , metaValidate    = if isJust (PPF.ppfValidation patch) then Just True else Nothing
+                                  }
         , patchContents  = if hasAppend then Nothing else Just PatchContents
             { contentsRecords     = map (\record -> Hunk (PPF.recordOffset record) (PPF.recordData record)) records
             , contentsDescription = Just (PPF.ppfDescription patch)
@@ -253,6 +261,13 @@ parseSome patchBytes = case detectFormat patchBytes of
           [ ["no EOF marker (patch may be truncated)" | not (IPS.ipsCleanEOF patch)]
           , ["empty patch (0 records)" | null records]
           ]
+        ebpPairs = maybe [] IPS.jsonPairs (IPS.ipsEBPMeta patch)
+        nonEmptyField s = if null s then Nothing else Just s
+        ebpMeta = defaultMeta
+          { metaTitle       = IPS.jsonFieldCI ebpPairs "title" >>= nonEmptyField
+          , metaAuthor      = IPS.jsonFieldCI ebpPairs "author" >>= nonEmptyField
+          , metaDescription = IPS.jsonFieldCI ebpPairs "description" >>= nonEmptyField
+          }
     Right SomePatch
       { patchFormat         = name
       , patchInfo           = IPS.ipsInfo patch
@@ -268,6 +283,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = ebpMeta
       , patchContents  = Just (emptyContents (map expandIPS records))
           { contentsTruncation = IPS.ipsTruncate patch
           , contentsEBPMeta    = IPS.ipsEBPMeta patch
@@ -277,6 +293,8 @@ parseSome patchBytes = case detectFormat patchBytes of
   Just (PatchDiff FormatBPS) -> do
     patch <- BPS.parseBPS patchBytes
     let actions = BPS.bpsActions patch
+        bpsMetaBlob = if ByteString.null (BPS.bpsMetadata patch) then Nothing
+                      else Just (BPS.bpsMetadata patch)
     Right SomePatch
       { patchFormat         = "BPS"
       , patchInfo           = BPS.bpsInfo patch
@@ -294,8 +312,8 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordCount    = length actions
       , patchRecordUnit     = "actions"
       , patchSourceNotes    = []
-      , patchMetadata       = if ByteString.null (BPS.bpsMetadata patch) then Nothing
-                           else Just (BPS.bpsMetadata patch)
+      , patchMetadata       = bpsMetaBlob
+      , patchExtractedMeta  = defaultMeta { metaBPSMetadata = bpsMetaBlob }
       , patchContents  = Nothing
       }
 
@@ -322,6 +340,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "blocks"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Nothing
       }
 
@@ -350,6 +369,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "windows"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Nothing
       }
 
@@ -385,6 +405,9 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (APSN64.apsN64Description header))
+                              in defaultMeta
+                                { metaDescription = if null desc then Nothing else Just desc }
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
             , contentsDestinationSize    = Just (FileSize (fromIntegral (APSN64.apsN64DestinationSize header)))
@@ -415,6 +438,21 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = let decode = RUP.decodeRUPField (RUP.rupPatchEncoding patch)
+                                  nonEmptyField bs = let s = decode bs
+                                                     in if null s then Nothing else Just s
+                                  info = RUP.rupHeader patch
+                              in defaultMeta
+                                { metaTitle       = RUP.rupTitle info >>= nonEmptyField
+                                , metaAuthor      = RUP.rupAuthor info >>= nonEmptyField
+                                , metaVersion     = RUP.rupVersion info >>= nonEmptyField
+                                , metaGenre       = RUP.rupGenre info >>= nonEmptyField
+                                , metaLanguage    = RUP.rupLanguage info >>= nonEmptyField
+                                , metaDate        = RUP.rupDate info >>= nonEmptyField
+                                , metaWebsite     = RUP.rupWebsite info >>= nonEmptyField
+                                , metaDescription = RUP.rupDescription info >>= nonEmptyField
+                                , metaRomType     = Just (RUP.rupRomType patch)
+                                }
       , patchContents  = Nothing
       }
 
@@ -452,6 +490,8 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "records"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
+          { metaRomType = Just (NINJA1.fromNINJA1RomType (NINJA1.ninja1RomType patch)) }
       , patchContents  = Just (emptyContents (map (\record -> Hunk (NINJA1.ninja1RecordOffset record) (NINJA1.ninja1RecordData record)) records))
           { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
           , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
@@ -478,6 +518,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "control tuples"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Nothing
       }
 
@@ -498,6 +539,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "commands"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Nothing
       }
 
@@ -525,6 +567,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "instructions"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Nothing
       }
 
@@ -548,6 +591,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Just (emptyContents
           (map (\record -> Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)) records))
       }
@@ -577,6 +621,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordUnit     = "entries"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = defaultMeta
       , patchContents  = Just (emptyContents contentRecords)
           { contentsDescription = ByteString8.pack <$> PCHTXT.pchtxtNsobid patch
           , contentsPCHTXTBlocks = Just allBlocks
@@ -617,6 +662,16 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchSourceNotes    = []
       , patchContents  = Nothing
       , patchMetadata       = Nothing
+      , patchExtractedMeta  = let nonEmpty bs = let s = ByteString8.unpack (DPS.trimNull bs)
+                                                in if null s then Nothing else Just s
+                              in defaultMeta
+                                { metaTitle    = nonEmpty (DPS.dpsName patch)
+                                , metaAuthor   = nonEmpty (DPS.dpsAuthor patch)
+                                , metaVersion  = nonEmpty (DPS.dpsVersion patch)
+                                , metaUnstable = case DPS.dpsStability patch of
+                                                   DPS.DPSUnstable -> Just True
+                                                   DPS.DPSStable   -> Nothing
+                                }
       }
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
@@ -655,6 +710,7 @@ parseAPSGBABlock input = do
     , patchRecordUnit     = "blocks"
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
+    , patchExtractedMeta  = defaultMeta
     , patchContents  = Nothing
     }
 

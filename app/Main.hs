@@ -5,7 +5,7 @@ module Main (main) where
 
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Explain (renderExplain, renderSummary)
@@ -59,10 +59,10 @@ data Command
       , commandDescription       :: Maybe String
       , commandTitle      :: Maybe String
       , commandAuthor     :: Maybe String
-      , commandUndo       :: Bool
-      , commandValidate   :: Bool
+      , commandUndo       :: Maybe Bool
+      , commandValidate   :: Maybe Bool
       , commandVersion    :: Maybe String
-      , commandUnstable   :: Bool
+      , commandUnstable   :: Maybe Bool
       , commandRomType    :: Maybe Word8
       , commandImageType  :: Maybe ImageType
       , commandGenre      :: Maybe String
@@ -81,11 +81,11 @@ data Command
       , commandConvertDescription      :: Maybe String
       , commandConvertTitle     :: Maybe String
       , commandConvertAuthor    :: Maybe String
-      , commandConvertUndo      :: Bool
-      , commandConvertValidate  :: Bool
+      , commandConvertUndo      :: Maybe Bool
+      , commandConvertValidate  :: Maybe Bool
       , commandNoVerify      :: Bool
       , commandConvertVersion   :: Maybe String
-      , commandConvertUnstable  :: Bool
+      , commandConvertUnstable  :: Maybe Bool
       , commandConvertRomType   :: Maybe Word8
       , commandConvertImageType :: Maybe ImageType
       , commandConvertGenre     :: Maybe String
@@ -219,11 +219,11 @@ createParser = do
         <> help "Patch title (EBP/RUP)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
         <> help "Patch author (EBP/DPS/RUP)"))
-    includeUndo <- switch (long "undo" <> short 'u' <> help "Include undo data (PPF3 only)")
-    includeValidation <- switch (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)")
+    includeUndo <- optional (flag' True (long "undo" <> short 'u' <> help "Include undo data (PPF3 only)"))
+    includeValidation <- optional (flag' True (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)"))
     version <- optional (option str (long "version" <> metavar "TEXT"
         <> help "Patch version (DPS/RUP)"))
-    unstable <- switch (long "unstable" <> help "Mark patch unstable (DPS)")
+    unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
         <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
@@ -280,12 +280,14 @@ convertParser = do
         <> help "Patch title (EBP/RUP)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
         <> help "Patch author (EBP/DPS/RUP)"))
-    includeUndo <- flag True False (long "no-undo" <> help "Omit undo data (PPF3 only; included by default)")
-    includeValidation <- flag True False (long "no-validate" <> help "Omit validation block (PPF3 only; included by default)")
+    includeUndo <- optional (flag' True (long "undo" <> help "Include undo data (PPF3)")
+                         <|> flag' False (long "no-undo" <> help "Omit undo data (PPF3)"))
+    includeValidation <- optional (flag' True (long "validate" <> help "Include validation block (PPF3)")
+                               <|> flag' False (long "no-validate" <> help "Omit validation block (PPF3)"))
     noVerify <- noVerifyFlag
     version <- optional (option str (long "version" <> metavar "TEXT"
         <> help "Patch version (DPS/RUP)"))
-    unstable <- switch (long "unstable" <> help "Mark patch unstable (DPS)")
+    unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
         <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
@@ -558,7 +560,7 @@ doCreate parsedCommand = do
         }
   let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultNotes $ \note -> hPutStrLn stderr ("slap: " ++ note)
-  case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta of
+  case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
     Left errorMessage -> die errorMessage
     Right patchBytes -> do
       ByteString.writeFile (commandCreateOutput parsedCommand) patchBytes
@@ -579,7 +581,7 @@ doConvert parsedCommand = do
       maybeMetadata <- case commandConvertMetadata parsedCommand of
         Nothing   -> pure Nothing
         Just path -> Just <$> ByteString.readFile path
-      let createMeta = CreateMeta
+      let cliMeta = CreateMeta
             { metaTitle       = commandConvertTitle parsedCommand
             , metaAuthor      = commandConvertAuthor parsedCommand
             , metaDescription        = commandConvertDescription parsedCommand
@@ -596,6 +598,7 @@ doConvert parsedCommand = do
             , metaPatchEncoding = commandConvertPatchEncoding parsedCommand
             , metaBPSMetadata = maybeMetadata
             }
+          mergedMeta = mergeMeta cliMeta (patchExtractedMeta parsed)
       let printNotes notes = forM_ notes $ \note -> hPutStrLn stderr ("slap: " ++ note)
           metaNotes = case patchMetadata parsed of
             Nothing -> []
@@ -603,7 +606,7 @@ doConvert parsedCommand = do
               let metaSize = ByteString.length metaBytes
               in if commandConvertTo parsedCommand == CreateDiff CreateBPS
                  then ["note: source has " ++ show metaSize ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
-                      | isNothing (metaBPSMetadata createMeta)]
+                      | isNothing (metaBPSMetadata mergedMeta)]
                  else ["note: dropping BPS metadata (" ++ show metaSize ++ " bytes)"]
       case commandConvertSource parsedCommand of
         Just sourcePath -> do
@@ -611,15 +614,20 @@ doConvert parsedCommand = do
           sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) sourcePath
           verifySource (commandNoVerify parsedCommand) (patchVerification parsed) sourceBytes
           targetBytes <- applyForConvert parsed sourceBytes
-          case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes createMeta of
+          -- For --with conversion, default undo/validate to True (preservation)
+          let withMeta = mergedMeta
+                { metaUndo     = metaUndo mergedMeta     <|> Just True
+                , metaValidate = metaValidate mergedMeta <|> Just True
+                }
+          case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
             Left errorMessage -> die errorMessage
             Right result -> do
-              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo parsedCommand) createMeta)
+              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta)
               ByteString.writeFile outputFile result
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
-          Just contents -> case convertDirect contents (commandConvertTo parsedCommand) createMeta of
+          Just contents -> case convertDirect contents (commandConvertTo parsedCommand) mergedMeta of
             Left errorMessage -> die errorMessage
             Right (result, notes) -> do
               printNotes (patchSourceNotes parsed ++ notes)

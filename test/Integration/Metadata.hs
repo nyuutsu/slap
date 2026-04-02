@@ -46,7 +46,7 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
     Right original -> do
       -- Self-convert: convert to same format
       let meta = case format of
-            CreateDirect CreatePPF3 -> defaultMeta { metaUndo = True, metaValidate = True }
+            CreateDirect CreatePPF3 -> defaultMeta { metaUndo = Just True, metaValidate = Just True }
             _                       -> defaultMeta
       convResult <- attemptConvert original format Nothing meta
       case convResult of

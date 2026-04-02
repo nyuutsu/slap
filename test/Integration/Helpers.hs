@@ -208,7 +208,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     case targetResult of
       Left errorMessage -> pure (Left errorMessage)
       Right targetBytes ->
-        case createFromMemory targetFormat baseBytes targetBytes meta of
+        case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
           Left errorMessage     -> pure (Left errorMessage)
           Right result -> pure (Right (result, []))
   Nothing -> case patchContents somePatch of

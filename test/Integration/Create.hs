@@ -67,7 +67,7 @@ getOrBootstrap cacheReference key baseBytes bootPath = do
 -- | Create a patch, parse it back, apply to base, verify SHA1.
 roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
-  case createFromMemory format baseBytes targetBytes defaultMeta of
+  case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
     Left errorMessage -> assertFailure ("create failed: " ++ errorMessage)
     Right patchBytes -> case parseSome patchBytes of
       Left errorMessage -> assertFailure ("re-parse failed: " ++ errorMessage)

@@ -18,10 +18,12 @@ ppf3       | ips     | test/data/stadium2/heavy-diff/patch.ppf     |            
 ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks target file    |  |
 # Hash-less source (→NINJA1) — spec allows zero hashes, conversion succeeds with note
 pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept | source verification hashes not populated |
-# Missing undo (→PPF3 with --no-validate, undo still required)
-ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks undo data      |  | --no-validate
-# Missing validation (→PPF3 with --no-undo, validation still required)
-ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks validation     |  | --no-undo
+# Neither flag — inherit from source (IPS has neither), conversion succeeds
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | accept |  | --no-validate
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | accept |  | --no-undo
+# Explicit --undo/--validate forces requirement, source lacks them
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks undo data      |  | --undo --no-validate
+ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks validation     |  | --no-undo --validate
 # Differential format without --with
 bps        | ips     | test/data/stadium2/heavy-diff/patch.bps     |                                 |          | reject:requires the original ROM   |  |
 # Overlay → differential without --with

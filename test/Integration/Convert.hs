@@ -49,8 +49,14 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsString f
     Right parsed -> do
       let flags = words flagsString
           useWith = "--with" `elem` flags
-          includeUndo = "--no-undo" `notElem` flags
-          includeValidate = "--no-validate" `notElem` flags
+          includeUndo
+            | "--undo" `elem` flags    = Just True
+            | "--no-undo" `elem` flags = Just False
+            | otherwise                = Nothing
+          includeValidate
+            | "--validate" `elem` flags    = Just True
+            | "--no-validate" `elem` flags = Just False
+            | otherwise                    = Nothing
 
       maybeBase <- if useWith && not (null baseRel)
                then do

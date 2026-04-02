@@ -322,7 +322,7 @@ crossFormatRoundTripTests romCache base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createFromMemory createFormatA baseBytes targetBytes defaultMeta of
+      case createFromMemory createFormatA baseBytes targetBytes defaultMeta Nothing of
         Left errorMessage -> assertFailure ("create " ++ formatA ++ " failed: " ++ errorMessage)
         Right patchA -> do
           -- Step 2: parse A, apply to get target, create in format B
@@ -335,7 +335,7 @@ crossFormatRoundTripTests romCache base bps =
                 Right outputA -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createFromMemory createFormatB baseBytes outputA defaultMeta of
+                  case createFromMemory createFormatB baseBytes outputA defaultMeta Nothing of
                     Left errorMessage -> assertFailure ("create " ++ formatB ++ " failed: " ++ errorMessage)
                     Right patchB -> do
                       -- Step 3: parse B, apply to get target, create in format C
@@ -348,7 +348,7 @@ crossFormatRoundTripTests romCache base bps =
                             Right outputB -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createFromMemory createFormatC baseBytes outputB defaultMeta of
+                              case createFromMemory createFormatC baseBytes outputB defaultMeta Nothing of
                                 Left errorMessage -> assertFailure ("create " ++ formatC ++ " failed: " ++ errorMessage)
                                 Right patchC -> do
                                   case parseSome patchC of
@@ -415,7 +415,7 @@ createRoundTripTests romCache dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createFromMemory createFormat baseBytes targetBytes defaultMeta of
+      case createFromMemory createFormat baseBytes targetBytes defaultMeta Nothing of
         Left errorMessage -> assertFailure ("create " ++ formatString ++ " failed: " ++ errorMessage)
         Right patchBytes ->
           case parseSome patchBytes of

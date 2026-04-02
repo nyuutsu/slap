@@ -16,6 +16,8 @@ module Slap.Convert
   , convertDirect
   , createFromMemory
   , createDefaultNotes
+  , mergeMeta
+  , trimNullSpace
   , formatExtension
   , formatName
   , PatchEncoding(..)
@@ -135,9 +137,9 @@ data CreateMeta = CreateMeta
   , metaAuthor      :: Maybe String
   , metaDescription        :: Maybe String
   , metaVersion     :: Maybe String
-  , metaUndo        :: Bool
-  , metaValidate    :: Bool
-  , metaUnstable    :: Bool
+  , metaUndo        :: Maybe Bool
+  , metaValidate    :: Maybe Bool
+  , metaUnstable    :: Maybe Bool
   , metaRomType     :: Maybe Word8
     -- ^ Word8, not a sum type: NINJA1 and RUP both carry a ROM type byte
     -- but with different (and for RUP, unspecified) semantics.  NINJA1
@@ -158,9 +160,9 @@ defaultMeta = CreateMeta
   , metaAuthor      = Nothing
   , metaDescription        = Nothing
   , metaVersion     = Nothing
-  , metaUndo        = False
-  , metaValidate    = False
-  , metaUnstable    = False
+  , metaUndo        = Nothing
+  , metaValidate    = Nothing
+  , metaUnstable    = Nothing
   , metaRomType     = Nothing
   , metaImageType   = Nothing
   , metaGenre       = Nothing
@@ -169,6 +171,28 @@ defaultMeta = CreateMeta
   , metaWebsite     = Nothing
   , metaPatchEncoding = PatchEncodingUTF8
   , metaBPSMetadata = Nothing
+  }
+
+-- | Merge two metadata records: first (CLI) wins for each field, then
+-- second (source patch).  For non-Maybe fields like 'metaPatchEncoding',
+-- the first argument always wins.
+mergeMeta :: CreateMeta -> CreateMeta -> CreateMeta
+mergeMeta cli source = CreateMeta
+  { metaTitle         = metaTitle cli <|> metaTitle source
+  , metaAuthor        = metaAuthor cli <|> metaAuthor source
+  , metaDescription   = metaDescription cli <|> metaDescription source
+  , metaVersion       = metaVersion cli <|> metaVersion source
+  , metaUndo          = metaUndo cli <|> metaUndo source
+  , metaValidate      = metaValidate cli <|> metaValidate source
+  , metaUnstable      = metaUnstable cli <|> metaUnstable source
+  , metaRomType       = metaRomType cli <|> metaRomType source
+  , metaImageType     = metaImageType cli <|> metaImageType source
+  , metaGenre         = metaGenre cli <|> metaGenre source
+  , metaLanguage      = metaLanguage cli <|> metaLanguage source
+  , metaDate          = metaDate cli <|> metaDate source
+  , metaWebsite       = metaWebsite cli <|> metaWebsite source
+  , metaPatchEncoding = metaPatchEncoding cli
+  , metaBPSMetadata   = metaBPSMetadata cli <|> metaBPSMetadata source
   }
 
 ----------------------------------------------------------------------------
@@ -320,7 +344,19 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 -- where no source PatchContents is available.
 createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
+  ++ undoValidateNotes target meta
 createDefaultNotes (CreateDiff _) _ = []
+
+-- | Warn when undo/validation are included by default (no CLI flag, no
+-- inherited source value).  Same pattern as rom-type defaulting to RAW.
+undoValidateNotes :: DirectCreate -> CreateMeta -> [String]
+undoValidateNotes CreatePPF3 meta = concat
+  [ [ "note: including undo data (use --no-undo to omit)"
+    | Nothing <- [metaUndo meta] ]
+  , [ "note: including validation block (use --no-validate to omit)"
+    | Nothing <- [metaValidate meta] ]
+  ]
+undoValidateNotes _ _ = []
 
 -- | Note when converting to NINJA1 without source verification hashes.
 ninja1HashNotes :: PatchContents -> DirectCreate -> [String]
@@ -393,7 +429,9 @@ convertDirect :: PatchContents -> CreateFormat -> CreateMeta
               -> Either String (ByteString.ByteString, [String])
 convertDirect _ (CreateDiff target) _ = Left (diffOnlyMsg target)
 convertDirect contents (CreateDirect target) meta = do
-  let spec = formatSpecification target (metaUndo meta) (metaValidate meta)
+  let includeUndo = fromMaybe (isJust (contentsUndoData contents)) (metaUndo meta)
+      includeValidation = fromMaybe (isJust (contentsValidation contents)) (metaValidate meta)
+      spec = formatSpecification target includeUndo includeValidation
   case canConvert contents spec of
     Left missing -> Left (formatMissing target missing)
     Right () -> do
@@ -427,8 +465,20 @@ encodeDirect contents source target meta limits = case target of
     Right (IPS.encodeIPS32 source records (contentsTruncation contents))
   CreateEBP -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
-    let passthrough = if isNothing cliDescription && isNothing cliTitle && isNothing cliAuthor
-                        then contentsEBPMeta contents else Nothing
+    -- Pass through raw EBP JSON when metadata values match what the JSON
+    -- already provides.  This detects CLI overrides: if the user changed
+    -- a field, the values diverge and we rebuild the JSON.
+    let passthrough = case contentsEBPMeta contents of
+          Nothing -> Nothing
+          Just raw ->
+            let pairs = jsonPairs raw
+                norm (Just s) = if null s then Nothing else Just s
+                norm Nothing  = Nothing
+            in if cliDescription == norm (jsonFieldCI pairs "description")
+                  && cliTitle == norm (jsonFieldCI pairs "title")
+                  && cliAuthor == norm (jsonFieldCI pairs "author")
+               then Just raw
+               else Nothing
     Right $ case passthrough of
       Just raw -> IPS.encodeEBPRaw source records (contentsTruncation contents) raw
       Nothing  -> IPS.encodeEBP source records (contentsTruncation contents)
@@ -483,20 +533,24 @@ encodeDirect contents source target meta limits = case target of
 ----------------------------------------------------------------------------
 
 -- | Create a patch from source and target bytes.
-createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> CreateMeta -> Either String ByteString.ByteString
-createFromMemory (CreateDirect format) source target meta =
-  let contents = buildContents format source target meta
+-- The optional 'PatchContents' carries structural data from the source patch
+-- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
+-- inheritance in the @--with@ conversion path.
+createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
+                 -> CreateMeta -> Maybe PatchContents -> Either String ByteString.ByteString
+createFromMemory (CreateDirect format) source target meta sourceContents =
+  let contents = buildContents format source target meta sourceContents
       -- Source bytes available: avoidSentinel handles sentinel collisions
       -- at encode time, so only validate offset ranges here (sentinel stripped).
       strippedLimits = fmap (\lim -> lim { sentinelOffset = Nothing }) (encodingLimits format)
   in encodeDirect contents source format meta strippedLimits
-createFromMemory (CreateDiff format) source target meta = case format of
+createFromMemory (CreateDiff format) source target meta _sourceContents = case format of
   CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
   CreateUPS    -> Right (UPS.createUPS source target)
   CreateDPS    -> Right (DPS.createDPS source target
                    (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                    (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
-                   (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
+                   (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
   CreateRUP    -> RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)) enc
     where
       enc = metaPatchEncoding meta
@@ -511,9 +565,12 @@ createFromMemory (CreateDiff format) source target meta = case format of
   CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
 
 -- | Build PatchContents from source and target bytes for a direct format.
+-- The optional source 'PatchContents' carries structural data (EBP JSON,
+-- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) from the original
+-- patch for inheritance during @--with@ conversion.
 buildContents :: DirectCreate -> ByteString.ByteString -> ByteString.ByteString
-              -> CreateMeta -> PatchContents
-buildContents format source target meta = PatchContents
+              -> CreateMeta -> Maybe PatchContents -> PatchContents
+buildContents format source target meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
   , contentsSourceCRC32 = if needs FSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
@@ -531,13 +588,14 @@ buildContents format source target meta = PatchContents
   , contentsTruncation  = if needs FTruncation && ByteString.length target < ByteString.length source
                     then Just (FileSize (fromIntegral (ByteString.length target)))
                     else Nothing
-  , contentsEBPMeta     = Nothing
+  -- Structural inheritance: preserve format-specific data from the source patch
+  , contentsEBPMeta          = sourceContents >>= contentsEBPMeta
+  , contentsFileIdDiz        = sourceContents >>= contentsFileIdDiz
+  , contentsPCHTXTBlocks     = sourceContents >>= contentsPCHTXTBlocks
+  , contentsNINJA1Compressed = sourceContents >>= contentsNINJA1Compressed
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
-  , contentsFileIdDiz   = Nothing
-  , contentsPCHTXTBlocks = Nothing
-  , contentsNINJA1Compressed = Nothing
-  , contentsMetadata = Nothing
+  , contentsMetadata    = Nothing
   }
   where
     encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk (Offset (fromIntegral hunkOffset)) hunkPayload
@@ -552,7 +610,9 @@ buildContents format source target meta = PatchContents
     validationOffset = case metaImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
-    spec      = formatSpecification format (metaUndo meta) (metaValidate meta)
+    includeUndo = fromMaybe False (metaUndo meta)
+    includeValidation = fromMaybe False (metaValidate meta)
+    spec      = formatSpecification format includeUndo includeValidation
     allFields = specificationRequired spec `Set.union` specificationAccepted spec
     needs field = field `Set.member` allFields
 
