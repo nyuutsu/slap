@@ -4,6 +4,7 @@ module Slap.RUP.Types
   ( RUPPatch(..)
   , RUPRecord(..)
   , RUPInfo(..)
+  , XorRecord(..)
   , OverflowMode(..)
   , toOverflowMode
   , fromOverflowMode
@@ -115,6 +116,12 @@ data RUPInfo = RUPInfo
 data RUPRecord = RUPRecord
   { rupRecordOffset :: !Offset
   , rupRecordXor    :: !ByteString
+  } deriving (Show)
+
+-- | An XOR record for encoding: offset + XOR'd payload.
+data XorRecord = XorRecord
+  { xorRecordOffset  :: !Offset
+  , xorRecordPayload :: !ByteString
   } deriving (Show)
 
 ----------------------------------------------------------------------------

@@ -9,7 +9,8 @@ import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), ExplainSummary(..)
-    , SummaryBytes(..), Annotation(..), OffsetKind(..)
+    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , Annotation(..), OffsetKind(..)
     )
 import Slap.Measure (Offset(..), Length(..))
 
@@ -54,7 +55,7 @@ explainPMSR patch = ExplainData
   { explainFormat   = "PMSR (Paper Mario Star Rod)"
   , explainHeader   = pmsrMeta patch
   , explainSections = [SectionRegions (map makePMSRRegion (pmsrRecords patch))]
-  , explainSummary  = Summary recordCount "records" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
   where

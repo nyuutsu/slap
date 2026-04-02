@@ -5,6 +5,8 @@ module Slap.Explain
   , ExplainPayload(..)
   , CopySource(..)
   , ExplainSummary(..)
+  , SummaryInfo(..)
+  , SummaryByteInfo(..)
   , SummaryBytes(..)
   , Annotation(..)
   , OffsetKind(..)
@@ -14,7 +16,7 @@ module Slap.Explain
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Format (padHex, padNum, padRight, showSigned, hexDump, renderField)
+import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
@@ -53,18 +55,28 @@ data ExplainRegion = ExplainRegion
 
 data ExplainPayload
   = PayloadWrite ByteString            -- literal data (renderer hex dumps)
-  | PayloadFill Word8 Int              -- fill byte + repeat count
+  | PayloadFill !Word8 !Length         -- fill byte + repeat count
   | PayloadCopy CopySource             -- copy operation
   | PayloadXOR (Maybe ByteString)      -- XOR delta
-  | PayloadMeta [(String, String)]     -- key-value details (BSDiff ctrl)
+  | PayloadMeta ![MetaField]           -- key-value details (BSDiff ctrl)
 
 data CopySource = FromSource | FromTarget | FromPatch
   deriving (Eq, Show)
 
 data ExplainSummary
   = SummaryNone
-  | Summary Int String (Maybe (Int, SummaryBytes))
-    -- ^ count, unit label, optional (byteCount, bytesSuffix)
+  | Summary !SummaryInfo
+
+data SummaryInfo = SummaryInfo
+  { summaryCount     :: !Int
+  , summaryUnitLabel :: !String
+  , summaryBytes     :: !(Maybe SummaryByteInfo)
+  }
+
+data SummaryByteInfo = SummaryByteInfo
+  { summaryByteCount  :: !Int
+  , summaryByteSuffix :: !SummaryBytes
+  }
 
 data SummaryBytes = BytesTotal | BytesTotalOutput
 
@@ -135,8 +147,8 @@ renderExplain mSource explainData = unlines $
         padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
         ++ annotation region
         ++ "\n" ++ hexDump writeData
-      PayloadFill fillByte count ->
-        padNum index ++ "  " ++ regionLabel region ++ show count ++ " x 0x"
+      PayloadFill fillByte fillCount ->
+        padNum index ++ "  " ++ regionLabel region ++ show (unLength fillCount) ++ " x 0x"
         ++ padHex 2 (fromIntegral fillByte :: Int64)
         ++ annotation region
       PayloadCopy _ ->
@@ -160,10 +172,11 @@ isSummaryNone _           = False
 
 renderSummaryLine :: ExplainSummary -> String
 renderSummaryLine SummaryNone = ""
-renderSummaryLine (Summary count unit Nothing) =
-  show count ++ " " ++ unit
-renderSummaryLine (Summary count unit (Just (bytes, suffix))) =
-  show count ++ " " ++ unit ++ ", " ++ show bytes ++ " " ++ renderBytesSuffix suffix
+renderSummaryLine (Summary info) =
+  show (summaryCount info) ++ " " ++ summaryUnitLabel info
+  ++ case summaryBytes info of
+       Nothing -> ""
+       Just byteInfo -> ", " ++ show (summaryByteCount byteInfo) ++ " " ++ renderBytesSuffix (summaryByteSuffix byteInfo)
 
 renderBytesSuffix :: SummaryBytes -> String
 renderBytesSuffix BytesTotal       = "bytes total"

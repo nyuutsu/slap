@@ -6,24 +6,25 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSStability, fromDPSStability)
+import Slap.DPS.Types (DPSStability, fromDPSStability, DPSRecord(..), DPSMode(..), DPSPayload(..),
+                        dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (Offset(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
-import Data.Word (Word8, Word32)
+import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
 createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> ByteString
 createDPS original modified name author version stability = LazyByteString.toStrict $ toLazyByteString $
-    padField 64 name                    -- name
-    <> padField 64 author               -- author
-    <> padField 64 version              -- version
+    padField dpsFieldWidth name         -- name
+    <> padField dpsFieldWidth author    -- author
+    <> padField dpsFieldWidth version   -- version
     <> word8 (fromDPSStability stability)  -- flag
     <> word8 1                          -- DPS version
     <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)  -- orig size
@@ -33,28 +34,34 @@ createDPS original modified name author version stability = LazyByteString.toStr
       let fieldBytes = ByteString8.pack (take fieldLength fieldString)
       in byteString fieldBytes <> byteString (ByteString.replicate (fieldLength - ByteString.length fieldBytes) 0)
 
-dpsRecordsFromDiff :: ByteString -> ByteString -> [(Word8, Int, ByteString)]
+dpsRecordsFromDiff :: ByteString -> ByteString -> [DPSRecord]
 dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modified)
   where
     buildRecords _ [] = []
     buildRecords position (Hunk rawOffset rawData : rest) =
       let intOffset = fromIntegral (unOffset rawOffset) :: Int
       in if intOffset > position
-         then (0, position, encodeCopy position (intOffset - position))  -- CopyFromROM gap
-              : (1, intOffset, rawData)                                  -- EnclosedData
+         then DPSRecord CopyFromROM (Offset (fromIntegral position))
+                (PayloadCopy (Offset (fromIntegral position)) (Length (intOffset - position)))
+              : DPSRecord EnclosedData rawOffset (PayloadData rawData)
               : buildRecords (intOffset + ByteString.length rawData) rest
-         else (1, intOffset, rawData) : buildRecords (intOffset + ByteString.length rawData) rest
-    encodeCopy sourceOffset copyLength = LazyByteString.toStrict $ toLazyByteString $
-      putWord32LE (fromIntegral sourceOffset :: Word32)
-      <> putWord32LE (fromIntegral copyLength :: Word32)
+         else DPSRecord EnclosedData rawOffset (PayloadData rawData)
+              : buildRecords (intOffset + ByteString.length rawData) rest
 
-encodeRecord :: (Word8, Int, ByteString) -> Builder
-encodeRecord (0, outputOffset, copyPayload) =  -- CopyFromROM: mode + outOff + srcOff + len (pre-encoded in copyPayload)
+encodeRecord :: DPSRecord -> Builder
+encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset copyLength)) =
     word8 0
-    <> putWord32LE (fromIntegral outputOffset :: Word32)
-    <> byteString copyPayload
-encodeRecord (_, outputOffset, payload) =      -- EnclosedData: mode + outOff + len + data
+    <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
+    <> putWord32LE (fromIntegral (unOffset sourceOffset) :: Word32)
+    <> putWord32LE (fromIntegral (unLength copyLength) :: Word32)
+encodeRecord (DPSRecord EnclosedData outputOffset (PayloadData payload)) =
     word8 1
-    <> putWord32LE (fromIntegral outputOffset :: Word32)
+    <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
     <> putWord32LE (fromIntegral (ByteString.length payload) :: Word32)
     <> byteString payload
+encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadData payload)) =
+    -- Shouldn't happen in normal use; encode as EnclosedData
+    encodeRecord (DPSRecord EnclosedData outputOffset (PayloadData payload))
+encodeRecord (DPSRecord EnclosedData outputOffset (PayloadCopy sourceOffset copyLength)) =
+    -- Shouldn't happen in normal use; encode as CopyFromROM
+    encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset copyLength))

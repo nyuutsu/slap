@@ -272,29 +272,29 @@ prop_avoidSentinel = property $
   let source = ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7]
   in conjoin
     [ -- Record at sentinel is shifted back
-      avoidSentinel 5 source [EncodedHunk 5 (ByteString.pack [0xFF])]
-        === [EncodedHunk 4 (ByteString.pack [4, 0xFF])]
+      avoidSentinel 5 source [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
+        === [EncodedHunk (Offset 4) (ByteString.pack [4, 0xFF])]
     , -- Record NOT at sentinel is unchanged
-      avoidSentinel 5 source [EncodedHunk 3 (ByteString.pack [0xAA])]
-        === [EncodedHunk 3 (ByteString.pack [0xAA])]
+      avoidSentinel 5 source [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
+        === [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
     , -- Source too short: no-op
-      avoidSentinel 5 ByteString.empty [EncodedHunk 5 (ByteString.pack [0xFF])]
-        === [EncodedHunk 5 (ByteString.pack [0xFF])]
+      avoidSentinel 5 ByteString.empty [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
+        === [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
     , -- Sentinel at offset 0: can't extend backward, no-op
-      avoidSentinel 0 source [EncodedHunk 0 (ByteString.pack [0xFF])]
-        === [EncodedHunk 0 (ByteString.pack [0xFF])]
+      avoidSentinel 0 source [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
+        === [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
     ]
 
 -- | Split hunks at maxSize boundaries (same logic as Slap.Convert.splitHunks).
 splitMax :: Int -> [Hunk] -> [EncodedHunk]
 splitMax maxRecordSize = concatMap splitRecord . map hunkToEncoded
   where
-    hunkToEncoded (Hunk hunkOffset hunkPayload) = EncodedHunk (fromIntegral (unOffset hunkOffset)) hunkPayload
+    hunkToEncoded (Hunk hunkOffset hunkPayload) = EncodedHunk hunkOffset hunkPayload
     splitRecord (EncodedHunk hunkOffset hunkPayload)
       | ByteString.length hunkPayload <= maxRecordSize = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
           let (chunk, remaining) = ByteString.splitAt maxRecordSize hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (hunkOffset + maxRecordSize) remaining)
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + fromIntegral maxRecordSize)) remaining)
 
 -- | Total encoded IPS record size (excluding magic/EOF marker).
 ipsEncodedSize :: Int -> [EncodedHunk] -> Int

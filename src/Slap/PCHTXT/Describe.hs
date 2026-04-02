@@ -9,8 +9,8 @@ module Slap.PCHTXT.Describe
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.PCHTXT.Create (hexPad)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), SummaryBytes(..),
-                     Annotation(..))
+                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                     SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
 import Slap.Format (renderField)
 import Slap.Measure (Offset(..), Length(..))
 
@@ -52,7 +52,7 @@ explainPCHTXT patch = ExplainData
   { explainFormat   = "PCHTXT (Nintendo Switch)"
   , explainHeader   = pchtxtMeta patch
   , explainSections = map makePCHTXTBlock (zip [1..] (pchtxtBlocks patch))
-  , explainSummary  = Summary (length enabledEntries) "enabled entries" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo (length enabledEntries) "enabled entries" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
   where

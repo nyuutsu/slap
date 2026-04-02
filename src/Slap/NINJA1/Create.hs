@@ -10,7 +10,7 @@ module Slap.NINJA1.Create
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..))
-import Slap.Measure (EncodedHunk(..))
+import Slap.Measure (Offset(..), EncodedHunk(..))
 import Slap.Compress (zlibDeflate)
 
 import Data.ByteString (ByteString)
@@ -44,7 +44,7 @@ encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
 
 encodeRecordBuilder :: EncodedHunk -> Builder
 encodeRecordBuilder (EncodedHunk hunkOffset hunkPayload) =
-    let offsetEncoded = encodeBigEndian (fromIntegral hunkOffset :: Int64)
+    let offsetEncoded = encodeBigEndian (fromIntegral (unOffset hunkOffset) :: Int64)
         lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length hunkPayload) :: Int64)
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded

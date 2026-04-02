@@ -34,7 +34,7 @@ encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
                          then ["@nsobid-" ++ text, ""]
                          else ["// " ++ text, ""]
     trimNull = reverse . dropWhile (\character -> character == ' ' || character == '\0') . reverse
-    encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (fromIntegral hunkOffset) ++ " " ++ hexBytes hunkPayload
+    encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (unOffset hunkOffset) ++ " " ++ hexBytes hunkPayload
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
 encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe ByteString -> ByteString

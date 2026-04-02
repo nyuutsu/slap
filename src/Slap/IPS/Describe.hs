@@ -9,7 +9,8 @@ module Slap.IPS.Describe
 
 import Slap.IPS.Types (IPSVariant(..), IPSRecord(..), IPSPatch(..))
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                      ExplainPayload(..), ExplainSummary(..), SummaryBytes(..),
+                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                      SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Format (renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
@@ -119,7 +120,7 @@ explainIPS patch = ExplainData
       IPS32       -> "IPS32"
   , explainHeader   = ipsMeta patch
   , explainSections = [SectionRegions (map makeIPSRegion (ipsRecords patch))]
-  , explainSummary  = Summary recordCount "records" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = truncNote
   }
   where
@@ -141,7 +142,7 @@ makeIPSRegion (IPSRecordRLE recordOffset fillCount fillByte) = ExplainRegion
   { regionOffset     = recordOffset
   , regionSize       = fillCount
   , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill fillByte (unLength fillCount)
+  , regionPayload    = PayloadFill fillByte fillCount
   , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
   }
 

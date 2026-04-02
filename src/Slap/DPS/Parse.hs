@@ -10,7 +10,10 @@ module Slap.DPS.Parse
 -- Author: Marc de Falco (Deufeufeu); deufeufeu.free.fr is dead.
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSPayload(..), DPSMode(..),
-                        toDPSStability, trimNull)
+                        toDPSStability,
+                        dpsFieldWidth, dpsMetadataSize, dpsMinimumFileSize,
+                        dpsVersionOffset, dpsStabilityOffset)
+import Slap.Binary (trimNull)
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
@@ -28,13 +31,13 @@ import qualified Data.ByteString as ByteString
 -- flag byte 0 or 1 at offset 192.
 isDPS :: ByteString -> Bool
 isDPS input
-  | ByteString.length input < 198 = False  -- 3×64 header + flag + version + u32 orig_size
-  | ByteString.index input 193 /= 1 = False  -- DPS version must be 1
-  | ByteString.index input 192 > 1 = False   -- stability flag must be 0 or 1
-  | not (ByteString.all isHeaderByte (ByteString.take 192 input)) = False
+  | ByteString.length input < dpsMinimumFileSize = False
+  | ByteString.index input dpsVersionOffset /= 1 = False
+  | ByteString.index input dpsStabilityOffset > 1 = False
+  | not (ByteString.all isHeaderByte (ByteString.take dpsMetadataSize input)) = False
   -- Zero-record patch (198 bytes exactly) is valid: identity diff.
   -- When records exist, first byte must be a valid mode (0 or 1).
-  | ByteString.length input > 198 = ByteString.index input 198 <= 1
+  | ByteString.length input > dpsMinimumFileSize = ByteString.index input dpsMinimumFileSize <= 1
   | otherwise = True
   where
     isHeaderByte headerByte = (headerByte >= 0x20 && headerByte <= 0x7E) || headerByte == 0
@@ -45,15 +48,15 @@ isDPS input
 
 parseDPS :: ByteString -> Either String DPSPatch
 parseDPS input
-  | ByteString.length input < 198 = Left "DPS: input too short"
-  | ByteString.index input 193 /= 1 = Left ("DPS: unsupported version byte: " ++ show (ByteString.index input 193))
+  | ByteString.length input < dpsMinimumFileSize = Left "DPS: input too short"
+  | ByteString.index input dpsVersionOffset /= 1 = Left ("DPS: unsupported version byte: " ++ show (ByteString.index input dpsVersionOffset))
   | otherwise = runGet parseDPSBody input
 
 parseDPSBody :: Get DPSPatch
 parseDPSBody = do
-  name    <- trimNull <$> getBytes (Length 64)
-  author  <- trimNull <$> getBytes (Length 64)
-  version <- trimNull <$> getBytes (Length 64)
+  name    <- trimNull <$> getBytes (Length dpsFieldWidth)
+  author  <- trimNull <$> getBytes (Length dpsFieldWidth)
+  version <- trimNull <$> getBytes (Length dpsFieldWidth)
   flagByte <- getByte
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage
@@ -81,8 +84,8 @@ parseRecords = do
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
     record <- case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
-        sourceOffset <- fromIntegral <$> Get.word32LE
-        dataLength    <- fromIntegral <$> Get.word32LE
+        sourceOffset <- Offset . fromIntegral <$> Get.word32LE
+        dataLength   <- Length . fromIntegral <$> Get.word32LE
         pure (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset dataLength))
       _ -> do  -- EnclosedData: read length + data from patch
         dataLength  <- fromIntegral <$> Get.word32LE :: Get Int

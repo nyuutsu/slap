@@ -73,7 +73,7 @@ parseN64Records = do
           value <- getByte
           count <- getByte
           rest <- parseN64Records
-          pure (APSN64RLE offset value count : rest)
+          pure (APSN64RLE (APSN64RLEFields offset value count) : rest)
         else do  -- Normal record
           payload <- getBytes (Length (fromIntegral dataLength))
           rest <- parseN64Records

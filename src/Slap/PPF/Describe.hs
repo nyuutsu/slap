@@ -9,6 +9,8 @@ import Slap.Explain
   , ExplainRegion(..)
   , ExplainPayload(PayloadWrite)
   , ExplainSummary(Summary)
+  , SummaryInfo(..)
+  , SummaryByteInfo(..)
   , SummaryBytes(BytesTotal)
   , Annotation(AnnotAt)
   , OffsetKind(AtOffset)
@@ -88,7 +90,7 @@ explainPPF patch = ExplainData
   { explainFormat   = ppfExplainVersionString (ppfVersion patch)
   , explainHeader   = ppfMeta patch
   , explainSections = [SectionRegions (zipWith makePPFRegion [1..] (ppfRecords patch))]
-  , explainSummary  = Summary recordCount "records" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
   where

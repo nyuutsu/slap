@@ -7,8 +7,8 @@ module Slap.APSGBA.Describe
 
 import Slap.APSGBA.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), Annotation(..),
-                     OffsetKind(..), AnnotDetail(..))
+                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                     Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Format (renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
@@ -29,7 +29,7 @@ explainAPSGBA patch@(APSGBAPatch _header records) = ExplainData
   { explainFormat   = "APS (GBA)"
   , explainHeader   = apsGBAMeta patch
   , explainSections = [SectionRegions (map makeGBARegion records)]
-  , explainSummary  = Summary (length records) "blocks" Nothing
+  , explainSummary  = Summary (SummaryInfo (length records) "blocks" Nothing)
   , explainNotes    = []
   }
 

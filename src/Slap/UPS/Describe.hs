@@ -9,7 +9,7 @@ import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), ExplainSummary(..)
-    , Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
 import Slap.Format (renderField)
@@ -38,7 +38,7 @@ explainUPS patch = ExplainData
   { explainFormat   = "UPS"
   , explainHeader   = upsMeta patch
   , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion (Offset 0) (upsBlocks patch)))]
-  , explainSummary  = Summary blockCount "blocks" Nothing
+  , explainSummary  = Summary (SummaryInfo blockCount "blocks" Nothing)
   , explainNotes    = []
   }
   where

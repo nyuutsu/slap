@@ -9,7 +9,8 @@ import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
-    , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
 import Slap.Format (renderField)
@@ -51,7 +52,7 @@ explainBPS patch = ExplainData
   { explainFormat   = "BPS"
   , explainHeader   = bpsMeta patch
   , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (bpsActions patch)))]
-  , explainSummary  = Summary actionCount "actions" (Just (fromIntegral (unFileSize (bpsTargetSize patch)), BytesTotalOutput))
+  , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (fromIntegral (unFileSize (bpsTargetSize patch))) BytesTotalOutput)))
   , explainNotes    = []
   }
   where

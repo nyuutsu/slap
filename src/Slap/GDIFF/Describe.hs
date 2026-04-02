@@ -9,7 +9,7 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), commandOutputSize)
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
-    , Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
@@ -41,7 +41,7 @@ explainGDIFF patch = ExplainData
   { explainFormat   = "GDIFF (W3C)"
   , explainHeader   = gdiffMeta patch
   , explainSections = [SectionRegions (snd (mapAccumL makeGDIFFRegion (Offset 0) (gdiffCommands patch)))]
-  , explainSummary  = Summary commandCount "commands" Nothing
+  , explainSummary  = Summary (SummaryInfo commandCount "commands" Nothing)
   , explainNotes    = []
   }
   where

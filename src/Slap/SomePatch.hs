@@ -1,5 +1,6 @@
 module Slap.SomePatch
   ( SomePatch(..)
+  , RecordSummary(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , Verification(..)
@@ -157,6 +158,12 @@ noVerification = Verification
 -- itself serves as the undo, so UndoInMemory simply wraps it.
 newtype UndoStrategy = UndoInMemory (ByteString.ByteString -> ByteString.ByteString)
 
+-- | Record count and unit label for display.
+data RecordSummary = RecordSummary
+  { recordCount :: !Int
+  , recordUnit  :: !String       -- "records", "actions", "commands", etc.
+  } deriving (Show)
+
 -- | A parsed patch with all operations pre-bound as closures.
 -- The only dispatch point is 'parseSome'; every consumer works
 -- through these fields, never inspecting the underlying format.
@@ -170,8 +177,7 @@ data SomePatch = SomePatch
   , patchVerification   :: Verification
   , patchVerboseLines   :: [String]
   , patchWarnings       :: [String]
-  , patchRecordCount    :: Int
-  , patchRecordUnit     :: String
+  , patchRecordSummary  :: RecordSummary
   , patchContents       :: Maybe PatchContents
   , patchSourceNotes    :: [String]  -- ^ Conversion warnings about source-side data loss
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
@@ -214,8 +220,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             "Write " ++ show (ByteString.length (PPF.recordData record)) ++ " bytes at 0x"
             ++ padHex 8 (unOffset (PPF.recordOffset record))
         , patchWarnings       = ["empty patch (0 records)" | null records]
-        , patchRecordCount    = length records
-        , patchRecordUnit     = "records"
+        , patchRecordSummary  = RecordSummary (length records) "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (PPF.ppfDescription patch))
@@ -279,8 +284,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = noVerification
       , patchVerboseLines   = numbered records describeIPS
       , patchWarnings       = warnings
-      , patchRecordCount    = length records
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = ebpMeta
@@ -309,8 +313,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       , patchVerboseLines   = numbered actions describeBPS
       , patchWarnings       = ["empty patch (0 actions)" | null actions]
-      , patchRecordCount    = length actions
-      , patchRecordUnit     = "actions"
+      , patchRecordSummary  = RecordSummary (length actions) "actions"
       , patchSourceNotes    = []
       , patchMetadata       = bpsMetaBlob
       , patchExtractedMeta  = defaultMeta { metaBPSMetadata = bpsMetaBlob }
@@ -336,8 +339,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           "XOR " ++ show (ByteString.length (UPS.upsXorData block))
           ++ " bytes (skip " ++ show (unDelta (UPS.upsSkip block)) ++ ")"
       , patchWarnings       = ["empty patch (0 blocks)" | null blocks]
-      , patchRecordCount    = length blocks
-      , patchRecordUnit     = "blocks"
+      , patchRecordSummary  = RecordSummary (length blocks) "blocks"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -365,8 +367,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerboseLines   = numbered windows $ \window ->
           "Window " ++ show (unFileSize (VCDIFF.vcdiffTargetLength window)) ++ " bytes target"
       , patchWarnings       = ["empty patch (0 windows)" | null windows]
-      , patchRecordCount    = length windows
-      , patchRecordUnit     = "windows"
+      , patchRecordSummary  = RecordSummary (length windows) "windows"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -383,7 +384,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     | otherwise -> do
     patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
     let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
-        expandN64 (APSN64.APSN64RLE recordOffset fillByte fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillByte)
+        expandN64 (APSN64.APSN64RLE rle) = Hunk (APSN64.apsN64RLEOffset rle) (ByteString.replicate (fromIntegral (APSN64.apsN64RLERepeatCount rle)) (APSN64.apsN64RLEFillValue rle))
     Right SomePatch
       { patchFormat         = "APS (N64)"
       , patchInfo           = APSN64.apsN64Info patch
@@ -401,8 +402,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             }
       , patchVerboseLines   = []
       , patchWarnings       = ["empty patch (0 records)" | null records]
-      , patchRecordCount    = length records
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (APSN64.apsN64Description header))
@@ -434,8 +434,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       , patchVerboseLines   = []
       , patchWarnings       = ["empty patch (0 records)" | null (RUP.rupRecords patch)]
-      , patchRecordCount    = length (RUP.rupRecords patch)
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length (RUP.rupRecords patch)) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let decode = RUP.decodeRUPField (RUP.rupPatchEncoding patch)
@@ -486,8 +485,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           "Write " ++ show (ByteString.length (NINJA1.ninja1RecordData record)) ++ " bytes at 0x"
           ++ padHex 8 (unOffset (NINJA1.ninja1RecordOffset record))
       , patchWarnings       = warnings
-      , patchRecordCount    = length records
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -514,8 +512,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = noVerification
       , patchVerboseLines   = []
       , patchWarnings       = ["empty patch (0 control tuples)" | null (BSDiff.bsdiffControls patch)]
-      , patchRecordCount    = length (BSDiff.bsdiffControls patch)
-      , patchRecordUnit     = "control tuples"
+      , patchRecordSummary  = RecordSummary (length (BSDiff.bsdiffControls patch)) "control tuples"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -535,8 +532,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = noVerification
       , patchVerboseLines   = []
       , patchWarnings       = ["empty patch (0 commands)" | null (GDIFF.gdiffCommands patch)]
-      , patchRecordCount    = length (GDIFF.gdiffCommands patch)
-      , patchRecordUnit     = "commands"
+      , patchRecordSummary  = RecordSummary (length (GDIFF.gdiffCommands patch)) "commands"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -563,8 +559,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchVerification   = xdeltaVerification
       , patchVerboseLines   = []
       , patchWarnings       = ["empty patch (0 instructions)" | null (XDelta1.xdelta1Instructions patch)]
-      , patchRecordCount    = length (XDelta1.xdelta1Instructions patch)
-      , patchRecordUnit     = "instructions"
+      , patchRecordSummary  = RecordSummary (length (XDelta1.xdelta1Instructions patch)) "instructions"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -587,8 +582,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           "Write " ++ show (ByteString.length (PMSR.pmsrData record)) ++ " bytes at 0x"
           ++ padHex 8 (unOffset (PMSR.pmsrOffset record))
       , patchWarnings       = ["empty patch (0 records)" | null records]
-      , patchRecordCount    = length records
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -617,8 +611,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           "Write " ++ show (ByteString.length (PCHTXT.pchtxtData entry)) ++ " bytes at 0x"
           ++ padHex 8 (unOffset (PCHTXT.pchtxtOffset entry))
       , patchWarnings       = ["empty patch (0 entries)" | null entries]
-      , patchRecordCount    = length entries
-      , patchRecordUnit     = "entries"
+      , patchRecordSummary  = RecordSummary (length entries) "entries"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
@@ -652,17 +645,16 @@ parseDPSBlock input = case DPS.parseDPS input of
           DPS.PayloadData payload ->
             "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
             ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
-          DPS.PayloadCopy sourceOffset dataLength ->
-            "Copy " ++ show dataLength ++ " bytes from 0x"
-            ++ padHex 8 sourceOffset ++ " to 0x"
+          DPS.PayloadCopy sourceOffset copyLength ->
+            "Copy " ++ show (unLength copyLength) ++ " bytes from 0x"
+            ++ padHex 8 (unOffset sourceOffset) ++ " to 0x"
             ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
       , patchWarnings       = ["empty patch (0 records)" | null records]
-      , patchRecordCount    = length records
-      , patchRecordUnit     = "records"
+      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchContents  = Nothing
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let nonEmpty bs = let s = ByteString8.unpack (DPS.trimNull bs)
+      , patchExtractedMeta  = let nonEmpty bs = let s = trimNullSpace (ByteString8.unpack bs)
                                                 in if null s then Nothing else Just s
                               in defaultMeta
                                 { metaTitle    = nonEmpty (DPS.dpsName patch)
@@ -706,8 +698,7 @@ parseAPSGBABlock input = do
           }
     , patchVerboseLines   = []
     , patchWarnings       = ["empty patch (0 blocks)" | null records]
-    , patchRecordCount    = length records
-    , patchRecordUnit     = "blocks"
+    , patchRecordSummary  = RecordSummary (length records) "blocks"
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = defaultMeta

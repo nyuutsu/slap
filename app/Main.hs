@@ -3,7 +3,7 @@
 
 module Main (main) where
 
-import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
+import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
@@ -477,7 +477,8 @@ doApply parsedCommand = do
 
       -- Dry run: report and exit
       when (commandDryRun parsedCommand) $ do
-        putStrLn $ "would apply " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
+        let summary = patchRecordSummary parsed
+        putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
                 ++ " \8594 " ++ outputPath
         case verifySourceCRC32 verification of
           Just expected -> do
@@ -509,7 +510,8 @@ doApply parsedCommand = do
         Right target -> do
           verifyTarget noVerify verification target
           ByteString.writeFile outputPath target
-          putStrLn $ "applied " ++ show (patchRecordCount parsed) ++ " " ++ patchRecordUnit parsed
+          let appliedSummary = patchRecordSummary parsed
+          putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
                   ++ " \8594 " ++ outputPath
 
 ----------------------------------------------------------------------------

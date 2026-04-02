@@ -8,14 +8,18 @@ module Slap.DPS.Types
   , DPSStability(..)
   , toDPSStability
   , fromDPSStability
-  , trimNull
+    -- * Named constants
+  , dpsFieldWidth
+  , dpsFieldCount
+  , dpsMetadataSize
+  , dpsMinimumFileSize
+  , dpsVersionOffset
+  , dpsStabilityOffset
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 import Data.Word (Word8)
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
@@ -49,9 +53,34 @@ data DPSRecord = DPSRecord
   } deriving (Show)
 
 data DPSPayload
-  = PayloadCopy Int64 Int64        -- source ROM offset, length
-  | PayloadData ByteString         -- embedded data
+  = PayloadCopy !Offset !Length    -- source ROM offset, copy length
+  | PayloadData !ByteString        -- embedded data
   deriving (Show)
 
-trimNull :: ByteString -> ByteString
-trimNull = ByteString.takeWhile (/= 0)
+----------------------------------------------------------------------------
+-- Named constants
+----------------------------------------------------------------------------
+
+-- | Each metadata field (name, author, version) is 64 bytes, null-padded.
+dpsFieldWidth :: Int
+dpsFieldWidth = 64
+
+-- | Number of metadata fields in the header.
+dpsFieldCount :: Int
+dpsFieldCount = 3
+
+-- | Total metadata size: 3 × 64 = 192 bytes.
+dpsMetadataSize :: Int
+dpsMetadataSize = dpsFieldCount * dpsFieldWidth
+
+-- | Minimum valid DPS file: 192 (metadata) + 1 (flag) + 1 (version) + 4 (orig size).
+dpsMinimumFileSize :: Int
+dpsMinimumFileSize = dpsMetadataSize + 6
+
+-- | Byte offset of the version field (0-indexed).
+dpsVersionOffset :: Int
+dpsVersionOffset = dpsMetadataSize + 1
+
+-- | Byte offset of the stability flag (0-indexed).
+dpsStabilityOffset :: Int
+dpsStabilityOffset = dpsMetadataSize

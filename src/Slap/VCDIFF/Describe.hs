@@ -14,9 +14,10 @@ import Slap.VCDIFF.Apply (decodeWindowInstructions)
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
-    , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Checksum (Adler32(..), showAdler32)
+import Slap.Checksum (showAdler32)
 import Slap.Format (padHex, renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
@@ -59,8 +60,8 @@ explainVCDIFF patch = ExplainData
                                then " (xdelta3)" else ""
   , explainHeader   = vcdiffMeta patch
   , explainSections = concat windowSections
-  , explainSummary  = Summary totalInstructions "instructions"
-                   (Just (fromIntegral totalTarget, BytesTotalOutput))
+  , explainSummary  = Summary (SummaryInfo totalInstructions "instructions"
+                   (Just (SummaryByteInfo (fromIntegral totalTarget) BytesTotalOutput)))
   , explainNotes    = []
   }
   where
@@ -107,7 +108,7 @@ decodedToRegion globalOffset instruction = case instruction of
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = Length count
     , regionLabel      = "Run  "
-    , regionPayload    = PayloadFill fillByte count
+    , regionPayload    = PayloadFill fillByte (Length count)
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
     }
   DecodedCopy windowOffset copySize (Just sourceOffset) -> ExplainRegion

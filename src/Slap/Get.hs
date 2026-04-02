@@ -31,7 +31,8 @@ module Slap.Get
   ) where
 
 import Slap.Binary
-  ( getWord16LE, getWord32LE, getInt64LE
+  ( VarintResult(..)
+  , getWord16LE, getWord32LE, getInt64LE
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
   )
@@ -130,11 +131,11 @@ liftRead (Length width) reader = Get $ \input (Position position) ->
   then Right (reader position input, Position (position + width))
   else Left ("liftRead: need " ++ show width ++ " bytes at offset " ++ show position)
 
-liftReadVarint :: (Int -> ByteString -> (a, Int)) -> Get a
+liftReadVarint :: (Int -> ByteString -> VarintResult) -> Get Int64
 liftReadVarint reader = Get $ \input (Position position) ->
   if position >= ByteString.length input
   then Left ("liftReadVarint: read past end at offset " ++ show position)
-  else let (result, consumed) = reader position input
+  else let VarintResult result consumed = reader position input
        in if position + consumed > ByteString.length input
           then Left ("liftReadVarint: varint overran buffer at offset " ++ show position)
           else Right (result, Position (position + consumed))

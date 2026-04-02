@@ -10,10 +10,11 @@ import qualified Slap.DPS.Types as DPS
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
-    , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Format (renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
@@ -55,7 +56,7 @@ explainDPS patch = ExplainData
   { explainFormat   = "DPS (Deufeufeu Patching System)"
   , explainHeader   = dpsMeta patch
   , explainSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
-  , explainSummary  = Summary recordCount "records" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
   where
@@ -63,7 +64,7 @@ explainDPS patch = ExplainData
     totalBytes = sum (map recordBytes (dpsRecords patch))
     recordBytes record = case dpsRecordPayload record of
       DPS.PayloadData payload     -> ByteString.length payload
-      DPS.PayloadCopy _ copyLength -> fromIntegral copyLength
+      DPS.PayloadCopy _ copyLength -> unLength copyLength
 
 makeDPSRegion :: DPSRecord -> ExplainRegion
 makeDPSRegion record = case dpsRecordPayload record of
@@ -76,8 +77,8 @@ makeDPSRegion record = case dpsRecordPayload record of
     }
   DPS.PayloadCopy sourceOffset copyLength -> ExplainRegion
     { regionOffset     = dpsRecordOutputOffset record
-    , regionSize       = Length (fromIntegral copyLength)
+    , regionSize       = copyLength
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOffset (dpsRecordOutputOffset record) [DetailSource (Offset sourceOffset)]
+    , regionAnnotation = AnnotAt AtOffset (dpsRecordOutputOffset record) [DetailSource sourceOffset]
     }

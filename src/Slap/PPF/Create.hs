@@ -2,7 +2,7 @@
 
 module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
-import Slap.PPF.Types (ImageType(..), fromImageType)
+import Slap.PPF.Types (ImageType(..), fromImageType, ppfDescriptionWidth)
 import Slap.Measure (Offset(..), Hunk(..), UndoHunk(..))
 
 import qualified Data.ByteString as ByteString
@@ -14,8 +14,8 @@ import Data.Maybe (isJust)
 
 padDescription :: String -> ByteString
 padDescription text =
-  let encoded = ByteStringChar.pack (take 50 text)
-  in encoded <> ByteString.replicate (50 - ByteString.length encoded) 0x20
+  let encoded = ByteStringChar.pack (take ppfDescriptionWidth text)
+  in encoded <> ByteString.replicate (ppfDescriptionWidth - ByteString.length encoded) 0x20
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> ImageType -> Builder
 buildHeader description blockCheck hasUndo validationBlock imageType =

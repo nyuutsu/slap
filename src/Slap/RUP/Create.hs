@@ -46,7 +46,7 @@ createRUP original modified info romType encoding =
     computeXorHunk (Hunk hunkOffset newData) =
       let intOffset = fromIntegral (unOffset hunkOffset) :: Int
           oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)
-      in (intOffset, ByteString.packZipWith xor oldData newData)
+      in XorRecord hunkOffset (ByteString.packZipWith xor oldData newData)
 
     -- Overflow section: emitted whenever sizes differ (parser expects it).
     -- Type byte: 'A' (0x41) = append, 'M' (0x4D) = truncate/minify.
@@ -153,9 +153,9 @@ rupTruncationNotes encoding info = concatMap checkField fields
       , (1074, "description", rupDescription info)
       ]
 
-encodeXorRecord :: (Int, ByteString) -> Builder
-encodeXorRecord (recordOffset, payload) =
+encodeXorRecord :: XorRecord -> Builder
+encodeXorRecord record =
     word8 0x02                                    -- XOR command
-    <> encodeVariableLengthValue (fromIntegral recordOffset)               -- offset
-    <> encodeVariableLengthValue (fromIntegral (ByteString.length payload))  -- length
-    <> byteString payload                         -- XOR data
+    <> encodeVariableLengthValue (fromIntegral (unOffset (xorRecordOffset record)))   -- offset
+    <> encodeVariableLengthValue (fromIntegral (ByteString.length (xorRecordPayload record)))  -- length
+    <> byteString (xorRecordPayload record)       -- XOR data

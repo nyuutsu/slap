@@ -611,7 +611,7 @@ buildContents format source target meta sourceContents = PatchContents
   , contentsMetadata    = Nothing
   }
   where
-    encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk (Offset (fromIntegral hunkOffset)) hunkPayload
+    encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk hunkOffset hunkPayload
     patchHunks = case format of
       CreateIPS   -> map encodedToHunk (IPS.optimalIPSRecords 3 source target)
       CreateIPS32 -> map encodedToHunk (IPS.optimalIPSRecords 4 source target)

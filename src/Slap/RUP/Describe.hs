@@ -9,8 +9,8 @@ import Slap.RUP.Types
 import Slap.Format (padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), Annotation(..),
-                     OffsetKind(..))
+                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                     Annotation(..), OffsetKind(..))
 
 import qualified Data.ByteString as ByteString
 
@@ -73,7 +73,7 @@ explainRUP patch = ExplainData
   { explainFormat   = "RUP (NINJA2)"
   , explainHeader   = rupMeta patch
   , explainSections = [SectionRegions (map makeRUPRegion (rupRecords patch))]
-  , explainSummary  = Summary recordCount "records" Nothing
+  , explainSummary  = Summary (SummaryInfo recordCount "records" Nothing)
   , explainNotes    = []
   }
   where

@@ -8,7 +8,8 @@ module Slap.NINJA1.Describe
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..),
                            romTypeName)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                      ExplainPayload(..), ExplainSummary(..), SummaryBytes(..),
+                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                      SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32)
 import Slap.Format (padHex, renderField)
@@ -58,7 +59,7 @@ explainNINJA1 patch = ExplainData
   { explainFormat   = "NINJA1 (" ++ subFormatString ++ ")"
   , explainHeader   = ninja1Meta patch
   , explainSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
-  , explainSummary  = Summary recordCount "records" (Just (totalBytes, BytesTotal))
+  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
   where

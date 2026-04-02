@@ -6,9 +6,9 @@ module Slap.APSN64.Create
   , encodeN64Record
   ) where
 
-import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..))
+import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), apsN64DescriptionWidth)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (EncodedHunk(..))
+import Slap.Measure (Offset(..), EncodedHunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -31,8 +31,8 @@ encodeAPSN64 records destinationSize description = LazyByteString.toStrict $ toL
     <> putWord32LE destinationSize -- dest size
     <> foldMap encodeN64Record (splitLong records)
   where
-    descriptionBytes = let padded = ByteString8.pack (take 50 description)
-                in padded <> ByteString.replicate (50 - ByteString.length padded) 0
+    descriptionBytes = let padded = ByteString8.pack (take apsN64DescriptionWidth description)
+                in padded <> ByteString.replicate (apsN64DescriptionWidth - ByteString.length padded) 0
 
 splitLong :: [EncodedHunk] -> [EncodedHunk]
 splitLong = concatMap splitRecord
@@ -41,10 +41,10 @@ splitLong = concatMap splitRecord
       | ByteString.length hunkPayload <= 255 = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
           let (chunk, rest) = ByteString.splitAt 255 hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (hunkOffset + 255) rest)
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + 255)) rest)
 
 encodeN64Record :: EncodedHunk -> Builder
 encodeN64Record (EncodedHunk hunkOffset hunkPayload) =
-    putWord32LE (fromIntegral hunkOffset :: Word32)
+    putWord32LE (fromIntegral (unOffset hunkOffset) :: Word32)
     <> word8 (fromIntegral (ByteString.length hunkPayload))
     <> byteString hunkPayload

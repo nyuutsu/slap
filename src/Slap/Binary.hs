@@ -105,35 +105,35 @@ getInt64BE offset input =
 -- High bit clear = more bytes follow. High bit set = final byte.
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
 -- Returns (value, bytes consumed).
-getByuuVarint :: Int -> ByteString -> (Int64, Int)
+getByuuVarint :: Int -> ByteString -> VarintResult
 getByuuVarint offset input = decode offset 0 1
   where
     inputLength = ByteString.length input
     decode position accumulated multiplier
-      | position >= inputLength = (accumulated, position - offset)
+      | position >= inputLength = VarintResult accumulated (position - offset)
       | otherwise =
           let byte = ByteString.index input position
               payload = fromIntegral (byte .&. 0x7F) :: Int64
               total = accumulated + payload * multiplier
           in if testBit byte 7
-             then (total, position - offset + 1)
+             then VarintResult total (position - offset + 1)
              else let nextMultiplier = multiplier `shiftL` 7
                   in decode (position + 1) (total + nextMultiplier) nextMultiplier
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
-getVcdiffVarint :: Int -> ByteString -> (Int64, Int)
+getVcdiffVarint :: Int -> ByteString -> VarintResult
 getVcdiffVarint offset input = decode offset 0
   where
     inputLength = ByteString.length input
     decode position accumulated
-      | position >= inputLength = (accumulated, position - offset)
+      | position >= inputLength = VarintResult accumulated (position - offset)
       | otherwise =
           let byte = ByteString.index input position
               total = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
           in if testBit byte 7
              then decode (position + 1) total
-             else (total, position - offset + 1)
+             else VarintResult total (position - offset + 1)
 
 ----------------------------------------------------------------------------
 -- Builders

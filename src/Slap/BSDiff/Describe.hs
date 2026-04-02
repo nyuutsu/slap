@@ -12,6 +12,7 @@ import Slap.Explain
   , ExplainRegion(..)
   , ExplainPayload(..)
   , ExplainSummary(..)
+  , SummaryInfo(..)
   , Annotation(..)
   )
 import Slap.Format (renderField)
@@ -53,7 +54,7 @@ explainBSDiff patch = ExplainData
                  else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffControls patch)))]
   , explainSummary  = if null (bsdiffControls patch)
                  then SummaryNone
-                 else Summary (length (bsdiffControls patch)) "control tuples" Nothing
+                 else Summary (SummaryInfo (length (bsdiffControls patch)) "control tuples" Nothing)
   , explainNotes    = []
   }
 

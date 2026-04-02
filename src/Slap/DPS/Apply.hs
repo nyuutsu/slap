@@ -6,7 +6,7 @@ module Slap.DPS.Apply
   ) where
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSPayload(..))
-import Slap.Measure (Offset(..))
+import Slap.Measure (Offset(..), Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -22,8 +22,8 @@ buildOutput source records =
   let base = source
       applyRecord buffer (DPSRecord _ outputOffset (PayloadData payload)) =
         overwriteAt buffer (fromIntegral (unOffset outputOffset)) payload
-      applyRecord buffer (DPSRecord _ outputOffset (PayloadCopy sourceOffset dataLength)) =
-        let chunk = takePadded (fromIntegral dataLength) (fromIntegral sourceOffset) source
+      applyRecord buffer (DPSRecord _ outputOffset (PayloadCopy sourceOffset copyLength)) =
+        let chunk = takePadded (unLength copyLength) (fromIntegral (unOffset sourceOffset)) source
         in overwriteAt buffer (fromIntegral (unOffset outputOffset)) chunk
   in foldl' applyRecord base records
 

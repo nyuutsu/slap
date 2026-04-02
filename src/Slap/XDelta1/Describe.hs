@@ -10,7 +10,8 @@ import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instructi
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
-    , SummaryBytes(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
+    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Format (padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
@@ -69,7 +70,7 @@ explainXDelta1 patch = ExplainData
   , explainSections = map makeXDelta1SourceText (zip [0..] (xdelta1Sources patch))
       ++ [SectionText "", SectionText ("instructions: " ++ show instructionCount), SectionText ""]
       ++ [SectionRegions (map makeXDelta1Region (xdelta1Instructions patch))]
-  , explainSummary  = Summary instructionCount "instructions" (Just (fromIntegral (unFileSize (xdelta1TargetLength patch)), BytesTotalOutput))
+  , explainSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (fromIntegral (unFileSize (xdelta1TargetLength patch))) BytesTotalOutput)))
   , explainNotes    = []
   }
   where

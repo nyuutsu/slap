@@ -21,7 +21,7 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..))
+import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..), offsetToInt)
 import Slap.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -40,7 +40,7 @@ import Data.Array.ST (STUArray)
 
 encodeIPSRecord :: Int -> EncodedHunk -> Builder
 encodeIPSRecord offsetWidth (EncodedHunk offset payload) =
-  encodeOffset offsetWidth offset
+  encodeOffset offsetWidth (offsetToInt offset)
   -- Check for RLE: all same byte and length >= 3
   <> if ByteString.length payload >= 3 && allSame payload
      then -- RLE record: size=0, then rle_count, rle_value
@@ -74,9 +74,11 @@ allSame input
 avoidSentinel :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
 avoidSentinel sentinel source = map adjustRecord
   where
+    sentinelOffset = Offset (fromIntegral sentinel)
     adjustRecord (EncodedHunk hunkOffset hunkPayload)
-      | hunkOffset == sentinel, hunkOffset > 0, hunkOffset - 1 < ByteString.length source =
-          EncodedHunk (hunkOffset - 1) (ByteString.cons (ByteString.index source (hunkOffset - 1)) hunkPayload)
+      | hunkOffset == sentinelOffset, offsetToInt hunkOffset > 0, offsetToInt hunkOffset - 1 < ByteString.length source =
+          let shiftedIndex = offsetToInt hunkOffset - 1
+          in EncodedHunk (Offset (unOffset hunkOffset - 1)) (ByteString.cons (ByteString.index source shiftedIndex) hunkPayload)
       | otherwise = EncodedHunk hunkOffset hunkPayload
 
 ----------------------------------------------------------------------------
@@ -146,44 +148,44 @@ ebpJson title author description = Text.encodeUtf8 $ Text.pack $
 -- offsetWidth is 3 for IPS/EBP, 4 for IPS32.
 optimalIPSRecords :: Int -> ByteString -> ByteString -> [EncodedHunk]
 optimalIPSRecords offsetWidth source target =
-  map (uncurry EncodedHunk) $
   concatMap (partitionOptimal offsetWidth) (mergeGaps offsetWidth target (diffRaw source target))
 
 -- | Diff without gap merging -- raw changed regions.
-diffRaw :: ByteString -> ByteString -> [(Int, ByteString)]
+diffRaw :: ByteString -> ByteString -> [EncodedHunk]
 diffRaw original modified = scanDiffs 0 ++ extension
   where
     originalLength = ByteString.length original
     modifiedLength = ByteString.length modified
     sharedLength = min originalLength modifiedLength
     extension
-      | modifiedLength > originalLength = [(originalLength, ByteString.drop originalLength modified)]
+      | modifiedLength > originalLength = [EncodedHunk (Offset (fromIntegral originalLength)) (ByteString.drop originalLength modified)]
       | otherwise                       = []
     scanDiffs position
       | position >= sharedLength = []
       | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
           let diffEnd = findDiffEnd (position + 1)
-          in (position, ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+          in EncodedHunk (Offset (fromIntegral position)) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
     findDiffEnd position
       | position >= sharedLength = sharedLength
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
       | otherwise = position
 
 -- | Merge hunks with gaps <= offsetWidth+1 (the break-even for separate records).
-mergeGaps :: Int -> ByteString -> [(Int, ByteString)] -> [(Int, ByteString)]
+mergeGaps :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
 mergeGaps _ _ [] = []
 mergeGaps _ _ [hunk] = [hunk]
-mergeGaps offsetWidth target ((firstOffset, firstData):(nextOffset, nextData):rest)
-  | nextOffset - (firstOffset + ByteString.length firstData) <= offsetWidth + 1 =
-      let merged = ByteString.take (nextOffset + ByteString.length nextData - firstOffset) (ByteString.drop firstOffset target)
-      in mergeGaps offsetWidth target ((firstOffset, merged) : rest)
-  | otherwise = (firstOffset, firstData) : mergeGaps offsetWidth target ((nextOffset, nextData) : rest)
+mergeGaps offsetWidth target (EncodedHunk firstOffset firstData : EncodedHunk nextOffset nextData : rest)
+  | offsetToInt nextOffset - (offsetToInt firstOffset + ByteString.length firstData) <= offsetWidth + 1 =
+      let merged = ByteString.take (offsetToInt nextOffset + ByteString.length nextData - offsetToInt firstOffset)
+                     (ByteString.drop (offsetToInt firstOffset) target)
+      in mergeGaps offsetWidth target (EncodedHunk firstOffset merged : rest)
+  | otherwise = EncodedHunk firstOffset firstData : mergeGaps offsetWidth target (EncodedHunk nextOffset nextData : rest)
 
 -- | DP within a single block to find optimal Copy/RLE record partition.
 -- Returns records with absolute offsets and data <= 65535 bytes each.
-partitionOptimal :: Int -> (Int, ByteString) -> [(Int, ByteString)]
-partitionOptimal offsetWidth (blockOffset, blockData)
+partitionOptimal :: Int -> EncodedHunk -> [EncodedHunk]
+partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
   | ByteString.null blockData = []
   | otherwise = runST buildOptimal
   where
@@ -198,7 +200,8 @@ partitionOptimal offsetWidth (blockOffset, blockData)
     rlePredecessors = listArray (0, positionCount - 1) (computeRLEPredecessors positions runs)
                        :: Array Int Int
 
-    buildOptimal :: forall s. ST s [(Int, ByteString)]
+    blockOffsetInt = offsetToInt blockOffset
+    buildOptimal :: forall s. ST s [EncodedHunk]
     buildOptimal = do
       costArray <- newArray (0, positionCount - 1) upperBound :: ST s (STUArray s Int Int)
       predecessorArray <- newArray (0, positionCount - 1) (-1) :: ST s (STUArray s Int Int)
@@ -241,7 +244,7 @@ partitionOptimal offsetWidth (blockOffset, blockData)
                 let startPosition = positionArray ! sourceIndex
                     endPosition   = positionArray ! targetIndex
                     payload  = ByteString.take (endPosition - startPosition) (ByteString.drop startPosition blockData)
-                extract sourceIndex ((blockOffset + startPosition, payload) : accumulated)
+                extract sourceIndex (EncodedHunk (Offset (fromIntegral (blockOffsetInt + startPosition))) payload : accumulated)
 
       extract (positionCount - 1) []
 

@@ -3,6 +3,7 @@
 module Slap.APSN64.Types
   ( APSN64Patch(..)
   , APSN64Record(..)
+  , APSN64RLEFields(..)
   , APSN64Header(..)
   , APSPatchType(..)
   , APSImageFormat(..)
@@ -10,6 +11,8 @@ module Slap.APSN64.Types
   , fromAPSPatchType
   , toAPSImageFormat
   , fromAPSImageFormat
+    -- * Named constants
+  , apsN64DescriptionWidth
   ) where
 
 import Data.ByteString (ByteString)
@@ -56,6 +59,16 @@ data APSN64Header = APSN64Header
   } deriving (Show)
 
 data APSN64Record
-  = APSN64Normal Offset ByteString    -- offset, data
-  | APSN64RLE    Offset Word8 Word8   -- offset, value, count
+  = APSN64Normal !Offset !ByteString    -- offset, data
+  | APSN64RLE    !APSN64RLEFields       -- RLE fill record
   deriving (Show)
+
+data APSN64RLEFields = APSN64RLEFields
+  { apsN64RLEOffset      :: !Offset
+  , apsN64RLEFillValue   :: !Word8
+  , apsN64RLERepeatCount :: !Word8
+  } deriving (Show)
+
+-- | Description field width: 50 bytes, null-padded.
+apsN64DescriptionWidth :: Int
+apsN64DescriptionWidth = 50

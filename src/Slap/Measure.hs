@@ -74,7 +74,7 @@ data UndoHunk = UndoHunk
   } deriving (Show)
 
 data EncodedHunk = EncodedHunk
-  { encodedOffset  :: !Int
+  { encodedOffset  :: !Offset
   , encodedPayload :: !ByteString
   } deriving (Eq, Show)
 
@@ -159,7 +159,7 @@ narrowHunk limits hunk
             ++ showHex (unOffset sentinel) "")
   | otherwise =
       Right EncodedHunk
-        { encodedOffset  = fromIntegral (unOffset (hunkOffset hunk))
+        { encodedOffset  = hunkOffset hunk
         , encodedPayload = hunkPayload hunk
         }
 
@@ -168,7 +168,7 @@ narrowHunks limits = traverse (narrowHunk limits)
 
 narrowHunkUnbounded :: Hunk -> EncodedHunk
 narrowHunkUnbounded hunk = EncodedHunk
-  { encodedOffset  = fromIntegral (unOffset (hunkOffset hunk))
+  { encodedOffset  = hunkOffset hunk
   , encodedPayload = hunkPayload hunk
   }
 

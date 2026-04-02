@@ -7,8 +7,8 @@ module Slap.APSN64.Describe
 
 import Slap.APSN64.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), Annotation(..),
-                     OffsetKind(..), AnnotDetail(..))
+                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                     Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Format (padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
@@ -50,7 +50,7 @@ explainAPSN64 patch@(APSN64Patch _header records) = ExplainData
   { explainFormat   = "APS (N64)"
   , explainHeader   = apsN64Meta patch
   , explainSections = [SectionRegions (map makeN64Region records)]
-  , explainSummary  = Summary (length records) "records" Nothing
+  , explainSummary  = Summary (SummaryInfo (length records) "records" Nothing)
   , explainNotes    = []
   }
 
@@ -62,10 +62,10 @@ makeN64Region (APSN64Normal recordOffset recordPayload) = ExplainRegion
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
-makeN64Region (APSN64RLE recordOffset fillByte fillCount) = ExplainRegion
-  { regionOffset     = recordOffset
-  , regionSize       = Length (fromIntegral fillCount)
+makeN64Region (APSN64RLE rle) = ExplainRegion
+  { regionOffset     = apsN64RLEOffset rle
+  , regionSize       = Length (fromIntegral (apsN64RLERepeatCount rle))
   , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill fillByte (fromIntegral fillCount)
-  , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
+  , regionPayload    = PayloadFill (apsN64RLEFillValue rle) (Length (fromIntegral (apsN64RLERepeatCount rle)))
+  , regionAnnotation = AnnotAt AtOffset (apsN64RLEOffset rle) [DetailRLE]
   }

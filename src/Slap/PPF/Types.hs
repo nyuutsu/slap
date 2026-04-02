@@ -11,6 +11,8 @@ module Slap.PPF.Types
     , Patch(..)
     , validationOffset
     , validationSize
+      -- * Named constants
+    , ppfDescriptionWidth
     ) where
 
 import Data.ByteString (ByteString)
@@ -72,3 +74,7 @@ validationOffset GI  = Offset 0x80A0
 -- | Size of the validation block.
 validationSize :: Length
 validationSize = Length 1024
+
+-- | Description field width: 50 bytes, space-padded.
+ppfDescriptionWidth :: Int
+ppfDescriptionWidth = 50

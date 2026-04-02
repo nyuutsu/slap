@@ -4,7 +4,7 @@ module Slap.PMSR.Create
   ( encodePMSR
   ) where
 
-import Slap.Measure (EncodedHunk(..))
+import Slap.Measure (Offset(..), EncodedHunk(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -18,6 +18,6 @@ encodePMSR records = LazyByteString.toStrict $ toLazyByteString $
     <> foldMap encodeOneRecord records
   where
     encodeOneRecord (EncodedHunk hunkOffset hunkPayload) =
-      word32BE (fromIntegral hunkOffset)
+      word32BE (fromIntegral (unOffset hunkOffset))
       <> word32BE (fromIntegral (ByteString.length hunkPayload))
       <> byteString hunkPayload
