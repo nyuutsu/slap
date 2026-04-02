@@ -42,12 +42,13 @@ unwrapArchive format path = do
       let candidates = filter isCandidate names
       case candidates of
         []  -> pure (Left ("no usable file found in " ++ formatString format ++ " archive "
-                           ++ path ++ " (" ++ show (length names) ++ " entries, all filtered)"))
+                           ++ path ++ " (" ++ show (length names) ++ " entries, all filtered)\n"
+                           ++ "If this isn't actually an archive, use --raw."))
         [name] -> extractEntry format path name
         _ -> pure (Left (path ++ " is a " ++ formatString format ++ " archive with "
-                         ++ show (length candidates) ++ " candidate files.\n"
+                         ++ show (length candidates) ++ " candidate files:\n"
                          ++ unlines (map ("  " ++) candidates)
-                         ++ "If the archive itself is the target, use --raw."))
+                         ++ "Extract the one you want and pass it directly."))
 
 formatString :: ArchiveFormat -> String
 formatString ArchiveZIP = "ZIP"
