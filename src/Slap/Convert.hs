@@ -345,17 +345,27 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
-createDefaultNotes (CreateDiff CreateRUP) meta = RUP.rupTruncationNotes enc rupInfo
+createDefaultNotes (CreateDiff CreateRUP) meta = snd (prepareRUP meta)
+createDefaultNotes (CreateDiff _) _ = []
+
+-- | Build a RUPInfo from CreateMeta and compute its truncation notes.
+-- Single source of truth for RUPInfo construction — used by both the create
+-- path (which needs the RUPInfo) and the notes path (which needs the warnings).
+prepareRUP :: CreateMeta -> (RUP.RUPInfo, [String])
+prepareRUP meta = (rupInfo, RUP.rupTruncationNotes enc rupInfo)
   where
     enc = metaPatchEncoding meta
     encode = RUP.encodeRUPString enc
     rupInfo = RUP.RUPInfo
-      { RUP.rupAuthor = fmap encode (metaAuthor meta), RUP.rupVersion = fmap encode (metaVersion meta)
-      , RUP.rupTitle = fmap encode (metaTitle meta), RUP.rupGenre = fmap encode (metaGenre meta)
-      , RUP.rupLanguage = fmap encode (metaLanguage meta), RUP.rupDate = fmap encode (metaDate meta)
-      , RUP.rupWebsite = fmap encode (metaWebsite meta), RUP.rupDescription = fmap encode (metaDescription meta)
+      { RUP.rupAuthor      = fmap encode (metaAuthor meta)
+      , RUP.rupVersion     = fmap encode (metaVersion meta)
+      , RUP.rupTitle       = fmap encode (metaTitle meta)
+      , RUP.rupGenre       = fmap encode (metaGenre meta)
+      , RUP.rupLanguage    = fmap encode (metaLanguage meta)
+      , RUP.rupDate        = fmap encode (metaDate meta)
+      , RUP.rupWebsite     = fmap encode (metaWebsite meta)
+      , RUP.rupDescription = fmap encode (metaDescription meta)
       }
-createDefaultNotes (CreateDiff _) _ = []
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
@@ -561,16 +571,7 @@ createFromMemory (CreateDiff format) source target meta _sourceContents = case f
                    (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                    (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
                    (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
-  CreateRUP    -> RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)) enc
-    where
-      enc = metaPatchEncoding meta
-      encode = RUP.encodeRUPString enc
-      rupInfo = RUP.RUPInfo
-        { RUP.rupAuthor = fmap encode (metaAuthor meta), RUP.rupVersion = fmap encode (metaVersion meta)
-        , RUP.rupTitle = fmap encode (metaTitle meta), RUP.rupGenre = fmap encode (metaGenre meta)
-        , RUP.rupLanguage = fmap encode (metaLanguage meta), RUP.rupDate = fmap encode (metaDate meta)
-        , RUP.rupWebsite = fmap encode (metaWebsite meta), RUP.rupDescription = fmap encode (metaDescription meta)
-        }
+  CreateRUP    -> RUP.createRUP source target (fst (prepareRUP meta)) (fromMaybe 0 (metaRomType meta)) (metaPatchEncoding meta)
   CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
   CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
 
