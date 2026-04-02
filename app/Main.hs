@@ -5,7 +5,7 @@ module Main (main) where
 
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Explain (renderExplain, renderSummary)
@@ -69,6 +69,7 @@ data Command
       , commandLanguage   :: Maybe String
       , commandDate       :: Maybe String
       , commandWebsite    :: Maybe String
+      , commandPatchEncoding :: PatchEncoding
       , commandMetadata   :: Maybe FilePath
       }
   | CommandConvert
@@ -91,6 +92,7 @@ data Command
       , commandConvertLanguage  :: Maybe String
       , commandConvertDate      :: Maybe String
       , commandConvertWebsite   :: Maybe String
+      , commandConvertPatchEncoding :: PatchEncoding
       , commandConvertMetadata  :: Maybe FilePath
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
@@ -234,6 +236,9 @@ createParser = do
         <> help "Date (RUP)"))
     website <- optional (option str (long "website" <> metavar "URL"
         <> help "Website (RUP)"))
+    patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
+        <> value PatchEncodingUTF8
+        <> help "Text encoding for RUP metadata: utf8 (default), system")
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandCreate
@@ -255,6 +260,7 @@ createParser = do
       , commandLanguage = language
       , commandDate = date
       , commandWebsite = website
+      , commandPatchEncoding = patchEncoding
       , commandMetadata = metadataFile
       }
 
@@ -292,6 +298,9 @@ convertParser = do
         <> help "Date (RUP)"))
     website <- optional (option str (long "website" <> metavar "URL"
         <> help "Website (RUP)"))
+    patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
+        <> value PatchEncodingUTF8
+        <> help "Text encoding for RUP metadata: utf8 (default), system")
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandConvert
@@ -314,6 +323,7 @@ convertParser = do
       , commandConvertLanguage = language
       , commandConvertDate = date
       , commandConvertWebsite = website
+      , commandConvertPatchEncoding = patchEncoding
       , commandConvertMetadata = metadataFile
       }
 
@@ -338,6 +348,13 @@ parseCreateFormat formatString = case map toLower formatString of
   "gdiff"   -> Right (CreateDiff CreateGDIFF)
   "pchtxt"  -> Right (CreateDirect CreatePCHTXT)
   _ -> Left ("unknown format: " ++ formatString ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+
+parsePatchEncoding :: String -> Either String PatchEncoding
+parsePatchEncoding encodingString = case map toLower encodingString of
+  "utf8"   -> Right PatchEncodingUTF8
+  "utf-8"  -> Right PatchEncodingUTF8
+  "system" -> Right PatchEncodingSystem
+  _ -> Left ("unknown patch encoding: " ++ encodingString ++ "\n  expected: utf8, system")
 
 parseRomType :: String -> Either String Word8
 parseRomType typeString = case map toLower typeString of
@@ -536,6 +553,7 @@ doCreate parsedCommand = do
         , metaLanguage    = commandLanguage parsedCommand
         , metaDate        = commandDate parsedCommand
         , metaWebsite     = commandWebsite parsedCommand
+        , metaPatchEncoding = commandPatchEncoding parsedCommand
         , metaBPSMetadata = maybeMeta
         }
   let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
@@ -575,6 +593,7 @@ doConvert parsedCommand = do
             , metaLanguage    = commandConvertLanguage parsedCommand
             , metaDate        = commandConvertDate parsedCommand
             , metaWebsite     = commandConvertWebsite parsedCommand
+            , metaPatchEncoding = commandConvertPatchEncoding parsedCommand
             , metaBPSMetadata = maybeMetadata
             }
       let printNotes notes = forM_ notes $ \note -> hPutStrLn stderr ("slap: " ++ note)

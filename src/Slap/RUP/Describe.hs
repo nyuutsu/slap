@@ -13,7 +13,6 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      OffsetKind(..))
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 
 ----------------------------------------------------------------------------
 -- Info
@@ -36,8 +35,9 @@ rupMeta patch = concat
   , overflowField
   ]
   where
+    enc = rupPatchEncoding patch
     metaField _ Nothing = []
-    metaField label (Just value) = [(label, ByteString8.unpack value)]
+    metaField label (Just value) = [(label, decodeRUPField enc value)]
 
     romTypeField
       | rupRomType patch == 0 = []

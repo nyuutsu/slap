@@ -7,6 +7,11 @@ module Slap.RUP.Types
   , OverflowMode(..)
   , toOverflowMode
   , fromOverflowMode
+  , PatchEncoding(..)
+  , fromPatchEncoding
+  , patchEncodingName
+  , encodeRUPString
+  , decodeRUPField
   , parsePackedInteger
   , parsePackedByteString
   , encodeVariableLengthValue
@@ -30,6 +35,11 @@ import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
 import Data.Word (Word8)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
+import qualified GHC.Foreign as GHC
+import System.IO (localeEncoding)
+import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -50,6 +60,33 @@ toOverflowMode byte = Left ("RUP: unknown overflow type: 0x" ++ padHex 2 (fromIn
 fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'
 fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
+
+-- | PATCH_ENC: how text fields in the fixed header are encoded.
+-- 0 = system codepage (platform-dependent), 1 = UTF-8 (portable).
+data PatchEncoding = PatchEncodingUTF8 | PatchEncodingSystem
+  deriving (Show, Eq)
+
+fromPatchEncoding :: PatchEncoding -> Word8
+fromPatchEncoding PatchEncodingUTF8   = 1
+fromPatchEncoding PatchEncodingSystem = 0
+
+patchEncodingName :: PatchEncoding -> String
+patchEncodingName PatchEncodingUTF8   = "UTF-8"
+patchEncodingName PatchEncodingSystem = "system"
+
+-- | Encode a String as bytes using the given patch encoding.
+encodeRUPString :: PatchEncoding -> String -> ByteString
+encodeRUPString PatchEncodingUTF8 str = Text.encodeUtf8 (Text.pack str)
+encodeRUPString PatchEncodingSystem str = unsafePerformIO $
+  GHC.withCStringLen localeEncoding str ByteString.packCStringLen
+
+-- | Decode a raw field ByteString to String based on the PATCH_ENC byte.
+-- PATCH_ENC=1 decodes as UTF-8 (lenient: invalid bytes become U+FFFD).
+-- PATCH_ENC=0 (or any other value) decodes using the system locale.
+decodeRUPField :: Word8 -> ByteString -> String
+decodeRUPField 1 bytes = Text.unpack (Text.decodeUtf8Lenient bytes)
+decodeRUPField _ bytes = unsafePerformIO $
+  ByteString.useAsCStringLen bytes (GHC.peekCStringLen localeEncoding)
 
 data RUPPatch = RUPPatch
   { rupHeader         :: RUPInfo

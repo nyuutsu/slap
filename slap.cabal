@@ -112,6 +112,7 @@ library slap-internal
     , process              >= 1.6
     , crypton              >= 0.31
     , ram                  >= 0.21
+    , text                 >= 2.0
 
 executable slap
   main-is:          Main.hs

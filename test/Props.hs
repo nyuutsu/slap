@@ -100,7 +100,14 @@ main = defaultMain $ testGroup "Properties"
   , testGroup "RUP"
       [ testProperty "round-trip" prop_rup
       , testProperty "hashes" prop_rupHashes
-      , testProperty "parse-truncated" prop_rupTrunc ]
+      , testProperty "parse-truncated" prop_rupTrunc
+      , testProperty "round-trip-utf8" prop_rupUTF8RoundTrip
+      , testProperty "round-trip-system" prop_rupSystemRoundTrip
+      , testProperty "non-ascii-utf8" prop_rupNonAsciiUTF8
+      , testProperty "field-overflow-rejected" prop_rupFieldOverflow
+      , testProperty "patch-enc-byte-utf8" prop_rupPatchEncByteUTF8
+      , testProperty "patch-enc-byte-system" prop_rupPatchEncByteSystem
+      , testProperty "utf8-decode-round-trip" prop_rupUTF8Decode ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
       , testProperty "parse-truncated" prop_apsN64Trunc ]
@@ -398,8 +405,9 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
 
 prop_rup :: Property
 prop_rup = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0
-  in case RUP.parseRUP patch of
+  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile RUP.applyRUP parsed source
@@ -407,8 +415,9 @@ prop_rup = forAll genPair $ \(source, target) ->
 
 prop_rupHashes :: Property
 prop_rupHashes = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0
-  in case RUP.parseRUP patch of
+  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
        Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
        Right parsed ->
          RUP.rupSourceMD5 parsed === Just (md5 source) .&&.
@@ -744,7 +753,91 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_rupTrunc :: Property
 prop_rupTrunc = forAll genPair $ \(source, target) ->
-  truncated RUP.parseRUP (RUP.createRUP source target emptyRupInfo 0)
+  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> truncated RUP.parseRUP patch
+
+-- RUP encoding tests
+
+-- Round-trip with ASCII metadata using UTF-8 encoding
+prop_rupUTF8RoundTrip :: Property
+prop_rupUTF8RoundTrip = forAll genPair $ \(source, target) ->
+  let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "Test Patch")
+                          , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "slap") }
+  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed ->
+        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
+        fmap (RUP.decodeRUPField 1) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
+
+-- Round-trip with ASCII metadata using system encoding
+prop_rupSystemRoundTrip :: Property
+prop_rupSystemRoundTrip = forAll genPair $ \(source, target) ->
+  let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "Test Patch")
+                          , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "slap") }
+  in case RUP.createRUP source target info 0 RUP.PatchEncodingSystem of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed ->
+        fmap (RUP.decodeRUPField 0) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
+        fmap (RUP.decodeRUPField 0) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
+
+-- Non-ASCII Latin-1 characters (accented) round-trip through UTF-8
+prop_rupNonAsciiUTF8 :: Property
+prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
+  let titleStr = "Pok\233mon \241" -- "Pokémon ñ"
+      info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
+  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed ->
+        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
+
+-- Rejection: title whose UTF-8 encoding exceeds 256 bytes
+prop_rupFieldOverflow :: Property
+prop_rupFieldOverflow = once $
+  let longTitle = replicate 257 'A' -- 257 ASCII bytes = 257 UTF-8 bytes > 256
+      info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 longTitle) }
+      source = ByteString.pack [0]
+      target = ByteString.pack [1]
+  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample errorMessage $
+      property ("exceeds" `isInfixOf` errorMessage && "256" `isInfixOf` errorMessage)
+    Right _ -> counterexample "expected field overflow rejection" $ property False
+
+-- PATCH_ENC byte is 1 for UTF-8
+prop_rupPatchEncByteUTF8 :: Property
+prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
+  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed -> RUP.rupPatchEncoding parsed === 1
+
+-- PATCH_ENC byte is 0 for system encoding
+prop_rupPatchEncByteSystem :: Property
+prop_rupPatchEncByteSystem = forAll genPair $ \(source, target) ->
+  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed -> RUP.rupPatchEncoding parsed === 0
+
+-- Read path: PATCH_ENC=1 patch decodes non-ASCII content correctly
+prop_rupUTF8Decode :: Property
+prop_rupUTF8Decode = forAll genPair $ \(source, target) ->
+  let titleStr = "\1055\1072\1090\1095" -- "Патч" (Cyrillic)
+      info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
+  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
+    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Right patch -> case RUP.parseRUP patch of
+      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Right parsed ->
+        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->

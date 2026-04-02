@@ -18,6 +18,7 @@ module Slap.Convert
   , createDefaultNotes
   , formatExtension
   , formatName
+  , PatchEncoding(..)
   ) where
 
 import qualified Slap.PPF.Create as PPF
@@ -29,6 +30,7 @@ import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
+import Slap.RUP.Types (PatchEncoding(..))
 import qualified Slap.RUP.Types as RUP
 import qualified Slap.RUP.Create as RUP
 import qualified Slap.GDIFF.Create as GDIFF
@@ -146,6 +148,7 @@ data CreateMeta = CreateMeta
   , metaLanguage    :: Maybe String
   , metaDate        :: Maybe String
   , metaWebsite     :: Maybe String
+  , metaPatchEncoding :: PatchEncoding
   , metaBPSMetadata :: Maybe ByteString.ByteString
   }
 
@@ -164,6 +167,7 @@ defaultMeta = CreateMeta
   , metaLanguage    = Nothing
   , metaDate        = Nothing
   , metaWebsite     = Nothing
+  , metaPatchEncoding = PatchEncodingUTF8
   , metaBPSMetadata = Nothing
   }
 
@@ -493,13 +497,16 @@ createFromMemory (CreateDiff format) source target meta = case format of
                    (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                    (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
                    (if metaUnstable meta then DPS.DPSUnstable else DPS.DPSStable))
-  CreateRUP    -> Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)))
-    where rupInfo = RUP.RUPInfo
-            { RUP.rupAuthor = fmap ByteString8.pack (metaAuthor meta), RUP.rupVersion = fmap ByteString8.pack (metaVersion meta)
-            , RUP.rupTitle = fmap ByteString8.pack (metaTitle meta), RUP.rupGenre = fmap ByteString8.pack (metaGenre meta)
-            , RUP.rupLanguage = fmap ByteString8.pack (metaLanguage meta), RUP.rupDate = fmap ByteString8.pack (metaDate meta)
-            , RUP.rupWebsite = fmap ByteString8.pack (metaWebsite meta), RUP.rupDescription = fmap ByteString8.pack (metaDescription meta)
-            }
+  CreateRUP    -> RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType meta)) enc
+    where
+      enc = metaPatchEncoding meta
+      encode = RUP.encodeRUPString enc
+      rupInfo = RUP.RUPInfo
+        { RUP.rupAuthor = fmap encode (metaAuthor meta), RUP.rupVersion = fmap encode (metaVersion meta)
+        , RUP.rupTitle = fmap encode (metaTitle meta), RUP.rupGenre = fmap encode (metaGenre meta)
+        , RUP.rupLanguage = fmap encode (metaLanguage meta), RUP.rupDate = fmap encode (metaDate meta)
+        , RUP.rupWebsite = fmap encode (metaWebsite meta), RUP.rupDescription = fmap encode (metaDescription meta)
+        }
   CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
   CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
 
