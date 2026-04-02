@@ -212,7 +212,7 @@ formatSpecification target includeUndo includeValidation = case target of
   CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData  | includeUndo]
                                  ++ [FValidation | includeValidation])
                              (acceptedFields [FDescription, FImageType, FFileIdDiz])
-  CreateNINJA1  -> FormatSpecification (requiredFields [FSourceCRC32, FSourceMD5, FSourceSHA1]) (acceptedFields [FRomType])
+  CreateNINJA1  -> FormatSpecification (requiredFields []) (acceptedFields [FSourceCRC32, FSourceMD5, FSourceSHA1, FRomType])
   CreatePMSR    -> FormatSpecification (requiredFields []) (acceptedFields [])
   CreatePCHTXT  -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
   CreateAPSN64  -> FormatSpecification (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
@@ -278,7 +278,8 @@ conversionNotes contents target spec meta =
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
       interopNotes = ebpTruncMetaNote contents target meta
       defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
-  in droppedNotes ++ interopNotes ++ defaultNotes
+      hashNotes = ninja1HashNotes contents target
+  in droppedNotes ++ interopNotes ++ defaultNotes ++ hashNotes
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
 -- treats them as mutually exclusive.
@@ -308,6 +309,15 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
 createDefaultNotes (CreateDiff _) _ = []
+
+-- | Note when converting to NINJA1 without source verification hashes.
+ninja1HashNotes :: PatchContents -> DirectCreate -> [String]
+ninja1HashNotes contents CreateNINJA1
+  | isNothing (contentsSourceCRC32 contents)
+    || isNothing (contentsSourceMD5 contents)
+    || isNothing (contentsSourceSHA1 contents)
+  = ["note: source verification hashes not populated (use --with SOURCE to include them)"]
+ninja1HashNotes _ _ = []
 
 fieldNote :: PatchContents -> PatchField -> [String]
 fieldNote contents field = case field of
@@ -420,11 +430,11 @@ encodeDirect contents source target meta limits = case target of
          Just diz -> base <> PPF.encodeFileIdDiz diz
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
-    case (contentsSourceCRC32 contents, contentsSourceMD5 contents, contentsSourceSHA1 contents) of
-      (Just crc, Just md5Hash, Just sha1Hash) ->
-        Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
-                 (fromMaybe False (contentsNINJA1Compressed contents)))
-      _ -> error "unreachable: canConvert verified"
+    let crc      = fromMaybe 0 (contentsSourceCRC32 contents)
+        md5Hash  = fromMaybe (ByteString.replicate 16 0) (contentsSourceMD5 contents)
+        sha1Hash = fromMaybe (ByteString.replicate 20 0) (contentsSourceSHA1 contents)
+    Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
+             (fromMaybe False (contentsNINJA1Compressed contents)))
   CreatePMSR -> do
     records <- narrow (contentsRecords contents)
     Right (PMSR.encodePMSR records)

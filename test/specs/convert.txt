@@ -16,8 +16,8 @@
 ppf3       | ips     | test/data/stadium2/heavy-diff/patch.ppf     |                                 |          | reject:exceeds maximum offset      |  |
 # Missing dest_size (→APS-N64)
 ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks target file    |  |
-# Missing hashes (→NINJA1)
-pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | reject:source lacks source CRC32   |  |
+# Hash-less source (→NINJA1) — spec allows zero hashes, conversion succeeds with note
+pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept | source verification hashes not populated |
 # Missing undo (→PPF3 with --no-validate, undo still required)
 ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:source lacks undo data      |  | --no-validate
 # Missing validation (→PPF3 with --no-undo, validation still required)

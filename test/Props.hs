@@ -132,7 +132,7 @@ main = defaultMain $ testGroup "Properties"
   , testGroup "Contracts"
       [ testProperty "canConvert-full" prop_canConvertFull
       , testProperty "no-surplus-no-notes" prop_noSurplusNoNotes
-      , testProperty "ninja1-rejects-empty" prop_ninja1RejectsEmpty
+      , testProperty "ninja1-accepts-empty" prop_ninja1AcceptsEmpty
       , testProperty "apsn64-rejects-empty" prop_apsn64RejectsEmpty
       , testProperty "ppf3-undo-rejects-empty" prop_ppf3UndoRejectsEmpty
       , testProperty "ppf3-validate-rejects-empty" prop_ppf3ValidateRejectsEmpty
@@ -565,10 +565,10 @@ prop_noSurplusNoNotes = conjoin
   | format <- directFormats
   ]
 
--- | NINJA1 requires hashes -- empty contents must fail.
-prop_ninja1RejectsEmpty :: Property
-prop_ninja1RejectsEmpty =
-  property $ isLeft (canConvert (emptyContents []) (formatSpecification CreateNINJA1 False False))
+-- | NINJA1 no longer requires hashes (spec allows zero) -- empty contents must succeed.
+prop_ninja1AcceptsEmpty :: Property
+prop_ninja1AcceptsEmpty =
+  property $ isRight (canConvert (emptyContents []) (formatSpecification CreateNINJA1 False False))
 
 -- | APS-N64 requires dest size -- empty contents must fail.
 prop_apsn64RejectsEmpty :: Property
@@ -640,6 +640,10 @@ prop_ipsSentinelWithSource =
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _        = False
+
+isRight :: Either a b -> Bool
+isRight (Right _) = True
+isRight _         = False
 
 ----------------------------------------------------------------------------
 -- Parse-truncated: truncate valid patches to random lengths, verify no crash
