@@ -37,4 +37,5 @@ Adding a new test
 
 1. Drop the base ROM and patch file(s) somewhere under test/ or homework/
 2. Create a .suite file (or add a line to an existing one)
-3. Run test/run.sh — the runner discovers all .suite files automatically
+3. Run `make test` (or `cabal test`) — the integration suite discovers
+   all .suite files in test/suites/ automatically

@@ -1,141 +1,205 @@
-# slap
+# slap 🌱
 
-Slap is a multi-format ROM patching tool. that auto-detects patch format from
-magic bytes.
+## In a nutshell 🌰
 
-Apply, create, convert between formats, inspect, and undo patches.
-Transparently unwraps ZIP, RAR, and 7z archives containing patches.
+`slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool. It knows how to work with a lot of patch formats. It probably knows (🎓) more than you'll actually need. Most people just need to apply patches; `slap` does this, and also creates them, converts between formats[^🤯], and lets you look inside them.
 
-## Philosophy
+On conversion: if a conversion would lose data, it tells you what's being left behind. If it can't do what you're asking, it says so and in most cases explains what is missing and how to provide it so as to make the operation succeed.
 
-slap does not invent data. Every byte it writes comes from one of three
-sources:
+`slap` understands[^🧠]: `IPS`, `IPS32`, `EBP`, `BPS`, `UPS`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `VCDIFF` (qua RFC 3284), `xdelta3`[^XDELTA3]), `BSDiff`, `GDIFF`, `xdelta1`[^XDELTA1], `APS-N64`[^APS], `APS-GBA`[^APS], `RUP`/`ninja2`[^RUP], `NINJA1`[^RUP], `PMSR`, `PCHTXT`, and `DPS`.
 
-1. The inputs you gave it (source file, target file, patch).
-2. An explicit choice you made (a CLI flag).
-3. A value that is true by construction (format magic bytes, version
-   markers, EOF sentinels).
+If your patch is tucked inside a `zip`, `rar`, or `7z` archive (📦), `slap` will attempt to find and retrieve it.
 
-If a format field requires metadata and you didn't provide it, slap
-asks or refuses. It does not silently fill in defaults and pretend.
+## Shape 🧅
 
-When converting between formats, slap tells you what survives and what
-gets dropped. It rejects conversions when required metadata is missing
-rather than fabricating it. If you supply the missing metadata via a
-flag, the conversion proceeds. The tool is permissive, but explicitly
-so.
+`slap`, like an onion[^🧅], has layers. At its core is a library that describes formats, and, provides an common normalized representation of "a patch". The CLI wraps this library and tries to be useful to humans and scripts and frontends. Eventually I'll make a GUI, which will probably wrap the CLI. Three layers.
 
-**What this means in practice:**
+Looking inside the core of that onion: each format is described declaratively. (i.e.) what fields it carries, what it requires, and what it can provide. Conversion compatability between formats *falls out* of these descriptions. If you like hearing about internals, `ARCHITECTURE.md` has *much* to say on the shape of the program.
 
-- `slap create --format ppf3 orig.gba mod.gba patch.ppf` works.
-  Adding `--undo` includes undo data. Adding `--validate` includes a
-  validation block. If you don't ask for them, they aren't there.
-- `slap convert patch.bps --to ips` works if the patch fits in IPS's
-  24-bit offset range. If it doesn't, slap tells you why and suggests
-  `--to ips32`.
-- `slap convert patch.ppf --to ips` warns you that it's dropping the
-  description, undo data, and validation block. Nothing is silently
-  lost.
-- `slap info patch.rup` shows you exactly what's in the patch,
-  including fields that are technically present but zero.
+## Applying 🍄
 
-**What slap will not do:**
+This is the most common thing you'd do with it. Give it a patch and a rom and it does the thing.
 
-- Fabricate an author, description, or version string you didn't
-  provide.
-- Silently drop data during conversion without telling you.
-- Pretend a conversion succeeded when it can't preserve required
-  fields.
-- Create PPF4 patches (reverse-engineered format with no natural
-  diff-creation analogue — apply and convert-via-source work fine).
-
-## Supported formats
-
-| Format | Apply | Create | Undo |
-|--------|-------|--------|------|
-| IPS | yes | yes | - |
-| IPS32 | yes | yes | - |
-| EBP | yes | yes | - |
-| BPS | yes | yes | - |
-| UPS | yes | yes | yes |
-| PPF1 | yes | - | - |
-| PPF2 | yes | - | - |
-| PPF3 | yes | yes | yes |
-| PPF4 | yes | - | - |
-| VCDIFF/xdelta3 | yes | - | - |
-| BSDiff/BDF | yes | - | - |
-| APS (N64) | yes | yes | - |
-| APS (GBA) | yes | yes | - |
-| RUP/NINJA2 | yes | yes | - |
-| NINJA1 | yes | yes | - |
-| GDIFF | yes | yes | - |
-| xdelta1 | yes | - | - |
-| DPS | yes | yes | - |
-| PMSR | yes | yes | - |
-| PCHTXT | yes | yes | - |
-
-## Usage
-
-```
-# Apply a patch (format auto-detected)
+```console
 slap apply patch.bps rom.gba
+slap apply patch.bps rom.gba -o patched.gba
+slap apply patch.bps rom.gba --in-place
+```
 
-# Apply with explicit output path
-slap apply patch.ips rom.sfc -o patched.sfc
+The output of the first example will be in the same directory as the input rom, and named `rom [patch].gba`.
 
-# Apply in-place (modifies the file directly, creates .bak backup)
-slap apply patch.ups rom.gba --in-place
+Application can be modified in these days:
 
-# Create a patch
-slap create --format bps original.gba modified.gba patch.bps
+`--output` or `-o`: Name the output file. This can be a filename (in which case the output will be in the cwd) or a fully qualified path (in which case the output goes to the exact location it is given).
 
-# Create with metadata
-slap create --format ebp original.gba modified.gba patch.ebp \
-  --title "My Patch" --author "me" --description "v1.0"
+`--in-place` or `-i`: Make a backup copy of the input rom: `rom.gba.bak`. Then, modify the input rom directly.[^INPLACE]
 
-# Convert between formats
+`--no-backup`: Don't make the backup copy. This modifies `--in-place`. This is for if you trust "the process". Perhaps don't trust it *that* much?
+
+`--no-verify`: If the patch contains identity checksums, allow these checksums to fail. More specifically: input, output, and adler32 checksums now emit warnings instead of errors; all other checksums are not even computed. This is for if you think you *know better* than "the process". This will probably result in a nonfunctioning output, but, it might, in principle, allow you to cheaply combine two patches that modify entirely separate regions of the rom.
+
+`--force` or `-f`: Let `slap` overwrite a file that already exists.
+
+`--verbose` or `-V`: Have `slap` narrate each record it modifies as it applies the patch. `-v` and `-V` might trade places. When this notice is removed, the mapping is probably final.
+
+`--dry-run`: Please ignore this flag for now as it doesn't do anything meaningful yet.[^DRYRUN] Print the record count, where the output *would* go, and, if applicable whether the input's CRC matches the one named in the patch.
+
+`--raw`: Tell `slap` the patch-argument *is* a patch and *isn't* an archive, and so does *not* need to be rummaged through like one. This is probably never going to matter, but it is *totally* possible to make polymorphic archive-patch-combos.
+
+### p.s. 📬
+
+re: `slap apply patch.bps rom.gba`: The grammar is something like "hey `slap`: `apply` this `patch` to that `rom`", so, the patch argument comes before the rom one.  If this feels wrong, let me know and maybe I'll swap them. I can be reached: [here](nyuu@nyuu.page).
+
+## Creating 🏗️
+
+Bottling the difference between an original file and a modified version.
+
+```console
+slap create original.gba modified.gba patch.bps
+slap create --format ips original.gba modified.gba patch.ips
+```
+
+Without `--format`, slap makes a `BPS` patch.
+
+`--format`: Specify the patch format to be any of: `bps`, `ips`, `ips32`, `ebp`, `ups`, `ppf3`, `pmsr`, `ninja1`, `dps`, `rup`, `aps-n64`, `aps-gba`, `gdiff`, `pchtxt`.
+
+`--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!!!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. In principle you could (mis)use this to produce diffs *of zip files*. Probably do not do this.
+
+### Metadata 📚
+
+Some formats have room for text fields. I *think* the right way to explain this is to list the flags at the top level and for each list the formats that store it.
+
+`--description` or `-d`: `EBP`, `PPF3`, `DPS`, `APS-N64`, `RUP`, `PCHTXT`
+
+`--title`: `EBP`, `RUP`
+
+`--author`: `EBP`, `DPS`, `RUP`
+
+`--version`: `DPS`, `RUP`
+
+**Important**: At time of writing, these ~all use `Char8.pack`. So ASCII works by-design. Latin-1 works by-coincidence. ~None of them validate that the input, once stored, is still representable. They should, and later, will handle input validation and encoding correctly. When fixed, this notice will be removed. Until then, metadata processing is not trustworthy.
+
+### PPF3
+
+`--undo` or `-u`: Tuck a copy of the original bytes into the patch at each offset, so the patch can be reversed later. Said reversal can be done with `slap undo`.
+
+`--validate` or `-v`: Store a 1024-byte sample from the intended output file. `-v` and `-V` might trade places. When this notice is removed, the mapping is probably final.
+
+`--image-type`: Remember what kind of media is being patched, as this determins *where* in the file the 1024-byte comes from. The image types are `bin` and `gi`. You probably have a `bin`.
+
+You could express non-playstation patches in this format. If you do, it is sort of pointless to bother with setting `--validate`, since doing so is either implicitly or explicitly answering `--image-type`, and the format only allows that `gi` or `bin`, and either of these answers is a declaration of "this is the kind of playstation media representation I am".
+
+### NINJA1 and RUP/NINJA2
+
+`--rom-type`: Tag the patch, with the platform its rom is from, and thus what preprocessing options to expose. There are 18 kinds of rom: `raw`, `nes`, `snes`, `n64`, `gb`, `gbc`, `gba`, `ngp`, `ngpc`, `sms`, `gg`, `mega`, `pce`, `ws`, `wsc`, `lynx`, `jag`, `gp32`. `raw` means "no preprocessing", so, if unspecified, `slap` tags the patch as `raw`.
+
+The other 17 modes specify *normalization procedures*. For example, if `gb`, then the patcher is to strip *GB Smart Card headers* before patching. Right now the implementation is *wrong*. It treats all values as though they are `raw`. This will be fixed. It is low priority as basically nobody is using representations of roms that care about any of these normalizations, and this has been the way of things for like 20 years. Also, I don't know of any patches that actually use a non-`raw` mode. So this issue might be academic. But academic correctness is what we're here for, so it will be made right.
+
+### BPS
+
+This is *sick as hell*, *based*, *cool*, and other superlatives.
+
+`--metadata`: Nestle an arbitrary file ("often" XML) into the patch as a metadata payload.
+
+### DPS
+
+Probably don't create a DPS patch.
+
+`--unstable`: Store in the metadata the annotation that "this patch is unstable".
+
+## Converting ⚗️
+
+Take your patch on a journey from one format to another.
+
+```
 slap convert patch.bps --to ips32
-
-# Convert a differential format (needs source ROM)
 slap convert patch.rup --to bps --with original.gba
+```
 
-# Inspect a patch
+Every format describes what fields it carries, what it requires, and what it can accept. Conversion compares these descriptions and acts based on the gaps, or lack thereof, between the formats.
+
+`--to` or `-t`: Required: what to convert to.
+
+We attempt to be exactly as strict as the formats involved require us to be. If it says a field is mandatory, then it is so. If it says it is optional, that is so instead.
+
+If the conversion is impossible for structural reasons (e.g. `IPS` has a maximum file size and it's fairly low), `slap` will refuse and explain why. If the conversion *could* be possible but the patch on its own isn't enough, then, it will say what is missing and how to furnish it.
+
+In short:
+
+`--with`: Show `slap` where the input rom is, thus making the vast majority of conversions work.[^🤯]
+
+`--with` and and the metadata flags used for `slap create` are your tools for making this work.
+
+If you are simultaneously using `--with` and using metadata flags, the metadata flags win.
+
+If the conversion is *lossy*, like... almost any format, *to* IPS, this is fine. `slap` will tell you what fields survive, what ones don't, and (as said above) what's missing, if anything.
+
+## Peeking 🔍
+
+Look at what's inside a patch without applying it.
+
+```console
 slap info patch.ppf
-
-# Detailed record-level view
 slap explain patch.ips
+slap explain patch.bps --records --with original.gba
+```
 
-# Undo a patch (PPF3 with undo data, or UPS)
+`info`: Show what the patch is carrying in a high-level sense. It shows the format, metadata, record count, and checksums. If the patch is a `BPS` and has embedded metadata, then `--extract-metadata` writes that data to a file.
+
+`explain`: Show the shape of the patch. Where are the modifications clustered, how big are the records, etc? This has a cute sparkline.
+
+`--records`: `explain` now unfolds every record. This gets quite close to "dump a transcription of 'what the patch does', into the terminal". It will be very long and you will not want to read it. This is entirely for scripts and robots to filter through.
+
+`--with`: Accepts the source rom, allowing differential formats to resolve delta operations and show resulting bytes, rather than just instructions.
+
+`--raw`: Skip archive unwrapping. As with other instances of `--raw`, this is a hedge against the (unlikely) risk that the detection gets confused and tries to insist on treating a non-archive, as though it were one. Like always, this flag is safe to tack onto any "normal" operation. So if you are writing a script that involves calling slap and you are not intentionally attempting to do or permit archive manipulation: you probably should append `--raw` to every command that accepts it.
+
+## Undoing ↩️
+
+Where supported by the patch format, put things back the way they were.
+
+```console
 slap undo patch.ppf3 patched.gba
+slap undo patch.ups patched.gba
+```
+ 
+This works with `PPF3`--if-made-with`--undo`-enabled, and `UPS`. `PPF3` stores the original bytes at each offset. `slap undo` write those bytes back. Applying a `UPS` patch to an already-patched file cleanly returns the original file for cool XOR reasons, so in that case we just apply the patch and so retrieve the original file.
+ 
+`--output` or `-o`: Write the de-patched file to somewhere else.
+ 
+`--verbose` or `-V`: Have `slap` narrate each record it modifies as it applies the patch. `-v` and `-V` might trade places. When this notice is removed, the mapping is probably final.
+ 
+`--raw`: Ensure file is treated as a bare rom and not as an archive.
+
+## Building 🔨
+
+Thank you for trying it out!
+
+```
+make
+make test
 ```
 
-## Building from source
+## Misc
 
-Requires GHC 9.12.2, cabal-install, and a Rust toolchain (cargo).
+# footnotes (👣)
 
-```
-make           # builds Rust staticlib, then Haskell
-make test      # property tests + integration suite
-cabal install --extra-lib-dirs=$(pwd)/rusty-slap/target/release
-```
+[^🤯]: Conversion is a special case, or "sugar" for "use the apply mode to apply `example.patch` to `input.rom`, yielding `output.rom`, then use create mode, `input.rom`, and `output.rom` to create a patch in the new format. It probably is not directly useful to most users but was extremely helpful as a whetstone for the program's design.
 
-## Known limitations
+[^🧠]: By "understands" I mean it "can apply". The following formats are not yet able to be created or converted-to: `PPF1`, `PPF2`, `PPF4`, `VCDIFF`, `xdelta3`, `BSDIFF`, `xdelta1`.
 
-- **PPF4 create:** PPF4 is a reverse-engineered Pyriel-internal format.
-  Apply and convert-via-source work. Direct creation is not supported.
-- **EBPatcher interop:** slap-created EBP patches embed
-  `"patcher":"slap"` in the JSON metadata. EBPatcher.js rejects
-  patches from unknown patchers. This is by design — slap identifies
-  itself honestly.
-- **RUP text encoding round-trip:** the PATCH_ENC byte is parsed and
-  displayed but set to 0 (system codepage) on creation. No known
-  real-world RUP patch uses a non-zero value.
+[^PPF4]: [Pyriel](https://www.romhacking.net/community/1288/) distributes their patches in files that have the extension `.ppf`, but is entirely distinct from the standard PPF1, PPF2, or PPF3. Said patches have the magic `PPF4`, so we're calling the format `ppf4`. Apologies to Mr./Ms./Mx. Pyriel if you prefer it be called something else.
 
-## Bug reports
+[^XDELTA3]: `xdelta3` is a tool that trades in the format `VCDIFF`. Ish. The [O.G. RFC 3284 VCDIFF specification](https://datatracker.ietf.org/doc/html/rfc3284) is its own thing. `xdelta3`'s format adds extensions to it. In practice, if you are dealing with a patch billed as with the extension `.vcdiff`, `.xd3`, or `xdelta`: under the hood it is the VCDIFF-with-`xdelta3`-extensions format.
 
-If you find a patch that slap handles incorrectly, please report it
-with the patch file and the tool you compared against.
+[^XDELTA1]: Entirely unrelated to `xdelta3` or `VCDIFF`. Your patch *probably* is not `xdelta1`. You *probably* don't want to create an `xdelta1` patch.
 
-## License
+[^APS]: The formats I'm calling "`APS-N64`" and "`APS-GBA`" are entirely unrelated, and only coincidentally share a name. In common practice people usually say "APS" without qualifiers, and do so to refer to the "GBA" format. The N64 one is comparatively obscure.
 
-MIT
+[^RUP]: There are two formats: `ninja1` and `ninja2`. Both might use the extension `rup`. Your patch *probably* is not `ninja1`. You *probably* don't want to create a `ninja1` patch.
+
+[^🧅]: Fun fact: in the USA, onions come with a *restrictive license*: it  is [illegal to trade onion futures](https://en.wikipedia.org/wiki/Onion_Futures_Act). In contrast, you're allowed to do almost anything with, or, to `slap`.
+
+[^INPLACE]: Right now all patching is done in-memory on a whole-file representation of the input, *and* we don't support creation of or conversion-to certain complex differential formats such as VCDIFF. When *both* of these change, this will *overdeterminedly* require defining what it *means* to `slap apply --in-place --no-backup patch.vcdiff ...`. The naïve implementation doesn't make any sense and would trash the input file. I *think* we have to, for copy-from-source formats such as VCDIFF, say that backup is *probably* mandatory. The applier would have to *read* the backup and use that as its roadmap as it *edits* the in-place input file. `--in-place --no-backup` has to either not be allowed, or has to sort of cheat by meaning "create a backup, apply the patch, delete the backup at the end". This is like-three layers of edge-case deep. The standard use case is like. `slap apply patch.bps input.rom`, which requires *none* of these considerations.
+
+[^DRYRUN]: This feature is functionally a stub right now. When fleshed out it will instead "do everything apply does *except* writing the output file to disc at the end". Probably you are not going to use this but it might be helpful when wiring up the GUI.

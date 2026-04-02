@@ -1,153 +1,130 @@
 # Architecture
 
-Haskell + Rust.
+slap is a Haskell CLI with a Rust static library (`rusty-slap`) for performance-critical primitives. The Haskell code handles all parsing, application, creation, conversion, inspection, and CLI logic. The Rust code provides CRC-32, Adler-32, suffix-array construction, BPS diffing, and zlib/gzip/bzip2 compression via C FFI.
 
-## Module Map
+## Layers
+
+The codebase has four distinct layers. Dependencies flow strictly downward.
+
+### Foundation
+
+Modules with no format-specific knowledge. Everything above depends on these.
+
+- **`Measure`** — Newtypes (`Offset`, `Length`, `FileSize`, `Delta`, `Position`) that prevent mixing byte offsets, lengths, and sizes. Also defines `Hunk` (offset + payload), `UndoHunk`, `EncodedHunk`, and `EncodingLimits`. The `Hunk` type is the universal currency for patch records across all direct formats.
+
+- **`FFI`** — Raw C FFI bindings to rusty-slap: `rustyCRC32`, `rustyAdler32`, `rustyBpsDiff`. Handles buffer allocation/deallocation across the language boundary.
+
+- **`Binary`** — Endian readers (`getWord16LE`, `getWord32BE`, etc.), varint decoders (byuu-style for BPS/UPS, VCDIFF-style per RFC 3284), CRC-16/IBM, Adler-32 re-export, cryptographic hashes (MD5, SHA1, SHA256 via cryptohash), `diffHunks` (contiguous-diff finder with gap merging), and `Builder` encoders.
+
+- **`Get`** — Position-threading parser monad over `ByteString`. Hand-rolled `StateT Position (Either String)` without monad transformer overhead. Bridges to `Binary` readers via `liftRead` and `liftReadVarint`. Every format parser runs in this monad.
+
+- **`Format`** — Display utilities: hex formatting, field rendering, hex dumps. No business logic.
+
+- **`Compress`** — Zlib inflate/deflate, gzip inflate, bzip2 decompress. Thin wrappers around rusty-slap FFI calls with error handling and buffer management.
+
+### Format modules
+
+Fifteen format families, each in its own `Slap/Foo/` directory. Every format follows the same decomposition:
 
 ```
-app/
-  Main.hs          CLI parsing, command handlers
-src/
-  Patch/
-    SomePatch.hs   SomePatch existential, ApplyStrategy, Verification, parseSome dispatch
-    Convert.hs     PatchContents, FormatSpec, contract checking, direct conversion, createFromMemory
-    Types.hs       PatchFormat enum
-    Detect.hs      Magic-byte detection → PatchFormat
-    Binary.hs      Shared primitives: endian readers, varints, CRC-16, MD5, SHA1, memcpy
-    FFI.hs         Rust FFI: rustyCRC32, rustyAdler32, rustyBpsDiff
-    Compress.hs    Rust FFI: zlibInflate/Deflate, gzipInflate, bz2Decompress
-    Get.hs         Pure parser monad (position-threading over strict ByteString)
-    Format.hs      Display helpers: hex padding, CRC formatting, hex dumps
-    Explain.hs     Structured explain data types, per-format explain functions, shared renderer
-    Archive.hs     ZIP/RAR/7z detection + single-entry extraction
-    IPS.hs         IPS + IPS32 + EBP: parse, apply, create, info
-    BPS.hs         BPS: parse, apply (unsafeCreate + memcpy), create (via Rust diff), info
-    UPS.hs         UPS: parse, apply (packZipWith xor), create, info
-    VCDIFF.hs      VCDIFF/xdelta3: parse, apply (unsafeCreate), info
-    BSDiff.hs      BSDiff/BDF: parse, apply, info
-    GDIFF.hs       W3C GDIFF: parse, apply (unsafeCreate), create, info
-    XDelta1.hs     xdelta v1.1: parse, apply (unsafeCreate), info
-    APS/
-      N64.hs       APS N64 (Blackbag 1998): parse, apply, create, info
-      GBA.hs       APS GBA (unrelated format, same name): parse, apply, create, info
-    RUP.hs         RUP/NINJA2: parse, apply, create, info
-    DPS.hs         DPS: parse, apply, create, info
-    NINJA1.hs      NINJA1 (B/BZ/T/TZ): parse, apply, create, info
-    PMSR.hs        Paper Mario Star Rod: parse, apply, create, info
-    PCHTXT.hs      PCHTXT (Nintendo Switch): parse, apply, create, info
-    Yay0.hs        Nintendo LZSS decompression for Star Rod .mod files
-    PPF/
-      Types.hs     PPF types (Patch, Record, Version)
-      Parse.hs     PPF 1/2/3/4 parser
-      Apply.hs     PPF apply + undo
-      Create.hs    PPF3 create (IO wrapper + pure core)
-      Info.hs      PPF info display
-rusty-slap/src/
-  lib.rs           FFI boundary (extern "C" exports, pointer ↔ slice, write_vec_to_ffi)
-  crc32.rs         CRC-32 via crc32fast (hardware CLMUL/PCLMULQDQ)
-  sa.rs            SA-IS suffix array (linear-time, Nong/Zhang/Chan 2009)
-  bps_diff.rs      BPS diff engine (concatenated SA + progressive sorting, after Alcaro/Flips)
-  compress.rs      flate2 (zlib/gzip) + bzip2-rs (bzip2), pure Rust
-test/
-  Props.hs         QuickCheck properties (round-trip, parse-truncated, contract)
+Foo/Types.hs    — data types for the parsed patch
+Foo/Parse.hs    — ByteString → Either String FooPatch
+Foo/Apply.hs    — FooPatch → source ByteString → target ByteString
+Foo/Describe.hs — FooPatch → info string + ExplainData
+Foo/Create.hs   — (optional) encode records/diffs into format bytes
 ```
 
-## Data Flow
+No format module imports another format module. They are fully isolated siblings. Each depends only on the foundation layer.
 
-`parseSome` is the **only** function that knows about format-specific
-types. It parses the raw bytes, then closes over the parsed data to
-produce a `SomePatch` — a record of closures carrying all operations.
-Every consumer (`doApply`, `doInfo`, `doConvert`, etc.) works through
-`SomePatch` fields, never inspecting the underlying format. Adding a
-new format means adding one block to `parseSome`. Nothing else changes.
+The formats:
 
-## SomePatch — Closure-Based Existential
+| Module   | Classification | Has Create | Notes |
+|----------|---------------|------------|-------|
+| IPS      | Direct        | Yes        | IPS, IPS32, and EBP (JSON metadata variant) |
+| PPF      | Direct        | Yes        | Versions 1, 2, 3; undo data and validation blocks |
+| NINJA1   | Direct        | Yes        | Binary/text subformats, optional zlib compression |
+| PMSR     | Direct        | Yes        | Paper Mario Star Rod; big-endian |
+| PCHTXT   | Direct        | Yes        | Text-based; block structure with enable/disable |
+| APSN64   | Direct        | Yes        | N64 cart ID/country/CRC advisory checks |
+| BPS      | Differential  | Yes        | Suffix-array diff via rusty-slap |
+| UPS      | Differential  | Yes        | XOR-based, self-inverse |
+| DPS      | Differential  | Yes        | Copy + data records with metadata header |
+| RUP      | Differential  | Yes        | NINJA2 format; XOR delta blocks |
+| APSGBA   | Differential  | Yes        | 64KB-aligned XOR blocks with per-block CRC-16 |
+| GDIFF    | Differential  | Yes        | W3C format (RFC NOTE-GDIFF-19970901) |
+| VCDIFF   | Differential  | No         | RFC 3284; includes xdelta3 variant |
+| BSDiff   | Differential  | No         | BSDIFF40; bzip2-compressed blocks |
+| XDelta1  | Differential  | No         | v1.0.4/v1.1; EDSIO varint, gzip compression |
 
-`SomePatch` is a record of closures — what a typeclass + existential
-compiles to, without the language extensions or module layering.
-`parseSome` captures format-specific data in closures at construction
-time; consumers use field accessors, never pattern-match on formats.
+"Direct" means the patch carries literal replacement bytes — the source file is only needed for verification, not reconstruction. "Differential" means the source file is required to produce the target.
 
-## Verification
+### Coordination
 
-Checksum validation flows through `verifySource`/`verifyTarget` in
-Main.hs — format modules never check hashes themselves. Three tiers:
+Modules that bridge between format-specific code and the CLI.
 
-1. **Whole-file hashes** (CRC32, MD5, SHA1): Fatal by default.
-   `--no-verify` downgrades mismatches to warnings.
-   Formats: BPS/UPS (source+target CRC32), NINJA1 (source CRC32+MD5+SHA1),
-   RUP (source+target MD5), xdelta1 (source+target MD5).
+- **`Types`** — Format taxonomy: `DirectFormat` (6 values), `DiffFormat` (9 values), `PatchFormat` (sum). Used by Detect and SomePatch.
 
-2. **Advisory spot-checks** (PPF validation block, APS-GBA per-block CRC16):
-   Warning-only regardless of `--no-verify`.
+- **`Detect`** — Format identification from raw bytes. Most formats use magic bytes. DPS uses a structural heuristic (printable ASCII header, version/stability flag bytes). PCHTXT scans the first 512 bytes for directives (`@nsobid`, `@flag`, `@enabled`, `@disabled`).
 
-3. **Patch file integrity** (BPS/UPS patch CRC): Always checked, cannot
-   be bypassed.
+- **`Explain`** — Types and renderers for patch structure visualization. `ExplainData` carries format name, header key-value pairs, sections (regions, blocks, labeled pairs, text), a summary, and notes. The renderer produces sparkline visualizations, region breakdowns, and record-size distributions. Every format's `Describe` module produces `ExplainData`; the renderer is format-agnostic.
 
-## Conversion — Contract System
+- **`Convert`** — The format conversion engine. `PatchContents` is the universal representation of a direct patch's extractable data (records, checksums, hashes, descriptions, undo data, validation blocks, truncation markers, ROM type, etc.). `FormatSpecification` declares what each target format requires and accepts. `canConvert` checks the contract. `conversionNotes` reports dropped fields. `encodeDirect` encodes `PatchContents` to the target format. `createFromMemory` builds patches from source+target bytes. `buildContents` computes `PatchContents` from source and target for direct format creation.
 
-`Patch.Convert` defines a contract system for direct format conversion.
-Each target format declares required and accepted fields (`FormatSpec`).
-Each parsed overlay patch exposes its fields (`PatchContents`).
+- **`SomePatch`** — The existential dispatch module. `parseSome` is the single point where format-specific types exist. It takes raw bytes, detects the format, parses it, and returns a `SomePatch` — a record containing closures (`ApplyStrategy`, `UndoStrategy`), verification data, explain data, verbose lines, warnings, and optionally `PatchContents` for conversion. Every consumer works through `SomePatch` fields. No format-specific type escapes this module.
 
-`parseSome` populates `patchContents :: Maybe PatchContents` for direct
-formats (IPS, IPS32, EBP, PPF1/2/3, APS-N64, NINJA1, PMSR, PCHTXT).
-Differential formats set it to `Nothing`. PPF4 sets it to `Nothing`
-when Append records are present (offsets would be wrong).
+- **`Archive`** — Transparent unwrapping of ZIP, RAR, and 7z archives. Detects by magic bytes, lists entries via shell tools (`unzip`, `unrar`, `7z`), filters out chaff (readmes, images, docs), extracts a sole candidate. Falls back to `7z` when `unrar` isn't available.
 
-`convertDirect` checks `canConvert pc spec` — if the source contents
-satisfy the target spec's required fields, conversion proceeds.
-Otherwise, the error names the missing fields and suggests `--with`.
+- **`Yay0`** — Nintendo LZSS decompression. Yay0 is a compression container, not a patch format. `parseSome` checks for Yay0 magic, decompresses, and recurses.
 
-`conversionNotes` compares `provides pc` against `specRequired ∪ specAccepted`
-to identify surplus fields that will be dropped, emitting notes like
-"dropping source CRC32: 0xDEADBEEF" on stderr.
+### Entry point
 
-Two conversion paths:
+- **`Main`** — CLI via `optparse-applicative`. Five subcommands: `apply`, `undo`, `create`, `convert`, `info`, `explain`. The `Command` ADT captures all flags and arguments. Handler functions (`doApply`, `doCreate`, etc.) are straightforward: read files, parse patches via `parseSome`, verify, apply/create/convert, write output.
 
-1. **Direct** (no ROM needed): `patchContents` is `Just` and
-   `canConvert` succeeds. `encodeDirect` dispatches to per-format
-   encoders. Offset/size constraints are checked per target (IPS/EBP
-   reject offsets > 16 MB, IPS32 splits records > 65535 bytes).
+## Key type relationships
 
-2. **Apply-then-create** (needs `--with`): Apply the source patch to
-   the ROM in memory, then create a new patch from (original, target)
-   via `createFromMemory`.
+```
+Main.Command
+  → parseSome (raw bytes)
+    → detectFormat (magic/heuristic)
+    → format-specific Parse
+    → SomePatch (closures + data)
+      → patchApply    : ApplyStrategy (ByteString → IO (Either String ByteString))
+      → patchUndo     : Maybe UndoStrategy
+      → patchVerification : Verification (CRC32, MD5, SHA1, blocks, Adler32, etc.)
+      → patchExplain  : ExplainData (for rendering)
+      → patchContents : Maybe PatchContents (for direct conversion)
 
-## Key Design Decisions
+PatchContents
+  → canConvert (check FormatSpecification)
+  → encodeDirect (to target format bytes)
+  or
+  → createFromMemory (source + target → patch bytes)
+```
 
-**Builder for output, unsafeCreate for apply.** Patch creation uses
-`Data.ByteString.Builder` (lazy construction, efficient concat).
-Patch application uses `unsafeCreate` with raw pointer arithmetic
-(single allocation, bulk copies via `copyBSRange`).
-The distinction matters: creation builds output incrementally from
-diffs, while application reconstructs a known-size target buffer.
+## Rust (rusty-slap)
 
-## rusty-slap — Rust Static Library
+A static library compiled with fat LTO and `panic=abort`. Five capabilities:
 
-`rusty-slap/` is a Rust `staticlib` linked into the Haskell binary
-via `ccall unsafe` FFI.
+1. **CRC-32** (`crc32.rs`) — `crc32fast` with hardware acceleration. Called on every apply/create/verify.
 
-**What Rust owns:**
-- CRC-32 (hardware CLMUL/PCLMULQDQ via `crc32fast`)
-- Adler-32 (RFC 1950)
-- BPS diff (SA-IS suffix array + concatenated-SA algorithm, after Alcaro's Flips)
-- Compression: zlib/gzip (`flate2`/`miniz_oxide`), bzip2 (`bzip2-rs`)
+2. **Adler-32** (`lib.rs`) — Inline implementation per RFC 1950. Used for VCDIFF window verification.
 
-**What Haskell keeps:** parsing, format logic, conversion, CLI, types.
+3. **Suffix array** (`sa.rs`) — SA-IS (Nong, Zhang, Chan 2009), linear time. Used internally by the BPS diff engine.
 
-**FFI boundary:** `Patch.FFI` (checksums, BPS diff) and `Patch.Compress`
-(zlib, gzip, bzip2). Rust allocates output buffers via `Box<[u8]>`;
-Haskell copies with `packCStringLen`, then frees via `rusty_free`.
+4. **BPS diff** (`bps_diff.rs`) — Suffix-array matching after Alcaro's Flips. Progressive window sorting: starts with a small window and grows it as the scan advances, re-sorting each time. Returns the raw byuu-varint-encoded action stream.
 
-**Build:** `Makefile` orchestrates `cargo build --release` then
-`cabal build --extra-lib-dirs=...`. A `.rusty-stamp` file detects when
-the Rust `.a` changes and triggers `cabal clean` (cabal 3.14 uses
-content hashing, so mtime tricks don't work).
+5. **Compression** (`compress.rs`) — Zlib inflate/deflate via `flate2`, gzip inflate via `flate2`, bzip2 decompress via `bzip2-rs`. Used by NINJA1, xdelta1, BSDiff, VCDIFF, and NINJA1 creation.
 
-**Dependencies:** All Rust crates are pure Rust. The final binary has
-no runtime dependency on libz, libbz2, or any system C library beyond
-what GHC requires (libc, libm, libgmp).
+The FFI boundary follows a simple pattern: Rust allocates output buffers, Haskell copies them to `ByteString` and calls `rusty_free`. The Haskell side wraps pure Rust functions in `unsafeDupablePerformIO`.
 
-Release profile: `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`,
-`RUSTFLAGS += -C target-cpu=native`.
+## Encoding limits and sentinel avoidance
+
+IPS, IPS32, and EBP have constrained offset ranges and sentinel values (the EOF marker bytes, when interpreted as an offset, would terminate the record stream early). `EncodingLimits` in `Measure` carries these constraints. Two different strategies apply depending on context:
+
+- **Create path** (source bytes available): `avoidSentinel` in `IPS/Create` shifts a hunk at the sentinel offset back by one byte, prepending the source byte. The narrowing step only validates offset ranges (sentinel stripped from limits).
+
+- **Convert path** (no source bytes): Full limits including sentinel are applied. A hunk at the sentinel offset produces an error because there's no source byte to prepend.
+
+## APS-N64 / APS-GBA disambiguation
+
+Two unrelated formats by different authors both used "APS" as the name. `detectFormat` dispatches on magic bytes: "APS10" → N64, "APS1" → GBA. But "APS10" (N64) collides with "APS1" + a source-size field when `size mod 256 == 48`. `SomePatch.parseSome` refines the detection via `apsGbaStructure`, which checks for GBA's fixed record structure (12 + N × 65544 bytes, 64KB-aligned offsets).

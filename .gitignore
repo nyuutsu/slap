@@ -6,6 +6,9 @@ rusty-slap/target/
 *.dyn_hi
 *.dyn_o
 
+# Claude Code local config
+.claude/
+
 # Local working files
 NEXT.md
 homework.md
