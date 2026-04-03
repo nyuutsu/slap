@@ -15,8 +15,9 @@ import Slap.Explain
 import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
+import Slap.TextEncoding (decodeLocaleField)
+
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 
 ----------------------------------------------------------------------------
 -- Info
@@ -32,7 +33,7 @@ dpsMeta patch = concat
   ]
   where
     fieldPair _ value | ByteString.null value = []
-    fieldPair label value = [MetaField label (ByteString8.unpack value)]
+    fieldPair label value = [MetaField label (decodeLocaleField value)]
 
 dpsInfo :: DPSPatch -> String
 dpsInfo patch = unlines $ filter (not . null) $

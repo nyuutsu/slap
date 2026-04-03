@@ -16,8 +16,9 @@ import Slap.Checksum (showCRC32)
 import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 
+import Slap.TextEncoding (decodeLocaleField)
+
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.Int (Int64)
 import Data.List (mapAccumL)
 
@@ -35,7 +36,7 @@ bpsMeta patch = concat
     metadataDisplay
       | ByteString.null metadata = "(none)"
       | otherwise        = show (ByteString.length metadata) ++ " bytes: "
-                        ++ map sanitize (ByteString8.unpack (ByteString.take 200 metadata))
+                        ++ map sanitize (decodeLocaleField (ByteString.take 200 metadata))
                         ++ if ByteString.length metadata > 200 then "..." else ""
     sanitize character
       | character >= ' ' && character <= '~' = character

@@ -17,6 +17,8 @@ import Slap.Explain
   , AnnotDetail(DetailUndo)
   )
 
+import Slap.TextEncoding (decodeLocaleField)
+
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteStringChar
 import Data.Word (Word64)
@@ -25,7 +27,7 @@ import Numeric (showHex)
 -- | All key-value metadata carried by a PPF patch header.
 ppfMeta :: Patch -> [MetaField]
 ppfMeta patch = concat
-  [ let description = ByteStringChar.unpack (stripTrailing (ppfDescription patch))
+  [ let description = decodeLocaleField (stripTrailing (ppfDescription patch))
     in [MetaField "description" description | not (null description)]
   , case ppfFileSize patch of
       Nothing   -> []
@@ -75,7 +77,7 @@ rangeInfo records =
 
 fileIdLines :: Maybe FileId -> [String]
 fileIdLines Nothing = []
-fileIdLines (Just (FileId content)) = [ByteStringChar.unpack content]
+fileIdLines (Just (FileId content)) = [decodeLocaleField content]
 
 stripTrailing :: ByteString.ByteString -> ByteString.ByteString
 stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')

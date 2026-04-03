@@ -16,8 +16,9 @@ import Slap.Explain
 import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
+import Slap.TextEncoding (decodeLocaleField)
+
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 
 ----------------------------------------------------------------------------
 -- Info
@@ -26,8 +27,8 @@ import qualified Data.ByteString.Char8 as ByteString8
 xdelta1Meta :: XDelta1Patch -> [MetaField]
 xdelta1Meta patch =
   [ MetaField "version" (xdelta1Version patch) ]
-  ++ [ MetaField "from" (ByteString8.unpack (xdelta1FromName patch))
-     , MetaField "to" (ByteString8.unpack (xdelta1ToName patch))
+  ++ [ MetaField "from" (decodeLocaleField (xdelta1FromName patch))
+     , MetaField "to" (decodeLocaleField (xdelta1ToName patch))
      , MetaField "target size" (show (unFileSize (xdelta1TargetLength patch)))
      , MetaField "target MD5" (md5Hex (xdelta1ToMD5 patch))
      , MetaField "sources" (show (length sources))
@@ -51,7 +52,7 @@ xdelta1Info patch = unlines $ filter (not . null) $
      ]
   where
     sourceLines = unlines
-      [ "  [" ++ show index ++ "] " ++ ByteString8.unpack (xdelta1SourceName entry)
+      [ "  [" ++ show index ++ "] " ++ decodeLocaleField (xdelta1SourceName entry)
         ++ (if xdelta1SourceIsData entry then " (data)" else " (file)")
         ++ (if xdelta1SourceSequential entry then " seq" else "")
         ++ "  " ++ show (unFileSize (xdelta1SourceLength entry)) ++ " bytes"
@@ -78,7 +79,7 @@ explainXDelta1 patch = ExplainData
 
 makeXDelta1SourceText :: (Int, XDelta1Source) -> ExplainSection
 makeXDelta1SourceText (index, sourceEntry) = SectionText $
-  "  [" ++ show index ++ "] " ++ ByteString8.unpack (xdelta1SourceName sourceEntry)
+  "  [" ++ show index ++ "] " ++ decodeLocaleField (xdelta1SourceName sourceEntry)
   ++ (if xdelta1SourceIsData sourceEntry then " (data)" else " (file)")
   ++ (if xdelta1SourceSequential sourceEntry then " seq" else "")
   ++ "  " ++ show (unFileSize (xdelta1SourceLength sourceEntry)) ++ " bytes"

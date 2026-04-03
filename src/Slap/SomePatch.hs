@@ -15,7 +15,7 @@ module Slap.SomePatch
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
-import Slap.TextEncoding (encodeUtf8Field)
+import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..), UndoHunk(..))
 import qualified Slap.PPF.Types as PPF
 import qualified Slap.PPF.Parse as PPF
@@ -84,7 +84,6 @@ import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.Maybe (fromMaybe, isJust)
 import Slap.Checksum (CRC32, CRC16, Adler32)
 
@@ -219,7 +218,7 @@ parseSome patchBytes = case detectFormat patchBytes of
         , patchRecordSummary  = RecordSummary (length records) "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
-        , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (PPF.ppfDescription patch))
+        , patchExtractedMeta  = let desc = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
                                 in defaultMeta
                                   { metaDescription = if null desc then Nothing else Just desc
                                   , metaImageType   = PPF.ppfImageType patch
@@ -389,7 +388,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let desc = trimNullSpace (ByteString8.unpack (APSN64.apsN64Description header))
+      , patchExtractedMeta  = let desc = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
                               in defaultMeta
                                 { metaDescription = if null desc then Nothing else Just desc }
       , patchContents  = Just (emptyContents (map expandN64 records))
@@ -608,7 +607,7 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchSourceNotes    = []
       , patchContents  = Nothing
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let nonEmpty bs = let s = trimNullSpace (ByteString8.unpack bs)
+      , patchExtractedMeta  = let nonEmpty bs = let s = trimNullSpace (decodeLocaleField bs)
                                                 in if null s then Nothing else Just s
                               in defaultMeta
                                 { metaTitle    = nonEmpty (DPS.dpsName patch)
