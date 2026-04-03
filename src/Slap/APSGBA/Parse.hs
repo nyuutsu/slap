@@ -11,16 +11,23 @@ module Slap.APSGBA.Parse
 
 import Slap.APSGBA.Types
 import Slap.Checksum (CRC16(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..))
 
 import qualified Data.ByteString as ByteString
 
-parseAPSGBA :: ByteString.ByteString -> Either String APSGBAPatch
+parseAPSGBA :: ByteString.ByteString -> Either SlapError APSGBAPatch
 parseAPSGBA input
-  | ByteString.length input < 4 = Left "APS-GBA: input too short"
-  | ByteString.take 4 input /= "APS1" = Left "not an APS-GBA file (bad magic)"
-  | otherwise = runGet parseGBA input
+  | ByteString.length input < 4 =
+      Left (InputTooShort LabelAPSGBA (Length 4) (Length (ByteString.length input)))
+  | ByteString.take 4 input /= "APS1" =
+      Left (BadMagic LabelAPSGBA (ByteString.take 4 input))
+  | otherwise =
+      case runGet parseGBA input of
+        Left msg -> Left (ParseError LabelAPSGBA msg)
+        Right patch -> Right patch
 
 parseGBA :: Get APSGBAPatch
 parseGBA = do

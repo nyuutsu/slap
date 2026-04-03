@@ -43,6 +43,7 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Checksum (CRC32(..))
+import Slap.Error (SlapError, renderSlapError)
 import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
@@ -218,23 +219,25 @@ applyViaFile applyFunction parsed source = do
 prop_bps :: Property
 prop_bps = forAll genPair $ \(source, target) ->
   let patch = BPS.createBPS source target ByteString.empty
-  in case BPS.parseBPS patch >>= \parsed -> BPS.applyBPS parsed source of
-       Left errorMessage     -> counterexample errorMessage $ property False
-       Right result -> result === target
+  in case BPS.parseBPS patch of
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Right parsed -> case BPS.applyBPS parsed source of
+         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
+         Right result -> result === target
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
   forAll genByteString $ \meta ->
     let patch = BPS.createBPS source target meta
     in case BPS.parseBPS patch of
-         Left errorMessage     -> counterexample errorMessage $ property False
+         Left slapError -> counterexample (renderSlapError slapError) $ property False
          Right parsed -> BPS.bpsMetadata parsed === meta
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
   let patch = UPS.createUPS source target
   in case UPS.parseUPS patch of
-       Left errorMessage     -> counterexample errorMessage $ property False
+       Left slapError -> counterexample (renderSlapError slapError) $ property False
        Right parsed -> UPS.applyUPS parsed source === target
 
 prop_ips :: Property
@@ -242,7 +245,7 @@ prop_ips = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
         pure $ result === target
@@ -262,7 +265,7 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
         pure $ result === target
@@ -327,15 +330,17 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(source, target) ->
   let patch = GDIFF.createGDIFF source target
-  in case GDIFF.parseGDIFF patch >>= \parsed -> GDIFF.applyGDIFF parsed source of
-       Left errorMessage     -> counterexample errorMessage $ property False
-       Right result -> result === target
+  in case GDIFF.parseGDIFF patch of
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Right parsed -> case GDIFF.applyGDIFF parsed source of
+         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
+         Right result -> result === target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
   let patch = APSGBA.createAPSGBA source target
   in case APSGBA.parseAPSGBA patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile APSGBA.applyAPSGBA parsed source
          pure $ result === target
@@ -349,7 +354,7 @@ prop_ips32 = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
         pure $ result === target
@@ -359,7 +364,7 @@ prop_ebp = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case IPS.parseIPS patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
         pure $ result === target
@@ -370,7 +375,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PPF.parsePatch patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> PPF.applyPatchMemory parsed source === target
 
 prop_pmsr :: Property
@@ -378,7 +383,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PMSR.parsePMSR patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile PMSR.applyPMSR parsed source
          pure $ result === target
@@ -388,7 +393,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile NINJA1.applyNINJA1 parsed source
          pure $ result === target
@@ -399,7 +404,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   case createFromMemory (CreateDirect CreateNINJA1) source source defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
          NINJA1.ninja1SourceCRC parsed === Just (rustyCRC32 source) .&&.
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
@@ -409,16 +414,18 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
   let patch = DPS.createDPS source target "" "" "" DPS.DPSStable
-  in case DPS.parseDPS patch >>= \parsed -> DPS.applyDPS parsed source of
-       Left errorMessage     -> counterexample errorMessage $ property False
-       Right result -> result === target
+  in case DPS.parseDPS patch of
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Right parsed -> case DPS.applyDPS parsed source of
+         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
+         Right result -> result === target
 
 prop_rup :: Property
 prop_rup = forAll genPair $ \(source, target) ->
   case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile RUP.applyRUP parsed source
          pure $ result === target
@@ -428,7 +435,7 @@ prop_rupHashes = forAll genPair $ \(source, target) ->
   case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
          RUP.rupSourceMD5 parsed === Just (md5 source) .&&.
          RUP.rupTargetMD5 parsed === Just (md5 target)
@@ -439,7 +446,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case PCHTXT.parsePCHTXT patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile PCHTXT.applyPCHTXT parsed source
          pure $ result === target
@@ -450,7 +457,7 @@ prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta Nothing of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case APSN64.parseAPSN64 patch of
-       Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile APSN64.applyAPSN64 parsed source
          pure $ result === target
@@ -483,15 +490,15 @@ prop_identity format = forAll genByteString $ \source -> not (ByteString.null so
   case createFromMemory format source source defaultMeta Nothing of
     Left _ -> discard
     Right patch -> case parseSome patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applySomePatch parsed source
         pure $ case result of
-          Left errorMessage  -> counterexample ("apply: " ++ errorMessage) $ property False
+          Left slapError -> counterexample ("apply: " ++ renderSlapError slapError) $ property False
           Right out -> out === source
 
 -- | Apply through the SomePatch closure.
-applySomePatch :: SomePatch -> ByteString -> IO (Either String ByteString)
+applySomePatch :: SomePatch -> ByteString -> IO (Either SlapError ByteString)
 applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 ----------------------------------------------------------------------------
@@ -505,7 +512,7 @@ prop_upsUndo :: Property
 prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
   let patch = UPS.createUPS source target
   in case UPS.parseUPS patch of
-       Left errorMessage     -> counterexample errorMessage $ property False
+       Left slapError -> counterexample (renderSlapError slapError) $ property False
        Right parsed -> UPS.applyUPS parsed (UPS.applyUPS parsed source) === source
 
 -- | PPF3 with undo data: apply then undo recovers the original.
@@ -516,7 +523,7 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
   case createFromMemory (CreateDirect CreatePPF3) source target (defaultMeta { metaUndo = Just True }) Nothing of
     Left _ -> discard
     Right patch -> case PPF.parsePatch patch of
-      Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         let applied = PPF.applyPatchMemory parsed source
         in PPF.undoPatchMemory parsed applied === source
@@ -651,7 +658,7 @@ prop_ipsSentinelWithSource =
   in case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
        Left errorMessage -> counterexample ("create should succeed: " ++ errorMessage) $ property False
        Right patch -> case IPS.parseIPS patch of
-         Left errorMessage     -> counterexample ("parse: " ++ errorMessage) $ property False
+         Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
          Right parsed -> ioProperty $ do
            result <- applyViaFile IPS.applyIPS parsed source
            pure $ result === target
@@ -671,7 +678,7 @@ isRight _         = False
 -- | Truncate a patch to a random length and verify parse returns Left or Right
 -- (never crashes).  Parsers with StrictData build results eagerly, so
 -- evaluating the Either constructor is sufficient to trigger any index errors.
-truncated :: (ByteString -> Either String a) -> ByteString -> Property
+truncated :: (ByteString -> Either SlapError a) -> ByteString -> Property
 truncated parseFunction patch =
   forAll (choose (0, ByteString.length patch - 1)) $ \truncationLength ->
     case parseFunction (ByteString.take truncationLength patch) of
@@ -699,9 +706,11 @@ prop_bpsBlockMove = once $
   in counterexample ("patch size: " ++ show (ByteString.length patch)
                       ++ " (block: " ++ show blockSize ++ ")") $
      conjoin
-       [ case BPS.parseBPS patch >>= \parsed -> BPS.applyBPS parsed source of
-           Left errorMessage     -> counterexample errorMessage $ property False
-           Right result -> result === target
+       [ case BPS.parseBPS patch of
+           Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+           Right parsed -> case BPS.applyBPS parsed source of
+             Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
+             Right result -> result === target
        , property (ByteString.length patch < 1024)
        ]
 
@@ -786,7 +795,7 @@ prop_rupUTF8RoundTrip = forAll genPair $ \(source, target) ->
   in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
         fmap (RUP.decodeRUPField 1) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
@@ -799,7 +808,7 @@ prop_rupSystemRoundTrip = forAll genPair $ \(source, target) ->
   in case RUP.createRUP source target info 0 RUP.PatchEncodingSystem of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 0) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
         fmap (RUP.decodeRUPField 0) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
@@ -812,7 +821,7 @@ prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
   in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
@@ -827,7 +836,7 @@ prop_rupFieldOverflow = once $
   in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("unexpected failure: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         let titleBytes = fromMaybe ByteString.empty (RUP.rupTitle (RUP.rupHeader parsed))
         in counterexample ("title length: " ++ show (ByteString.length titleBytes)) $
@@ -841,7 +850,7 @@ prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
   case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === 1
 
 -- PATCH_ENC byte is 0 for system encoding
@@ -850,7 +859,7 @@ prop_rupPatchEncByteSystem = forAll genPair $ \(source, target) ->
   case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === 0
 
 -- Read path: PATCH_ENC=1 patch decodes non-ASCII content correctly
@@ -861,7 +870,7 @@ prop_rupUTF8Decode = forAll genPair $ \(source, target) ->
   in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
     Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
     Right patch -> case RUP.parseRUP patch of
-      Left errorMessage -> counterexample ("parse: " ++ errorMessage) $ property False
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
@@ -890,7 +899,7 @@ parsePchtxtEscapes :: IO ()
 parsePchtxtEscapes = do
   raw <- ByteString.readFile "test/data/pchtxt/escapes.pchtxt"
   case PCHTXT.parsePCHTXT raw of
-    Left errorMessage     -> assertBool ("parse failed: " ++ errorMessage) False
+    Left slapError -> assertBool ("parse failed: " ++ renderSlapError slapError) False
     Right parsed -> assertBool "expected 2 entries"
       (length (concatMap PCHTXT.pchtxtBlockEntries (PCHTXT.pchtxtBlocks parsed)) == 2)
 
@@ -899,7 +908,7 @@ parsePchtxtSphinx :: IO ()
 parsePchtxtSphinx = do
   raw <- ByteString.readFile "test/data/pchtxt/sphinx.pchtxt"
   case PCHTXT.parsePCHTXT raw of
-    Left errorMessage     -> assertBool ("parse failed: " ++ errorMessage) False
+    Left slapError -> assertBool ("parse failed: " ++ renderSlapError slapError) False
     Right parsed -> do
       assertBool "expected nsobid" (PCHTXT.pchtxtNsobid parsed /= Nothing)
       case PCHTXT.pchtxtBlocks parsed of
@@ -912,7 +921,7 @@ parsePchtxtSphinx = do
 
 -- | Truncate a real patch file from disk to random lengths.
 -- These formats have no create function; use known-good patches instead.
-truncatedFile :: (ByteString -> Either String a) -> FilePath -> Property
+truncatedFile :: (ByteString -> Either SlapError a) -> FilePath -> Property
 truncatedFile parseFunction path = ioProperty $ do
   patchBytes <- ByteString.readFile path
   pure $ forAll (choose (0, ByteString.length patchBytes - 1)) $ \truncationLength ->

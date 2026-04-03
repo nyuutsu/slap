@@ -79,6 +79,8 @@ import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Explain (ExplainData(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
@@ -97,7 +99,7 @@ import Slap.Checksum (CRC32, CRC16, Adler32)
 -- source; differential formats (BPS, UPS, VCDIFF, etc.) compute the
 -- target from source bytes and patch instructions.
 newtype ApplyStrategy = InMemory
-  { inMemoryApply :: ByteString.ByteString -> IO (Either String ByteString.ByteString) }
+  { inMemoryApply :: ByteString.ByteString -> IO (Either SlapError ByteString.ByteString) }
 
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
@@ -188,11 +190,11 @@ data SomePatch = SomePatch
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
-parseSome :: ByteString.ByteString -> Either String SomePatch
+parseSome :: ByteString.ByteString -> Either SlapError SomePatch
 parseSome patchBytes = case detectFormat patchBytes of
   Nothing
     | Yay0.isYay0 patchBytes -> parseYay0Container patchBytes
-    | otherwise -> Left "unknown patch format"
+    | otherwise -> Left UnrecognizedFormat
 
   Just (PatchDirect FormatPPF) -> case PPF.parsePatch patchBytes of
     Left errorMessage -> Left errorMessage
@@ -305,7 +307,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchExplain        = BPS.explainBPS patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (BPS.applyBPS patch source) }
+          { inMemoryApply     = \source -> pure (wrapApplyError LabelBPS (BPS.applyBPS patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
@@ -527,7 +529,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchExplain        = GDIFF.explainGDIFF patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (GDIFF.applyGDIFF patch source) }
+          { inMemoryApply     = \source -> pure (wrapApplyError LabelGDIFF (GDIFF.applyGDIFF patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchVerboseLines   = []
@@ -627,9 +629,9 @@ parseSome patchBytes = case detectFormat patchBytes of
 -- Helpers
 ----------------------------------------------------------------------------
 
-parseDPSBlock :: ByteString.ByteString -> Either String SomePatch
+parseDPSBlock :: ByteString.ByteString -> Either SlapError SomePatch
 parseDPSBlock input = case DPS.parseDPS input of
-  Left errorMessage -> Left errorMessage
+  Left slapError -> Left slapError
   Right patch  ->
     let records = DPS.dpsRecords patch
     in Right SomePatch
@@ -638,7 +640,7 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchExplain        = DPS.explainDPS patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
+          { inMemoryApply     = \source -> pure (wrapApplyError LabelDPS (DPS.applyDPS patch source)) }
       , patchVerification   = noVerification
       , patchUndo           = Nothing
       , patchVerboseLines   = numbered records $ \case
@@ -668,11 +670,11 @@ parseDPSBlock input = case DPS.parseDPS input of
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
 -- Decompress the envelope and recurse into parseSome on the inner bytes.
-parseYay0Container :: ByteString.ByteString -> Either String SomePatch
+parseYay0Container :: ByteString.ByteString -> Either SlapError SomePatch
 parseYay0Container input = case Yay0.decompressYay0 input of
-  Left errorMessage   -> Left ("Yay0 decompression failed: " ++ errorMessage)
+  Left errorMessage   -> Left (Yay0DecompressionFailed errorMessage)
   Right decompressedBytes -> case parseSome decompressedBytes of
-    Left errorMessage -> Left errorMessage
+    Left slapError -> Left slapError
     Right parsed -> Right parsed
       { patchFormat  = patchFormat parsed ++ "/Yay0"
       , patchInfo    = replaceFirst "PMSR" "PMSR/Yay0" (patchInfo parsed)
@@ -680,7 +682,7 @@ parseYay0Container input = case Yay0.decompressYay0 input of
           { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
       }
 
-parseAPSGBABlock :: ByteString.ByteString -> Either String SomePatch
+parseAPSGBABlock :: ByteString.ByteString -> Either SlapError SomePatch
 parseAPSGBABlock input = do
   patch@(APSGBA.APSGBAPatch header records) <- APSGBA.parseAPSGBA input
   Right SomePatch
@@ -729,6 +731,12 @@ describeBPS (BPS.SourceRead actionLength) = "SourceRead " ++ show (unLength acti
 describeBPS (BPS.TargetRead payload) = "TargetRead " ++ show (ByteString.length payload) ++ " bytes"
 describeBPS (BPS.SourceCopy actionLength _) = "SourceCopy " ++ show (unLength actionLength) ++ " bytes"
 describeBPS (BPS.TargetCopy actionLength _) = "TargetCopy " ++ show (unLength actionLength) ++ " bytes"
+
+-- | Wrap a String-based apply error into SlapError for formats whose apply
+-- functions haven't been migrated yet (BPS, DPS, GDIFF).
+wrapApplyError :: FormatLabel -> Either String a -> Either SlapError a
+wrapApplyError _ (Right x) = Right x
+wrapApplyError label (Left msg) = Left (ParseError label msg)
 
 -- | Pre-render verbose lines with "[i/n]" prefixes.
 numbered :: [a] -> (a -> String) -> [String]

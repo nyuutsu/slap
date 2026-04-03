@@ -14,6 +14,8 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..),
                         dpsFieldWidth, dpsMetadataSize, dpsMinimumFileSize,
                         dpsVersionOffset, dpsStabilityOffset)
 import Slap.Binary (trimNull)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
@@ -46,11 +48,13 @@ isDPS input
 -- Parse
 ----------------------------------------------------------------------------
 
-parseDPS :: ByteString -> Either String DPSPatch
+parseDPS :: ByteString -> Either SlapError DPSPatch
 parseDPS input
-  | ByteString.length input < dpsMinimumFileSize = Left "DPS: input too short"
-  | ByteString.index input dpsVersionOffset /= 1 = Left ("DPS: unsupported version byte: " ++ show (ByteString.index input dpsVersionOffset))
-  | otherwise = runGet parseDPSBody input
+  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (Length dpsMinimumFileSize) (Length (ByteString.length input)))
+  | ByteString.index input dpsVersionOffset /= 1 = Left (BadVersion LabelDPS (ByteString.index input dpsVersionOffset))
+  | otherwise = case runGet parseDPSBody input of
+      Left msg -> Left (ParseError LabelDPS msg)
+      Right patch -> Right patch
 
 parseDPSBody :: Get DPSPatch
 parseDPSBody = do

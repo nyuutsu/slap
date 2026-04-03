@@ -21,6 +21,8 @@ module Slap.NINJA1.Parse
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..),
                            NINJA1RomType(..), toNINJA1RomType)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..))
 import Slap.Compress (zlibInflate)
@@ -34,24 +36,24 @@ import Data.Word (Word8, Word32)
 import Numeric (readHex)
 import Slap.Checksum (CRC32(..))
 
-parseNINJA1 :: ByteString -> Either String NINJA1Patch
+parseNINJA1 :: ByteString -> Either SlapError NINJA1Patch
 parseNINJA1 input
-  | ByteString.length input < 8             = Left "NINJA1: input too short"
-  | ByteString.take 6 input /= "NINJA1"    = Left "not a NINJA1 file (bad magic)"
+  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (Length 8) (Length (ByteString.length input)))
+  | ByteString.take 6 input /= "NINJA1"    = Left (BadMagic LabelNINJA1 (ByteString.take 6 input))
   | subFormatIdentifier == "B "                = parseBinary Ninja1Binary payload
   | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= parseBinary Ninja1BinaryCompressed
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
   | subFormatIdentifier == ByteString.pack [0x54,0x0A] = parseText Ninja1Text payload    -- "T\n"
   | subFormatIdentifier == "TZ"                = zlibDecompress payload >>= parseText Ninja1TextCompressed
-  | otherwise                    = Left ("NINJA1: unsupported subformat: " ++ show subFormatIdentifier)
+  | otherwise                    = Left (UnsupportedSubformat LabelNINJA1 (show subFormatIdentifier))
   where
     subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
     payload = ByteString.drop 8 input
 
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
-zlibDecompress :: ByteString -> Either String ByteString
+zlibDecompress :: ByteString -> Either SlapError ByteString
 zlibDecompress compressed = case zlibInflate compressed of
-  Left _  -> Left "NINJA1: zlib decompression failed"
+  Left _  -> Left (DecompressionFailed LabelNINJA1 "zlib")
   Right result -> Right result
 
 ----------------------------------------------------------------------------
@@ -65,10 +67,12 @@ zlibDecompress compressed = case zlibInflate compressed of
 -- Large file hash sampling (>0x1e00000): see ninja1HashInput.
 ----------------------------------------------------------------------------
 
-parseBinary :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
+parseBinary :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
 parseBinary format payload
-  | ByteString.length payload < 41 = Left "NINJA1: binary payload too short"
-  | otherwise = runGet (parseBinaryGet format) payload
+  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (Length 41) (Length (ByteString.length payload)))
+  | otherwise = case runGet (parseBinaryGet format) payload of
+      Left msg -> Left (ParseError LabelNINJA1 msg)
+      Right patch -> Right patch
 
 parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch
 parseBinaryGet format = do
@@ -126,12 +130,12 @@ parseBinaryRecords = parseLoop []
 -- Record lines: OFFSET HEXDATA (both hex strings, no 0x prefix)
 ----------------------------------------------------------------------------
 
-parseText :: NINJA1SubFormat -> ByteString -> Either String NINJA1Patch
+parseText :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
 parseText format payload = do
   let stripCR = ByteString8.takeWhile (/= '\r')
       contentLines = filter (not . isSkippable) (map stripCR (ByteString8.lines payload))
   case contentLines of
-    [] -> Left "NINJA1: empty textual patch"
+    [] -> Left (MalformedTextField LabelNINJA1 "empty textual patch")
     (headerLine : recordLines) -> do
       let (romType, parsedCRC, parsedMD5, parsedSHA1) = parseTextHeader headerLine
       records <- mapM parseTextRecord recordLines
@@ -168,13 +172,13 @@ parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
       (_:_:_:sha1Text:_) | not (isUnknown sha1Text) -> nonEmpty (hexToBS sha1Text)
       _ -> Nothing
 
-parseTextRecord :: ByteString -> Either String NINJA1Record
+parseTextRecord :: ByteString -> Either SlapError NINJA1Record
 parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
       [(offset, "")] -> Right (NINJA1Record (Offset offset) (hexToBS (concatMap ByteString8.unpack dataParts)))
-      _ -> Left ("NINJA1: invalid offset in text record: " ++ ByteString8.unpack offsetString)
-  _ -> Left ("NINJA1: malformed text record: " ++ ByteString8.unpack line)
+      _ -> Left (MalformedTextField LabelNINJA1 ("invalid offset in text record: " ++ ByteString8.unpack offsetString))
+  _ -> Left (MalformedTextField LabelNINJA1 ("malformed text record: " ++ ByteString8.unpack line))
 
 hexToBS :: String -> ByteString
 hexToBS text = ByteString.pack (parseHexPairs text)

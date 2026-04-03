@@ -3,6 +3,7 @@ module Integration.CLI (cliTests) where
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir, RomCache,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
@@ -61,20 +62,20 @@ corruptTests :: [TestTree]
 corruptTests =
   [ testCase "corrupt/empty file" $
       case parseSome ByteString.empty of
-        Left errorMessage -> assertBool "expected 'unknown'" (ciContains "unknown" errorMessage)
+        Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (renderSlapError slapError))
         Right _ -> assertFailure "expected parse failure for empty file"
 
   , testCase "corrupt/random garbage" $ do
       let garbageBytes = ByteString.pack $ take 256 $ map fromIntegral $
                  iterate (\seed -> (seed * 1103515245 + 12345) `mod` 256) (42 :: Int)
       case parseSome garbageBytes of
-        Left errorMessage -> assertBool "expected 'unknown'" (ciContains "unknown" errorMessage)
+        Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (renderSlapError slapError))
         Right _ -> assertFailure "expected parse failure for random garbage"
 
   , testCase "corrupt/info truncated IPS (graceful)" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome truncatedIPS of
-        Left errorMessage -> assertFailure ("parseSome rejected truncated IPS: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome rejected truncated IPS: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` patchInfo parsed)
 
   , testCase "corrupt/info truncated BPS" $ do
@@ -260,21 +261,21 @@ warningTests repo =
   [ testCase "warnings/truncated IPS no EOF" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome truncatedIPS of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'no EOF marker' in warnings"
                      (any (ciContains "no EOF marker") (patchWarnings parsed))
 
   , testCase "warnings/truncated IPS empty" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome truncatedIPS of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'empty patch' in info"
                      (ciContains "empty patch" (patchInfo parsed))
 
   , testCase "warnings/empty IPS warns empty only" $ do
       let emptyIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
       case parseSome emptyIPS of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
           let info = patchInfo parsed
           assertBool "should warn 'empty patch'" ("empty patch" `isInfixOf` info)
@@ -286,7 +287,7 @@ warningTests repo =
       when exists $ do
         patchBytes <- ByteString.readFile ipsPath
         case parseSome patchBytes of
-          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> assertBool "unexpected warning"
                        (not ("warning" `isInfixOf` patchInfo parsed))
   ]
@@ -434,7 +435,7 @@ pchtxtDetectTests =
       let pchtxtBytes = ByteString.pack (map (fromIntegral . fromEnum)
             "/ block comment\n/ another line\n@enabled\n00000000 FF\n")
       case parseSome pchtxtBytes of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'PCHTXT' in format"
                      ("PCHTXT" `isInfixOf` patchFormat parsed)
   ]

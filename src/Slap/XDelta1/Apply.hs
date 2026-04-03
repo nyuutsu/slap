@@ -4,6 +4,8 @@ module Slap.XDelta1.Apply
 
 import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..))
 import Slap.Binary (copyByteStringRange)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
 import Data.ByteString (ByteString)
@@ -16,10 +18,10 @@ import Foreign.Ptr (Ptr)
 -- Apply
 ----------------------------------------------------------------------------
 
-applyXDelta1 :: XDelta1Patch -> ByteString -> Either String ByteString
+applyXDelta1 :: XDelta1Patch -> ByteString -> Either SlapError ByteString
 applyXDelta1 patch _source
   | unFileSize (xdelta1TargetLength patch) == 0 = Right ByteString.empty
-  | unFileSize (xdelta1TargetLength patch) < 0  = Left "xdelta1: negative target size"
+  | unFileSize (xdelta1TargetLength patch) < 0  = Left (NegativeTargetSize LabelXDelta1 (xdelta1TargetLength patch))
 applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     applyLoop targetPointer 0 (xdelta1Instructions patch)
   where

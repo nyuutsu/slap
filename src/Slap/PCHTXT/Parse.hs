@@ -11,6 +11,8 @@ module Slap.PCHTXT.Parse
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..), FlagResult(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..))
 
 import Data.ByteString (ByteString)
@@ -24,7 +26,7 @@ import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Word (Word8)
 import Numeric (readHex)
 
-parsePCHTXT :: ByteString -> Either String PCHTXTPatch
+parsePCHTXT :: ByteString -> Either SlapError PCHTXTPatch
 parsePCHTXT input = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (ByteString8.lines input)) Nothing [] Nothing 0 False Nothing
   where
     -- parseLines lines nsobid finishedBlocks lastComment shift shifted currentBlock
@@ -41,7 +43,7 @@ parsePCHTXT input = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (Byte
       | "@flag " `isPrefixOf` stripped = case parseFlag (drop 6 stripped) of
           FlagShift value -> parseLines rest nsobid blocks lastComment value True currentBlock
           FlagIgnored     -> parseLines rest nsobid blocks lastComment shift shifted currentBlock
-          FlagError errorMessage   -> Left errorMessage
+          FlagError errorMessage   -> Left (MalformedTextField LabelPCHTXT errorMessage)
       | "@enabled" `isPrefixOf` stripped =
           let closedBlocks = finishBlock currentBlock blocks
           in parseLines rest nsobid closedBlocks Nothing shift shifted (Just (True, lastComment, []))
@@ -55,7 +57,7 @@ parsePCHTXT input = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (Byte
       | "@" `isPrefixOf` stripped =
           parseLines rest nsobid blocks lastComment shift shifted currentBlock
       | otherwise = case currentBlock of
-          Nothing -> Left ("PCHTXT: entry outside @enabled/@disabled block: " ++ stripped)
+          Nothing -> Left (EntryOutsideBlock LabelPCHTXT stripped)
           Just (enabled, description, reversedEntries) -> case parsePatchLine stripped shift of
             Left errorMessage -> Left errorMessage
             Right entry ->
@@ -76,10 +78,10 @@ parseFlag text
   | "offset_shift" `isPrefixOf` text =
       let value = dropWhile isSpace (drop 12 text)
       in if null value
-         then FlagError "PCHTXT: missing offset_shift value"
+         then FlagError "missing offset_shift value"
          else case parseHexInt value of
            Just number -> FlagShift number
-           Nothing     -> FlagError ("PCHTXT: invalid offset_shift value: " ++ value)
+           Nothing     -> FlagError ("invalid offset_shift value: " ++ value)
   | otherwise = FlagIgnored
 
 parseHexInt :: String -> Maybe Int64
@@ -94,39 +96,39 @@ parseHexInt text =
        [(value, "")] -> Just value
        _ -> Nothing
 
-parsePatchLine :: String -> Int64 -> Either String PCHTXTEntry
+parsePatchLine :: String -> Int64 -> Either SlapError PCHTXTEntry
 parsePatchLine line shift = do
   let (offsetString, rest) = span isHexDigit line
   if null offsetString
-    then Left ("PCHTXT: expected hex offset: " ++ line)
+    then Left (MalformedTextField LabelPCHTXT ("expected hex offset: " ++ line))
     else do
       offset <- case readHex offsetString :: [(Int64, String)] of
                [(value, "")] -> Right value
-               _ -> Left ("PCHTXT: invalid hex offset: " ++ offsetString)
+               _ -> Left (MalformedTextField LabelPCHTXT ("invalid hex offset: " ++ offsetString))
       let dataString = dropWhile isSpace rest
       if null dataString
-        then Left ("PCHTXT: no data after offset: " ++ line)
+        then Left (MalformedTextField LabelPCHTXT ("no data after offset: " ++ line))
         else do
           payload <- case dataString of
                    '"':quotedRest -> parseQuotedString quotedRest
                    _              -> parseHexBytes dataString
           Right (PCHTXTEntry (Offset (offset + shift)) payload)
 
-parseHexBytes :: String -> Either String ByteString
+parseHexBytes :: String -> Either SlapError ByteString
 parseHexBytes text =
   let hexChars = takeWhile isHexDigit text
   in if odd (length hexChars)
-     then Left ("PCHTXT: odd number of hex digits: " ++ text)
+     then Left (MalformedTextField LabelPCHTXT ("odd number of hex digits: " ++ text))
      else Right (ByteString.pack (decodeHexPairs hexChars))
 
 decodeHexPairs :: String -> [Word8]
 decodeHexPairs (highNibble:lowNibble:rest) = fromIntegral (digitToInt highNibble * 16 + digitToInt lowNibble) : decodeHexPairs rest
 decodeHexPairs _ = []
 
-parseQuotedString :: String -> Either String ByteString
+parseQuotedString :: String -> Either SlapError ByteString
 parseQuotedString = fmap (Text.encodeUtf8 . Text.pack) . parseEscaped
   where
-    parseEscaped [] = Left "PCHTXT: unterminated quoted string"
+    parseEscaped [] = Left (MalformedTextField LabelPCHTXT "unterminated quoted string")
     parseEscaped ('"':_) = Right []
     parseEscaped ('\\':'n':rest) = ('\n' :) <$> parseEscaped rest
     parseEscaped ('\\':'t':rest) = ('\t' :) <$> parseEscaped rest

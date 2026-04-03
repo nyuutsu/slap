@@ -4,6 +4,7 @@ import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    withTempFile, withTempDir, RomCache, cachedReadFile)
 import Slap.Convert (CreateFormat(..), defaultMeta, createFromMemory)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -71,11 +72,11 @@ getOrBootstrap cacheReference _repo key baseBytes bootPath = do
     Nothing -> do
       bootBytes <- ByteString.readFile bootPath
       case parseSome bootBytes of
-        Left errorMessage -> error ("bootstrap parse failed: " ++ errorMessage)
+        Left slapError -> error ("bootstrap parse failed: " ++ renderSlapError slapError)
         Right parsed -> do
           result <- applyPatch parsed baseBytes
           case result of
-            Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
+            Left slapError -> error ("bootstrap apply failed: " ++ renderSlapError slapError)
             Right targetBytes -> do
               atomicModifyIORef' cacheReference (\existing -> (Map.insert key targetBytes existing, ()))
               pure targetBytes

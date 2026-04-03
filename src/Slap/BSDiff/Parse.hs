@@ -15,7 +15,9 @@ import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
 import Slap.Compress (bz2Decompress)
-import Slap.Measure (FileSize(..), Delta(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (FileSize(..), Length(..), Delta(..))
 
 ----------------------------------------------------------------------------
 -- Signed LE64 (bsdiff sign-magnitude encoding)
@@ -37,21 +39,21 @@ getSignMagnitude64 offset input =
 -- Safe decompression
 ----------------------------------------------------------------------------
 
-safeDecompressBZip :: String -> ByteString -> Either String ByteString
+safeDecompressBZip :: String -> ByteString -> Either SlapError ByteString
 safeDecompressBZip _     compressed | ByteString.null compressed = Right ByteString.empty
 safeDecompressBZip label compressed = case bz2Decompress compressed of
-  Left _  -> Left ("BSDiff: " ++ label ++ " decompression failed")
+  Left _  -> Left (DecompressionFailed LabelBSDiff label)
   Right decompressed -> Right decompressed
 
 ----------------------------------------------------------------------------
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseBSDiff :: ByteString -> Either String BSDiffPatch
+parseBSDiff :: ByteString -> Either SlapError BSDiffPatch
 parseBSDiff input
-  | ByteString.length input < 32 = Left "BSDiff: input too short"
-  | ByteString.take 8 input /= "BSDIFF40" = Left "not a BSDiff file (bad magic)"
-  | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left "BSDiff: invalid header (negative size)"
+  | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (Length 32) (Length (ByteString.length input)))
+  | ByteString.take 8 input /= "BSDIFF40" = Left (BadMagic LabelBSDiff (ByteString.take 8 input))
+  | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left (ParseError LabelBSDiff "invalid header (negative size)")
   | otherwise = do
       controlData  <- safeDecompressBZip "control" controlCompressed
       diffData  <- safeDecompressBZip "diff" diffCompressed

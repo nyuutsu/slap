@@ -1,6 +1,7 @@
 module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Slap.BPS.Create as BPS
@@ -42,7 +43,7 @@ makeFieldTest :: FilePath -> CreateFormat -> String -> TestTree
 makeFieldTest patchPath format fieldName = testCase fieldName $ do
   patchBytes <- ByteString.readFile patchPath
   case parseSome patchBytes of
-    Left errorMessage -> assertFailure ("parseSome original failed: " ++ errorMessage)
+    Left slapError -> assertFailure ("parseSome original failed: " ++ renderSlapError slapError)
     Right original -> do
       -- Self-convert: convert to same format
       let meta = case format of
@@ -52,7 +53,7 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
         Right (convertedBytes, _) -> case parseSome convertedBytes of
-          Left errorMessage -> assertFailure ("parseSome converted failed: " ++ errorMessage)
+          Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
             let originalInfo = patchInfo original
                 convertedInfo = patchInfo converted
@@ -90,7 +91,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           meta   = ByteString8.pack "<patch><title>Test</title></patch>"
           patchBytes = BPS.createBPS source target meta
       case parseSome patchBytes of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
 
   , testCase "empty metadata gives Nothing" $ do
@@ -98,7 +99,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [16..31]
           patchBytes = BPS.createBPS source target ByteString.empty
       case parseSome patchBytes of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
   , testCase "info shows metadata preview" $ do
@@ -107,7 +108,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           meta   = ByteString8.pack "hello-world-metadata"
           patchBytes = BPS.createBPS source target meta
       case parseSome patchBytes of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
           assertBool "info mentions metadata content"
             ("hello-world-metadata" `isInfixOf` patchInfo parsed)
@@ -119,7 +120,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [64..127]
           patchBytes = BPS.createBPS source target ByteString.empty
       case parseSome patchBytes of
-        Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
           assertBool "info shows (none)" ("(none)" `isInfixOf` patchInfo parsed)
   ]

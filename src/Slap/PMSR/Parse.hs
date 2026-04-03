@@ -10,6 +10,8 @@ module Slap.PMSR.Parse
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..))
@@ -20,11 +22,13 @@ import qualified Data.ByteString as ByteString
 -- Format: 4 bytes "PMSR" magic, uint32BE record count,
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
-parsePMSR :: ByteString -> Either String PMSRPatch
+parsePMSR :: ByteString -> Either SlapError PMSRPatch
 parsePMSR input
-  | ByteString.length input < 4 = Left "PMSR: input too short"
-  | ByteString.take 4 input /= "PMSR" = Left "not a PMSR file (bad magic)"
-  | otherwise = runGet parsePMSRBody input
+  | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (Length 4) (Length (ByteString.length input)))
+  | ByteString.take 4 input /= "PMSR" = Left (BadMagic LabelPMSR (ByteString.take 4 input))
+  | otherwise = case runGet parsePMSRBody input of
+      Left msg -> Left (ParseError LabelPMSR msg)
+      Right result -> Right result
 
 parsePMSRBody :: Get PMSRPatch
 parsePMSRBody = do

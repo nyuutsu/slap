@@ -12,6 +12,8 @@ import Slap.VCDIFF.Types
     )
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.Checksum (Adler32(..))
+import Slap.Error (SlapError(..), renderSlapError)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
 import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..))
@@ -25,23 +27,23 @@ import Control.Monad (when)
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseVCDIFF :: ByteString -> Either String VCDIFFPatch
+parseVCDIFF :: ByteString -> Either SlapError VCDIFFPatch
 parseVCDIFF = parseVCDIFFWith True
 
-parseVCDIFFWith :: Bool -> ByteString -> Either String VCDIFFPatch
+parseVCDIFFWith :: Bool -> ByteString -> Either SlapError VCDIFFPatch
 parseVCDIFFWith allowCustom input
-  | ByteString.length input < 5 = Left "VCDIFF: input too short"
-  | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left "not a VCDIFF file (bad magic)"
+  | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (Length 5) (Length (ByteString.length input)))
+  | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left (BadMagic LabelVCDIFF (ByteString.take 3 input))
   | otherwise = do
-      (maybeTableBytes, header, windows) <- runGet parseHeader input
+      (maybeTableBytes, header, windows) <- wrapParse (runGet parseHeader input)
       case maybeTableBytes of
         Nothing -> Right (VCDIFFPatch header windows defaultCodeTable
                                       defaultNearSize defaultSameSize)
         Just rawTableBytes -> do
           let applyInnerDelta deltaBytes = do
-                inner <- parseVCDIFFWith False deltaBytes
-                applyVCDIFF inner serializedDefaultTable
-          (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
+                inner <- renderError (parseVCDIFFWith False deltaBytes)
+                renderError (applyVCDIFF inner serializedDefaultTable)
+          (table, nearSize, sameSize) <- wrapParse (decodeCustomTable applyInnerDelta rawTableBytes)
           Right (VCDIFFPatch header windows table nearSize sameSize)
   where
     parseHeader = do
@@ -130,3 +132,11 @@ parseVCDIFFWith allowCustom input
         , vcdiffInstructions = instructionData
         , vcdiffAddresses    = addressData
         }
+
+    wrapParse :: Either String a -> Either SlapError a
+    wrapParse (Left msg)     = Left (ParseError LabelVCDIFF msg)
+    wrapParse (Right result) = Right result
+
+    renderError :: Either SlapError a -> Either String a
+    renderError (Left err)    = Left (renderSlapError err)
+    renderError (Right value) = Right value

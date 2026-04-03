@@ -7,18 +7,22 @@ module Slap.GDIFF.Parse
 -- Canonical reference: W3C NOTE-GDIFF-19970901
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseGDIFF :: ByteString -> Either String GDiffPatch
+parseGDIFF :: ByteString -> Either SlapError GDiffPatch
 parseGDIFF input
-  | ByteString.length input < 5 = Left "GDIFF: input too short"
-  | ByteString.take 4 input /= "\xd1\xff\xd1\xff" = Left "not a GDIFF file (bad magic)"
-  | ByteString.index input 4 /= 4 = Left ("GDIFF: unsupported version: " ++ show (ByteString.index input 4))
-  | otherwise = runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input
+  | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (Length 5) (Length (ByteString.length input)))
+  | ByteString.take 4 input /= "\xd1\xff\xd1\xff" = Left (BadMagic LabelGDIFF (ByteString.take 4 input))
+  | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (ByteString.index input 4))
+  | otherwise = case runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input of
+      Left msg -> Left (ParseError LabelGDIFF msg)
+      Right patch -> Right patch
   where
     parseCommands accumulated = do
       opcode <- getByte

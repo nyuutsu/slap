@@ -7,15 +7,17 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Slap.Binary (copyByteStringRange)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Delta(..))
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (pokeByteOff)
 
-applyBSDiff :: BSDiffPatch -> ByteString -> Either String ByteString
+applyBSDiff :: BSDiffPatch -> ByteString -> Either SlapError ByteString
 applyBSDiff patch _source
   | unFileSize (bsdiffTargetSize patch) == 0 = Right ByteString.empty
-  | unFileSize (bsdiffTargetSize patch) < 0  = Left "BSDiff: negative target size"
+  | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
 applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
   applyLoop targetPointer 0 0 0 0 (bsdiffControls patch)
   where

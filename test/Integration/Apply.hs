@@ -3,6 +3,7 @@ module Integration.Apply (applyTests) where
 import Integration.Helpers
   (repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
    sha1Hex, applyPatch, RomCache, cachedReadFile)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -49,10 +50,10 @@ makePatchTest romCache repo basePath expectedSha entry =
         baseBytes <- cachedReadFile romCache basePath
         patchBytes <- ByteString.readFile patchPath
         case parseSome patchBytes of
-          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> do
             result <- applyPatch parsed baseBytes
             case result of
-              Left errorMessage -> assertFailure ("apply failed: " ++ errorMessage)
+              Left slapError -> assertFailure ("apply failed: " ++ renderSlapError slapError)
               Right output -> assertEqual "SHA1 mismatch"
                 expectedSha (sha1Hex output)

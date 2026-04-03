@@ -13,6 +13,7 @@ import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
+import Slap.Error (SlapError, renderSlapError)
 import Slap.Format (padHex)
 
 import qualified Data.ByteString as ByteString
@@ -429,7 +430,7 @@ doInfo :: Command -> IO ()
 doInfo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right parsed -> do
       putStr (patchInfo parsed)
       emitWarnings parsed
@@ -445,7 +446,7 @@ doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
 doExplain patchFile records maybeWithPath raw = do
   patchBytes <- readUnwrap patchFile
   case parseSome patchBytes of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right parsed -> do
       maybeSource <- case maybeWithPath of
         Nothing   -> pure Nothing
@@ -462,7 +463,7 @@ doApply :: Command -> IO ()
 doApply parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
       when (commandVerbose parsedCommand) $
@@ -506,7 +507,7 @@ doApply parsedCommand = do
       verifySource noVerify verification sourceBytes
       result <- apply sourceBytes
       case result of
-        Left errorMessage -> die errorMessage
+        Left slapError -> dieError slapError
         Right target -> do
           verifyTarget noVerify verification target
           ByteString.writeFile outputPath target
@@ -522,7 +523,7 @@ doUndo :: Command -> IO ()
 doUndo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
   case parseSome patchBytes of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
       case patchUndo parsed of
@@ -577,7 +578,7 @@ doConvert :: Command -> IO ()
 doConvert parsedCommand = do
   patchBytes <- readUnwrap (commandConvertPatch parsedCommand)
   case parseSome patchBytes of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
       let outputFile = fromMaybe (replaceExtension (commandConvertPatch parsedCommand) (formatExtension (commandConvertTo parsedCommand))) (commandConvertOutput parsedCommand)
@@ -642,7 +643,7 @@ applyForConvert :: SomePatch -> ByteString.ByteString -> IO ByteString.ByteStrin
 applyForConvert somePatch sourceBytes = do
   result <- inMemoryApply (patchApply somePatch) sourceBytes
   case result of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right target      -> pure target
 
 -- | Error message when --with is required but not provided.
@@ -762,3 +763,6 @@ warn message = hPutStrLn stderr ("slap: warning: " ++ message)
 
 die :: String -> IO a
 die message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
+
+dieError :: SlapError -> IO a
+dieError = die . renderSlapError

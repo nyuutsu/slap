@@ -38,6 +38,7 @@ module Integration.Helpers
   ) where
 
 import Slap.Binary (sha1)
+import Slap.Error (SlapError, renderSlapError)
 import Slap.Format (padHex)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
@@ -179,7 +180,7 @@ parseCreateFormat formatString = case map toLower formatString of
 ----------------------------------------------------------------------------
 
 -- | Apply a parsed patch to source bytes.
-applyPatch :: SomePatch -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
+applyPatch :: SomePatch -> ByteString.ByteString -> IO (Either SlapError ByteString.ByteString)
 applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
@@ -206,7 +207,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
     targetResult <- applyPatch somePatch baseBytes
     case targetResult of
-      Left errorMessage -> pure (Left errorMessage)
+      Left slapError -> pure (Left (renderSlapError slapError))
       Right targetBytes ->
         case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
           Left errorMessage     -> pure (Left errorMessage)

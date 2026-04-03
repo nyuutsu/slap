@@ -10,6 +10,8 @@ module Slap.IPS.Parse
 
 import Slap.IPS.Types (IPSVariant(..), IPSRecord(..), IPSPatch(..))
 import Slap.Binary (getWord24BE, getWord32BE)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
 import Slap.Measure (Position(..), Offset(..), Length(..), FileSize(..))
@@ -22,11 +24,17 @@ import Data.Word (Word32, Word64)
 import Control.Monad (when)
 import Numeric (showHex)
 
-parseIPS :: ByteString -> Either String IPSPatch
+parseIPS :: ByteString -> Either SlapError IPSPatch
 parseIPS input
-  | ByteString.take 5 input == "PATCH" = runGet (skip (Length 5) >> parseRecords StandardIPS 3 0x454F46) input
-  | ByteString.take 5 input == "IPS32" = runGet (skip (Length 5) >> parseRecords IPS32 4 0x45454F46) input
-  | otherwise = Left "not an IPS file (bad magic)"
+  | ByteString.take 5 input == "PATCH" =
+      case runGet (skip (Length 5) >> parseRecords StandardIPS 3 0x454F46) input of
+        Left msg -> Left (ParseError LabelIPS msg)
+        Right patch -> Right patch
+  | ByteString.take 5 input == "IPS32" =
+      case runGet (skip (Length 5) >> parseRecords IPS32 4 0x45454F46) input of
+        Left msg -> Left (ParseError LabelIPS32 msg)
+        Right patch -> Right patch
+  | otherwise = Left (BadMagic LabelIPS (ByteString.take 5 input))
 
 parseRecords :: IPSVariant -> Int -> Word32 -> Get IPSPatch
 parseRecords variant offsetWidth eofMarker = parseLoop []

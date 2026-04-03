@@ -8,8 +8,10 @@ module Slap.BPS.Parse
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..), decodeSignedVarint)
 import Slap.Binary (getWord32LE)
-import Slap.Checksum (CRC32(..), showCRC32)
+import Slap.Checksum (CRC32(..))
+import Slap.Error (SlapError(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
@@ -18,33 +20,37 @@ import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseBPS :: ByteString -> Either String BPSPatch
+parseBPS :: ByteString -> Either SlapError BPSPatch
 parseBPS input
-  | ByteString.length input < 4 = Left "BPS: input too short"
-  | ByteString.take 4 input /= "BPS1" = Left "not a BPS file (bad magic)"
-  | ByteString.length input < 12 = Left "BPS: truncated footer"
+  | ByteString.length input < 4 =
+      Left (InputTooShort LabelBPS (Length 4) (Length (ByteString.length input)))
+  | ByteString.take 4 input /= "BPS1" =
+      Left (BadMagic LabelBPS (ByteString.take 4 input))
+  | ByteString.length input < 12 =
+      Left (InputTooShort LabelBPS (Length 12) (Length (ByteString.length input)))
   | otherwise = do
       -- Validate patch CRC (covers everything except the last 4 bytes)
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
           actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
       if storedPatchCRC /= actualPatchCRC
-        then Left ("BPS: patch CRC mismatch (stored " ++ showCRC32 storedPatchCRC
-                    ++ ", computed " ++ showCRC32 actualPatchCRC ++ ")")
+        then Left (PatchCRCMismatch LabelBPS storedPatchCRC actualPatchCRC)
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - 12) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
           -- Parse body between magic and footer using Get monad
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
-      (sourceSize, targetSize, metadata, actions) <- runGet parseBPSBody bodyBytes
-      Right BPSPatch
-        { bpsSourceSize = sourceSize
-        , bpsTargetSize = targetSize
-        , bpsMetadata   = metadata
-        , bpsActions    = actions
-        , bpsSourceCRC  = sourceCRC
-        , bpsTargetCRC  = targetCRC
-        , bpsPatchCRC   = storedPatchCRC
-        }
+      case runGet parseBPSBody bodyBytes of
+        Left msg -> Left (ParseError LabelBPS msg)
+        Right (sourceSize, targetSize, metadata, actions) ->
+          Right BPSPatch
+            { bpsSourceSize = sourceSize
+            , bpsTargetSize = targetSize
+            , bpsMetadata   = metadata
+            , bpsActions    = actions
+            , bpsSourceCRC  = sourceCRC
+            , bpsTargetCRC  = targetCRC
+            , bpsPatchCRC   = storedPatchCRC
+            }
 
 parseBPSBody :: Get (FileSize, FileSize, ByteString, [BPSAction])
 parseBPSBody = do

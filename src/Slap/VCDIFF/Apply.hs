@@ -12,6 +12,8 @@ import Slap.VCDIFF.Types
     , VCDIFFDecodedInstruction(..), CodeEntry, AddressCache(..)
     )
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
 import Data.Array (Array, listArray, (!))
@@ -109,9 +111,9 @@ decodeAddress cache mode here addressPositionReference addressBytes
 -- Apply
 ----------------------------------------------------------------------------
 
-applyVCDIFF :: VCDIFFPatch -> ByteString -> Either String ByteString
+applyVCDIFF :: VCDIFFPatch -> ByteString -> Either SlapError ByteString
 applyVCDIFF patch source
-  | totalSize < 0  = Left "VCDIFF: negative total target size"
+  | totalSize < 0  = Left (NegativeTargetSize LabelVCDIFF (FileSize totalSize))
   | totalSize == 0 = Right ByteString.empty
   | otherwise =
       Right $ unsafeCreate (fromIntegral totalSize) $ \outputPointer -> do

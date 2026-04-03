@@ -4,6 +4,7 @@ import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, RomCache, cachedReadFile, parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
@@ -193,16 +194,16 @@ corruptPatchCRCTests bps ups =
       -- Flip byte 10 (somewhere in the body, well before the footer)
       let corrupted = flipByte 10 patchBytes
       case parseSome corrupted of
-        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" errorMessage)
+        Left slapError -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/UPS flipped byte" $ do
       patchBytes <- ByteString.readFile ups
       let corrupted = flipByte 10 patchBytes
       case parseSome corrupted of
-        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" errorMessage)
+        Left slapError -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/BPS last data byte" $ do
@@ -211,8 +212,8 @@ corruptPatchCRCTests bps ups =
       let position = ByteString.length patchBytes - 13
       let corrupted = flipByte position patchBytes
       case parseSome corrupted of
-        Left errorMessage -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" errorMessage)
+        Left slapError -> assertBool "expected 'patch CRC mismatch'"
+          (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
   ]
   where
@@ -287,33 +288,33 @@ crossFormatRoundTripTests romCache base bps =
       baseBytes <- cachedReadFile romCache base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
-        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
             Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- cachedReadFile romCache base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
-        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
             Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- cachedReadFile romCache base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
-        Left errorMessage -> assertFailure ("parse BPS failed: " ++ errorMessage)
+        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed baseBytes
           case targetResult of
-            Left errorMessage -> assertFailure ("apply BPS failed: " ++ errorMessage)
+            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
             Right targetBytes -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
@@ -327,11 +328,11 @@ crossFormatRoundTripTests romCache base bps =
         Right patchA -> do
           -- Step 2: parse A, apply to get target, create in format B
           case parseSome patchA of
-            Left errorMessage -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ errorMessage)
+            Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
               resultA <- applyPatch parsedA baseBytes
               case resultA of
-                Left errorMessage -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ errorMessage)
+                Left slapError -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ renderSlapError slapError)
                 Right outputA -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
@@ -340,11 +341,11 @@ crossFormatRoundTripTests romCache base bps =
                     Right patchB -> do
                       -- Step 3: parse B, apply to get target, create in format C
                       case parseSome patchB of
-                        Left errorMessage -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ errorMessage)
+                        Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
                           resultB <- applyPatch parsedB baseBytes
                           case resultB of
-                            Left errorMessage -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ errorMessage)
+                            Left slapError -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                             Right outputB -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
@@ -352,11 +353,11 @@ crossFormatRoundTripTests romCache base bps =
                                 Left errorMessage -> assertFailure ("create " ++ formatC ++ " failed: " ++ errorMessage)
                                 Right patchC -> do
                                   case parseSome patchC of
-                                    Left errorMessage -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ errorMessage)
+                                    Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
                                       resultC <- applyPatch parsedC baseBytes
                                       case resultC of
-                                        Left errorMessage -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ errorMessage)
+                                        Left slapError -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                         Right outputC ->
                                           assertEqual (formatA ++ " -> " ++ formatB ++ " -> " ++ formatC ++ " output SHA1")
                                             expectedSha (sha1Hex outputC)
@@ -403,11 +404,11 @@ createRoundTripTests romCache dm4yBase dm4yBps
       baseBytes <- cachedReadFile romCacheLocal basePath
       bootBytes <- ByteString.readFile bootPath
       case parseSome bootBytes of
-        Left errorMessage -> error ("bootstrap parse failed: " ++ errorMessage)
+        Left slapError -> error ("bootstrap parse failed: " ++ renderSlapError slapError)
         Right parsed -> do
           result <- applyPatch parsed baseBytes
           case result of
-            Left errorMessage -> error ("bootstrap apply failed: " ++ errorMessage)
+            Left slapError -> error ("bootstrap apply failed: " ++ renderSlapError slapError)
             Right targetBytes -> pure (baseBytes, targetBytes)
 
     createAndVerify :: String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
@@ -419,10 +420,10 @@ createRoundTripTests romCache dm4yBase dm4yBps
         Left errorMessage -> assertFailure ("create " ++ formatString ++ " failed: " ++ errorMessage)
         Right patchBytes ->
           case parseSome patchBytes of
-            Left errorMessage -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ errorMessage)
+            Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
               result <- applyPatch parsed baseBytes
               case result of
-                Left errorMessage -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ errorMessage)
+                Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
                 Right output ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)

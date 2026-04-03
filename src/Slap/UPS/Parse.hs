@@ -10,41 +10,47 @@ module Slap.UPS.Parse
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
 import Slap.Binary (getWord32LE)
-import Slap.Checksum (CRC32(..), showCRC32)
+import Slap.Checksum (CRC32(..))
+import Slap.Error (SlapError(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
-import Slap.Measure (FileSize(..), Delta(..))
+import Slap.Measure (Length(..), FileSize(..), Delta(..))
 import Control.Monad (when)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseUPS :: ByteString -> Either String UPSPatch
+parseUPS :: ByteString -> Either SlapError UPSPatch
 parseUPS input
-  | ByteString.length input < 4 = Left "UPS: input too short"
-  | ByteString.take 4 input /= "UPS1" = Left "not a UPS file (bad magic)"
-  | ByteString.length input < 16 = Left "UPS: truncated footer"
+  | ByteString.length input < 4 =
+      Left (InputTooShort LabelUPS (Length 4) (Length (ByteString.length input)))
+  | ByteString.take 4 input /= "UPS1" =
+      Left (BadMagic LabelUPS (ByteString.take 4 input))
+  | ByteString.length input < 16 =
+      Left (InputTooShort LabelUPS (Length 16) (Length (ByteString.length input)))
   | otherwise = do
       -- Validate patch CRC
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
           actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
       if storedPatchCRC /= actualPatchCRC
-        then Left ("UPS: patch CRC mismatch (stored " ++ showCRC32 storedPatchCRC
-                    ++ ", computed " ++ showCRC32 actualPatchCRC ++ ")")
+        then Left (PatchCRCMismatch LabelUPS storedPatchCRC actualPatchCRC)
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - 12) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
-      (sourceSize, targetSize, blocks) <- runGet parseUPSBody bodyBytes
-      Right UPSPatch
-        { upsSourceSize = sourceSize
-        , upsTargetSize = targetSize
-        , upsBlocks     = blocks
-        , upsSourceCRC  = sourceCRC
-        , upsTargetCRC  = targetCRC
-        , upsPatchCRC   = storedPatchCRC
-        }
+      case runGet parseUPSBody bodyBytes of
+        Left msg -> Left (ParseError LabelUPS msg)
+        Right (sourceSize, targetSize, blocks) ->
+          Right UPSPatch
+            { upsSourceSize = sourceSize
+            , upsTargetSize = targetSize
+            , upsBlocks     = blocks
+            , upsSourceCRC  = sourceCRC
+            , upsTargetCRC  = targetCRC
+            , upsPatchCRC   = storedPatchCRC
+            }
 
 parseUPSBody :: Get (FileSize, FileSize, [UPSBlock])
 parseUPSBody = do

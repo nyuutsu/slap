@@ -13,6 +13,8 @@ module Slap.XDelta1.Parse
 
 import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..))
 import Slap.Binary (getWord32BE)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
 import Slap.Measure (Length(..), FileSize(..), Offset(..))
 import Slap.Compress (gzipInflate)
@@ -29,21 +31,21 @@ import qualified Data.IntSet as IntSet
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseXDelta1 :: ByteString -> Either String XDelta1Patch
+parseXDelta1 :: ByteString -> Either SlapError XDelta1Patch
 parseXDelta1 input
-  | ByteString.length input < 20 = Left "xdelta1: input too short"
+  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (Length 20) (Length (ByteString.length input)))
   | magic == "%XDZ004%" = parseV11 input magic "1.1"
   | magic == "%XDZ003%" = parseV11 input magic "1.0.4"
-  | magic == "%XDZ002%" = Left "xdelta1: unsupported version (v1.0)"
-  | ByteString.take 7 input == "%XDELTA" = Left "xdelta1: unsupported version (v0.14)"
-  | otherwise = Left "not an xdelta1 file (bad magic)"
+  | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
+  | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
+  | otherwise = Left (BadMagic LabelXDelta1 (ByteString.take 8 input))
   where
     magic = ByteString.take 8 input
 
-parseV11 :: ByteString -> ByteString -> String -> Either String XDelta1Patch
+parseV11 :: ByteString -> ByteString -> String -> Either SlapError XDelta1Patch
 parseV11 input expectedMagic version
-  | totalLength < 44 = Left "xdelta1: input too short"
-  | trailingMagic /= expectedMagic = Left ("xdelta1: trailing magic mismatch (expected " ++ show expectedMagic ++ ", got " ++ show trailingMagic ++ ")")
+  | totalLength < 44 = Left (InputTooShort LabelXDelta1 (Length 44) (Length totalLength))
+  | trailingMagic /= expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic trailingMagic)
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
@@ -74,15 +76,17 @@ parseV11 input expectedMagic version
       | not compressed = Right raw
       | ByteString.null raw    = Right ByteString.empty
       | otherwise      = case gzipInflate raw of
-          Left _  -> Left "xdelta1: gzip decompression failed"
+          Left _  -> Left (DecompressionFailed LabelXDelta1 "gzip")
           Right result -> Right result
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
 parseControl :: String -> ByteString -> ByteString -> ByteString -> ByteString
-             -> Either String XDelta1Patch
+             -> Either SlapError XDelta1Patch
 parseControl version controlSegment dataSegment fromName toName
-  | ByteString.length controlSegment < 28 = Left ("xdelta1: truncated control segment (need 28 bytes, have " ++ show (ByteString.length controlSegment) ++ ")")
-  | otherwise = runGet parseControlBody controlSegment
+  | ByteString.length controlSegment < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlSegment)))
+  | otherwise = case runGet parseControlBody controlSegment of
+      Left msg -> Left (ParseError LabelXDelta1 msg)
+      Right result -> Right result
   where
     parseControlBody :: Get XDelta1Patch
     parseControlBody = do

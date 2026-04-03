@@ -10,17 +10,24 @@ module Slap.APSN64.Parse
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
 import Slap.APSN64.Types
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseAPSN64 :: ByteString -> Either String APSN64Patch
+parseAPSN64 :: ByteString -> Either SlapError APSN64Patch
 parseAPSN64 input
-  | ByteString.length input < 5 = Left "APS-N64: input too short"
-  | ByteString.take 5 input /= "APS10" = Left "not an APS-N64 file (bad magic)"
-  | otherwise = runGet parseN64 input
+  | ByteString.length input < 5 =
+      Left (InputTooShort LabelAPSN64 (Length 5) (Length (ByteString.length input)))
+  | ByteString.take 5 input /= "APS10" =
+      Left (BadMagic LabelAPSN64 (ByteString.take 5 input))
+  | otherwise =
+      case runGet parseN64 input of
+        Left msg -> Left (ParseError LabelAPSN64 msg)
+        Right patch -> Right patch
 
 parseN64 :: Get APSN64Patch
 parseN64 = do

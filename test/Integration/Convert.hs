@@ -3,6 +3,7 @@ module Integration.Convert (convertTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
@@ -45,7 +46,7 @@ runConvertTest :: RomCache -> FilePath -> FilePath -> String -> String -> String
 runConvertTest romCache repo patchPath baseRel targetSha result warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
   case parseSome patchBytes of
-    Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+    Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
     Right parsed -> do
       let flags = words flagsString
           useWith = "--with" `elem` flags
@@ -89,11 +90,11 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsString f
                 when baseExists $ do
                   baseBytes <- maybe (cachedReadFile romCache basePath) pure maybeBase
                   case parseSome convertedBytes of
-                    Left errorMessage -> assertFailure ("re-parse converted failed: " ++ errorMessage)
+                    Left slapError -> assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
                       applied <- applyPatch convertedParsed baseBytes
                       case applied of
-                        Left errorMessage -> assertFailure ("apply converted failed: " ++ errorMessage)
+                        Left slapError -> assertFailure ("apply converted failed: " ++ renderSlapError slapError)
                         Right output ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 

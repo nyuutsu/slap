@@ -3,6 +3,7 @@ module Integration.Undo (undoTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch,
    RomCache, cachedReadFile)
+import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -31,12 +32,12 @@ makeUndoTest romCache repo (_, fields) = case fields of
         baseBytes  <- cachedReadFile romCache base
         patchBytes <- ByteString.readFile patch
         case parseSome patchBytes of
-          Left errorMessage -> assertFailure ("parseSome failed: " ++ errorMessage)
+          Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> do
             -- Apply
             applied <- applyPatch parsed baseBytes
             case applied of
-              Left errorMessage -> assertFailure ("apply failed: " ++ errorMessage)
+              Left slapError -> assertFailure ("apply failed: " ++ renderSlapError slapError)
               Right patchedBytes -> do
                 -- Undo
                 undone <- undoPatch parsed patchedBytes
