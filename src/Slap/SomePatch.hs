@@ -218,9 +218,9 @@ parseSome patchBytes = case detectFormat patchBytes of
         , patchRecordSummary  = RecordSummary (length records) "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
-        , patchExtractedMeta  = let desc = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
+        , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
                                 in defaultMeta
-                                  { metaDescription = if null desc then Nothing else Just desc
+                                  { metaDescription = if null description then Nothing else Just description
                                   , metaImageType   = PPF.ppfImageType patch
                                   , metaUndo        = if PPF.ppfHasUndo patch then Just True else Nothing
                                   , metaValidate    = if isJust (PPF.ppfValidation patch) then Just True else Nothing
@@ -263,7 +263,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           , [EmptyPatch label "records" | null records]
           ]
         ebpPairs = maybe [] IPS.jsonPairs (IPS.ipsEBPMeta patch)
-        nonEmptyField s = if null s then Nothing else Just s
+        nonEmptyField decoded = if null decoded then Nothing else Just decoded
         ebpMeta = defaultMeta
           { metaTitle       = IPS.jsonFieldCI ebpPairs "title" >>= nonEmptyField
           , metaAuthor      = IPS.jsonFieldCI ebpPairs "author" >>= nonEmptyField
@@ -388,9 +388,9 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let desc = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
+      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
                               in defaultMeta
-                                { metaDescription = if null desc then Nothing else Just desc }
+                                { metaDescription = if null description then Nothing else Just description }
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
             , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
@@ -419,8 +419,8 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let decode = RUP.decodeRUPField (RUP.rupPatchEncoding patch)
-                                  nonEmptyField bs = let s = decode bs
-                                                     in if null s then Nothing else Just s
+                                  nonEmptyField fieldBytes = let decoded = decode fieldBytes
+                                                              in if null decoded then Nothing else Just decoded
                                   info = RUP.rupHeader patch
                               in defaultMeta
                                 { metaTitle       = RUP.rupTitle info >>= nonEmptyField
@@ -607,8 +607,8 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchSourceNotes    = []
       , patchContents  = Nothing
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let nonEmpty bs = let s = trimNullSpace (decodeLocaleField bs)
-                                                in if null s then Nothing else Just s
+      , patchExtractedMeta  = let nonEmpty fieldBytes = let decoded = trimNullSpace (decodeLocaleField fieldBytes)
+                                                       in if null decoded then Nothing else Just decoded
                               in defaultMeta
                                 { metaTitle    = nonEmpty (DPS.dpsName patch)
                                 , metaAuthor   = nonEmpty (DPS.dpsAuthor patch)
