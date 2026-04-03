@@ -5,7 +5,7 @@ module Slap.DPS.Apply
   , takePadded
   ) where
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSPayload(..))
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..))
 import Slap.Measure (Offset(..), Length(..))
 
 import Data.ByteString (ByteString)
@@ -20,9 +20,9 @@ buildOutput source records =
   -- DPS builds output by writing chunks at specified offsets.
   -- Start with a copy of the source, then overwrite at each record's offset.
   let base = source
-      applyRecord buffer (DPSRecord _ outputOffset (PayloadData payload)) =
+      applyRecord buffer (DPSEnclosedData outputOffset payload) =
         overwriteAt buffer (fromIntegral (unOffset outputOffset)) payload
-      applyRecord buffer (DPSRecord _ outputOffset (PayloadCopy sourceOffset copyLength)) =
+      applyRecord buffer (DPSCopyFromROM outputOffset sourceOffset copyLength) =
         let chunk = takePadded (unLength copyLength) (fromIntegral (unOffset sourceOffset)) source
         in overwriteAt buffer (fromIntegral (unOffset outputOffset)) chunk
   in foldl' applyRecord base records

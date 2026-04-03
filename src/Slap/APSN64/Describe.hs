@@ -62,10 +62,10 @@ makeN64Region (APSN64Normal recordOffset recordPayload) = ExplainRegion
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
-makeN64Region (APSN64RLE rle) = ExplainRegion
-  { regionOffset     = apsN64RLEOffset rle
-  , regionSize       = Length (fromIntegral (apsN64RLERepeatCount rle))
+makeN64Region (APSN64RLE recordOffset fillValue fillCount) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (fromIntegral fillCount)
   , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill (apsN64RLEFillValue rle) (Length (fromIntegral (apsN64RLERepeatCount rle)))
-  , regionAnnotation = AnnotAt AtOffset (apsN64RLEOffset rle) [DetailRLE]
+  , regionPayload    = PayloadFill fillValue (Length (fromIntegral fillCount))
+  , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
   }

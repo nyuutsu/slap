@@ -9,7 +9,7 @@ module Slap.DPS.Parse
 -- Original C source: https://github.com/xperia64/android-rom-patcher/blob/master/jni/dpspatcher/dpspatcher.c
 -- Author: Marc de Falco (Deufeufeu); deufeufeu.free.fr is dead.
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSPayload(..), DPSMode(..),
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..),
                         toDPSStability,
                         dpsFieldWidth, dpsMetadataSize, dpsMinimumFileSize,
                         dpsVersionOffset, dpsStabilityOffset)
@@ -85,11 +85,11 @@ parseRecords = do
     record <- case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
         sourceOffset <- Offset . fromIntegral <$> Get.word32LE
-        dataLength   <- Length . fromIntegral <$> Get.word32LE
-        pure (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset dataLength))
+        copyLength   <- Length . fromIntegral <$> Get.word32LE
+        pure (DPSCopyFromROM outputOffset sourceOffset copyLength)
       _ -> do  -- EnclosedData: read length + data from patch
         dataLength  <- fromIntegral <$> Get.word32LE :: Get Int
         payload  <- getBytes (Length dataLength)
-        pure (DPSRecord EnclosedData outputOffset (PayloadData payload))
+        pure (DPSEnclosedData outputOffset payload)
     rest <- parseRecords
     pure (record : rest)

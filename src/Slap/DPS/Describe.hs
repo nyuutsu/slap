@@ -5,8 +5,7 @@ module Slap.DPS.Describe
   , makeDPSRegion
   ) where
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSMode(..), DPSStability(..))
-import qualified Slap.DPS.Types as DPS
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
@@ -44,8 +43,8 @@ dpsInfo patch = unlines $ filter (not . null) $
      , "  enclosed:  " ++ show enclosedCount
      ]
   where
-    copyCount = length [() | DPSRecord CopyFromROM _ _ <- dpsRecords patch]
-    enclosedCount = length [() | DPSRecord EnclosedData _ _ <- dpsRecords patch]
+    copyCount = length [() | DPSCopyFromROM {} <- dpsRecords patch]
+    enclosedCount = length [() | DPSEnclosedData {} <- dpsRecords patch]
 
 ----------------------------------------------------------------------------
 -- Explain
@@ -62,23 +61,21 @@ explainDPS patch = ExplainData
   where
     recordCount = length (dpsRecords patch)
     totalBytes = sum (map recordBytes (dpsRecords patch))
-    recordBytes record = case dpsRecordPayload record of
-      DPS.PayloadData payload     -> ByteString.length payload
-      DPS.PayloadCopy _ copyLength -> unLength copyLength
+    recordBytes (DPSEnclosedData _ payload)       = ByteString.length payload
+    recordBytes (DPSCopyFromROM _ _ copyLength) = unLength copyLength
 
 makeDPSRegion :: DPSRecord -> ExplainRegion
-makeDPSRegion record = case dpsRecordPayload record of
-  DPS.PayloadData payload -> ExplainRegion
-    { regionOffset     = dpsRecordOutputOffset record
-    , regionSize       = Length (ByteString.length payload)
-    , regionLabel      = "Data   "
-    , regionPayload    = PayloadWrite payload
-    , regionAnnotation = AnnotAt AtOffset (dpsRecordOutputOffset record) []
-    }
-  DPS.PayloadCopy sourceOffset copyLength -> ExplainRegion
-    { regionOffset     = dpsRecordOutputOffset record
-    , regionSize       = copyLength
-    , regionLabel      = "Copy   "
-    , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOffset (dpsRecordOutputOffset record) [DetailSource sourceOffset]
-    }
+makeDPSRegion (DPSEnclosedData outputOffset payload) = ExplainRegion
+  { regionOffset     = outputOffset
+  , regionSize       = Length (ByteString.length payload)
+  , regionLabel      = "Data   "
+  , regionPayload    = PayloadWrite payload
+  , regionAnnotation = AnnotAt AtOffset outputOffset []
+  }
+makeDPSRegion (DPSCopyFromROM outputOffset sourceOffset copyLength) = ExplainRegion
+  { regionOffset     = outputOffset
+  , regionSize       = copyLength
+  , regionLabel      = "Copy   "
+  , regionPayload    = PayloadCopy FromSource
+  , regionAnnotation = AnnotAt AtOffset outputOffset [DetailSource sourceOffset]
+  }

@@ -26,9 +26,9 @@ applyN64Record :: Handle -> APSN64Record -> IO ()
 applyN64Record handle (APSN64Normal writeOffset writePayload) = do
   seekTo handle writeOffset
   ByteString.hPut handle writePayload
-applyN64Record handle (APSN64RLE rle) = do
-  seekTo handle (apsN64RLEOffset rle)
-  ByteString.hPut handle (ByteString.replicate (fromIntegral (apsN64RLERepeatCount rle)) (apsN64RLEFillValue rle))
+applyN64Record handle (APSN64RLE writeOffset fillValue fillCount) = do
+  seekTo handle writeOffset
+  ByteString.hPut handle (ByteString.replicate (fromIntegral fillCount) fillValue)
 
 applyAPSN64Memory :: APSN64Patch -> ByteString -> ByteString
 applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \targetPointer -> do
@@ -38,11 +38,11 @@ applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \
     forM_ records $ \case
       APSN64Normal writeOffset writePayload ->
         copyByteStringRange targetPointer (offsetToInt writeOffset) writePayload 0 (ByteString.length writePayload)
-      APSN64RLE rle ->
-        fillBytes (targetPointer `plusPtr` offsetToInt (apsN64RLEOffset rle)) (apsN64RLEFillValue rle) (fromIntegral (apsN64RLERepeatCount rle))
+      APSN64RLE writeOffset fillValue fillCount ->
+        fillBytes (targetPointer `plusPtr` offsetToInt writeOffset) fillValue (fromIntegral fillCount)
   where
     sourceLength = ByteString.length source
     recordEnd (APSN64Normal recordOffset recordPayload) = offsetToInt recordOffset + ByteString.length recordPayload
-    recordEnd (APSN64RLE rle)     = offsetToInt (apsN64RLEOffset rle) + fromIntegral (apsN64RLERepeatCount rle)
+    recordEnd (APSN64RLE recordOffset _ recordCount) = offsetToInt recordOffset + fromIntegral recordCount
     outputLength = foldl' max sourceLength (map recordEnd records)
 

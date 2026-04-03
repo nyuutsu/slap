@@ -3,8 +3,6 @@
 module Slap.DPS.Types
   ( DPSPatch(..)
   , DPSRecord(..)
-  , DPSMode(..)
-  , DPSPayload(..)
   , DPSStability(..)
   , toDPSStability
   , fromDPSStability
@@ -43,18 +41,16 @@ data DPSPatch = DPSPatch
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
 
-data DPSMode = CopyFromROM | EnclosedData
-  deriving (Show, Eq)
-
-data DPSRecord = DPSRecord
-  { dpsRecordMode      :: DPSMode
-  , dpsRecordOutputOffset :: !Offset     -- write position in output
-  , dpsRecordPayload   :: DPSPayload
-  } deriving (Show)
-
-data DPSPayload
-  = PayloadCopy !Offset !Length    -- source ROM offset, copy length
-  | PayloadData !ByteString        -- embedded data
+data DPSRecord
+  = DPSCopyFromROM
+      { dpsCopyOutputOffset :: !Offset   -- write position in output
+      , dpsCopySourceOffset :: !Offset   -- source ROM offset to copy from
+      , dpsCopyLength       :: !Length   -- bytes to copy
+      }
+  | DPSEnclosedData
+      { dpsDataOutputOffset :: !Offset   -- write position in output
+      , dpsDataPayload      :: !ByteString
+      }
   deriving (Show)
 
 ----------------------------------------------------------------------------

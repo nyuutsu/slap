@@ -6,8 +6,7 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSStability, fromDPSStability, DPSRecord(..), DPSMode(..), DPSPayload(..),
-                        dpsFieldWidth)
+import Slap.DPS.Types (DPSStability, fromDPSStability, DPSRecord(..), dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 
@@ -41,27 +40,21 @@ dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modifi
     buildRecords position (Hunk rawOffset rawData : rest) =
       let intOffset = fromIntegral (unOffset rawOffset) :: Int
       in if intOffset > position
-         then DPSRecord CopyFromROM (Offset (fromIntegral position))
-                (PayloadCopy (Offset (fromIntegral position)) (Length (intOffset - position)))
-              : DPSRecord EnclosedData rawOffset (PayloadData rawData)
+         then DPSCopyFromROM (Offset (fromIntegral position))
+                (Offset (fromIntegral position)) (Length (intOffset - position))
+              : DPSEnclosedData rawOffset rawData
               : buildRecords (intOffset + ByteString.length rawData) rest
-         else DPSRecord EnclosedData rawOffset (PayloadData rawData)
+         else DPSEnclosedData rawOffset rawData
               : buildRecords (intOffset + ByteString.length rawData) rest
 
 encodeRecord :: DPSRecord -> Builder
-encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset copyLength)) =
+encodeRecord (DPSCopyFromROM outputOffset sourceOffset copyLength) =
     word8 0
     <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
     <> putWord32LE (fromIntegral (unOffset sourceOffset) :: Word32)
     <> putWord32LE (fromIntegral (unLength copyLength) :: Word32)
-encodeRecord (DPSRecord EnclosedData outputOffset (PayloadData payload)) =
+encodeRecord (DPSEnclosedData outputOffset payload) =
     word8 1
     <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
     <> putWord32LE (fromIntegral (ByteString.length payload) :: Word32)
     <> byteString payload
-encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadData payload)) =
-    -- Shouldn't happen in normal use; encode as EnclosedData
-    encodeRecord (DPSRecord EnclosedData outputOffset (PayloadData payload))
-encodeRecord (DPSRecord EnclosedData outputOffset (PayloadCopy sourceOffset copyLength)) =
-    -- Shouldn't happen in normal use; encode as CopyFromROM
-    encodeRecord (DPSRecord CopyFromROM outputOffset (PayloadCopy sourceOffset copyLength))

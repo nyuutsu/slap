@@ -384,7 +384,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     | otherwise -> do
     patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
     let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
-        expandN64 (APSN64.APSN64RLE rle) = Hunk (APSN64.apsN64RLEOffset rle) (ByteString.replicate (fromIntegral (APSN64.apsN64RLERepeatCount rle)) (APSN64.apsN64RLEFillValue rle))
+        expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
     Right SomePatch
       { patchFormat         = "APS (N64)"
       , patchInfo           = APSN64.apsN64Info patch
@@ -641,14 +641,14 @@ parseDPSBlock input = case DPS.parseDPS input of
           { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
       , patchVerification   = noVerification
       , patchUndo           = Nothing
-      , patchVerboseLines   = numbered records $ \record -> case DPS.dpsRecordPayload record of
-          DPS.PayloadData payload ->
+      , patchVerboseLines   = numbered records $ \case
+          DPS.DPSEnclosedData outputOffset payload ->
             "Write " ++ show (ByteString.length payload) ++ " bytes at 0x"
-            ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
-          DPS.PayloadCopy sourceOffset copyLength ->
+            ++ padHex 8 (unOffset outputOffset)
+          DPS.DPSCopyFromROM outputOffset sourceOffset copyLength ->
             "Copy " ++ show (unLength copyLength) ++ " bytes from 0x"
             ++ padHex 8 (unOffset sourceOffset) ++ " to 0x"
-            ++ padHex 8 (unOffset (DPS.dpsRecordOutputOffset record))
+            ++ padHex 8 (unOffset outputOffset)
       , patchWarnings       = ["empty patch (0 records)" | null records]
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
