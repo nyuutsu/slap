@@ -38,7 +38,8 @@ module Integration.Helpers
   ) where
 
 import Slap.Binary (sha1)
-import Slap.Error (SlapError, renderSlapError, renderSlapWarning)
+import Slap.Checksum (SHA1Hash(..))
+import Slap.Error (SlapError, CreateResult(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
@@ -82,7 +83,7 @@ cachedReadFile reference filePath = do
 sha1Hex :: ByteString.ByteString -> String
 sha1Hex inputBytes =
   let digest = sha1 inputBytes
-  in concatMap (\byte -> padHex 2 (fromIntegral byte :: Int64)) (ByteString.unpack digest)
+  in concatMap (\byte -> padHex 2 (fromIntegral byte :: Int64)) (ByteString.unpack (unSHA1Hash digest))
 
 ----------------------------------------------------------------------------
 -- Spec/suite parsing
@@ -203,7 +204,7 @@ attemptConvert
   -> CreateFormat
   -> Maybe ByteString.ByteString  -- ^ base ROM (--with)
   -> CreateMeta           -- ^ metadata
-  -> IO (Either String (ByteString.ByteString, [String]))
+  -> IO (Either String CreateResult)
 attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
     targetResult <- applyPatch somePatch baseBytes
@@ -211,13 +212,13 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right targetBytes ->
         case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
-          Left slapErr     -> pure (Left (renderSlapError slapErr))
-          Right (result, warnings) -> pure (Right (result, map renderSlapWarning warnings))
+          Left slapErr -> pure (Left (renderSlapError slapErr))
+          Right result -> pure (Right result)
   Nothing -> case patchContents somePatch of
     Nothing -> pure (Left (needWithMsg somePatch))
     Just patchContent -> pure $ case convertDirect patchContent targetFormat meta of
-      Left slapErr              -> Left (renderSlapError slapErr)
-      Right (result, warnings) -> Right (result, map renderSlapWarning warnings)
+      Left slapErr -> Left (renderSlapError slapErr)
+      Right result -> Right result
   where
     needWithMsg thePatch =
       "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"

@@ -3,6 +3,7 @@
 module Slap.Error
   ( SlapError(..)
   , SlapWarning(..)
+  , CreateResult(..)
   , FieldName(..)
   , fieldNameLabel
   , renderSlapError
@@ -165,6 +166,15 @@ data SlapWarning
   | OffsetShiftApplied
 
   deriving (Show, Eq)
+
+----------------------------------------------------------------------------
+-- CreateResult
+----------------------------------------------------------------------------
+
+data CreateResult = CreateResult
+  { resultBytes    :: !ByteString
+  , resultWarnings :: ![SlapWarning]
+  } deriving (Show)
 
 ----------------------------------------------------------------------------
 -- renderSlapError

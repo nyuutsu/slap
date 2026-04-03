@@ -6,7 +6,7 @@ module Slap.BPS.Parse
   , parseActions
   ) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSAction(..), decodeSignedVarint)
+import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..))
@@ -41,18 +41,18 @@ parseBPS input
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
       case runGet parseBPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelBPS errorMessage)
-        Right (sourceSize, targetSize, metadata, actions) ->
+        Right body ->
           Right BPSPatch
-            { bpsSourceSize = sourceSize
-            , bpsTargetSize = targetSize
-            , bpsMetadata   = metadata
-            , bpsActions    = actions
+            { bpsSourceSize = bpsBodySourceSize body
+            , bpsTargetSize = bpsBodyTargetSize body
+            , bpsMetadata   = bpsBodyMetadata body
+            , bpsActions    = bpsBodyActions body
             , bpsSourceCRC  = sourceCRC
             , bpsTargetCRC  = targetCRC
             , bpsPatchCRC   = storedPatchCRC
             }
 
-parseBPSBody :: Get (FileSize, FileSize, ByteString, [BPSAction])
+parseBPSBody :: Get BPSBody
 parseBPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
@@ -63,7 +63,12 @@ parseBPSBody = do
   metadataLength <- fromIntegral <$> byuuVarint
   metadata       <- getBytes (Length metadataLength)
   actions <- parseActions
-  pure (sourceSize, targetSize, metadata, actions)
+  pure BPSBody
+    { bpsBodySourceSize = sourceSize
+    , bpsBodyTargetSize = targetSize
+    , bpsBodyMetadata   = metadata
+    , bpsBodyActions    = actions
+    }
 
 parseActions :: Get [BPSAction]
 parseActions = do

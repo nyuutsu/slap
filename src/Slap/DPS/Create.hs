@@ -6,11 +6,11 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSStability, fromDPSStability, DPSRecord(..), dpsFieldWidth)
+import Slap.DPS.Types (DPSStability, fromDPSStability, DPSFormatVersion(..), fromDPSFormatVersion, DPSRecord(..), dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
 import Data.ByteString (ByteString)
@@ -21,7 +21,7 @@ import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> (ByteString, [SlapWarning])
+createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> CreateResult
 createDPS original modified name author version stability =
     let (nameBytes, nameWarnings)       = encodeField FieldPatchName name
         (authorBytes, authorWarnings)   = encodeField FieldAuthor author
@@ -31,10 +31,10 @@ createDPS original modified name author version stability =
             <> byteString authorBytes
             <> byteString versionBytes
             <> word8 (fromDPSStability stability)
-            <> word8 1
+            <> word8 (fromDPSFormatVersion DPSVersion1)
             <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
             <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
-    in (patchBytes, nameWarnings ++ authorWarnings ++ versionWarnings)
+    in CreateResult patchBytes (nameWarnings ++ authorWarnings ++ versionWarnings)
   where
     encodeField fieldName fieldString =
       let result = encodeBoundedLocale dpsFieldWidth fieldString

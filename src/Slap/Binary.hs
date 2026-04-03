@@ -47,7 +47,7 @@ import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
-import Slap.Checksum (Adler32)
+import Slap.Checksum (Adler32, MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyAdler32)
 import Slap.Measure (Offset(..), Hunk(..))
 
@@ -166,11 +166,11 @@ putByuuVarint = encode
 -- Cryptographic hashes
 ----------------------------------------------------------------------------
 
-md5 :: ByteString -> ByteString
-md5 = ByteArray.convert . Hash.hashWith Hash.MD5
+md5 :: ByteString -> MD5Hash
+md5 = MD5Hash . ByteArray.convert . Hash.hashWith Hash.MD5
 
-sha1 :: ByteString -> ByteString
-sha1 = ByteArray.convert . Hash.hashWith Hash.SHA1
+sha1 :: ByteString -> SHA1Hash
+sha1 = SHA1Hash . ByteArray.convert . Hash.hashWith Hash.SHA1
 
 sha256 :: ByteString -> ByteString
 sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256

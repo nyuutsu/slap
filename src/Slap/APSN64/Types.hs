@@ -6,10 +6,13 @@ module Slap.APSN64.Types
   , APSN64Header(..)
   , APSPatchType(..)
   , APSImageFormat(..)
+  , APSRecordEncoding(..)
   , toAPSPatchType
   , fromAPSPatchType
   , toAPSImageFormat
   , fromAPSImageFormat
+  , toAPSRecordEncoding
+  , fromAPSRecordEncoding
     -- * Named constants
   , apsN64DescriptionWidth
   ) where
@@ -43,12 +46,25 @@ fromAPSImageFormat V64Format              = 0
 fromAPSImageFormat Z64Format              = 1
 fromAPSImageFormat (UnknownImageFormat byte) = byte
 
+data APSRecordEncoding
+  = APSDefaultRecordEncoding
+  | APSUnknownRecordEncoding !Word8
+  deriving (Show, Eq)
+
+toAPSRecordEncoding :: Word8 -> APSRecordEncoding
+toAPSRecordEncoding 0 = APSDefaultRecordEncoding
+toAPSRecordEncoding byte = APSUnknownRecordEncoding byte
+
+fromAPSRecordEncoding :: APSRecordEncoding -> Word8
+fromAPSRecordEncoding APSDefaultRecordEncoding        = 0
+fromAPSRecordEncoding (APSUnknownRecordEncoding byte) = byte
+
 data APSN64Patch = APSN64Patch APSN64Header [APSN64Record]
   deriving (Show)
 
 data APSN64Header = APSN64Header
   { apsN64PatchType   :: APSPatchType
-  , apsN64Encoding    :: Word8        -- encoding method byte (0 in all known patches)
+  , apsN64Encoding    :: APSRecordEncoding
   , apsN64Description :: ByteString   -- 50 bytes
   , apsN64ImageFormat :: Maybe APSImageFormat
   , apsN64CartId      :: Maybe ByteString  -- 2 bytes

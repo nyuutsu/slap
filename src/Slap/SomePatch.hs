@@ -85,7 +85,7 @@ import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe, isJust)
-import Slap.Checksum (CRC32, CRC16, Adler32)
+import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -104,10 +104,10 @@ newtype ApplyStrategy = InMemory
 -- All fields are optional; formats populate whichever they carry.
 data Verification = Verification
   { verifySourceCRC32  :: Maybe CRC32
-  , verifySourceMD5    :: Maybe ByteString.ByteString
-  , verifySourceSHA1   :: Maybe ByteString.ByteString
+  , verifySourceMD5    :: Maybe MD5Hash
+  , verifySourceSHA1   :: Maybe SHA1Hash
   , verifyTargetCRC32  :: Maybe CRC32
-  , verifyTargetMD5    :: Maybe ByteString.ByteString
+  , verifyTargetMD5    :: Maybe MD5Hash
   , verifySourceBlocks  :: [BlockCheck]
   , verifyTargetBlocks  :: [BlockCheck]
   , verifyPPFBlock      :: Maybe ValidationBlock
@@ -193,18 +193,17 @@ parseSome patchBytes = case detectFormat patchBytes of
     | Yay0.isYay0 patchBytes -> parseYay0Container patchBytes
     | otherwise -> Left UnrecognizedFormat
 
-  Just (PatchDirect FormatPPF) -> case PPF.parsePatch patchBytes of
-    Left errorMessage -> Left errorMessage
-    Right patch  ->
-      let records = PPF.ppfRecords patch
-          hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
-          ppfVerification = noVerification
+  Just (PatchDirect FormatPPF) -> do
+    patch <- PPF.parsePatch patchBytes
+    let records = PPF.ppfRecords patch
+        hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
+        ppfVerification = noVerification
             { verifyPPFBlock = case PPF.ppfValidation patch of
                 Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
                 Nothing  -> Nothing
             , verifyFileSize = PPF.ppfFileSize patch
             }
-      in Right SomePatch
+    Right SomePatch
         { patchFormat         = ppfLabel (PPF.ppfVersion patch)
         , patchExplain        = PPF.explainPPF patch
         , patchIsDifferential = False
@@ -401,8 +400,8 @@ parseSome patchBytes = case detectFormat patchBytes of
 
   Just (PatchDiff FormatRUP) -> do
     patch <- RUP.parseRUP patchBytes
-    let filterZero (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
-        filterZero other = other
+    let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
+        filterZeroMD5 other = fmap MD5Hash other
     Right SomePatch
       { patchFormat         = LabelRUP
       , patchExplain        = RUP.explainRUP patch
@@ -411,8 +410,8 @@ parseSome patchBytes = case detectFormat patchBytes of
             { inMemoryApply = \source -> pure (Right (RUP.applyRUPMemory patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-          { verifySourceMD5 = filterZero (RUP.rupSourceMD5 patch)
-          , verifyTargetMD5 = filterZero (RUP.rupTargetMD5 patch)
+          { verifySourceMD5 = filterZeroMD5 (RUP.rupSourceMD5 patch)
+          , verifyTargetMD5 = filterZeroMD5 (RUP.rupTargetMD5 patch)
           }
       , patchWarnings       = [EmptyPatch LabelRUP "records" | null (RUP.rupRecords patch)]
       , patchRecordSummary  = RecordSummary (length (RUP.rupRecords patch)) "records"
@@ -517,9 +516,9 @@ parseSome patchBytes = case detectFormat patchBytes of
     let fileSources = filter (not . XDelta1.xdelta1SourceIsData) (XDelta1.xdelta1Sources patch)
         xdeltaVerification = noVerification
           { verifySourceMD5 = case fileSources of
-              (entry:_) -> Just (XDelta1.xdelta1SourceMD5 entry)
+              (entry:_) -> Just (MD5Hash (XDelta1.xdelta1SourceMD5 entry))
               []        -> Nothing
-          , verifyTargetMD5 = Just (XDelta1.xdelta1ToMD5 patch)
+          , verifyTargetMD5 = Just (MD5Hash (XDelta1.xdelta1ToMD5 patch))
           }
     Right SomePatch
       { patchFormat         = LabelXDelta1

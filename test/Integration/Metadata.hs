@@ -1,7 +1,7 @@
 module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
-import Slap.Error (renderSlapError)
+import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
@@ -53,7 +53,7 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
       convResult <- attemptConvert original format Nothing meta
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
-        Right (convertedBytes, _) -> case parseSome convertedBytes of
+        Right (CreateResult convertedBytes _) -> case parseSome convertedBytes of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
             let originalInfo = renderSummary Nothing (patchExplain original)

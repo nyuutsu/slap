@@ -35,9 +35,9 @@ rupMeta patch = concat
   , overflowField
   ]
   where
-    patchEncoding = rupPatchEncoding patch
+    encoding = rupPatchEncoding patch
     optionalField _ Nothing = []
-    optionalField label (Just value) = [MetaField label (decodeRUPField patchEncoding value)]
+    optionalField label (Just value) = [MetaField label (decodeRUPField encoding value)]
 
     romTypeField
       | rupRomType patch == 0 = []

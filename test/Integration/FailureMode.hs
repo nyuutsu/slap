@@ -4,7 +4,7 @@ import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, RomCache, cachedReadFile, parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
-import Slap.Error (renderSlapError)
+import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
@@ -325,7 +325,7 @@ crossFormatRoundTripTests romCache base bps =
       createFormatA <- parseFormat formatA
       case createFromMemory createFormatA baseBytes targetBytes defaultMeta Nothing of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
-        Right (patchA, _) -> do
+        Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
           case parseSome patchA of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
@@ -338,7 +338,7 @@ crossFormatRoundTripTests romCache base bps =
                   createFormatB <- parseFormat formatB
                   case createFromMemory createFormatB baseBytes outputA defaultMeta Nothing of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
-                    Right (patchB, _) -> do
+                    Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
                       case parseSome patchB of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
@@ -351,7 +351,7 @@ crossFormatRoundTripTests romCache base bps =
                               createFormatC <- parseFormat formatC
                               case createFromMemory createFormatC baseBytes outputB defaultMeta Nothing of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
-                                Right (patchC, _) -> do
+                                Right (CreateResult patchC _) -> do
                                   case parseSome patchC of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
@@ -418,7 +418,7 @@ createRoundTripTests romCache dm4yBase dm4yBps
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
       case createFromMemory createFormat baseBytes targetBytes defaultMeta Nothing of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
-        Right (patchBytes, _) ->
+        Right (CreateResult patchBytes _) ->
           case parseSome patchBytes of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do

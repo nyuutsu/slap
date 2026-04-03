@@ -2,6 +2,7 @@
 
 module Slap.BPS.Types
   ( BPSAction(..)
+  , BPSBody(..)
   , BPSPatch(..)
   , decodeSignedVarint
   ) where
@@ -18,6 +19,13 @@ data BPSAction
   | SourceCopy { sourceCopyLength :: !Length, sourceCopyDelta :: !Delta }
   | TargetCopy { targetCopyLength :: !Length, targetCopyDelta :: !Delta }
   deriving (Show)
+
+data BPSBody = BPSBody
+  { bpsBodySourceSize :: !FileSize
+  , bpsBodyTargetSize :: !FileSize
+  , bpsBodyMetadata   :: !ByteString
+  , bpsBodyActions    :: ![BPSAction]
+  } deriving (Show)
 
 data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize

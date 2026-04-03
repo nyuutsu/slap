@@ -42,8 +42,8 @@ import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.PCHTXT.Apply as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
-import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError, renderSlapError, renderSlapWarning)
+import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
+import Slap.Error (SlapError, CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
@@ -243,7 +243,7 @@ prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case IPS.parseIPS patch of
+    Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
@@ -263,7 +263,7 @@ prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case IPS.parseIPS patch of
+    Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
@@ -350,7 +350,7 @@ prop_ips32 :: Property
 prop_ips32 = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case IPS.parseIPS patch of
+    Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
@@ -360,7 +360,7 @@ prop_ebp :: Property
 prop_ebp = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case IPS.parseIPS patch of
+    Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applyViaFile IPS.applyIPS parsed source
@@ -371,7 +371,7 @@ prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case PPF.parsePatch patch of
+    Right (CreateResult patch _) -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> PPF.applyPatchMemory parsed source === target
 
@@ -379,7 +379,7 @@ prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case PMSR.parsePMSR patch of
+    Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile PMSR.applyPMSR parsed source
@@ -389,7 +389,7 @@ prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case NINJA1.parseNINJA1 patch of
+    Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile NINJA1.applyNINJA1 parsed source
@@ -400,7 +400,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
   case createFromMemory (CreateDirect CreateNINJA1) source source defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case NINJA1.parseNINJA1 patch of
+    Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
          NINJA1.ninja1SourceCRC parsed === Just (rustyCRC32 source) .&&.
@@ -410,7 +410,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
-  let (patch, _) = DPS.createDPS source target "" "" "" DPS.DPSStable
+  let patch = resultBytes (DPS.createDPS source target "" "" "" DPS.DPSStable)
   in case DPS.parseDPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> DPS.applyDPS parsed source === target
@@ -430,15 +430,15 @@ prop_rupHashes = forAll genPair $ \(source, target) ->
   in case RUP.parseRUP patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
-         RUP.rupSourceMD5 parsed === Just (md5 source) .&&.
-         RUP.rupTargetMD5 parsed === Just (md5 target)
+         RUP.rupSourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
+         RUP.rupTargetMD5 parsed === Just (unMD5Hash (md5 target))
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case PCHTXT.parsePCHTXT patch of
+    Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile PCHTXT.applyPCHTXT parsed source
@@ -449,7 +449,7 @@ prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (patch, _) -> case APSN64.parseAPSN64 patch of
+    Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile APSN64.applyAPSN64 parsed source
@@ -482,7 +482,7 @@ prop_identity :: CreateFormat -> Property
 prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
   case createFromMemory format source source defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> case parseSome patch of
+    Right (CreateResult patch _) -> case parseSome patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applySomePatch parsed source
@@ -515,7 +515,7 @@ prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
   case createFromMemory (CreateDirect CreatePPF3) source target (defaultMeta { metaUndo = Just True }) Nothing of
     Left _ -> discard
-    Right (patch, _) -> case PPF.parsePatch patch of
+    Right (CreateResult patch _) -> case PPF.parsePatch patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         let applied = PPF.applyPatchMemory parsed source
@@ -536,8 +536,8 @@ fullContents = PatchContents
   { contentsRecords     = [Hunk (Offset 0) (ByteString.pack [0xFF])]
   , contentsDescription = Just (ByteString.pack [0x74, 0x65, 0x73, 0x74])
   , contentsSourceCRC32 = Just (CRC32 0xDEADBEEF)
-  , contentsSourceMD5   = Just (ByteString.replicate 16 0xAA)
-  , contentsSourceSHA1  = Just (ByteString.replicate 20 0xBB)
+  , contentsSourceMD5   = Just (MD5Hash (ByteString.replicate 16 0xAA))
+  , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))
   , contentsDestinationSize    = Just (FileSize 1024)
   , contentsValidation  = Just (ByteString.replicate 1024 0)
   , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
@@ -651,7 +651,7 @@ prop_ipsSentinelWithSource =
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
   in case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
-       Right (patch, _) -> case IPS.parseIPS patch of
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
          Right parsed -> ioProperty $ do
            result <- applyViaFile IPS.applyIPS parsed source
@@ -722,19 +722,19 @@ prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated IPS.parseIPS patch
+    Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
 prop_ips32Trunc = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated IPS.parseIPS patch
+    Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
 prop_ebpTrunc = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated IPS.parseIPS patch
+    Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 -- | EBP JSON metadata must round-trip non-ASCII characters through UTF-8.
 test_ebpUtf8 :: IO ()
@@ -753,23 +753,23 @@ prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated PPF.parsePatch patch
+    Right (CreateResult patch _) -> truncated PPF.parsePatch patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated PMSR.parsePMSR patch
+    Right (CreateResult patch _) -> truncated PMSR.parsePMSR patch
 
 prop_ninja1Trunc :: Property
 prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated NINJA1.parseNINJA1 patch
+    Right (CreateResult patch _) -> truncated NINJA1.parseNINJA1 patch
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
-  truncated DPS.parseDPS (fst (DPS.createDPS source target "" "" "" DPS.DPSStable))
+  truncated DPS.parseDPS (resultBytes (DPS.createDPS source target "" "" "" DPS.DPSStable))
 
 prop_rupTrunc :: Property
 prop_rupTrunc = forAll genPair $ \(source, target) ->
@@ -786,8 +786,8 @@ prop_rupUTF8RoundTrip = forAll genPair $ \(source, target) ->
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
-        fmap (RUP.decodeRUPField 1) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
+        fmap (RUP.decodeRUPField RUP.PatchEncodingUTF8) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
+        fmap (RUP.decodeRUPField RUP.PatchEncodingUTF8) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
 
 -- Round-trip with ASCII metadata using system encoding
 prop_rupSystemRoundTrip :: Property
@@ -798,8 +798,8 @@ prop_rupSystemRoundTrip = forAll genPair $ \(source, target) ->
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        fmap (RUP.decodeRUPField 0) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
-        fmap (RUP.decodeRUPField 0) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
+        fmap (RUP.decodeRUPField RUP.PatchEncodingSystem) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
+        fmap (RUP.decodeRUPField RUP.PatchEncodingSystem) (RUP.rupAuthor (RUP.rupHeader parsed)) === Just "slap"
 
 -- Non-ASCII Latin-1 characters (accented) round-trip through UTF-8
 prop_rupNonAsciiUTF8 :: Property
@@ -810,7 +810,7 @@ prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
+        fmap (RUP.decodeRUPField RUP.PatchEncodingUTF8) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
 -- Truncation: title whose UTF-8 encoding exceeds 256 bytes is silently truncated
 prop_rupFieldOverflow :: Property
@@ -836,7 +836,7 @@ prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
   let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> RUP.rupPatchEncoding parsed === 1
+      Right parsed -> RUP.rupPatchEncoding parsed === RUP.PatchEncodingUTF8
 
 -- PATCH_ENC byte is 0 for system encoding
 prop_rupPatchEncByteSystem :: Property
@@ -844,7 +844,7 @@ prop_rupPatchEncByteSystem = forAll genPair $ \(source, target) ->
   let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> RUP.rupPatchEncoding parsed === 0
+      Right parsed -> RUP.rupPatchEncoding parsed === RUP.PatchEncodingSystem
 
 -- Read path: PATCH_ENC=1 patch decodes non-ASCII content correctly
 prop_rupUTF8Decode :: Property
@@ -855,13 +855,13 @@ prop_rupUTF8Decode = forAll genPair $ \(source, target) ->
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
+        fmap (RUP.decodeRUPField RUP.PatchEncodingUTF8) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated APSN64.parseAPSN64 patch
+    Right (CreateResult patch _) -> truncated APSN64.parseAPSN64 patch
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(source, target) ->
@@ -875,7 +875,7 @@ prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta Nothing of
     Left _ -> discard
-    Right (patch, _) -> truncated PCHTXT.parsePCHTXT patch
+    Right (CreateResult patch _) -> truncated PCHTXT.parsePCHTXT patch
 
 -- | Parse escapes.pchtxt: exercises quoted string escapes (\n, \t, \\, \").
 parsePchtxtEscapes :: IO ()

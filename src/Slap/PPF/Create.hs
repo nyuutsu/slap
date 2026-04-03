@@ -5,7 +5,7 @@ module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 import Slap.PPF.Types (ImageType(..), fromImageType, ppfDescriptionWidth)
 import Slap.Measure (Offset(..), Length(..), Hunk(..), UndoHunk(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
 import qualified Data.ByteString as ByteString
@@ -14,14 +14,14 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Maybe (isJust)
 
-padDescription :: String -> (ByteString, [SlapWarning])
+padDescription :: String -> CreateResult
 padDescription text =
   let result = encodeBoundedLocale ppfDescriptionWidth text
       warnings = case boundedTruncation result of
         Nothing -> []
         Just info -> [FieldTruncated LabelPPF3 FieldDescription
                        (Length (truncatedFrom info)) (Length (truncatedTo info))]
-  in (boundedField result, warnings)
+  in CreateResult (boundedField result) warnings
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> ImageType -> Builder
 buildHeader description blockCheck hasUndo validationBlock imageType =
@@ -49,18 +49,18 @@ encodePPF3 :: [Hunk]
            -> Maybe [UndoHunk]
            -> Maybe ByteString
            -> ImageType
-           -> (ByteString, [SlapWarning])
+           -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
-  let (descriptionBytes, descriptionWarnings) = padDescription description
+  let descResult = padDescription description
       hasValidate = isJust validationBlock
       hasUndo     = isJust undoHunks
       validationBytes = maybe ByteString.empty id validationBlock
-      header      = buildHeader descriptionBytes hasValidate hasUndo
+      header      = buildHeader (resultBytes descResult) hasValidate hasUndo
                       validationBytes imageType
       body = case undoHunks of
         Just hunks -> foldMap (encodeUndoRecord True) hunks
         Nothing    -> foldMap encodeWriteRecord records
-  in (LazyByteString.toStrict (toLazyByteString (header <> body)), descriptionWarnings)
+  in CreateResult (LazyByteString.toStrict (toLazyByteString (header <> body))) (resultWarnings descResult)
 
 -- | Encode a write record (no undo data).
 encodeWriteRecord :: Hunk -> Builder

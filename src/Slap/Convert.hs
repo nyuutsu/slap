@@ -42,13 +42,13 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
-import Slap.Checksum (CRC32(..), showCRC32)
+import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..), showCRC32)
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
                       narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
-import Slap.Error (SlapError(..), SlapWarning(..))
+import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..))
 import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
@@ -78,8 +78,8 @@ data PatchContents = PatchContents
   { contentsRecords     :: [Hunk]
   , contentsDescription :: Maybe ByteString.ByteString
   , contentsSourceCRC32 :: Maybe CRC32
-  , contentsSourceMD5   :: Maybe ByteString.ByteString
-  , contentsSourceSHA1  :: Maybe ByteString.ByteString
+  , contentsSourceMD5   :: Maybe MD5Hash
+  , contentsSourceSHA1  :: Maybe SHA1Hash
   , contentsDestinationSize    :: Maybe FileSize
   , contentsValidation  :: Maybe ByteString.ByteString
   , contentsUndoData    :: Maybe [UndoHunk]
@@ -357,11 +357,11 @@ fieldNote contents field = case field of
     | Just crc <- contentsSourceCRC32 contents, crc /= CRC32 0 ->
       [FieldDropped FSourceCRC32 ("0x" ++ showCRC32 crc)]
   FSourceMD5
-    | Just md5Hash <- contentsSourceMD5 contents, not (ByteString.all (== 0) md5Hash) ->
-      [FieldDropped FSourceMD5 (hexByteString md5Hash)]
+    | Just (MD5Hash hash) <- contentsSourceMD5 contents, not (ByteString.all (== 0) hash) ->
+      [FieldDropped FSourceMD5 (hexByteString hash)]
   FSourceSHA1
-    | Just sha1Hash <- contentsSourceSHA1 contents, not (ByteString.all (== 0) sha1Hash) ->
-      [FieldDropped FSourceSHA1 (hexByteString sha1Hash)]
+    | Just (SHA1Hash hash) <- contentsSourceSHA1 contents, not (ByteString.all (== 0) hash) ->
+      [FieldDropped FSourceSHA1 (hexByteString hash)]
   FDescription
     | Just description <- contentsDescription contents
     , not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
@@ -410,7 +410,7 @@ fieldNote contents field = case field of
 
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> CreateMeta
-              -> Either SlapError (ByteString.ByteString, [SlapWarning])
+              -> Either SlapError CreateResult
 convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
 convertDirect contents (CreateDirect target) meta = do
   let includeUndo = fromMaybe (isJust (contentsUndoData contents)) (metaUndo meta)
@@ -422,8 +422,11 @@ convertDirect contents (CreateDirect target) meta = do
       -- Full limits including sentinel: convertDirect has no source bytes,
       -- so avoidSentinel can't fix collisions at encode time.
       let notes = conversionNotes contents target spec meta
-      (result, encodeWarnings) <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
-      Right (result, notes ++ encodeWarnings)
+      encoded <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
+      Right CreateResult
+        { resultBytes    = resultBytes encoded
+        , resultWarnings = notes ++ resultWarnings encoded
+        }
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
@@ -436,14 +439,14 @@ encodingLimits _           = Nothing
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta
-             -> Maybe EncodingLimits -> Either SlapError (ByteString.ByteString, [SlapWarning])
+             -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
-    Right (IPS.encodeIPS source records (contentsTruncation contents), [])
+    Right (CreateResult (IPS.encodeIPS source records (contentsTruncation contents)) [])
   CreateIPS32 -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
-    Right (IPS.encodeIPS32 source records (contentsTruncation contents), [])
+    Right (CreateResult (IPS.encodeIPS32 source records (contentsTruncation contents)) [])
   CreateEBP -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
     -- Pass through raw EBP JSON when metadata values match what the JSON
@@ -461,37 +464,36 @@ encodeDirect contents source target meta limits = case target of
                then Just raw
                else Nothing
     Right $ case passthrough of
-      Just raw -> (IPS.encodeEBPRaw source records (contentsTruncation contents) raw, [])
-      Nothing  -> (IPS.encodeEBP source records (contentsTruncation contents)
-                    ebpTitle ebpAuthor description, [])
+      Just raw -> CreateResult (IPS.encodeEBPRaw source records (contentsTruncation contents) raw) []
+      Nothing  -> CreateResult (IPS.encodeEBP source records (contentsTruncation contents)
+                    ebpTitle ebpAuthor description) []
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
-    let (base, encodeWarnings) = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
-                  (contentsUndoData contents) (contentsValidation contents) imageType
+    let ppfResult = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
+                      (contentsUndoData contents) (contentsValidation contents) imageType
     in Right $ case contentsFileIdDiz contents of
-         Nothing  -> (base, encodeWarnings)
-         Just diz -> (base <> PPF.encodeFileIdDiz diz, encodeWarnings)
+         Nothing  -> ppfResult
+         Just diz -> ppfResult { resultBytes = resultBytes ppfResult <> PPF.encodeFileIdDiz diz }
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
-        md5Hash  = fromMaybe (ByteString.replicate 16 0) (contentsSourceMD5 contents)
-        sha1Hash = fromMaybe (ByteString.replicate 20 0) (contentsSourceSHA1 contents)
-    Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
-             (fromMaybe False (contentsNINJA1Compressed contents)), [])
+        md5Hash  = unMD5Hash (fromMaybe (MD5Hash (ByteString.replicate 16 0)) (contentsSourceMD5 contents))
+        sha1Hash = unSHA1Hash (fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents))
+    Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
+             (fromMaybe False (contentsNINJA1Compressed contents))) [])
   CreatePMSR -> do
     records <- narrow (contentsRecords contents)
-    Right (PMSR.encodePMSR records, [])
+    Right (CreateResult (PMSR.encodePMSR records) [])
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
-    Just blocks -> Right (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription, [])
+    Just blocks -> Right (CreateResult (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription) [])
     Nothing -> do
       records <- narrow (contentsRecords contents)
-      Right (PCHTXT.encodePCHTXT records pchtxtDescription, [])
+      Right (CreateResult (PCHTXT.encodePCHTXT records pchtxtDescription) [])
   CreateAPSN64 -> do
     records <- narrow (contentsRecords contents)
     case contentsDestinationSize contents of
       Just targetSize ->
-        let (patchBytes, encodeWarnings) = APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription
-        in Right (patchBytes, encodeWarnings)
+        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
       Nothing -> error "unreachable: canConvert verified FDestinationSize"
   where
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
@@ -523,7 +525,7 @@ encodeDirect contents source target meta limits = case target of
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
 createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
-                 -> CreateMeta -> Maybe PatchContents -> Either SlapError (ByteString.ByteString, [SlapWarning])
+                 -> CreateMeta -> Maybe PatchContents -> Either SlapError CreateResult
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
       -- Source bytes available: avoidSentinel handles sentinel collisions
@@ -531,13 +533,12 @@ createFromMemory (CreateDirect format) source target meta sourceContents =
       strippedLimits = fmap (\lim -> lim { sentinelOffset = Nothing }) (encodingLimits format)
   in encodeDirect contents source format meta strippedLimits
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
-  CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)), [])
-  CreateUPS    -> Right (UPS.createUPS source target, [])
-  CreateDPS    -> let (patchBytes, dpsWarnings) = DPS.createDPS source target
+  CreateBPS    -> Right (CreateResult (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))) [])
+  CreateUPS    -> Right (CreateResult (UPS.createUPS source target) [])
+  CreateDPS    -> Right (DPS.createDPS source target
                        (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                        (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
-                       (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable)
-                 in Right (patchBytes, dpsWarnings)
+                       (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
   CreateRUP    ->
     let -- When source patch has opaque description bytes, detect encoding
         -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
@@ -549,10 +550,10 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
             _ -> metaPatchEncoding meta
         adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
         (rupInfo, truncWarnings) = prepareRUP adjustedMeta
-    in Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType adjustedMeta)) detectedEncoding,
+    in Right (CreateResult (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType adjustedMeta)) detectedEncoding)
               truncWarnings)
-  CreateAPSGBA -> Right (APSGBA.createAPSGBA source target, [])
-  CreateGDIFF  -> Right (GDIFF.createGDIFF source target, [])
+  CreateAPSGBA -> Right (CreateResult (APSGBA.createAPSGBA source target) [])
+  CreateGDIFF  -> Right (CreateResult (GDIFF.createGDIFF source target) [])
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,

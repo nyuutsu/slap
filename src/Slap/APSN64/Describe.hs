@@ -17,7 +17,8 @@ import qualified Data.ByteString as ByteString
 apsN64Meta :: APSN64Patch -> [MetaField]
 apsN64Meta (APSN64Patch header _) = concat
   [ [MetaField "patch type" (patchTypeName (apsN64PatchType header))]
-  , [MetaField "encoding" (show (apsN64Encoding header)) | apsN64Encoding header /= 0]
+  , [MetaField "encoding" (show (fromAPSRecordEncoding (apsN64Encoding header)))
+    | apsN64Encoding header /= APSDefaultRecordEncoding]
   , descriptionField (apsN64Description header)
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)

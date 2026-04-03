@@ -11,7 +11,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
-import Slap.Checksum (showCRC32)
+import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..))
 
@@ -28,11 +28,11 @@ ninja1Meta patch = concat
       Nothing  -> []
       Just crc -> [MetaField "source CRC" ("0x" ++ showCRC32 crc)]
   , case ninja1SourceMD5 patch of
-      Nothing   -> []
-      Just hash -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Nothing              -> []
+      Just (MD5Hash hash)  -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
   , case ninja1SourceSHA1 patch of
-      Nothing   -> []
-      Just hash -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Nothing              -> []
+      Just (SHA1Hash hash) -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
   ]
 
 ninja1Info :: NINJA1Patch -> String

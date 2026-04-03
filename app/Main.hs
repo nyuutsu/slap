@@ -10,9 +10,9 @@ import Slap.PPF.Types (ImageType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
-import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), showCRC32, showAdler32)
+import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
-import Slap.Error (SlapError, SlapWarning(..), renderSlapError, renderSlapWarning)
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.FormatLabel (formatLabelName)
 import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
@@ -571,9 +571,9 @@ doCreate parsedCommand = do
   forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
   case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
     Left slapError -> dieError slapError
-    Right (patchBytes, encodeWarnings) -> do
-      forM_ encodeWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-      ByteString.writeFile (commandCreateOutput parsedCommand) patchBytes
+    Right result -> do
+      forM_ (resultWarnings result) $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
+      ByteString.writeFile (commandCreateOutput parsedCommand) (resultBytes result)
       putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
 
 ----------------------------------------------------------------------------
@@ -637,20 +637,20 @@ doConvert parsedCommand = do
                 }
           case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
             Left slapError -> dieError slapError
-            Right (result, encodeWarnings) -> do
+            Right createResult -> do
               printWarnings (patchSourceNotes parsed ++ metaWarnings
                             ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
-                            ++ encodeWarnings)
+                            ++ resultWarnings createResult)
               forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
-              ByteString.writeFile outputFile result
+              ByteString.writeFile outputFile (resultBytes createResult)
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
           Just contents -> case convertDirect contents (commandConvertTo parsedCommand) mergedMeta of
             Left slapError -> dieError slapError
-            Right (result, warnings) -> do
-              printWarnings (patchSourceNotes parsed ++ warnings)
-              ByteString.writeFile outputFile result
+            Right convertResult -> do
+              printWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
+              ByteString.writeFile outputFile (resultBytes convertResult)
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
@@ -691,9 +691,9 @@ verifySource noVerify verification sourceBytes = do
   forM_ (verifySourceCRC32 verification) $ \expected ->
     checkCRC noVerify "source" expected (rustyCRC32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
-    checkHash noVerify "source MD5" expected (md5 preprocessed)
+    checkHash noVerify "source MD5" (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
   forM_ (verifySourceSHA1 verification) $ \expected ->
-    checkHash noVerify "source SHA1" expected (sha1 preprocessed)
+    checkHash noVerify "source SHA1" (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
   unless noVerify $ do
     forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
@@ -710,7 +710,7 @@ verifyTarget noVerify verification targetBytes = do
   forM_ (verifyTargetCRC32 verification) $ \expected ->
     checkCRC noVerify "target" expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
-    checkHash noVerify "target MD5" expected (md5 targetBytes)
+    checkHash noVerify "target MD5" (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
   unless noVerify $
     forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
       warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))

@@ -3,7 +3,7 @@ module Integration.Convert (convertTests) where
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
-import Slap.Error (renderSlapError)
+import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
@@ -82,8 +82,8 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsString f
         else do
           case convResult of
             Left errorMessage -> assertFailure ("conversion failed: " ++ errorMessage)
-            Right (convertedBytes, notes) -> do
-              checkWarnings warningsString notes
+            Right (CreateResult convertedBytes warnings) -> do
+              checkWarnings warningsString (map renderSlapWarning warnings)
               when (not (null targetSha) && not (null baseRel)) $ do
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath

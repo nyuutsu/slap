@@ -1,6 +1,5 @@
 module Slap.DPS.Parse
   ( parseDPS
-  , parseDPSBody
   , parseRecords
   , isDPS
   ) where
@@ -9,8 +8,8 @@ module Slap.DPS.Parse
 -- Original C source: https://github.com/xperia64/android-rom-patcher/blob/master/jni/dpspatcher/dpspatcher.c
 -- Author: Marc de Falco (Deufeufeu); deufeufeu.free.fr is dead.
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..),
-                        toDPSStability,
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
+                        toDPSStability, toDPSFormatVersion,
                         dpsFieldWidth, dpsMinimumFileSize,
                         dpsVersionOffset, dpsStabilityOffset,
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
@@ -75,7 +74,8 @@ isDPS input
 parseDPS :: ByteString -> Either SlapError DPSPatch
 parseDPS input
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (Length dpsMinimumFileSize) (Length (ByteString.length input)))
-  | ByteString.index input dpsVersionOffset /= 1 = Left (BadVersion LabelDPS (ByteString.index input dpsVersionOffset))
+  | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
+    = Left versionError
   | otherwise = case runGet parseDPSBody input of
       Left errorMessage -> Left (ParseError LabelDPS errorMessage)
       Right patch -> Right patch
@@ -89,7 +89,7 @@ parseDPSBody = do
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage
     Right stability -> do
-      formatVersion     <- getByte
+      _ <- getByte  -- version byte (validated by parseDPS guard)
       originalSize  <- FileSize . fromIntegral <$> Get.word32LE
       records    <- parseRecords
       pure DPSPatch
@@ -97,7 +97,7 @@ parseDPSBody = do
         , dpsAuthor     = author
         , dpsVersion    = version
         , dpsStability       = stability
-        , dpsFormatVersion = formatVersion
+        , dpsFormatVersion = DPSVersion1
         , dpsOriginalSize   = originalSize
         , dpsRecords    = records
         }

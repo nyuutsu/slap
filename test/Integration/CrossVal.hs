@@ -4,7 +4,7 @@ import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    withTempFile, withTempDir, RomCache, cachedReadFile)
 import Slap.Convert (CreateFormat(..), defaultMeta, createFromMemory)
-import Slap.Error (renderSlapError)
+import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -49,7 +49,7 @@ mkCrossValTest romCache repo cacheReference fields = case fields of
                 -- Create patch with slap
                 case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
                   Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-                  Right (patchBytes, _) ->
+                  Right (CreateResult patchBytes _) ->
                     -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->
                     withTempFile "slap-xv-base" $ \baseFile ->

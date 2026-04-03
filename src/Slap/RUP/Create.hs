@@ -9,6 +9,7 @@ module Slap.RUP.Create
 
 import Slap.RUP.Types
 import Slap.Binary (diffHunks, md5)
+import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 import Slap.Error (SlapWarning(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -34,8 +35,8 @@ createRUP original modified info romType encoding =
       <> word8 romType                        -- ROM type byte
       <> encodeVariableLengthValue (fromIntegral (ByteString.length original))   -- source size
       <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))   -- target size
-      <> byteString (md5 original)            -- source MD5
-      <> byteString (md5 modified)            -- target MD5
+      <> byteString (unMD5Hash (md5 original))  -- source MD5
+      <> byteString (unMD5Hash (md5 modified))  -- target MD5
       <> overflowPart
       <> foldMap encodeXorRecord xorHunks
       <> word8 0x00                           -- END command
@@ -102,8 +103,8 @@ encodeFixedHeader encoding info =
 -- For UTF-8: cuts at the last complete codepoint boundary.
 -- For system encoding: truncates at the byte boundary.
 truncateField :: PatchEncoding -> Int -> ByteString -> ByteString
-truncateField PatchEncodingUTF8   = truncateUtf8
-truncateField PatchEncodingSystem = truncateLocale
+truncateField PatchEncodingUTF8 = truncateUtf8
+truncateField _                 = truncateLocale
 
 -- | Check which RUPInfo fields would be truncated by encodeFixedHeader,
 -- and return a warning for each one.

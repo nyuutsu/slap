@@ -19,13 +19,14 @@ module Slap.NINJA1.Parse
 -- Format spec: docs/specs/ninja1-filespec10.txt
 -- Both archived from http://ninja.cinnamonpirate.com/
 
-import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..),
-                           NINJA1RomType(..), toNINJA1RomType)
+import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
+                           NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..))
 import Slap.Compress (zlibInflate)
+import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -34,7 +35,6 @@ import Data.Char (toLower)
 import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
-import Slap.Checksum (CRC32(..))
 
 parseNINJA1 :: ByteString -> Either SlapError NINJA1Patch
 parseNINJA1 input
@@ -80,18 +80,18 @@ parseBinaryGet format = do
   crcBytes  <- getBytes (Length 4)
   md5Bytes  <- getBytes (Length 16)
   sha1Bytes <- getBytes (Length 20)
-  (records, clean) <- parseBinaryRecords
+  result <- parseBinaryRecords
   let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (CRC32 (decodeBigEndian32 crcBytes))
-      parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just md5Bytes
-      parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just sha1Bytes
+      parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just (MD5Hash md5Bytes)
+      parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just (SHA1Hash sha1Bytes)
   pure NINJA1Patch
     { ninja1SubFormat  = format
     , ninja1RomType    = romType
     , ninja1SourceCRC  = parsedCRC
     , ninja1SourceMD5  = parsedMD5
     , ninja1SourceSHA1 = parsedSHA1
-    , ninja1Records    = records
-    , ninja1CleanEOF   = clean
+    , ninja1Records    = ninja1BinaryRecords result
+    , ninja1CleanEOF   = ninja1BinaryCleanEOF result
     }
 
 decodeBigEndian32 :: ByteString -> Word32
@@ -100,19 +100,19 @@ decodeBigEndian32 = ByteString.foldl' (\accumulated byte -> accumulated * 256 + 
 decodeBigEndian :: ByteString -> Int64
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
-parseBinaryRecords :: Get ([NINJA1Record], Bool)
+parseBinaryRecords :: Get NINJA1BinaryResult
 parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
       remainingLength <- remaining
-      if unLength remainingLength < 1 then pure (reverse accumulated, False)
+      if unLength remainingLength < 1 then pure (NINJA1BinaryResult (reverse accumulated) False)
       else do
         offsetWidth <- fromIntegral <$> getByte :: Get Int
-        if offsetWidth == 0 then pure (reverse accumulated, False)
+        if offsetWidth == 0 then pure (NINJA1BinaryResult (reverse accumulated) False)
         else do
           offsetBytes <- getBytes (Length offsetWidth)
           if offsetWidth == 3 && offsetBytes == "EOF"
-            then pure (reverse accumulated, True)
+            then pure (NINJA1BinaryResult (reverse accumulated) True)
             else do
               let recordOffset = Offset (decodeBigEndian offsetBytes)
               dataWidth <- fromIntegral <$> getByte :: Get Int
@@ -137,22 +137,27 @@ parseText format payload = do
   case contentLines of
     [] -> Left (MalformedTextField LabelNINJA1 "empty textual patch")
     (headerLine : recordLines) -> do
-      let (romType, parsedCRC, parsedMD5, parsedSHA1) = parseTextHeader headerLine
+      let header = parseTextHeader headerLine
       records <- mapM parseTextRecord recordLines
       Right NINJA1Patch
         { ninja1SubFormat  = format
-        , ninja1RomType    = romType
-        , ninja1SourceCRC  = parsedCRC
-        , ninja1SourceMD5  = parsedMD5
-        , ninja1SourceSHA1 = parsedSHA1
+        , ninja1RomType    = ninja1TextRomType header
+        , ninja1SourceCRC  = ninja1TextSourceCRC header
+        , ninja1SourceMD5  = ninja1TextSourceMD5 header
+        , ninja1SourceSHA1 = ninja1TextSourceSHA1 header
         , ninja1Records    = records
         , ninja1CleanEOF   = True  -- textual format has no EOF sentinel
         }
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
-parseTextHeader :: ByteString -> (NINJA1RomType, Maybe CRC32, Maybe ByteString, Maybe ByteString)
-parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
+parseTextHeader :: ByteString -> NINJA1TextHeader
+parseTextHeader line = NINJA1TextHeader
+  { ninja1TextRomType    = romType
+  , ninja1TextSourceCRC  = parsedCRC
+  , ninja1TextSourceMD5  = parsedMD5
+  , ninja1TextSourceSHA1 = parsedSHA1
+  }
   where
     tokens = map ByteString8.unpack (ByteString8.words line)
     romType = case tokens of
@@ -166,10 +171,10 @@ parseTextHeader line = (romType, parsedCRC, parsedMD5, parsedSHA1)
       _ -> Nothing
     nonEmpty bytes = if ByteString.null bytes then Nothing else Just bytes
     parsedMD5 = case tokens of
-      (_:_:md5Text:_) | not (isUnknown md5Text) -> nonEmpty (hexToBS md5Text)
+      (_:_:md5Text:_) | not (isUnknown md5Text) -> MD5Hash <$> nonEmpty (hexToBS md5Text)
       _ -> Nothing
     parsedSHA1 = case tokens of
-      (_:_:_:sha1Text:_) | not (isUnknown sha1Text) -> nonEmpty (hexToBS sha1Text)
+      (_:_:_:sha1Text:_) | not (isUnknown sha1Text) -> SHA1Hash <$> nonEmpty (hexToBS sha1Text)
       _ -> Nothing
 
 parseTextRecord :: ByteString -> Either SlapError NINJA1Record

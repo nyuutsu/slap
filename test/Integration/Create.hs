@@ -4,7 +4,7 @@ import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    RomCache, cachedReadFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
-import Slap.Error (renderSlapError)
+import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -70,7 +70,7 @@ roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> S
 roundTrip format baseBytes targetBytes expectedSha = do
   case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-    Right (patchBytes, _) -> case parseSome patchBytes of
+    Right (CreateResult patchBytes _) -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
         result <- applyPatch parsed baseBytes

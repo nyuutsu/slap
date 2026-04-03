@@ -3,6 +3,8 @@
 module Slap.NINJA1.Types
   ( NINJA1Patch(..)
   , NINJA1Record(..)
+  , NINJA1BinaryResult(..)
+  , NINJA1TextHeader(..)
   , NINJA1SubFormat(..)
   , NINJA1RomType(..)
   , toNINJA1RomType
@@ -12,7 +14,7 @@ module Slap.NINJA1.Types
 
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
-import Slap.Checksum (CRC32)
+import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Measure (Offset(..))
 
 data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
@@ -70,12 +72,24 @@ fromNINJA1RomType RomJaguar         = 16
 fromNINJA1RomType RomGP32           = 17
 fromNINJA1RomType (RomUnknown value) = value
 
+data NINJA1BinaryResult = NINJA1BinaryResult
+  { ninja1BinaryRecords  :: ![NINJA1Record]
+  , ninja1BinaryCleanEOF :: !Bool
+  } deriving (Show)
+
+data NINJA1TextHeader = NINJA1TextHeader
+  { ninja1TextRomType    :: !NINJA1RomType
+  , ninja1TextSourceCRC  :: !(Maybe CRC32)
+  , ninja1TextSourceMD5  :: !(Maybe MD5Hash)
+  , ninja1TextSourceSHA1 :: !(Maybe SHA1Hash)
+  } deriving (Show)
+
 data NINJA1Patch = NINJA1Patch
   { ninja1SubFormat  :: NINJA1SubFormat
   , ninja1RomType    :: NINJA1RomType
   , ninja1SourceCRC  :: Maybe CRC32
-  , ninja1SourceMD5  :: Maybe ByteString  -- 16 bytes
-  , ninja1SourceSHA1 :: Maybe ByteString  -- 20 bytes
+  , ninja1SourceMD5  :: Maybe MD5Hash
+  , ninja1SourceSHA1 :: Maybe SHA1Hash
   , ninja1Records    :: [NINJA1Record]
   , ninja1CleanEOF   :: Bool              -- parse completed cleanly (binary: EOF sentinel found; text: always True)
   } deriving (Show)

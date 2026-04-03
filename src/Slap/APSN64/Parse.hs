@@ -36,7 +36,7 @@ parseN64 = do
   case toAPSPatchType patchTypeByte of
     Left errorMessage -> fail errorMessage
     Right patchType -> do
-      encodingByte <- getByte
+      encodingMethod <- toAPSRecordEncoding <$> getByte
       description <- getBytes (Length 50)
       case patchType of
         APSSimple -> do
@@ -44,7 +44,7 @@ parseN64 = do
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { apsN64PatchType = patchType, apsN64Encoding = encodingByte, apsN64Description = description
+              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
               , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
               , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
               }
@@ -59,7 +59,7 @@ parseN64 = do
           records <- parseN64Records
           pure $ APSN64Patch
             APSN64Header
-              { apsN64PatchType = patchType, apsN64Encoding = encodingByte, apsN64Description = description
+              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
               , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
               , apsN64Country = Just country, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
               }

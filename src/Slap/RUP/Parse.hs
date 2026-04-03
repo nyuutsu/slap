@@ -62,7 +62,7 @@ parseRUP input
     parseRUPBody = do
       headerBytes <- getBytes (Length headerSize)
       let meta = parseFixedHeader headerBytes
-          encoding = ByteString.index headerBytes 6  -- PATCH_ENC byte
+          encoding = toPatchEncoding (ByteString.index headerBytes 6)
       patch <- parseCommands (emptyPatch meta encoding)
       pure patch { rupRecords = reverse (rupRecords patch) }
 

@@ -8,7 +8,7 @@ module Slap.UPS.Parse
 
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
-import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
+import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..))
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..))
@@ -42,24 +42,28 @@ parseUPS input
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
       case runGet parseUPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelUPS errorMessage)
-        Right (sourceSize, targetSize, blocks) ->
+        Right body ->
           Right UPSPatch
-            { upsSourceSize = sourceSize
-            , upsTargetSize = targetSize
-            , upsBlocks     = blocks
+            { upsSourceSize = upsBodySourceSize body
+            , upsTargetSize = upsBodyTargetSize body
+            , upsBlocks     = upsBodyBlocks body
             , upsSourceCRC  = sourceCRC
             , upsTargetCRC  = targetCRC
             , upsPatchCRC   = storedPatchCRC
             }
 
-parseUPSBody :: Get (FileSize, FileSize, [UPSBlock])
+parseUPSBody :: Get UPSBody
 parseUPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
   when (rawSourceSize < 0) $ failGet "UPS: negative source size"
   when (rawTargetSize < 0) $ failGet "UPS: negative target size"
   blocks  <- parseBlocks
-  pure (FileSize rawSourceSize, FileSize rawTargetSize, blocks)
+  pure UPSBody
+    { upsBodySourceSize = FileSize rawSourceSize
+    , upsBodyTargetSize = FileSize rawTargetSize
+    , upsBodyBlocks     = blocks
+    }
 
 parseBlocks :: Get [UPSBlock]
 parseBlocks = do

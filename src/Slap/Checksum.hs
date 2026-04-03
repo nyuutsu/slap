@@ -2,11 +2,14 @@ module Slap.Checksum
   ( CRC32(..)
   , CRC16(..)
   , Adler32(..)
+  , MD5Hash(..)
+  , SHA1Hash(..)
   , showCRC32
   , showCRC16
   , showAdler32
   ) where
 
+import Data.ByteString (ByteString)
 import Data.Word (Word16, Word32, Word64)
 import Numeric (showHex)
 
@@ -17,6 +20,12 @@ newtype CRC16 = CRC16 { unCRC16 :: Word16 }
   deriving (Eq, Ord, Show)
 
 newtype Adler32 = Adler32 { unAdler32 :: Word32 }
+  deriving (Eq, Ord, Show)
+
+newtype MD5Hash = MD5Hash { unMD5Hash :: ByteString }
+  deriving (Eq, Ord, Show)
+
+newtype SHA1Hash = SHA1Hash { unSHA1Hash :: ByteString }
   deriving (Eq, Ord, Show)
 
 -- | "0x001A3B4C" — 8-digit zero-padded hex.

@@ -9,6 +9,7 @@ module Slap.RUP.Types
   , toOverflowMode
   , fromOverflowMode
   , PatchEncoding(..)
+  , toPatchEncoding
   , fromPatchEncoding
   , patchEncodingName
   , encodeRUPString
@@ -62,28 +63,39 @@ fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
 -- | PATCH_ENC: how text fields in the fixed header are encoded.
 -- 0 = system codepage (platform-dependent), 1 = UTF-8 (portable).
-data PatchEncoding = PatchEncodingUTF8 | PatchEncodingSystem
+-- Unknown values are preserved for round-tripping but treated as system.
+data PatchEncoding
+  = PatchEncodingUTF8
+  | PatchEncodingSystem
+  | PatchEncodingUnknown !Word8
   deriving (Show, Eq)
 
+toPatchEncoding :: Word8 -> PatchEncoding
+toPatchEncoding 1 = PatchEncodingUTF8
+toPatchEncoding 0 = PatchEncodingSystem
+toPatchEncoding byte = PatchEncodingUnknown byte
+
 fromPatchEncoding :: PatchEncoding -> Word8
-fromPatchEncoding PatchEncodingUTF8   = 1
-fromPatchEncoding PatchEncodingSystem = 0
+fromPatchEncoding PatchEncodingUTF8          = 1
+fromPatchEncoding PatchEncodingSystem        = 0
+fromPatchEncoding (PatchEncodingUnknown byte) = byte
 
 patchEncodingName :: PatchEncoding -> String
-patchEncodingName PatchEncodingUTF8   = "UTF-8"
-patchEncodingName PatchEncodingSystem = "system"
+patchEncodingName PatchEncodingUTF8          = "UTF-8"
+patchEncodingName PatchEncodingSystem        = "system"
+patchEncodingName (PatchEncodingUnknown byte) = "unknown (" ++ show byte ++ ")"
 
 -- | Encode a String as bytes using the given patch encoding.
 encodeRUPString :: PatchEncoding -> String -> ByteString
-encodeRUPString PatchEncodingUTF8   = encodeUtf8Field
-encodeRUPString PatchEncodingSystem = encodeLocaleField
+encodeRUPString PatchEncodingUTF8 = encodeUtf8Field
+encodeRUPString _                 = encodeLocaleField
 
--- | Decode a raw field ByteString to String based on the PATCH_ENC byte.
--- PATCH_ENC=1 decodes as UTF-8 (lenient: invalid bytes become U+FFFD).
--- PATCH_ENC=0 (or any other value) decodes using the system locale.
-decodeRUPField :: Word8 -> ByteString -> String
-decodeRUPField 1 = decodeUtf8Field
-decodeRUPField _ = decodeLocaleField
+-- | Decode a raw field ByteString to String based on the patch encoding.
+-- UTF-8 decodes leniently (invalid bytes become U+FFFD).
+-- System and unknown encodings use the system locale.
+decodeRUPField :: PatchEncoding -> ByteString -> String
+decodeRUPField PatchEncodingUTF8 = decodeUtf8Field
+decodeRUPField _                 = decodeLocaleField
 
 data RUPPatch = RUPPatch
   { rupHeader         :: RUPInfo
@@ -94,7 +106,7 @@ data RUPPatch = RUPPatch
   , rupTargetMD5      :: Maybe ByteString  -- 16 bytes
   , rupSourceSize     :: !FileSize
   , rupTargetSize     :: !FileSize
-  , rupPatchEncoding  :: Word8             -- PATCH_ENC (text encoding, byte 6)
+  , rupPatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
   , rupRomType        :: Word8             -- ROM type byte from OPEN_NEW_FILE command
   } deriving (Show)
 

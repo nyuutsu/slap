@@ -4,8 +4,11 @@ module Slap.DPS.Types
   ( DPSPatch(..)
   , DPSRecord(..)
   , DPSStability(..)
+  , DPSFormatVersion(..)
   , toDPSStability
   , fromDPSStability
+  , toDPSFormatVersion
+  , fromDPSFormatVersion
     -- * Named constants
   , dpsFieldWidth
   , dpsFieldCount
@@ -22,6 +25,8 @@ module Slap.DPS.Types
 
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 data DPSStability = DPSStable | DPSUnstable
@@ -36,12 +41,22 @@ fromDPSStability :: DPSStability -> Word8
 fromDPSStability DPSStable   = 0
 fromDPSStability DPSUnstable = 1
 
+data DPSFormatVersion = DPSVersion1
+  deriving (Show, Eq)
+
+toDPSFormatVersion :: Word8 -> Either SlapError DPSFormatVersion
+toDPSFormatVersion 1 = Right DPSVersion1
+toDPSFormatVersion byte = Left (BadVersion LabelDPS byte)
+
+fromDPSFormatVersion :: DPSFormatVersion -> Word8
+fromDPSFormatVersion DPSVersion1 = 1
+
 data DPSPatch = DPSPatch
   { dpsName       :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
   , dpsAuthor     :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
   , dpsVersion    :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
   , dpsStability       :: DPSStability
-  , dpsFormatVersion :: Word8        -- must be 1
+  , dpsFormatVersion :: DPSFormatVersion
   , dpsOriginalSize   :: !FileSize    -- original ROM size
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
