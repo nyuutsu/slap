@@ -26,7 +26,7 @@ parseAPSN64 input
       Left (BadMagic LabelAPSN64 (ByteString.take 5 input))
   | otherwise =
       case runGet parseN64 input of
-        Left msg -> Left (ParseError LabelAPSN64 msg)
+        Left errorMessage -> Left (ParseError LabelAPSN64 errorMessage)
         Right patch -> Right patch
 
 parseN64 :: Get APSN64Patch

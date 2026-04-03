@@ -76,5 +76,5 @@ parseControls :: ByteString -> [BSDiffControl]
 parseControls input
   | ByteString.length input < 24 = []
   | otherwise =
-      BSDiffControl (getSignMagnitude64 0 input) (getSignMagnitude64 8 input) (Delta (getSignMagnitude64 16 input))
+      BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (getSignMagnitude64 16 input))
         : parseControls (ByteString.drop 24 input)

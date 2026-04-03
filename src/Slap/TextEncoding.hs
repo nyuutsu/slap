@@ -48,8 +48,8 @@ encodeUtf8Field = Text.encodeUtf8 . Text.pack
 -- This is what the C reference implementations did: memcpy from
 -- argv, which was locale-encoded by the OS.
 encodeLocaleField :: String -> ByteString
-encodeLocaleField str = unsafePerformIO $
-  GHC.withCStringLen localeEncoding str ByteString.packCStringLen
+encodeLocaleField inputText = unsafePerformIO $
+  GHC.withCStringLen localeEncoding inputText ByteString.packCStringLen
 
 -- | Decode UTF-8 bytes to String. Lenient: invalid bytes become U+FFFD.
 decodeUtf8Field :: ByteString -> String
@@ -100,8 +100,8 @@ truncateLocale = ByteString.take
 -- | Encode a String as UTF-8, truncate at codepoint boundary,
 -- null-pad to exactly fieldWidth bytes.
 encodeBoundedUtf8 :: Int -> String -> BoundedResult
-encodeBoundedUtf8 fieldWidth str =
-  let encoded = encodeUtf8Field str
+encodeBoundedUtf8 fieldWidth inputText =
+  let encoded = encodeUtf8Field inputText
       truncated = truncateUtf8 fieldWidth encoded
       padded = truncated <> ByteString.replicate
                  (max 0 (fieldWidth - ByteString.length truncated)) 0
@@ -115,8 +115,8 @@ encodeBoundedUtf8 fieldWidth str =
 -- | Encode a String using the locale, truncate at byte boundary,
 -- null-pad to exactly fieldWidth bytes.
 encodeBoundedLocale :: Int -> String -> BoundedResult
-encodeBoundedLocale fieldWidth str =
-  let encoded = encodeLocaleField str
+encodeBoundedLocale fieldWidth inputText =
+  let encoded = encodeLocaleField inputText
       truncated = truncateLocale fieldWidth encoded
       padded = truncated <> ByteString.replicate
                  (max 0 (fieldWidth - ByteString.length truncated)) 0

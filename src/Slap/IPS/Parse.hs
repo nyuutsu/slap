@@ -28,11 +28,11 @@ parseIPS :: ByteString -> Either SlapError IPSPatch
 parseIPS input
   | ByteString.take 5 input == "PATCH" =
       case runGet (skip (Length 5) >> parseRecords StandardIPS 3 0x454F46) input of
-        Left msg -> Left (ParseError LabelIPS msg)
+        Left errorMessage -> Left (ParseError LabelIPS errorMessage)
         Right patch -> Right patch
   | ByteString.take 5 input == "IPS32" =
       case runGet (skip (Length 5) >> parseRecords IPS32 4 0x45454F46) input of
-        Left msg -> Left (ParseError LabelIPS32 msg)
+        Left errorMessage -> Left (ParseError LabelIPS32 errorMessage)
         Right patch -> Right patch
   | otherwise = Left (BadMagic LabelIPS (ByteString.take 5 input))
 

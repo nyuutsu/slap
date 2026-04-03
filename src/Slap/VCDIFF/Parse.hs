@@ -134,5 +134,5 @@ parseVCDIFFWith allowCustom input
         }
 
     wrapParse :: Either String a -> Either SlapError a
-    wrapParse (Left msg)     = Left (ParseError LabelVCDIFF msg)
+    wrapParse (Left errorMessage) = Left (ParseError LabelVCDIFF errorMessage)
     wrapParse (Right result) = Right result

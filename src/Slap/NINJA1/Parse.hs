@@ -71,7 +71,7 @@ parseBinary :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
 parseBinary format payload
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (Length 41) (Length (ByteString.length payload)))
   | otherwise = case runGet (parseBinaryGet format) payload of
-      Left msg -> Left (ParseError LabelNINJA1 msg)
+      Left errorMessage -> Left (ParseError LabelNINJA1 errorMessage)
       Right patch -> Right patch
 
 parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch

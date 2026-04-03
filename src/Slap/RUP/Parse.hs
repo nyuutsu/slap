@@ -55,7 +55,7 @@ parseRUP input
   | ByteString.take 6 input /= "NINJA2" = Left (BadMagic LabelRUP (ByteString.take 6 input))
   | ByteString.length input < headerSize = Left (InputTooShort LabelRUP (Length headerSize) (Length (ByteString.length input)))
   | otherwise = case runGet parseRUPBody input of
-      Left msg -> Left (ParseError LabelRUP msg)
+      Left errorMessage -> Left (ParseError LabelRUP errorMessage)
       Right patch -> Right patch
   where
     parseRUPBody :: Get RUPPatch

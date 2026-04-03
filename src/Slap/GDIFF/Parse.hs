@@ -21,7 +21,7 @@ parseGDIFF input
   | ByteString.take 4 input /= "\xd1\xff\xd1\xff" = Left (BadMagic LabelGDIFF (ByteString.take 4 input))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (ByteString.index input 4))
   | otherwise = case runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input of
-      Left msg -> Left (ParseError LabelGDIFF msg)
+      Left errorMessage -> Left (ParseError LabelGDIFF errorMessage)
       Right patch -> Right patch
   where
     parseCommands accumulated = do

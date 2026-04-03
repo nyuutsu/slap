@@ -318,10 +318,10 @@ createDefaultNotes (CreateDiff _) _ = []
 -- Single source of truth for RUPInfo construction — used by both the create
 -- path (which needs the RUPInfo) and the notes path (which needs the warnings).
 prepareRUP :: CreateMeta -> (RUP.RUPInfo, [SlapWarning])
-prepareRUP meta = (rupInfo, RUP.rupTruncationNotes enc rupInfo)
+prepareRUP meta = (rupInfo, RUP.rupTruncationNotes patchEncoding rupInfo)
   where
-    enc = metaPatchEncoding meta
-    encode = RUP.encodeRUPString enc
+    patchEncoding = metaPatchEncoding meta
+    encode = RUP.encodeRUPString patchEncoding
     rupInfo = RUP.RUPInfo
       { RUP.rupAuthor      = fmap encode (metaAuthor meta)
       , RUP.rupVersion     = fmap encode (metaVersion meta)
@@ -453,11 +453,11 @@ encodeDirect contents source target meta limits = case target of
           Nothing -> Nothing
           Just raw ->
             let pairs = jsonPairs raw
-                norm (Just s) = if null s then Nothing else Just s
-                norm Nothing  = Nothing
-            in if cliDescription == norm (jsonFieldCI pairs "description")
-                  && cliTitle == norm (jsonFieldCI pairs "title")
-                  && cliAuthor == norm (jsonFieldCI pairs "author")
+                normalizeEmpty (Just value) = if null value then Nothing else Just value
+                normalizeEmpty Nothing  = Nothing
+            in if cliDescription == normalizeEmpty (jsonFieldCI pairs "description")
+                  && cliTitle == normalizeEmpty (jsonFieldCI pairs "title")
+                  && cliAuthor == normalizeEmpty (jsonFieldCI pairs "author")
                then Just raw
                else Nothing
     Right $ case passthrough of
@@ -500,7 +500,7 @@ encodeDirect contents source target meta limits = case target of
       Just lim -> wrapNarrow . narrowHunks lim
     wrapNarrow :: Either String a -> Either SlapError a
     wrapNarrow (Right value) = Right value
-    wrapNarrow (Left msg)    = Left (ParseError (directLabel target) msg)
+    wrapNarrow (Left errorMessage) = Left (ParseError (directLabel target) errorMessage)
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
@@ -543,7 +543,7 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
         -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
         -- If source already has known encoding, respect it.
         detectedEncoding = case sourceContents >>= contentsPatchEncoding of
-          Just enc -> enc
+          Just patchEncoding -> patchEncoding
           Nothing  -> case sourceContents >>= contentsDescription of
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
             _ -> metaPatchEncoding meta

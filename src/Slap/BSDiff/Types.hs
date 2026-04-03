@@ -6,8 +6,7 @@ module Slap.BSDiff.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Int (Int64)
-import Slap.Measure (FileSize(..), Delta(..))
+import Slap.Measure (FileSize(..), Length(..), Delta(..))
 
 data BSDiffPatch = BSDiffPatch
   { bsdiffControlSize :: !FileSize   -- compressed control block size
@@ -20,7 +19,7 @@ data BSDiffPatch = BSDiffPatch
   } deriving (Show)
 
 data BSDiffControl = BSDiffControl
-  { controlAdd  :: !Int64  -- bytes to add from diff stream to source
-  , controlCopy :: !Int64  -- bytes to copy from extra stream
-  , controlSeek :: !Delta  -- signed seek offset in source
+  { controlAdd  :: !Length  -- bytes to add from diff stream to source
+  , controlCopy :: !Length  -- bytes to copy from extra stream
+  , controlSeek :: !Delta   -- signed seek offset in source
   } deriving (Show)

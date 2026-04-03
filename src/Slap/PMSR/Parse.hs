@@ -27,7 +27,7 @@ parsePMSR input
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (Length 4) (Length (ByteString.length input)))
   | ByteString.take 4 input /= "PMSR" = Left (BadMagic LabelPMSR (ByteString.take 4 input))
   | otherwise = case runGet parsePMSRBody input of
-      Left msg -> Left (ParseError LabelPMSR msg)
+      Left errorMessage -> Left (ParseError LabelPMSR errorMessage)
       Right result -> Right result
 
 parsePMSRBody :: Get PMSRPatch

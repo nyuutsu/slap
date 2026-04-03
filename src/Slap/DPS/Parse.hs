@@ -77,7 +77,7 @@ parseDPS input
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (Length dpsMinimumFileSize) (Length (ByteString.length input)))
   | ByteString.index input dpsVersionOffset /= 1 = Left (BadVersion LabelDPS (ByteString.index input dpsVersionOffset))
   | otherwise = case runGet parseDPSBody input of
-      Left msg -> Left (ParseError LabelDPS msg)
+      Left errorMessage -> Left (ParseError LabelDPS errorMessage)
       Right patch -> Right patch
 
 parseDPSBody :: Get DPSPatch

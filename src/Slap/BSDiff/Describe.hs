@@ -62,12 +62,12 @@ makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, ExplainRegion)
 makeBSDiffRegion outputPosition control =
   let addLength = controlAdd control
       copyLength = controlCopy control
-  in ( Offset (unOffset outputPosition + addLength + copyLength)
+  in ( Offset (unOffset outputPosition + fromIntegral (unLength addLength) + fromIntegral (unLength copyLength))
      , ExplainRegion
        { regionOffset     = outputPosition
-       , regionSize       = Length (fromIntegral (addLength + copyLength))
+       , regionSize       = Length (unLength addLength + unLength copyLength)
        , regionLabel      = ""
        , regionPayload    = PayloadMeta []
-       , regionAnnotation = AnnotBSDiff (FileSize addLength) (FileSize copyLength) (controlSeek control)
+       , regionAnnotation = AnnotBSDiff addLength copyLength (controlSeek control)
        }
      )

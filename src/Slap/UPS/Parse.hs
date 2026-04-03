@@ -41,7 +41,7 @@ parseUPS input
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
       case runGet parseUPSBody bodyBytes of
-        Left msg -> Left (ParseError LabelUPS msg)
+        Left errorMessage -> Left (ParseError LabelUPS errorMessage)
         Right (sourceSize, targetSize, blocks) ->
           Right UPSPatch
             { upsSourceSize = sourceSize

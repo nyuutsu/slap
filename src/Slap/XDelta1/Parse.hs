@@ -85,7 +85,7 @@ parseControl :: String -> ByteString -> ByteString -> ByteString -> ByteString
 parseControl version controlSegment dataSegment fromName toName
   | ByteString.length controlSegment < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlSegment)))
   | otherwise = case runGet parseControlBody controlSegment of
-      Left msg -> Left (ParseError LabelXDelta1 msg)
+      Left errorMessage -> Left (ParseError LabelXDelta1 errorMessage)
       Right result -> Right result
   where
     parseControlBody :: Get XDelta1Patch
@@ -125,11 +125,11 @@ parseInstructions count = do
 -- | When a source has sequential=True, wire offsets are 0.
 -- Reconstruct by maintaining a running position per source.
 fixSequentialOffsets :: [XDelta1Source] -> [XDelta1Instruction] -> [XDelta1Instruction]
-fixSequentialOffsets sources = reverse . snd . foldl' step (initialPositions, [])
+fixSequentialOffsets sources = reverse . snd . foldl' resolveSequentialOffset (initialPositions, [])
   where
     sequentialIndices = IntSet.fromList [index | (index, entry) <- zip [0..] sources, xdelta1SourceSequential entry]
     initialPositions = IntMap.fromList [(index, 0 :: Int64) | index <- IntSet.toList sequentialIndices]
-    step (positions, accumulated) instruction =
+    resolveSequentialOffset (positions, accumulated) instruction =
       let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
       in if IntSet.member index sequentialIndices
          then let rawOffset       = IntMap.findWithDefault 0 index positions

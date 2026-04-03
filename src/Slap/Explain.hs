@@ -17,7 +17,7 @@ module Slap.Explain
 
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Offset(..), Length(..), Delta(..))
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -82,8 +82,16 @@ data SummaryBytes = BytesTotal | BytesTotalOutput
 
 data Annotation
   = AnnotNone                                    -- no annotation (PCHTXT)
-  | AnnotAt OffsetKind Offset [AnnotDetail]      -- offset display + details
-  | AnnotBSDiff FileSize FileSize Delta          -- add, copy, seek
+  | AnnotAt
+      { annotOffsetKind :: !OffsetKind
+      , annotOffset     :: !Offset
+      , annotDetails    :: ![AnnotDetail]
+      }
+  | AnnotBSDiff
+      { annotAddSize  :: !Length
+      , annotCopySize :: !Length
+      , annotSeek     :: !Delta
+      }
 
 data OffsetKind = AtOffset | AtOutput
 
@@ -185,8 +193,8 @@ renderBytesSuffix BytesTotalOutput = "bytes total output"
 renderAnnotation :: Annotation -> String
 renderAnnotation AnnotNone = ""
 renderAnnotation (AnnotBSDiff addSize copySize seekDelta) =
-  "add " ++ padRight 10 (show (unFileSize addSize) ++ " B")
-  ++ "  copy " ++ padRight 10 (show (unFileSize copySize) ++ " B")
+  "add " ++ padRight 10 (show (unLength addSize) ++ " B")
+  ++ "  copy " ++ padRight 10 (show (unLength copySize) ++ " B")
   ++ "  seek " ++ showSigned (unDelta seekDelta)
 renderAnnotation (AnnotAt kind offset details) =
   sourcePrefix ++ "  " ++ kindString kind ++ "0x" ++ padHex 6 (unOffset offset)

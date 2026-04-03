@@ -40,7 +40,7 @@ parseBPS input
           -- Parse body between magic and footer using Get monad
           bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
       case runGet parseBPSBody bodyBytes of
-        Left msg -> Left (ParseError LabelBPS msg)
+        Left errorMessage -> Left (ParseError LabelBPS errorMessage)
         Right (sourceSize, targetSize, metadata, actions) ->
           Right BPSPatch
             { bpsSourceSize = sourceSize

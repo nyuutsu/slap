@@ -26,7 +26,7 @@ parseAPSGBA input
       Left (BadMagic LabelAPSGBA (ByteString.take 4 input))
   | otherwise =
       case runGet parseGBA input of
-        Left msg -> Left (ParseError LabelAPSGBA msg)
+        Left errorMessage -> Left (ParseError LabelAPSGBA errorMessage)
         Right patch -> Right patch
 
 parseGBA :: Get APSGBAPatch
