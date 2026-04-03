@@ -10,11 +10,11 @@ The codebase has four distinct layers. Dependencies flow strictly downward.
 
 Modules with no format-specific knowledge. Everything above depends on these.
 
-- **`Measure`** — Newtypes (`Offset`, `Length`, `FileSize`, `Delta`, `Position`) that prevent mixing byte offsets, lengths, and sizes. Also defines `Hunk` (offset + payload), `UndoHunk`, `EncodedHunk`, and `EncodingLimits`. The `Hunk` type is the universal currency for patch records across all direct formats.
+- **`Measure`** — Newtypes (`Offset`, `Length`, `FileSize`, `Delta`, `Position`) that prevent mixing byte offsets, lengths, and sizes. Also defines `Hunk` (offset + payload), `UndoHunk`, `EncodedHunk`, and `EncodingLimits` (whose `formatLabel` field is `FormatLabel`, not `String`). The `Hunk` type is the universal currency for patch records across all direct formats.
 
 - **`FFI`** — Raw C FFI bindings to rusty-slap: `rustyCRC32`, `rustyAdler32`, `rustyBpsDiff`. Handles buffer allocation/deallocation across the language boundary.
 
-- **`Binary`** — Endian readers (`getWord16LE`, `getWord32BE`, etc.), varint decoders (byuu-style for BPS/UPS, VCDIFF-style per RFC 3284), CRC-16/IBM, Adler-32 re-export, cryptographic hashes (MD5, SHA1, SHA256 via cryptohash), `diffHunks` (contiguous-diff finder with gap merging), and `Builder` encoders.
+- **`Binary`** — Endian readers (`getWord16LE`, `getWord32BE`, etc.), varint decoders (byuu-style for BPS/UPS, VCDIFF-style per RFC 3284), CRC-16/IBM, Adler-32 re-export, cryptographic hashes (MD5 → `MD5Hash`, SHA1 → `SHA1Hash`, SHA256 via cryptohash), `diffHunks` (contiguous-diff finder with gap merging), and `Builder` encoders.
 
 - **`Get`** — Position-threading parser monad over `ByteString`. Hand-rolled `StateT Position (Either String)` without monad transformer overhead. Bridges to `Binary` readers via `liftRead` and `liftReadVarint`. Every format parser runs in this monad.
 
@@ -22,17 +22,29 @@ Modules with no format-specific knowledge. Everything above depends on these.
 
 - **`Compress`** — Zlib inflate/deflate, gzip inflate, bzip2 decompress. Thin wrappers around rusty-slap FFI calls with error handling and buffer management.
 
+- **`FormatLabel`** — Sum type with one constructor per supported format (20 values). Used in error messages, warnings, and `EncodingLimits`. `formatLabelName` renders to a human-facing string.
+
+- **`Checksum`** — Newtypes: `CRC32`, `CRC16`, `Adler32`, `MD5Hash`, `SHA1Hash`. Rendering functions (`showCRC32`, `showAdler32`). Every hash and checksum in the project is a distinct type.
+
+- **`Error`** — `SlapError` (25 constructors covering parse, apply, create, and convert errors), `SlapWarning` (18 constructors for dropped fields, assumed defaults, encoding gaps, truncation), `FieldName` (metadata field identity for error context), `CreateResult` (patch bytes + warnings from creation). Renderers: `renderSlapError`, `renderSlapWarning`.
+
+- **`TextEncoding`** — Locale and UTF-8 encoding/decoding for metadata text fields. `encodeBoundedLocale`/`encodeBoundedUtf8` for creation (encode, truncate at codepoint boundary, null-pad). `decodeLocaleField`/`decodeUtf8Field` for display. `isValidUtf8` for opaque-to-flagged conversion heuristic.
+
+- **`PatchField`** — Field identity type for the conversion contract system. Extracted from Convert to break an import cycle with Error. `fieldName` renders to a human string.
+
 ### Format modules
 
 Fifteen format families, each in its own `Slap/Foo/` directory. Every format follows the same decomposition:
 
 ```
 Foo/Types.hs    — data types for the parsed patch
-Foo/Parse.hs    — ByteString → Either String FooPatch
+Foo/Parse.hs    — ByteString → Either SlapError FooPatch
 Foo/Apply.hs    — FooPatch → source ByteString → target ByteString
-Foo/Describe.hs — FooPatch → info string + ExplainData
-Foo/Create.hs   — (optional) encode records/diffs into format bytes
+Foo/Describe.hs — FooPatch → [MetaField] + ExplainData
+Foo/Create.hs   — (optional) → CreateResult (patch bytes + [SlapWarning])
 ```
+
+BPS, DPS, and GDIFF apply functions are total (return `ByteString` directly). BSDiff, VCDIFF, and XDelta1 return `Either SlapError ByteString`.
 
 No format module imports another format module. They are fully isolated siblings. Each depends only on the foundation layer.
 
@@ -64,13 +76,13 @@ Modules that bridge between format-specific code and the CLI.
 
 - **`Types`** — Format taxonomy: `DirectFormat` (6 values), `DiffFormat` (9 values), `PatchFormat` (sum). Used by Detect and SomePatch.
 
-- **`Detect`** — Format identification from raw bytes. Most formats use magic bytes. DPS uses a structural heuristic (printable ASCII header, version/stability flag bytes). PCHTXT scans the first 512 bytes for directives (`@nsobid`, `@flag`, `@enabled`, `@disabled`).
+- **`Detect`** — Format identification from raw bytes. Most formats use magic bytes. DPS uses a tentative record walk: checks version byte = 1 and stability flag ∈ {0,1}, then walks the record structure verifying mode bytes and data lengths consume the file exactly. Named constants for all field widths and mode bytes. PCHTXT scans until the first non-comment non-blank line against a data-driven directive list (`@nsobid`, `@flag`, `@enabled`, `@disabled`).
 
 - **`Explain`** — Types and renderers for patch structure visualization. `ExplainData` carries format name, header key-value pairs, sections (regions, blocks, labeled pairs, text), a summary, and notes. The renderer produces sparkline visualizations, region breakdowns, and record-size distributions. Every format's `Describe` module produces `ExplainData`; the renderer is format-agnostic.
 
-- **`Convert`** — The format conversion engine. `PatchContents` is the universal representation of a direct patch's extractable data (records, checksums, hashes, descriptions, undo data, validation blocks, truncation markers, ROM type, etc.). `FormatSpecification` declares what each target format requires and accepts. `canConvert` checks the contract. `conversionNotes` reports dropped fields. `encodeDirect` encodes `PatchContents` to the target format. `createFromMemory` builds patches from source+target bytes. `buildContents` computes `PatchContents` from source and target for direct format creation.
+- **`Convert`** — The format conversion engine. `PatchContents` is the universal representation of a direct patch's extractable data (records, checksums, hashes, descriptions, undo data, validation blocks, truncation markers, ROM type, etc.). `FormatSpecification` declares what each target format requires and accepts. `canConvert` checks the contract. `conversionNotes` reports dropped fields. `encodeDirect` encodes `PatchContents` to the target format. `createFromMemory` builds patches from source+target bytes. `buildContents` computes `PatchContents` from source and target for direct format creation. Returns `Either SlapError CreateResult`. Warnings are `[SlapWarning]` constructors (not strings). `contentsPatchEncoding` tracks text encoding for encoding-aware conversion. `PatchField` lives in its own module (extracted to break an import cycle with Error).
 
-- **`SomePatch`** — The existential dispatch module. `parseSome` is the single point where format-specific types exist. It takes raw bytes, detects the format, parses it, and returns a `SomePatch` — a record containing closures (`ApplyStrategy`, `UndoStrategy`), verification data, explain data, verbose lines, warnings, and optionally `PatchContents` for conversion. Every consumer works through `SomePatch` fields. No format-specific type escapes this module.
+- **`SomePatch`** — The existential dispatch module. `parseSome` is the single point where format-specific types exist. It takes raw bytes, detects the format, parses it, and returns a `SomePatch` — a record containing closures (`ApplyStrategy`, `UndoStrategy`), verification data, structured warnings (`[SlapWarning]`), explain data (`ExplainData`), record summary (`RecordSummary`), format identity (`FormatLabel`), and optionally `PatchContents` for conversion. No pre-rendered strings — rendering happens at the display boundary. Every consumer works through `SomePatch` fields. No format-specific type escapes this module.
 
 - **`Archive`** — Transparent unwrapping of ZIP, RAR, and 7z archives. Detects by magic bytes, lists entries via shell tools (`unzip`, `unrar`, `7z`), filters out chaff (readmes, images, docs), extracts a sole candidate. Falls back to `7z` when `unrar` isn't available.
 
@@ -78,7 +90,7 @@ Modules that bridge between format-specific code and the CLI.
 
 ### Entry point
 
-- **`Main`** — CLI via `optparse-applicative`. Five subcommands: `apply`, `undo`, `create`, `convert`, `info`, `explain`. The `Command` ADT captures all flags and arguments. Handler functions (`doApply`, `doCreate`, etc.) are straightforward: read files, parse patches via `parseSome`, verify, apply/create/convert, write output.
+- **`Main`** — CLI via `optparse-applicative`. Six subcommands: `apply`, `undo`, `create`, `convert`, `info`, `explain`. The `Command` ADT captures all flags and arguments. Handler functions (`doApply`, `doCreate`, etc.) are straightforward: read files, parse patches via `parseSome`, verify, apply/create/convert, write output.
 
 ## Key type relationships
 
@@ -88,17 +100,20 @@ Main.Command
     → detectFormat (magic/heuristic)
     → format-specific Parse
     → SomePatch (closures + data)
-      → patchApply    : ApplyStrategy (ByteString → IO (Either String ByteString))
+      → patchApply    : ApplyStrategy (ByteString → IO (Either SlapError ByteString))
       → patchUndo     : Maybe UndoStrategy
       → patchVerification : Verification (CRC32, MD5, SHA1, blocks, Adler32, etc.)
       → patchExplain  : ExplainData (for rendering)
+      → patchWarnings : [SlapWarning]
+      → patchFormat   : FormatLabel
+      → patchRecordSummary : RecordSummary
       → patchContents : Maybe PatchContents (for direct conversion)
 
 PatchContents
   → canConvert (check FormatSpecification)
-  → encodeDirect (to target format bytes)
+  → encodeDirect (to target format CreateResult)
   or
-  → createFromMemory (source + target → patch bytes)
+  → createFromMemory (source + target → CreateResult)
 ```
 
 ## Rust (rusty-slap)
