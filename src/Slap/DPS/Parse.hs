@@ -11,8 +11,10 @@ module Slap.DPS.Parse
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..),
                         toDPSStability,
-                        dpsFieldWidth, dpsMetadataSize, dpsMinimumFileSize,
-                        dpsVersionOffset, dpsStabilityOffset)
+                        dpsFieldWidth, dpsMinimumFileSize,
+                        dpsVersionOffset, dpsStabilityOffset,
+                        dpsCopyFromROMMode, dpsEnclosedDataMode,
+                        dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -20,6 +22,7 @@ import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 
+import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
@@ -27,22 +30,43 @@ import qualified Data.ByteString as ByteString
 -- Detection heuristic (no magic bytes)
 ----------------------------------------------------------------------------
 
--- | Heuristic detection: DPS files have a 198-byte header with
--- printable ASCII and null padding in the first 192 bytes (three
--- 64-byte string fields), version byte = 1 at offset 193,
--- flag byte 0 or 1 at offset 192.
+-- | Heuristic detection: DPS files have version byte = 1 at
+-- dpsVersionOffset, stability flag ∈ {0,1} at dpsStabilityOffset,
+-- and records that parse cleanly to end of file.
 isDPS :: ByteString -> Bool
 isDPS input
   | ByteString.length input < dpsMinimumFileSize = False
   | ByteString.index input dpsVersionOffset /= 1 = False
   | ByteString.index input dpsStabilityOffset > 1 = False
-  | not (ByteString.all isHeaderByte (ByteString.take dpsMetadataSize input)) = False
-  -- Zero-record patch (198 bytes exactly) is valid: identity diff.
-  -- When records exist, first byte must be a valid mode (0 or 1).
-  | ByteString.length input > dpsMinimumFileSize = ByteString.index input dpsMinimumFileSize <= 1
-  | otherwise = True
+  | otherwise = walkRecords dpsMinimumFileSize
   where
-    isHeaderByte headerByte = (headerByte >= 0x20 && headerByte <= 0x7E) || headerByte == 0
+    inputLength = ByteString.length input
+    -- Tentative record walk: each record starts with a mode byte, then
+    -- mode 0 (CopyFromROM): outputOffset(4) + sourceOffset(4) + length(4)
+    -- mode 1 (EnclosedData): outputOffset(4) + dataLength(4) + data(dataLength)
+    -- Records must consume the remaining bytes exactly.
+    walkRecords position
+      | position == inputLength = True
+      | position > inputLength  = False
+      | otherwise =
+          let modeByte = ByteString.index input position
+          in if modeByte == dpsCopyFromROMMode
+             then position + dpsCopyRecordSize <= inputLength
+                  && walkRecords (position + dpsCopyRecordSize)
+             else if modeByte == dpsEnclosedDataMode
+             then let fixedSize = dpsRecordHeaderSize + 4  -- + dataLength field
+                  in position + fixedSize <= inputLength
+                     && let dataLength = word32LEAt (position + dpsRecordHeaderSize)
+                        in walkRecords (position + fixedSize + dataLength)
+             else False
+    word32LEAt offset
+      | offset + 4 > inputLength = inputLength  -- out of bounds → force walk failure
+      | otherwise =
+          let byte0 = fromIntegral (ByteString.index input offset) :: Int
+              byte1 = fromIntegral (ByteString.index input (offset + 1)) `shiftL` 8
+              byte2 = fromIntegral (ByteString.index input (offset + 2)) `shiftL` 16
+              byte3 = fromIntegral (ByteString.index input (offset + 3)) `shiftL` 24
+          in byte0 .|. byte1 .|. byte2 .|. byte3
 
 ----------------------------------------------------------------------------
 -- Parse

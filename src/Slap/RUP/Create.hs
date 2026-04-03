@@ -12,6 +12,7 @@ import Slap.Binary (diffHunks, md5)
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 import Slap.Error (SlapWarning(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.TextEncoding (truncateUtf8, truncateLocale)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -98,40 +99,11 @@ encodeFixedHeader encoding info =
       ]
 
 -- | Truncate a field value to fit within the given byte width.
--- For UTF-8: walks backward from the limit to find the last complete
--- codepoint boundary.  For system encoding: truncates at the byte boundary.
+-- For UTF-8: cuts at the last complete codepoint boundary.
+-- For system encoding: truncates at the byte boundary.
 truncateField :: PatchEncoding -> Int -> ByteString -> ByteString
-truncateField _ fieldLength value
-  | ByteString.length value <= fieldLength = value
-truncateField PatchEncodingSystem fieldLength value = ByteString.take fieldLength value
-truncateField PatchEncodingUTF8 fieldLength value = truncateUTF8 fieldLength value
-
--- | Truncate a UTF-8 ByteString to fit within maxBytes, ensuring the
--- result ends at a complete codepoint boundary.
-truncateUTF8 :: Int -> ByteString -> ByteString
-truncateUTF8 maxBytes value =
-    let candidate = ByteString.take maxBytes value
-        candidateLength = ByteString.length candidate
-        startIndex = findCodepointStart candidate (candidateLength - 1)
-        startByte = ByteString.index candidate startIndex
-        expectedLength = utf8CharLength startByte
-        availableLength = candidateLength - startIndex
-    in if availableLength >= expectedLength
-       then candidate
-       else ByteString.take startIndex candidate
-  where
-    -- Walk backward past continuation bytes (0x80–0xBF) to the start byte.
-    findCodepointStart bytes index
-      | index <= 0                               = 0
-      | isUTF8Continuation (ByteString.index bytes index) = findCodepointStart bytes (index - 1)
-      | otherwise                                = index
-    isUTF8Continuation byte = byte >= 0x80 && byte <= 0xBF
-    utf8CharLength byte
-      | byte < 0x80 = 1
-      | byte < 0xC0 = 1  -- bare continuation byte; treat as single
-      | byte < 0xE0 = 2
-      | byte < 0xF0 = 3
-      | otherwise   = 4
+truncateField PatchEncodingUTF8   = truncateUtf8
+truncateField PatchEncodingSystem = truncateLocale
 
 -- | Check which RUPInfo fields would be truncated by encodeFixedHeader,
 -- and return a warning for each one.

@@ -30,17 +30,15 @@ import Slap.Get (Get, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Format (padHex)
 
+import Slap.TextEncoding (encodeUtf8Field, encodeLocaleField,
+                          decodeUtf8Field, decodeLocaleField)
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
 import Data.Word (Word8)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified GHC.Foreign as GHC
-import System.IO (localeEncoding)
-import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -77,17 +75,15 @@ patchEncodingName PatchEncodingSystem = "system"
 
 -- | Encode a String as bytes using the given patch encoding.
 encodeRUPString :: PatchEncoding -> String -> ByteString
-encodeRUPString PatchEncodingUTF8 str = Text.encodeUtf8 (Text.pack str)
-encodeRUPString PatchEncodingSystem str = unsafePerformIO $
-  GHC.withCStringLen localeEncoding str ByteString.packCStringLen
+encodeRUPString PatchEncodingUTF8   = encodeUtf8Field
+encodeRUPString PatchEncodingSystem = encodeLocaleField
 
 -- | Decode a raw field ByteString to String based on the PATCH_ENC byte.
 -- PATCH_ENC=1 decodes as UTF-8 (lenient: invalid bytes become U+FFFD).
 -- PATCH_ENC=0 (or any other value) decodes using the system locale.
 decodeRUPField :: Word8 -> ByteString -> String
-decodeRUPField 1 bytes = Text.unpack (Text.decodeUtf8Lenient bytes)
-decodeRUPField _ bytes = unsafePerformIO $
-  ByteString.useAsCStringLen bytes (GHC.peekCStringLen localeEncoding)
+decodeRUPField 1 = decodeUtf8Field
+decodeRUPField _ = decodeLocaleField
 
 data RUPPatch = RUPPatch
   { rupHeader         :: RUPInfo

@@ -15,9 +15,8 @@ import Slap.Compress (zlibDeflate)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
+import Data.ByteString.Builder (Builder, word8, byteString, intDec, toLazyByteString)
 import Data.Bits (shiftR, (.&.))
 import Data.Int (Int64)
 
@@ -76,6 +75,6 @@ ninja1HashInput input
   | ByteString.length input > 0x1e00000 =
       let headSample = ByteString.take 0x1400000 input
           tailSample  = ByteString.drop (ByteString.length input - 0xa00000) input
-          sizeString  = ByteString8.pack (show (ByteString.length input))
+          sizeString  = LazyByteString.toStrict (toLazyByteString (intDec (ByteString.length input)))
       in headSample <> tailSample <> sizeString
   | otherwise = input

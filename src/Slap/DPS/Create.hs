@@ -9,29 +9,40 @@ module Slap.DPS.Create
 import Slap.DPS.Types (DPSStability, fromDPSStability, DPSRecord(..), dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
+import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> ByteString
-createDPS original modified name author version stability = LazyByteString.toStrict $ toLazyByteString $
-    padField dpsFieldWidth name         -- name
-    <> padField dpsFieldWidth author    -- author
-    <> padField dpsFieldWidth version   -- version
-    <> word8 (fromDPSStability stability)  -- flag
-    <> word8 1                          -- DPS version
-    <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)  -- orig size
-    <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
+createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> (ByteString, [SlapWarning])
+createDPS original modified name author version stability =
+    let (nameBytes, nameWarnings)       = encodeField FieldPatchName name
+        (authorBytes, authorWarnings)   = encodeField FieldAuthor author
+        (versionBytes, versionWarnings) = encodeField FieldVersion version
+        patchBytes = LazyByteString.toStrict $ toLazyByteString $
+            byteString nameBytes
+            <> byteString authorBytes
+            <> byteString versionBytes
+            <> word8 (fromDPSStability stability)
+            <> word8 1
+            <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
+            <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
+    in (patchBytes, nameWarnings ++ authorWarnings ++ versionWarnings)
   where
-    padField fieldLength fieldString =
-      let fieldBytes = ByteString8.pack (take fieldLength fieldString)
-      in byteString fieldBytes <> byteString (ByteString.replicate (fieldLength - ByteString.length fieldBytes) 0)
+    encodeField fieldName fieldString =
+      let result = encodeBoundedLocale dpsFieldWidth fieldString
+          warnings = case boundedTruncation result of
+            Nothing -> []
+            Just info -> [FieldTruncated LabelDPS fieldName
+                           (Length (truncatedFrom info)) (Length (truncatedTo info))]
+      in (boundedField result, warnings)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [DPSRecord]
 dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modified)

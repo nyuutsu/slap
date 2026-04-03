@@ -70,7 +70,7 @@ roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> S
 roundTrip format baseBytes targetBytes expectedSha = do
   case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-    Right patchBytes -> case parseSome patchBytes of
+    Right (patchBytes, _) -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
         result <- applyPatch parsed baseBytes

@@ -15,6 +15,7 @@ module Slap.SomePatch
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
+import Slap.TextEncoding (encodeUtf8Field)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..), UndoHunk(..))
 import qualified Slap.PPF.Types as PPF
 import qualified Slap.PPF.Parse as PPF
@@ -245,6 +246,7 @@ parseSome patchBytes = case detectFormat patchBytes of
             , contentsPCHTXTBlocks = Nothing
             , contentsNINJA1Compressed = Nothing
             , contentsMetadata = Nothing
+            , contentsPatchEncoding = Nothing
             }
         }
 
@@ -577,7 +579,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
       , patchContents  = Just (emptyContents contentRecords)
-          { contentsDescription = ByteString8.pack <$> PCHTXT.pchtxtNsobid patch
+          { contentsDescription = encodeUtf8Field <$> PCHTXT.pchtxtNsobid patch
           , contentsPCHTXTBlocks = Just allBlocks
           }
       }

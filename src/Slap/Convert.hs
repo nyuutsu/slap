@@ -53,6 +53,8 @@ import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
 
+import Slap.TextEncoding (isValidUtf8)
+
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -91,6 +93,10 @@ data PatchContents = PatchContents
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
+  , contentsPatchEncoding :: Maybe PatchEncoding
+    -- ^ Text encoding of description/metadata fields, when the source
+    -- format carries an encoding flag (e.g. RUP PATCH_ENC).  Nothing
+    -- for formats with opaque byte fields (PPF, DPS, APSN64).
   }
 
 -- | Direct creation target.  Some format families have multiple creation
@@ -200,6 +206,7 @@ emptyContents records = PatchContents
   , contentsPCHTXTBlocks = Nothing
   , contentsNINJA1Compressed = Nothing
   , contentsMetadata = Nothing
+  , contentsPatchEncoding = Nothing
   }
 
 provides :: PatchContents -> Set.Set PatchField
@@ -263,7 +270,18 @@ conversionNotes contents target spec meta =
       interopNotes = ebpTruncMetaNote contents target meta
       defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
       hashNotes = ninja1HashNotes contents target
-  in droppedNotes ++ interopNotes ++ defaultNotes ++ hashNotes
+      encodingNotes = encodingGapNotes contents target
+  in droppedNotes ++ interopNotes ++ defaultNotes ++ hashNotes ++ encodingNotes
+
+-- | Warn when converting from a format with known text encoding to one
+-- without an encoding flag.  The bytes are copied unchanged — but the
+-- target has no way to record what encoding they are.
+encodingGapNotes :: PatchContents -> DirectCreate -> [SlapWarning]
+encodingGapNotes contents target = case contentsPatchEncoding contents of
+  Just _ | isJust (contentsDescription contents)
+         , target `elem` [CreatePPF3, CreateAPSN64]
+         -> [EncodingGap LabelRUP (directLabel target)]
+  _ -> []
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
 -- treats them as mutually exclusive.
@@ -404,8 +422,8 @@ convertDirect contents (CreateDirect target) meta = do
       -- Full limits including sentinel: convertDirect has no source bytes,
       -- so avoidSentinel can't fix collisions at encode time.
       let notes = conversionNotes contents target spec meta
-      result <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
-      Right (result, notes)
+      (result, encodeWarnings) <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
+      Right (result, notes ++ encodeWarnings)
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
@@ -418,14 +436,14 @@ encodingLimits _           = Nothing
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta
-             -> Maybe EncodingLimits -> Either SlapError ByteString.ByteString
+             -> Maybe EncodingLimits -> Either SlapError (ByteString.ByteString, [SlapWarning])
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
-    Right (IPS.encodeIPS source records (contentsTruncation contents))
+    Right (IPS.encodeIPS source records (contentsTruncation contents), [])
   CreateIPS32 -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
-    Right (IPS.encodeIPS32 source records (contentsTruncation contents))
+    Right (IPS.encodeIPS32 source records (contentsTruncation contents), [])
   CreateEBP -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
     -- Pass through raw EBP JSON when metadata values match what the JSON
@@ -443,35 +461,37 @@ encodeDirect contents source target meta limits = case target of
                then Just raw
                else Nothing
     Right $ case passthrough of
-      Just raw -> IPS.encodeEBPRaw source records (contentsTruncation contents) raw
-      Nothing  -> IPS.encodeEBP source records (contentsTruncation contents)
-                    ebpTitle ebpAuthor description
+      Just raw -> (IPS.encodeEBPRaw source records (contentsTruncation contents) raw, [])
+      Nothing  -> (IPS.encodeEBP source records (contentsTruncation contents)
+                    ebpTitle ebpAuthor description, [])
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
-    let base = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
+    let (base, encodeWarnings) = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
                   (contentsUndoData contents) (contentsValidation contents) imageType
     in Right $ case contentsFileIdDiz contents of
-         Nothing  -> base
-         Just diz -> base <> PPF.encodeFileIdDiz diz
+         Nothing  -> (base, encodeWarnings)
+         Just diz -> (base <> PPF.encodeFileIdDiz diz, encodeWarnings)
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (ByteString.replicate 16 0) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (ByteString.replicate 20 0) (contentsSourceSHA1 contents)
     Right (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
-             (fromMaybe False (contentsNINJA1Compressed contents)))
+             (fromMaybe False (contentsNINJA1Compressed contents)), [])
   CreatePMSR -> do
     records <- narrow (contentsRecords contents)
-    Right (PMSR.encodePMSR records)
+    Right (PMSR.encodePMSR records, [])
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
-    Just blocks -> Right (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription)
+    Just blocks -> Right (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription, [])
     Nothing -> do
       records <- narrow (contentsRecords contents)
-      Right (PCHTXT.encodePCHTXT records pchtxtDescription)
+      Right (PCHTXT.encodePCHTXT records pchtxtDescription, [])
   CreateAPSN64 -> do
     records <- narrow (contentsRecords contents)
     case contentsDestinationSize contents of
-      Just targetSize -> Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
+      Just targetSize ->
+        let (patchBytes, encodeWarnings) = APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription
+        in Right (patchBytes, encodeWarnings)
       Nothing -> error "unreachable: canConvert verified FDestinationSize"
   where
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
@@ -503,23 +523,36 @@ encodeDirect contents source target meta limits = case target of
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
 createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
-                 -> CreateMeta -> Maybe PatchContents -> Either SlapError ByteString.ByteString
+                 -> CreateMeta -> Maybe PatchContents -> Either SlapError (ByteString.ByteString, [SlapWarning])
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
       -- Source bytes available: avoidSentinel handles sentinel collisions
       -- at encode time, so only validate offset ranges here (sentinel stripped).
       strippedLimits = fmap (\lim -> lim { sentinelOffset = Nothing }) (encodingLimits format)
   in encodeDirect contents source format meta strippedLimits
-createFromMemory (CreateDiff format) source target meta _sourceContents = case format of
-  CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)))
-  CreateUPS    -> Right (UPS.createUPS source target)
-  CreateDPS    -> Right (DPS.createDPS source target
-                   (fromMaybe "" (metaTitle meta <|> metaDescription meta))
-                   (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
-                   (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
-  CreateRUP    -> Right (RUP.createRUP source target (fst (prepareRUP meta)) (fromMaybe 0 (metaRomType meta)) (metaPatchEncoding meta))
-  CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
-  CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
+createFromMemory (CreateDiff format) source target meta sourceContents = case format of
+  CreateBPS    -> Right (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta)), [])
+  CreateUPS    -> Right (UPS.createUPS source target, [])
+  CreateDPS    -> let (patchBytes, dpsWarnings) = DPS.createDPS source target
+                       (fromMaybe "" (metaTitle meta <|> metaDescription meta))
+                       (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
+                       (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable)
+                 in Right (patchBytes, dpsWarnings)
+  CreateRUP    ->
+    let -- When source patch has opaque description bytes, detect encoding
+        -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
+        -- If source already has known encoding, respect it.
+        detectedEncoding = case sourceContents >>= contentsPatchEncoding of
+          Just enc -> enc
+          Nothing  -> case sourceContents >>= contentsDescription of
+            Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
+            _ -> metaPatchEncoding meta
+        adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
+        (rupInfo, truncWarnings) = prepareRUP adjustedMeta
+    in Right (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType adjustedMeta)) detectedEncoding,
+              truncWarnings)
+  CreateAPSGBA -> Right (APSGBA.createAPSGBA source target, [])
+  CreateGDIFF  -> Right (GDIFF.createGDIFF source target, [])
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
@@ -553,6 +586,7 @@ buildContents format source target meta sourceContents = PatchContents
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsMetadata    = Nothing
+  , contentsPatchEncoding = Nothing
   }
   where
     encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk hunkOffset hunkPayload

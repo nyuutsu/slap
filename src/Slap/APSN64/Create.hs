@@ -8,11 +8,13 @@ module Slap.APSN64.Create
 
 import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), apsN64DescriptionWidth)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), EncodedHunk(..))
+import Slap.Measure (Offset(..), Length(..), EncodedHunk(..))
+import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
+import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Word (Word32)
@@ -22,17 +24,21 @@ import Data.Word (Word32)
 -- Patch type: APSSimple matches the simple-record structure we emit.
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
-encodeAPSN64 :: [EncodedHunk] -> Word32 -> String -> ByteString
-encodeAPSN64 records destinationSize description = LazyByteString.toStrict $ toLazyByteString $
-    byteString "APS10"             -- magic
-    <> word8 (fromAPSPatchType APSSimple)  -- patch type: simple
-    <> word8 0                     -- encoding: not used
-    <> byteString descriptionBytes        -- 50-byte description
-    <> putWord32LE destinationSize -- dest size
-    <> foldMap encodeN64Record (splitLong records)
-  where
-    descriptionBytes = let padded = ByteString8.pack (take apsN64DescriptionWidth description)
-                in padded <> ByteString.replicate (apsN64DescriptionWidth - ByteString.length padded) 0
+encodeAPSN64 :: [EncodedHunk] -> Word32 -> String -> (ByteString, [SlapWarning])
+encodeAPSN64 records destinationSize description =
+    let result = encodeBoundedLocale apsN64DescriptionWidth description
+        descriptionWarnings = case boundedTruncation result of
+          Nothing -> []
+          Just info -> [FieldTruncated LabelAPSN64 FieldDescription
+                         (Length (truncatedFrom info)) (Length (truncatedTo info))]
+        patchBytes = LazyByteString.toStrict $ toLazyByteString $
+            byteString "APS10"
+            <> word8 (fromAPSPatchType APSSimple)
+            <> word8 0
+            <> byteString (boundedField result)
+            <> putWord32LE destinationSize
+            <> foldMap encodeN64Record (splitLong records)
+    in (patchBytes, descriptionWarnings)
 
 splitLong :: [EncodedHunk] -> [EncodedHunk]
 splitLong = concatMap splitRecord

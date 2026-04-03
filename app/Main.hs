@@ -571,7 +571,8 @@ doCreate parsedCommand = do
   forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
   case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
     Left slapError -> dieError slapError
-    Right patchBytes -> do
+    Right (patchBytes, encodeWarnings) -> do
+      forM_ encodeWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
       ByteString.writeFile (commandCreateOutput parsedCommand) patchBytes
       putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
 
@@ -636,9 +637,10 @@ doConvert parsedCommand = do
                 }
           case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
             Left slapError -> dieError slapError
-            Right result -> do
+            Right (result, encodeWarnings) -> do
               printWarnings (patchSourceNotes parsed ++ metaWarnings
-                            ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta)
+                            ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
+                            ++ encodeWarnings)
               forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
               ByteString.writeFile outputFile result
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)

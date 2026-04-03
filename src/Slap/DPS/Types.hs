@@ -13,6 +13,11 @@ module Slap.DPS.Types
   , dpsMinimumFileSize
   , dpsVersionOffset
   , dpsStabilityOffset
+    -- * Record constants
+  , dpsCopyFromROMMode
+  , dpsEnclosedDataMode
+  , dpsRecordHeaderSize
+  , dpsCopyRecordSize
   ) where
 
 import Data.ByteString (ByteString)
@@ -80,3 +85,19 @@ dpsVersionOffset = dpsMetadataSize + 1
 -- | Byte offset of the stability flag (0-indexed).
 dpsStabilityOffset :: Int
 dpsStabilityOffset = dpsMetadataSize
+
+-- | Mode byte for CopyFromROM records.
+dpsCopyFromROMMode :: Word8
+dpsCopyFromROMMode = 0
+
+-- | Mode byte for EnclosedData records.
+dpsEnclosedDataMode :: Word8
+dpsEnclosedDataMode = 1
+
+-- | Shared record header: mode byte + output offset (1 + 4 bytes).
+dpsRecordHeaderSize :: Int
+dpsRecordHeaderSize = 5
+
+-- | Full CopyFromROM record: mode + outputOffset + sourceOffset + length (1 + 4 + 4 + 4).
+dpsCopyRecordSize :: Int
+dpsCopyRecordSize = 13

@@ -49,7 +49,7 @@ mkCrossValTest romCache repo cacheReference fields = case fields of
                 -- Create patch with slap
                 case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
                   Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-                  Right patchBytes ->
+                  Right (patchBytes, _) ->
                     -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->
                     withTempFile "slap-xv-base" $ \baseFile ->
