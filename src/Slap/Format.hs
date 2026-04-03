@@ -7,7 +7,6 @@ module Slap.Format
   , showSigned
     -- * Key-value rendering
   , renderField
-  , renderMetaField
     -- * Structured fields
   , MetaField(..)
     -- * Hex dump
@@ -43,10 +42,6 @@ showSigned value
   | value >= 0 = "+0x" ++ padHex 6 value
   | otherwise  = "-0x" ++ padHex 6 (abs value)
 
--- | Render a key-value pair with column-13 alignment.
-renderField :: (String, String) -> String
-renderField (key, value) = key ++ ":" ++ replicate (max 1 (13 - length key - 1)) ' ' ++ value
-
 -- | A labeled metadata value for display. This is the output of
 -- the Describe layer: structured domain data has already been
 -- translated into human-readable strings by the time MetaField
@@ -57,8 +52,8 @@ data MetaField = MetaField
   } deriving (Eq, Show)
 
 -- | Render a MetaField with column-13 alignment.
-renderMetaField :: MetaField -> String
-renderMetaField (MetaField label value) =
+renderField :: MetaField -> String
+renderField (MetaField label value) =
   label ++ ":" ++ replicate (max 1 (13 - length label - 1)) ' ' ++ value
 
 -- | Hex dump of a ByteString, showing up to 64 bytes in 16-byte rows.

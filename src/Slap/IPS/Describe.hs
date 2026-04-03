@@ -12,7 +12,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
@@ -25,11 +25,11 @@ import Data.Ord (comparing)
 import Data.Word (Word64)
 import Numeric (showHex)
 
-ipsMeta :: IPSPatch -> [(String, String)]
+ipsMeta :: IPSPatch -> [MetaField]
 ipsMeta patch = concat
   [ case ipsTruncate patch of
       Nothing        -> []
-      Just truncSize -> [("truncate", show (unFileSize truncSize) ++ " bytes")]
+      Just truncSize -> [MetaField "truncate" (show (unFileSize truncSize) ++ " bytes")]
   , ebpFields
   ]
   where
@@ -38,10 +38,10 @@ ipsMeta patch = concat
       Just meta ->
         let pairs = jsonPairs meta
             known = ["patcher", "title", "author", "description"]
-            knownFields = [ (key, value) | key <- known
+            knownFields = [ MetaField key value | key <- known
                           , Just value <- [jsonFieldCI pairs key]
                           , not (null value) ]
-            unknownFields = sortBy (comparing fst)
+            unknownFields = map (uncurry MetaField) $ sortBy (comparing fst)
                           [ (key, value) | (key, value) <- pairs
                           , map toLower key `notElem` known
                           , not (null value) ]

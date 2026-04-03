@@ -13,7 +13,7 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 
 import qualified Data.ByteString as ByteString
@@ -21,14 +21,14 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Data.Int (Int64)
 import Data.List (mapAccumL)
 
-bpsMeta :: BPSPatch -> [(String, String)]
+bpsMeta :: BPSPatch -> [MetaField]
 bpsMeta patch = concat
-  [ [("source size", show (unFileSize (bpsSourceSize patch)))]
-  , [("target size", show (unFileSize (bpsTargetSize patch)))]
-  , [("metadata", metadataDisplay)]
-  , [("source CRC", showCRC32 (bpsSourceCRC patch))]
-  , [("target CRC", showCRC32 (bpsTargetCRC patch))]
-  , [("patch CRC", showCRC32 (bpsPatchCRC patch))]
+  [ [MetaField "source size" (show (unFileSize (bpsSourceSize patch)))]
+  , [MetaField "target size" (show (unFileSize (bpsTargetSize patch)))]
+  , [MetaField "metadata" metadataDisplay]
+  , [MetaField "source CRC" (showCRC32 (bpsSourceCRC patch))]
+  , [MetaField "target CRC" (showCRC32 (bpsTargetCRC patch))]
+  , [MetaField "patch CRC" (showCRC32 (bpsPatchCRC patch))]
   ]
   where
     metadata = bpsMetadata patch

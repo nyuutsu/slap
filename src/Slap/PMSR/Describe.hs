@@ -12,6 +12,7 @@ import Slap.Explain
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..)
     )
+import Slap.Format (MetaField(..))
 import Slap.Measure (Offset(..), Length(..))
 
 import qualified Data.ByteString as ByteString
@@ -23,7 +24,7 @@ import Numeric (showHex)
 ----------------------------------------------------------------------------
 
 -- | PMSR carries no header metadata; this returns an empty list.
-pmsrMeta :: PMSRPatch -> [(String, String)]
+pmsrMeta :: PMSRPatch -> [MetaField]
 pmsrMeta _ = []
 
 pmsrInfo :: PMSRPatch -> String

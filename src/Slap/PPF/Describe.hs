@@ -2,7 +2,7 @@ module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
 import Slap.PPF.Types
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Explain
   ( ExplainData(..)
   , ExplainSection(SectionRegions)
@@ -23,18 +23,18 @@ import Data.Word (Word64)
 import Numeric (showHex)
 
 -- | All key-value metadata carried by a PPF patch header.
-ppfMeta :: Patch -> [(String, String)]
+ppfMeta :: Patch -> [MetaField]
 ppfMeta patch = concat
   [ let description = ByteStringChar.unpack (stripTrailing (ppfDescription patch))
-    in [("description", description) | not (null description)]
+    in [MetaField "description" description | not (null description)]
   , case ppfFileSize patch of
       Nothing   -> []
-      Just size -> [("file size", show (unFileSize size) ++ " bytes (validation)")]
-  , [("validation", validationString (ppfValidation patch))]
-  , [("undo data", if ppfHasUndo patch then "yes" else "no")]
+      Just size -> [MetaField "file size" (show (unFileSize size) ++ " bytes (validation)")]
+  , [MetaField "validation" (validationString (ppfValidation patch))]
+  , [MetaField "undo data" (if ppfHasUndo patch then "yes" else "no")]
   , case ppfFileId patch of
       Nothing             -> []
-      Just (FileId content) -> [("file_id.diz", show (ByteString.length content) ++ " bytes")]
+      Just (FileId content) -> [MetaField "file_id.diz" (show (ByteString.length content) ++ " bytes")]
   ]
   where
     validationString Nothing = "none"

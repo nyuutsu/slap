@@ -18,7 +18,7 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showAdler32)
-import Slap.Format (padHex, renderField)
+import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
@@ -27,19 +27,19 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-vcdiffMeta :: VCDIFFPatch -> [(String, String)]
+vcdiffMeta :: VCDIFFPatch -> [MetaField]
 vcdiffMeta patch = concat
-  [ [("version", show (vcdiffVersion (vcdiffHeader patch)))]
+  [ [MetaField "version" (show (vcdiffVersion (vcdiffHeader patch)))]
   , case vcdiffCompressorId (vcdiffHeader patch) of
       Nothing -> []
-      Just compressor  -> [("compressor", show compressor)]
+      Just compressor  -> [MetaField "compressor" (show compressor)]
   , if vcdiffHasCodeTable (vcdiffHeader patch)
-    then [("code table", "custom (near=" ++ show (vcdiffNearSize patch)
+    then [MetaField "code table" ("custom (near=" ++ show (vcdiffNearSize patch)
           ++ ", same=" ++ show (vcdiffSameSize patch) ++ ")")]
     else []
-  , [("target size", show (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
+  , [MetaField "target size" (show (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
   , if any ((/= Nothing) . vcdiffAdler32) (vcdiffWindows patch)
-    then [("checksums", "Adler32 (xdelta3)")]
+    then [MetaField "checksums" "Adler32 (xdelta3)"]
     else []
   ]
 
@@ -80,12 +80,12 @@ makeVCDIFFSection :: Int -> Offset -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
                 -> [ExplainSection]
 makeVCDIFFSection index globalOffset window instructions =
   [ SectionLabeled ("window " ++ show index ++ ":")
-      ( [ ("target size", show (unFileSize (vcdiffTargetLength window)))
-        , ("source segment", show (unFileSize (vcdiffSourceLength window)) ++ " bytes at 0x"
+      ( [ MetaField "target size" (show (unFileSize (vcdiffTargetLength window)))
+        , MetaField "source segment" (show (unFileSize (vcdiffSourceLength window)) ++ " bytes at 0x"
             ++ padHex 6 (unOffset (vcdiffSourcePosition window)))
-        , ("add/run data", show (ByteString.length (vcdiffAddRunData window)) ++ " bytes")
-        , ("instructions", show (ByteString.length (vcdiffInstructions window)) ++ " bytes")
-        , ("addresses", show (ByteString.length (vcdiffAddresses window)) ++ " bytes")
+        , MetaField "add/run data" (show (ByteString.length (vcdiffAddRunData window)) ++ " bytes")
+        , MetaField "instructions" (show (ByteString.length (vcdiffInstructions window)) ++ " bytes")
+        , MetaField "addresses" (show (ByteString.length (vcdiffAddresses window)) ++ " bytes")
         ] ++ adlerPair
       )
   , SectionRegions (map (decodedToRegion globalOffset) instructions)
@@ -93,7 +93,7 @@ makeVCDIFFSection index globalOffset window instructions =
   where
     adlerPair = case vcdiffAdler32 window of
       Nothing      -> []
-      Just adler   -> [("adler32", "0x" ++ showAdler32 adler)]
+      Just adler   -> [MetaField "adler32" ("0x" ++ showAdler32 adler)]
 
 decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> ExplainRegion
 decodedToRegion globalOffset instruction = case instruction of

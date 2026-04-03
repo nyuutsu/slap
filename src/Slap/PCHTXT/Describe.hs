@@ -11,14 +11,14 @@ import Slap.PCHTXT.Create (hexPad)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..))
 
 import qualified Data.ByteString as ByteString
 
-pchtxtMeta :: PCHTXTPatch -> [(String, String)]
+pchtxtMeta :: PCHTXTPatch -> [MetaField]
 pchtxtMeta patch = case pchtxtNsobid patch of
-  Just nsobid -> [("nsobid", nsobid)]
+  Just nsobid -> [MetaField "nsobid" nsobid]
   Nothing     -> []
 
 pchtxtInfo :: PCHTXTPatch -> String

@@ -12,7 +12,7 @@ import Slap.Explain
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
@@ -22,17 +22,17 @@ import qualified Data.ByteString.Char8 as ByteString8
 -- Info
 ----------------------------------------------------------------------------
 
-dpsMeta :: DPSPatch -> [(String, String)]
+dpsMeta :: DPSPatch -> [MetaField]
 dpsMeta patch = concat
   [ fieldPair "name"    (dpsName patch)
   , fieldPair "author"  (dpsAuthor patch)
   , fieldPair "version" (dpsVersion patch)
-  , [("orig size", show (unFileSize (dpsOriginalSize patch)))]
-  , [("flag", "unstable") | dpsStability patch == DPSUnstable]
+  , [MetaField "orig size" (show (unFileSize (dpsOriginalSize patch)))]
+  , [MetaField "flag" "unstable" | dpsStability patch == DPSUnstable]
   ]
   where
     fieldPair _ value | ByteString.null value = []
-    fieldPair label value = [(label, ByteString8.unpack value)]
+    fieldPair label value = [MetaField label (ByteString8.unpack value)]
 
 dpsInfo :: DPSPatch -> String
 dpsInfo patch = unlines $ filter (not . null) $

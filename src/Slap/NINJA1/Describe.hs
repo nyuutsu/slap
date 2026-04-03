@@ -12,7 +12,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32)
-import Slap.Format (padHex, renderField)
+import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..))
 
 import qualified Data.ByteString as ByteString
@@ -21,18 +21,18 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-ninja1Meta :: NINJA1Patch -> [(String, String)]
+ninja1Meta :: NINJA1Patch -> [MetaField]
 ninja1Meta patch = concat
-  [ [("ROM type", romTypeName (ninja1RomType patch))]
+  [ [MetaField "ROM type" (romTypeName (ninja1RomType patch))]
   , case ninja1SourceCRC patch of
       Nothing  -> []
-      Just crc -> [("source CRC", "0x" ++ showCRC32 crc)]
+      Just crc -> [MetaField "source CRC" ("0x" ++ showCRC32 crc)]
   , case ninja1SourceMD5 patch of
       Nothing   -> []
-      Just hash -> [("source MD5", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Just hash -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
   , case ninja1SourceSHA1 patch of
       Nothing   -> []
-      Just hash -> [("source SHA1", concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Just hash -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
   ]
 
 ninja1Info :: NINJA1Patch -> String

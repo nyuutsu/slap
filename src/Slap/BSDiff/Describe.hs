@@ -15,7 +15,7 @@ import Slap.Explain
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Format (renderField)
+import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Data.List (mapAccumL)
 
@@ -23,12 +23,12 @@ import Data.List (mapAccumL)
 -- Info
 ----------------------------------------------------------------------------
 
-bsdiffMeta :: BSDiffPatch -> [(String, String)]
+bsdiffMeta :: BSDiffPatch -> [MetaField]
 bsdiffMeta patch =
-  [ ("new size", show (unFileSize (bsdiffTargetSize patch)))
-  , ("ctrl block", show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
-  , ("diff block", show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
-  , ("extra block", show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
+  [ MetaField "new size" (show (unFileSize (bsdiffTargetSize patch)))
+  , MetaField "ctrl block" (show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
+  , MetaField "diff block" (show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
+  , MetaField "extra block" (show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
   ]
 
 bsdiffInfo :: BSDiffPatch -> String

@@ -11,13 +11,14 @@ import Slap.Explain
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
+import Slap.Format (MetaField(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
 
 -- | GDIFF carries no header metadata; this returns an empty list.
-gdiffMeta :: GDiffPatch -> [(String, String)]
+gdiffMeta :: GDiffPatch -> [MetaField]
 gdiffMeta _ = []
 
 gdiffInfo :: GDiffPatch -> String

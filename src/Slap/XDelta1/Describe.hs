@@ -13,7 +13,7 @@ import Slap.Explain
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Format (padHex, renderField)
+import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
@@ -23,23 +23,23 @@ import qualified Data.ByteString.Char8 as ByteString8
 -- Info
 ----------------------------------------------------------------------------
 
-xdelta1Meta :: XDelta1Patch -> [(String, String)]
+xdelta1Meta :: XDelta1Patch -> [MetaField]
 xdelta1Meta patch =
-  [ ("version", xdelta1Version patch) ]
-  ++ [ ("from", ByteString8.unpack (xdelta1FromName patch))
-     , ("to", ByteString8.unpack (xdelta1ToName patch))
-     , ("target size", show (unFileSize (xdelta1TargetLength patch)))
-     , ("target MD5", md5Hex (xdelta1ToMD5 patch))
-     , ("sources", show (length sources))
+  [ MetaField "version" (xdelta1Version patch) ]
+  ++ [ MetaField "from" (ByteString8.unpack (xdelta1FromName patch))
+     , MetaField "to" (ByteString8.unpack (xdelta1ToName patch))
+     , MetaField "target size" (show (unFileSize (xdelta1TargetLength patch)))
+     , MetaField "target MD5" (md5Hex (xdelta1ToMD5 patch))
+     , MetaField "sources" (show (length sources))
      ]
   ++ sourceMD5s
-  ++ [ ("data seg", show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
+  ++ [ MetaField "data seg" (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
   where
     sources = xdelta1Sources patch
     md5Hex = concatMap (\byte -> padHex 2 (fromIntegral byte)) . ByteString.unpack
     sourceMD5s
-      | [entry] <- sources = [("source MD5", md5Hex (xdelta1SourceMD5 entry))]
-      | otherwise       = [("source " ++ show index ++ " MD5", md5Hex (xdelta1SourceMD5 entry))
+      | [entry] <- sources = [MetaField "source MD5" (md5Hex (xdelta1SourceMD5 entry))]
+      | otherwise       = [MetaField ("source " ++ show index ++ " MD5") (md5Hex (xdelta1SourceMD5 entry))
                             | (index, entry) <- zip [(1::Int)..] sources]
 
 xdelta1Info :: XDelta1Patch -> String

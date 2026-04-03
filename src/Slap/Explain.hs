@@ -23,7 +23,7 @@ import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (isDigit)
-import Data.List (sort, intercalate, partition)
+import Data.List (find, sort, intercalate, partition)
 import Data.Int (Int64)
 import Data.Word (Word8)
 
@@ -33,7 +33,7 @@ import Data.Word (Word8)
 
 data ExplainData = ExplainData
   { explainFormat   :: String              -- "PPF3", "IPS (EBP)", "BPS", etc.
-  , explainHeader   :: [(String, String)]  -- key-value metadata (key without colon)
+  , explainHeader   :: [MetaField]         -- key-value metadata
   , explainSections :: [ExplainSection]    -- grouped content
   , explainSummary  :: ExplainSummary      -- structured summary
   , explainNotes    :: [String]            -- trailing messages
@@ -42,7 +42,7 @@ data ExplainData = ExplainData
 data ExplainSection
   = SectionRegions [ExplainRegion]              -- flat numbered list
   | SectionBlock String [ExplainRegion]         -- labeled block + entries (PCHTXT)
-  | SectionLabeled String [(String, String)]    -- labeled block + kv pairs (VCDIFF)
+  | SectionLabeled String [MetaField]            -- labeled block + kv pairs (VCDIFF)
   | SectionText String                          -- free text line
 
 data ExplainRegion = ExplainRegion
@@ -124,12 +124,12 @@ renderExplain mSource explainData = unlines $
     renderSection (SectionBlock label regions) =
       label : map renderBlockEntry regions ++ [""]
 
-    renderSection (SectionLabeled label keyValues) =
-      label : map renderLabeledPair keyValues ++ [""]
+    renderSection (SectionLabeled label fields) =
+      label : map renderLabeledField fields ++ [""]
 
     renderSection (SectionText text) = [text]
 
-    renderLabeledPair (key, value) =
+    renderLabeledField (MetaField key value) =
       "  " ++ key ++ ":" ++ replicate (max 1 (18 - length key - 3)) ' ' ++ value
 
     renderBlockEntry region =
@@ -320,7 +320,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       (Just sourceString, _, Just targetString) -> makeSizeLine sourceString targetString
       _ -> []
 
-    lookupHeader key = lookup key (explainHeader explainData)
+    lookupHeader key = metaFieldValue <$> find (\field -> metaFieldLabel field == key) (explainHeader explainData)
 
     makeSizeLine sourceString targetString =
       case (parseSize sourceString, parseSize targetString) of
