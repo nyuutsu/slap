@@ -7,10 +7,10 @@ module Slap.VCDIFF.Parse
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFHeader(..), VCDIFFWindow(..)
-    , defaultCodeTable, defaultNearSize, defaultSameSize
+    , defaultCodeTable
     , serializedDefaultTable, decodeCustomTable
     )
-import Slap.VCDIFF.Apply (applyVCDIFF)
+import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.Checksum (Adler32(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))

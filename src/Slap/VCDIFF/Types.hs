@@ -6,11 +6,8 @@ module Slap.VCDIFF.Types
   , VCDIFFWindow(..)
   , VCDIFFInstruction(..)
   , VCDIFFDecodedInstruction(..)
-  , CodeEntry
-  , AddressCache(..)
+  , CodeEntry(..)
   , defaultCodeTable
-  , defaultNearSize
-  , defaultSameSize
   , serializedDefaultTable
   , deserializeCodeTable
   , decodeCustomTable
@@ -24,23 +21,24 @@ module Slap.VCDIFF.Types
 import Slap.Checksum (Adler32)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset(..), FileSize(..), Length(..))
 
 import Control.Monad (when)
 import Data.Array (Array, listArray, (!))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.IORef
-import Data.Int (Int64)
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- Types
 ----------------------------------------------------------------------------
 
-data VCDIFFInstruction = VcdiffNoop | VcdiffAdd Int | VcdiffRun Int | VcdiffCopy Int Int
+data VCDIFFInstruction
+  = VcdiffNoop
+  | VcdiffAdd  { vcdiffAddSize  :: !Int }
+  | VcdiffRun  { vcdiffRunSize  :: !Int }
+  | VcdiffCopy { vcdiffCopySize :: !Int, vcdiffCopyMode :: !Int }
   deriving (Show)
-  -- VcdiffCopy length mode  (mode indexes into near/same cache decode)
 
 data VCDIFFHeader = VCDIFFHeader
   { vcdiffVersion      :: Word8
@@ -71,54 +69,51 @@ data VCDIFFPatch = VCDIFFPatch
 -- | Decoded instruction for the explain path -- mirrors execute logic but
 --   accumulates instructions instead of writing bytes.
 data VCDIFFDecodedInstruction
-  = DecodedAdd  Int64 ByteString         -- window-local output offset, literal bytes
-  | DecodedRun  Int64 Word8 Int          -- window-local output offset, fill byte, count
-  | DecodedCopy Int64 Int (Maybe Int64)  -- window-local output offset, size,
-                                         --   Just absoluteSrcFileOffset | Nothing (target/self ref)
+  = DecodedAdd
+      { decodedAddWindowOffset :: !Offset
+      , decodedAddPayload      :: !ByteString
+      }
+  | DecodedRun
+      { decodedRunWindowOffset :: !Offset
+      , decodedRunFillByte     :: !Word8
+      , decodedRunCount        :: !Length
+      }
+  | DecodedCopy
+      { decodedCopyWindowOffset :: !Offset
+      , decodedCopySize         :: !Length
+      , decodedCopySourceOffset :: !(Maybe Offset)
+      }
 
 ----------------------------------------------------------------------------
 -- Default code table (RFC 3284 Section 5.6)
 ----------------------------------------------------------------------------
 
--- Each entry is a pair of instructions. For size=0 instructions, the
--- actual size follows as a varint in the instruction stream.
+-- For size=0 instructions, the actual size follows as a varint in the
+-- instruction stream.
 
-type CodeEntry = (VCDIFFInstruction, VCDIFFInstruction)
+data CodeEntry = CodeEntry
+  { codeEntryFirst  :: !VCDIFFInstruction
+  , codeEntrySecond :: !VCDIFFInstruction
+  } deriving (Show)
 
 defaultCodeTable :: Array Word8 CodeEntry
 defaultCodeTable = listArray (0, 255) $
   -- 0: RUN 0, Noop
-  [(VcdiffRun 0, VcdiffNoop)]
+  [CodeEntry (VcdiffRun 0) VcdiffNoop]
   -- 1-18: ADD size, Noop  (size 0..17)
-  ++ [(VcdiffAdd size, VcdiffNoop) | size <- [0..17]]
+  ++ [CodeEntry (VcdiffAdd size) VcdiffNoop | size <- [0..17]]
   -- 19-162: COPY size mode, Noop
   -- 9 modes (0..8), sizes 0..15 for each mode -> 144 entries
   -- For each mode 0..8:
   --   size 0: COPY 0 mode, Noop
   --   sizes 4..18: COPY s mode, Noop
-  ++ [(VcdiffCopy size mode, VcdiffNoop) | mode <- [0..8], size <- 0 : [4..18]]
+  ++ [CodeEntry (VcdiffCopy size mode) VcdiffNoop | mode <- [0..8], size <- 0 : [4..18]]
   -- 163-234: ADD 1..4, COPY 4..6, modes 0..5  -> 72 entries
-  ++ [(VcdiffAdd addSize, VcdiffCopy copySize mode) | mode <- [0..5], addSize <- [1..4], copySize <- [4..6]]
+  ++ [CodeEntry (VcdiffAdd addSize) (VcdiffCopy copySize mode) | mode <- [0..5], addSize <- [1..4], copySize <- [4..6]]
   -- 235-246: ADD 1..4, COPY 4, modes 6..8  -> 12 entries
-  ++ [(VcdiffAdd addSize, VcdiffCopy 4 mode) | mode <- [6..8], addSize <- [1..4]]
+  ++ [CodeEntry (VcdiffAdd addSize) (VcdiffCopy 4 mode) | mode <- [6..8], addSize <- [1..4]]
   -- 247-255: COPY 4, ADD 1, modes 0..8  -> 9 entries
-  ++ [(VcdiffCopy 4 mode, VcdiffAdd 1) | mode <- [0..8]]
-
-----------------------------------------------------------------------------
--- Address cache (RFC 3284 Section 5.3)
-----------------------------------------------------------------------------
-
-data AddressCache = AddressCache
-  { cacheNear     :: !(Array Int (IORef Int64))
-  , cacheSame     :: !(Array Int (IORef Int64))
-  , cacheNearNext :: !(IORef Int)
-  , cacheNearSize :: !Int
-  , cacheSameSize :: !Int
-  }
-
-defaultNearSize, defaultSameSize :: Int
-defaultNearSize = 4
-defaultSameSize = 3
+  ++ [CodeEntry (VcdiffCopy 4 mode) (VcdiffAdd 1) | mode <- [0..8]]
 
 ----------------------------------------------------------------------------
 -- Code table serialization (RFC 3284 Section 7)
@@ -145,12 +140,12 @@ instructionMode _                = 0
 --   types1 ++ types2 ++ sizes1 ++ sizes2 ++ modes1 ++ modes2
 serializedDefaultTable :: ByteString
 serializedDefaultTable = ByteString.pack $
-  map (instructionType . fst . (defaultCodeTable !)) [0..255]
-  ++ map (instructionType . snd . (defaultCodeTable !)) [0..255]
-  ++ map (instructionSize . fst . (defaultCodeTable !)) [0..255]
-  ++ map (instructionSize . snd . (defaultCodeTable !)) [0..255]
-  ++ map (instructionMode . fst . (defaultCodeTable !)) [0..255]
-  ++ map (instructionMode . snd . (defaultCodeTable !)) [0..255]
+  map (instructionType . codeEntryFirst . (defaultCodeTable !)) [0..255]
+  ++ map (instructionType . codeEntrySecond . (defaultCodeTable !)) [0..255]
+  ++ map (instructionSize . codeEntryFirst . (defaultCodeTable !)) [0..255]
+  ++ map (instructionSize . codeEntrySecond . (defaultCodeTable !)) [0..255]
+  ++ map (instructionMode . codeEntryFirst . (defaultCodeTable !)) [0..255]
+  ++ map (instructionMode . codeEntrySecond . (defaultCodeTable !)) [0..255]
 
 deserializeCodeTable :: ByteString -> Either SlapError (Array Word8 CodeEntry)
 deserializeCodeTable tableBytes
@@ -160,8 +155,8 @@ deserializeCodeTable tableBytes
       pure $ listArray (0, 255) entries
   where
     makeEntry :: Int -> Either SlapError CodeEntry
-    makeEntry index = (,) <$> makeInstruction (byteAt index) (byteAt (512+index)) (byteAt (1024+index))
-                        <*> makeInstruction (byteAt (256+index)) (byteAt (768+index)) (byteAt (1280+index))
+    makeEntry index = CodeEntry <$> makeInstruction (byteAt index) (byteAt (512+index)) (byteAt (1024+index))
+                                <*> makeInstruction (byteAt (256+index)) (byteAt (768+index)) (byteAt (1280+index))
     byteAt = ByteString.index tableBytes
     makeInstruction :: Word8 -> Word8 -> Word8 -> Either SlapError VCDIFFInstruction
     makeInstruction 0 _ _ = Right VcdiffNoop

@@ -2,19 +2,22 @@ module Slap.VCDIFF.Apply
   ( applyVCDIFF
   , applyWindow
   , decodeWindowInstructions
+  , AddressCache(..)
   , newAddressCache
   , updateCache
   , decodeAddress
+  , defaultNearSize
+  , defaultSameSize
   ) where
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFWindow(..), VCDIFFInstruction(..)
-    , VCDIFFDecodedInstruction(..), CodeEntry, AddressCache(..)
+    , VCDIFFDecodedInstruction(..), CodeEntry(..)
     )
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset(..), FileSize(..), Length(..))
 
 import Data.Array (Array, listArray, (!))
 import Data.Array.ST (STArray, newArray, readArray, writeArray)
@@ -32,8 +35,20 @@ import Foreign.Ptr (Ptr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 ----------------------------------------------------------------------------
--- Address cache operations
+-- Address cache (RFC 3284 Section 5.3)
 ----------------------------------------------------------------------------
+
+data AddressCache = AddressCache
+  { cacheNear     :: !(Array Int (IORef Int64))
+  , cacheSame     :: !(Array Int (IORef Int64))
+  , cacheNearNext :: !(IORef Int)
+  , cacheNearSize :: !Int
+  , cacheSameSize :: !Int
+  }
+
+defaultNearSize, defaultSameSize :: Int
+defaultNearSize = 4
+defaultSameSize = 3
 
 newAddressCache :: Int -> Int -> IO AddressCache
 newAddressCache nearSize sameSize = do
@@ -225,16 +240,16 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
         writeIORef windowOffsetReference (windowOffset + count)
 
   -- Process instruction stream
-  let processLoop = do
+  let executeInstructionStream = do
         nextCode <- readNextInstruction
         case nextCode of
           Nothing -> pure ()
           Just code -> do
-            let (firstInstruction, secondInstruction) = codeTable ! code
+            let CodeEntry firstInstruction secondInstruction = codeTable ! code
             executeInstruction firstInstruction
             executeInstruction secondInstruction
-            processLoop
-  processLoop
+            executeInstructionStream
+  executeInstructionStream
 
   -- Fill remaining target bytes from source (implicit copy).
   -- xdelta3 and other VCDIFF decoders fill any remaining target bytes
@@ -292,8 +307,8 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
               let sameIndex = fromIntegral address `mod` (sameSize * 256)
               writeArray sameArray sameIndex address
 
-          decodeAddressessST :: Int -> Int64 -> ST s Int64
-          decodeAddressessST mode here
+          decodeAddressST :: Int -> Int64 -> ST s Int64
+          decodeAddressST mode here
             | mode == 0 = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
@@ -364,7 +379,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
                             then min count (ByteString.length addRunBytes - addRunPosition)
                             else 0
             when (count > 0) $
-              emit (DecodedAdd (fromIntegral windowOffset) (ByteString.take safeCount (ByteString.drop addRunPosition addRunBytes)))
+              emit (DecodedAdd (Offset (fromIntegral windowOffset)) (ByteString.take safeCount (ByteString.drop addRunPosition addRunBytes)))
             writeSTRef addRunPositionReference (addRunPosition + count)
             writeSTRef windowOffsetReference (windowOffset + count)
 
@@ -374,7 +389,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             addRunPosition <- readSTRef addRunPositionReference
             let count = min size (targetLength - windowOffset)
             when (addRunPosition >= 0 && addRunPosition < ByteString.length addRunBytes && count > 0) $
-              emit (DecodedRun (fromIntegral windowOffset) (ByteString.index addRunBytes addRunPosition) count)
+              emit (DecodedRun (Offset (fromIntegral windowOffset)) (ByteString.index addRunBytes addRunPosition) (Length count))
             writeSTRef addRunPositionReference (addRunPosition + 1)
             writeSTRef windowOffsetReference (windowOffset + count)
 
@@ -383,31 +398,31 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             windowOffset <- readSTRef windowOffsetReference
             let here  = fromIntegral sourceSegmentLength + fromIntegral windowOffset :: Int64
                 count = min size (targetLength - windowOffset)
-            address <- decodeAddressessST mode here
+            address <- decodeAddressST mode here
             when (count > 0) $ do
               let maybeSourceOffset = if address < fromIntegral sourceSegmentLength && hasSource
-                            then Just (unOffset (vcdiffSourcePosition window) + address)
+                            then Just (Offset (unOffset (vcdiffSourcePosition window) + address))
                             else Nothing
-              emit (DecodedCopy (fromIntegral windowOffset) count maybeSourceOffset)
+              emit (DecodedCopy (Offset (fromIntegral windowOffset)) (Length count) maybeSourceOffset)
             writeSTRef windowOffsetReference (windowOffset + count)
 
-          decodeLoop :: ST s ()
-          decodeLoop = do
+          executeInstructionStream :: ST s ()
+          executeInstructionStream = do
             nextCode <- readNextInstruction
             case nextCode of
               Nothing -> pure ()
               Just code -> do
-                let (firstInstruction, secondInstruction) = codeTable ! code
+                let CodeEntry firstInstruction secondInstruction = codeTable ! code
                 executeInstruction firstInstruction
                 executeInstruction secondInstruction
-                decodeLoop
+                executeInstructionStream
 
-      decodeLoop
+      executeInstructionStream
 
       -- Implicit trailing copy from source
       windowOffset <- readSTRef windowOffsetReference
       when (hasSource && windowOffset < targetLength) $
-        emit (DecodedCopy (fromIntegral windowOffset) (targetLength - windowOffset)
-                     (Just (unOffset (vcdiffSourcePosition window) + fromIntegral windowOffset)))
+        emit (DecodedCopy (Offset (fromIntegral windowOffset)) (Length (targetLength - windowOffset))
+                     (Just (Offset (unOffset (vcdiffSourcePosition window) + fromIntegral windowOffset))))
 
       reverse <$> readSTRef resultReference

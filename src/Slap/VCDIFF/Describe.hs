@@ -106,24 +106,24 @@ decodedToRegion globalOffset instruction = case instruction of
     }
   DecodedRun windowOffset fillByte count -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = Length count
+    , regionSize       = count
     , regionLabel      = "Run  "
-    , regionPayload    = PayloadFill fillByte (Length count)
+    , regionPayload    = PayloadFill fillByte count
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
     }
   DecodedCopy windowOffset copySize (Just sourceOffset) -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = Length copySize
+    , regionSize       = copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource (Offset sourceOffset)]
+    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource sourceOffset]
     }
   DecodedCopy windowOffset copySize Nothing -> ExplainRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = Length copySize
+    , regionSize       = copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromTarget
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
     }
   where
-    absoluteOffset windowOffset = Offset (unOffset globalOffset + windowOffset)
+    absoluteOffset windowOffset = Offset (unOffset globalOffset + unOffset windowOffset)
