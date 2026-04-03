@@ -282,14 +282,15 @@ renderSlapWarning (EmptyPatch _label unit) =
 renderSlapWarning (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
 
-renderSlapWarning (FieldDropped field description) =
-  "note: dropping " ++ fieldName field ++ ": " ++ description
+renderSlapWarning (FieldDropped field description)
+  | null description = "note: dropping " ++ fieldName field
+  | otherwise        = "note: dropping " ++ fieldName field ++ ": " ++ description
 
 renderSlapWarning (UndoDataDropped recordCount) =
   "note: dropping undo data (" ++ show recordCount ++ " records)"
 
 renderSlapWarning ValidationBlockDropped =
-  "note: dropping validation block"
+  "note: dropping validation block (1024 bytes)"
 
 renderSlapWarning (DisabledEntriesDropped entryCount) =
   "note: dropping " ++ show entryCount ++ " disabled entries"
@@ -301,20 +302,19 @@ renderSlapWarning (MetadataDropped byteCount) =
   "note: dropping metadata (" ++ show byteCount ++ " bytes)"
 
 renderSlapWarning (DefaultRomType _label) =
-  "note: assuming raw ROM type (use --rom-type to specify)"
+  "note: assuming ROM type RAW (override with --rom-type)"
 
 renderSlapWarning (DefaultImageType _label) =
-  "note: assuming default image type (use --image-type to specify)"
+  "note: assuming image type BIN (override with --image-type gi for GI disc images)"
 
 renderSlapWarning IncludingUndoByDefault =
-  "note: including undo data by default"
+  "note: including undo data (omit with --no-undo)"
 
 renderSlapWarning IncludingValidationByDefault =
-  "note: including validation block by default"
+  "note: including validation block (omit with --no-validate)"
 
-renderSlapWarning (SourceHashesMissing label) =
-  "note: " ++ formatLabelName label
-  ++ " source hashes not available; skipping verification"
+renderSlapWarning (SourceHashesMissing _label) =
+  "note: source verification hashes not available (populate with --with SOURCE)"
 
 renderSlapWarning (FieldTruncated label name actual truncated) =
   "note: " ++ formatLabelName label ++ " "
@@ -329,14 +329,14 @@ renderSlapWarning (EncodingGap fromLabel toLabel) =
   ++ " has no encoding flag; writing bytes as-is"
 
 renderSlapWarning EBPTruncationMetaConflict =
-  "note: EBP truncation marker conflicts with metadata fields"
+  "note: EBP output has both truncation and metadata; RomPatcher.js treats these as mutually exclusive and may misread this patch"
 
 renderSlapWarning (SubformatConverted label fromSub toSub) =
   "note: " ++ formatLabelName label ++ " "
   ++ fromSub ++ " converted to " ++ toSub
 
 renderSlapWarning OffsetShiftApplied =
-  "note: PCHTXT offset_shift baked into absolute offsets"
+  "note: PCHTXT offset_shift applied to absolute offsets; output has no @flag directive"
 
 ----------------------------------------------------------------------------
 -- Helpers

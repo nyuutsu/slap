@@ -17,7 +17,7 @@ ppf3       | ips     | test/data/stadium2/heavy-diff/patch.ppf     |            
 # Missing dest_size (→APS-N64)
 ips        | aps-n64 | test/data/emerald/heavy-diff/patch.ips      |                                 |          | reject:requires target file size   |  |
 # Hash-less source (→NINJA1) — spec allows zero hashes, conversion succeeds with note
-pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept | source verification hashes not populated |
+pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept | source verification hashes not available |
 # Neither flag — inherit from source (IPS has neither), conversion succeeds
 ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | accept |  | --no-validate
 ips        | ppf3    | test/data/emerald/heavy-diff/patch.ips      |                                 |          | accept |  | --no-undo

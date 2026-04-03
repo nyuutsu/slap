@@ -2,6 +2,7 @@ module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
 import Slap.Error (renderSlapError)
+import Slap.Explain (renderExplain, renderSummary)
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Slap.BPS.Create as BPS
@@ -55,8 +56,8 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
         Right (convertedBytes, _) -> case parseSome convertedBytes of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
-            let originalInfo = patchInfo original
-                convertedInfo = patchInfo converted
+            let originalInfo = renderSummary Nothing (patchExplain original)
+                convertedInfo = renderSummary Nothing (patchExplain converted)
                 originalValue = extractField fieldName originalInfo
                 convertedValue = extractField fieldName convertedInfo
             assertEqual ("field '" ++ fieldName ++ "' mismatch") originalValue convertedValue
@@ -110,10 +111,11 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
+          let info = renderExplain Nothing (patchExplain parsed)
           assertBool "info mentions metadata content"
-            ("hello-world-metadata" `isInfixOf` patchInfo parsed)
+            ("hello-world-metadata" `isInfixOf` info)
           assertBool "info shows byte count"
-            ("20 bytes" `isInfixOf` patchInfo parsed)
+            ("20 bytes" `isInfixOf` info)
 
   , testCase "info shows (none) without metadata" $ do
       let source = ByteString.pack [0..63]
@@ -122,5 +124,5 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
-          assertBool "info shows (none)" ("(none)" `isInfixOf` patchInfo parsed)
+          assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain Nothing (patchExplain parsed))
   ]

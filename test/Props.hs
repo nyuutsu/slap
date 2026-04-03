@@ -43,7 +43,7 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError, renderSlapError)
+import Slap.Error (SlapError, renderSlapError, renderSlapWarning)
 import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
@@ -579,7 +579,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsImageType   = if FImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
           -- filter to only dropped-field notes; interop notes are tested separately
-          droppedNotes = filter ("note: dropping" `isPrefixOf`) (conversionNotes trimmed format spec defaultMeta)
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format spec defaultMeta))
       in droppedNotes === []
   | format <- directFormats
   ]

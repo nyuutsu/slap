@@ -9,7 +9,9 @@ module Slap.RUP.Create
 
 import Slap.RUP.Types
 import Slap.Binary (diffHunks, md5)
-import Slap.Measure (Offset(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -132,25 +134,25 @@ truncateUTF8 maxBytes value =
       | otherwise   = 4
 
 -- | Check which RUPInfo fields would be truncated by encodeFixedHeader,
--- and return a warning note for each one.
-rupTruncationNotes :: PatchEncoding -> RUPInfo -> [String]
-rupTruncationNotes encoding info = concatMap checkField fields
+-- and return a warning for each one.
+rupTruncationNotes :: PatchEncoding -> RUPInfo -> [SlapWarning]
+rupTruncationNotes _encoding info = concatMap checkField fields
   where
-    checkField (fieldLength, fieldLabel, maybeValue) = case maybeValue of
+    checkField (fieldLength, name, maybeValue) = case maybeValue of
       Just value | ByteString.length value > fieldLength ->
-        ["note: RUP " ++ fieldLabel ++ " truncated to fit " ++ show fieldLength
-         ++ "-byte field (was " ++ show (ByteString.length value)
-         ++ " bytes as " ++ patchEncodingName encoding ++ ")"]
+        [FieldTruncated LabelRUP name
+          (Length (ByteString.length value))
+          (Length fieldLength)]
       _ -> []
     fields =
-      [ (84,   "author",      rupAuthor info)
-      , (11,   "version",     rupVersion info)
-      , (256,  "title",       rupTitle info)
-      , (48,   "genre",       rupGenre info)
-      , (48,   "language",    rupLanguage info)
-      , (8,    "date",        rupDate info)
-      , (512,  "website",     rupWebsite info)
-      , (1074, "description", rupDescription info)
+      [ (84,   FieldAuthor,      rupAuthor info)
+      , (11,   FieldVersion,     rupVersion info)
+      , (256,  FieldTitle,       rupTitle info)
+      , (48,   FieldGenre,       rupGenre info)
+      , (48,   FieldLanguage,    rupLanguage info)
+      , (8,    FieldDate,        rupDate info)
+      , (512,  FieldWebsite,     rupWebsite info)
+      , (1074, FieldDescription, rupDescription info)
       ]
 
 encodeXorRecord :: XorRecord -> Builder

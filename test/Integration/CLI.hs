@@ -3,7 +3,9 @@ module Integration.CLI (cliTests) where
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir, RomCache,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
-import Slap.Error (renderSlapError)
+import Slap.Error (renderSlapError, renderSlapWarning)
+import Slap.Explain (renderSummary)
+import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), parseSome)
 
 import Control.Monad (when)
@@ -76,7 +78,7 @@ corruptTests =
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome truncatedIPS of
         Left slapError -> assertFailure ("parseSome rejected truncated IPS: " ++ renderSlapError slapError)
-        Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` patchInfo parsed)
+        Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` renderSummary Nothing (patchExplain parsed))
 
   , testCase "corrupt/info truncated BPS" $ do
       let truncatedBPS = ByteString.pack [0x42,0x50,0x53,0x31]
@@ -193,8 +195,8 @@ verboseTests slap base ips =
           ["apply", ips, base, "-o", out, "--verbose", "--force"]
         let combined = stdoutText ++ stderrText
         case exitCode of
-          ExitSuccess -> assertBool "expected [1/ in output"
-            ("[1/" `isInfixOf` combined)
+          ExitSuccess -> assertBool "expected 'Write' in verbose output"
+            ("Write" `isInfixOf` combined)
           _ -> assertFailure ("verbose failed: " ++ combined)
   ]
 
@@ -217,7 +219,7 @@ compoundTests slap base ips bps =
            ["apply", ips, base, "--dry-run", "--verbose"]
          let combined = stdoutText ++ stderrText
          assertBool "missing 'would apply'" ("would apply" `isInfixOf` combined)
-         assertBool "missing [1/" ("[1/" `isInfixOf` combined)
+         assertBool "missing 'Write'" ("Write" `isInfixOf` combined)
 
   , testCase "compound/dry-run+force doesn't modify" $
       withTempFile "slap-work" $ \work -> do
@@ -263,21 +265,21 @@ warningTests repo =
       case parseSome truncatedIPS of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'no EOF marker' in warnings"
-                     (any (ciContains "no EOF marker") (patchWarnings parsed))
+                     (any (ciContains "no EOF marker" . renderSlapWarning) (patchWarnings parsed))
 
   , testCase "warnings/truncated IPS empty" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome truncatedIPS of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'empty patch' in info"
-                     (ciContains "empty patch" (patchInfo parsed))
+                     (ciContains "empty patch" (renderSummary Nothing (patchExplain parsed)))
 
   , testCase "warnings/empty IPS warns empty only" $ do
       let emptyIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
       case parseSome emptyIPS of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
-          let info = patchInfo parsed
+          let info = renderSummary Nothing (patchExplain parsed)
           assertBool "should warn 'empty patch'" ("empty patch" `isInfixOf` info)
           assertBool "should NOT warn 'no EOF'" (not ("no EOF" `isInfixOf` info))
 
@@ -289,7 +291,7 @@ warningTests repo =
         case parseSome patchBytes of
           Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> assertBool "unexpected warning"
-                       (not ("warning" `isInfixOf` patchInfo parsed))
+                       (null (patchWarnings parsed))
   ]
 
 
@@ -437,7 +439,7 @@ pchtxtDetectTests =
       case parseSome pchtxtBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'PCHTXT' in format"
-                     ("PCHTXT" `isInfixOf` patchFormat parsed)
+                     ("PCHTXT" `isInfixOf` formatLabelName (patchFormat parsed))
   ]
 
 ninja1VerifyTests :: FilePath -> FilePath -> FilePath -> [TestTree]

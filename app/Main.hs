@@ -8,13 +8,14 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
-import Slap.Explain (renderExplain, renderSummary)
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
-import Slap.Error (SlapError, renderSlapError)
-import Slap.Format (padHex)
+import Slap.Error (SlapError, SlapWarning(..), renderSlapError, renderSlapWarning)
+import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.FormatLabel (formatLabelName)
+import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
@@ -26,7 +27,7 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitFailure, exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStr, hPutStrLn, stderr)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -432,7 +433,11 @@ doInfo parsedCommand = do
   case parseSome patchBytes of
     Left slapError -> dieError slapError
     Right parsed -> do
-      putStr (patchInfo parsed)
+      let explain = patchExplain parsed
+          summary = patchRecordSummary parsed
+      putStrLn $ "format:      " ++ explainFormat explain
+      mapM_ (putStrLn . renderField) (explainHeader explain)
+      putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
       emitWarnings parsed
       case commandExtractMetadata parsedCommand of
         Nothing -> pure ()
@@ -467,7 +472,7 @@ doApply parsedCommand = do
     Right parsed -> do
       emitWarnings parsed
       when (commandVerbose parsedCommand) $
-        mapM_ (hPutStrLn stderr) (patchVerboseLines parsed)
+        hPutStr stderr (renderExplain Nothing (patchExplain parsed))
 
       let outputPath
             | commandInPlace parsedCommand         = commandSource parsedCommand
@@ -562,8 +567,8 @@ doCreate parsedCommand = do
         , metaPatchEncoding = commandPatchEncoding parsedCommand
         , metaBPSMetadata = maybeMeta
         }
-  let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
-  forM_ defaultNotes $ \note -> hPutStrLn stderr ("slap: " ++ note)
+  let defaultWarnings = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
+  forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
   case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
     Left slapError -> dieError slapError
     Right patchBytes -> do
@@ -603,15 +608,21 @@ doConvert parsedCommand = do
             , metaBPSMetadata = maybeMetadata
             }
           mergedMeta = mergeMeta cliMeta (patchExtractedMeta parsed)
-      let printNotes notes = forM_ notes $ \note -> hPutStrLn stderr ("slap: " ++ note)
-          metaNotes = case patchMetadata parsed of
+      let printWarnings warnings = forM_ warnings $ \warning ->
+              hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
+          metaWarnings = case patchMetadata parsed of
             Nothing -> []
             Just metaBytes ->
               let metaSize = ByteString.length metaBytes
               in if commandConvertTo parsedCommand == CreateDiff CreateBPS
-                 then ["note: source has " ++ show metaSize ++ " bytes of BPS metadata; use --metadata FILE to carry it forward"
-                      | isNothing (metaBPSMetadata mergedMeta)]
-                 else ["note: dropping BPS metadata (" ++ show metaSize ++ " bytes)"]
+                 then []
+                 else [MetadataDropped metaSize]
+          metaCarryNote = case patchMetadata parsed of
+            Just metaBytes | commandConvertTo parsedCommand == CreateDiff CreateBPS
+                           , isNothing (metaBPSMetadata mergedMeta) ->
+              Just ("note: source has " ++ show (ByteString.length metaBytes)
+                    ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
+            _ -> Nothing
       case commandConvertSource parsedCommand of
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
@@ -626,15 +637,17 @@ doConvert parsedCommand = do
           case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
             Left slapError -> dieError slapError
             Right result -> do
-              printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta)
+              printWarnings (patchSourceNotes parsed ++ metaWarnings
+                            ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta)
+              forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
               ByteString.writeFile outputFile result
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
           Just contents -> case convertDirect contents (commandConvertTo parsedCommand) mergedMeta of
             Left slapError -> dieError slapError
-            Right (result, notes) -> do
-              printNotes (patchSourceNotes parsed ++ notes)
+            Right (result, warnings) -> do
+              printWarnings (patchSourceNotes parsed ++ warnings)
               ByteString.writeFile outputFile result
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
@@ -651,7 +664,7 @@ needSourceMessage :: SomePatch -> String
 needSourceMessage somePatch = "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
   ++ name ++ " " ++ reason ++ " \8212 the original ROM is needed\nto reconstruct the target file for re-encoding."
   where
-    name = patchFormat somePatch
+    name = formatLabelName (patchFormat somePatch)
     reason
       | patchIsDifferential somePatch = "stores differential data, not raw bytes"
       | otherwise                  = "does not carry extractable records"
@@ -756,7 +769,7 @@ formatCRC crcValue = "0x" ++ showCRC32 crcValue
 
 emitWarnings :: SomePatch -> IO ()
 emitWarnings somePatch = forM_ (patchWarnings somePatch) $ \warning ->
-  hPutStrLn stderr ("slap: warning: " ++ patchFormat somePatch ++ ": " ++ warning)
+  hPutStrLn stderr ("slap: warning: " ++ renderSlapWarning warning)
 
 warn :: String -> IO ()
 warn message = hPutStrLn stderr ("slap: warning: " ++ message)

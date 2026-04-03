@@ -48,7 +48,7 @@ import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
                       narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), SlapWarning(..))
 import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
@@ -254,7 +254,7 @@ canConvert contents spec =
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> CreateMeta -> [String]
+conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> CreateMeta -> [SlapWarning]
 conversionNotes contents target spec meta =
   let have = provides contents
       kept = specificationRequired spec `Set.union` specificationAccepted spec
@@ -267,10 +267,10 @@ conversionNotes contents target spec meta =
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
 -- treats them as mutually exclusive.
-ebpTruncMetaNote :: PatchContents -> DirectCreate -> CreateMeta -> [String]
+ebpTruncMetaNote :: PatchContents -> DirectCreate -> CreateMeta -> [SlapWarning]
 ebpTruncMetaNote contents CreateEBP meta
   | isJust (contentsTruncation contents), hasMeta
-  = ["note: EBP truncation + metadata together; may not be compatible with RomPatcher.js"]
+  = [EBPTruncationMetaConflict]
   where
     hasMeta = isJust (contentsEBPMeta contents) || isJust (contentsDescription contents)
            || isJust (metaDescription meta) || isJust (metaTitle meta) || isJust (metaAuthor meta)
@@ -278,28 +278,28 @@ ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [String]
+defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [SlapWarning]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
-  [ [ "note: assuming raw ROM type (use --rom-type to specify)"
+  [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
     , Nothing <- [metaRomType meta <|> sourceRomType] ]
-  , [ "note: assuming BIN image type (use --image-type gi for GI disc images)"
+  , [ DefaultImageType LabelPPF3
     | target == CreatePPF3
     , Nothing <- [metaImageType meta <|> sourceImageType] ]
   ]
 
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available.
-createDefaultNotes :: CreateFormat -> CreateMeta -> [String]
+createDefaultNotes :: CreateFormat -> CreateMeta -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
 createDefaultNotes (CreateDiff CreateRUP) meta = snd (prepareRUP meta)
 createDefaultNotes (CreateDiff _) _ = []
 
--- | Build a RUPInfo from CreateMeta and compute its truncation notes.
+-- | Build a RUPInfo from CreateMeta and compute its truncation warnings.
 -- Single source of truth for RUPInfo construction — used by both the create
 -- path (which needs the RUPInfo) and the notes path (which needs the warnings).
-prepareRUP :: CreateMeta -> (RUP.RUPInfo, [String])
+prepareRUP :: CreateMeta -> (RUP.RUPInfo, [SlapWarning])
 prepareRUP meta = (rupInfo, RUP.rupTruncationNotes enc rupInfo)
   where
     enc = metaPatchEncoding meta
@@ -317,75 +317,73 @@ prepareRUP meta = (rupInfo, RUP.rupTruncationNotes enc rupInfo)
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
-undoValidateNotes :: DirectCreate -> CreateMeta -> [String]
+undoValidateNotes :: DirectCreate -> CreateMeta -> [SlapWarning]
 undoValidateNotes CreatePPF3 meta = concat
-  [ [ "note: including undo data (use --no-undo to omit)"
-    | Nothing <- [metaUndo meta] ]
-  , [ "note: including validation block (use --no-validate to omit)"
-    | Nothing <- [metaValidate meta] ]
+  [ [ IncludingUndoByDefault | Nothing <- [metaUndo meta] ]
+  , [ IncludingValidationByDefault | Nothing <- [metaValidate meta] ]
   ]
 undoValidateNotes _ _ = []
 
 -- | Note when converting to NINJA1 without source verification hashes.
-ninja1HashNotes :: PatchContents -> DirectCreate -> [String]
+ninja1HashNotes :: PatchContents -> DirectCreate -> [SlapWarning]
 ninja1HashNotes contents CreateNINJA1
   | isNothing (contentsSourceCRC32 contents)
     || isNothing (contentsSourceMD5 contents)
     || isNothing (contentsSourceSHA1 contents)
-  = ["note: source verification hashes not populated (use --with SOURCE to include them)"]
+  = [SourceHashesMissing LabelNINJA1]
 ninja1HashNotes _ _ = []
 
-fieldNote :: PatchContents -> PatchField -> [String]
+fieldNote :: PatchContents -> PatchField -> [SlapWarning]
 fieldNote contents field = case field of
   FSourceCRC32
     | Just crc <- contentsSourceCRC32 contents, crc /= CRC32 0 ->
-      ["note: dropping source CRC32: 0x" ++ showCRC32 crc]
+      [FieldDropped FSourceCRC32 ("0x" ++ showCRC32 crc)]
   FSourceMD5
     | Just md5Hash <- contentsSourceMD5 contents, not (ByteString.all (== 0) md5Hash) ->
-      ["note: dropping source MD5: " ++ hexByteString md5Hash]
+      [FieldDropped FSourceMD5 (hexByteString md5Hash)]
   FSourceSHA1
     | Just sha1Hash <- contentsSourceSHA1 contents, not (ByteString.all (== 0) sha1Hash) ->
-      ["note: dropping source SHA1: " ++ hexByteString sha1Hash]
+      [FieldDropped FSourceSHA1 (hexByteString sha1Hash)]
   FDescription
     | Just description <- contentsDescription contents
     , not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      ["note: dropping description: \"" ++ trimNullSpace (Text.unpack (Text.decodeUtf8Lenient description)) ++ "\""]
+      [FieldDropped FDescription ("\"" ++ trimNullSpace (Text.unpack (Text.decodeUtf8Lenient description)) ++ "\"")]
   FUndoData
     | Just undoRecords <- contentsUndoData contents ->
-      ["note: dropping undo data (" ++ show (length undoRecords) ++ " records)"]
+      [UndoDataDropped (length undoRecords)]
   FValidation
     | isJust (contentsValidation contents) ->
-      ["note: dropping 1024-byte validation block"]
+      [ValidationBlockDropped]
   FDestinationSize
     | Just targetSize <- contentsDestinationSize contents ->
-      ["note: dropping file size: " ++ show (unFileSize targetSize) ++ " bytes"]
+      [FieldDropped FDestinationSize (show (unFileSize targetSize) ++ " bytes")]
   FTruncation
     | isJust (contentsTruncation contents) ->
-      ["note: dropping truncation marker"]
+      [FieldDropped FTruncation ""]
   FEBPMeta
     | isJust (contentsEBPMeta contents) ->
-      ["note: dropping EBP metadata"]
+      [FieldDropped FEBPMeta ""]
   FRomType
     | isJust (contentsRomType contents) ->
-      ["note: dropping ROM type"]
+      [FieldDropped FRomType ""]
   FImageType
     | isJust (contentsImageType contents) ->
-      ["note: dropping image type"]
+      [FieldDropped FImageType ""]
   FFileIdDiz
     | isJust (contentsFileIdDiz contents) ->
-      ["note: dropping File_ID.diz"]
+      [FieldDropped FFileIdDiz ""]
   FPCHTXTBlocks
     | Just blocks <- contentsPCHTXTBlocks contents ->
       let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
                               (filter (not . PCHTXT.pchtxtBlockEnabled) blocks))
           hasDescriptions = any (isJust . PCHTXT.pchtxtBlockDescription) blocks
       in concat
-        [ ["note: dropping " ++ show disabled ++ " disabled entries" | disabled > 0]
-        , ["note: dropping block descriptions" | hasDescriptions]
+        [ [DisabledEntriesDropped disabled | disabled > 0]
+        , [BlockDescriptionsDropped | hasDescriptions]
         ]
   FMetadata
     | Just metadataBlob <- contentsMetadata contents, not (ByteString.null metadataBlob) ->
-      ["note: dropping metadata (" ++ show (ByteString.length metadataBlob) ++ " bytes)"]
+      [MetadataDropped (ByteString.length metadataBlob)]
   _ -> []
 
 ----------------------------------------------------------------------------
@@ -394,7 +392,7 @@ fieldNote contents field = case field of
 
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> CreateMeta
-              -> Either SlapError (ByteString.ByteString, [String])
+              -> Either SlapError (ByteString.ByteString, [SlapWarning])
 convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
 convertDirect contents (CreateDirect target) meta = do
   let includeUndo = fromMaybe (isJust (contentsUndoData contents)) (metaUndo meta)

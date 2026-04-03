@@ -38,8 +38,9 @@ module Integration.Helpers
   ) where
 
 import Slap.Binary (sha1)
-import Slap.Error (SlapError, renderSlapError)
+import Slap.Error (SlapError, renderSlapError, renderSlapWarning)
 import Slap.Format (padHex)
+import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
@@ -216,14 +217,14 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     Nothing -> pure (Left (needWithMsg somePatch))
     Just patchContent -> pure $ case convertDirect patchContent targetFormat meta of
       Left slapErr              -> Left (renderSlapError slapErr)
-      Right (result, notes) -> Right (result, notes)
+      Right (result, warnings) -> Right (result, map renderSlapWarning warnings)
   where
     needWithMsg thePatch =
       "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
       ++ name ++ " " ++ reason ++ " \8212 the original ROM is needed\n"
       ++ "to reconstruct the target file for re-encoding."
       where
-        name = patchFormat thePatch
+        name = formatLabelName (patchFormat thePatch)
         reason
           | patchIsDifferential thePatch = "stores differential data, not raw bytes"
           | otherwise                    = "applies in-place to the target file"
