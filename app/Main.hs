@@ -565,7 +565,7 @@ doCreate parsedCommand = do
   let defaultNotes = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultNotes $ \note -> hPutStrLn stderr ("slap: " ++ note)
   case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
-    Left errorMessage -> die errorMessage
+    Left slapError -> dieError slapError
     Right patchBytes -> do
       ByteString.writeFile (commandCreateOutput parsedCommand) patchBytes
       putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
@@ -624,7 +624,7 @@ doConvert parsedCommand = do
                 , metaValidate = metaValidate mergedMeta <|> Just True
                 }
           case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
-            Left errorMessage -> die errorMessage
+            Left slapError -> dieError slapError
             Right result -> do
               printNotes (patchSourceNotes parsed ++ metaNotes ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta)
               ByteString.writeFile outputFile result
@@ -632,7 +632,7 @@ doConvert parsedCommand = do
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
           Just contents -> case convertDirect contents (commandConvertTo parsedCommand) mergedMeta of
-            Left errorMessage -> die errorMessage
+            Left slapError -> dieError slapError
             Right (result, notes) -> do
               printNotes (patchSourceNotes parsed ++ notes)
               ByteString.writeFile outputFile result

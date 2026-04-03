@@ -17,8 +17,8 @@ import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 -- Caller validates checksums.
-applyBPS :: BPSPatch -> ByteString -> Either String ByteString
-applyBPS patch source = Right $ unsafeCreate targetLength $ \outputPointer ->
+applyBPS :: BPSPatch -> ByteString -> ByteString
+applyBPS patch source = unsafeCreate targetLength $ \outputPointer ->
   applyLoop outputPointer 0 0 0 (bpsActions patch)
   where
     targetLength = fromIntegral (unFileSize (bpsTargetSize patch))

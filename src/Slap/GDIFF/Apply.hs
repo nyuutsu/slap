@@ -12,10 +12,10 @@ import Data.ByteString.Internal (unsafeCreate)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 
-applyGDIFF :: GDiffPatch -> ByteString -> Either String ByteString
+applyGDIFF :: GDiffPatch -> ByteString -> ByteString
 applyGDIFF patch source
-  | totalSize == 0 = Right ByteString.empty
-  | otherwise = Right $ unsafeCreate (fromIntegral totalSize) $ \outputPointer ->
+  | totalSize == 0 = ByteString.empty
+  | otherwise = unsafeCreate (fromIntegral totalSize) $ \outputPointer ->
       applyLoop outputPointer 0 (gdiffCommands patch)
   where
     totalSize = sum (map commandOutputSize (gdiffCommands patch))

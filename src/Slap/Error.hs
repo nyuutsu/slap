@@ -15,7 +15,7 @@ import Numeric (showHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Checksum (CRC32, showCRC32)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Convert (PatchField, fieldName)
+import Slap.PatchField (PatchField, fieldName)
 
 ----------------------------------------------------------------------------
 -- FieldName

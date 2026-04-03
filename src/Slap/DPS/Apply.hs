@@ -12,8 +12,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 -- | Apply a DPS patch. Builds output from source ROM + embedded data.
-applyDPS :: DPSPatch -> ByteString -> Either String ByteString
-applyDPS patch source = Right $ buildOutput source (dpsRecords patch)
+applyDPS :: DPSPatch -> ByteString -> ByteString
+applyDPS patch source = buildOutput source (dpsRecords patch)
 
 buildOutput :: ByteString -> [DPSRecord] -> ByteString
 buildOutput source records =

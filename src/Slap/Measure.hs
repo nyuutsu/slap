@@ -46,6 +46,7 @@ import Data.Word (Word8)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import Numeric (showHex)
+import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 
 ----------------------------------------------------------------------------
@@ -81,7 +82,7 @@ data EncodedHunk = EncodedHunk
 data EncodingLimits = EncodingLimits
   { maximumOffset  :: !Offset
   , sentinelOffset :: !(Maybe Offset)
-  , formatLabel    :: !String
+  , formatLabel    :: !FormatLabel
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -147,13 +148,13 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 narrowHunk :: EncodingLimits -> Hunk -> Either String EncodedHunk
 narrowHunk limits hunk
   | unOffset (hunkOffset hunk) > unOffset (maximumOffset limits) =
-      Left (formatLabel limits ++ ": hunk offset 0x"
+      Left (formatLabelName (formatLabel limits) ++ ": hunk offset 0x"
             ++ showHex (unOffset (hunkOffset hunk)) ""
             ++ " exceeds maximum offset 0x"
             ++ showHex (unOffset (maximumOffset limits)) "")
   | Just sentinel <- sentinelOffset limits
   , hunkOffset hunk == sentinel =
-      Left (formatLabel limits ++ ": hunk offset 0x"
+      Left (formatLabelName (formatLabel limits) ++ ": hunk offset 0x"
             ++ showHex (unOffset sentinel) ""
             ++ " collides with sentinel 0x"
             ++ showHex (unOffset sentinel) "")
@@ -195,19 +196,19 @@ ipsLimits :: EncodingLimits
 ipsLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
   , sentinelOffset = Just (Offset 0x454F46)
-  , formatLabel    = "IPS"
+  , formatLabel    = LabelIPS
   }
 
 ips32Limits :: EncodingLimits
 ips32Limits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFFFF
   , sentinelOffset = Just (Offset 0x45454F46)
-  , formatLabel    = "IPS32"
+  , formatLabel    = LabelIPS32
   }
 
 ebpLimits :: EncodingLimits
 ebpLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
   , sentinelOffset = Just (Offset 0x454F46)
-  , formatLabel    = "EBP"
+  , formatLabel    = LabelEBP
   }

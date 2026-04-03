@@ -48,10 +48,11 @@ import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
-import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), CreateFormat(..), PatchField(..),
+import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), CreateFormat(..),
                       FormatSpecification(..), CreateMeta(..),
                       emptyContents, formatSpecification, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
+import Slap.PatchField (PatchField(..))
 
 import Data.ByteString (ByteString)
 import Data.List (isInfixOf, isPrefixOf)
@@ -221,9 +222,7 @@ prop_bps = forAll genPair $ \(source, target) ->
   let patch = BPS.createBPS source target ByteString.empty
   in case BPS.parseBPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> case BPS.applyBPS parsed source of
-         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
-         Right result -> result === target
+       Right parsed -> BPS.applyBPS parsed source === target
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
@@ -243,7 +242,7 @@ prop_ups = forAll genPair $ \(source, target) ->
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
@@ -263,7 +262,7 @@ genEofPair = do
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
@@ -332,9 +331,7 @@ prop_gdiff = forAll genPair $ \(source, target) ->
   let patch = GDIFF.createGDIFF source target
   in case GDIFF.parseGDIFF patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> case GDIFF.applyGDIFF parsed source of
-         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
-         Right result -> result === target
+       Right parsed -> GDIFF.applyGDIFF parsed source === target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
@@ -352,7 +349,7 @@ prop_apsGba = forAll genPair $ \(source, target) ->
 prop_ips32 :: Property
 prop_ips32 = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS32) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
@@ -362,7 +359,7 @@ prop_ips32 = forAll genPair $ \(source, target) ->
 prop_ebp :: Property
 prop_ebp = forAll genPair $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
@@ -373,7 +370,7 @@ prop_ebp = forAll genPair $ \(source, target) ->
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePPF3) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> PPF.applyPatchMemory parsed source === target
@@ -381,7 +378,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
@@ -391,7 +388,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateNINJA1) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
@@ -402,7 +399,7 @@ prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
   case createFromMemory (CreateDirect CreateNINJA1) source source defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
@@ -416,15 +413,12 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
   let patch = DPS.createDPS source target "" "" "" DPS.DPSStable
   in case DPS.parseDPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> case DPS.applyDPS parsed source of
-         Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
-         Right result -> result === target
+       Right parsed -> DPS.applyDPS parsed source === target
 
 prop_rup :: Property
 prop_rup = forAll genPair $ \(source, target) ->
-  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  in case RUP.parseRUP patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
          result <- applyViaFile RUP.applyRUP parsed source
@@ -432,9 +426,8 @@ prop_rup = forAll genPair $ \(source, target) ->
 
 prop_rupHashes :: Property
 prop_rupHashes = forAll genPair $ \(source, target) ->
-  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  in case RUP.parseRUP patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
          RUP.rupSourceMD5 parsed === Just (md5 source) .&&.
@@ -444,7 +437,7 @@ prop_rupHashes = forAll genPair $ \(source, target) ->
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreatePCHTXT) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
@@ -455,7 +448,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateAPSN64) source target defaultMeta Nothing of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right patch -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
@@ -616,7 +609,7 @@ prop_ipsSentinelDirect :: Property
 prop_ipsSentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
-       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
        Right _  -> False
 
 -- | Direct conversion to IPS32 must reject a record at the EEOF sentinel offset.
@@ -624,7 +617,7 @@ prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
   in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
-       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
        Right _  -> False
 
 -- | A hunk that doesn't start at the sentinel but produces a split fragment
@@ -636,7 +629,7 @@ prop_ipsSentinelSplitDirect =
       payload = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces split
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
   in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
-       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
        Right _  -> False
 
 -- | Same as above for IPS32: split fragment at EEOF sentinel 0x45454F46.
@@ -646,7 +639,7 @@ prop_ips32SentinelSplitDirect =
       payload = ByteString.replicate 0x10000 0xFF
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
   in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
-       Left errorMessage -> "collides with sentinel" `isInfixOf` errorMessage
+       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
        Right _  -> False
 
 -- | Create path (with source bytes) must handle the sentinel offset correctly.
@@ -656,7 +649,7 @@ prop_ipsSentinelWithSource =
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
   in case createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing of
-       Left errorMessage -> counterexample ("create should succeed: " ++ errorMessage) $ property False
+       Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right patch -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
          Right parsed -> ioProperty $ do
@@ -708,9 +701,7 @@ prop_bpsBlockMove = once $
      conjoin
        [ case BPS.parseBPS patch of
            Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-           Right parsed -> case BPS.applyBPS parsed source of
-             Left errorMessage -> counterexample ("apply: " ++ errorMessage) $ property False
-             Right result -> result === target
+           Right parsed -> BPS.applyBPS parsed source === target
        , property (ByteString.length patch < 1024)
        ]
 
@@ -781,9 +772,7 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_rupTrunc :: Property
 prop_rupTrunc = forAll genPair $ \(source, target) ->
-  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> truncated RUP.parseRUP patch
+  truncated RUP.parseRUP (RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8)
 
 -- RUP encoding tests
 
@@ -792,9 +781,8 @@ prop_rupUTF8RoundTrip :: Property
 prop_rupUTF8RoundTrip = forAll genPair $ \(source, target) ->
   let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "Test Patch")
                           , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "slap") }
-  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+     in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
@@ -805,9 +793,8 @@ prop_rupSystemRoundTrip :: Property
 prop_rupSystemRoundTrip = forAll genPair $ \(source, target) ->
   let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "Test Patch")
                           , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "slap") }
-  in case RUP.createRUP source target info 0 RUP.PatchEncodingSystem of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+      patch = RUP.createRUP source target info 0 RUP.PatchEncodingSystem
+  in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 0) (RUP.rupTitle (RUP.rupHeader parsed)) === Just "Test Patch" .&&.
@@ -818,9 +805,8 @@ prop_rupNonAsciiUTF8 :: Property
 prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
   let titleStr = "Pok\233mon \241" -- "Pokémon ñ"
       info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
-  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+     in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr
@@ -833,9 +819,8 @@ prop_rupFieldOverflow = once $
       info = emptyRupInfo { RUP.rupTitle = Just encodedTitle }
       source = ByteString.pack [0]
       target = ByteString.pack [1]
-  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("unexpected failure: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+      patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+  in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         let titleBytes = fromMaybe ByteString.empty (RUP.rupTitle (RUP.rupHeader parsed))
@@ -847,18 +832,16 @@ prop_rupFieldOverflow = once $
 -- PATCH_ENC byte is 1 for UTF-8
 prop_rupPatchEncByteUTF8 :: Property
 prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
-  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === 1
 
 -- PATCH_ENC byte is 0 for system encoding
 prop_rupPatchEncByteSystem :: Property
 prop_rupPatchEncByteSystem = forAll genPair $ \(source, target) ->
-  case RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem
+  in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === 0
 
@@ -867,9 +850,8 @@ prop_rupUTF8Decode :: Property
 prop_rupUTF8Decode = forAll genPair $ \(source, target) ->
   let titleStr = "\1055\1072\1090\1095" -- "Патч" (Cyrillic)
       info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
-  in case RUP.createRUP source target info 0 RUP.PatchEncodingUTF8 of
-    Left errorMessage -> counterexample ("create: " ++ errorMessage) $ property False
-    Right patch -> case RUP.parseRUP patch of
+  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+     in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
         fmap (RUP.decodeRUPField 1) (RUP.rupTitle (RUP.rupHeader parsed)) === Just titleStr

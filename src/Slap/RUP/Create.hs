@@ -20,9 +20,9 @@ import Data.Word (Word8)
 
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> PatchEncoding -> Either String ByteString
+createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> PatchEncoding -> ByteString
 createRUP original modified info romType encoding =
-    Right $ LazyByteString.toStrict $ toLazyByteString $
+    LazyByteString.toStrict $ toLazyByteString $
       byteString "NINJA2"                     -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header

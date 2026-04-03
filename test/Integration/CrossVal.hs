@@ -48,7 +48,7 @@ mkCrossValTest romCache repo cacheReference fields = case fields of
                 targetBytes <- getOrBootstrap cacheReference repo (baseRelative, bootRelative) baseBytes bootPath
                 -- Create patch with slap
                 case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
-                  Left errorMessage -> assertFailure ("create failed: " ++ errorMessage)
+                  Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
                   Right patchBytes ->
                     -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->

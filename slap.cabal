@@ -46,6 +46,7 @@ library slap-internal
     , Slap.NINJA1.Parse
     , Slap.NINJA1.Types
     , Slap.Get
+    , Slap.PatchField
     , Slap.BSDiff.Apply
     , Slap.BSDiff.Describe
     , Slap.BSDiff.Parse

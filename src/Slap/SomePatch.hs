@@ -80,7 +80,6 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Explain (ExplainData(..))
 import Slap.Error (SlapError(..))
-import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
@@ -307,7 +306,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchExplain        = BPS.explainBPS patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (wrapApplyError LabelBPS (BPS.applyBPS patch source)) }
+          { inMemoryApply     = \source -> pure (Right (BPS.applyBPS patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
@@ -529,7 +528,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchExplain        = GDIFF.explainGDIFF patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (wrapApplyError LabelGDIFF (GDIFF.applyGDIFF patch source)) }
+          { inMemoryApply     = \source -> pure (Right (GDIFF.applyGDIFF patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchVerboseLines   = []
@@ -640,7 +639,7 @@ parseDPSBlock input = case DPS.parseDPS input of
       , patchExplain        = DPS.explainDPS patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (wrapApplyError LabelDPS (DPS.applyDPS patch source)) }
+          { inMemoryApply     = \source -> pure (Right (DPS.applyDPS patch source)) }
       , patchVerification   = noVerification
       , patchUndo           = Nothing
       , patchVerboseLines   = numbered records $ \case
@@ -731,12 +730,6 @@ describeBPS (BPS.SourceRead actionLength) = "SourceRead " ++ show (unLength acti
 describeBPS (BPS.TargetRead payload) = "TargetRead " ++ show (ByteString.length payload) ++ " bytes"
 describeBPS (BPS.SourceCopy actionLength _) = "SourceCopy " ++ show (unLength actionLength) ++ " bytes"
 describeBPS (BPS.TargetCopy actionLength _) = "TargetCopy " ++ show (unLength actionLength) ++ " bytes"
-
--- | Wrap a String-based apply error into SlapError for formats whose apply
--- functions haven't been migrated yet (BPS, DPS, GDIFF).
-wrapApplyError :: FormatLabel -> Either String a -> Either SlapError a
-wrapApplyError _ (Right x) = Right x
-wrapApplyError label (Left msg) = Left (ParseError label msg)
 
 -- | Pre-render verbose lines with "[i/n]" prefixes.
 numbered :: [a] -> (a -> String) -> [String]

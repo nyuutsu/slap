@@ -12,7 +12,7 @@ import Slap.VCDIFF.Types
     )
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.Checksum (Adler32(..))
-import Slap.Error (SlapError(..), renderSlapError)
+import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
@@ -41,9 +41,9 @@ parseVCDIFFWith allowCustom input
                                       defaultNearSize defaultSameSize)
         Just rawTableBytes -> do
           let applyInnerDelta deltaBytes = do
-                inner <- renderError (parseVCDIFFWith False deltaBytes)
-                renderError (applyVCDIFF inner serializedDefaultTable)
-          (table, nearSize, sameSize) <- wrapParse (decodeCustomTable applyInnerDelta rawTableBytes)
+                inner <- parseVCDIFFWith False deltaBytes
+                applyVCDIFF inner serializedDefaultTable
+          (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
           Right (VCDIFFPatch header windows table nearSize sameSize)
   where
     parseHeader = do
@@ -136,7 +136,3 @@ parseVCDIFFWith allowCustom input
     wrapParse :: Either String a -> Either SlapError a
     wrapParse (Left msg)     = Left (ParseError LabelVCDIFF msg)
     wrapParse (Right result) = Right result
-
-    renderError :: Either SlapError a -> Either String a
-    renderError (Left err)    = Left (renderSlapError err)
-    renderError (Right value) = Right value

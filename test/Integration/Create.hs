@@ -69,7 +69,7 @@ getOrBootstrap cacheReference key baseBytes bootPath = do
 roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
   case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
-    Left errorMessage -> assertFailure ("create failed: " ++ errorMessage)
+    Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
     Right patchBytes -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do

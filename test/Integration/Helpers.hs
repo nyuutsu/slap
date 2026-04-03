@@ -210,12 +210,12 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right targetBytes ->
         case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
-          Left errorMessage     -> pure (Left errorMessage)
+          Left slapErr     -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right (result, []))
   Nothing -> case patchContents somePatch of
     Nothing -> pure (Left (needWithMsg somePatch))
     Just patchContent -> pure $ case convertDirect patchContent targetFormat meta of
-      Left errorMessage              -> Left errorMessage
+      Left slapErr              -> Left (renderSlapError slapErr)
       Right (result, notes) -> Right (result, notes)
   where
     needWithMsg thePatch =

@@ -5,14 +5,12 @@ module Slap.Convert
   , CreateFormat(..)
   , CreateMeta(..)
   , defaultMeta
-  , PatchField(..)
   , FormatSpecification(..)
   , emptyContents
   , provides
   , formatSpecification
   , canConvert
   , conversionNotes
-  , fieldName
   , convertDirect
   , createFromMemory
   , createDefaultNotes
@@ -50,11 +48,13 @@ import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
                       narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
+import Slap.Error (SlapError(..))
 import Slap.Format (padHex)
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.PatchField (PatchField(..))
 
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
-import Data.List (intercalate)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -64,25 +64,6 @@ import Data.Word (Word8)
 ----------------------------------------------------------------------------
 -- Types
 ----------------------------------------------------------------------------
-
--- | Fields a patch format can provide or require.
-data PatchField
-  = FRecords
-  | FDescription
-  | FSourceCRC32
-  | FSourceMD5
-  | FSourceSHA1
-  | FDestinationSize
-  | FUndoData
-  | FValidation
-  | FTruncation
-  | FEBPMeta
-  | FRomType
-  | FImageType
-  | FFileIdDiz
-  | FPCHTXTBlocks
-  | FMetadata
-  deriving (Eq, Ord, Show)
 
 -- | Declares what a target format requires and can accept.
 data FormatSpecification = FormatSpecification
@@ -269,41 +250,6 @@ canConvert contents spec =
       missing = need `Set.difference` have
   in if Set.null missing then Right () else Left missing
 
-formatMissing :: DirectCreate -> Set.Set PatchField -> String
-formatMissing target missing = header ++ skipHint ++ withHint
-  where
-    header = "cannot convert to " ++ directName target ++ ": source lacks "
-          ++ intercalate ", " (map fieldName (Set.toList missing))
-    skipHint
-      | FUndoData `Set.member` missing, FValidation `Set.member` missing
-        = "\nuse --no-undo and --no-validate to skip, or"
-      | FUndoData `Set.member` missing
-        = "\nuse --no-undo to skip, or"
-      | FValidation `Set.member` missing
-        = "\nuse --no-validate to skip, or"
-      | otherwise = ""
-    withHint
-      | null skipHint = "\nuse --with SOURCE to provide " ++ pronoun
-      | otherwise     = "\n--with SOURCE to provide " ++ pronoun
-    pronoun = if Set.size missing == 1 then "it" else "them"
-
-fieldName :: PatchField -> String
-fieldName FRecords     = "records"
-fieldName FDescription = "description"
-fieldName FSourceCRC32 = "source CRC32"
-fieldName FSourceMD5   = "source MD5"
-fieldName FSourceSHA1  = "source SHA1"
-fieldName FDestinationSize    = "target file size"
-fieldName FUndoData    = "undo data"
-fieldName FValidation  = "validation block"
-fieldName FTruncation  = "truncation marker"
-fieldName FEBPMeta     = "EBP metadata"
-fieldName FRomType     = "ROM type"
-fieldName FImageType   = "image type"
-fieldName FFileIdDiz   = "File_ID.diz"
-fieldName FPCHTXTBlocks = "PCHTXT blocks"
-fieldName FMetadata     = "metadata"
-
 ----------------------------------------------------------------------------
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
@@ -448,23 +394,20 @@ fieldNote contents field = case field of
 
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> CreateMeta
-              -> Either String (ByteString.ByteString, [String])
-convertDirect _ (CreateDiff target) _ = Left (diffOnlyMsg target)
+              -> Either SlapError (ByteString.ByteString, [String])
+convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
 convertDirect contents (CreateDirect target) meta = do
   let includeUndo = fromMaybe (isJust (contentsUndoData contents)) (metaUndo meta)
       includeValidation = fromMaybe (isJust (contentsValidation contents)) (metaValidate meta)
       spec = formatSpecification target includeUndo includeValidation
   case canConvert contents spec of
-    Left missing -> Left (formatMissing target missing)
+    Left missing -> Left (MissingRequiredField (directLabel target) (Set.findMin missing))
     Right () -> do
       -- Full limits including sentinel: convertDirect has no source bytes,
       -- so avoidSentinel can't fix collisions at encode time.
       let notes = conversionNotes contents target spec meta
       result <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
       Right (result, notes)
-
-diffOnlyMsg :: DiffCreate -> String
-diffOnlyMsg format = diffName format ++ " requires source+target diff data\nuse --with SOURCE"
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
@@ -477,7 +420,7 @@ encodingLimits _           = Nothing
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta
-             -> Maybe EncodingLimits -> Either String ByteString.ByteString
+             -> Maybe EncodingLimits -> Either SlapError ByteString.ByteString
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
     records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
@@ -533,10 +476,13 @@ encodeDirect contents source target meta limits = case target of
       Just targetSize -> Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
       Nothing -> error "unreachable: canConvert verified FDestinationSize"
   where
-    narrow :: [Hunk] -> Either String [EncodedHunk]
+    narrow :: [Hunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
       Nothing  -> Right . narrowHunksUnbounded
-      Just lim -> narrowHunks lim
+      Just lim -> wrapNarrow . narrowHunks lim
+    wrapNarrow :: Either String a -> Either SlapError a
+    wrapNarrow (Right value) = Right value
+    wrapNarrow (Left msg)    = Left (ParseError (directLabel target) msg)
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
@@ -559,7 +505,7 @@ encodeDirect contents source target meta limits = case target of
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
 createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
-                 -> CreateMeta -> Maybe PatchContents -> Either String ByteString.ByteString
+                 -> CreateMeta -> Maybe PatchContents -> Either SlapError ByteString.ByteString
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
       -- Source bytes available: avoidSentinel handles sentinel collisions
@@ -573,7 +519,7 @@ createFromMemory (CreateDiff format) source target meta _sourceContents = case f
                    (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                    (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
                    (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
-  CreateRUP    -> RUP.createRUP source target (fst (prepareRUP meta)) (fromMaybe 0 (metaRomType meta)) (metaPatchEncoding meta)
+  CreateRUP    -> Right (RUP.createRUP source target (fst (prepareRUP meta)) (fromMaybe 0 (metaRomType meta)) (metaPatchEncoding meta))
   CreateAPSGBA -> Right (APSGBA.createAPSGBA source target)
   CreateGDIFF  -> Right (GDIFF.createGDIFF source target)
 
@@ -725,3 +671,21 @@ diffName CreateDPS    = "DPS"
 diffName CreateRUP    = "RUP"
 diffName CreateAPSGBA = "APS (GBA)"
 diffName CreateGDIFF  = "GDIFF"
+
+directLabel :: DirectCreate -> FormatLabel
+directLabel CreateIPS    = LabelIPS
+directLabel CreateIPS32  = LabelIPS32
+directLabel CreateEBP    = LabelEBP
+directLabel CreatePPF3   = LabelPPF3
+directLabel CreateNINJA1 = LabelNINJA1
+directLabel CreatePMSR   = LabelPMSR
+directLabel CreatePCHTXT = LabelPCHTXT
+directLabel CreateAPSN64 = LabelAPSN64
+
+diffLabel :: DiffCreate -> FormatLabel
+diffLabel CreateBPS    = LabelBPS
+diffLabel CreateUPS    = LabelUPS
+diffLabel CreateDPS    = LabelDPS
+diffLabel CreateRUP    = LabelRUP
+diffLabel CreateAPSGBA = LabelAPSGBA
+diffLabel CreateGDIFF  = LabelGDIFF

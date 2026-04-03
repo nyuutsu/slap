@@ -22,6 +22,8 @@ module Slap.VCDIFF.Types
 -- Canonical reference: RFC 3284
 
 import Slap.Checksum (Adler32)
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
 import Control.Monad (when)
@@ -150,23 +152,23 @@ serializedDefaultTable = ByteString.pack $
   ++ map (instructionMode . fst . (defaultCodeTable !)) [0..255]
   ++ map (instructionMode . snd . (defaultCodeTable !)) [0..255]
 
-deserializeCodeTable :: ByteString -> Either String (Array Word8 CodeEntry)
+deserializeCodeTable :: ByteString -> Either SlapError (Array Word8 CodeEntry)
 deserializeCodeTable tableBytes
-  | ByteString.length tableBytes /= 1536 = Left $ "VCDIFF: code table must be 1536 bytes, got " ++ show (ByteString.length tableBytes)
+  | ByteString.length tableBytes /= 1536 = Left $ ParseError LabelVCDIFF ("code table must be 1536 bytes, got " ++ show (ByteString.length tableBytes))
   | otherwise = do
       entries <- mapM makeEntry [0..255]
       pure $ listArray (0, 255) entries
   where
-    makeEntry :: Int -> Either String CodeEntry
+    makeEntry :: Int -> Either SlapError CodeEntry
     makeEntry index = (,) <$> makeInstruction (byteAt index) (byteAt (512+index)) (byteAt (1024+index))
                         <*> makeInstruction (byteAt (256+index)) (byteAt (768+index)) (byteAt (1280+index))
     byteAt = ByteString.index tableBytes
-    makeInstruction :: Word8 -> Word8 -> Word8 -> Either String VCDIFFInstruction
+    makeInstruction :: Word8 -> Word8 -> Word8 -> Either SlapError VCDIFFInstruction
     makeInstruction 0 _ _ = Right VcdiffNoop
     makeInstruction 1 size _ = Right (VcdiffAdd (fromIntegral size))
     makeInstruction 2 size _ = Right (VcdiffRun (fromIntegral size))
     makeInstruction 3 size mode = Right (VcdiffCopy (fromIntegral size) (fromIntegral mode))
-    makeInstruction typeCode _ _ = Left ("VCDIFF: invalid instruction type in code table: " ++ show typeCode)
+    makeInstruction typeCode _ _ = Left (ParseError LabelVCDIFF ("invalid instruction type in code table: " ++ show typeCode))
 
 -- | Decode a custom code table from the header's code table data.
 --   Format: near_size (1 byte), same_size (1 byte), then a VCDIFF delta
@@ -177,10 +179,10 @@ deserializeCodeTable tableBytes
 --   default table, producing the custom table bytes. This parameter breaks
 --   what would otherwise be a circular dependency between Types, Parse,
 --   and Apply.
-decodeCustomTable :: (ByteString -> Either String ByteString)
-                  -> ByteString -> Either String (Array Word8 CodeEntry, Int, Int)
+decodeCustomTable :: (ByteString -> Either SlapError ByteString)
+                  -> ByteString -> Either SlapError (Array Word8 CodeEntry, Int, Int)
 decodeCustomTable applyInnerDelta input = do
-  when (ByteString.length input < 2) $ Left "VCDIFF: custom code table data too short"
+  when (ByteString.length input < 2) $ Left (ParseError LabelVCDIFF "custom code table data too short")
   let nearSize = fromIntegral (ByteString.index input 0) :: Int
       sameSize = fromIntegral (ByteString.index input 1) :: Int
       deltaBytes = ByteString.drop 2 input
