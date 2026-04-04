@@ -26,7 +26,7 @@ Modules with no format-specific knowledge. Everything above depends on these.
 
 - **`Checksum`** — Newtypes: `CRC32`, `CRC16`, `Adler32`, `MD5Hash`, `SHA1Hash`. Rendering functions (`showCRC32`, `showAdler32`). Every hash and checksum in the project is a distinct type.
 
-- **`Error`** — `SlapError` (25 constructors covering parse, apply, create, and convert errors), `SlapWarning` (18 constructors for dropped fields, assumed defaults, encoding gaps, truncation), `FieldName` (metadata field identity for error context), `CreateResult` (patch bytes + warnings from creation). Renderers: `renderSlapError`, `renderSlapWarning`.
+- **`Error`** — `SlapError` (24 constructors covering parse, apply, create, and convert errors), `SlapWarning` (18 constructors for dropped fields, assumed defaults, encoding gaps, truncation), `FieldName` (metadata field identity for error context), `CreateResult` (patch bytes + warnings from creation). Renderers: `renderSlapError`, `renderSlapWarning`.
 
 - **`TextEncoding`** — Locale and UTF-8 encoding/decoding for metadata text fields. `encodeBoundedLocale`/`encodeBoundedUtf8` for creation (encode, truncate at codepoint boundary, null-pad). `decodeLocaleField`/`decodeUtf8Field` for display. `isValidUtf8` for opaque-to-flagged conversion heuristic.
 
