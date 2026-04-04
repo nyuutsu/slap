@@ -513,12 +513,12 @@ parseSome patchBytes = case detectFormat patchBytes of
 
   Just (PatchDiff FormatXDelta1) -> do
     patch <- XDelta1.parseXDelta1 patchBytes
-    let fileSources = filter (not . XDelta1.xdelta1SourceIsData) (XDelta1.xdelta1Sources patch)
+    let fileSources = filter (\entry -> XDelta1.xdelta1SourceKind entry == XDelta1.FileSource) (XDelta1.xdelta1Sources patch)
         xdeltaVerification = noVerification
           { verifySourceMD5 = case fileSources of
-              (entry:_) -> Just (MD5Hash (XDelta1.xdelta1SourceMD5 entry))
+              (entry:_) -> Just (XDelta1.xdelta1SourceMD5 entry)
               []        -> Nothing
-          , verifyTargetMD5 = Just (MD5Hash (XDelta1.xdelta1ToMD5 patch))
+          , verifyTargetMD5 = Just (XDelta1.xdelta1ToMD5 patch)
           }
     Right SomePatch
       { patchFormat         = LabelXDelta1

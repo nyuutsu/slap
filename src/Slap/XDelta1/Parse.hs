@@ -11,8 +11,12 @@ module Slap.XDelta1.Parse
 
 -- Canonical reference: tools/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
 
-import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..))
+import Slap.XDelta1.Types
+    ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
+    , XDelta1Version(..), XDelta1SourceKind(..), XDelta1OffsetMode(..)
+    )
 import Slap.Binary (getWord32BE)
+import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
@@ -34,15 +38,15 @@ import qualified Data.IntSet as IntSet
 parseXDelta1 :: ByteString -> Either SlapError XDelta1Patch
 parseXDelta1 input
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (Length 20) (Length (ByteString.length input)))
-  | magic == "%XDZ004%" = parseV11 input magic "1.1"
-  | magic == "%XDZ003%" = parseV11 input magic "1.0.4"
+  | magic == "%XDZ004%" = parseV11 input magic XDelta1v11
+  | magic == "%XDZ003%" = parseV11 input magic XDelta1v104
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
   | otherwise = Left (BadMagic LabelXDelta1 (ByteString.take 8 input))
   where
     magic = ByteString.take 8 input
 
-parseV11 :: ByteString -> ByteString -> String -> Either SlapError XDelta1Patch
+parseV11 :: ByteString -> ByteString -> XDelta1Version -> Either SlapError XDelta1Patch
 parseV11 input expectedMagic version
   | totalLength < 44 = Left (InputTooShort LabelXDelta1 (Length 44) (Length totalLength))
   | trailingMagic /= expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic trailingMagic)
@@ -80,7 +84,7 @@ parseV11 input expectedMagic version
           Right result -> Right result
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
-parseControl :: String -> ByteString -> ByteString -> ByteString -> ByteString
+parseControl :: XDelta1Version -> ByteString -> ByteString -> ByteString -> ByteString
              -> Either SlapError XDelta1Patch
 parseControl version controlSegment dataSegment fromName toName
   | ByteString.length controlSegment < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlSegment)))
@@ -91,7 +95,7 @@ parseControl version controlSegment dataSegment fromName toName
     parseControlBody :: Get XDelta1Patch
     parseControlBody = do
       skip (Length 8)  -- type tag + allocation (deprecated)
-      toMD5 <- getBytes (Length 16)
+      toMD5 <- MD5Hash <$> getBytes (Length 16)
       targetLength <- edsioVarint
       skip (Length 1)  -- has_data boolean
       sourceCount <- fromIntegral <$> edsioVarint
@@ -106,12 +110,14 @@ parseSources 0 = pure []
 parseSources count = do
   nameLength <- fromIntegral <$> edsioVarint
   sourceName <- getBytes (Length nameLength)
-  md5Bytes <- getBytes (Length 16)
+  md5Bytes <- MD5Hash <$> getBytes (Length 16)
   sourceLength <- edsioVarint
-  isDataSource <- (/= 0) <$> getByte
-  isSequential <- (/= 0) <$> getByte
+  sourceKindByte <- getByte
+  offsetModeByte <- getByte
+  let sourceKind = if sourceKindByte /= 0 then DataSegmentSource else FileSource
+      offsetMode = if offsetModeByte /= 0 then SequentialOffsets else AbsoluteOffsets
   rest <- parseSources (count - 1)
-  pure (XDelta1Source sourceName md5Bytes (FileSize sourceLength) isDataSource isSequential : rest)
+  pure (XDelta1Source sourceName md5Bytes (FileSize sourceLength) sourceKind offsetMode : rest)
 
 parseInstructions :: Int -> Get [XDelta1Instruction]
 parseInstructions 0 = pure []
@@ -122,12 +128,12 @@ parseInstructions count = do
   rest <- parseInstructions (count - 1)
   pure (XDelta1Instruction index offset instructionLength : rest)
 
--- | When a source has sequential=True, wire offsets are 0.
+-- | When a source has sequential offsets, wire offsets are 0.
 -- Reconstruct by maintaining a running position per source.
 fixSequentialOffsets :: [XDelta1Source] -> [XDelta1Instruction] -> [XDelta1Instruction]
 fixSequentialOffsets sources = reverse . snd . foldl' resolveSequentialOffset (initialPositions, [])
   where
-    sequentialIndices = IntSet.fromList [index | (index, entry) <- zip [0..] sources, xdelta1SourceSequential entry]
+    sequentialIndices = IntSet.fromList [index | (index, entry) <- zip [0..] sources, xdelta1SourceOffsetMode entry == SequentialOffsets]
     initialPositions = IntMap.fromList [(index, 0 :: Int64) | index <- IntSet.toList sequentialIndices]
     resolveSequentialOffset (positions, accumulated) instruction =
       let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int

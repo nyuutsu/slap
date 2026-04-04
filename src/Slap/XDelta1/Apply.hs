@@ -2,12 +2,13 @@ module Slap.XDelta1.Apply
   ( applyXDelta1
   ) where
 
-import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..))
+import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..), XDelta1SourceKind(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
+import Data.Array (listArray, (!), bounds)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -26,14 +27,17 @@ applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     applyLoop targetPointer 0 (xdelta1Instructions patch)
   where
     outputSize = fromIntegral (unFileSize (xdelta1TargetLength patch))
-    sourceList    = xdelta1Sources patch
+    sourceArray   = let sourceList = xdelta1Sources patch
+                    in listArray (0, length sourceList - 1) sourceList
     dataSegment    = xdelta1DataSegment patch
 
     applyLoop :: Ptr Word8 -> Int -> [XDelta1Instruction] -> IO ()
     applyLoop _targetPointer _position [] = pure ()
     applyLoop targetPointer position (instruction:rest) = do
       let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
-          sourceBytes = if index < length sourceList && xdelta1SourceIsData (sourceList !! index)
+          (lowBound, highBound) = bounds sourceArray
+          sourceBytes = if index >= lowBound && index <= highBound
+                           && xdelta1SourceKind (sourceArray ! index) == DataSegmentSource
                         then dataSegment
                         else source
           instructionOffset = fromIntegral (unOffset (xdelta1InstructionOffset instruction))
