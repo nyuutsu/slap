@@ -10,6 +10,7 @@ module Slap.NINJA1.Types
   , toNINJA1RomType
   , fromNINJA1RomType
   , romTypeName
+  , subFormatName
   ) where
 
 import Data.ByteString (ByteString)
@@ -119,3 +120,9 @@ romTypeName RomLynx           = "Lynx"
 romTypeName RomJaguar         = "Jaguar"
 romTypeName RomGP32           = "GP32"
 romTypeName (RomUnknown value) = "unknown (" ++ show value ++ ")"
+
+subFormatName :: NINJA1SubFormat -> String
+subFormatName Ninja1Binary           = "binary"
+subFormatName Ninja1BinaryCompressed = "binary, compressed"
+subFormatName Ninja1Text             = "text"
+subFormatName Ninja1TextCompressed   = "text, compressed"

@@ -220,8 +220,12 @@ adler32 = rustyAdler32
 -- Diff
 ----------------------------------------------------------------------------
 
+-- | Maximum gap (in bytes) between adjacent diff hunks that triggers merging.
+mergeGapThreshold :: Int64
+mergeGapThreshold = 5
+
 -- | Find contiguous regions where two ByteStrings differ.
--- Merges nearby hunks (gap <= 5 bytes) to reduce record count.
+-- Merges nearby hunks (gap <= mergeGapThreshold bytes) to reduce record count.
 -- Returns [Hunk] from the second ByteString.
 diffHunks :: ByteString -> ByteString -> [Hunk]
 diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
@@ -245,7 +249,7 @@ diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
     mergeNearby (Hunk firstOffset firstData : Hunk nextOffset nextData : rest)
-      | unOffset nextOffset - unOffset firstOffset - fromIntegral (ByteString.length firstData) <= 5 =
+      | unOffset nextOffset - unOffset firstOffset - fromIntegral (ByteString.length firstData) <= mergeGapThreshold =
           let merged = ByteString.take (fromIntegral (unOffset nextOffset) + ByteString.length nextData - fromIntegral (unOffset firstOffset))
                          (ByteString.drop (fromIntegral (unOffset firstOffset)) modified)
           in mergeNearby (Hunk firstOffset merged : rest)

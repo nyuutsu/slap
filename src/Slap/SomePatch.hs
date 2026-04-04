@@ -659,10 +659,10 @@ parseAPSGBABlock input = do
 apsGbaStructure :: ByteString.ByteString -> Bool
 apsGbaStructure input =
   let dataLength = ByteString.length input - 12
-      recordCount = dataLength `div` 65544
+      recordCount = dataLength `div` APSGBA.apsGbaRecordSize
   in dataLength == 0
-     || (dataLength >= 65544 && dataLength `mod` 65544 == 0
-         && all (\index -> let position = 12 + index * 65544
+     || (dataLength >= APSGBA.apsGbaRecordSize && dataLength `mod` APSGBA.apsGbaRecordSize == 0
+         && all (\index -> let position = 12 + index * APSGBA.apsGbaRecordSize
                        in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
                 [0 .. recordCount - 1])
 

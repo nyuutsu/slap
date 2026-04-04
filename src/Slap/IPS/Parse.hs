@@ -14,7 +14,8 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
-import Slap.Measure (Position(..), Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Position(..), Offset(..), Length(..), FileSize(..),
+                     ipsSentinel, ips32Sentinel)
 import qualified Slap.Get as Get
 
 import Data.ByteString (ByteString)
@@ -27,11 +28,11 @@ import Numeric (showHex)
 parseIPS :: ByteString -> Either SlapError IPSPatch
 parseIPS input
   | ByteString.take 5 input == "PATCH" =
-      case runGet (skip (Length 5) >> parseRecords StandardIPS 3 0x454F46) input of
+      case runGet (skip (Length 5) >> parseRecords StandardIPS 3 ipsSentinel) input of
         Left errorMessage -> Left (ParseError LabelIPS errorMessage)
         Right patch -> Right patch
   | ByteString.take 5 input == "IPS32" =
-      case runGet (skip (Length 5) >> parseRecords IPS32 4 0x45454F46) input of
+      case runGet (skip (Length 5) >> parseRecords IPS32 4 ips32Sentinel) input of
         Left errorMessage -> Left (ParseError LabelIPS32 errorMessage)
         Right patch -> Right patch
   | otherwise = Left (BadMagic LabelIPS (ByteString.take 5 input))

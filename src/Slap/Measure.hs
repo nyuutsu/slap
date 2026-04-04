@@ -36,13 +36,16 @@ module Slap.Measure
   , ipsLimits
   , ips32Limits
   , ebpLimits
+    -- * IPS sentinel values
+  , ipsSentinel
+  , ips32Sentinel
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Int (Int64)
-import Data.Word (Word8)
+import Data.Word (Word8, Word32)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import Numeric (showHex)
@@ -195,20 +198,28 @@ copyRegion destination destinationOffset source sourcePosition regionLength =
 ipsLimits :: EncodingLimits
 ipsLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
-  , sentinelOffset = Just (Offset 0x454F46)
+  , sentinelOffset = Just (Offset (fromIntegral ipsSentinel))
   , formatLabel    = LabelIPS
   }
 
 ips32Limits :: EncodingLimits
 ips32Limits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFFFF
-  , sentinelOffset = Just (Offset 0x45454F46)
+  , sentinelOffset = Just (Offset (fromIntegral ips32Sentinel))
   , formatLabel    = LabelIPS32
   }
 
 ebpLimits :: EncodingLimits
 ebpLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
-  , sentinelOffset = Just (Offset 0x454F46)
+  , sentinelOffset = Just (Offset (fromIntegral ipsSentinel))
   , formatLabel    = LabelEBP
   }
+
+-- | IPS EOF marker value (ASCII "EOF").
+ipsSentinel :: Word32
+ipsSentinel = 0x454F46
+
+-- | IPS32 EEOF marker value (ASCII "EEOF").
+ips32Sentinel :: Word32
+ips32Sentinel = 0x45454F46

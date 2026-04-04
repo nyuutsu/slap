@@ -40,11 +40,11 @@ parseGBA = do
 parseGBARecords :: Get [APSGBARecord]
 parseGBARecords = do
   remainingLength <- remaining
-  if unLength remainingLength < 65544 then pure []
+  if unLength remainingLength < apsGbaRecordSize then pure []
   else do
     offset <- Offset . fromIntegral <$> word32LE
     sourceCrc <- CRC16 <$> word16LE
     targetCrc <- CRC16 <$> word16LE
-    xorPayload <- getBytes (Length 65536)
+    xorPayload <- getBytes (Length apsGbaBlockSize)
     rest <- parseGBARecords
     pure (APSGBARecord offset sourceCrc targetCrc xorPayload : rest)

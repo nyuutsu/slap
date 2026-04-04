@@ -226,10 +226,6 @@ main = defaultMain $ testGroup "Properties"
 emptyRupInfo :: RUP.RUPInfo
 emptyRupInfo = RUP.RUPInfo Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
-isValidUTF8 :: ByteString -> Bool
-isValidUTF8 bytes = case Text.decodeUtf8' bytes of
-  Right _ -> True
-  Left _  -> False
 
 ----------------------------------------------------------------------------
 -- Generators
@@ -893,7 +889,7 @@ prop_rupFieldOverflow = once $
         in counterexample ("title length: " ++ show (ByteString.length titleBytes)) $
            ByteString.length titleBytes <= 256 .&&.
            ByteString.isPrefixOf titleBytes encodedTitle .&&.
-           isValidUTF8 titleBytes
+           isValidUtf8 titleBytes
 
 -- PATCH_ENC byte is 1 for UTF-8
 prop_rupPatchEncByteUTF8 :: Property

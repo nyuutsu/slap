@@ -6,7 +6,7 @@ module Slap.NINJA1.Describe
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..),
-                           romTypeName)
+                           romTypeName, subFormatName)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                       SummaryByteInfo(..), SummaryBytes(..),
@@ -43,11 +43,7 @@ ninja1Info patch = unlines $ filter (not . null) $
      , "total bytes: " ++ show totalBytes
      ]
   where
-    subFormatString = case ninja1SubFormat patch of
-      Ninja1Binary  -> "binary"
-      Ninja1BinaryCompressed -> "binary, compressed"
-      Ninja1Text    -> "text"
-      Ninja1TextCompressed   -> "text, compressed"
+    subFormatString = subFormatName (ninja1SubFormat patch)
     totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
 ----------------------------------------------------------------------------
@@ -64,11 +60,7 @@ explainNINJA1 patch = ExplainData
   }
   where
     recordCount = length (ninja1Records patch)
-    subFormatString = case ninja1SubFormat patch of
-      Ninja1Binary -> "binary"
-      Ninja1BinaryCompressed -> "binary, compressed"
-      Ninja1Text   -> "text"
-      Ninja1TextCompressed   -> "text, compressed"
+    subFormatString = subFormatName (ninja1SubFormat patch)
     totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
 makeNINJA1Region :: NINJA1Record -> ExplainRegion

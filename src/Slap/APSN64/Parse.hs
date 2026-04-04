@@ -37,7 +37,7 @@ parseN64 = do
     Left errorMessage -> fail errorMessage
     Right patchType -> do
       encodingMethod <- toAPSRecordEncoding <$> getByte
-      description <- getBytes (Length 50)
+      description <- getBytes (Length apsN64DescriptionWidth)
       case patchType of
         APSSimple -> do
           destinationSize <- FileSize . fromIntegral <$> word32LE

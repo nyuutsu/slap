@@ -21,7 +21,8 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..), offsetToInt)
+import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..), offsetToInt,
+                     ipsSentinel, ips32Sentinel)
 import Slap.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -90,7 +91,7 @@ avoidSentinel sentinel source = map adjustRecord
 encodeIPS :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"
   <> maybe mempty (encodeTruncation 3) truncation
 
@@ -99,7 +100,7 @@ encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString
 encodeIPS32 :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "IPS32"
-  <> foldMap (encodeIPSRecord 4) (avoidSentinel 0x45454F46 source records)
+  <> foldMap (encodeIPSRecord 4) (avoidSentinel (fromIntegral ips32Sentinel) source records)
   <> byteString "EEOF"
   <> maybe mempty (encodeTruncation 4) truncation
 
@@ -108,7 +109,7 @@ encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteStri
 encodeEBP :: ByteString -> [EncodedHunk] -> Maybe FileSize -> String -> String -> String -> ByteString
 encodeEBP source records truncation title author description = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"
   <> maybe mempty (encodeTruncation 3) truncation
   <> byteString (ebpJson title author description)
@@ -118,7 +119,7 @@ encodeEBP source records truncation title author description = LazyByteString.to
 encodeEBPRaw :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString -> ByteString
 encodeEBPRaw source records truncation meta = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel 0x454F46 source records)
+  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"
   <> maybe mempty (encodeTruncation 3) truncation
   <> byteString meta

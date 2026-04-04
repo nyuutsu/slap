@@ -36,7 +36,7 @@ applyGBARecords :: ByteString -> [APSGBARecord] -> IO ByteString
 applyGBARecords source [] = pure source
 applyGBARecords source (APSGBARecord recordOffset _ _ xorPayload : rest) = do
   let blockOffset = fromIntegral (unOffset recordOffset) :: Int
-      blockSize = 65536
+      blockSize = apsGbaBlockSize
       before = ByteString.take blockOffset source
       sourceBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
       paddedBlock = if ByteString.length sourceBlock < blockSize
@@ -54,7 +54,7 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)
     forM_ records $ \(APSGBARecord recordOffset _ _ xorPayload) -> do
       let blockOffset = fromIntegral (unOffset recordOffset) :: Int
-      forM_ [0..65535] $ \index -> do
+      forM_ [0..apsGbaBlockSize - 1] $ \index -> do
         let position = blockOffset + index
         when (position < targetSize) $ do
           original <- peekByteOff targetPointer position :: IO Word8

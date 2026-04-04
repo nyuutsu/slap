@@ -36,7 +36,7 @@ explainAPSGBA patch@(APSGBAPatch _header records) = ExplainData
 makeGBARegion :: APSGBARecord -> ExplainRegion
 makeGBARegion record = ExplainRegion
   { regionOffset     = apsGbaOffset record
-  , regionSize       = Length 65536
+  , regionSize       = Length apsGbaBlockSize
   , regionLabel      = "XOR block  "
   , regionPayload    = PayloadXOR (Just (apsGbaXorData record))
   , regionAnnotation = AnnotAt AtOffset (apsGbaOffset record)
