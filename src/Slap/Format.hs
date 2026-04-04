@@ -5,6 +5,7 @@ module Slap.Format
   , padNum
   , padRight
   , showSigned
+  , hexByteString
     -- * Key-value rendering
   , renderField
     -- * Structured fields
@@ -77,3 +78,7 @@ formatRow bytes =
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []
 chunksOf size items = let (chunk, rest) = splitAt size items in chunk : chunksOf size rest
+
+-- | Render a ByteString as a lowercase hex string (e.g. "a3f0...").
+hexByteString :: ByteString -> String
+hexByteString = concatMap (\byte -> padHex 2 (fromIntegral byte)) . ByteString.unpack

@@ -42,14 +42,13 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
-import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..), showCRC32)
+import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
                       narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
-import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..))
-import Slap.Format (padHex)
+import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
 
@@ -59,8 +58,6 @@ import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -355,17 +352,17 @@ fieldNote :: PatchContents -> PatchField -> [SlapWarning]
 fieldNote contents field = case field of
   FSourceCRC32
     | Just crc <- contentsSourceCRC32 contents, crc /= CRC32 0 ->
-      [FieldDropped FSourceCRC32 ("0x" ++ showCRC32 crc)]
+      [FieldDropped FSourceCRC32 (DroppedCRC crc)]
   FSourceMD5
-    | Just (MD5Hash hash) <- contentsSourceMD5 contents, not (ByteString.all (== 0) hash) ->
-      [FieldDropped FSourceMD5 (hexByteString hash)]
+    | Just hash <- contentsSourceMD5 contents, not (ByteString.all (== 0) (unMD5Hash hash)) ->
+      [FieldDropped FSourceMD5 (DroppedMD5 hash)]
   FSourceSHA1
-    | Just (SHA1Hash hash) <- contentsSourceSHA1 contents, not (ByteString.all (== 0) hash) ->
-      [FieldDropped FSourceSHA1 (hexByteString hash)]
+    | Just hash <- contentsSourceSHA1 contents, not (ByteString.all (== 0) (unSHA1Hash hash)) ->
+      [FieldDropped FSourceSHA1 (DroppedSHA1 hash)]
   FDescription
     | Just description <- contentsDescription contents
     , not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      [FieldDropped FDescription ("\"" ++ trimNullSpace (Text.unpack (Text.decodeUtf8Lenient description)) ++ "\"")]
+      [FieldDropped FDescription (DroppedDescription (trimNullSpace (decodeLocaleField description)))]
   FUndoData
     | Just undoRecords <- contentsUndoData contents ->
       [UndoDataDropped (length undoRecords)]
@@ -374,22 +371,22 @@ fieldNote contents field = case field of
       [ValidationBlockDropped]
   FDestinationSize
     | Just targetSize <- contentsDestinationSize contents ->
-      [FieldDropped FDestinationSize (show (unFileSize targetSize) ++ " bytes")]
+      [FieldDropped FDestinationSize (DroppedSize targetSize)]
   FTruncation
     | isJust (contentsTruncation contents) ->
-      [FieldDropped FTruncation ""]
+      [FieldDropped FTruncation DroppedEmpty]
   FEBPMeta
     | isJust (contentsEBPMeta contents) ->
-      [FieldDropped FEBPMeta ""]
+      [FieldDropped FEBPMeta DroppedEmpty]
   FRomType
     | isJust (contentsRomType contents) ->
-      [FieldDropped FRomType ""]
+      [FieldDropped FRomType DroppedEmpty]
   FImageType
     | isJust (contentsImageType contents) ->
-      [FieldDropped FImageType ""]
+      [FieldDropped FImageType DroppedEmpty]
   FFileIdDiz
     | isJust (contentsFileIdDiz contents) ->
-      [FieldDropped FFileIdDiz ""]
+      [FieldDropped FFileIdDiz DroppedEmpty]
   FPCHTXTBlocks
     | Just blocks <- contentsPCHTXTBlocks contents ->
       let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
@@ -508,7 +505,7 @@ encodeDirect contents source target meta limits = case target of
     cliAuthor = metaAuthor meta
     description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
     apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
-    pchtxtDescription = fmap (Text.encodeUtf8 . Text.pack) cliDescription <|> contentsDescription contents
+    pchtxtDescription = cliDescription <|> fmap decodeLocaleField (contentsDescription contents)
     ebpFieldPairs = maybe [] jsonPairs (contentsEBPMeta contents)
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
@@ -650,9 +647,6 @@ resolveField cliValue pairs key
   | Just provided <- cliValue = provided
   | Just value <- jsonFieldCI pairs key = value
   | otherwise = ""
-
-hexByteString :: ByteString.ByteString -> String
-hexByteString = concatMap (\byte -> padHex 2 (fromIntegral byte)) . ByteString.unpack
 
 trimNullSpace :: String -> String
 trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . reverse

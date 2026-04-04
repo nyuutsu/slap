@@ -22,13 +22,13 @@ import Numeric (showHex)
 -- | Encode records as PCHTXT text (for direct conversion and create).
 -- If a description is provided and looks like a hex build ID (all hex, 32+ chars),
 -- emit @nsobid-<id>; otherwise emit // <description> as a comment.
-encodePCHTXT :: [EncodedHunk] -> Maybe ByteString -> ByteString
+encodePCHTXT :: [EncodedHunk] -> Maybe String -> ByteString
 encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ "@enabled" : map encodeHunkEntry records
   where
     descriptionLines = case maybeDescription of
       Nothing -> []
-      Just rawDescription -> let text = trimNull (Text.unpack (Text.decodeUtf8Lenient rawDescription))
+      Just rawDescription -> let text = trimNull rawDescription
                  in if null text then []
                     else if length text >= 32 && all isHexDigit text
                          then ["@nsobid-" ++ text, ""]
@@ -37,13 +37,13 @@ encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
     encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (unOffset hunkOffset) ++ " " ++ hexBytes hunkPayload
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
-encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe ByteString -> ByteString
+encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe String -> ByteString
 encodePCHTXTBlocks blocks maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ concatMap encodeBlock blocks
   where
     descriptionLines = case maybeDescription of
       Nothing -> []
-      Just rawDescription -> let text = trimNull (Text.unpack (Text.decodeUtf8Lenient rawDescription))
+      Just rawDescription -> let text = trimNull rawDescription
                  in if null text then []
                     else if length text >= 32 && all isHexDigit text
                          then ["@nsobid-" ++ text, ""]

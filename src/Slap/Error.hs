@@ -3,6 +3,7 @@
 module Slap.Error
   ( SlapError(..)
   , SlapWarning(..)
+  , DroppedValue(..)
   , CreateResult(..)
   , FieldName(..)
   , fieldNameLabel
@@ -14,7 +15,8 @@ import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import Numeric (showHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
-import Slap.Checksum (CRC32, showCRC32)
+import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32)
+import Slap.Format (hexByteString)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.PatchField (PatchField, fieldName)
 
@@ -80,6 +82,27 @@ fieldNameLabel FieldTargetCRC       = "target CRC"
 fieldNameLabel FieldPatchCRC        = "patch CRC"
 
 ----------------------------------------------------------------------------
+-- DroppedValue
+----------------------------------------------------------------------------
+
+data DroppedValue
+  = DroppedCRC CRC32
+  | DroppedMD5 MD5Hash
+  | DroppedSHA1 SHA1Hash
+  | DroppedDescription String
+  | DroppedSize FileSize
+  | DroppedEmpty
+  deriving (Show, Eq)
+
+renderDroppedValue :: DroppedValue -> String
+renderDroppedValue (DroppedCRC crc)             = "0x" ++ showCRC32 crc
+renderDroppedValue (DroppedMD5 hash)            = hexByteString (unMD5Hash hash)
+renderDroppedValue (DroppedSHA1 hash)           = hexByteString (unSHA1Hash hash)
+renderDroppedValue (DroppedDescription text)    = "\"" ++ text ++ "\""
+renderDroppedValue (DroppedSize size)           = show (unFileSize size) ++ " bytes"
+renderDroppedValue DroppedEmpty                 = ""
+
+----------------------------------------------------------------------------
 -- SlapError
 ----------------------------------------------------------------------------
 
@@ -140,7 +163,7 @@ data SlapWarning
   | NoEOFMarker FormatLabel
 
   -- Conversion: dropped fields
-  | FieldDropped PatchField String
+  | FieldDropped PatchField DroppedValue
   | UndoDataDropped Int
   | ValidationBlockDropped
   | DisabledEntriesDropped Int
@@ -292,9 +315,11 @@ renderSlapWarning (EmptyPatch _label unit) =
 renderSlapWarning (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
 
-renderSlapWarning (FieldDropped field description)
-  | null description = "note: dropping " ++ fieldName field
-  | otherwise        = "note: dropping " ++ fieldName field ++ ": " ++ description
+renderSlapWarning (FieldDropped field droppedValue) =
+  let rendered = renderDroppedValue droppedValue
+  in if null rendered
+     then "note: dropping " ++ fieldName field
+     else "note: dropping " ++ fieldName field ++ ": " ++ rendered
 
 renderSlapWarning (UndoDataDropped recordCount) =
   "note: dropping undo data (" ++ show recordCount ++ " records)"
