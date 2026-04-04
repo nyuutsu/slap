@@ -8,7 +8,7 @@ module Slap.VCDIFF.Describe
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFHeader(..), VCDIFFWindow(..)
-    , VCDIFFDecodedInstruction(..)
+    , VCDIFFDecodedInstruction(..), VCDIFFVersion(..)
     )
 import Slap.VCDIFF.Apply (decodeWindowInstructions)
 import Slap.Explain
@@ -29,7 +29,7 @@ import qualified Data.ByteString as ByteString
 
 vcdiffMeta :: VCDIFFPatch -> [MetaField]
 vcdiffMeta patch = concat
-  [ [MetaField "version" (show (vcdiffVersion (vcdiffHeader patch)))]
+  [ [MetaField "version" (displayVersion (vcdiffVersion (vcdiffHeader patch)))]
   , case vcdiffCompressorId (vcdiffHeader patch) of
       Nothing -> []
       Just compressor  -> [MetaField "compressor" (show compressor)]
@@ -45,10 +45,15 @@ vcdiffMeta patch = concat
 
 vcdiffInfo :: VCDIFFPatch -> String
 vcdiffInfo patch = unlines $ filter (not . null) $
-  [ "format:      VCDIFF" ++ if vcdiffVersion (vcdiffHeader patch) == 0x53
-                              then " (xdelta3)" else "" ]
+  [ "format:      VCDIFF" ++ case vcdiffVersion (vcdiffHeader patch) of
+                                VCDIFFXDelta3 -> " (xdelta3)"
+                                VCDIFFStandard -> "" ]
   ++ map renderField (vcdiffMeta patch)
   ++ [ "windows:     " ++ show (length (vcdiffWindows patch)) ]
+
+displayVersion :: VCDIFFVersion -> String
+displayVersion VCDIFFStandard = "0 (standard)"
+displayVersion VCDIFFXDelta3  = "0x53 (xdelta3)"
 
 ----------------------------------------------------------------------------
 -- Explain
@@ -56,8 +61,9 @@ vcdiffInfo patch = unlines $ filter (not . null) $
 
 explainVCDIFF :: VCDIFFPatch -> ExplainData
 explainVCDIFF patch = ExplainData
-  { explainFormat   = "VCDIFF" ++ if vcdiffVersion (vcdiffHeader patch) == 0x53
-                               then " (xdelta3)" else ""
+  { explainFormat   = "VCDIFF" ++ case vcdiffVersion (vcdiffHeader patch) of
+                                    VCDIFFXDelta3 -> " (xdelta3)"
+                                    VCDIFFStandard -> ""
   , explainHeader   = vcdiffMeta patch
   , explainSections = concat windowSections
   , explainSummary  = Summary (SummaryInfo totalInstructions "instructions"

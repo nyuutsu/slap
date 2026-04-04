@@ -12,7 +12,8 @@ module Slap.VCDIFF.Apply
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFWindow(..), VCDIFFInstruction(..)
-    , VCDIFFDecodedInstruction(..), CodeEntry(..)
+    , VCDIFFDecodedInstruction(..), VCDIFFWindowSource(..)
+    , CodeEntry(..)
     )
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
 import Slap.Error (SlapError(..))
@@ -21,7 +22,6 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..))
 
 import Data.Array (Array, listArray, (!))
 import Data.Array.ST (STArray, newArray, readArray, writeArray)
-import Data.Bits (testBit)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -147,8 +147,8 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
   let targetLength = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
       sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
       sourceSegmentOffset = fromIntegral (unOffset (vcdiffSourcePosition window)) :: Int
-      hasSource = testBit (vcdiffWindowIndicator window) 0
-      hasTarget = testBit (vcdiffWindowIndicator window) 1
+      hasSource = vcdiffWindowSource window == WindowFromSource
+      hasTarget = vcdiffWindowSource window == WindowFromTarget
 
   -- Initialize stream position counters for this window.
 
@@ -278,7 +278,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
   where
     targetLength    = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
     sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
-    hasSource = testBit (vcdiffWindowIndicator window) 0
+    hasSource = vcdiffWindowSource window == WindowFromSource
     instructionBytes    = vcdiffInstructions window
     addRunBytes     = vcdiffAddRunData window
     addressBytes    = vcdiffAddresses window

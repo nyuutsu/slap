@@ -6,6 +6,15 @@ module Slap.VCDIFF.Types
   , VCDIFFWindow(..)
   , VCDIFFInstruction(..)
   , VCDIFFDecodedInstruction(..)
+  , VCDIFFVersion(..)
+  , toVCDIFFVersion
+  , fromVCDIFFVersion
+  , VCDIFFWindowSource(..)
+  , toVCDIFFWindowSource
+  , fromVCDIFFWindowSource
+  , VCDIFFSecondaryCompression(..)
+  , toVCDIFFSecondaryCompression
+  , fromVCDIFFSecondaryCompression
   , CodeEntry(..)
   , defaultCodeTable
   , serializedDefaultTable
@@ -25,6 +34,7 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..))
 
 import Control.Monad (when)
 import Data.Array (Array, listArray, (!))
+import Data.Bits (testBit, setBit)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
@@ -32,6 +42,57 @@ import Data.Word (Word8)
 ----------------------------------------------------------------------------
 -- Types
 ----------------------------------------------------------------------------
+
+data VCDIFFVersion = VCDIFFStandard | VCDIFFXDelta3
+  deriving (Show, Eq)
+
+toVCDIFFVersion :: Word8 -> Either SlapError VCDIFFVersion
+toVCDIFFVersion 0    = Right VCDIFFStandard
+toVCDIFFVersion 0x53 = Right VCDIFFXDelta3
+toVCDIFFVersion byte = Left (BadVersion LabelVCDIFF byte)
+
+fromVCDIFFVersion :: VCDIFFVersion -> Word8
+fromVCDIFFVersion VCDIFFStandard = 0
+fromVCDIFFVersion VCDIFFXDelta3  = 0x53
+
+data VCDIFFWindowSource
+  = WindowNoSource
+  | WindowFromSource
+  | WindowFromTarget
+  deriving (Show, Eq)
+
+toVCDIFFWindowSource :: Word8 -> VCDIFFWindowSource
+toVCDIFFWindowSource indicator
+  | testBit indicator 0 = WindowFromSource
+  | testBit indicator 1 = WindowFromTarget
+  | otherwise            = WindowNoSource
+
+fromVCDIFFWindowSource :: VCDIFFWindowSource -> Word8
+fromVCDIFFWindowSource WindowNoSource    = 0
+fromVCDIFFWindowSource WindowFromSource  = 1
+fromVCDIFFWindowSource WindowFromTarget  = 2
+
+data VCDIFFSecondaryCompression = VCDIFFSecondaryCompression
+  { compressAddRunData   :: !Bool
+  , compressInstructions :: !Bool
+  , compressAddresses    :: !Bool
+  } deriving (Show, Eq)
+
+toVCDIFFSecondaryCompression :: Word8 -> VCDIFFSecondaryCompression
+toVCDIFFSecondaryCompression indicator = VCDIFFSecondaryCompression
+  { compressAddRunData   = testBit indicator 0
+  , compressInstructions = testBit indicator 1
+  , compressAddresses    = testBit indicator 2
+  }
+
+fromVCDIFFSecondaryCompression :: VCDIFFSecondaryCompression -> Word8
+fromVCDIFFSecondaryCompression compression =
+  applyBit 0 (compressAddRunData compression)
+    $ applyBit 1 (compressInstructions compression)
+    $ applyBit 2 (compressAddresses compression) 0
+  where
+    applyBit bit True  byte = setBit byte bit
+    applyBit _   False byte = byte
 
 data VCDIFFInstruction
   = VcdiffNoop
@@ -41,21 +102,21 @@ data VCDIFFInstruction
   deriving (Show)
 
 data VCDIFFHeader = VCDIFFHeader
-  { vcdiffVersion      :: Word8
+  { vcdiffVersion      :: VCDIFFVersion
   , vcdiffCompressorId :: Maybe Word8
   , vcdiffHasCodeTable :: Bool
   } deriving (Show)
 
 data VCDIFFWindow = VCDIFFWindow
-  { vcdiffWindowIndicator :: Word8
-  , vcdiffSourceLength    :: FileSize
-  , vcdiffSourcePosition  :: Offset
-  , vcdiffTargetLength    :: FileSize
-  , vcdiffDeltaIndicator  :: Word8
-  , vcdiffAdler32         :: Maybe Adler32
-  , vcdiffAddRunData      :: ByteString   -- literal data stream
-  , vcdiffInstructions    :: ByteString   -- instruction stream (code + sizes)
-  , vcdiffAddresses       :: ByteString   -- address stream
+  { vcdiffWindowSource           :: VCDIFFWindowSource
+  , vcdiffSourceLength           :: FileSize
+  , vcdiffSourcePosition         :: Offset
+  , vcdiffTargetLength           :: FileSize
+  , vcdiffSecondaryCompression   :: VCDIFFSecondaryCompression
+  , vcdiffAdler32                :: Maybe Adler32
+  , vcdiffAddRunData             :: ByteString   -- literal data stream
+  , vcdiffInstructions           :: ByteString   -- instruction stream (code + sizes)
+  , vcdiffAddresses              :: ByteString   -- address stream
   } deriving (Show)
 
 data VCDIFFPatch = VCDIFFPatch
