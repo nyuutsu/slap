@@ -59,7 +59,7 @@ import Slap.Measure (Offset(..), FileSize(..),
 import Slap.FFI (rustyCRC32)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
 import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), CreateFormat(..),
-                      FormatSpecification(..), CreateMeta(..),
+                      FormatSpecification(..), CreateMeta(..), PatchEncoding(..),
                       emptyContents, formatSpecification, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
 import Slap.PatchField (PatchField(..))
@@ -210,6 +210,11 @@ main = defaultMain $ testGroup "Properties"
       , testCase "apsn64-non-ascii-round-trip" test_apsN64NonAsciiRoundTrip
       , testCase "apsn64-overflow-warning" test_apsN64OverflowWarning
       , testCase "rup-non-ascii-system" test_rupNonAsciiSystem
+      , testCase "encoding-gap-ppf3" test_encodingGapPPF3
+      , testCase "encoding-gap-apsn64" test_encodingGapAPSN64
+      , testCase "conversion-metadata-round-trip" test_conversionMetadataRoundTrip
+      , testCase "utf8-inference-valid" test_utf8InferenceValid
+      , testCase "utf8-inference-invalid" test_utf8InferenceInvalid
       ]
   , testGroup "DPS Detection"
       [ testCase "valid-dps-zero-records" test_isDPSValidZeroRecords
@@ -1229,6 +1234,88 @@ test_rupNonAsciiSystem = do
       assertEqual "title round-trip" titleString
         (RUP.decodeRUPField RUP.PatchEncodingSystem
           (fromMaybe ByteString.empty (RUP.rupTitle (RUP.rupHeader parsed))))
+
+-- EncodingGap warning: PatchContents with known encoding → format without encoding flag
+
+test_encodingGapPPF3 :: IO ()
+test_encodingGapPPF3 = do
+  let contents = (emptyContents [Hunk (Offset 0) (ByteString.pack [1])])
+        { contentsPatchEncoding = Just PatchEncodingUTF8
+        , contentsDescription   = Just (encodeLocaleField "hello")
+        }
+      spec = formatSpecification CreatePPF3 False False
+      warnings = conversionNotes contents CreatePPF3 spec defaultMeta
+      hasEncodingGap = any isEncodingGap warnings
+  assertBool "expected EncodingGap warning for PPF3" hasEncodingGap
+  where
+    isEncodingGap (EncodingGap _ _) = True
+    isEncodingGap _                 = False
+
+test_encodingGapAPSN64 :: IO ()
+test_encodingGapAPSN64 = do
+  let contents = (emptyContents [Hunk (Offset 0) (ByteString.pack [1])])
+        { contentsPatchEncoding = Just PatchEncodingUTF8
+        , contentsDescription   = Just (encodeLocaleField "hello")
+        , contentsDestinationSize = Just (FileSize 256)
+        }
+      spec = formatSpecification CreateAPSN64 False False
+      warnings = conversionNotes contents CreateAPSN64 spec defaultMeta
+      hasEncodingGap = any isEncodingGap warnings
+  assertBool "expected EncodingGap warning for APS-N64" hasEncodingGap
+  where
+    isEncodingGap (EncodingGap _ _) = True
+    isEncodingGap _                 = False
+
+-- Conversion metadata round-trip: locale bytes through convertDirect to PPF3
+
+test_conversionMetadataRoundTrip :: IO ()
+test_conversionMetadataRoundTrip = do
+  let contents = (emptyContents [Hunk (Offset 0) (ByteString.pack [1])])
+        { contentsDescription = Just (encodeLocaleField "Pokémon")
+        }
+  case convertDirect contents (CreateDirect CreatePPF3) defaultMeta of
+    Left slapError -> assertBool ("convert: " ++ renderSlapError slapError) False
+    Right (CreateResult patchBytes _) ->
+      case PPF.parsePatch patchBytes of
+        Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+        Right parsed ->
+          assertEqual "description round-trip through conversion"
+            "Pokémon"
+            (decodeLocaleField (trimNull (PPF.ppfDescription parsed)))
+
+-- isValidUtf8 conversion inference: opaque description bytes → RUP PATCH_ENC
+
+test_utf8InferenceValid :: IO ()
+test_utf8InferenceValid = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      contents = (emptyContents [])
+        { contentsDescription = Just (encodeUtf8Field "André")
+        }
+  case createFromMemory (CreateDiff CreateRUP) source target defaultMeta (Just contents) of
+    Left slapError -> assertBool ("create: " ++ renderSlapError slapError) False
+    Right (CreateResult patchBytes _) ->
+      case RUP.parseRUP patchBytes of
+        Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+        Right parsed ->
+          assertEqual "valid UTF-8 description → PatchEncodingUTF8"
+            RUP.PatchEncodingUTF8 (RUP.rupPatchEncoding parsed)
+
+test_utf8InferenceInvalid :: IO ()
+test_utf8InferenceInvalid = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      contents = (emptyContents [])
+        { contentsDescription = Just (ByteString.pack [0xC0, 0x41])
+        }
+  case createFromMemory (CreateDiff CreateRUP) source target defaultMeta (Just contents) of
+    Left slapError -> assertBool ("create: " ++ renderSlapError slapError) False
+    Right (CreateResult patchBytes _) ->
+      case RUP.parseRUP patchBytes of
+        Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+        Right parsed ->
+          assertEqual "invalid UTF-8 description → PatchEncodingSystem"
+            RUP.PatchEncodingSystem (RUP.rupPatchEncoding parsed)
 
 -- Helpers for FieldTruncated matching
 

@@ -53,7 +53,7 @@ import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
 
-import Slap.TextEncoding (isValidUtf8)
+import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
 
 import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
@@ -641,7 +641,7 @@ resolveDescription cliDescription ebpMeta rawDescription fallback
   | Just meta <- ebpMeta
   , Just description <- jsonFieldCI (jsonPairs meta) "description"
   , not (null description) = description
-  | Just raw <- rawDescription    = trimNullSpace (Text.unpack (Text.decodeUtf8Lenient raw))
+  | Just raw <- rawDescription    = trimNullSpace (decodeLocaleField raw)
   | otherwise              = fallback
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
