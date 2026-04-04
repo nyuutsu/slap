@@ -4,6 +4,8 @@ module Slap.IPS.Types
   ( IPSVariant(..)
   , IPSRecord(..)
   , IPSPatch(..)
+    -- * Named constants
+  , ipsMaxRecordData
   ) where
 
 import Data.ByteString (ByteString)
@@ -25,3 +27,7 @@ data IPSPatch = IPSPatch
   , ipsEBPMeta   :: Maybe ByteString  -- raw JSON metadata (EBP format)
   , ipsCleanEOF  :: Bool              -- True if proper EOF/EEOF marker was found
   } deriving (Show)
+
+-- | Maximum data bytes per IPS record (16-bit length field).
+ipsMaxRecordData :: Int
+ipsMaxRecordData = 0xFFFF

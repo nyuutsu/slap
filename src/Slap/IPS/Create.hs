@@ -21,6 +21,7 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
+import Slap.IPS.Types (ipsMaxRecordData)
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..), offsetToInt,
                      ipsSentinel, ips32Sentinel)
 import Slap.Format (padHex)
@@ -87,7 +88,7 @@ avoidSentinel sentinel source = map adjustRecord
 ----------------------------------------------------------------------------
 
 -- | Encode pre-split records as an IPS patch. Records must have offsets
--- <= 0xFFFFFF and data <= 65535 bytes each.
+-- <= 0xFFFFFF and data <= ipsMaxRecordData bytes each.
 encodeIPS :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
@@ -96,7 +97,7 @@ encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString
   <> maybe mempty (encodeTruncation 3) truncation
 
 -- | Encode pre-split records as an IPS32 patch. Records must have data
--- <= 65535 bytes each.
+-- <= ipsMaxRecordData bytes each.
 encodeIPS32 :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
 encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteString $
   byteString "IPS32"
@@ -184,7 +185,7 @@ mergeGaps offsetWidth target (EncodedHunk firstOffset firstData : EncodedHunk ne
   | otherwise = EncodedHunk firstOffset firstData : mergeGaps offsetWidth target (EncodedHunk nextOffset nextData : rest)
 
 -- | DP within a single block to find optimal Copy/RLE record partition.
--- Returns records with absolute offsets and data <= 65535 bytes each.
+-- Returns records with absolute offsets and data <= ipsMaxRecordData bytes each.
 partitionOptimal :: Int -> EncodedHunk -> [EncodedHunk]
 partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
   | ByteString.null blockData = []
@@ -195,7 +196,7 @@ partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
     runs = findByteRuns blockData
     rawPositions = deduplicate . sort $
       [0, blockLength] ++ concatMap (\(runStart, runEnd) -> [runStart, runEnd]) runs
-    positions = ensureMaxGap 0xFFFF rawPositions
+    positions = ensureMaxGap ipsMaxRecordData rawPositions
     positionCount = length positions
     positionArray = listArray (0, positionCount - 1) positions :: Array Int Int
     rlePredecessors = listArray (0, positionCount - 1) (computeRLEPredecessors positions runs)
@@ -211,10 +212,10 @@ partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
       forM_ [1 .. positionCount - 1] $ \targetIndex -> do
         let targetPosition = positionArray ! targetIndex
 
-        -- Copy: scan backward within 65535 window
+        -- Copy: scan backward within ipsMaxRecordData window
         let scanCopy bestCost bestSource sourceIndex
               | sourceIndex < 0 = pure (bestCost, bestSource)
-              | targetPosition - (positionArray ! sourceIndex) > 0xFFFF = pure (bestCost, bestSource)
+              | targetPosition - (positionArray ! sourceIndex) > ipsMaxRecordData = pure (bestCost, bestSource)
               | otherwise = do
                   sourceCost <- readArray costArray sourceIndex
                   let candidateCost = sourceCost + offsetWidth + 2 + targetPosition - (positionArray ! sourceIndex)

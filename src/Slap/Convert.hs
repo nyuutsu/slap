@@ -25,6 +25,7 @@ import qualified Slap.PPF.Create as PPF
 import Slap.PPF.Types (ImageType(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Create (splitHunks)
+import Slap.IPS.Types (ipsMaxRecordData)
 import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -439,13 +440,13 @@ encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> Create
              -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
-    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
     Right (CreateResult (IPS.encodeIPS source records (contentsTruncation contents)) [])
   CreateIPS32 -> do
-    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
     Right (CreateResult (IPS.encodeIPS32 source records (contentsTruncation contents)) [])
   CreateEBP -> do
-    records <- narrow (splitHunks 0xFFFF (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.

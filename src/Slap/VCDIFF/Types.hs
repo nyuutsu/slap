@@ -23,6 +23,8 @@ module Slap.VCDIFF.Types
   , instructionType
   , instructionSize
   , instructionMode
+    -- * Named constants
+  , sameCacheSlots
   ) where
 
 -- Canonical reference: RFC 3284
@@ -144,6 +146,11 @@ data VCDIFFDecodedInstruction
       , decodedCopySize         :: !Length
       , decodedCopySourceOffset :: !(Maybe Offset)
       }
+
+-- | Slot count per same-cache entry (RFC 3284 §5.3).
+-- Each same-cache entry maps 256 byte values to addresses.
+sameCacheSlots :: Int
+sameCacheSlots = 256
 
 ----------------------------------------------------------------------------
 -- Default code table (RFC 3284 Section 5.6)

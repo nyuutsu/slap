@@ -8,7 +8,8 @@ module Slap.UPS.Parse
 
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
-import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..))
+import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
+                       upsMagicSize, upsFooterSize, upsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..))
@@ -23,12 +24,12 @@ import qualified Data.ByteString as ByteString
 
 parseUPS :: ByteString -> Either SlapError UPSPatch
 parseUPS input
-  | ByteString.length input < 4 =
-      Left (InputTooShort LabelUPS (Length 4) (Length (ByteString.length input)))
-  | ByteString.take 4 input /= "UPS1" =
-      Left (BadMagic LabelUPS (ByteString.take 4 input))
-  | ByteString.length input < 16 =
-      Left (InputTooShort LabelUPS (Length 16) (Length (ByteString.length input)))
+  | ByteString.length input < upsMagicSize =
+      Left (InputTooShort LabelUPS (Length upsMagicSize) (Length (ByteString.length input)))
+  | ByteString.take upsMagicSize input /= "UPS1" =
+      Left (BadMagic LabelUPS (ByteString.take upsMagicSize input))
+  | ByteString.length input < upsTotalOverhead =
+      Left (InputTooShort LabelUPS (Length upsTotalOverhead) (Length (ByteString.length input)))
   | otherwise = do
       -- Validate patch CRC
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
@@ -36,10 +37,10 @@ parseUPS input
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelUPS storedPatchCRC actualPatchCRC)
         else pure ()
-      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - 12) input)
+      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - upsFooterSize) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
           -- Parse body between magic and footer
-          bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
+          bodyBytes = ByteString.take (ByteString.length input - upsTotalOverhead) (ByteString.drop upsMagicSize input)
       case runGet parseUPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelUPS errorMessage)
         Right body ->

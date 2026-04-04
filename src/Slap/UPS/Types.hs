@@ -4,6 +4,10 @@ module Slap.UPS.Types
   ( UPSBlock(..)
   , UPSBody(..)
   , UPSPatch(..)
+    -- * Named constants
+  , upsMagicSize
+  , upsFooterSize
+  , upsTotalOverhead
   ) where
 
 import Slap.Checksum (CRC32)
@@ -30,3 +34,15 @@ data UPSPatch = UPSPatch
   , upsTargetCRC  :: CRC32
   , upsPatchCRC   :: CRC32
   } deriving (Show)
+
+-- | Magic ("UPS1") size in bytes.
+upsMagicSize :: Int
+upsMagicSize = 4
+
+-- | Footer size: three CRC32s (source, target, patch) = 12 bytes.
+upsFooterSize :: Int
+upsFooterSize = 12
+
+-- | Total framing overhead: magic + footer.
+upsTotalOverhead :: Int
+upsTotalOverhead = upsMagicSize + upsFooterSize

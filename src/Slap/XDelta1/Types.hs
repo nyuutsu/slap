@@ -8,6 +8,8 @@ module Slap.XDelta1.Types
   , fromXDelta1Version
   , XDelta1SourceKind(..)
   , XDelta1OffsetMode(..)
+    -- * Named constants
+  , xdelta1TrailerSize
   ) where
 
 import Data.ByteString (ByteString)
@@ -52,3 +54,7 @@ data XDelta1Instruction = XDelta1Instruction
   , xdelta1InstructionOffset :: Offset
   , xdelta1InstructionLength :: FileSize
   } deriving (Show)
+
+-- | Trailer size: 4-byte control offset + 8-byte trailing magic.
+xdelta1TrailerSize :: Int
+xdelta1TrailerSize = 12

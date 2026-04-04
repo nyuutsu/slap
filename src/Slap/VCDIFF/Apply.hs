@@ -13,7 +13,7 @@ module Slap.VCDIFF.Apply
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFWindow(..), VCDIFFInstruction(..)
     , VCDIFFDecodedInstruction(..), VCDIFFWindowSource(..)
-    , CodeEntry(..)
+    , CodeEntry(..), sameCacheSlots
     )
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
 import Slap.Error (SlapError(..))
@@ -53,11 +53,11 @@ defaultSameSize = 3
 newAddressCache :: Int -> Int -> IO AddressCache
 newAddressCache nearSize sameSize = do
   nearSlots <- mapM (\_ -> newIORef 0) [0..nearSize-1]
-  sameSlots <- mapM (\_ -> newIORef 0) [0..sameSize*256-1]
+  sameSlots <- mapM (\_ -> newIORef 0) [0..sameSize*sameCacheSlots-1]
   nextIndex <- newIORef 0
   pure AddressCache
     { cacheNear     = listArray (0, max 0 nearSize - 1) nearSlots
-    , cacheSame     = listArray (0, max 0 (sameSize * 256) - 1) sameSlots
+    , cacheSame     = listArray (0, max 0 (sameSize * sameCacheSlots) - 1) sameSlots
     , cacheNearNext = nextIndex
     , cacheNearSize = nearSize
     , cacheSameSize = sameSize
@@ -70,7 +70,7 @@ updateCache cache address = do
     writeIORef (cacheNear cache ! index) address
     writeIORef (cacheNearNext cache) ((index + 1) `mod` cacheNearSize cache)
   when (cacheSameSize cache > 0) $ do
-    let sameIndex = fromIntegral address `mod` (cacheSameSize cache * 256)
+    let sameIndex = fromIntegral address `mod` (cacheSameSize cache * sameCacheSlots)
     writeIORef (cacheSame cache ! sameIndex) address
 
 -- | Decode an address given the mode, current "here" position,
@@ -114,8 +114,8 @@ decodeAddress cache mode here addressPositionReference addressBytes
       else do
         let byte = fromIntegral (ByteString.index addressBytes position) :: Int
         writeIORef addressPositionReference (position + 1)
-        let sameIndex = (mode - cacheNearSize cache - 2) * 256 + byte
-        if sameIndex >= 0 && sameIndex < cacheSameSize cache * 256
+        let sameIndex = (mode - cacheNearSize cache - 2) * sameCacheSlots + byte
+        if sameIndex >= 0 && sameIndex < cacheSameSize cache * sameCacheSlots
           then do
             address <- readIORef (cacheSame cache ! sameIndex)
             updateCache cache address
@@ -292,7 +292,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
       resultReference    <- newSTRef ([] :: [VCDIFFDecodedInstruction])
 
       nearArray     <- newArray (0, max 0 nearSize - 1) 0 :: ST s (STArray s Int Int64)
-      sameArray     <- newArray (0, max 0 (sameSize * 256) - 1) 0 :: ST s (STArray s Int Int64)
+      sameArray     <- newArray (0, max 0 (sameSize * sameCacheSlots) - 1) 0 :: ST s (STArray s Int Int64)
       nearNextReference <- newSTRef (0 :: Int)
 
       let emit instruction = modifySTRef' resultReference (instruction :)
@@ -304,7 +304,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
               writeArray nearArray index address
               writeSTRef nearNextReference ((index + 1) `mod` nearSize)
             when (sameSize > 0) $ do
-              let sameIndex = fromIntegral address `mod` (sameSize * 256)
+              let sameIndex = fromIntegral address `mod` (sameSize * sameCacheSlots)
               writeArray sameArray sameIndex address
 
           decodeAddressST :: Int -> Int64 -> ST s Int64
@@ -342,8 +342,8 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
                 else do
                   let byte = fromIntegral (ByteString.index addressBytes position) :: Int
                   writeSTRef addressPositionReference (position + 1)
-                  let sameIndex = (mode - nearSize - 2) * 256 + byte
-                  if sameIndex >= 0 && sameIndex < sameSize * 256
+                  let sameIndex = (mode - nearSize - 2) * sameCacheSlots + byte
+                  if sameIndex >= 0 && sameIndex < sameSize * sameCacheSlots
                     then do
                       address <- readArray sameArray sameIndex
                       updateCacheST address

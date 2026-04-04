@@ -14,6 +14,7 @@ module Slap.XDelta1.Parse
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
     , XDelta1Version(..), XDelta1SourceKind(..), XDelta1OffsetMode(..)
+    , xdelta1TrailerSize
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
@@ -67,7 +68,7 @@ parseV11 input expectedMagic version
     headerOffset = 32 + fromNameLength + toNameLength
 
     -- Trailer: last 12 bytes = control_offset (4B) + magic (8B)
-    trailerOffset = totalLength - 12
+    trailerOffset = totalLength - xdelta1TrailerSize
     controlOffset = fromIntegral (getWord32BE trailerOffset input) :: Int
     trailingMagic = ByteString.take 8 (ByteString.drop (totalLength - 8) input)
 

@@ -89,14 +89,14 @@ encodeFixedHeader encoding info =
         in zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (zeroPadTo fieldLength truncated))
     zeroPadTo count input = ByteString.take count input <> ByteString.replicate (max 0 (count - ByteString.length input)) 0
     fields =
-      [ (0x007 - 7, 84,   rupAuthor info)
-      , (0x05B - 7, 11,   rupVersion info)
-      , (0x066 - 7, 256,  rupTitle info)
-      , (0x166 - 7, 48,   rupGenre info)
-      , (0x196 - 7, 48,   rupLanguage info)
-      , (0x1C6 - 7, 8,    rupDate info)
-      , (0x1CE - 7, 512,  rupWebsite info)
-      , (0x3CE - 7, 1074, rupDescription info)
+      [ (0x007 - 7, rupAuthorWidth,      rupAuthor info)
+      , (0x05B - 7, rupVersionWidth,     rupVersion info)
+      , (0x066 - 7, rupTitleWidth,       rupTitle info)
+      , (0x166 - 7, rupGenreWidth,       rupGenre info)
+      , (0x196 - 7, rupLanguageWidth,    rupLanguage info)
+      , (0x1C6 - 7, rupDateWidth,        rupDate info)
+      , (0x1CE - 7, rupWebsiteWidth,     rupWebsite info)
+      , (0x3CE - 7, rupDescriptionWidth, rupDescription info)
       ]
 
 -- | Truncate a field value to fit within the given byte width.
@@ -118,14 +118,14 @@ rupTruncationNotes _encoding info = concatMap checkField fields
           (Length fieldLength)]
       _ -> []
     fields =
-      [ (84,   FieldAuthor,      rupAuthor info)
-      , (11,   FieldVersion,     rupVersion info)
-      , (256,  FieldTitle,       rupTitle info)
-      , (48,   FieldGenre,       rupGenre info)
-      , (48,   FieldLanguage,    rupLanguage info)
-      , (8,    FieldDate,        rupDate info)
-      , (512,  FieldWebsite,     rupWebsite info)
-      , (1074, FieldDescription, rupDescription info)
+      [ (rupAuthorWidth,      FieldAuthor,      rupAuthor info)
+      , (rupVersionWidth,     FieldVersion,     rupVersion info)
+      , (rupTitleWidth,       FieldTitle,       rupTitle info)
+      , (rupGenreWidth,       FieldGenre,       rupGenre info)
+      , (rupLanguageWidth,    FieldLanguage,    rupLanguage info)
+      , (rupDateWidth,        FieldDate,        rupDate info)
+      , (rupWebsiteWidth,     FieldWebsite,     rupWebsite info)
+      , (rupDescriptionWidth, FieldDescription, rupDescription info)
       ]
 
 encodeXorRecord :: XorRecord -> Builder

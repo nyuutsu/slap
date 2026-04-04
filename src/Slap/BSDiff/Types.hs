@@ -3,6 +3,8 @@
 module Slap.BSDiff.Types
   ( BSDiffPatch(..)
   , BSDiffControl(..)
+    -- * Named constants
+  , bsdiffControlRecordSize
   ) where
 
 import Data.ByteString (ByteString)
@@ -23,3 +25,8 @@ data BSDiffControl = BSDiffControl
   , controlCopy :: !Length  -- bytes to copy from extra stream
   , controlSeek :: !Delta   -- signed seek offset in source
   } deriving (Show)
+
+-- | Size of one control record: three 8-byte sign-magnitude values
+-- (add length, copy length, seek offset).
+bsdiffControlRecordSize :: Int
+bsdiffControlRecordSize = 24

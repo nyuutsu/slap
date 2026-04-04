@@ -19,6 +19,15 @@ module Slap.RUP.Types
   , encodeVariableLengthValue
   , variableLengthValueBytes
   , headerSize
+    -- * Field widths
+  , rupAuthorWidth
+  , rupVersionWidth
+  , rupTitleWidth
+  , rupGenreWidth
+  , rupLanguageWidth
+  , rupDateWidth
+  , rupWebsiteWidth
+  , rupDescriptionWidth
   ) where
 
 -- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
@@ -153,6 +162,18 @@ parsePackedByteString = do
 
 headerSize :: Int
 headerSize = 0x800  -- NINJA2 spec: fixed 2048-byte header
+
+-- | Fixed-header field widths (bytes) per ninja2-filespec20.txt §2.
+rupAuthorWidth, rupVersionWidth, rupTitleWidth, rupGenreWidth :: Int
+rupLanguageWidth, rupDateWidth, rupWebsiteWidth, rupDescriptionWidth :: Int
+rupAuthorWidth      = 84
+rupVersionWidth     = 11
+rupTitleWidth       = 256
+rupGenreWidth       = 48
+rupLanguageWidth    = 48
+rupDateWidth        = 8
+rupWebsiteWidth     = 512
+rupDescriptionWidth = 1074
 
 -- | VLV: 1-byte length prefix, then N bytes little-endian.
 encodeVariableLengthValue :: Int64 -> Builder

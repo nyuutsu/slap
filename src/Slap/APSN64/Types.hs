@@ -15,6 +15,7 @@ module Slap.APSN64.Types
   , fromAPSRecordEncoding
     -- * Named constants
   , apsN64DescriptionWidth
+  , apsN64MaxChunkSize
   ) where
 
 import Data.ByteString (ByteString)
@@ -88,3 +89,7 @@ data APSN64Record
 -- | Description field width: 50 bytes, null-padded.
 apsN64DescriptionWidth :: Int
 apsN64DescriptionWidth = 50
+
+-- | Maximum data bytes per APS-N64 record (8-bit length field).
+apsN64MaxChunkSize :: Int
+apsN64MaxChunkSize = 255

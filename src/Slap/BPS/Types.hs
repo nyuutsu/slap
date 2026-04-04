@@ -5,6 +5,10 @@ module Slap.BPS.Types
   , BPSBody(..)
   , BPSPatch(..)
   , decodeSignedVarint
+    -- * Named constants
+  , bpsMagicSize
+  , bpsFooterSize
+  , bpsTotalOverhead
   ) where
 
 import Data.Bits (shiftR, testBit)
@@ -36,6 +40,18 @@ data BPSPatch = BPSPatch
   , bpsTargetCRC  :: CRC32
   , bpsPatchCRC   :: CRC32
   } deriving (Show)
+
+-- | Magic ("BPS1") size in bytes.
+bpsMagicSize :: Int
+bpsMagicSize = 4
+
+-- | Footer size: three CRC32s (source, target, patch) = 12 bytes.
+bpsFooterSize :: Int
+bpsFooterSize = 12
+
+-- | Total framing overhead: magic + footer.
+bpsTotalOverhead :: Int
+bpsTotalOverhead = bpsMagicSize + bpsFooterSize
 
 -- Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64

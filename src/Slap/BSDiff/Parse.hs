@@ -13,7 +13,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffControlRecordSize)
 import Slap.Compress (bz2Decompress)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -74,7 +74,7 @@ parseBSDiff input
 
 parseControls :: ByteString -> [BSDiffControl]
 parseControls input
-  | ByteString.length input < 24 = []
+  | ByteString.length input < bsdiffControlRecordSize = []
   | otherwise =
       BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (getSignMagnitude64 16 input))
-        : parseControls (ByteString.drop 24 input)
+        : parseControls (ByteString.drop bsdiffControlRecordSize input)

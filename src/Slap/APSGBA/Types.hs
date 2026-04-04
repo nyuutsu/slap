@@ -5,6 +5,7 @@ module Slap.APSGBA.Types
   , APSGBAHeader(..)
   , APSGBARecord(..)
     -- * Named constants
+  , apsGbaHeaderSize
   , apsGbaBlockSize
   , apsGbaRecordSize
   ) where
@@ -27,6 +28,10 @@ data APSGBARecord = APSGBARecord
   , apsGbaTargetCRC :: CRC16
   , apsGbaXorData   :: ByteString  -- apsGbaBlockSize bytes
   } deriving (Show)
+
+-- | File header size: 4-byte magic + 4-byte source size + 4-byte target size.
+apsGbaHeaderSize :: Int
+apsGbaHeaderSize = 12
 
 -- | XOR data block size: 65536 bytes (64 KB).
 apsGbaBlockSize :: Int

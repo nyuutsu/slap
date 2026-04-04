@@ -6,7 +6,8 @@ module Slap.BPS.Parse
   , parseActions
   ) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint)
+import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
+                       bpsMagicSize, bpsFooterSize, bpsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..))
@@ -22,12 +23,12 @@ import qualified Data.ByteString as ByteString
 
 parseBPS :: ByteString -> Either SlapError BPSPatch
 parseBPS input
-  | ByteString.length input < 4 =
-      Left (InputTooShort LabelBPS (Length 4) (Length (ByteString.length input)))
-  | ByteString.take 4 input /= "BPS1" =
-      Left (BadMagic LabelBPS (ByteString.take 4 input))
-  | ByteString.length input < 12 =
-      Left (InputTooShort LabelBPS (Length 12) (Length (ByteString.length input)))
+  | ByteString.length input < bpsMagicSize =
+      Left (InputTooShort LabelBPS (Length bpsMagicSize) (Length (ByteString.length input)))
+  | ByteString.take bpsMagicSize input /= "BPS1" =
+      Left (BadMagic LabelBPS (ByteString.take bpsMagicSize input))
+  | ByteString.length input < bpsFooterSize =
+      Left (InputTooShort LabelBPS (Length bpsFooterSize) (Length (ByteString.length input)))
   | otherwise = do
       -- Validate patch CRC (covers everything except the last 4 bytes)
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
@@ -35,10 +36,10 @@ parseBPS input
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelBPS storedPatchCRC actualPatchCRC)
         else pure ()
-      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - 12) input)
+      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - bpsFooterSize) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
           -- Parse body between magic and footer using Get monad
-          bodyBytes = ByteString.take (ByteString.length input - 16) (ByteString.drop 4 input)
+          bodyBytes = ByteString.take (ByteString.length input - bpsTotalOverhead) (ByteString.drop bpsMagicSize input)
       case runGet parseBPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelBPS errorMessage)
         Right body ->

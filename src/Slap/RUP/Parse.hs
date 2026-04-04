@@ -27,14 +27,14 @@ import qualified Data.ByteString as ByteString
 -- | Parse the fixed header region.  Field offsets per ninja2-filespec20.txt §2.
 parseFixedHeader :: ByteString -> RUPInfo
 parseFixedHeader input = RUPInfo
-  { rupAuthor      = extractField 0x007 84
-  , rupVersion     = extractField 0x05B 11
-  , rupTitle       = extractField 0x066 256
-  , rupGenre       = extractField 0x166 48
-  , rupLanguage    = extractField 0x196 48
-  , rupDate        = extractField 0x1C6 8
-  , rupWebsite     = extractField 0x1CE 512
-  , rupDescription = extractField 0x3CE 1074
+  { rupAuthor      = extractField 0x007 rupAuthorWidth
+  , rupVersion     = extractField 0x05B rupVersionWidth
+  , rupTitle       = extractField 0x066 rupTitleWidth
+  , rupGenre       = extractField 0x166 rupGenreWidth
+  , rupLanguage    = extractField 0x196 rupLanguageWidth
+  , rupDate        = extractField 0x1C6 rupDateWidth
+  , rupWebsite     = extractField 0x1CE rupWebsiteWidth
+  , rupDescription = extractField 0x3CE rupDescriptionWidth
   }
   where
     extractField fieldOffset fieldLength =

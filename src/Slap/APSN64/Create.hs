@@ -6,7 +6,7 @@ module Slap.APSN64.Create
   , encodeN64Record
   ) where
 
-import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64DescriptionWidth)
+import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64DescriptionWidth, apsN64MaxChunkSize)
 import Slap.Binary (putWord32LE)
 import Slap.Measure (Offset(..), Length(..), EncodedHunk(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
@@ -19,7 +19,7 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Word (Word32)
 
 -- | Encode pre-diffed records as an APS N64 patch.
--- Records are split at 255 bytes internally.
+-- Records are split at apsN64MaxChunkSize bytes internally.
 -- Patch type: APSSimple matches the simple-record structure we emit.
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
@@ -43,10 +43,10 @@ splitLong :: [EncodedHunk] -> [EncodedHunk]
 splitLong = concatMap splitRecord
   where
     splitRecord (EncodedHunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= 255 = [EncodedHunk hunkOffset hunkPayload]
+      | ByteString.length hunkPayload <= apsN64MaxChunkSize = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
-          let (chunk, rest) = ByteString.splitAt 255 hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + 255)) rest)
+          let (chunk, rest) = ByteString.splitAt apsN64MaxChunkSize hunkPayload
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + fromIntegral apsN64MaxChunkSize)) rest)
 
 encodeN64Record :: EncodedHunk -> Builder
 encodeN64Record (EncodedHunk hunkOffset hunkPayload) =

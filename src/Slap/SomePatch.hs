@@ -653,16 +653,16 @@ parseAPSGBABlock input = do
     , patchContents  = Nothing
     }
 
--- | Structural check for APS-GBA: 12-byte header + N * 65544-byte records,
+-- | Structural check for APS-GBA: header + N * 65544-byte records,
 -- each record offset 64KB-aligned.  Used to disambiguate "APS10" (N64) from
 -- "APS1" + source_size when size mod 256 == 48.
 apsGbaStructure :: ByteString.ByteString -> Bool
 apsGbaStructure input =
-  let dataLength = ByteString.length input - 12
+  let dataLength = ByteString.length input - APSGBA.apsGbaHeaderSize
       recordCount = dataLength `div` APSGBA.apsGbaRecordSize
   in dataLength == 0
      || (dataLength >= APSGBA.apsGbaRecordSize && dataLength `mod` APSGBA.apsGbaRecordSize == 0
-         && all (\index -> let position = 12 + index * APSGBA.apsGbaRecordSize
+         && all (\index -> let position = APSGBA.apsGbaHeaderSize + index * APSGBA.apsGbaRecordSize
                        in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
                 [0 .. recordCount - 1])
 
