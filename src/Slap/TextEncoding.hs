@@ -64,17 +64,20 @@ decodeLocaleField bytes = unsafePerformIO $
 -- cutting at the last complete codepoint boundary.
 truncateUtf8 :: Int -> ByteString -> ByteString
 truncateUtf8 maxBytes value
+  | maxBytes <= 0 = ByteString.empty
   | ByteString.length value <= maxBytes = value
   | otherwise =
       let candidate = ByteString.take maxBytes value
           candidateLength = ByteString.length candidate
           startIndex = findCodepointStart candidate (candidateLength - 1)
           startByte = ByteString.index candidate startIndex
-          expectedLength = utf8CharLength startByte
-          availableLength = candidateLength - startIndex
-      in if availableLength >= expectedLength
-         then candidate
-         else ByteString.take startIndex candidate
+      in if isUTF8Continuation startByte
+         then ByteString.take startIndex candidate
+         else let expectedLength = utf8CharLength startByte
+                  availableLength = candidateLength - startIndex
+              in if availableLength >= expectedLength
+                 then candidate
+                 else ByteString.take startIndex candidate
   where
     findCodepointStart bytes index
       | index <= 0 = 0
@@ -84,7 +87,6 @@ truncateUtf8 maxBytes value
     isUTF8Continuation byte = byte >= 0x80 && byte <= 0xBF
     utf8CharLength byte
       | byte < 0x80 = 1
-      | byte < 0xC0 = 1  -- bare continuation; treat as single
       | byte < 0xE0 = 2
       | byte < 0xF0 = 3
       | otherwise   = 4

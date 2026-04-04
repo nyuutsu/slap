@@ -13,7 +13,6 @@ import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLo
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
