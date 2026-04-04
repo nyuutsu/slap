@@ -13,6 +13,13 @@ module Slap.PPF.Types
     , validationSize
       -- * Named constants
     , ppfDescriptionWidth
+    , ppfDescriptionOffset
+    , ppf1HeaderSize
+    , ppf2HeaderSize
+    , ppf3MinHeaderSize
+    , ppf4HeaderSize
+    , fileIdMarkerSize
+    , fileIdFooterSize
     ) where
 
 import Data.ByteString (ByteString)
@@ -78,3 +85,31 @@ validationSize = Length 1024
 -- | Description field width: 50 bytes, space-padded.
 ppfDescriptionWidth :: Int
 ppfDescriptionWidth = 50
+
+-- | Offset to the description field: 4 (magic) + 1 (version) + 1 (encoding).
+ppfDescriptionOffset :: Int
+ppfDescriptionOffset = 6
+
+-- | PPF1 header size in bytes.
+ppf1HeaderSize :: Int
+ppf1HeaderSize = 56
+
+-- | PPF2 header size in bytes (56 fixed + 1024 validation block + 4 padding).
+ppf2HeaderSize :: Int
+ppf2HeaderSize = 1084
+
+-- | Minimum PPF3 header size (without validation block).
+ppf3MinHeaderSize :: Int
+ppf3MinHeaderSize = 60
+
+-- | PPF4 header size in bytes.
+ppf4HeaderSize :: Int
+ppf4HeaderSize = 60
+
+-- | "FILE_ID.DIZ" marker prefix size in the File_ID.diz trailer.
+fileIdMarkerSize :: Int
+fileIdMarkerSize = 18
+
+-- | Fixed footer size after the File_ID.diz content.
+fileIdFooterSize :: Int
+fileIdFooterSize = 16

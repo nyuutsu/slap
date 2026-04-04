@@ -6,9 +6,10 @@ module Slap.PPF.Parse (parsePatch) where
 -- Secondary: RomPatcher.js modules/RomPatcher.format.ppf.js
 
 import Slap.PPF.Types
-import Slap.Binary (getWord16LE, getWord32LE, getInt64LE)
+import Slap.Binary (getWord16LE, getWord32LE)
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE, int64LE)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
@@ -32,6 +33,10 @@ versionLabel PPF1 = LabelPPF1
 versionLabel PPF2 = LabelPPF2
 versionLabel PPF3 = LabelPPF3
 versionLabel PPF4 = LabelPPF4
+
+-- | Wrap a Get error string into a SlapError.
+wrapError :: FormatLabel -> Either String a -> Either SlapError a
+wrapError label = either (Left . ParseError label) Right
 
 -- Version detection: bytes 0-3 as ASCII "PPF1" .. "PPF4".
 detectVersion :: ByteString -> Either SlapError Version
@@ -61,59 +66,68 @@ checkEncoding version input
 
 -- PPF1: 56-byte header, then records with 4-byte offsets.
 parsePPF1 :: ByteString -> Either SlapError Patch
-parsePPF1 input = do
-  requireLength LabelPPF1 56 input
-  records <- parseRecords32 LabelPPF1 (ByteString.drop 56 input)
-  Right Patch
-    { ppfVersion     = PPF1
-    , ppfDescription = ByteString.take 50 (ByteString.drop 6 input)
-    , ppfFileSize    = Nothing
-    , ppfValidation  = Nothing
-    , ppfHasUndo     = False
-    , ppfImageType   = Nothing
-    , ppfRecords     = records
-    , ppfFileId      = Nothing
-    }
+parsePPF1 input = wrapError LabelPPF1 $ runGet parsePPF1Body input
+  where
+    parsePPF1Body :: Get Patch
+    parsePPF1Body = do
+      skip (Length ppfDescriptionOffset)
+      description <- getBytes (Length ppfDescriptionWidth)
+      records <- parseRecords32 LabelPPF1 0
+      pure Patch
+        { ppfVersion     = PPF1
+        , ppfDescription = description
+        , ppfFileSize    = Nothing
+        , ppfValidation  = Nothing
+        , ppfHasUndo     = False
+        , ppfImageType   = Nothing
+        , ppfRecords     = records
+        , ppfFileId      = Nothing
+        }
 
 -- PPF2: 1084-byte header, then records with 4-byte offsets, optional File_ID.diz.
 parsePPF2 :: ByteString -> Either SlapError Patch
 parsePPF2 input = do
-  requireLength LabelPPF2 1084 input
-  let fileId = detectFileId getWord32LE 4 input
-      body   = stripFileId 4 fileId (ByteString.drop 1084 input)
-  records <- parseRecords32 LabelPPF2 body
+  let fileId     = detectFileId getWord32LE 4 input
+      recordBody = stripFileId 4 fileId (ByteString.drop ppf2HeaderSize input)
+  (description, fileSize, validationBlock) <-
+    wrapError LabelPPF2 $ runGet parsePPF2Header input
+  records <- wrapError LabelPPF2 $ runGet (parseRecords32 LabelPPF2 0) recordBody
   Right Patch
     { ppfVersion     = PPF2
-    , ppfDescription = ByteString.take 50 (ByteString.drop 6 input)
-    , ppfFileSize    = Just (FileSize (fromIntegral (getWord32LE 56 input)))
-    , ppfValidation  = Just (Validation BIN (ByteString.take 1024 (ByteString.drop 60 input)))
+    , ppfDescription = description
+    , ppfFileSize    = Just fileSize
+    , ppfValidation  = Just (Validation BIN validationBlock)
     , ppfHasUndo     = False
     , ppfImageType   = Nothing
     , ppfRecords     = records
     , ppfFileId      = fileId
     }
+  where
+    parsePPF2Header :: Get (ByteString, FileSize, ByteString)
+    parsePPF2Header = do
+      skip (Length ppfDescriptionOffset)
+      description <- getBytes (Length ppfDescriptionWidth)
+      fileSize <- FileSize . fromIntegral <$> word32LE
+      validationBlock <- getBytes validationSize
+      pure (description, fileSize, validationBlock)
 
 -- PPF3: 60 or 1084-byte header, then records with 8-byte offsets, optional undo.
 parsePPF3 :: ByteString -> Either SlapError Patch
 parsePPF3 input = do
-  requireLength LabelPPF3 60 input
-  imageType <- case ByteString.index input 56 of
+  (description, imageTypeByte, hasBlock, hasUndo, validationBlock) <-
+    wrapError LabelPPF3 $ runGet parsePPF3Header input
+  imageType <- case imageTypeByte of
     0x00 -> Right BIN
     0x01 -> Right GI
     byte -> Left (UnknownFlag LabelPPF3 FieldImageType byte)
-  let hasBlock   = ByteString.index input 57 /= 0
-      hasUndo    = ByteString.index input 58 /= 0
-      ppf3HeaderSize = if hasBlock then 1084 else 60
-  requireLength LabelPPF3 ppf3HeaderSize input
-  let validation = if hasBlock
-        then Just (Validation imageType (ByteString.take 1024 (ByteString.drop 60 input)))
-        else Nothing
-      fileId = detectFileId getWord16LE 2 input
-      body   = stripFileId 2 fileId (ByteString.drop ppf3HeaderSize input)
-  records <- parseRecords64 LabelPPF3 hasUndo body
+  let validation = Validation imageType <$> validationBlock
+      headerSize = if hasBlock then ppf3MinHeaderSize + unLength validationSize else ppf3MinHeaderSize
+      fileId     = detectFileId getWord16LE 2 input
+      recordBody = stripFileId 2 fileId (ByteString.drop headerSize input)
+  records <- wrapError LabelPPF3 $ runGet (parseRecords64 LabelPPF3 hasUndo 0) recordBody
   Right Patch
     { ppfVersion     = PPF3
-    , ppfDescription = ByteString.take 50 (ByteString.drop 6 input)
+    , ppfDescription = description
     , ppfFileSize    = Nothing
     , ppfValidation  = validation
     , ppfHasUndo     = hasUndo
@@ -121,76 +135,109 @@ parsePPF3 input = do
     , ppfRecords     = records
     , ppfFileId      = fileId
     }
+  where
+    parsePPF3Header :: Get (ByteString, Word8, Bool, Bool, Maybe ByteString)
+    parsePPF3Header = do
+      skip (Length ppfDescriptionOffset)
+      description <- getBytes (Length ppfDescriptionWidth)
+      imageTypeByte <- getByte
+      hasBlockByte <- getByte
+      hasUndoByte <- getByte
+      skip (Length 1)
+      validationBlock <- if hasBlockByte /= 0
+        then Just <$> getBytes validationSize
+        else pure Nothing
+      pure (description, imageTypeByte, hasBlockByte /= 0, hasUndoByte /= 0, validationBlock)
 
 -- Pyriel's internal format (magic "PPF4"): 60-byte header, records with command byte +
 -- 4-byte offsets.  Reverse-engineered from the Suikoden I/II bug fix patchers; not a
 -- published spec — only ever generated and consumed within those patchers' Lua runtime.
 parsePPF4 :: ByteString -> Either SlapError Patch
-parsePPF4 input = do
-  requireLength LabelPPF4 60 input
-  records <- parseRecords4 LabelPPF4 (ByteString.drop 60 input)
-  Right Patch
-    { ppfVersion     = PPF4
-    , ppfDescription = ByteString.take 50 (ByteString.drop 6 input)
-    , ppfFileSize    = Nothing
-    , ppfValidation  = Nothing
-    , ppfHasUndo     = False
-    , ppfImageType   = Nothing
-    , ppfRecords     = records
-    , ppfFileId      = Nothing
-    }
+parsePPF4 input = wrapError LabelPPF4 $ runGet parsePPF4Body input
+  where
+    parsePPF4Body :: Get Patch
+    parsePPF4Body = do
+      skip (Length ppfDescriptionOffset)
+      description <- getBytes (Length ppfDescriptionWidth)
+      skip (Length (ppf4HeaderSize - ppfDescriptionOffset - ppfDescriptionWidth))
+      records <- parseRecords4 LabelPPF4 0
+      pure Patch
+        { ppfVersion     = PPF4
+        , ppfDescription = description
+        , ppfFileSize    = Nothing
+        , ppfValidation  = Nothing
+        , ppfHasUndo     = False
+        , ppfImageType   = Nothing
+        , ppfRecords     = records
+        , ppfFileId      = Nothing
+        }
+
+----------------------------------------------------------------------------
+-- Record parsers (Get actions)
+----------------------------------------------------------------------------
 
 -- Parse PPF1/PPF2 records (4-byte offset, 1-byte count, N bytes data).
-parseRecords32 :: FormatLabel -> ByteString -> Either SlapError [Record]
-parseRecords32 label = parseLoop [] 0
-  where
-    parseLoop accumulated recordIndex input
-      | ByteString.length input < 5 = Right (reverse accumulated)
-      | 5 + count > ByteString.length input =
-          Left (TruncatedRecord label recordIndex (Length (5 + count)) (Length (ByteString.length input)))
-      | otherwise =
-          parseLoop (Record recordOffset (ByteString.take count (ByteString.drop 5 input)) Nothing Replace : accumulated)
-                    (recordIndex + 1)
-                    (ByteString.drop (5 + count) input)
-      where
-        recordOffset = Offset (fromIntegral (getWord32LE 0 input))
-        count  = fromIntegral (ByteString.index input 4) :: Int
+parseRecords32 :: FormatLabel -> Int -> Get [Record]
+parseRecords32 label recordIndex = do
+  remainingBytes <- remaining
+  if unLength remainingBytes < 5 then pure []
+  else do
+    recordOffset <- Offset . fromIntegral <$> word32LE
+    count <- fromIntegral <$> getByte
+    remainingAfterHeader <- remaining
+    if unLength remainingAfterHeader < count
+      then fail (truncatedMessage label recordIndex (5 + count) (unLength remainingBytes))
+      else do
+        payload <- getBytes (Length count)
+        rest <- parseRecords32 label (recordIndex + 1)
+        pure (Record recordOffset payload Nothing Replace : rest)
 
 -- Parse PPF3 records (8-byte offset, 1-byte count, N bytes data, optional undo).
-parseRecords64 :: FormatLabel -> Bool -> ByteString -> Either SlapError [Record]
-parseRecords64 label hasUndo = parseLoop [] 0
-  where
-    parseLoop accumulated recordIndex input
-      | ByteString.length input < 9 = Right (reverse accumulated)
-      | need > ByteString.length input =
-          Left (TruncatedRecord label recordIndex (Length need) (Length (ByteString.length input)))
-      | otherwise =
-          parseLoop (Record recordOffset payload undoData Replace : accumulated) (recordIndex + 1) (ByteString.drop need input)
-      where
-        recordOffset = Offset (getInt64LE 0 input)
-        count   = fromIntegral (ByteString.index input 8) :: Int
-        payload = ByteString.take count (ByteString.drop 9 input)
-        undoData = if hasUndo
-                   then Just (ByteString.take count (ByteString.drop (9 + count) input))
-                   else Nothing
-        need    = 9 + count + if hasUndo then count else 0
+parseRecords64 :: FormatLabel -> Bool -> Int -> Get [Record]
+parseRecords64 label hasUndo recordIndex = do
+  remainingBytes <- remaining
+  if unLength remainingBytes < 9 then pure []
+  else do
+    recordOffset <- Offset <$> int64LE
+    count <- fromIntegral <$> getByte
+    let need = 9 + count + if hasUndo then count else 0
+    if need > unLength remainingBytes
+      then fail (truncatedMessage label recordIndex need (unLength remainingBytes))
+      else do
+        payload <- getBytes (Length count)
+        undoData <- if hasUndo
+                    then Just <$> getBytes (Length count)
+                    else pure Nothing
+        rest <- parseRecords64 label hasUndo (recordIndex + 1)
+        pure (Record recordOffset payload undoData Replace : rest)
 
 -- Parse PPF4 records (1-byte cmd, 4-byte offset, 1-byte count, N bytes data).
-parseRecords4 :: FormatLabel -> ByteString -> Either SlapError [Record]
-parseRecords4 label = parseLoop [] 0
-  where
-    parseLoop accumulated recordIndex input
-      | ByteString.length input < 6 = Right (reverse accumulated)
-      | 6 + count > ByteString.length input =
-          Left (TruncatedRecord label recordIndex (Length (6 + count)) (Length (ByteString.length input)))
-      | otherwise =
-          parseLoop (Record recordOffset (ByteString.take count (ByteString.drop 6 input)) Nothing command : accumulated)
-                    (recordIndex + 1)
-                    (ByteString.drop (6 + count) input)
-      where
-        command = if ByteString.index input 0 == 1 then Append else Replace
-        recordOffset = Offset (fromIntegral (getWord32LE 1 input))
-        count   = fromIntegral (ByteString.index input 5) :: Int
+parseRecords4 :: FormatLabel -> Int -> Get [Record]
+parseRecords4 label recordIndex = do
+  remainingBytes <- remaining
+  if unLength remainingBytes < 6 then pure []
+  else do
+    commandByte <- getByte
+    let command = if commandByte == 1 then Append else Replace
+    recordOffset <- Offset . fromIntegral <$> word32LE
+    count <- fromIntegral <$> getByte
+    remainingAfterHeader <- remaining
+    if unLength remainingAfterHeader < count
+      then fail (truncatedMessage label recordIndex (6 + count) (unLength remainingBytes))
+      else do
+        payload <- getBytes (Length count)
+        rest <- parseRecords4 label (recordIndex + 1)
+        pure (Record recordOffset payload Nothing command : rest)
+
+-- Format a truncated-record error message.
+truncatedMessage :: FormatLabel -> Int -> Int -> Int -> String
+truncatedMessage label recordIndex needed available =
+  show label ++ ": record " ++ show recordIndex
+  ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"
+
+----------------------------------------------------------------------------
+-- File_ID.diz detection (operates on the full input ByteString)
+----------------------------------------------------------------------------
 
 -- File_ID.diz detection, parameterised by length-field reader and width.
 detectFileId :: (Integral a) => (Int -> ByteString -> a) -> Int -> ByteString -> Maybe FileId
@@ -198,17 +245,12 @@ detectFileId readLength lengthSize input
   | ByteString.length input < 4 + lengthSize = Nothing
   | ByteString.take 4 (ByteString.drop (ByteString.length input - 4 - lengthSize) input) == ".DIZ" =
       let idLength    = fromIntegral (readLength (ByteString.length input - lengthSize) input)
-          trailerSize = 18 + idLength + 16 + lengthSize
-      in Just (FileId (ByteString.take idLength (ByteString.drop (ByteString.length input - trailerSize + 18) input)))
+          trailerSize = fileIdMarkerSize + idLength + fileIdFooterSize + lengthSize
+      in Just (FileId (ByteString.take idLength (ByteString.drop (ByteString.length input - trailerSize + fileIdMarkerSize) input)))
   | otherwise = Nothing
 
 -- Strip File_ID.diz trailer bytes from the record body.
 stripFileId :: Int -> Maybe FileId -> ByteString -> ByteString
 stripFileId _ Nothing body = body
 stripFileId lengthSize (Just (FileId content)) body =
-  ByteString.take (ByteString.length body - 18 - ByteString.length content - 16 - lengthSize) body
-
-requireLength :: FormatLabel -> Int -> ByteString -> Either SlapError ()
-requireLength label minLength input
-  | ByteString.length input >= minLength = Right ()
-  | otherwise = Left (InputTooShort label (Length minLength) (Length (ByteString.length input)))
+  ByteString.take (ByteString.length body - fileIdMarkerSize - ByteString.length content - fileIdFooterSize - lengthSize) body
