@@ -24,16 +24,20 @@ import qualified Slap.RUP.Types as RUP
 import qualified Slap.RUP.Parse as RUP
 import qualified Slap.RUP.Apply as RUP
 import qualified Slap.RUP.Create as RUP
+import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
+import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Create as APSGBA
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.PPF.Types as PPF
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Apply as PPF
+import qualified Slap.PPF.Create as PPF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.XDelta1.Parse as XDelta1
@@ -46,9 +50,10 @@ import           Slap.TextEncoding (truncateUtf8, isValidUtf8,
                    truncateLocale, BoundedResult(..))
 import qualified Slap.PCHTXT.Apply as PCHTXT
 
-import Slap.Binary (md5, sha1, diffHunks)
+import Slap.Binary (md5, sha1, diffHunks, trimNull)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Error (SlapError, CreateResult(..), renderSlapError, renderSlapWarning)
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..), renderSlapError, renderSlapWarning)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
@@ -194,6 +199,22 @@ main = defaultMain $ testGroup "Properties"
           [ testProperty "utf8-round-trip" prop_utf8RoundTrip
           , testProperty "locale-round-trip-ascii" prop_localeRoundTripAscii
           ]
+      ]
+  , testGroup "Encoding"
+      [ testCase "ppf3-non-ascii-round-trip" test_ppf3NonAsciiRoundTrip
+      , testCase "ppf3-overflow-warning" test_ppf3OverflowWarning
+      , testCase "ppf3-empty-description" test_ppf3EmptyDescription
+      , testCase "dps-non-ascii-round-trip" test_dpsNonAsciiRoundTrip
+      , testCase "dps-overflow-per-field" test_dpsOverflowPerField
+      , testCase "dps-all-fields-overflow" test_dpsAllFieldsOverflow
+      , testCase "apsn64-non-ascii-round-trip" test_apsN64NonAsciiRoundTrip
+      , testCase "apsn64-overflow-warning" test_apsN64OverflowWarning
+      , testCase "rup-non-ascii-system" test_rupNonAsciiSystem
+      ]
+  , testGroup "DPS Detection"
+      [ testCase "valid-dps-zero-records" test_isDPSValidZeroRecords
+      , testCase "valid-header-invalid-record-mode" test_isDPSInvalidRecordMode
+      , testCase "printable-ascii-not-dps" test_isDPSPrintableAsciiNotDPS
       ]
   ]
 
@@ -1095,3 +1116,155 @@ prop_localeRoundTripAscii :: Property
 prop_localeRoundTripAscii =
   forAll (listOf (choose ('\x20', '\x7E'))) $ \inputString ->
     decodeLocaleField (encodeLocaleField inputString) === inputString
+
+----------------------------------------------------------------------------
+-- Encoding: format create round-trip tests
+----------------------------------------------------------------------------
+
+-- PPF3 create → parse → decode with non-ASCII description
+test_ppf3NonAsciiRoundTrip :: IO ()
+test_ppf3NonAsciiRoundTrip = do
+  let description = "Pokémon André"
+      CreateResult patchBytes _ = PPF.encodePPF3 [] description Nothing Nothing PPF.BIN
+  case PPF.parsePatch patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed ->
+      let decoded = decodeLocaleField (trimNull (PPF.ppfDescription parsed))
+      in assertEqual "description round-trip" description decoded
+
+-- PPF3 create with overlong description produces FieldTruncated warning
+test_ppf3OverflowWarning :: IO ()
+test_ppf3OverflowWarning = do
+  let longDescription = replicate 60 'A'
+      CreateResult patchBytes warnings = PPF.encodePPF3 [] longDescription Nothing Nothing PPF.BIN
+      hasFieldTruncated = any (isFieldTruncatedFor LabelPPF3) warnings
+  assertBool "expected FieldTruncated warning" hasFieldTruncated
+  case PPF.parsePatch patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed ->
+      assertBool "description at most 50 bytes"
+        (ByteString.length (PPF.ppfDescription parsed) <= PPF.ppfDescriptionWidth)
+
+-- PPF3 create with empty description: no warnings, empty after trimming
+test_ppf3EmptyDescription :: IO ()
+test_ppf3EmptyDescription = do
+  let CreateResult patchBytes warnings = PPF.encodePPF3 [] "" Nothing Nothing PPF.BIN
+  assertBool "no FieldTruncated warning" (not (any (isFieldTruncatedFor LabelPPF3) warnings))
+  case PPF.parsePatch patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed ->
+      assertEqual "empty description" "" (decodeLocaleField (trimNull (PPF.ppfDescription parsed)))
+
+-- DPS create → parse → decode with non-ASCII metadata fields
+test_dpsNonAsciiRoundTrip :: IO ()
+test_dpsNonAsciiRoundTrip = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      CreateResult patchBytes _ = DPS.createDPS source target "Pokémon" "André" "1.0" DPS.DPSStable
+  case DPS.parseDPS patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed -> do
+      assertEqual "name"    "Pokémon" (decodeLocaleField (DPS.dpsName parsed))
+      assertEqual "author"  "André"   (decodeLocaleField (DPS.dpsAuthor parsed))
+      assertEqual "version" "1.0"     (decodeLocaleField (DPS.dpsVersion parsed))
+
+-- DPS create with one overflowing field: exactly one FieldTruncated warning for name
+test_dpsOverflowPerField :: IO ()
+test_dpsOverflowPerField = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      longName = replicate 80 'A'
+      CreateResult patchBytes warnings = DPS.createDPS source target longName "ok" "1.0" DPS.DPSStable
+      truncatedWarnings = filter (isFieldTruncatedFor LabelDPS) warnings
+  assertEqual "exactly one FieldTruncated" 1 (length truncatedWarnings)
+  assertBool "truncated field is name"
+    (all (\warning -> case warning of FieldTruncated _ FieldPatchName _ _ -> True; _ -> False) truncatedWarnings)
+  case DPS.parseDPS patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed -> do
+      assertBool "name at most 64 bytes" (ByteString.length (DPS.dpsName parsed) <= DPS.dpsFieldWidth)
+      assertEqual "author intact"  "ok"  (decodeLocaleField (DPS.dpsAuthor parsed))
+      assertEqual "version intact" "1.0" (decodeLocaleField (DPS.dpsVersion parsed))
+
+-- DPS create with all three fields overflowing
+test_dpsAllFieldsOverflow :: IO ()
+test_dpsAllFieldsOverflow = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      longField = replicate 80 'A'
+      CreateResult _ warnings = DPS.createDPS source target longField longField longField DPS.DPSStable
+      truncatedWarnings = filter (isFieldTruncatedFor LabelDPS) warnings
+  assertEqual "exactly three FieldTruncated" 3 (length truncatedWarnings)
+
+-- APS-N64 create → parse → decode with non-ASCII description
+test_apsN64NonAsciiRoundTrip :: IO ()
+test_apsN64NonAsciiRoundTrip = do
+  let description = "Pokémon"
+      CreateResult patchBytes _ = APSN64.encodeAPSN64 [] 256 description
+  case APSN64.parseAPSN64 patchBytes of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right (APSN64.APSN64Patch header _) ->
+      assertEqual "description round-trip" description
+        (decodeLocaleField (trimNull (APSN64.apsN64Description header)))
+
+-- APS-N64 create with overlong description produces FieldTruncated warning
+test_apsN64OverflowWarning :: IO ()
+test_apsN64OverflowWarning = do
+  let longDescription = replicate 60 'A'
+      CreateResult _ warnings = APSN64.encodeAPSN64 [] 256 longDescription
+      hasFieldTruncated = any (isFieldTruncatedFor LabelAPSN64) warnings
+  assertBool "expected FieldTruncated warning" hasFieldTruncated
+
+-- RUP create with PatchEncodingSystem and non-ASCII title
+test_rupNonAsciiSystem :: IO ()
+test_rupNonAsciiSystem = do
+  let source = ByteString.pack [0]
+      target = ByteString.pack [1]
+      titleString = "Pokémon"
+      info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingSystem titleString) }
+      patch = RUP.createRUP source target info 0 RUP.PatchEncodingSystem
+  case RUP.parseRUP patch of
+    Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
+    Right parsed ->
+      assertEqual "title round-trip" titleString
+        (RUP.decodeRUPField RUP.PatchEncodingSystem
+          (fromMaybe ByteString.empty (RUP.rupTitle (RUP.rupHeader parsed))))
+
+-- Helpers for FieldTruncated matching
+
+isFieldTruncatedFor :: FormatLabel -> SlapWarning -> Bool
+isFieldTruncatedFor expectedLabel (FieldTruncated warningLabel _ _ _) = expectedLabel == warningLabel
+isFieldTruncatedFor _ _ = False
+
+----------------------------------------------------------------------------
+-- DPS Detection
+----------------------------------------------------------------------------
+
+-- Valid DPS with zero records: 198 bytes, correct version and stability
+test_isDPSValidZeroRecords :: IO ()
+test_isDPSValidZeroRecords = do
+  let metadata = ByteString.replicate DPS.dpsMetadataSize 0    -- 192 bytes of nulls
+      stabilityByte = ByteString.singleton 0                    -- stable
+      versionByte = ByteString.singleton 1                      -- DPSVersion1
+      originalSize = ByteString.pack [0x00, 0x00, 0x00, 0x00]  -- 4 bytes LE
+      input = metadata <> stabilityByte <> versionByte <> originalSize
+  assertEqual "input length" DPS.dpsMinimumFileSize (ByteString.length input)
+  assertBool "isDPS returns True" (DPS.isDPS input)
+
+-- Valid header but first record byte is an invalid mode (2)
+test_isDPSInvalidRecordMode :: IO ()
+test_isDPSInvalidRecordMode = do
+  let metadata = ByteString.replicate DPS.dpsMetadataSize 0
+      stabilityByte = ByteString.singleton 0
+      versionByte = ByteString.singleton 1
+      originalSize = ByteString.pack [0x00, 0x00, 0x00, 0x00]
+      invalidMode = ByteString.singleton 2  -- not 0 or 1
+      input = metadata <> stabilityByte <> versionByte <> originalSize <> invalidMode
+  assertEqual "input length" (DPS.dpsMinimumFileSize + 1) (ByteString.length input)
+  assertBool "isDPS returns False" (not (DPS.isDPS input))
+
+-- 198 bytes of 'A': version byte at dpsVersionOffset is 0x41, not 1
+test_isDPSPrintableAsciiNotDPS :: IO ()
+test_isDPSPrintableAsciiNotDPS = do
+  let input = ByteString.replicate DPS.dpsMinimumFileSize 0x41
+  assertBool "isDPS returns False" (not (DPS.isDPS input))
