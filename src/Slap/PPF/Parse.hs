@@ -8,6 +8,7 @@ module Slap.PPF.Parse (parsePatch) where
 import Slap.PPF.Types
 import Slap.Binary (getWord16LE, getWord32LE)
 import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE, int64LE)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
@@ -232,7 +233,11 @@ parseRecords4 label recordIndex = do
   if unLength remainingBytes < 6 then pure []
   else do
     commandByte <- getByte
-    let command = if commandByte == 1 then Append else Replace
+    command <- case commandByte of
+      0 -> pure Replace
+      1 -> pure Append
+      _ -> fail (show label ++ ": record " ++ show recordIndex
+                ++ " has unknown command byte: 0x" ++ padHex 2 (fromIntegral commandByte))
     recordOffset <- Offset . fromIntegral <$> word32LE
     count <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining
