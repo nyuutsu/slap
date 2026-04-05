@@ -126,7 +126,7 @@ encodeEBPRaw source records truncation meta = LazyByteString.toStrict $ toLazyBy
   <> byteString meta
 
 encodeTruncation :: Int -> FileSize -> Builder
-encodeTruncation width truncSize = encodeOffset width (fromIntegral (unFileSize truncSize))
+encodeTruncation width truncSize = encodeOffset width (unFileSize truncSize)
 
 ebpJson :: String -> String -> String -> ByteString
 ebpJson title author description = Text.encodeUtf8 $ Text.pack $
@@ -138,7 +138,7 @@ ebpJson title author description = Text.encodeUtf8 $ Text.pack $
     escapeJson ('"':rest)  = '\\' : '"'  : escapeJson rest
     escapeJson ('\\':rest) = '\\' : '\\' : escapeJson rest
     escapeJson (char:rest)
-      | char < ' ' = "\\u00" ++ padHex 2 (fromIntegral (fromEnum char)) ++ escapeJson rest
+      | char < ' ' = "\\u00" ++ padHex 2 (fromEnum char) ++ escapeJson rest
       | otherwise  = char : escapeJson rest
 
 ----------------------------------------------------------------------------
@@ -160,14 +160,14 @@ diffRaw original modified = scanDiffs 0 ++ extension
     modifiedLength = ByteString.length modified
     sharedLength = min originalLength modifiedLength
     extension
-      | modifiedLength > originalLength = [EncodedHunk (Offset (fromIntegral originalLength)) (ByteString.drop originalLength modified)]
+      | modifiedLength > originalLength = [EncodedHunk (Offset originalLength) (ByteString.drop originalLength modified)]
       | otherwise                       = []
     scanDiffs position
       | position >= sharedLength = []
       | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
           let diffEnd = findDiffEnd (position + 1)
-          in EncodedHunk (Offset (fromIntegral position)) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+          in EncodedHunk (Offset position) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
     findDiffEnd position
       | position >= sharedLength = sharedLength
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
@@ -246,7 +246,7 @@ partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
                 let startPosition = positionArray ! sourceIndex
                     endPosition   = positionArray ! targetIndex
                     payload  = ByteString.take (endPosition - startPosition) (ByteString.drop startPosition blockData)
-                extract sourceIndex (EncodedHunk (Offset (fromIntegral (blockOffsetInt + startPosition))) payload : accumulated)
+                extract sourceIndex (EncodedHunk (Offset (blockOffsetInt + startPosition)) payload : accumulated)
 
       extract (positionCount - 1) []
 

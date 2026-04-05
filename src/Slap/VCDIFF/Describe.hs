@@ -67,7 +67,7 @@ explainVCDIFF patch = ExplainData
   , explainHeader   = vcdiffMeta patch
   , explainSections = concat windowSections
   , explainSummary  = Summary (SummaryInfo totalInstructions "instructions"
-                   (Just (SummaryByteInfo (fromIntegral totalTarget) BytesTotalOutput)))
+                   (Just (SummaryByteInfo totalTarget BytesTotalOutput)))
   , explainNotes    = []
   }
   where

@@ -15,7 +15,6 @@ import qualified Data.ByteString as ByteString
 import Data.Char (intToDigit, isHexDigit, toUpper)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import Data.Int (Int64)
 import Data.Word (Word64)
 import Numeric (showHex)
 
@@ -57,7 +56,7 @@ encodePCHTXTBlocks blocks maybeDescription = Text.encodeUtf8 $ Text.pack $ unlin
       in description ++ [header] ++ map encodeEntry (pchtxtBlockEntries block)
     encodeEntry entry = hexPad 8 (unOffset (pchtxtOffset entry)) ++ " " ++ hexBytes (pchtxtData entry)
 
-hexPad :: Int -> Int64 -> String
+hexPad :: (Integral a) => Int -> a -> String
 hexPad width value =
   let text = map toUpper (showHex (fromIntegral value :: Word64) "")
   in replicate (width - length text) '0' ++ text

@@ -10,7 +10,6 @@ import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
-import Data.Int (Int64)
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr, plusPtr)
@@ -21,10 +20,10 @@ applyBPS :: BPSPatch -> ByteString -> ByteString
 applyBPS patch source = unsafeCreate targetLength $ \outputPointer ->
   applyLoop outputPointer 0 0 0 (bpsActions patch)
   where
-    targetLength = fromIntegral (unFileSize (bpsTargetSize patch))
+    targetLength = unFileSize (bpsTargetSize patch)
     sourceLength = ByteString.length source
 
-    applyLoop :: Ptr Word8 -> Int -> Int64 -> Int64 -> [BPSAction] -> IO ()
+    applyLoop :: Ptr Word8 -> Int -> Int -> Int -> [BPSAction] -> IO ()
     applyLoop _             _              _              _              []           = pure ()
     applyLoop outputPointer outputPosition sourceRelative targetRelative (action:remaining) = case action of
       SourceRead actionLength -> do
@@ -44,7 +43,7 @@ applyBPS patch source = unsafeCreate targetLength $ \outputPointer ->
       SourceCopy actionLength actionDelta -> do
         let copyLength = unLength actionLength
             nextSourceRelative = sourceRelative + unDelta actionDelta
-            sourceOffset  = fromIntegral nextSourceRelative :: Int
+            sourceOffset  = nextSourceRelative
             count   = min copyLength (targetLength - outputPosition)
             -- Clamp to the portion that falls within the source ByteString
             leadingClipLength = max 0 (negate sourceOffset)
@@ -59,13 +58,13 @@ applyBPS patch source = unsafeCreate targetLength $ \outputPointer ->
         let copied = leadingClipLength + safeSourceLength
         when (copied < count) $
           fillBytes (outputPointer `plusPtr` (outputPosition + copied)) 0 (count - copied)
-        applyLoop outputPointer (outputPosition + count) (nextSourceRelative + fromIntegral count) targetRelative remaining
+        applyLoop outputPointer (outputPosition + count) (nextSourceRelative + count) targetRelative remaining
 
       TargetCopy actionLength actionDelta -> do
         let copyLength = unLength actionLength
             nextTargetRelative = targetRelative + unDelta actionDelta
             count   = min copyLength (targetLength - outputPosition)
-            readOffset = fromIntegral nextTargetRelative
+            readOffset = nextTargetRelative
         -- Byte-by-byte: source region may overlap with destination
         mapM_ (\index -> do
           let readIndex = readOffset + index
@@ -73,4 +72,4 @@ applyBPS patch source = unsafeCreate targetLength $ \outputPointer ->
                then peekByteOff outputPointer readIndex :: IO Word8
                else pure 0
           pokeByteOff outputPointer (outputPosition + index) byte) [0..count-1]
-        applyLoop outputPointer (outputPosition + count) sourceRelative (nextTargetRelative + fromIntegral count) remaining
+        applyLoop outputPointer (outputPosition + count) sourceRelative (nextTargetRelative + count) remaining

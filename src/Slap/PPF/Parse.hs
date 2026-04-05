@@ -213,7 +213,7 @@ parseRecords64 label hasUndo recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 9 then pure []
   else do
-    recordOffset <- Offset <$> int64LE
+    recordOffset <- Offset . fromIntegral <$> int64LE
     count <- fromIntegral <$> getByte
     let need = 9 + count + if hasUndo then count else 0
     if need > unLength remainingBytes

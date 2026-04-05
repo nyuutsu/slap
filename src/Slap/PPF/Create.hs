@@ -36,7 +36,7 @@ buildHeader description blockCheck hasUndo validationBlock imageType =
 
 encodeUndoRecord :: Bool -> UndoHunk -> Builder
 encodeUndoRecord hasUndo (UndoHunk hunkOffset hunkPayload hunkOriginal) =
-  int64LE (unOffset hunkOffset)
+  int64LE (fromIntegral (unOffset hunkOffset))
   <> word8 (fromIntegral (ByteString.length hunkPayload))
   <> byteString hunkPayload
   <> if hasUndo then byteString hunkOriginal else mempty
@@ -65,7 +65,7 @@ encodePPF3 records description undoHunks validationBlock imageType =
 -- | Encode a write record (no undo data).
 encodeWriteRecord :: Hunk -> Builder
 encodeWriteRecord (Hunk hunkOffset hunkPayload) =
-  int64LE (unOffset hunkOffset)
+  int64LE (fromIntegral (unOffset hunkOffset))
   <> word8 (fromIntegral (ByteString.length hunkPayload))
   <> byteString hunkPayload
 

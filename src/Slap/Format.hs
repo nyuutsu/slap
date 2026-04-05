@@ -17,14 +17,13 @@ module Slap.Format
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 import Data.Word (Word8, Word32, Word64)
 import Numeric (showHex)
 
 showCRC :: Word32 -> String
-showCRC crc = padHex 8 (fromIntegral crc)
+showCRC crc = padHex 8 crc
 
-padHex :: Int -> Int64 -> String
+padHex :: (Integral a) => Int -> a -> String
 padHex minWidth value =
   let digits = showHex (fromIntegral value :: Word64) ""
   in replicate (minWidth - length digits) '0' ++ digits
@@ -38,7 +37,7 @@ padRight :: Int -> String -> String
 padRight minWidth text = text ++ replicate (minWidth - length text) ' '
 
 -- | Show a signed offset as +0xNNNNNN or -0xNNNNNN.
-showSigned :: Int64 -> String
+showSigned :: Int -> String
 showSigned value
   | value >= 0 = "+0x" ++ padHex 6 value
   | otherwise  = "-0x" ++ padHex 6 (abs value)
@@ -71,7 +70,7 @@ hexDump input
 
 formatRow :: [Word8] -> String
 formatRow bytes =
-  let hexParts = map (\byte -> padHex 2 (fromIntegral byte)) bytes
+  let hexParts = map (\byte -> padHex 2 byte) bytes
       (left, right) = splitAt 8 hexParts
   in unwords left ++ "  " ++ unwords right
 
@@ -81,4 +80,4 @@ chunksOf size items = let (chunk, rest) = splitAt size items in chunk : chunksOf
 
 -- | Render a ByteString as a lowercase hex string (e.g. "a3f0...").
 hexByteString :: ByteString -> String
-hexByteString = concatMap (\byte -> padHex 2 (fromIntegral byte)) . ByteString.unpack
+hexByteString = concatMap (\byte -> padHex 2 byte) . ByteString.unpack

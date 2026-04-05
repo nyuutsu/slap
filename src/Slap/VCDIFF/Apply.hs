@@ -131,9 +131,9 @@ applyVCDIFF patch source
   | totalSize < 0  = Left (NegativeTargetSize LabelVCDIFF (FileSize totalSize))
   | totalSize == 0 = Right ByteString.empty
   | otherwise =
-      Right $ unsafeCreate (fromIntegral totalSize) $ \outputPointer -> do
+      Right $ unsafeCreate totalSize $ \outputPointer -> do
         globalOutputOffsetRef <- newIORef (0 :: Int)
-        mapM_ (applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef (fromIntegral totalSize)) (vcdiffWindows patch)
+        mapM_ (applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalSize) (vcdiffWindows patch)
   where
     totalSize = sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))
     codeTable = vcdiffCodeTable patch
@@ -144,9 +144,9 @@ applyWindow :: Array Word8 CodeEntry -> Int -> Int
             -> ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
 applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalTargetLength window = do
   globalOutputOffset <- readIORef globalOutputOffsetRef
-  let targetLength = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
-      sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
-      sourceSegmentOffset = fromIntegral (unOffset (vcdiffSourcePosition window)) :: Int
+  let targetLength = unFileSize (vcdiffTargetLength window)
+      sourceSegmentLength = unFileSize (vcdiffSourceLength window)
+      sourceSegmentOffset = unOffset (vcdiffSourcePosition window)
       hasSource = vcdiffWindowSource window == WindowFromSource
       hasTarget = vcdiffWindowSource window == WindowFromTarget
 
@@ -276,8 +276,8 @@ decodeWindowInstructions :: Array Word8 CodeEntry -> Int -> Int
                          -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
 decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
   where
-    targetLength    = fromIntegral (unFileSize (vcdiffTargetLength window)) :: Int
-    sourceSegmentLength = fromIntegral (unFileSize (vcdiffSourceLength window)) :: Int
+    targetLength    = unFileSize (vcdiffTargetLength window)
+    sourceSegmentLength = unFileSize (vcdiffSourceLength window)
     hasSource = vcdiffWindowSource window == WindowFromSource
     instructionBytes    = vcdiffInstructions window
     addRunBytes     = vcdiffAddRunData window
@@ -379,7 +379,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
                             then min count (ByteString.length addRunBytes - addRunPosition)
                             else 0
             when (count > 0) $
-              emit (DecodedAdd (Offset (fromIntegral windowOffset)) (ByteString.take safeCount (ByteString.drop addRunPosition addRunBytes)))
+              emit (DecodedAdd (Offset windowOffset) (ByteString.take safeCount (ByteString.drop addRunPosition addRunBytes)))
             writeSTRef addRunPositionReference (addRunPosition + count)
             writeSTRef windowOffsetReference (windowOffset + count)
 
@@ -389,7 +389,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             addRunPosition <- readSTRef addRunPositionReference
             let count = min size (targetLength - windowOffset)
             when (addRunPosition >= 0 && addRunPosition < ByteString.length addRunBytes && count > 0) $
-              emit (DecodedRun (Offset (fromIntegral windowOffset)) (ByteString.index addRunBytes addRunPosition) (Length count))
+              emit (DecodedRun (Offset windowOffset) (ByteString.index addRunBytes addRunPosition) (Length count))
             writeSTRef addRunPositionReference (addRunPosition + 1)
             writeSTRef windowOffsetReference (windowOffset + count)
 
@@ -401,9 +401,9 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             address <- decodeAddressST mode here
             when (count > 0) $ do
               let maybeSourceOffset = if address < fromIntegral sourceSegmentLength && hasSource
-                            then Just (Offset (unOffset (vcdiffSourcePosition window) + address))
+                            then Just (Offset (unOffset (vcdiffSourcePosition window) + fromIntegral address))
                             else Nothing
-              emit (DecodedCopy (Offset (fromIntegral windowOffset)) (Length count) maybeSourceOffset)
+              emit (DecodedCopy (Offset windowOffset) (Length count) maybeSourceOffset)
             writeSTRef windowOffsetReference (windowOffset + count)
 
           executeInstructionStream :: ST s ()
@@ -422,7 +422,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
       -- Implicit trailing copy from source
       windowOffset <- readSTRef windowOffsetReference
       when (hasSource && windowOffset < targetLength) $
-        emit (DecodedCopy (Offset (fromIntegral windowOffset)) (Length (targetLength - windowOffset))
-                     (Just (Offset (unOffset (vcdiffSourcePosition window) + fromIntegral windowOffset))))
+        emit (DecodedCopy (Offset windowOffset) (Length (targetLength - windowOffset))
+                     (Just (Offset (unOffset (vcdiffSourcePosition window) + windowOffset))))
 
       reverse <$> readSTRef resultReference

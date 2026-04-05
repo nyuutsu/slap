@@ -21,10 +21,10 @@ buildOutput source records =
   -- Start with a copy of the source, then overwrite at each record's offset.
   let base = source
       applyRecord buffer (DPSEnclosedData outputOffset payload) =
-        overwriteAt buffer (fromIntegral (unOffset outputOffset)) payload
+        overwriteAt buffer (unOffset outputOffset) payload
       applyRecord buffer (DPSCopyFromROM outputOffset sourceOffset copyLength) =
-        let chunk = takePadded (unLength copyLength) (fromIntegral (unOffset sourceOffset)) source
-        in overwriteAt buffer (fromIntegral (unOffset outputOffset)) chunk
+        let chunk = takePadded (unLength copyLength) (unOffset sourceOffset) source
+        in overwriteAt buffer (unOffset outputOffset) chunk
   in foldl' applyRecord base records
 
 -- | Write bytes at a given offset, extending with zeros if needed.

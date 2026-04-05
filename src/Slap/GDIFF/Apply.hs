@@ -15,7 +15,7 @@ import Foreign.Ptr (Ptr)
 applyGDIFF :: GDiffPatch -> ByteString -> ByteString
 applyGDIFF patch source
   | totalSize == 0 = ByteString.empty
-  | otherwise = unsafeCreate (fromIntegral totalSize) $ \outputPointer ->
+  | otherwise = unsafeCreate totalSize $ \outputPointer ->
       applyLoop outputPointer 0 (gdiffCommands patch)
   where
     totalSize = sum (map commandOutputSize (gdiffCommands patch))
@@ -28,7 +28,7 @@ applyGDIFF patch source
         copyByteStringRange outputPointer position payload 0 dataLength
         applyLoop outputPointer (position + dataLength) remaining
       GDiffCopy sourceOffset copyLength -> do
-        let sourceStart = fromIntegral (unOffset sourceOffset)
-            count = fromIntegral (unFileSize copyLength) :: Int
+        let sourceStart = unOffset sourceOffset
+            count = unFileSize copyLength
         copyByteStringRange outputPointer position source sourceStart count
         applyLoop outputPointer (position + count) remaining

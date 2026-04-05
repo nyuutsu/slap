@@ -15,7 +15,7 @@ import Data.Bits (xor)
 -- Caller is responsible for checksum validation.
 applyUPS :: UPSPatch -> ByteString -> ByteString
 applyUPS patch source =
-  let targetSize = fromIntegral (unFileSize (upsTargetSize patch))
+  let targetSize = unFileSize (upsTargetSize patch)
       -- Pad or truncate source to target size for XOR
       padded = if ByteString.length source >= targetSize
                then ByteString.take targetSize source
@@ -28,7 +28,7 @@ applyBlocks [] source position =
   -- Copy remaining source bytes unchanged
   byteString (ByteString.drop position source)
 applyBlocks (UPSBlock skipDelta xorBytes : remaining) source position =
-  let skipAmount = fromIntegral (unDelta skipDelta)
+  let skipAmount = unDelta skipDelta
       skipEnd = position + skipAmount
       -- Copy 'skip' bytes unchanged from source
       unchanged = byteString (ByteString.take skipAmount (ByteString.drop position source))

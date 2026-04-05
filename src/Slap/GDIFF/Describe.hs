@@ -57,7 +57,7 @@ makeGDIFFRegion outputPosition command = case command of
            (AnnotAt AtOutput outputPosition [])
        )
   GDiffCopy sourceOffset copyLength ->
-    ( advance outputPosition (Length (fromIntegral (unFileSize copyLength)))
-    , ExplainRegion outputPosition (Length (fromIntegral (unFileSize copyLength))) "COPY  " (PayloadCopy FromSource)
+    ( advance outputPosition (Length (unFileSize copyLength))
+    , ExplainRegion outputPosition (Length (unFileSize copyLength)) "COPY  " (PayloadCopy FromSource)
         (AnnotAt AtOutput outputPosition [DetailSource sourceOffset])
     )

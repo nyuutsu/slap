@@ -221,7 +221,7 @@ adler32 = rustyAdler32
 ----------------------------------------------------------------------------
 
 -- | Maximum gap (in bytes) between adjacent diff hunks that triggers merging.
-mergeGapThreshold :: Int64
+mergeGapThreshold :: Int
 mergeGapThreshold = 5
 
 -- | Find contiguous regions where two ByteStrings differ.
@@ -234,14 +234,14 @@ diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
     modifiedLength = ByteString.length modified
     sharedLength = min originalLength modifiedLength
     extension
-      | modifiedLength > originalLength = [Hunk (Offset (fromIntegral originalLength)) (ByteString.drop originalLength modified)]
+      | modifiedLength > originalLength = [Hunk (Offset originalLength) (ByteString.drop originalLength modified)]
       | otherwise                       = []
     scanDiffs position
       | position >= sharedLength = []
       | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
       | otherwise =
           let diffEnd = findDiffEnd (position + 1)
-          in Hunk (Offset (fromIntegral position)) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
+          in Hunk (Offset position) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
     findDiffEnd position
       | position >= sharedLength = sharedLength
       | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
@@ -249,9 +249,9 @@ diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
     mergeNearby (Hunk firstOffset firstData : Hunk nextOffset nextData : rest)
-      | unOffset nextOffset - unOffset firstOffset - fromIntegral (ByteString.length firstData) <= mergeGapThreshold =
-          let merged = ByteString.take (fromIntegral (unOffset nextOffset) + ByteString.length nextData - fromIntegral (unOffset firstOffset))
-                         (ByteString.drop (fromIntegral (unOffset firstOffset)) modified)
+      | unOffset nextOffset - unOffset firstOffset - ByteString.length firstData <= mergeGapThreshold =
+          let merged = ByteString.take (unOffset nextOffset + ByteString.length nextData - unOffset firstOffset)
+                         (ByteString.drop (unOffset firstOffset) modified)
           in mergeNearby (Hunk firstOffset merged : rest)
       | otherwise = Hunk firstOffset firstData : mergeNearby (Hunk nextOffset nextData : rest)
 

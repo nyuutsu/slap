@@ -19,7 +19,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
 import Slap.TextEncoding (decodeLocaleField)
 
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 import Data.List (mapAccumL)
 
 bpsMeta :: BPSPatch -> [MetaField]
@@ -53,36 +52,36 @@ explainBPS patch = ExplainData
   { explainFormat   = "BPS"
   , explainHeader   = bpsMeta patch
   , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (bpsActions patch)))]
-  , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (fromIntegral (unFileSize (bpsTargetSize patch))) BytesTotalOutput)))
+  , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
   , explainNotes    = []
   }
   where
     actionCount = length (bpsActions patch)
 
-makeBPSRegion :: (Int64, Int64) -> BPSAction -> ((Int64, Int64), ExplainRegion)
+makeBPSRegion :: (Int, Int) -> BPSAction -> ((Int, Int), ExplainRegion)
 makeBPSRegion (outputPosition, sourceRelative) action = case action of
   SourceRead actionLength ->
     let dataLength = unLength actionLength
-    in ( (outputPosition + fromIntegral dataLength, sourceRelative)
+    in ( (outputPosition + dataLength, sourceRelative)
        , ExplainRegion (Offset outputPosition) actionLength "SourceRead " (PayloadCopy FromSource)
            (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset outputPosition)])
        )
   TargetRead payload ->
     let dataLength = ByteString.length payload
-    in ( (outputPosition + fromIntegral dataLength, sourceRelative)
+    in ( (outputPosition + dataLength, sourceRelative)
        , ExplainRegion (Offset outputPosition) (Length dataLength) "TargetRead " (PayloadWrite payload)
            (AnnotAt AtOutput (Offset outputPosition) [])
        )
   SourceCopy actionLength actionDelta ->
     let dataLength = unLength actionLength
         nextSourceRelative = sourceRelative + unDelta actionDelta
-    in ( (outputPosition + fromIntegral dataLength, nextSourceRelative + fromIntegral dataLength)
+    in ( (outputPosition + dataLength, nextSourceRelative + dataLength)
        , ExplainRegion (Offset outputPosition) actionLength "SourceCopy " (PayloadCopy FromSource)
            (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset nextSourceRelative), DetailDelta actionDelta])
        )
   TargetCopy actionLength actionDelta ->
     let dataLength = unLength actionLength
-    in ( (outputPosition + fromIntegral dataLength, sourceRelative)
+    in ( (outputPosition + dataLength, sourceRelative)
        , ExplainRegion (Offset outputPosition) actionLength "TargetCopy " (PayloadCopy FromTarget)
            (AnnotAt AtOutput (Offset outputPosition) [DetailDelta actionDelta])
        )

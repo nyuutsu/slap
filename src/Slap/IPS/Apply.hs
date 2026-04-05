@@ -56,5 +56,5 @@ applyIPSMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     recordEnd (IPSRecordRLE recordOffset fillCount _) = offsetToInt recordOffset + unLength fillCount
     maxRecordEnd = foldl' max sourceLength (map recordEnd (ipsRecords patch))
     outputLength = case ipsTruncate patch of
-      Just truncSize -> fromIntegral (unFileSize truncSize)
+      Just truncSize -> unFileSize truncSize
       Nothing        -> maxRecordEnd

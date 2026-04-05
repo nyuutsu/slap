@@ -759,9 +759,9 @@ warnFileSize (FileSize expectedSize) (FileSize actualSize) =
 
 warnSourceBytes :: String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 warnSourceBytes label checkOffset expectedData sourceBytes =
-  let actual = safeSlice (fromIntegral (unOffset checkOffset)) (ByteString.length expectedData) sourceBytes
+  let actual = safeSlice (unOffset checkOffset) (ByteString.length expectedData) sourceBytes
   in when (actual /= expectedData) $
-       warn (label ++ " mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset checkOffset)))
+       warn (label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset))
 
 safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
 safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)

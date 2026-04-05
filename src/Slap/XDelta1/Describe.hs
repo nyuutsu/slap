@@ -73,7 +73,7 @@ explainXDelta1 patch = ExplainData
   , explainSections = map makeXDelta1SourceText (zip [0..] (xdelta1Sources patch))
       ++ [SectionText "", SectionText ("instructions: " ++ show instructionCount), SectionText ""]
       ++ [SectionRegions (map makeXDelta1Region (xdelta1Instructions patch))]
-  , explainSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (fromIntegral (unFileSize (xdelta1TargetLength patch))) BytesTotalOutput)))
+  , explainSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (unFileSize (xdelta1TargetLength patch)) BytesTotalOutput)))
   , explainNotes    = []
   }
   where
@@ -90,7 +90,7 @@ makeXDelta1SourceText (index, sourceEntry) = SectionText $
 makeXDelta1Region :: XDelta1Instruction -> ExplainRegion
 makeXDelta1Region instruction = ExplainRegion
   { regionOffset     = xdelta1InstructionOffset instruction
-  , regionSize       = Length (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
+  , regionSize       = Length (unFileSize (xdelta1InstructionLength instruction))
   , regionLabel      = "Copy  "
   , regionPayload    = PayloadCopy FromSource
   , regionAnnotation = AnnotAt AtOffset (xdelta1InstructionOffset instruction)

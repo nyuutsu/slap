@@ -104,7 +104,7 @@ parseControl version controlSegment dataSegment fromName toName
       instructionCount <- fromIntegral <$> edsioVarint
       instructions <- parseInstructions instructionCount
       let fixedInstructions = fixSequentialOffsets sources instructions
-      pure (XDelta1Patch version fromName toName toMD5 (FileSize targetLength) sources fixedInstructions dataSegment)
+      pure (XDelta1Patch version fromName toName toMD5 (FileSize (fromIntegral targetLength)) sources fixedInstructions dataSegment)
 
 parseSources :: Int -> Get [XDelta1Source]
 parseSources 0 = pure []
@@ -118,14 +118,14 @@ parseSources count = do
   let sourceKind = if sourceKindByte /= 0 then DataSegmentSource else FileSource
       offsetMode = if offsetModeByte /= 0 then SequentialOffsets else AbsoluteOffsets
   rest <- parseSources (count - 1)
-  pure (XDelta1Source sourceName md5Bytes (FileSize sourceLength) sourceKind offsetMode : rest)
+  pure (XDelta1Source sourceName md5Bytes (FileSize (fromIntegral sourceLength)) sourceKind offsetMode : rest)
 
 parseInstructions :: Int -> Get [XDelta1Instruction]
 parseInstructions 0 = pure []
 parseInstructions count = do
   index <- edsioVarint
-  offset <- Offset <$> edsioVarint
-  instructionLength <- FileSize <$> edsioVarint
+  offset <- Offset . fromIntegral <$> edsioVarint
+  instructionLength <- FileSize . fromIntegral <$> edsioVarint
   rest <- parseInstructions (count - 1)
   pure (XDelta1Instruction index offset instructionLength : rest)
 
@@ -135,7 +135,7 @@ fixSequentialOffsets :: [XDelta1Source] -> [XDelta1Instruction] -> [XDelta1Instr
 fixSequentialOffsets sources = reverse . snd . foldl' resolveSequentialOffset (initialPositions, [])
   where
     sequentialIndices = IntSet.fromList [index | (index, entry) <- zip [0..] sources, xdelta1SourceOffsetMode entry == SequentialOffsets]
-    initialPositions = IntMap.fromList [(index, 0 :: Int64) | index <- IntSet.toList sequentialIndices]
+    initialPositions = IntMap.fromList [(index, 0 :: Int) | index <- IntSet.toList sequentialIndices]
     resolveSequentialOffset (positions, accumulated) instruction =
       let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
       in if IntSet.member index sequentialIndices

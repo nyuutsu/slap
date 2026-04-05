@@ -60,7 +60,7 @@ parseBSDiff input
       extraData <- safeDecompressBZip "extra" extraCompressed
       let controls = parseControls controlData
           rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
-      Right (BSDiffPatch (FileSize rawControlSize) (FileSize rawDiffSize) (FileSize rawExtraSize) (FileSize rawTargetSize) controls diffData extraData)
+      Right (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) controls diffData extraData)
   where
     rawControlSize = getSignMagnitude64 8 input
     rawDiffSize = getSignMagnitude64 16 input
@@ -76,5 +76,5 @@ parseControls :: ByteString -> [BSDiffControl]
 parseControls input
   | ByteString.length input < bsdiffControlRecordSize = []
   | otherwise =
-      BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (getSignMagnitude64 16 input))
+      BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (fromIntegral (getSignMagnitude64 16 input)))
         : parseControls (ByteString.drop bsdiffControlRecordSize input)

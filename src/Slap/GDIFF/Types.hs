@@ -10,8 +10,6 @@ import Slap.Measure (Offset(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
-
 data GDiffCommand
   = GDiffData ByteString                             -- literal data to append
   | GDiffCopy { gdiffCopyOffset :: !Offset, gdiffCopyLength :: !FileSize }  -- offset into source, length
@@ -21,6 +19,6 @@ data GDiffPatch = GDiffPatch
   { gdiffCommands :: [GDiffCommand]
   } deriving (Show)
 
-commandOutputSize :: GDiffCommand -> Int64
-commandOutputSize (GDiffData payload)       = fromIntegral (ByteString.length payload)
+commandOutputSize :: GDiffCommand -> Int
+commandOutputSize (GDiffData payload)       = ByteString.length payload
 commandOutputSize (GDiffCopy _ copyLength) = unFileSize copyLength

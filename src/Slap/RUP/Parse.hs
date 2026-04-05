@@ -89,8 +89,8 @@ parseFileCommand :: RUPPatch -> Get RUPPatch
 parseFileCommand patch = do
   _filename <- parsePackedByteString
   romTypeByte <- getByte  -- ROM type byte
-  sourceSize <- FileSize <$> parsePackedInteger
-  targetSize <- FileSize <$> parsePackedInteger
+  sourceSize <- FileSize . fromIntegral <$> parsePackedInteger
+  targetSize <- FileSize . fromIntegral <$> parsePackedInteger
   sourceMD5 <- getBytes (Length 16)
   targetMD5 <- getBytes (Length 16)
   (overflowType, overflowData) <- if sourceSize /= targetSize
@@ -114,6 +114,6 @@ parseFileCommand patch = do
 -- | Command 0x02: XOR record
 parseXorRecord :: RUPPatch -> Get RUPPatch
 parseXorRecord patch = do
-  recordOffset <- Offset <$> parsePackedInteger
+  recordOffset <- Offset . fromIntegral <$> parsePackedInteger
   xorPayload <- parsePackedByteString
   pure patch { rupRecords = RUPRecord recordOffset xorPayload : rupRecords patch }

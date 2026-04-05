@@ -65,10 +65,10 @@ applyRUPMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     case rupOverflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPosition = fromIntegral (unFileSize (rupSourceSize patch)) :: Int
+        let appendPosition = unFileSize (rupSourceSize patch)
             decoded = ByteString.map (xor 0xFF) overflow
         copyByteStringRange outputPointer appendPosition decoded 0 (ByteString.length decoded)
   where
     sourceLength = ByteString.length source
-    targetLength = fromIntegral (unFileSize (rupTargetSize patch)) :: Int
+    targetLength = unFileSize (rupTargetSize patch)
     outputLength = if targetLength > 0 then targetLength else sourceLength

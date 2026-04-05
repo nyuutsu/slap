@@ -49,10 +49,10 @@ dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modifi
   where
     buildRecords _ [] = []
     buildRecords position (Hunk rawOffset rawData : rest) =
-      let intOffset = fromIntegral (unOffset rawOffset) :: Int
+      let intOffset = unOffset rawOffset
       in if intOffset > position
-         then DPSCopyFromROM (Offset (fromIntegral position))
-                (Offset (fromIntegral position)) (Length (intOffset - position))
+         then DPSCopyFromROM (Offset position)
+                (Offset position) (Length (intOffset - position))
               : DPSEnclosedData rawOffset rawData
               : buildRecords (intOffset + ByteString.length rawData) rest
          else DPSEnclosedData rawOffset rawData

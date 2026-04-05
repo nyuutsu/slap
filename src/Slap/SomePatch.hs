@@ -339,7 +339,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     let windows = VCDIFF.vcdiffWindows patch
         windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
         adlerChecks =
-          [ WindowCheck (Offset windowOffset) (Length (fromIntegral (unFileSize (VCDIFF.vcdiffTargetLength window)))) checksum
+          [ WindowCheck (Offset windowOffset) (Length (unFileSize (VCDIFF.vcdiffTargetLength window))) checksum
           | (window, windowOffset) <- zip windows windowOffsets
           , Just checksum <- [VCDIFF.vcdiffAdler32 window]
           ]

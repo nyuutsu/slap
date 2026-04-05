@@ -166,7 +166,7 @@ renderExplain mSource explainData = unlines $
         ++ "\n" ++ hexDump writeData
       PayloadFill fillByte fillCount ->
         padNum index ++ "  " ++ regionLabel region ++ show (unLength fillCount) ++ " x 0x"
-        ++ padHex 2 (fromIntegral fillByte :: Int64)
+        ++ padHex 2 fillByte
         ++ annotation region
       PayloadCopy _ ->
         padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
@@ -235,9 +235,9 @@ renderDetail (DetailCRC16 sourceCrc targetCrc) =
 labeledHexDump :: String -> ByteString -> String
 labeledHexDump label bytes = "      " ++ label ++ ":\n" ++ hexDump bytes
 
-resolveXOR :: ByteString -> Int64 -> ByteString -> ByteString
+resolveXOR :: ByteString -> Int -> ByteString -> ByteString
 resolveXOR source offset deltaBytes =
-  let sourceSlice = ByteString.take (ByteString.length deltaBytes) (ByteString.drop (fromIntegral offset) source)
+  let sourceSlice = ByteString.take (ByteString.length deltaBytes) (ByteString.drop offset source)
       -- zero-pad if source is shorter
       padded = sourceSlice <> ByteString.replicate (ByteString.length deltaBytes - ByteString.length sourceSlice) 0
   in ByteString.pack (ByteString.zipWith xor padded deltaBytes)
@@ -250,7 +250,7 @@ findSourceOffset (AnnotAt _ _ details) = searchDetails details
     searchDetails (_:remaining)                = searchDetails remaining
 findSourceOffset _ = Nothing
 
-renderResolvedXOR :: Maybe ByteString -> Int64 -> ByteString -> String
+renderResolvedXOR :: Maybe ByteString -> Int -> ByteString -> String
 renderResolvedXOR Nothing _ _ = ""
 renderResolvedXOR (Just source) offset deltaBytes =
   "\n" ++ labeledHexDump "resolved" (resolveXOR source offset deltaBytes)
@@ -261,7 +261,7 @@ renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
     Nothing          -> ""
     Just sourceOffset ->
-      let slice = ByteString.take (unLength (regionSize region)) (ByteString.drop (fromIntegral (unOffset sourceOffset)) source)
+      let slice = ByteString.take (unLength (regionSize region)) (ByteString.drop (unOffset sourceOffset) source)
       in "\n" ++ labeledHexDump "source data" slice
 
 ----------------------------------------------------------------------------
@@ -349,27 +349,27 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
               truncNote = case lookupHeader "truncation" of
                 Just truncation -> " (truncation at " ++ truncation ++ ")"
                 Nothing         -> ""
-          in ["size change: " ++ sign ++ commaNum (fromIntegral diff)
+          in ["size change: " ++ sign ++ commaNum diff
               ++ " bytes" ++ truncNote]
         _ -> []
 
     parseSize input =
       let digits = filter isDigit (takeWhile (\character -> isDigit character || character == ',') input)
       in case reads digits of
-           [(number, "")] -> Just (number :: Int64)
+           [(number, "")] -> Just (number :: Int)
            _              -> Nothing
 
     -- Bucket-based analysis
     bucketCount = 56 :: Int  -- terminal sparkline width
 
-    bucketWidth :: OffsetRange -> Int64
-    bucketWidth range = max 1 (max 1 (unOffset (rangeEnd range) - unOffset (rangeStart range)) `div` fromIntegral bucketCount)
+    bucketWidth :: OffsetRange -> Int
+    bucketWidth range = max 1 (max 1 (unOffset (rangeEnd range) - unOffset (rangeStart range)) `div` bucketCount)
 
     toBucket :: OffsetRange -> ExplainRegion -> [(Int, Int)]
     toBucket range region =
       let width = bucketWidth range
-          startBucket = fromIntegral ((unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width)
-          endBucket   = fromIntegral ((unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width)
+          startBucket = (unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width
+          endBucket   = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width
       in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
     -- Bucket arrays: sums (for sparkline/run detection), counts, bytes.
@@ -378,7 +378,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       Nothing -> ([], [], [])
       Just range ->
         let width = bucketWidth range
-            regionBucket region = fromIntegral ((unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width)
+            regionBucket region = (unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width
             sums   = elems (accumArray (+) 0 (0, bucketCount - 1) (concatMap (toBucket range) allRegions))
             counts = elems (accumArray (+) 0 (0, bucketCount - 1)
                       [ (bucket, 1 :: Int) | region <- allRegions
@@ -408,8 +408,8 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
           let width = bucketWidth range
               runs = findRuns bucketSums
               formatRun (runStart, runEnd) =
-                let startOffset = unOffset (rangeStart range) + fromIntegral runStart * width
-                    endOffset = unOffset (rangeStart range) + fromIntegral (runEnd + 1) * width - 1
+                let startOffset = unOffset (rangeStart range) + runStart * width
+                    endOffset = unOffset (rangeStart range) + (runEnd + 1) * width - 1
                     recordsInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketCounts))
                     bytesInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketBytes))
                     percentage = if totalModified > 0

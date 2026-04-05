@@ -44,7 +44,7 @@ createUPS original modified =
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipDelta xorData) =
-  putByuuVarint (unDelta skipDelta)
+  putByuuVarint (fromIntegral (unDelta skipDelta))
   <> byteString xorData
   <> word8 0x00  -- terminator
 
@@ -62,7 +62,7 @@ xorToBlocks input = scanLoop 0
           in if runStart >= inputLength
              then []
              else let (xorData, end) = collectNonzero runStart
-                  in UPSBlock (Delta skip) xorData : scanLoop end
+                  in UPSBlock (Delta (fromIntegral skip)) xorData : scanLoop end
 
     countZeros :: Int -> Int64
     countZeros startPosition = countFrom startPosition

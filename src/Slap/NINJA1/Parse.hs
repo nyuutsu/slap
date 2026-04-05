@@ -114,7 +114,7 @@ parseBinaryRecords = parseLoop []
           if offsetWidth == 3 && offsetBytes == "EOF"
             then pure (NINJA1BinaryResult (reverse accumulated) True)
             else do
-              let recordOffset = Offset (decodeBigEndian offsetBytes)
+              let recordOffset = Offset (fromIntegral (decodeBigEndian offsetBytes))
               dataWidth <- fromIntegral <$> getByte :: Get Int
               dataLenBytes <- getBytes (Length dataWidth)
               let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
@@ -181,7 +181,7 @@ parseTextRecord :: ByteString -> Either SlapError NINJA1Record
 parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
-      [(offset, "")] -> Right (NINJA1Record (Offset offset) (hexToBS (concatMap ByteString8.unpack dataParts)))
+      [(offset, "")] -> Right (NINJA1Record (Offset (fromIntegral offset)) (hexToBS (concatMap ByteString8.unpack dataParts)))
       _ -> Left (MalformedTextField LabelNINJA1 ("invalid offset in text record: " ++ ByteString8.unpack offsetString))
   _ -> Left (MalformedTextField LabelNINJA1 ("malformed text record: " ++ ByteString8.unpack line))
 

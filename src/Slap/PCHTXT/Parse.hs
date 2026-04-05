@@ -21,7 +21,6 @@ import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (digitToInt, isHexDigit, isSpace)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import Data.Int (Int64)
 import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Word (Word8)
 import Numeric (readHex)
@@ -84,7 +83,7 @@ parseFlag text
            Nothing     -> FlagError ("invalid offset_shift value: " ++ value)
   | otherwise = FlagIgnored
 
-parseHexInt :: String -> Maybe Int64
+parseHexInt :: String -> Maybe Int
 parseHexInt text =
   let stripped = case text of
               '0':'x':hexRest -> hexRest
@@ -96,13 +95,13 @@ parseHexInt text =
        [(value, "")] -> Just value
        _ -> Nothing
 
-parsePatchLine :: String -> Int64 -> Either SlapError PCHTXTEntry
+parsePatchLine :: String -> Int -> Either SlapError PCHTXTEntry
 parsePatchLine line shift = do
   let (offsetString, rest) = span isHexDigit line
   if null offsetString
     then Left (MalformedTextField LabelPCHTXT ("expected hex offset: " ++ line))
     else do
-      offset <- case readHex offsetString :: [(Int64, String)] of
+      offset <- case readHex offsetString :: [(Int, String)] of
                [(value, "")] -> Right value
                _ -> Left (MalformedTextField LabelPCHTXT ("invalid hex offset: " ++ offsetString))
       let dataString = dropWhile isSpace rest

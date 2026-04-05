@@ -75,7 +75,7 @@ parseGDIFF input
                   parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
         -- COPY long offset, int length
-        255 -> do offset <- int64BE
+        255 -> do offset <- fromIntegral <$> int64BE
                   copyLength <- fromIntegral <$> word32BE
                   parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 

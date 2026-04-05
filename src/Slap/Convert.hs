@@ -566,7 +566,7 @@ buildContents format source target meta sourceContents = PatchContents
   , contentsSourceMD5   = if needs FSourceMD5   then Just (md5 hashSource)   else Nothing
   , contentsSourceSHA1  = if needs FSourceSHA1  then Just (sha1 hashSource)  else Nothing
   , contentsDestinationSize    = if needs FDestinationSize
-                    then Just (FileSize (fromIntegral (ByteString.length target)))
+                    then Just (FileSize (ByteString.length target))
                     else Nothing
   , contentsValidation  = if needs FValidation && ByteString.length source > validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
@@ -575,7 +575,7 @@ buildContents format source target meta sourceContents = PatchContents
                     then Just (computeUndo source patchHunks)
                     else Nothing
   , contentsTruncation  = if needs FTruncation && ByteString.length target < ByteString.length source
-                    then Just (FileSize (fromIntegral (ByteString.length target)))
+                    then Just (FileSize (ByteString.length target))
                     else Nothing
   -- Structural inheritance: preserve format-specific data from the source patch
   , contentsEBPMeta          = sourceContents >>= contentsEBPMeta
@@ -615,10 +615,10 @@ computeUndo source = concatMap splitUndo
     splitUndo (Hunk hunkOffset hunkPayload)
       | ByteString.null hunkPayload = []
       | ByteString.length hunkPayload <= 255 =
-          [UndoHunk hunkOffset hunkPayload (oldBytes (fromIntegral (unOffset hunkOffset)) (ByteString.length hunkPayload))]
+          [UndoHunk hunkOffset hunkPayload (oldBytes (unOffset hunkOffset) (ByteString.length hunkPayload))]
       | otherwise =
           let chunk = ByteString.take 255 hunkPayload
-              intOffset = fromIntegral (unOffset hunkOffset)
+              intOffset = unOffset hunkOffset
           in UndoHunk hunkOffset chunk (oldBytes intOffset 255)
              : splitUndo (Hunk (advance hunkOffset (Length 255)) (ByteString.drop 255 hunkPayload))
     oldBytes position chunkLength

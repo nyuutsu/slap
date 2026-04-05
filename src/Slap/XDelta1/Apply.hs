@@ -26,7 +26,7 @@ applyXDelta1 patch _source
 applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     applyLoop targetPointer 0 (xdelta1Instructions patch)
   where
-    outputSize = fromIntegral (unFileSize (xdelta1TargetLength patch))
+    outputSize = unFileSize (xdelta1TargetLength patch)
     sourceArray   = let sourceList = xdelta1Sources patch
                     in listArray (0, length sourceList - 1) sourceList
     dataSegment    = xdelta1DataSegment patch
@@ -40,8 +40,8 @@ applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
                            && xdelta1SourceKind (sourceArray ! index) == DataSegmentSource
                         then dataSegment
                         else source
-          instructionOffset = fromIntegral (unOffset (xdelta1InstructionOffset instruction))
-          instructionLength = fromIntegral (unFileSize (xdelta1InstructionLength instruction)) :: Int
+          instructionOffset = unOffset (xdelta1InstructionOffset instruction)
+          instructionLength = unFileSize (xdelta1InstructionLength instruction)
           -- Clamp to remaining output buffer
           safeLength = max 0 $ min instructionLength (outputSize - position)
           -- Clamp source read to available data

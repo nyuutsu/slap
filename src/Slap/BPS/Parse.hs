@@ -44,10 +44,10 @@ parseBPS input
         Right body
           | unFileSize (bpsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldSourceSize
-                (fromIntegral (unFileSize (bpsBodySourceSize body))))
+                (unFileSize (bpsBodySourceSize body)))
           | unFileSize (bpsBodyTargetSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldTargetSize
-                (fromIntegral (unFileSize (bpsBodyTargetSize body))))
+                (unFileSize (bpsBodyTargetSize body)))
           | otherwise ->
               Right BPSPatch
                 { bpsSourceSize = bpsBodySourceSize body
@@ -63,8 +63,8 @@ parseBPSBody :: Get BPSBody
 parseBPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
-  let sourceSize = FileSize rawSourceSize
-      targetSize = FileSize rawTargetSize
+  let sourceSize = FileSize (fromIntegral rawSourceSize)
+      targetSize = FileSize (fromIntegral rawTargetSize)
   metadataLength <- fromIntegral <$> byuuVarint
   metadata       <- getBytes (Length metadataLength)
   actions <- parseActions
@@ -86,8 +86,8 @@ parseActions = do
     action <- case commandCode of
       0 -> pure (SourceRead (Length dataLength))
       1 -> TargetRead <$> getBytes (Length dataLength)
-      2 -> SourceCopy (Length dataLength) . Delta . decodeSignedVarint <$> byuuVarint
-      3 -> TargetCopy (Length dataLength) . Delta . decodeSignedVarint <$> byuuVarint
+      2 -> SourceCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
+      3 -> TargetCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
       _ -> error "unreachable"  -- (.&. 3) is always 0-3; GHC can't see this
     remaining <- parseActions
     pure (action : remaining)

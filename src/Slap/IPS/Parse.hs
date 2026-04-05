@@ -52,7 +52,7 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
                then getWord24BE (unPosition position) inputBytes == eofMarker
                else getWord32BE (unPosition position) inputBytes == eofMarker
 
-    readOffset :: Get Int64
+    readOffset :: Get Int
     readOffset
       | offsetWidth == 3 = fromIntegral <$> Get.word24BE
       | otherwise     = fromIntegral <$> Get.word32BE

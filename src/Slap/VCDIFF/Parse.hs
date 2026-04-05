@@ -88,7 +88,7 @@ parseVCDIFFWith allowCustom input
       let windowSource = toVCDIFFWindowSource windowIndicator
           hasSource = windowSource /= WindowNoSource
       (sourceLength, sourcePosition) <- if hasSource
-        then (\rawLength rawPosition -> (FileSize rawLength, Offset rawPosition)) <$> vcdiffVarint <*> vcdiffVarint
+        then (\rawLength rawPosition -> (FileSize (fromIntegral rawLength), Offset (fromIntegral rawPosition))) <$> vcdiffVarint <*> vcdiffVarint
         else pure (FileSize 0, Offset 0)
       -- Delta encoding length
       deltaLength <- vcdiffVarint
@@ -97,7 +97,7 @@ parseVCDIFFWith allowCustom input
       -- Inside the delta body:
       rawTargetSize <- vcdiffVarint
       when (rawTargetSize < 0) $ failGet "negative window target size"
-      let targetSize = FileSize rawTargetSize
+      let targetSize = FileSize (fromIntegral rawTargetSize)
       deltaIndicator <- getByte
       let secondaryCompression = toVCDIFFSecondaryCompression deltaIndicator
       addRunLength <- vcdiffVarint

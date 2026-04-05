@@ -24,7 +24,7 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 applyAPSGBA :: APSGBAPatch -> FilePath -> IO Int
 applyAPSGBA (APSGBAPatch header records) target = do
   source <- ByteString.readFile target
-  let targetSize = fromIntegral (unFileSize (apsGbaTargetSize header)) :: Int
+  let targetSize = unFileSize (apsGbaTargetSize header)
       padded = if ByteString.length source < targetSize
                then source <> ByteString.replicate (targetSize - ByteString.length source) 0
                else source
@@ -35,7 +35,7 @@ applyAPSGBA (APSGBAPatch header records) target = do
 applyGBARecords :: ByteString -> [APSGBARecord] -> IO ByteString
 applyGBARecords source [] = pure source
 applyGBARecords source (APSGBARecord recordOffset _ _ xorPayload : rest) = do
-  let blockOffset = fromIntegral (unOffset recordOffset) :: Int
+  let blockOffset = unOffset recordOffset
       blockSize = apsGbaBlockSize
       before = ByteString.take blockOffset source
       sourceBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
@@ -53,7 +53,7 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
     when (targetSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)
     forM_ records $ \(APSGBARecord recordOffset _ _ xorPayload) -> do
-      let blockOffset = fromIntegral (unOffset recordOffset) :: Int
+      let blockOffset = unOffset recordOffset
       forM_ [0..apsGbaBlockSize - 1] $ \index -> do
         let position = blockOffset + index
         when (position < targetSize) $ do
@@ -61,7 +61,7 @@ applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize 
           pokeByteOff targetPointer position (original `xor` ByteString.index xorPayload index)
   where
     sourceLength = ByteString.length source
-    targetSize = fromIntegral (unFileSize (apsGbaTargetSize header))
+    targetSize = unFileSize (apsGbaTargetSize header)
 
 safeSlice :: Int -> Int -> ByteString -> ByteString
 safeSlice offset sliceLength input

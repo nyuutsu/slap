@@ -48,7 +48,7 @@ createRUP original modified info romType encoding =
     -- diffHunks finds changed regions; we then XOR old and new at those positions
     xorHunks = map computeXorHunk (diffHunks sourceTrimmed targetTrimmed)
     computeXorHunk (Hunk hunkOffset newData) =
-      let intOffset = fromIntegral (unOffset hunkOffset) :: Int
+      let intOffset = unOffset hunkOffset
           oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)
       in XorRecord hunkOffset (ByteString.packZipWith xor oldData newData)
 

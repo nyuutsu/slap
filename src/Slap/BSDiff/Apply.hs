@@ -21,7 +21,7 @@ applyBSDiff patch _source
 applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
   applyLoop targetPointer 0 0 0 0 (bsdiffControls patch)
   where
-    outputSize = fromIntegral (unFileSize (bsdiffTargetSize patch))
+    outputSize = unFileSize (bsdiffTargetSize patch)
     sourceLength  = ByteString.length source
     diffBytes  = bsdiffDiffData patch
     extraBytes = bsdiffExtraData patch
@@ -32,9 +32,9 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
     applyLoop _targetPointer _diffOffset _extraOffset _originalPosition _outputPosition [] = pure ()
     applyLoop targetPointer diffOffset extraOffset originalPosition outputPosition (control:rest) = do
       -- Clamp add/copy lengths to remaining output buffer space
-      let addLength = max 0 $ min (fromIntegral (unLength (controlAdd control))) (outputSize - outputPosition)
-          copyLength  = max 0 $ min (fromIntegral (unLength (controlCopy control))) (outputSize - outputPosition - addLength)
-          seekOffset     = fromIntegral (unDelta (controlSeek control))
+      let addLength = max 0 $ min (unLength (controlAdd control)) (outputSize - outputPosition)
+          copyLength  = max 0 $ min (unLength (controlCopy control)) (outputSize - outputPosition - addLength)
+          seekOffset     = unDelta (controlSeek control)
       -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
       mapM_ (\index -> do
         let sourceByte = if originalPosition + index >= 0 && originalPosition + index < sourceLength

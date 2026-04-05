@@ -64,8 +64,8 @@ parseUPSBody = do
   rawTargetSize <- byuuVarint
   blocks  <- parseBlocks
   pure UPSBody
-    { upsBodySourceSize = FileSize rawSourceSize
-    , upsBodyTargetSize = FileSize rawTargetSize
+    { upsBodySourceSize = FileSize (fromIntegral rawSourceSize)
+    , upsBodyTargetSize = FileSize (fromIntegral rawTargetSize)
     , upsBodyBlocks     = blocks
     }
 
@@ -74,7 +74,7 @@ parseBlocks = do
   done <- atEnd
   if done then pure []
   else do
-    skipCount <- Delta <$> byuuVarint
+    skipCount <- Delta . fromIntegral <$> byuuVarint
     xorBytes <- collectXor []
     remaining <- parseBlocks
     pure (UPSBlock skipCount xorBytes : remaining)

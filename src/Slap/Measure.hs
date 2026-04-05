@@ -45,7 +45,6 @@ module Slap.Measure
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
-import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Foreign.Marshal.Utils (copyBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
@@ -57,11 +56,11 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- Newtypes
 ----------------------------------------------------------------------------
 
-newtype Offset   = Offset   { unOffset   :: Int64 } deriving (Eq, Ord, Show)
-newtype Length   = Length   { unLength   :: Int   } deriving (Eq, Ord, Show)
-newtype FileSize = FileSize { unFileSize :: Int64 } deriving (Eq, Ord, Show)
-newtype Delta    = Delta    { unDelta    :: Int64 } deriving (Eq, Ord, Show)
-newtype Position = Position { unPosition :: Int   } deriving (Eq, Ord, Show)
+newtype Offset   = Offset   { unOffset   :: Int } deriving (Eq, Ord, Show)
+newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
+newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
+newtype Delta    = Delta    { unDelta    :: Int } deriving (Eq, Ord, Show)
+newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
 -- Records
@@ -104,16 +103,16 @@ instance Monoid Length where
 ----------------------------------------------------------------------------
 
 offsetToInt :: Offset -> Int
-offsetToInt = fromIntegral . unOffset
+offsetToInt = unOffset
 
 fileSizeToInt :: FileSize -> Int
-fileSizeToInt = fromIntegral . unFileSize
+fileSizeToInt = unFileSize
 
 lengthToFileSize :: Length -> FileSize
-lengthToFileSize (Length lengthValue) = FileSize (fromIntegral lengthValue)
+lengthToFileSize (Length lengthValue) = FileSize lengthValue
 
 lengthToOffset :: Length -> Offset
-lengthToOffset (Length lengthValue) = Offset (fromIntegral lengthValue)
+lengthToOffset (Length lengthValue) = Offset lengthValue
 
 ----------------------------------------------------------------------------
 -- Seeking
@@ -129,18 +128,18 @@ seekTo handle targetOffset =
 
 advance :: Offset -> Length -> Offset
 advance (Offset startOffset) (Length strideLength) =
-  Offset (startOffset + fromIntegral strideLength)
+  Offset (startOffset + strideLength)
 
 displace :: Offset -> Delta -> Offset
 displace (Offset position) (Delta displacement) = Offset (position + displacement)
 
 distance :: Offset -> Offset -> Length
 distance (Offset startOffset) (Offset endOffset) =
-  Length (fromIntegral (endOffset - startOffset))
+  Length (endOffset - startOffset)
 
 fitsWithin :: Offset -> Length -> FileSize -> Bool
 fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
-  regionStart + fromIntegral regionLength <= totalSize
+  regionStart + regionLength <= totalSize
 
 byteLength :: ByteString -> Length
 byteLength bytes = Length (ByteString.length bytes)
@@ -191,7 +190,7 @@ copyRegion :: Ptr Word8 -> Offset -> ByteString -> Int -> Length -> IO ()
 copyRegion _           _                 _      _              regionLength | unLength regionLength <= 0 = pure ()
 copyRegion destination destinationOffset source sourcePosition regionLength =
   UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-    copyBytes (destination `plusPtr` fromIntegral (unOffset destinationOffset))
+    copyBytes (destination `plusPtr` unOffset destinationOffset)
               (castPtr sourcePointer `plusPtr` sourcePosition)
               (unLength regionLength)
 

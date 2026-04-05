@@ -8,7 +8,6 @@ module Slap.PCHTXT.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Int (Int64)
 import Slap.Measure (Offset(..))
 
 -- | A single PCHTXT patch entry: absolute offset + data to write.
@@ -31,4 +30,4 @@ data PCHTXTPatch = PCHTXTPatch
   , pchtxtHasShift :: Bool  -- ^ True if @flag offset_shift was applied during parse
   } deriving (Show)
 
-data FlagResult = FlagShift Int64 | FlagIgnored | FlagError String
+data FlagResult = FlagShift Int | FlagIgnored | FlagError String
