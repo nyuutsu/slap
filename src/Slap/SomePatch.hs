@@ -403,6 +403,7 @@ parseSome patchBytes = case detectFormat patchBytes of
     patch <- RUP.parseRUP patchBytes
     let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
         filterZeroMD5 other = fmap MD5Hash other
+        (platformType, platformWarnings) = ninja2ToPlatform (RUP.rupRomType patch)
     Right SomePatch
       { patchFormat         = LabelRUP
       , patchExplain        = RUP.explainRUP patch
@@ -415,6 +416,7 @@ parseSome patchBytes = case detectFormat patchBytes of
           , verifyTargetMD5 = filterZeroMD5 (RUP.rupTargetMD5 patch)
           }
       , patchWarnings       = [EmptyPatch LabelRUP "records" | null (RUP.rupRecords patch)]
+                               ++ platformWarnings
       , patchRecordSummary  = RecordSummary (length (RUP.rupRecords patch)) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -431,7 +433,7 @@ parseSome patchBytes = case detectFormat patchBytes of
                                 , metaDate        = RUP.rupDate info >>= nonEmptyField
                                 , metaWebsite     = RUP.rupWebsite info >>= nonEmptyField
                                 , metaDescription = RUP.rupDescription info >>= nonEmptyField
-                                , metaRomType     = Just (ninja2ToPlatform (RUP.rupRomType patch))
+                                , metaRomType     = Just platformType
                                 }
       , patchContents  = Nothing
       }

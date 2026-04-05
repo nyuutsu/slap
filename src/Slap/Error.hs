@@ -186,6 +186,7 @@ data SlapWarning
 
   -- Platform conversion
   | PlatformNotAvailable FormatLabel String  -- target format, platform name
+  | PlatformAmbiguous FormatLabel String String String  -- source format, combined name, default name, override value
 
   -- Format-specific
   | SubformatConverted FormatLabel String String
@@ -371,6 +372,11 @@ renderSlapWarning EBPTruncationMetaConflict =
 
 renderSlapWarning (PlatformNotAvailable label name) =
   "note: platform " ++ name ++ " not available in " ++ formatLabelName label ++ "; using Raw"
+
+renderSlapWarning (PlatformAmbiguous label combined chosen override) =
+  "note: " ++ formatLabelName label ++ " ROM type " ++ combined
+  ++ " is ambiguous; defaults to " ++ chosen
+  ++ " on conversion (override with --rom-type " ++ override ++ ")"
 
 renderSlapWarning (SubformatConverted label fromSub toSub) =
   "note: " ++ formatLabelName label ++ " "

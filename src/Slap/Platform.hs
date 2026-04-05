@@ -111,18 +111,18 @@ platformToNinja1 PlatformGP32           = (RomGP32, [])
 -- NINJA2 conversion
 ----------------------------------------------------------------------------
 
-ninja2ToPlatform :: NINJA2RomType -> PlatformType
-ninja2ToPlatform Ninja2Raw                    = PlatformRaw
-ninja2ToPlatform Ninja2NES                    = PlatformNES
-ninja2ToPlatform Ninja2FDS                    = PlatformFDS
-ninja2ToPlatform Ninja2SNES                   = PlatformSNES
-ninja2ToPlatform Ninja2N64                    = PlatformN64
-ninja2ToPlatform Ninja2GB                     = PlatformGB
-ninja2ToPlatform Ninja2SMSGameGear            = PlatformSMS
-ninja2ToPlatform Ninja2Genesis                = PlatformGenesis
-ninja2ToPlatform Ninja2PCEngine               = PlatformPCEngine
-ninja2ToPlatform Ninja2Lynx                   = PlatformLynx
-ninja2ToPlatform (Ninja2UnknownRomType _)     = PlatformRaw
+ninja2ToPlatform :: NINJA2RomType -> (PlatformType, [SlapWarning])
+ninja2ToPlatform Ninja2Raw                    = (PlatformRaw, [])
+ninja2ToPlatform Ninja2NES                    = (PlatformNES, [])
+ninja2ToPlatform Ninja2FDS                    = (PlatformFDS, [])
+ninja2ToPlatform Ninja2SNES                   = (PlatformSNES, [])
+ninja2ToPlatform Ninja2N64                    = (PlatformN64, [])
+ninja2ToPlatform Ninja2GB                     = (PlatformGB, [])
+ninja2ToPlatform Ninja2SMSGameGear            = (PlatformSMS, [PlatformAmbiguous LabelRUP "SMS/Game Gear" "SMS" "gg"])
+ninja2ToPlatform Ninja2Genesis                = (PlatformGenesis, [])
+ninja2ToPlatform Ninja2PCEngine               = (PlatformPCEngine, [])
+ninja2ToPlatform Ninja2Lynx                   = (PlatformLynx, [])
+ninja2ToPlatform (Ninja2UnknownRomType _)     = (PlatformRaw, [])
 
 -- | Convert a shared platform to NINJA2.  Platforms that NINJA2
 -- doesn't enumerate (GBC, GBA, NGP, NGPC, WonderSwan,
