@@ -79,4 +79,4 @@ parseGDIFF input
                   copyLength <- fromIntegral <$> word32BE
                   parseCommands (GDiffCopy (Offset offset) (FileSize copyLength) : accumulated)
 
-        _ -> fail "impossible GDIFF opcode"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
+        _ -> fail "impossible opcode"  -- 0-255 covered above; GHC can't prove guard exhaustiveness

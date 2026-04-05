@@ -71,7 +71,7 @@ parseRecords variant offsetWidth eofMarker = parseLoop []
             then do  -- RLE record
               rleCount <- fromIntegral <$> Get.word16BE
               when (rleCount == 0) $
-                fail ("IPS: RLE record with count 0 at offset 0x"
+                fail ("RLE record with count 0 at offset 0x"
                       ++ showHex (fromIntegral (unOffset recordOffset) :: Word64) "")
               rleFillByte  <- getByte
               parseLoop (IPSRecordRLE recordOffset (Length rleCount) rleFillByte : accumulated)

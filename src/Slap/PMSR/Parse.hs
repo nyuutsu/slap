@@ -44,7 +44,7 @@ parseLoop count accumulated = do
   dataLength <- fromIntegral <$> Get.word32BE
   available <- remaining
   if dataLength > unLength available
-    then fail ("PMSR record needs " ++ show dataLength ++ " bytes but only "
+    then fail ("record needs " ++ show dataLength ++ " bytes but only "
                ++ show (unLength available) ++ " available")
     else do
       payload <- getBytes (Length dataLength)

@@ -12,13 +12,11 @@ import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicSize, upsFooterSize, upsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd, failGet)
+import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
-import Control.Monad (when)
-
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
@@ -43,22 +41,27 @@ parseUPS input
           bodyBytes = ByteString.take (ByteString.length input - upsTotalOverhead) (ByteString.drop upsMagicSize input)
       case runGet parseUPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelUPS errorMessage)
-        Right body ->
-          Right UPSPatch
-            { upsSourceSize = upsBodySourceSize body
-            , upsTargetSize = upsBodyTargetSize body
-            , upsBlocks     = upsBodyBlocks body
-            , upsSourceCRC  = sourceCRC
-            , upsTargetCRC  = targetCRC
-            , upsPatchCRC   = storedPatchCRC
-            }
+        Right body
+          | unFileSize (upsBodySourceSize body) < 0 ->
+              Left (NegativeSize LabelUPS FieldSourceSize
+                (fromIntegral (unFileSize (upsBodySourceSize body))))
+          | unFileSize (upsBodyTargetSize body) < 0 ->
+              Left (NegativeSize LabelUPS FieldTargetSize
+                (fromIntegral (unFileSize (upsBodyTargetSize body))))
+          | otherwise ->
+              Right UPSPatch
+                { upsSourceSize = upsBodySourceSize body
+                , upsTargetSize = upsBodyTargetSize body
+                , upsBlocks     = upsBodyBlocks body
+                , upsSourceCRC  = sourceCRC
+                , upsTargetCRC  = targetCRC
+                , upsPatchCRC   = storedPatchCRC
+                }
 
 parseUPSBody :: Get UPSBody
 parseUPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
-  when (rawSourceSize < 0) $ failGet "UPS: negative source size"
-  when (rawTargetSize < 0) $ failGet "UPS: negative target size"
   blocks  <- parseBlocks
   pure UPSBody
     { upsBodySourceSize = FileSize rawSourceSize

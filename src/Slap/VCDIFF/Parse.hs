@@ -96,7 +96,7 @@ parseVCDIFFWith allowCustom input
       let deltaEnd = Position (unPosition deltaStart + fromIntegral deltaLength)
       -- Inside the delta body:
       rawTargetSize <- vcdiffVarint
-      when (rawTargetSize < 0) $ failGet "VCDIFF: negative window target size"
+      when (rawTargetSize < 0) $ failGet "negative window target size"
       let targetSize = FileSize rawTargetSize
       deltaIndicator <- getByte
       let secondaryCompression = toVCDIFFSecondaryCompression deltaIndicator
@@ -107,7 +107,7 @@ parseVCDIFFWith allowCustom input
       when (compressAddRunData secondaryCompression
             || compressInstructions secondaryCompression
             || (not isXdelta3 && compressAddresses secondaryCompression)) $
-        failGet "secondary compression in VCDIFF data sections is not supported"
+        failGet "secondary compression in data sections is not supported"
       -- Compute data section start from deltaEnd, not from current position.
       -- xdelta3 writes 4 bytes of Adler32 after the length fields (even in
       -- version 0 mode, sometimes without setting any flag), so working

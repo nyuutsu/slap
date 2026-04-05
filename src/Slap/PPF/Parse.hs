@@ -201,7 +201,7 @@ parseRecords32 label recordIndex = do
     count <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining
     if unLength remainingAfterHeader < count
-      then fail (truncatedMessage label recordIndex (5 + count) (unLength remainingBytes))
+      then fail (truncatedMessage recordIndex (5 + count) (unLength remainingBytes))
       else do
         payload <- getBytes (Length count)
         rest <- parseRecords32 label (recordIndex + 1)
@@ -217,7 +217,7 @@ parseRecords64 label hasUndo recordIndex = do
     count <- fromIntegral <$> getByte
     let need = 9 + count + if hasUndo then count else 0
     if need > unLength remainingBytes
-      then fail (truncatedMessage label recordIndex need (unLength remainingBytes))
+      then fail (truncatedMessage recordIndex need (unLength remainingBytes))
       else do
         payload <- getBytes (Length count)
         undoData <- if hasUndo
@@ -236,22 +236,22 @@ parseRecords4 label recordIndex = do
     command <- case commandByte of
       0 -> pure Replace
       1 -> pure Append
-      _ -> fail (show label ++ ": record " ++ show recordIndex
+      _ -> fail ("record " ++ show recordIndex
                 ++ " has unknown command byte: 0x" ++ padHex 2 (fromIntegral commandByte))
     recordOffset <- Offset . fromIntegral <$> word32LE
     count <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining
     if unLength remainingAfterHeader < count
-      then fail (truncatedMessage label recordIndex (6 + count) (unLength remainingBytes))
+      then fail (truncatedMessage recordIndex (6 + count) (unLength remainingBytes))
       else do
         payload <- getBytes (Length count)
         rest <- parseRecords4 label (recordIndex + 1)
         pure (Record recordOffset payload Nothing command : rest)
 
 -- Format a truncated-record error message.
-truncatedMessage :: FormatLabel -> Int -> Int -> Int -> String
-truncatedMessage label recordIndex needed available =
-  show label ++ ": record " ++ show recordIndex
+truncatedMessage :: Int -> Int -> Int -> String
+truncatedMessage recordIndex needed available =
+  "record " ++ show recordIndex
   ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"
 
 ----------------------------------------------------------------------------

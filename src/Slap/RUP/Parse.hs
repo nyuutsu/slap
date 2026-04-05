@@ -82,7 +82,7 @@ parseCommands patch = do
       0x01 -> parseFileCommand patch >>= parseCommands
       0x02 -> parseXorRecord patch >>= parseCommands
       0x00 -> pure patch  -- END marker
-      _    -> fail ("RUP: unknown command code: 0x" ++ padHex 2 (fromIntegral code))
+      _    -> fail ("unknown command code: 0x" ++ padHex 2 (fromIntegral code))
 
 -- | Command 0x01: OPEN_NEW_FILE
 parseFileCommand :: RUPPatch -> Get RUPPatch

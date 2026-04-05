@@ -10,13 +10,12 @@ import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVar
                        bpsMagicSize, bpsFooterSize, bpsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd, failGet)
+import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
-import Control.Monad (when)
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -42,23 +41,28 @@ parseBPS input
           bodyBytes = ByteString.take (ByteString.length input - bpsTotalOverhead) (ByteString.drop bpsMagicSize input)
       case runGet parseBPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelBPS errorMessage)
-        Right body ->
-          Right BPSPatch
-            { bpsSourceSize = bpsBodySourceSize body
-            , bpsTargetSize = bpsBodyTargetSize body
-            , bpsMetadata   = bpsBodyMetadata body
-            , bpsActions    = bpsBodyActions body
-            , bpsSourceCRC  = sourceCRC
-            , bpsTargetCRC  = targetCRC
-            , bpsPatchCRC   = storedPatchCRC
-            }
+        Right body
+          | unFileSize (bpsBodySourceSize body) < 0 ->
+              Left (NegativeSize LabelBPS FieldSourceSize
+                (fromIntegral (unFileSize (bpsBodySourceSize body))))
+          | unFileSize (bpsBodyTargetSize body) < 0 ->
+              Left (NegativeSize LabelBPS FieldTargetSize
+                (fromIntegral (unFileSize (bpsBodyTargetSize body))))
+          | otherwise ->
+              Right BPSPatch
+                { bpsSourceSize = bpsBodySourceSize body
+                , bpsTargetSize = bpsBodyTargetSize body
+                , bpsMetadata   = bpsBodyMetadata body
+                , bpsActions    = bpsBodyActions body
+                , bpsSourceCRC  = sourceCRC
+                , bpsTargetCRC  = targetCRC
+                , bpsPatchCRC   = storedPatchCRC
+                }
 
 parseBPSBody :: Get BPSBody
 parseBPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
-  when (rawSourceSize < 0) $ failGet "BPS: negative source size"
-  when (rawTargetSize < 0) $ failGet "BPS: negative target size"
   let sourceSize = FileSize rawSourceSize
       targetSize = FileSize rawTargetSize
   metadataLength <- fromIntegral <$> byuuVarint
