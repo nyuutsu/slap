@@ -31,7 +31,7 @@ import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
-import Slap.RUP.Types (PatchEncoding(..))
+import Slap.RUP.Types (PatchEncoding(..), NINJA2RomType(..))
 import qualified Slap.RUP.Types as RUP
 import qualified Slap.RUP.Create as RUP
 import qualified Slap.GDIFF.Create as GDIFF
@@ -40,6 +40,7 @@ import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
+import Slap.Platform (PlatformType(..), platformToNinja1, platformToNinja2)
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
@@ -59,7 +60,6 @@ import Control.Applicative ((<|>))
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
-import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -83,8 +83,7 @@ data PatchContents = PatchContents
   , contentsUndoData    :: Maybe [UndoHunk]
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
-  , contentsRomType     :: Maybe Word8
-    -- ^ See metaRomType comment: Word8 is intentional (NINJA1 vs RUP semantics).
+  , contentsRomType     :: Maybe PlatformType
   , contentsImageType   :: Maybe ImageType
   , contentsFileIdDiz   :: Maybe ByteString.ByteString
   , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
@@ -127,11 +126,11 @@ data CreateMeta = CreateMeta
   , metaUndo        :: Maybe Bool
   , metaValidate    :: Maybe Bool
   , metaUnstable    :: Maybe Bool
-  , metaRomType     :: Maybe Word8
-    -- ^ Word8, not a sum type: NINJA1 and RUP both carry a ROM type byte
-    -- but with different (and for RUP, unspecified) semantics.  NINJA1
-    -- converts at its boundary via toNINJA1RomType; RUP passes through raw.
-    -- A shared sum type would force NINJA1 labels onto RUP values.
+  , metaRomType     :: Maybe PlatformType
+    -- ^ Shared platform type: NINJA1 and NINJA2 (RUP) define different
+    -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
+    -- PlatformType represents the union; format-specific conversion
+    -- (platformToNinja1, platformToNinja2) handles lossy mappings.
   , metaImageType   :: Maybe ImageType
   , metaGenre       :: Maybe String
   , metaLanguage    :: Maybe String
@@ -294,7 +293,7 @@ ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe Word8 -> Maybe ImageType -> [SlapWarning]
+defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe PlatformType -> Maybe ImageType -> [SlapWarning]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
   [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
@@ -477,8 +476,8 @@ encodeDirect contents source target meta limits = case target of
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = unMD5Hash (fromMaybe (MD5Hash (ByteString.replicate 16 0)) (contentsSourceMD5 contents))
         sha1Hash = unSHA1Hash (fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents))
-    Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash romType
-             (fromMaybe False (contentsNINJA1Compressed contents))) [])
+    Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
+             (fromMaybe False (contentsNINJA1Compressed contents))) platformWarnings)
   CreatePMSR -> do
     records <- narrow (contentsRecords contents)
     Right (CreateResult (PMSR.encodePMSR records) [])
@@ -511,7 +510,7 @@ encodeDirect contents source target meta limits = case target of
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
     -- CLI flag > PatchContents > format default
-    romType   = maybe NINJA1.RomRAW NINJA1.toNINJA1RomType (metaRomType meta <|> contentsRomType contents)
+    (ninja1Type, platformWarnings) = maybe (NINJA1.RomRAW, []) platformToNinja1 (metaRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe BIN (metaImageType meta <|> contentsImageType contents)
 
 ----------------------------------------------------------------------------
@@ -548,8 +547,9 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
             _ -> metaPatchEncoding meta
         adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
         (rupInfo, truncWarnings) = prepareRUP adjustedMeta
-    in Right (CreateResult (RUP.createRUP source target rupInfo (fromMaybe 0 (metaRomType adjustedMeta)) detectedEncoding)
-              truncWarnings)
+        (ninja2Type, ninja2Warnings) = maybe (Ninja2Raw, []) platformToNinja2 (metaRomType adjustedMeta)
+    in Right (CreateResult (RUP.createRUP source target rupInfo ninja2Type detectedEncoding)
+              (truncWarnings ++ ninja2Warnings))
   CreateAPSGBA -> Right (CreateResult (APSGBA.createAPSGBA source target) [])
   CreateGDIFF  -> Right (CreateResult (GDIFF.createGDIFF source target) [])
 

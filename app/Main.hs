@@ -7,7 +7,7 @@ import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), Undo
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (ImageType(..))
-import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
+import Slap.Platform (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
@@ -21,7 +21,6 @@ import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
 import Data.Maybe (fromMaybe, isNothing)
-import Data.Word (Word8)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -66,7 +65,7 @@ data Command
       , commandValidate   :: Maybe Bool
       , commandVersion    :: Maybe String
       , commandUnstable   :: Maybe Bool
-      , commandRomType    :: Maybe Word8
+      , commandRomType    :: Maybe PlatformType
       , commandImageType  :: Maybe ImageType
       , commandGenre      :: Maybe String
       , commandLanguage   :: Maybe String
@@ -89,7 +88,7 @@ data Command
       , commandNoVerify      :: Bool
       , commandConvertVersion   :: Maybe String
       , commandConvertUnstable  :: Maybe Bool
-      , commandConvertRomType   :: Maybe Word8
+      , commandConvertRomType   :: Maybe PlatformType
       , commandConvertImageType :: Maybe ImageType
       , commandConvertGenre     :: Maybe String
       , commandConvertLanguage  :: Maybe String
@@ -228,7 +227,7 @@ createParser = do
         <> help "Patch version (DPS/RUP)"))
     unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+        <> help "ROM type (NINJA1/RUP): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
     genre <- optional (option str (long "genre" <> metavar "TEXT"
@@ -292,7 +291,7 @@ convertParser = do
         <> help "Patch version (DPS/RUP)"))
     unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/RUP): raw, nes, snes, n64, gb, gbc, gba, ..."))
+        <> help "ROM type (NINJA1/RUP): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
     genre <- optional (option str (long "genre" <> metavar "TEXT"
@@ -361,28 +360,29 @@ parsePatchEncoding encodingString = case map toLower encodingString of
   "system" -> Right PatchEncodingSystem
   _ -> Left ("unknown patch encoding: " ++ encodingString ++ "\n  expected: utf8, system")
 
-parseRomType :: String -> Either String Word8
+parseRomType :: String -> Either String PlatformType
 parseRomType typeString = case map toLower typeString of
-  "raw"  -> Right (fromNINJA1RomType RomRAW)
-  "nes"  -> Right (fromNINJA1RomType RomNES)
-  "snes" -> Right (fromNINJA1RomType RomSNES)
-  "n64"  -> Right (fromNINJA1RomType RomN64)
-  "gb"   -> Right (fromNINJA1RomType RomGB)
-  "gbc"  -> Right (fromNINJA1RomType RomGBC)
-  "gba"  -> Right (fromNINJA1RomType RomGBA)
-  "ngp"  -> Right (fromNINJA1RomType RomNGP)
-  "ngpc" -> Right (fromNINJA1RomType RomNGPC)
-  "sms"  -> Right (fromNINJA1RomType RomSMS)
-  "gg"   -> Right (fromNINJA1RomType RomGameGear)
-  "mega" -> Right (fromNINJA1RomType RomGenesis)
-  "pce"  -> Right (fromNINJA1RomType RomPCEngine)
-  "ws"   -> Right (fromNINJA1RomType RomWonderSwan)
-  "wsc"  -> Right (fromNINJA1RomType RomWonderSwanColor)
-  "lynx" -> Right (fromNINJA1RomType RomLynx)
-  "jag"  -> Right (fromNINJA1RomType RomJaguar)
-  "gp32" -> Right (fromNINJA1RomType RomGP32)
+  "raw"  -> Right PlatformRaw
+  "nes"  -> Right PlatformNES
+  "fds"  -> Right PlatformFDS
+  "snes" -> Right PlatformSNES
+  "n64"  -> Right PlatformN64
+  "gb"   -> Right PlatformGB
+  "gbc"  -> Right PlatformGBC
+  "gba"  -> Right PlatformGBA
+  "ngp"  -> Right PlatformNGP
+  "ngpc" -> Right PlatformNGPC
+  "sms"  -> Right PlatformSMS
+  "gg"   -> Right PlatformGameGear
+  "mega" -> Right PlatformGenesis
+  "pce"  -> Right PlatformPCEngine
+  "ws"   -> Right PlatformWonderSwan
+  "wsc"  -> Right PlatformWonderSwanColor
+  "lynx" -> Right PlatformLynx
+  "jag"  -> Right PlatformJaguar
+  "gp32" -> Right PlatformGP32
   _ -> Left ("unknown ROM type: " ++ typeString
-    ++ "\n  expected: raw, nes, snes, n64, gb, gbc, gba, ngp, ngpc, sms, gg, mega, pce, ws, wsc, lynx, jag, gp32")
+    ++ "\n  expected: raw, nes, fds, snes, n64, gb, gbc, gba, ngp, ngpc, sms, gg, mega, pce, ws, wsc, lynx, jag, gp32")
 
 parseImageType :: String -> Either String ImageType
 parseImageType typeString = case map toLower typeString of

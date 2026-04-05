@@ -78,6 +78,7 @@ import qualified Slap.NINJA1.Parse as NINJA1
 import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
+import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
 import Slap.Explain (ExplainData(..))
 import Slap.Error (SlapError(..), SlapWarning(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -430,7 +431,7 @@ parseSome patchBytes = case detectFormat patchBytes of
                                 , metaDate        = RUP.rupDate info >>= nonEmptyField
                                 , metaWebsite     = RUP.rupWebsite info >>= nonEmptyField
                                 , metaDescription = RUP.rupDescription info >>= nonEmptyField
-                                , metaRomType     = Just (RUP.rupRomType patch)
+                                , metaRomType     = Just (ninja2ToPlatform (RUP.rupRomType patch))
                                 }
       , patchContents  = Nothing
       }
@@ -465,12 +466,12 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
-          { metaRomType = Just (NINJA1.fromNINJA1RomType (NINJA1.ninja1RomType patch)) }
+          { metaRomType = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch)) }
       , patchContents  = Just (emptyContents (map (\record -> Hunk (NINJA1.ninja1RecordOffset record) (NINJA1.ninja1RecordData record)) records))
           { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
           , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
           , contentsSourceSHA1  = NINJA1.ninja1SourceSHA1 patch
-          , contentsRomType     = Just (NINJA1.fromNINJA1RomType (NINJA1.ninja1RomType patch))
+          , contentsRomType     = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch))
           , contentsNINJA1Compressed = Just compressed
           }
       }

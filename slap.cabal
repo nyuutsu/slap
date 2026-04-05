@@ -66,6 +66,7 @@ library slap-internal
     , Slap.IPS.Types
     , Slap.Measure
     , Slap.Convert
+    , Slap.Platform
     , Slap.PCHTXT.Apply
     , Slap.PCHTXT.Create
     , Slap.PCHTXT.Describe

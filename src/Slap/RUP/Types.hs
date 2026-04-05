@@ -12,6 +12,10 @@ module Slap.RUP.Types
   , toPatchEncoding
   , fromPatchEncoding
   , patchEncodingName
+  , NINJA2RomType(..)
+  , toNINJA2RomType
+  , fromNINJA2RomType
+  , ninja2RomTypeName
   , encodeRUPString
   , decodeRUPField
   , parsePackedInteger
@@ -33,8 +37,9 @@ module Slap.RUP.Types
 -- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
 -- Archived from http://ninja.cinnamonpirate.com/files/filespec20.txt
 -- Secondary: RomPatcher.js modules/RomPatcher.format.rup.js
--- Note: NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
--- see docs/specs/ninja2-cliusage.txt. slap stores RUP ROM type as raw Word8.
+-- NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
+-- see docs/specs/ninja2-cliusage.txt.  Cross-format conversion goes
+-- through Slap.Platform.PlatformType.
 
 import Slap.Get (Get, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
@@ -94,6 +99,62 @@ patchEncodingName PatchEncodingUTF8          = "UTF-8"
 patchEncodingName PatchEncodingSystem        = "system"
 patchEncodingName (PatchEncodingUnknown byte) = "unknown (" ++ show byte ++ ")"
 
+-- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
+-- documented; Ninja2UnknownRomType preserves any future/unknown value.
+-- Numbering diverges from NINJA1 at value 2 (FDS vs SNES).
+data NINJA2RomType
+  = Ninja2Raw           -- 0: Raw Binary
+  | Ninja2NES           -- 1: NES/Famicom
+  | Ninja2FDS           -- 2: Famicom Disk System
+  | Ninja2SNES          -- 3: SNES/Super Famicom
+  | Ninja2N64           -- 4: Nintendo 64
+  | Ninja2GB            -- 5: Game Boy
+  | Ninja2SMSGameGear   -- 6: SMS/Game Gear
+  | Ninja2Genesis       -- 7: Genesis/Megadrive
+  | Ninja2PCEngine      -- 8: TurboGrafx-16/PC-Engine
+  | Ninja2Lynx          -- 9: Atari Lynx
+  | Ninja2UnknownRomType !Word8
+  deriving (Show, Eq)
+
+toNINJA2RomType :: Word8 -> NINJA2RomType
+toNINJA2RomType 0 = Ninja2Raw
+toNINJA2RomType 1 = Ninja2NES
+toNINJA2RomType 2 = Ninja2FDS
+toNINJA2RomType 3 = Ninja2SNES
+toNINJA2RomType 4 = Ninja2N64
+toNINJA2RomType 5 = Ninja2GB
+toNINJA2RomType 6 = Ninja2SMSGameGear
+toNINJA2RomType 7 = Ninja2Genesis
+toNINJA2RomType 8 = Ninja2PCEngine
+toNINJA2RomType 9 = Ninja2Lynx
+toNINJA2RomType value = Ninja2UnknownRomType value
+
+fromNINJA2RomType :: NINJA2RomType -> Word8
+fromNINJA2RomType Ninja2Raw                      = 0
+fromNINJA2RomType Ninja2NES                      = 1
+fromNINJA2RomType Ninja2FDS                      = 2
+fromNINJA2RomType Ninja2SNES                     = 3
+fromNINJA2RomType Ninja2N64                      = 4
+fromNINJA2RomType Ninja2GB                       = 5
+fromNINJA2RomType Ninja2SMSGameGear              = 6
+fromNINJA2RomType Ninja2Genesis                  = 7
+fromNINJA2RomType Ninja2PCEngine                 = 8
+fromNINJA2RomType Ninja2Lynx                     = 9
+fromNINJA2RomType (Ninja2UnknownRomType value)   = value
+
+ninja2RomTypeName :: NINJA2RomType -> String
+ninja2RomTypeName Ninja2Raw                    = "Raw Binary"
+ninja2RomTypeName Ninja2NES                    = "NES"
+ninja2RomTypeName Ninja2FDS                    = "FDS"
+ninja2RomTypeName Ninja2SNES                   = "SNES"
+ninja2RomTypeName Ninja2N64                    = "N64"
+ninja2RomTypeName Ninja2GB                     = "Game Boy"
+ninja2RomTypeName Ninja2SMSGameGear            = "SMS/Game Gear"
+ninja2RomTypeName Ninja2Genesis                = "Genesis"
+ninja2RomTypeName Ninja2PCEngine               = "PC Engine"
+ninja2RomTypeName Ninja2Lynx                   = "Lynx"
+ninja2RomTypeName (Ninja2UnknownRomType value) = "unknown (" ++ show value ++ ")"
+
 -- | Encode a String as bytes using the given patch encoding.
 encodeRUPString :: PatchEncoding -> String -> ByteString
 encodeRUPString PatchEncodingUTF8 = encodeUtf8Field
@@ -116,7 +177,7 @@ data RUPPatch = RUPPatch
   , rupSourceSize     :: !FileSize
   , rupTargetSize     :: !FileSize
   , rupPatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
-  , rupRomType        :: Word8             -- ROM type byte from OPEN_NEW_FILE command
+  , rupRomType        :: NINJA2RomType     -- ROM type from OPEN_NEW_FILE command
   } deriving (Show)
 
 data RUPInfo = RUPInfo

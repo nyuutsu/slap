@@ -69,7 +69,7 @@ parseRUP input
     emptyPatch meta encoding = RUPPatch
       { rupHeader = meta, rupRecords = [], rupOverflow = Nothing
       , rupOverflowType = Nothing, rupSourceMD5 = Nothing, rupTargetMD5 = Nothing
-      , rupSourceSize = FileSize 0, rupTargetSize = FileSize 0, rupPatchEncoding = encoding, rupRomType = 0
+      , rupSourceSize = FileSize 0, rupTargetSize = FileSize 0, rupPatchEncoding = encoding, rupRomType = Ninja2Raw
       }
 
 parseCommands :: RUPPatch -> Get RUPPatch
@@ -108,7 +108,7 @@ parseFileCommand patch = do
              , rupTargetSize   = targetSize
              , rupOverflow     = overflowData
              , rupOverflowType = overflowType
-             , rupRomType      = romTypeByte
+             , rupRomType      = toNINJA2RomType romTypeByte
              }
 
 -- | Command 0x02: XOR record

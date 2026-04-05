@@ -39,9 +39,9 @@ rupMeta patch = concat
     optionalField _ Nothing = []
     optionalField label (Just value) = [MetaField label (decodeRUPField encoding value)]
 
-    romTypeField
-      | rupRomType patch == 0 = []
-      | otherwise = [MetaField "ROM type" (show (rupRomType patch))]
+    romTypeField = case rupRomType patch of
+      Ninja2Raw -> []
+      romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
 
     sizeFields
       | unFileSize (rupSourceSize patch) == 0 && unFileSize (rupTargetSize patch) == 0 = []

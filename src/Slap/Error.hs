@@ -184,6 +184,9 @@ data SlapWarning
   -- Interop
   | EBPTruncationMetaConflict
 
+  -- Platform conversion
+  | PlatformNotAvailable FormatLabel String  -- target format, platform name
+
   -- Format-specific
   | SubformatConverted FormatLabel String String
   | OffsetShiftApplied
@@ -365,6 +368,9 @@ renderSlapWarning (EncodingGap fromLabel toLabel) =
 
 renderSlapWarning EBPTruncationMetaConflict =
   "note: EBP output has both truncation and metadata; RomPatcher.js treats these as mutually exclusive and may misread this patch"
+
+renderSlapWarning (PlatformNotAvailable label name) =
+  "note: platform " ++ name ++ " not available in " ++ formatLabelName label ++ "; using Raw"
 
 renderSlapWarning (SubformatConverted label fromSub toSub) =
   "note: " ++ formatLabelName label ++ " "

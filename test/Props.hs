@@ -63,6 +63,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), Create
                       emptyContents, formatSpecification, defaultMeta,
                       canConvert, convertDirect, conversionNotes, createFromMemory)
 import Slap.PatchField (PatchField(..))
+import Slap.Platform (PlatformType(..))
 
 import Data.ByteString (ByteString)
 import Data.List (isInfixOf, isPrefixOf)
@@ -478,7 +479,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
 
 prop_rup :: Property
 prop_rup = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  let patch = RUP.createRUP source target emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8
   in case RUP.parseRUP patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
@@ -487,7 +488,7 @@ prop_rup = forAll genPair $ \(source, target) ->
 
 prop_rupHashes :: Property
 prop_rupHashes = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  let patch = RUP.createRUP source target emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8
   in case RUP.parseRUP patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
@@ -604,7 +605,7 @@ fullContents = PatchContents
   , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
   , contentsTruncation  = Just (FileSize 512)
   , contentsEBPMeta     = Just (ByteString.pack [0x7B, 0x7D])
-  , contentsRomType     = Just 0
+  , contentsRomType     = Just PlatformRaw
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
   , contentsPCHTXTBlocks = Nothing
@@ -834,7 +835,7 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_rupTrunc :: Property
 prop_rupTrunc = forAll genPair $ \(source, target) ->
-  truncated RUP.parseRUP (RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8)
+  truncated RUP.parseRUP (RUP.createRUP source target emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8)
 
 -- RUP encoding tests
 
@@ -843,7 +844,7 @@ prop_rupUTF8RoundTrip :: Property
 prop_rupUTF8RoundTrip = forAll genPair $ \(source, target) ->
   let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "Test Patch")
                           , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 "slap") }
-  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+  in let patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingUTF8
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
@@ -855,7 +856,7 @@ prop_rupSystemRoundTrip :: Property
 prop_rupSystemRoundTrip = forAll genPair $ \(source, target) ->
   let info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "Test Patch")
                           , RUP.rupAuthor = Just (RUP.encodeRUPString RUP.PatchEncodingSystem "slap") }
-      patch = RUP.createRUP source target info 0 RUP.PatchEncodingSystem
+      patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingSystem
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
@@ -867,7 +868,7 @@ prop_rupNonAsciiUTF8 :: Property
 prop_rupNonAsciiUTF8 = forAll genPair $ \(source, target) ->
   let titleStr = "Pok\233mon \241" -- "Pokémon ñ"
       info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
-  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+  in let patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingUTF8
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
@@ -881,7 +882,7 @@ prop_rupFieldOverflow = once $
       info = emptyRupInfo { RUP.rupTitle = Just encodedTitle }
       source = ByteString.pack [0]
       target = ByteString.pack [1]
-      patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+      patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingUTF8
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
@@ -894,7 +895,7 @@ prop_rupFieldOverflow = once $
 -- PATCH_ENC byte is 1 for UTF-8
 prop_rupPatchEncByteUTF8 :: Property
 prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingUTF8
+  let patch = RUP.createRUP source target emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === RUP.PatchEncodingUTF8
@@ -902,7 +903,7 @@ prop_rupPatchEncByteUTF8 = forAll genPair $ \(source, target) ->
 -- PATCH_ENC byte is 0 for system encoding
 prop_rupPatchEncByteSystem :: Property
 prop_rupPatchEncByteSystem = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP source target emptyRupInfo 0 RUP.PatchEncodingSystem
+  let patch = RUP.createRUP source target emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingSystem
   in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> RUP.rupPatchEncoding parsed === RUP.PatchEncodingSystem
@@ -912,7 +913,7 @@ prop_rupUTF8Decode :: Property
 prop_rupUTF8Decode = forAll genPair $ \(source, target) ->
   let titleStr = "\1055\1072\1090\1095" -- "Патч" (Cyrillic)
       info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingUTF8 titleStr) }
-  in let patch = RUP.createRUP source target info 0 RUP.PatchEncodingUTF8
+  in let patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingUTF8
      in case RUP.parseRUP patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
@@ -1223,7 +1224,7 @@ test_rupNonAsciiSystem = do
       target = ByteString.pack [1]
       titleString = "Pokémon"
       info = emptyRupInfo { RUP.rupTitle = Just (RUP.encodeRUPString RUP.PatchEncodingSystem titleString) }
-      patch = RUP.createRUP source target info 0 RUP.PatchEncodingSystem
+      patch = RUP.createRUP source target info RUP.Ninja2Raw RUP.PatchEncodingSystem
   case RUP.parseRUP patch of
     Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
     Right parsed ->

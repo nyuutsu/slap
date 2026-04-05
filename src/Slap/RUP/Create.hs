@@ -20,11 +20,11 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
-import Data.Word (Word8)
+
 
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createRUP :: ByteString -> ByteString -> RUPInfo -> Word8 -> PatchEncoding -> ByteString
+createRUP :: ByteString -> ByteString -> RUPInfo -> NINJA2RomType -> PatchEncoding -> ByteString
 createRUP original modified info romType encoding =
     LazyByteString.toStrict $ toLazyByteString $
       byteString "NINJA2"                     -- magic (6 bytes)
@@ -32,7 +32,7 @@ createRUP original modified info romType encoding =
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header
       <> word8 0x01                           -- OPEN_NEW_FILE command
       <> encodeVariableLengthValue 0          -- filename length (empty)
-      <> word8 romType                        -- ROM type byte
+      <> word8 (fromNINJA2RomType romType)    -- ROM type byte
       <> encodeVariableLengthValue (fromIntegral (ByteString.length original))   -- source size
       <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))   -- target size
       <> byteString (unMD5Hash (md5 original))  -- source MD5
