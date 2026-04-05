@@ -41,7 +41,7 @@ createDPS original modified name author version stability =
           warnings = case boundedTruncation result of
             Nothing -> []
             Just info -> [FieldTruncated LabelDPS fieldName
-                           (Length (truncatedFrom info)) (Length (truncatedTo info))]
+                           (truncatedFrom info) (truncatedTo info)]
       in (boundedField result, warnings)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [DPSRecord]

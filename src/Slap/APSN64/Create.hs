@@ -29,7 +29,7 @@ encodeAPSN64 records destinationSize description =
         descriptionWarnings = case boundedTruncation bounded of
           Nothing -> []
           Just info -> [FieldTruncated LabelAPSN64 FieldDescription
-                         (Length (truncatedFrom info)) (Length (truncatedTo info))]
+                         (truncatedFrom info) (truncatedTo info)]
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
             byteString "APS10"
             <> word8 (fromAPSPatchType APSSimple)

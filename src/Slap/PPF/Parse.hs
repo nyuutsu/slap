@@ -111,32 +111,40 @@ parsePPF2 input = do
       validationBlock <- getBytes validationSize
       pure (description, fileSize, validationBlock)
 
+-- | Intermediate result of parsing the PPF3 fixed header fields.
+data PPF3HeaderResult = PPF3HeaderResult
+  { ppf3Description     :: !ByteString
+  , ppf3ImageTypeByte   :: !Word8
+  , ppf3HasBlockCheck   :: !Bool
+  , ppf3HasUndo         :: !Bool
+  , ppf3ValidationBlock :: !(Maybe ByteString)
+  }
+
 -- PPF3: 60 or 1084-byte header, then records with 8-byte offsets, optional undo.
 parsePPF3 :: ByteString -> Either SlapError Patch
 parsePPF3 input = do
-  (description, imageTypeByte, hasBlock, hasUndo, validationBlock) <-
-    wrapError LabelPPF3 $ runGet parsePPF3Header input
-  imageType <- case imageTypeByte of
+  header <- wrapError LabelPPF3 $ runGet parsePPF3Header input
+  imageType <- case ppf3ImageTypeByte header of
     0x00 -> Right BIN
     0x01 -> Right GI
     byte -> Left (UnknownFlag LabelPPF3 FieldImageType byte)
-  let validation = Validation imageType <$> validationBlock
-      headerSize = if hasBlock then ppf3MinHeaderSize + unLength validationSize else ppf3MinHeaderSize
+  let validation = Validation imageType <$> ppf3ValidationBlock header
+      headerSize = if ppf3HasBlockCheck header then ppf3MinHeaderSize + unLength validationSize else ppf3MinHeaderSize
       fileId     = detectFileId getWord16LE 2 input
       recordBody = stripFileId 2 fileId (ByteString.drop headerSize input)
-  records <- wrapError LabelPPF3 $ runGet (parseRecords64 LabelPPF3 hasUndo 0) recordBody
+  records <- wrapError LabelPPF3 $ runGet (parseRecords64 LabelPPF3 (ppf3HasUndo header) 0) recordBody
   Right Patch
     { ppfVersion     = PPF3
-    , ppfDescription = description
+    , ppfDescription = ppf3Description header
     , ppfFileSize    = Nothing
     , ppfValidation  = validation
-    , ppfHasUndo     = hasUndo
+    , ppfHasUndo     = ppf3HasUndo header
     , ppfImageType   = Just imageType
     , ppfRecords     = records
     , ppfFileId      = fileId
     }
   where
-    parsePPF3Header :: Get (ByteString, Word8, Bool, Bool, Maybe ByteString)
+    parsePPF3Header :: Get PPF3HeaderResult
     parsePPF3Header = do
       skip (Length ppfDescriptionOffset)
       description <- getBytes (Length ppfDescriptionWidth)
@@ -147,7 +155,13 @@ parsePPF3 input = do
       validationBlock <- if hasBlockByte /= 0
         then Just <$> getBytes validationSize
         else pure Nothing
-      pure (description, imageTypeByte, hasBlockByte /= 0, hasUndoByte /= 0, validationBlock)
+      pure PPF3HeaderResult
+        { ppf3Description     = description
+        , ppf3ImageTypeByte   = imageTypeByte
+        , ppf3HasBlockCheck   = hasBlockByte /= 0
+        , ppf3HasUndo         = hasUndoByte /= 0
+        , ppf3ValidationBlock = validationBlock
+        }
 
 -- Pyriel's internal format (magic "PPF4"): 60-byte header, records with command byte +
 -- 4-byte offsets.  Reverse-engineered from the Suikoden I/II bug fix patchers; not a

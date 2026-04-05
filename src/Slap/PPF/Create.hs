@@ -3,7 +3,7 @@
 module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
 import Slap.PPF.Types (ImageType(..), fromImageType, ppfDescriptionWidth)
-import Slap.Measure (Offset(..), Length(..), Hunk(..), UndoHunk(..))
+import Slap.Measure (Offset(..), Hunk(..), UndoHunk(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -20,7 +20,7 @@ padDescription text =
       warnings = case boundedTruncation result of
         Nothing -> []
         Just info -> [FieldTruncated LabelPPF3 FieldDescription
-                       (Length (truncatedFrom info)) (Length (truncatedTo info))]
+                       (truncatedFrom info) (truncatedTo info)]
   in CreateResult (boundedField result) warnings
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> ImageType -> Builder

@@ -17,6 +17,7 @@ module Slap.TextEncoding
   , isValidUtf8
   ) where
 
+import Slap.Measure (Length(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
@@ -27,8 +28,8 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- | How a field was truncated: original encoded size vs. what fit.
 data TruncationInfo = TruncationInfo
-  { truncatedFrom :: !Int   -- original encoded byte count
-  , truncatedTo   :: !Int   -- byte count after truncation
+  { truncatedFrom :: !Length   -- original encoded byte count
+  , truncatedTo   :: !Length   -- byte count after truncation
   } deriving (Show)
 
 -- | Result of bounded encoding: the padded field plus optional
@@ -109,8 +110,8 @@ encodeBoundedUtf8 fieldWidth inputText =
                  (max 0 (fieldWidth - ByteString.length truncated)) 0
       truncation = if ByteString.length encoded > fieldWidth
                    then Just TruncationInfo
-                              { truncatedFrom = ByteString.length encoded
-                              , truncatedTo   = ByteString.length truncated }
+                              { truncatedFrom = Length (ByteString.length encoded)
+                              , truncatedTo   = Length (ByteString.length truncated) }
                    else Nothing
   in BoundedResult padded truncation
 
@@ -124,8 +125,8 @@ encodeBoundedLocale fieldWidth inputText =
                  (max 0 (fieldWidth - ByteString.length truncated)) 0
       truncation = if ByteString.length encoded > fieldWidth
                    then Just TruncationInfo
-                              { truncatedFrom = ByteString.length encoded
-                              , truncatedTo   = ByteString.length truncated }
+                              { truncatedFrom = Length (ByteString.length encoded)
+                              , truncatedTo   = Length (ByteString.length truncated) }
                    else Nothing
   in BoundedResult padded truncation
 

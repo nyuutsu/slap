@@ -107,8 +107,17 @@ data AnnotDetail
 -- | Byte offset range for a non-empty set of regions.
 -- 'rangeStart' is the first modified byte; 'rangeEnd' is one past the last.
 data OffsetRange = OffsetRange
-  { rangeStart :: !Int64
-  , rangeEnd   :: !Int64
+  { rangeStart :: !Offset
+  , rangeEnd   :: !Offset
+  }
+
+-- | Per-payload-type record counts, accumulated across regions.
+data PayloadCounts = PayloadCounts
+  { writeCount :: !Int
+  , fillCount  :: !Int
+  , copyCount  :: !Int
+  , xorCount   :: !Int
+  , metaCount  :: !Int
   }
 
 ----------------------------------------------------------------------------
@@ -285,18 +294,20 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
 
     -- Modified bytes breakdown
     totalModified = sum (map (unLength . regionSize) allRegions)
-    payloadCounts = foldl' countPayload (0,0,0,0,0) allRegions
-    countPayload (!writes,!fills,!copies,!xors,!metas) region = case regionPayload region of
-      PayloadWrite _  -> (writes+1,fills,copies,xors,metas)
-      PayloadFill _ _ -> (writes,fills+1,copies,xors,metas)
-      PayloadCopy _   -> (writes,fills,copies+1,xors,metas)
-      PayloadXOR _    -> (writes,fills,copies,xors+1,metas)
-      PayloadMeta _   -> (writes,fills,copies,xors,metas+1)
+    payloadCounts = foldl' countPayload (PayloadCounts 0 0 0 0 0) allRegions
+    countPayload counts region = case regionPayload region of
+      PayloadWrite _  -> counts { writeCount = writeCount counts + 1 }
+      PayloadFill _ _ -> counts { fillCount  = fillCount  counts + 1 }
+      PayloadCopy _   -> counts { copyCount  = copyCount  counts + 1 }
+      PayloadXOR _    -> counts { xorCount   = xorCount   counts + 1 }
+      PayloadMeta _   -> counts { metaCount  = metaCount  counts + 1 }
     breakdownString =
-      let (writes,fills,copies,xors,metas) = payloadCounts
-          parts = filter ((/= 0) . fst)
-            [ (writes, "writes"), (fills, "fills"), (copies, "copies")
-            , (xors, "XOR"), (metas, "structural") ]
+      let parts = filter ((/= 0) . fst)
+            [ (writeCount payloadCounts, "writes")
+            , (fillCount  payloadCounts, "fills")
+            , (copyCount  payloadCounts, "copies")
+            , (xorCount   payloadCounts, "XOR")
+            , (metaCount  payloadCounts, "structural") ]
       in case parts of
            [] -> ""
            items -> " (" ++ intercalate ", "
@@ -312,14 +323,14 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     offsetRange
       | null allRegions = Nothing
       | otherwise = Just OffsetRange
-          { rangeStart = minimum (map (unOffset . regionOffset) allRegions)
-          , rangeEnd   = unOffset (maximum [ advance (regionOffset region) (regionSize region)
-                                          | region <- allRegions ])
+          { rangeStart = minimum (map regionOffset allRegions)
+          , rangeEnd   = maximum [ advance (regionOffset region) (regionSize region)
+                                 | region <- allRegions ]
           }
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
-      Just range -> ["range:       0x" ++ padHex 6 (rangeStart range)
-                     ++ " \8211 0x" ++ padHex 6 (rangeEnd range - 1)]
+      Just range -> ["range:       0x" ++ padHex 6 (unOffset (rangeStart range))
+                     ++ " \8211 0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)]
 
     -- Size change from header
     sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
@@ -352,13 +363,13 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     bucketCount = 56 :: Int  -- terminal sparkline width
 
     bucketWidth :: OffsetRange -> Int64
-    bucketWidth range = max 1 (max 1 (rangeEnd range - rangeStart range) `div` fromIntegral bucketCount)
+    bucketWidth range = max 1 (max 1 (unOffset (rangeEnd range) - unOffset (rangeStart range)) `div` fromIntegral bucketCount)
 
     toBucket :: OffsetRange -> ExplainRegion -> [(Int, Int)]
     toBucket range region =
       let width = bucketWidth range
-          startBucket = fromIntegral ((unOffset (regionOffset region) - rangeStart range) `div` width)
-          endBucket   = fromIntegral ((unOffset (advance (regionOffset region) (regionSize region)) - 1 - rangeStart range) `div` width)
+          startBucket = fromIntegral ((unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width)
+          endBucket   = fromIntegral ((unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width)
       in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
     -- Bucket arrays: sums (for sparkline/run detection), counts, bytes.
@@ -367,7 +378,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       Nothing -> ([], [], [])
       Just range ->
         let width = bucketWidth range
-            regionBucket region = fromIntegral ((unOffset (regionOffset region) - rangeStart range) `div` width)
+            regionBucket region = fromIntegral ((unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width)
             sums   = elems (accumArray (+) 0 (0, bucketCount - 1) (concatMap (toBucket range) allRegions))
             counts = elems (accumArray (+) 0 (0, bucketCount - 1)
                       [ (bucket, 1 :: Int) | region <- allRegions
@@ -397,8 +408,8 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
           let width = bucketWidth range
               runs = findRuns bucketSums
               formatRun (runStart, runEnd) =
-                let startOffset = rangeStart range + fromIntegral runStart * width
-                    endOffset = rangeStart range + fromIntegral (runEnd + 1) * width - 1
+                let startOffset = unOffset (rangeStart range) + fromIntegral runStart * width
+                    endOffset = unOffset (rangeStart range) + fromIntegral (runEnd + 1) * width - 1
                     recordsInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketCounts))
                     bytesInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketBytes))
                     percentage = if totalModified > 0
@@ -439,8 +450,8 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       Nothing -> []
       Just range ->
           let chars = map (\entry -> if entry > 0 then '#' else '.') bucketSums
-              leftLabel = "0x" ++ padHex 6 (rangeStart range)
-              rightLabel = "0x" ++ padHex 6 (rangeEnd range - 1)
+              leftLabel = "0x" ++ padHex 6 (unOffset (rangeStart range))
+              rightLabel = "0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)
               barLine = "[" ++ chars ++ "]"
               -- right-align rightLabel to closing bracket
               gap = max 1 (length barLine - length leftLabel - length rightLabel)
