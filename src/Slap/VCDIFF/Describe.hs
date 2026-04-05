@@ -19,7 +19,7 @@ import Slap.Explain
     )
 import Slap.Checksum (showAdler32)
 import Slap.Format (MetaField(..), padHex, renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
 
 import qualified Data.ByteString as ByteString
 
@@ -132,4 +132,4 @@ decodedToRegion globalOffset instruction = case instruction of
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
     }
   where
-    absoluteOffset windowOffset = Offset (unOffset globalOffset + unOffset windowOffset)
+    absoluteOffset windowOffset = displace globalOffset (Delta (unOffset windowOffset))

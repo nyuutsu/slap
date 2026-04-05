@@ -12,7 +12,7 @@ import Slap.Explain
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Format (MetaField(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
@@ -51,13 +51,13 @@ explainGDIFF patch = ExplainData
 makeGDIFFRegion :: Offset -> GDiffCommand -> (Offset, ExplainRegion)
 makeGDIFFRegion outputPosition command = case command of
   GDiffData payload ->
-    let dataLength = ByteString.length payload
-    in ( Offset (unOffset outputPosition + fromIntegral dataLength)
-       , ExplainRegion outputPosition (Length dataLength) "DATA  " (PayloadWrite payload)
+    let payloadLength = byteLength payload
+    in ( advance outputPosition payloadLength
+       , ExplainRegion outputPosition payloadLength "DATA  " (PayloadWrite payload)
            (AnnotAt AtOutput outputPosition [])
        )
   GDiffCopy sourceOffset copyLength ->
-    ( Offset (unOffset outputPosition + unFileSize copyLength)
+    ( advance outputPosition (Length (fromIntegral (unFileSize copyLength)))
     , ExplainRegion outputPosition (Length (fromIntegral (unFileSize copyLength))) "COPY  " (PayloadCopy FromSource)
         (AnnotAt AtOutput outputPosition [DetailSource sourceOffset])
     )

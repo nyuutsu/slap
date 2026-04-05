@@ -13,7 +13,7 @@ import Slap.Explain
     )
 import Slap.Checksum (showCRC32)
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, displace)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
@@ -46,9 +46,9 @@ explainUPS patch = ExplainData
 
 makeUPSRegion :: Offset -> UPSBlock -> (Offset, ExplainRegion)
 makeUPSRegion position (UPSBlock skipDelta deltaBytes) =
-  let xorOffset = Offset (unOffset position + unDelta skipDelta)
+  let xorOffset = displace position skipDelta
       dataLength = ByteString.length deltaBytes
-      nextPosition = Offset (unOffset xorOffset + fromIntegral dataLength + 1)  -- +1 for 0x00 terminator byte
+      nextPosition = advance xorOffset (Length (dataLength + 1))  -- +1 for 0x00 terminator byte
   in ( nextPosition
      , ExplainRegion xorOffset (Length dataLength) "XOR  " (PayloadXOR (Just deltaBytes))
          (AnnotAt AtOffset xorOffset [DetailSkip skipDelta])

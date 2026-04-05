@@ -12,7 +12,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Measure (Offset(..), Length(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 
@@ -44,7 +44,7 @@ pchtxtInfo patch = unlines $ filter (not . null) $
       | null enabledEntries = "range:       (empty patch)"
       | otherwise =
           let lowestOffset = minimum (map (unOffset . pchtxtOffset) enabledEntries)
-              highestEnd = maximum (map (\entry -> unOffset (pchtxtOffset entry) + fromIntegral (ByteString.length (pchtxtData entry))) enabledEntries)
+              highestEnd = unOffset (maximum (map (\entry -> advance (pchtxtOffset entry) (byteLength (pchtxtData entry))) enabledEntries))
           in "range:       0x" ++ hexPad 8 lowestOffset ++ " - 0x" ++ hexPad 8 highestEnd
 
 explainPCHTXT :: PCHTXTPatch -> ExplainData

@@ -13,7 +13,7 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -69,8 +69,8 @@ ipsInfo patch = unlines $ filter (not . null) $
       | null (ipsRecords patch) = "range:       (empty patch)"
       | otherwise =
           let lowest  = minimum [ unOffset (ipsOffset record) | record <- ipsRecords patch ]
-              highest = maximum [ unOffset (ipsOffset record) + fromIntegral (ipsPayloadSize record)
-                                | record <- ipsRecords patch ]
+              highest = unOffset (maximum [ advance (ipsOffset record) (Length (ipsPayloadSize record))
+                                          | record <- ipsRecords patch ])
           in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
              ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 

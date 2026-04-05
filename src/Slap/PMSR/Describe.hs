@@ -13,7 +13,7 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..)
     )
 import Slap.Format (MetaField(..))
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Measure (Offset(..), Length(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 import Data.Word (Word64)
@@ -43,7 +43,7 @@ pmsrInfo patch = unlines $ filter (not . null)
       | otherwise =
           let records = pmsrRecords patch
               lowest = minimum (map (unOffset . pmsrOffset) records)
-              highest = maximum (map (\record -> unOffset (pmsrOffset record) + fromIntegral (ByteString.length (pmsrData record))) records)
+              highest = unOffset (maximum (map (\record -> advance (pmsrOffset record) (byteLength (pmsrData record))) records))
           in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
              ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 

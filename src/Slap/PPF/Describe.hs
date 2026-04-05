@@ -1,7 +1,7 @@
 module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
 import Slap.PPF.Types
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 import Slap.Format (MetaField(..), renderField)
 import Slap.Explain
   ( ExplainData(..)
@@ -71,7 +71,7 @@ rangeInfo :: [Record] -> String
 rangeInfo [] = "range:       (empty patch)"
 rangeInfo records =
   let lowest  = minimum (map (unOffset . recordOffset) records)
-      highest = maximum (map (\record -> unOffset (recordOffset record) + fromIntegral (ByteString.length (recordData record))) records)
+      highest = unOffset (maximum (map (\record -> advance (recordOffset record) (byteLength (recordData record))) records))
   in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
      ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 

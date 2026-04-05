@@ -21,6 +21,7 @@ module Slap.Measure
   , seekTo
     -- * Arithmetic
   , advance
+  , displace
   , distance
   , fitsWithin
   , byteLength
@@ -129,6 +130,9 @@ seekTo handle targetOffset =
 advance :: Offset -> Length -> Offset
 advance (Offset startOffset) (Length strideLength) =
   Offset (startOffset + fromIntegral strideLength)
+
+displace :: Offset -> Delta -> Offset
+displace (Offset position) (Delta displacement) = Offset (position + displacement)
 
 distance :: Offset -> Offset -> Length
 distance (Offset startOffset) (Offset endOffset) =

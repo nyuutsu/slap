@@ -16,7 +16,7 @@ import Slap.Explain
   , Annotation(..)
   )
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
 ----------------------------------------------------------------------------
@@ -62,7 +62,7 @@ makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, ExplainRegion)
 makeBSDiffRegion outputPosition control =
   let addLength = controlAdd control
       copyLength = controlCopy control
-  in ( Offset (unOffset outputPosition + fromIntegral (unLength addLength) + fromIntegral (unLength copyLength))
+  in ( advance outputPosition (addLength <> copyLength)
      , ExplainRegion
        { regionOffset     = outputPosition
        , regionSize       = Length (unLength addLength + unLength copyLength)

@@ -17,7 +17,7 @@ module Slap.Explain
 
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField)
-import Slap.Measure (Offset(..), Length(..), Delta(..))
+import Slap.Measure (Offset(..), Length(..), Delta(..), advance)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -313,8 +313,8 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       | null allRegions = Nothing
       | otherwise = Just OffsetRange
           { rangeStart = minimum (map (unOffset . regionOffset) allRegions)
-          , rangeEnd   = maximum [ unOffset (regionOffset region) + fromIntegral (unLength (regionSize region))
-                                 | region <- allRegions ]
+          , rangeEnd   = unOffset (maximum [ advance (regionOffset region) (regionSize region)
+                                          | region <- allRegions ])
           }
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
@@ -358,7 +358,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     toBucket range region =
       let width = bucketWidth range
           startBucket = fromIntegral ((unOffset (regionOffset region) - rangeStart range) `div` width)
-          endBucket   = fromIntegral (((unOffset (regionOffset region) + fromIntegral (unLength (regionSize region)) - 1) - rangeStart range) `div` width)
+          endBucket   = fromIntegral ((unOffset (advance (regionOffset region) (regionSize region)) - 1 - rangeStart range) `div` width)
       in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
     -- Bucket arrays: sums (for sparkline/run detection), counts, bytes.

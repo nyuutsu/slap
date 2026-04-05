@@ -45,9 +45,9 @@ import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
+import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
-                      narrowHunks, narrowHunksUnbounded,
+                      advance, narrowHunks, narrowHunksUnbounded,
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -620,7 +620,7 @@ computeUndo source = concatMap splitUndo
           let chunk = ByteString.take 255 hunkPayload
               intOffset = fromIntegral (unOffset hunkOffset)
           in UndoHunk hunkOffset chunk (oldBytes intOffset 255)
-             : splitUndo (Hunk (Offset (unOffset hunkOffset + 255)) (ByteString.drop 255 hunkPayload))
+             : splitUndo (Hunk (advance hunkOffset (Length 255)) (ByteString.drop 255 hunkPayload))
     oldBytes position chunkLength
       | position >= sourceLength = ByteString.replicate chunkLength 0
       | position + chunkLength > sourceLength =

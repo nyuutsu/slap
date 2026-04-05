@@ -8,7 +8,7 @@ module Slap.APSN64.Create
 
 import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64DescriptionWidth, apsN64MaxChunkSize)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), Length(..), EncodedHunk(..))
+import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -46,7 +46,7 @@ splitLong = concatMap splitRecord
       | ByteString.length hunkPayload <= apsN64MaxChunkSize = [EncodedHunk hunkOffset hunkPayload]
       | otherwise =
           let (chunk, rest) = ByteString.splitAt apsN64MaxChunkSize hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + fromIntegral apsN64MaxChunkSize)) rest)
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (advance hunkOffset (Length apsN64MaxChunkSize)) rest)
 
 encodeN64Record :: EncodedHunk -> Builder
 encodeN64Record (EncodedHunk hunkOffset hunkPayload) =

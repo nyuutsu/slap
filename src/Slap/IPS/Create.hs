@@ -22,8 +22,8 @@ module Slap.IPS.Create
 
 import Slap.Binary (putWord16BE)
 import Slap.IPS.Types (ipsMaxRecordData)
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), EncodedHunk(..), offsetToInt,
-                     ipsSentinel, ips32Sentinel)
+import Slap.Measure (Offset(..), FileSize(..), Length(..), Delta(..), Hunk(..), EncodedHunk(..),
+                     offsetToInt, advance, displace, ipsSentinel, ips32Sentinel)
 import Slap.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -80,7 +80,7 @@ avoidSentinel sentinel source = map adjustRecord
     adjustRecord (EncodedHunk hunkOffset hunkPayload)
       | hunkOffset == sentinelOffset, offsetToInt hunkOffset > 0, offsetToInt hunkOffset - 1 < ByteString.length source =
           let shiftedIndex = offsetToInt hunkOffset - 1
-          in EncodedHunk (Offset (unOffset hunkOffset - 1)) (ByteString.cons (ByteString.index source shiftedIndex) hunkPayload)
+          in EncodedHunk (displace hunkOffset (Delta (-1))) (ByteString.cons (ByteString.index source shiftedIndex) hunkPayload)
       | otherwise = EncodedHunk hunkOffset hunkPayload
 
 ----------------------------------------------------------------------------
@@ -279,7 +279,7 @@ splitHunks maxSize = concatMap splitOne
       | ByteString.length hunkPayload <= maxSize = [Hunk hunkOffset hunkPayload]
       | otherwise =
           let (chunk, remaining) = ByteString.splitAt maxSize hunkPayload
-              nextOffset = Offset (unOffset hunkOffset + fromIntegral maxSize)
+              nextOffset = advance hunkOffset (Length maxSize)
           in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
 
 -- | Remove consecutive duplicates from a sorted list.
