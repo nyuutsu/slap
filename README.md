@@ -28,7 +28,7 @@ slap apply patch.bps rom.gba --in-place
 
 The output of the first example will be in the same directory as the input rom, and named `rom [patch].gba`.
 
-Application can be modified in these days:
+Application can be modified in these ways:
 
 `--output` or `-o`: Name the output file. This can be a filename (in which case the output will be in the cwd) or a fully qualified path (in which case the output goes to the exact location it is given).
 
