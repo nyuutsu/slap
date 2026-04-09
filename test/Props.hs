@@ -284,7 +284,7 @@ prop_bps = forAll genPair $ \(source, target) ->
   let patch = BPS.createBPS source target ByteString.empty
   in case BPS.parseBPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> BPS.applyBPS parsed source === target
+       Right parsed -> BPS.applyBPS parsed source === Right target
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
@@ -764,7 +764,7 @@ prop_bpsBlockMove = once $
      conjoin
        [ case BPS.parseBPS patch of
            Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-           Right parsed -> BPS.applyBPS parsed source === target
+           Right parsed -> BPS.applyBPS parsed source === Right target
        , property (ByteString.length patch < 1024)
        ]
 

@@ -9,6 +9,12 @@ module Slap.Measure
   , Position(..)
   , SignedOffset(..)
   , ActionIndex(..)
+  , ReadOffset(..)
+  , WritePosition(..)
+  , RequestedLength(..)
+  , RemainingLength(..)
+  , ActualSize(..)
+  , ExpectedSize(..)
     -- * Records
   , Hunk(..)
   , UndoHunk(..)
@@ -31,6 +37,8 @@ module Slap.Measure
   , subtractLength
   , negativeOvershoot
   , plusOffset
+  , SignedOffsetSign(..)
+  , examineSignedOffset
     -- * Arithmetic
   , distance
   , fitsWithin
@@ -72,6 +80,46 @@ newtype SignedOffset = SignedOffset { unSignedOffset :: Int }
   deriving (Eq, Ord, Show)
 
 newtype ActionIndex = ActionIndex { unActionIndex :: Int }
+  deriving (Eq, Ord, Show)
+
+----------------------------------------------------------------------------
+-- Apply-error role newtypes
+----------------------------------------------------------------------------
+
+-- | The offset at which a read was requested. Used in error
+-- contexts where a bare 'Offset' would be ambiguous with another
+-- offset-valued field.
+newtype ReadOffset = ReadOffset { unReadOffset :: Offset }
+  deriving (Eq, Ord, Show)
+
+-- | The current write position in a buffer being populated. Used
+-- in error contexts where a bare 'Offset' would be ambiguous with
+-- another offset-valued field.
+newtype WritePosition = WritePosition { unWritePosition :: Offset }
+  deriving (Eq, Ord, Show)
+
+-- | A length an action requested to copy or write. Used in error
+-- contexts where a bare 'Length' would be ambiguous with another
+-- length-valued field.
+newtype RequestedLength = RequestedLength { unRequestedLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The length of space remaining in a buffer being populated.
+-- Used in error contexts where a bare 'Length' would be ambiguous
+-- with another length-valued field.
+newtype RemainingLength = RemainingLength { unRemainingLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The actual size achieved by a partial or completed operation.
+-- Used in error contexts where a bare 'FileSize' would be
+-- ambiguous with another size-valued field.
+newtype ActualSize = ActualSize { unActualSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | The expected or declared size of something. Used in error
+-- contexts where a bare 'FileSize' would be ambiguous with another
+-- size-valued field.
+newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
@@ -198,6 +246,26 @@ subtractLength (Length minuend) (Length subtrahend) =
 -- patch and the leading out-of-range bytes need to be zero-filled.
 negativeOvershoot :: SignedOffset -> Length
 negativeOvershoot (SignedOffset position) = Length (max 0 (negate position))
+
+-- | The result of examining a 'SignedOffset' for non-negativity.
+-- 'NonNegativeCursor' carries an 'Offset' with its non-negativity
+-- proven by construction — the only way to obtain this constructor
+-- is via 'examineSignedOffset', which performs the check. This lets
+-- apply workers branch on cursor validity and receive a refinement-
+-- typed 'Offset' in the valid branch, rather than calling
+-- 'clampToOffset' after a manual guard (which reads as if clamping
+-- were still happening when it isn't).
+data SignedOffsetSign
+  = NegativeCursor SignedOffset
+  | NonNegativeCursor Offset
+  deriving (Show, Eq)
+
+-- | Examine a 'SignedOffset' and return either the original negative
+-- value or a proven-non-negative 'Offset'.
+examineSignedOffset :: SignedOffset -> SignedOffsetSign
+examineSignedOffset signedCursor@(SignedOffset position)
+  | position < 0 = NegativeCursor signedCursor
+  | otherwise    = NonNegativeCursor (Offset position)
 
 -- | Advance a raw byte pointer by a typed 'Offset'. Used at the
 -- FFI boundary in apply workers, where the typed cursor needs to

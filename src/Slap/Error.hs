@@ -3,11 +3,15 @@
 module Slap.Error
   ( SlapError(..)
   , SlapWarning(..)
+  , ApplyError(..)
+  , CursorKind(..)
   , DroppedValue(..)
   , CreateResult(..)
   , FieldName(..)
   , fieldNameLabel
   , renderSlapError
+  , renderApplyError
+  , renderCursorKind
   , renderSlapWarning
   ) where
 
@@ -17,7 +21,11 @@ import Numeric (showHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32)
 import Slap.Format (hexByteString)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     SignedOffset(..), ActionIndex(..),
+                     ReadOffset(..), WritePosition(..),
+                     RequestedLength(..), RemainingLength(..),
+                     ActualSize(..), ExpectedSize(..))
 import Slap.PatchField (PatchField, fieldName)
 
 ----------------------------------------------------------------------------
@@ -103,6 +111,69 @@ renderDroppedValue (DroppedSize size)           = show (unFileSize size) ++ " by
 renderDroppedValue DroppedEmpty                 = ""
 
 ----------------------------------------------------------------------------
+-- CursorKind
+----------------------------------------------------------------------------
+
+-- | Which of BPS's relative cursors misbehaved. BPS tracks two
+-- independent relative cursors — 'SourceCursor' points into the
+-- source ByteString for 'SourceCopy' actions, 'TargetCursor' points
+-- into the output buffer for 'TargetCopy' actions. Apply errors
+-- related to cursor underflow carry this tag to disambiguate.
+data CursorKind = SourceCursor | TargetCursor
+  deriving (Show, Eq)
+
+----------------------------------------------------------------------------
+-- ApplyError
+----------------------------------------------------------------------------
+
+-- | Format-agnostic errors encountered during patch application.
+-- Paired with a 'FormatLabel' at the outer boundary via the
+-- 'ApplyFailed' 'SlapError' constructor. Most variants carry an
+-- 'ActionIndex' identifying which action in the patch's action
+-- stream triggered the error — this is the first thing to look at
+-- when debugging a malformed patch.
+--
+-- Where a variant would otherwise have two positional arguments of
+-- the same base type (two 'Offset's, two 'Length's, two 'FileSize's),
+-- the arguments are typed with role newtypes from 'Slap.Measure'
+-- ('ReadOffset' vs 'WritePosition', 'RequestedLength' vs
+-- 'RemainingLength', 'ActualSize' vs 'ExpectedSize') so the field
+-- roles are visible at construction, pattern-match, and rendering
+-- sites without needing to consult documentation.
+data ApplyError
+
+  -- | A relative cursor (source or target) went negative after
+  -- applying the action's delta. Arguments are all distinct types,
+  -- so no role newtypes needed.
+  = ApplyCursorUnderflow CursorKind ActionIndex SignedOffset
+
+  -- | An action would read past the end of the source ByteString.
+  -- The 'Offset' is the would-be read end; the 'FileSize' is the
+  -- actual source size. Arguments are distinct types, so no role
+  -- newtypes needed.
+  | ApplySourceReadOutOfBounds ActionIndex Offset FileSize
+
+  -- | A TargetCopy referenced an output position at or past the
+  -- current write position (i.e., unwritten memory).
+  | ApplyTargetReadUnwritten ActionIndex ReadOffset WritePosition
+
+  -- | An action's output length would exceed the remaining space in
+  -- the target buffer.
+  | ApplyWritesPastTarget ActionIndex RequestedLength RemainingLength
+
+  -- | The action stream was exhausted but the target buffer is not
+  -- fully written. No 'ActionIndex' because this error fires after
+  -- the stream ends and no specific action is responsible — the
+  -- whole patch is short. (There is no corresponding
+  -- @ApplyTargetOverfilled@ because 'ApplyWritesPastTarget' catches
+  -- over-writes per-action before they can happen; writing past
+  -- target is impossible if every action's length is validated
+  -- against remaining space before the copy runs.)
+  | ApplyTargetUnderfilled ActualSize ExpectedSize
+
+  deriving (Show, Eq)
+
+----------------------------------------------------------------------------
 -- SlapError
 ----------------------------------------------------------------------------
 
@@ -136,6 +207,7 @@ data SlapError
 
   -- Apply
   | NegativeTargetSize FormatLabel FileSize
+  | ApplyFailed FormatLabel ApplyError
 
   -- Create / Encode
   | OffsetExceedsRange FormatLabel Offset Offset
@@ -202,6 +274,45 @@ data CreateResult = CreateResult
   { resultBytes    :: !ByteString
   , resultWarnings :: ![SlapWarning]
   } deriving (Show)
+
+----------------------------------------------------------------------------
+-- renderApplyError
+----------------------------------------------------------------------------
+
+renderCursorKind :: CursorKind -> String
+renderCursorKind SourceCursor = "source-relative"
+renderCursorKind TargetCursor = "target-relative"
+
+renderApplyError :: ApplyError -> String
+
+renderApplyError (ApplyCursorUnderflow cursorKind actionIndex cursor) =
+  "at action #" ++ show (unActionIndex actionIndex) ++ ": "
+  ++ renderCursorKind cursorKind ++ " cursor underflowed (value "
+  ++ show (unSignedOffset cursor) ++ ")"
+
+renderApplyError (ApplySourceReadOutOfBounds actionIndex readEndOffset sourceSize) =
+  "at action #" ++ show (unActionIndex actionIndex)
+  ++ ": source read would end at offset 0x"
+  ++ showHex (unOffset readEndOffset) ""
+  ++ " but source is " ++ show (unFileSize sourceSize) ++ " bytes"
+
+renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (WritePosition writePosition)) =
+  "at action #" ++ show (unActionIndex actionIndex)
+  ++ ": TargetCopy read at offset 0x"
+  ++ showHex (unOffset readOffset) ""
+  ++ " references position at or past current write position 0x"
+  ++ showHex (unOffset writePosition) ""
+
+renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLength) (RemainingLength remainingLength)) =
+  "at action #" ++ show (unActionIndex actionIndex)
+  ++ ": action of length " ++ show (unLength requestedLength)
+  ++ " would write past target ("
+  ++ show (unLength remainingLength) ++ " bytes remaining)"
+
+renderApplyError (ApplyTargetUnderfilled (ActualSize actualSize) (ExpectedSize expectedSize)) =
+  "target under-filled ("
+  ++ show (unFileSize actualSize) ++ " of "
+  ++ show (unFileSize expectedSize) ++ " bytes written before action stream exhausted)"
 
 ----------------------------------------------------------------------------
 -- renderSlapError
@@ -274,6 +385,9 @@ renderSlapError (ParseError label message) =
 renderSlapError (NegativeTargetSize label size) =
   formatLabelName label ++ ": negative target size: "
   ++ show (unFileSize size)
+
+renderSlapError (ApplyFailed label applyErr) =
+  formatLabelName label ++ " apply: " ++ renderApplyError applyErr
 
 renderSlapError (OffsetExceedsRange label actual maxOffset) =
   formatLabelName label ++ ": hunk offset 0x"

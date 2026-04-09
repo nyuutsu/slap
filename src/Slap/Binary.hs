@@ -26,6 +26,7 @@ module Slap.Binary
     -- * Bulk memory operations
   , copyByteStringRange
   , copyRegion
+  , copyInPlace
     -- * Diff
   , diffHunks
     -- * String utilities
@@ -36,6 +37,7 @@ module Slap.Binary
   , putInt64BE
   ) where
 
+import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
@@ -44,7 +46,7 @@ import Data.Array (Array, listArray, (!))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
 import Data.Int (Int64)
 import Data.Word (Word8, Word16, Word32)
-import Foreign.Marshal.Utils (copyBytes)
+import Foreign.Marshal.Utils (copyBytes, moveBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
@@ -198,6 +200,21 @@ copyRegion destination destinationOffset source sourcePosition regionLength =
   UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
     copyBytes (destination `plusPtr` unOffset destinationOffset)
               (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
+              (unLength regionLength)
+
+-- | Copy @regionLength@ bytes from one position in a buffer to
+-- another position in the SAME buffer. Used by apply workers for
+-- in-buffer copies (e.g., BPS TargetCopy's non-overlapping back
+-- references). Uses C @memmove@ under the hood, so it's correct
+-- even when the source and destination regions overlap — but
+-- callers are responsible for knowing whether overlap is
+-- semantically correct for their use case. A no-op when
+-- @regionLength@ is zero or negative.
+copyInPlace :: Ptr Word8 -> Offset -> Offset -> Length -> IO ()
+copyInPlace buffer sourceOffset destinationOffset regionLength =
+  when (unLength regionLength > 0) $
+    moveBytes (buffer `plusPtr` unOffset destinationOffset)
+              (buffer `plusPtr` unOffset sourceOffset)
               (unLength regionLength)
 
 ----------------------------------------------------------------------------
