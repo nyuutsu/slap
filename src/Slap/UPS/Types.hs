@@ -14,6 +14,7 @@ import Slap.Checksum (CRC32)
 import Slap.Measure (FileSize(..), Delta(..))
 
 import Data.ByteString (ByteString)
+import Data.Vector (Vector)
 
 data UPSBlock = UPSBlock
   { upsSkip    :: !Delta      -- bytes to skip (copy from source unchanged)
@@ -23,13 +24,13 @@ data UPSBlock = UPSBlock
 data UPSBody = UPSBody
   { upsBodySourceSize :: !FileSize
   , upsBodyTargetSize :: !FileSize
-  , upsBodyBlocks     :: ![UPSBlock]
+  , upsBodyBlocks     :: !(Vector UPSBlock)
   } deriving (Show)
 
 data UPSPatch = UPSPatch
   { upsSourceSize :: !FileSize
   , upsTargetSize :: !FileSize
-  , upsBlocks     :: [UPSBlock]
+  , upsBlocks     :: !(Vector UPSBlock)
   , upsSourceCRC  :: CRC32
   , upsTargetCRC  :: CRC32
   , upsPatchCRC   :: CRC32

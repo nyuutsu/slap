@@ -314,7 +314,7 @@ prop_ups = forAll genPair $ \(source, target) ->
   let patch = UPS.createUPS source target
   in case UPS.parseUPS patch of
        Left slapError -> counterexample (renderSlapError slapError) $ property False
-       Right parsed -> UPS.applyUPS parsed source === target
+       Right parsed -> UPS.applyUPS parsed source === Right target
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
@@ -583,7 +583,7 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
   let patch = UPS.createUPS source target
   in case UPS.parseUPS patch of
        Left slapError -> counterexample (renderSlapError slapError) $ property False
-       Right parsed -> UPS.applyUPS parsed (UPS.applyUPS parsed source) === source
+       Right parsed -> (UPS.applyUPS parsed source >>= UPS.applyUPS parsed) === Right source
 
 -- | PPF3 with undo data: apply then undo recovers the original.
 -- Same-size pairs only — PPF3 undo writes back original bytes but can't

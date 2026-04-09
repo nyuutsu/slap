@@ -293,25 +293,25 @@ renderCursorKind TargetCursor = "target-relative"
 renderApplyError :: ApplyError -> String
 
 renderApplyError (ApplyCursorUnderflow cursorKind actionIndex cursor) =
-  "at action #" ++ show (unActionIndex actionIndex) ++ ": "
+  "at step #" ++ show (unActionIndex actionIndex) ++ ": "
   ++ renderCursorKind cursorKind ++ " cursor underflowed (value "
   ++ show (unSignedOffset cursor) ++ ")"
 
 renderApplyError (ApplySourceReadOutOfBounds actionIndex readEndOffset sourceSize) =
-  "at action #" ++ show (unActionIndex actionIndex)
+  "at step #" ++ show (unActionIndex actionIndex)
   ++ ": source read would end at offset 0x"
   ++ showHex (unOffset readEndOffset) ""
   ++ " but source is " ++ show (unFileSize sourceSize) ++ " bytes"
 
 renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (WritePosition writePosition)) =
-  "at action #" ++ show (unActionIndex actionIndex)
+  "at step #" ++ show (unActionIndex actionIndex)
   ++ ": TargetCopy read at offset 0x"
   ++ showHex (unOffset readOffset) ""
   ++ " references position at or past current write position 0x"
   ++ showHex (unOffset writePosition) ""
 
 renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLength) (RemainingLength remainingLength)) =
-  "at action #" ++ show (unActionIndex actionIndex)
+  "at step #" ++ show (unActionIndex actionIndex)
   ++ ": action of length " ++ show (unLength requestedLength)
   ++ " would write past target ("
   ++ show (unLength remainingLength) ++ " bytes remaining)"

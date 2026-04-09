@@ -17,6 +17,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, displace)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
+import qualified Data.Vector as Vector
 
 upsMeta :: UPSPatch -> [MetaField]
 upsMeta patch =
@@ -31,18 +32,18 @@ upsInfo :: UPSPatch -> String
 upsInfo patch = unlines $
   [ "format:      UPS" ]
   ++ map renderField (upsMeta patch)
-  ++ [ "blocks:      " ++ show (length (upsBlocks patch)) ]
+  ++ [ "blocks:      " ++ show (Vector.length (upsBlocks patch)) ]
 
 explainUPS :: UPSPatch -> ExplainData
 explainUPS patch = ExplainData
   { explainFormat   = "UPS"
   , explainHeader   = upsMeta patch
-  , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion (Offset 0) (upsBlocks patch)))]
+  , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion (Offset 0) (Vector.toList (upsBlocks patch))))]
   , explainSummary  = Summary (SummaryInfo blockCount "blocks" Nothing)
   , explainNotes    = []
   }
   where
-    blockCount = length (upsBlocks patch)
+    blockCount = Vector.length (upsBlocks patch)
 
 makeUPSRegion :: Offset -> UPSBlock -> (Offset, ExplainRegion)
 makeUPSRegion position (UPSBlock skipDelta deltaBytes) =

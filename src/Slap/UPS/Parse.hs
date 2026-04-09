@@ -21,6 +21,7 @@ import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      ActualMagic(..), ParsedSizeValue(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 
 parseUPS :: ByteString -> Either SlapError UPSPatch
 parseUPS input
@@ -64,11 +65,15 @@ parseUPSBody :: Get UPSBody
 parseUPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
+  -- parseBlocks builds a cons-cell list inside the pure Get monad
+  -- (where list spine is cheap and natural). We materialise to Vector
+  -- once at the UPSBody boundary so the apply loop can index by
+  -- position — same pattern as BPS/Parse.hs's action vector.
   blocks  <- parseBlocks
   pure UPSBody
     { upsBodySourceSize = FileSize (fromIntegral rawSourceSize)
     , upsBodyTargetSize = FileSize (fromIntegral rawTargetSize)
-    , upsBodyBlocks     = blocks
+    , upsBodyBlocks     = Vector.fromList blocks
     }
 
 parseBlocks :: Get [UPSBlock]

@@ -321,14 +321,20 @@ parseSome patchBytes = case detectFormat patchBytes of
       , patchExplain        = UPS.explainUPS patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (Right (UPS.applyUPS patch source)) }
-      , patchUndo           = Just (UndoInMemory $ UPS.applyUPS patch)
+          { inMemoryApply     = \source -> pure (UPS.applyUPS patch source) }
+      , patchUndo           = Just $ UndoInMemory $ \modified ->
+          -- UPS is self-inverse (XOR-based): applying the patch to the
+          -- target recovers the source. For a well-parsed patch this
+          -- reapplication cannot fail.
+          case UPS.applyUPS patch modified of
+            Right reverted -> reverted
+            Left err       -> error ("UPS undo: " ++ show err)
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
           , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
           }
-      , patchWarnings       = [EmptyPatch LabelUPS "blocks" | null blocks]
-      , patchRecordSummary  = RecordSummary (length blocks) "blocks"
+      , patchWarnings       = [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
+      , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = defaultMeta
