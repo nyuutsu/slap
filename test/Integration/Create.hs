@@ -2,31 +2,26 @@ module Integration.Create (createTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
-   RomCache, cachedReadFile)
+   BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.SomePatch (parseSome)
 
-import qualified Data.ByteString as ByteString
-import qualified Data.Map.Strict as Map
-import Data.IORef
+import Data.ByteString (ByteString)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-createTests :: RomCache -> IO TestTree
-createTests romCache = do
+createTests :: BootstrapTargets -> IO TestTree
+createTests bootstrapTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
-  -- Cache bootstrapped targets by (base, bootstrap_patch)
-  cacheReference <- newIORef (Map.empty :: Map.Map (String, String) ByteString.ByteString)
-  tests <- mapM (makeCreateTest romCache repo cacheReference) rows
+  tests <- mapM (makeCreateTest bootstrapTargets repo) rows
   pure (testGroup "create" (concat tests))
 
-makeCreateTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) ByteString.ByteString)
-             -> [String] -> IO [TestTree]
-makeCreateTest romCache repo cacheReference fields = case fields of
+makeCreateTest :: BootstrapTargets -> FilePath -> [String] -> IO [TestTree]
+makeCreateTest bootstrapTargets repo fields = case fields of
   (formatString : scenario : basePath : bootstrapPath : targetSha : _) -> do
     case parseCreateFormat formatString of
       Nothing -> pure []
@@ -38,35 +33,14 @@ makeCreateTest romCache repo cacheReference fields = case fields of
         if not (baseExists && bootExists)
           then pure []
           else pure [testCase (formatString ++ "/" ++ scenario) $ do
-            baseBytes   <- cachedReadFile romCache base
-            targetBytes <- getOrBootstrap cacheReference (basePath, bootstrapPath) baseBytes boot
+            baseBytes <- mmapRomFile base
+            let targetBytes = lookupBootstrapTarget bootstrapTargets base boot
             roundTrip format baseBytes targetBytes targetSha
           ]
   _ -> pure []
 
--- | Bootstrap: apply patch to base, cache result.
--- Uses atomicModifyIORef' to avoid redundant bootstrapping under parallelism.
-getOrBootstrap :: IORef (Map.Map (String, String) ByteString.ByteString)
-               -> (String, String) -> ByteString.ByteString -> FilePath
-               -> IO ByteString.ByteString
-getOrBootstrap cacheReference key baseBytes bootPath = do
-  cache <- readIORef cacheReference
-  case Map.lookup key cache of
-    Just targetBytes -> pure targetBytes
-    Nothing -> do
-      bootBytes <- ByteString.readFile bootPath
-      case parseSome bootBytes of
-        Left slapError -> error ("bootstrap parse failed: " ++ renderSlapError slapError)
-        Right parsed -> do
-          result <- applyPatch parsed baseBytes
-          case result of
-            Left slapError -> error ("bootstrap apply failed: " ++ renderSlapError slapError)
-            Right targetBytes -> do
-              atomicModifyIORef' cacheReference (\existing -> (Map.insert key targetBytes existing, ()))
-              pure targetBytes
-
 -- | Create a patch, parse it back, apply to base, verify SHA1.
-roundTrip :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString -> String -> IO ()
+roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
   case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)

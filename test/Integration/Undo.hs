@@ -1,8 +1,7 @@
 module Integration.Undo (undoTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch,
-   RomCache, cachedReadFile)
+  (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch, mmapRomFile)
 import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 
@@ -12,15 +11,15 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-undoTests :: RomCache -> IO TestTree
-undoTests romCache = do
+undoTests :: IO TestTree
+undoTests = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "undo.txt")
-  tests <- mapM (makeUndoTest romCache repo) (zip [1::Int ..] rows)
+  tests <- mapM (makeUndoTest repo) (zip [1::Int ..] rows)
   pure (testGroup "undo" (concat tests))
 
-makeUndoTest :: RomCache -> FilePath -> (Int, [String]) -> IO [TestTree]
-makeUndoTest romCache repo (_, fields) = case fields of
+makeUndoTest :: FilePath -> (Int, [String]) -> IO [TestTree]
+makeUndoTest repo (_, fields) = case fields of
   (method : basePath : patchPath : baseSha : _) -> do
     let base  = repo </> basePath
         patch = repo </> patchPath
@@ -29,7 +28,7 @@ makeUndoTest romCache repo (_, fields) = case fields of
     if not (baseExists && patchExists)
       then pure []
       else pure [testCase label $ do
-        baseBytes  <- cachedReadFile romCache base
+        baseBytes  <- mmapRomFile base
         patchBytes <- ByteString.readFile patch
         case parseSome patchBytes of
           Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)

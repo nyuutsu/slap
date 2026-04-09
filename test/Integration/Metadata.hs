@@ -1,6 +1,6 @@
 module Integration.Metadata (metadataTests) where
 
-import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim, RomCache)
+import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
 import Slap.SomePatch (SomePatch(..), parseSome)
@@ -16,8 +16,8 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
 
-metadataTests :: RomCache -> IO TestTree
-metadataTests _romCache = do
+metadataTests :: IO TestTree
+metadataTests = do
   repo <- repoDir
   groups <- mapM (makeMetadataGroup repo) metadataCases
   pure (testGroup "metadata" (concat groups ++ [bpsMetadataGroup]))

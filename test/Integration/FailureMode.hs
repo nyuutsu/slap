@@ -2,13 +2,15 @@ module Integration.FailureMode (failureModeTests) where
 
 import Integration.Helpers
   (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
-   withTempFile, RomCache, cachedReadFile, parseCreateFormat,
+   withTempFile, BootstrapTargets, lookupBootstrapTarget, mmapRomFile,
+   parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
 import Data.Bits (xor)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
@@ -16,8 +18,8 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-failureModeTests :: RomCache -> IO TestTree
-failureModeTests romCache = do
+failureModeTests :: BootstrapTargets -> IO TestTree
+failureModeTests bootstrapTargets = do
   repo <- repoDir
   maybeSlap <- findSlapBinary
   let dm4yBase  = repo </> "test/data/dm4y/base.gbc"
@@ -42,9 +44,9 @@ failureModeTests romCache = do
       , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
       ]
   let inProcessTests = concat
-        [ if dm4yExists then crossFormatRoundTripTests romCache dm4yBase dm4yBps else []
+        [ if dm4yExists then crossFormatRoundTripTests dm4yBase dm4yBps else []
         , if dm4yExists && stadium2Exists
-          then createRoundTripTests romCache
+          then createRoundTripTests bootstrapTargets
                  dm4yBase dm4yBps
                  stadium2Base (repo </> "test/data/stadium2/heavy-diff/patch.bps")
           else []
@@ -217,7 +219,7 @@ corruptPatchCRCTests bps ups =
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
   ]
   where
-    flipByte :: Int -> ByteString.ByteString -> ByteString.ByteString
+    flipByte :: Int -> ByteString -> ByteString
     flipByte position inputBytes =
       let (before, remaining) = ByteString.splitAt position inputBytes
           (byte, after) = case ByteString.uncons remaining of
@@ -282,10 +284,10 @@ wrongSizeSourceTests slap _base bps =
 
 -- | Convert IPS -> EBP -> IPS, IPS -> PPF3 -> IPS, and BPS -> UPS -> BPS.
 -- Apply round-tripped patch, verify same output as original.
-crossFormatRoundTripTests :: RomCache -> FilePath -> FilePath -> [TestTree]
-crossFormatRoundTripTests romCache base bps =
+crossFormatRoundTripTests :: FilePath -> FilePath -> [TestTree]
+crossFormatRoundTripTests base bps =
   [ testCase "round-trip/IPS -> EBP -> IPS" $ do
-      baseBytes <- cachedReadFile romCache base
+      baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
@@ -296,7 +298,7 @@ crossFormatRoundTripTests romCache base bps =
             Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
-      baseBytes <- cachedReadFile romCache base
+      baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
@@ -307,7 +309,7 @@ crossFormatRoundTripTests romCache base bps =
             Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
-      baseBytes <- cachedReadFile romCache base
+      baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
@@ -318,7 +320,7 @@ crossFormatRoundTripTests romCache base bps =
             Right targetBytes -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
-    roundTripVia :: ByteString.ByteString -> ByteString.ByteString -> String -> String -> String -> IO ()
+    roundTripVia :: ByteString -> ByteString -> String -> String -> String -> IO ()
     roundTripVia baseBytes targetBytes formatA formatB formatC = do
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
@@ -374,44 +376,38 @@ crossFormatRoundTripTests romCache base bps =
 -- | Create a patch from real ROM pairs, parse it back, apply, and verify
 -- the output matches the original target. Exercises create+parse+apply at
 -- realistic scale — something the QuickCheck property tests can't cover.
-createRoundTripTests :: RomCache -> FilePath -> FilePath
+createRoundTripTests :: BootstrapTargets -> FilePath -> FilePath
                      -> FilePath -> FilePath -> [TestTree]
-createRoundTripTests romCache dm4yBase dm4yBps
+createRoundTripTests bootstrapTargets dm4yBase dm4yBps
                      stadium2Base stadium2Bps =
   [ testCase "create-round-trip/dm4y BPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
       createAndVerify "bps" baseBytes targetBytes
 
   , testCase "create-round-trip/dm4y IPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
       createAndVerify "ips" baseBytes targetBytes
 
   , testCase "create-round-trip/dm4y UPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget romCache dm4yBase dm4yBps
+      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
       createAndVerify "ups" baseBytes targetBytes
 
   , testCase "create-round-trip/stadium2 BPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
+      (baseBytes, targetBytes) <- bootstrapTarget stadium2Base stadium2Bps
       createAndVerify "bps" baseBytes targetBytes
 
   , testCase "create-round-trip/stadium2 IPS32" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget romCache stadium2Base stadium2Bps
+      (baseBytes, targetBytes) <- bootstrapTarget stadium2Base stadium2Bps
       createAndVerify "ips32" baseBytes targetBytes
   ]
   where
-    bootstrapTarget :: RomCache -> FilePath -> FilePath -> IO (ByteString.ByteString, ByteString.ByteString)
-    bootstrapTarget romCacheLocal basePath bootPath = do
-      baseBytes <- cachedReadFile romCacheLocal basePath
-      bootBytes <- ByteString.readFile bootPath
-      case parseSome bootBytes of
-        Left slapError -> error ("bootstrap parse failed: " ++ renderSlapError slapError)
-        Right parsed -> do
-          result <- applyPatch parsed baseBytes
-          case result of
-            Left slapError -> error ("bootstrap apply failed: " ++ renderSlapError slapError)
-            Right targetBytes -> pure (baseBytes, targetBytes)
+    bootstrapTarget :: FilePath -> FilePath -> IO (ByteString, ByteString)
+    bootstrapTarget basePath patchPath = do
+      baseBytes <- mmapRomFile basePath
+      let targetBytes = lookupBootstrapTarget bootstrapTargets basePath patchPath
+      pure (baseBytes, targetBytes)
 
-    createAndVerify :: String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+    createAndVerify :: String -> ByteString -> ByteString -> IO ()
     createAndVerify formatString baseBytes targetBytes = do
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format

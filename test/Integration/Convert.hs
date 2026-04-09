@@ -2,7 +2,7 @@ module Integration.Convert (convertTests) where
 
 import Integration.Helpers
   (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
-   applyPatch, attemptConvert, matchPattern, trim, RomCache, cachedReadFile)
+   applyPatch, attemptConvert, matchPattern, trim, mmapRomFile)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
@@ -15,15 +15,15 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-convertTests :: RomCache -> IO TestTree
-convertTests romCache = do
+convertTests :: IO TestTree
+convertTests = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  tests <- mapM (makeConvertTest romCache repo) rows
+  tests <- mapM (makeConvertTest repo) rows
   pure (testGroup "convert" (concat tests))
 
-makeConvertTest :: RomCache -> FilePath -> [String] -> IO [TestTree]
-makeConvertTest romCache repo fields = case fields of
+makeConvertTest :: FilePath -> [String] -> IO [TestTree]
+makeConvertTest repo fields = case fields of
   (sourceFormat : targetFormat : patchRel : baseRel : targetSha : result : rest)
     | "skip:" `isPrefixOf` result -> pure []
     | otherwise -> do
@@ -37,13 +37,13 @@ makeConvertTest romCache repo fields = case fields of
             Just targetCreateFormat -> do
               let label = sourceFormat ++ " -> " ++ targetFormat ++ " (" ++ patchRel ++ ")"
               pure [testCase label $
-                runConvertTest romCache repo patchPath baseRel targetSha result
+                runConvertTest repo patchPath baseRel targetSha result
                   warningsString flagsString targetCreateFormat]
   _ -> pure []
 
-runConvertTest :: RomCache -> FilePath -> FilePath -> String -> String -> String
+runConvertTest :: FilePath -> FilePath -> String -> String -> String
                -> String -> String -> CreateFormat -> IO ()
-runConvertTest romCache repo patchPath baseRel targetSha result warningsString flagsString targetCreateFormat = do
+runConvertTest repo patchPath baseRel targetSha result warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
   case parseSome patchBytes of
     Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
@@ -64,7 +64,7 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsString f
                  let basePath = repo </> baseRel
                  exists <- doesFileExist basePath
                  if exists
-                   then Just <$> cachedReadFile romCache basePath
+                   then Just <$> mmapRomFile basePath
                    else pure Nothing
                else pure Nothing
 
@@ -88,7 +88,7 @@ runConvertTest romCache repo patchPath baseRel targetSha result warningsString f
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
-                  baseBytes <- maybe (cachedReadFile romCache basePath) pure maybeBase
+                  baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
                   case parseSome convertedBytes of
                     Left slapError -> assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do

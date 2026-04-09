@@ -1,15 +1,13 @@
 module Integration.CrossVal (crossValTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
-   withTempFile, withTempDir, RomCache, cachedReadFile)
+  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
+   withTempFile, withTempDir, BootstrapTargets, lookupBootstrapTarget,
+   mmapRomFile)
 import Slap.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.Map.Strict as Map
-import Data.IORef
 import System.Directory (doesFileExist, listDirectory, copyFile, makeAbsolute)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
@@ -18,17 +16,15 @@ import System.Process (readProcessWithExitCode, proc, cwd, readCreateProcessWith
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-crossValTests :: RomCache -> IO TestTree
-crossValTests romCache = do
+crossValTests :: BootstrapTargets -> IO TestTree
+crossValTests bootstrapTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
-  cacheReference <- newIORef (Map.empty :: Map.Map (String, String) ByteString.ByteString)
-  tests <- mapM (mkCrossValTest romCache repo cacheReference) rows
+  tests <- mapM (mkCrossValTest bootstrapTargets repo) rows
   pure (testGroup "crossval" (concat tests))
 
-mkCrossValTest :: RomCache -> FilePath -> IORef (Map.Map (String, String) ByteString.ByteString)
-               -> [String] -> IO [TestTree]
-mkCrossValTest romCache repo cacheReference fields = case fields of
+mkCrossValTest :: BootstrapTargets -> FilePath -> [String] -> IO [TestTree]
+mkCrossValTest bootstrapTargets repo fields = case fields of
   (formatString : scenario : baseRelative : bootRelative : targetSha : toolName : _) -> do
     case parseCreateFormat formatString of
       Nothing -> pure []
@@ -44,8 +40,8 @@ mkCrossValTest romCache repo cacheReference fields = case fields of
             case toolPath of
               Nothing -> pure []
               Just tool -> pure [testCase (formatString ++ "/" ++ scenario) $ do
-                baseBytes   <- cachedReadFile romCache basePath
-                targetBytes <- getOrBootstrap cacheReference repo (baseRelative, bootRelative) baseBytes bootPath
+                baseBytes <- mmapRomFile basePath
+                let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
                 -- Create patch with slap
                 case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
                   Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
@@ -61,25 +57,6 @@ mkCrossValTest romCache repo cacheReference fields = case fields of
                       assertEqual "SHA1 mismatch" targetSha (sha1Hex resultBytes)
                 ]
   _ -> pure []
-
-getOrBootstrap :: IORef (Map.Map (String, String) ByteString.ByteString)
-               -> FilePath -> (String, String) -> ByteString.ByteString -> FilePath
-               -> IO ByteString.ByteString
-getOrBootstrap cacheReference _repo key baseBytes bootPath = do
-  cache <- readIORef cacheReference
-  case Map.lookup key cache of
-    Just targetBytes -> pure targetBytes
-    Nothing -> do
-      bootBytes <- ByteString.readFile bootPath
-      case parseSome bootBytes of
-        Left slapError -> error ("bootstrap parse failed: " ++ renderSlapError slapError)
-        Right parsed -> do
-          result <- applyPatch parsed baseBytes
-          case result of
-            Left slapError -> error ("bootstrap apply failed: " ++ renderSlapError slapError)
-            Right targetBytes -> do
-              atomicModifyIORef' cacheReference (\existing -> (Map.insert key targetBytes existing, ()))
-              pure targetBytes
 
 findTool :: String -> IO (Maybe FilePath)
 findTool name = do

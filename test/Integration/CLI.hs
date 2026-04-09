@@ -1,7 +1,7 @@
 module Integration.CLI (cliTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir, RomCache,
+  (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Slap.Error (renderSlapError, renderSlapWarning)
 import Slap.Explain (renderSummary)
@@ -19,8 +19,8 @@ import System.Process (readProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-cliTests :: RomCache -> IO TestTree
-cliTests _romCache = do
+cliTests :: IO TestTree
+cliTests = do
   repo <- repoDir
   maybeSlap <- findSlapBinary
   let inProcess = concat

@@ -9,11 +9,11 @@ import Integration.Metadata (metadataTests)
 import Integration.Undo (undoTests)
 import Integration.CLI (cliTests)
 import Integration.FailureMode (failureModeTests)
+import Integration.Helpers
+  (repoDir, collectBootstrapPairs, buildBootstrapTargets)
 
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, forkIO)
-import Data.IORef (newIORef)
-import qualified Data.Map.Strict as Map
-import qualified Data.ByteString as ByteString
+import System.IO.Temp (withSystemTempDirectory)
 
 parSequence :: [IO a] -> IO [a]
 parSequence actions = do
@@ -25,9 +25,18 @@ parSequence actions = do
 
 main :: IO ()
 main = do
-  romCache <- newIORef (Map.empty :: Map.Map FilePath ByteString.ByteString)
-  trees <- parSequence
-    [applyTests romCache, createTests romCache, crossValTests romCache,
-     convertTests romCache, metadataTests romCache, undoTests romCache,
-     cliTests romCache, failureModeTests romCache]
-  defaultMain (testGroup "integration" trees)
+  repo  <- repoDir
+  pairs <- collectBootstrapPairs repo
+  withSystemTempDirectory "slap-integration-bootstrap" $ \tempDir -> do
+    bootstrapTargets <- buildBootstrapTargets tempDir pairs
+    trees <- parSequence
+      [ applyTests
+      , createTests bootstrapTargets
+      , crossValTests bootstrapTargets
+      , convertTests
+      , metadataTests
+      , undoTests
+      , cliTests
+      , failureModeTests bootstrapTargets
+      ]
+    defaultMain (testGroup "integration" trees)

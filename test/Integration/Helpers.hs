@@ -1,7 +1,12 @@
 module Integration.Helpers
-  ( -- * Caching
-    RomCache
-  , cachedReadFile
+  ( -- * ROM access (mmap-backed, kernel page cache only)
+    mmapRomFile
+    -- * Shared bootstrap targets
+  , BootstrapPair(..)
+  , BootstrapTargets
+  , collectBootstrapPairs
+  , buildBootstrapTargets
+  , lookupBootstrapTarget
     -- * Hashing
   , sha1Hex
     -- * Spec/suite parsing
@@ -42,45 +47,137 @@ import Slap.Checksum (SHA1Hash(..))
 import Slap.Error (SlapError, CreateResult(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
-import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, IOException)
+import Control.Monad (filterM)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
-import Data.IORef (IORef, readIORef, atomicModifyIORef')
 import Data.List (isInfixOf, isPrefixOf)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import System.Directory (removeFile)
+import Data.Maybe (mapMaybe)
+import qualified Data.Set as Set
+import System.Directory (doesFileExist, removeFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
+import System.IO.MMap (mmapFileByteString)
 import Test.Tasty.HUnit (assertBool, assertFailure)
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
 
 ----------------------------------------------------------------------------
--- Caching
+-- ROM access
 ----------------------------------------------------------------------------
 
-type RomCache = IORef (Map.Map FilePath ByteString.ByteString)
+-- | Map a ROM file into memory and return a strict ByteString view onto the
+-- mmap'd region. Bytes live in the kernel page cache, not the GHC heap, so
+-- two calls on the same file are essentially free and large ROMs cost
+-- (almost) nothing in residency. The returned ByteString is read-only.
+mmapRomFile :: FilePath -> IO ByteString
+mmapRomFile filePath = mmapFileByteString filePath Nothing
 
-cachedReadFile :: RomCache -> FilePath -> IO ByteString.ByteString
-cachedReadFile reference filePath = do
-  cache <- readIORef reference
-  case Map.lookup filePath cache of
-    Just fileBytes -> pure fileBytes
-    Nothing -> do
-      fileBytes <- ByteString.readFile filePath
-      atomicModifyIORef' reference (\existing -> (Map.insert filePath fileBytes existing, ()))
-      pure fileBytes
+----------------------------------------------------------------------------
+-- Bootstrap targets
+----------------------------------------------------------------------------
+
+-- | A pair of paths identifying a bootstrap operation: the base ROM that
+-- downstream tests start from, and the patch that bootstraps it into the
+-- target ROM they actually want to operate on. Stored as absolute paths so
+-- two callers naming the same files always produce the same key.
+data BootstrapPair = BootstrapPair
+  { bootstrapBase  :: !FilePath
+  , bootstrapPatch :: !FilePath
+  } deriving (Eq, Ord, Show)
+
+-- | Lookup table from 'BootstrapPair' to mmap'd target bytes. Built once at
+-- the top of the test run and shared across every test tree that needs to
+-- compare against a bootstrapped target. Values cost (almost) no GHC heap
+-- because they are mmap'd views into temp files.
+newtype BootstrapTargets = BootstrapTargets
+  { bootstrapTargetsByPair :: Map BootstrapPair ByteString }
+
+-- | Walk the create and crossval spec files (plus the failure-mode tests'
+-- hardcoded pairs) and produce the deduplicated list of bootstrap pairs the
+-- test run will need targets for. Pairs whose base or patch files are
+-- missing on disk are silently dropped — the corresponding tests already
+-- self-skip in that situation.
+collectBootstrapPairs :: FilePath -> IO [BootstrapPair]
+collectBootstrapPairs repo = do
+  createRows   <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
+  crossvalRows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
+  let fromSpecRow row = case row of
+        (_format : _scenario : baseRel : patchRel : _) ->
+          Just (BootstrapPair (repo </> baseRel) (repo </> patchRel))
+        _ -> Nothing
+      specPairs = mapMaybe fromSpecRow (createRows ++ crossvalRows)
+      failureModePairs =
+        [ BootstrapPair
+            (repo </> "test/data/dm4y/base.gbc")
+            (repo </> "test/data/dm4y/patch.bps")
+        , BootstrapPair
+            (repo </> "test/data/stadium2/base.z64")
+            (repo </> "test/data/stadium2/heavy-diff/patch.bps")
+        ]
+      allPairs = Set.toList (Set.fromList (specPairs ++ failureModePairs))
+  filterM bothFilesExist allPairs
+  where
+    bothFilesExist pair = do
+      baseExists  <- doesFileExist (bootstrapBase pair)
+      patchExists <- doesFileExist (bootstrapPatch pair)
+      pure (baseExists && patchExists)
+
+-- | For each bootstrap pair: mmap the base, parse and apply the bootstrap
+-- patch, write the resulting target bytes to a file inside @tempDir@, and
+-- mmap that file back so the value stored in the map costs (almost) no GHC
+-- heap. The transient peak during a single bootstrap is one target's worth
+-- of bytes; once we re-mmap from disk, that allocation is unreferenced and
+-- gets collected.
+buildBootstrapTargets :: FilePath -> [BootstrapPair] -> IO BootstrapTargets
+buildBootstrapTargets tempDir pairs = do
+  entries <- mapM bootstrap (zip [0 :: Int ..] pairs)
+  pure (BootstrapTargets (Map.fromList entries))
+  where
+    bootstrap (index, pair) = do
+      baseBytes  <- mmapRomFile (bootstrapBase pair)
+      patchBytes <- ByteString.readFile (bootstrapPatch pair)
+      case parseSome patchBytes of
+        Left slapError ->
+          error ("bootstrap parse failed for " ++ bootstrapPatch pair
+                 ++ ": " ++ renderSlapError slapError)
+        Right parsed -> do
+          result <- applyPatch parsed baseBytes
+          case result of
+            Left slapError ->
+              error ("bootstrap apply failed for " ++ bootstrapPatch pair
+                     ++ ": " ++ renderSlapError slapError)
+            Right targetBytes -> do
+              let targetFile = tempDir </> ("target-" ++ show index ++ ".bin")
+              ByteString.writeFile targetFile targetBytes
+              mmappedTarget <- mmapRomFile targetFile
+              pure (pair, mmappedTarget)
+
+-- | Look up a previously bootstrapped target by base ROM and bootstrap patch
+-- path. Missing keys are programmer errors (the test should not have been
+-- registered without a corresponding entry in the shared map), so this
+-- throws via 'error' rather than returning a 'Maybe'.
+lookupBootstrapTarget :: BootstrapTargets -> FilePath -> FilePath -> ByteString
+lookupBootstrapTarget targets basePath patchPath =
+  case Map.lookup (BootstrapPair basePath patchPath) (bootstrapTargetsByPair targets) of
+    Just targetBytes -> targetBytes
+    Nothing -> error ("missing bootstrap target for base=" ++ show basePath
+                      ++ " patch=" ++ show patchPath)
 
 ----------------------------------------------------------------------------
 -- Hashing
 ----------------------------------------------------------------------------
 
-sha1Hex :: ByteString.ByteString -> String
+sha1Hex :: ByteString -> String
 sha1Hex inputBytes =
   let digest = sha1 inputBytes
   in concatMap (\byte -> padHex 2 (fromIntegral byte :: Int64)) (ByteString.unpack (unSHA1Hash digest))
@@ -182,11 +279,11 @@ parseCreateFormat formatString = case map toLower formatString of
 ----------------------------------------------------------------------------
 
 -- | Apply a parsed patch to source bytes.
-applyPatch :: SomePatch -> ByteString.ByteString -> IO (Either SlapError ByteString.ByteString)
+applyPatch :: SomePatch -> ByteString -> IO (Either SlapError ByteString)
 applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
-undoPatch :: SomePatch -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
+undoPatch :: SomePatch -> ByteString -> IO (Either String ByteString)
 undoPatch somePatch patched = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
   Just (UndoInMemory undoFunction) -> pure (Right (undoFunction patched))
@@ -202,8 +299,8 @@ removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pu
 attemptConvert
   :: SomePatch
   -> CreateFormat
-  -> Maybe ByteString.ByteString  -- ^ base ROM (--with)
-  -> CreateMeta           -- ^ metadata
+  -> Maybe ByteString    -- ^ base ROM (--with)
+  -> CreateMeta          -- ^ metadata
   -> IO (Either String CreateResult)
 attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
