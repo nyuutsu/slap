@@ -737,20 +737,20 @@ checkAdler noVerify windowOffset expected actual
   | expected == actual = pure ()
   | noVerify = warn message
   | otherwise = die (message ++ "\n  use --no-verify to apply anyway")
-  where message = "Adler32 mismatch at window 0x" ++ padHex 8 (fromIntegral (unOffset windowOffset))
+  where message = "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
             ++ " (expected 0x" ++ showAdler32 expected
             ++ ", got 0x" ++ showAdler32 actual ++ ")"
 
 warnBlock :: String -> Offset -> CRC16 -> CRC16 -> IO ()
 warnBlock label blockOffset expected actual
   | expected == actual = pure ()
-  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset blockOffset)))
+  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
 
 warnPPFBlock :: Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 warnPPFBlock blockOffset expectedData sourceBytes =
   let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
   in when (actual /= expectedData) $
-       warn ("validation block mismatch at 0x" ++ padHex 8 (fromIntegral (unOffset blockOffset)))
+       warn ("validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
 
 warnFileSize :: FileSize -> FileSize -> IO ()
 warnFileSize (FileSize expectedSize) (FileSize actualSize) =

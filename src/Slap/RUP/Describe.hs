@@ -50,7 +50,7 @@ rupMeta patch = concat
 
     md5Field _ Nothing = []
     md5Field label (Just hash) =
-      [MetaField label (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
 
     overflowField = case (rupOverflowType patch, rupOverflow patch) of
       (Just OverflowAppend,   Just payload) -> [MetaField "overflow" ("append " ++ show (ByteString.length payload) ++ " bytes")]

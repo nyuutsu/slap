@@ -20,7 +20,6 @@ import qualified Slap.Get as Get
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Int (Int64)
 import Data.Word (Word32, Word64)
 import Control.Monad (when)
 import Numeric (showHex)

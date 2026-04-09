@@ -35,7 +35,7 @@ data DPSStability = DPSStable | DPSUnstable
 toDPSStability :: Word8 -> Either String DPSStability
 toDPSStability 0 = Right DPSStable
 toDPSStability 1 = Right DPSUnstable
-toDPSStability flagByte = Left ("DPS: unknown stability flag: " ++ show flagByte)
+toDPSStability flagByte = Left ("unknown stability flag: " ++ show flagByte)
 
 fromDPSStability :: DPSStability -> Word8
 fromDPSStability DPSStable   = 0

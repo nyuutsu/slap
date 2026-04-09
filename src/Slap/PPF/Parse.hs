@@ -237,7 +237,7 @@ parseRecords4 label recordIndex = do
       0 -> pure Replace
       1 -> pure Append
       _ -> fail ("record " ++ show recordIndex
-                ++ " has unknown command byte: 0x" ++ padHex 2 (fromIntegral commandByte))
+                ++ " has unknown command byte: 0x" ++ padHex 2 commandByte)
     recordOffset <- Offset . fromIntegral <$> word32LE
     count <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining

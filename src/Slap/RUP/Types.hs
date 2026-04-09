@@ -69,7 +69,7 @@ data OverflowMode = OverflowAppend | OverflowTruncate
 toOverflowMode :: Word8 -> Either String OverflowMode
 toOverflowMode 0x41 = Right OverflowAppend
 toOverflowMode 0x4D = Right OverflowTruncate
-toOverflowMode byte = Left ("RUP: unknown overflow type: 0x" ++ padHex 2 (fromIntegral byte))
+toOverflowMode byte = Left ("unknown overflow type: 0x" ++ padHex 2 byte)
 
 fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'

@@ -27,7 +27,6 @@ import Slap.Compress (gzipInflate)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), shiftR, testBit)
-import Data.Int (Int64)
 
 import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet

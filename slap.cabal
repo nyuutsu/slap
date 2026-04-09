@@ -106,7 +106,7 @@ library slap-internal
     , Slap.PPF.Types
   hs-source-dirs:   src
   default-language: GHC2024
-  ghc-options:      -Wall -O2 -g3
+  ghc-options:      -Wall -Werror -O2 -g3
   extra-libraries:  rusty_slap
   build-depends:
       base                 >= 4.18 && < 5
@@ -124,7 +124,7 @@ executable slap
   main-is:          Main.hs
   hs-source-dirs:   app
   default-language: GHC2024
-  ghc-options:      -Wall -O2 -g3
+  ghc-options:      -Wall -Werror -O2 -g3
   build-depends:
       base                 >= 4.18 && < 5
     , bytestring           >= 0.11
@@ -138,7 +138,7 @@ test-suite props
   main-is:          Props.hs
   hs-source-dirs:   test
   default-language: GHC2024
-  ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N"
+  ghc-options:      -Wall -Werror -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
       base                 >= 4.18 && < 5
     , bytestring           >= 0.11
@@ -167,7 +167,7 @@ test-suite integration
                   , Integration.CLI
                   , Integration.FailureMode
   default-language: GHC2024
-  ghc-options:      -Wall -threaded -rtsopts "-with-rtsopts=-N"
+  ghc-options:      -Wall -Werror -threaded -rtsopts "-with-rtsopts=-N"
   build-depends:
       base          >= 4.18 && < 5
     , bytestring    >= 0.11

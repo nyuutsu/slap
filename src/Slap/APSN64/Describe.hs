@@ -36,9 +36,9 @@ apsN64Meta (APSN64Patch header _) = concat
     formatField (Just Z64Format)              = [MetaField "image" "Z64 (big-endian)"]
     formatField (Just (UnknownImageFormat format)) = [MetaField "image" ("unknown (" ++ show format ++ ")")]
     cartField Nothing      = []
-    cartField (Just cartId) = [MetaField "cart ID" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack cartId))]
+    cartField (Just cartId) = [MetaField "cart ID" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack cartId))]
     countryField Nothing        = []
-    countryField (Just country) = [MetaField "country" ("0x" ++ padHex 2 (fromIntegral country))]
+    countryField (Just country) = [MetaField "country" ("0x" ++ padHex 2 country)]
 
 apsN64Info :: APSN64Patch -> String
 apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $

@@ -5,7 +5,7 @@ module Slap.NINJA1.Describe
   , makeNINJA1Region
   ) where
 
-import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1SubFormat(..),
+import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
                            romTypeName, subFormatName)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
@@ -29,10 +29,10 @@ ninja1Meta patch = concat
       Just crc -> [MetaField "source CRC" ("0x" ++ showCRC32 crc)]
   , case ninja1SourceMD5 patch of
       Nothing              -> []
-      Just (MD5Hash hash)  -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Just (MD5Hash hash)  -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
   , case ninja1SourceSHA1 patch of
       Nothing              -> []
-      Just (SHA1Hash hash) -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 (fromIntegral byte)) (ByteString.unpack hash))]
+      Just (SHA1Hash hash) -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
   ]
 
 ninja1Info :: NINJA1Patch -> String

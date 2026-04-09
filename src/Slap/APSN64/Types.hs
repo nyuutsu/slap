@@ -28,7 +28,7 @@ data APSPatchType = APSSimple | APSN64Specific
 toAPSPatchType :: Word8 -> Either String APSPatchType
 toAPSPatchType 0 = Right APSSimple
 toAPSPatchType 1 = Right APSN64Specific
-toAPSPatchType byte = Left ("APS-N64: unknown patch type: " ++ show byte)
+toAPSPatchType byte = Left ("unknown patch type: " ++ show byte)
 
 fromAPSPatchType :: APSPatchType -> Word8
 fromAPSPatchType APSSimple       = 0
