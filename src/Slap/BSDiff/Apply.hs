@@ -30,14 +30,10 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
             seekDelta = controlSeek control
         -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
         mapM_ (\index -> do
-          let originalIndex = unSignedOffset originalPosition + index
-              sourceByte = if originalIndex >= 0 && originalIndex < sourceLength
-                  then ByteString.index source originalIndex else 0
-              diffIndex = unOffset diffOffset + index
-              diffByte = if diffIndex >= 0 && diffIndex < diffLength
-                  then ByteString.index diffBytes diffIndex else 0
+          let sourceByte = safeByteAt source    (unSignedOffset originalPosition + index)
+              diffByte   = safeByteAt diffBytes (unOffset diffOffset + index)
           pokeByteOff targetPointer (unOffset outputPosition + index)
-            (sourceByte + diffByte :: Word8)) [0..unLength addLength - 1]
+            (sourceByte + diffByte :: Word8)) [0 .. unLength addLength - 1]
         -- Copy: target[outputPosition+addLength..] = extra[extraOffset..]
         let safeCopyLength = if unOffset extraOffset >= 0 && unOffset extraOffset < extraLength
                         then min copyLength (Length (extraLength - unOffset extraOffset))
@@ -53,8 +49,15 @@ applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
   where
     outputSize     = unFileSize (bsdiffTargetSize patch)
     targetFileSize = bsdiffTargetSize patch
-    sourceLength   = ByteString.length source
     diffBytes      = bsdiffDiffData patch
     extraBytes     = bsdiffExtraData patch
-    diffLength     = ByteString.length diffBytes
     extraLength    = ByteString.length extraBytes
+
+    -- | Read a byte at @index@ from @bytes@, returning 0 for out-of-bounds
+    -- reads. Used by BSDiff's Add step, where 0 is the neutral element for
+    -- the byte-wise addition of the source and diff byte streams.
+    safeByteAt :: ByteString -> Int -> Word8
+    safeByteAt bytes index
+      | index >= 0 && index < ByteString.length bytes =
+          ByteString.index bytes index
+      | otherwise = 0
