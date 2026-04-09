@@ -20,6 +20,7 @@ import Slap.TextEncoding (decodeLocaleField)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
+import qualified Data.Vector as Vector
 
 bpsMeta :: BPSPatch -> [MetaField]
 bpsMeta patch = concat
@@ -45,18 +46,22 @@ bpsInfo :: BPSPatch -> String
 bpsInfo patch = unlines $ filter (not . null) $
   [ "format:      BPS" ]
   ++ map renderField (bpsMeta patch)
-  ++ [ "actions:     " ++ show (length (bpsActions patch)) ]
+  ++ [ "actions:     " ++ show (Vector.length (bpsActions patch)) ]
 
 explainBPS :: BPSPatch -> ExplainData
 explainBPS patch = ExplainData
   { explainFormat   = "BPS"
   , explainHeader   = bpsMeta patch
-  , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (bpsActions patch)))]
+    -- 'mapAccumL' is list-shaped; 'Data.Vector' has no direct equivalent.
+    -- 'explain' runs once per @slap explain@ invocation, not per byte,
+    -- so the toList round-trip here is not in the hot path and the
+    -- straightforward expression is preferable to a manual unfold.
+  , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (Vector.toList (bpsActions patch))))]
   , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
   , explainNotes    = []
   }
   where
-    actionCount = length (bpsActions patch)
+    actionCount = Vector.length (bpsActions patch)
 
 makeBPSRegion :: (Int, Int) -> BPSAction -> ((Int, Int), ExplainRegion)
 makeBPSRegion (outputPosition, sourceRelative) action = case action of

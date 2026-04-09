@@ -488,9 +488,22 @@ expectOkWithWarning slap arguments label pattern = do
 ----------------------------------------------------------------------------
 
 -- | Write deterministic pseudo-random bytes to a file.
+--
+-- Generates the bytes directly into the destination ByteString via
+-- 'ByteString.unfoldrN' so we never materialise an intermediate
+-- @[Int]@ spine — at 4 MB that list would cost ~160 MB of throwaway
+-- cons cells per call, and ~20 failure-mode tests call it.
 writeGarbage :: FilePath -> Int -> IO ()
-writeGarbage filePath count = ByteString.writeFile filePath $ ByteString.pack $ take count $ map fromIntegral $
-  iterate (\seed -> (seed * 1103515245 + 12345) `mod` 256) (42 :: Int)
+writeGarbage filePath count = ByteString.writeFile filePath bytes
+  where
+    bytes       = fst (ByteString.unfoldrN count step initialSeed)
+    initialSeed = 42 :: Int
+    multiplier  = 1103515245
+    increment   = 12345
+    modulus     = 256
+    step seed =
+      let nextSeed = (seed * multiplier + increment) `mod` modulus
+      in Just (fromIntegral nextSeed, nextSeed)
 
 ----------------------------------------------------------------------------
 -- String helpers

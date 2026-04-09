@@ -14,6 +14,7 @@ module Slap.BPS.Types
 import Data.Bits (shiftR, testBit)
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
+import Data.Vector (Vector)
 import Slap.Checksum (CRC32)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
@@ -35,7 +36,15 @@ data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize
   , bpsTargetSize :: !FileSize
   , bpsMetadata   :: ByteString
-  , bpsActions    :: [BPSAction]
+  -- | Action stream as a boxed 'Vector'. Boxed (not unboxed/storable)
+  -- because 'BPSAction' is a sum type containing a 'ByteString'. Stored
+  -- as a 'Vector' rather than a list so the entire action stream lives
+  -- in one contiguous array of pointers — this saves ~90 MB of cons-cell
+  -- overhead on a stadium2-scale patch (~5M actions) and lets the GC
+  -- treat the action stream as a single object instead of millions of
+  -- individually-allocated cells, dramatically reducing minor-GC walk
+  -- cost during 'applyBPS'.
+  , bpsActions    :: Vector BPSAction
   , bpsSourceCRC  :: CRC32
   , bpsTargetCRC  :: CRC32
   , bpsPatchCRC   :: CRC32

@@ -19,6 +19,7 @@ import Slap.Measure (Length(..), FileSize(..), Delta(..))
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 
 parseBPS :: ByteString -> Either SlapError BPSPatch
 parseBPS input
@@ -53,7 +54,12 @@ parseBPS input
                 { bpsSourceSize = bpsBodySourceSize body
                 , bpsTargetSize = bpsBodyTargetSize body
                 , bpsMetadata   = bpsBodyMetadata body
-                , bpsActions    = bpsBodyActions body
+                -- The parser builds the action stream as a list (cheap
+                -- cons during 'parseActions'); we materialise it into
+                -- one contiguous 'Vector' here at the boundary so the
+                -- intermediate cons cells become collectable as soon as
+                -- the BPSPatch escapes this scope.
+                , bpsActions    = Vector.fromList (bpsBodyActions body)
                 , bpsSourceCRC  = sourceCRC
                 , bpsTargetCRC  = targetCRC
                 , bpsPatchCRC   = storedPatchCRC

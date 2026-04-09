@@ -85,6 +85,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 import Data.Maybe (fromMaybe, isJust)
 import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 
@@ -304,8 +305,8 @@ parseSome patchBytes = case detectFormat patchBytes of
           { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
           , verifyTargetCRC32 = Just (BPS.bpsTargetCRC patch)
           }
-      , patchWarnings       = [EmptyPatch LabelBPS "actions" | null actions]
-      , patchRecordSummary  = RecordSummary (length actions) "actions"
+      , patchWarnings       = [EmptyPatch LabelBPS "actions" | Vector.null actions]
+      , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
       , patchSourceNotes    = []
       , patchMetadata       = bpsMetaBlob
       , patchExtractedMeta  = defaultMeta { metaBPSMetadata = bpsMetaBlob }
