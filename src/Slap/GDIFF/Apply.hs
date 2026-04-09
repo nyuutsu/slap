@@ -3,7 +3,8 @@ module Slap.GDIFF.Apply
   ) where
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), commandOutputSize)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), copyRegion)
+import Slap.Binary (copyRegion)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString

@@ -29,4 +29,5 @@ createBPS original modified metadata =
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+      patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+  in bodyBytes <> patchCRCBytes

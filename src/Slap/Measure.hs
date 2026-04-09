@@ -28,6 +28,9 @@ module Slap.Measure
   , remainingFromOffset
   , firstAction
   , nextAction
+  , subtractLength
+  , negativeOvershoot
+  , plusOffset
     -- * Arithmetic
   , distance
   , fitsWithin
@@ -38,8 +41,6 @@ module Slap.Measure
   , narrowHunks
   , narrowHunkUnbounded
   , narrowHunksUnbounded
-    -- * Memory
-  , copyRegion
     -- * Encoding limits
   , ipsLimits
   , ips32Limits
@@ -51,10 +52,8 @@ module Slap.Measure
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8, Word32)
-import Foreign.Marshal.Utils (copyBytes)
-import Foreign.Ptr (Ptr, plusPtr, castPtr)
+import Foreign.Ptr (Ptr, plusPtr)
 import Numeric (showHex)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
@@ -185,6 +184,28 @@ firstAction = ActionIndex 0
 nextAction :: ActionIndex -> ActionIndex
 nextAction (ActionIndex index) = ActionIndex (index + 1)
 
+-- | Subtract two 'Length' values, clamping to zero on underflow.
+-- Used in apply workers when computing the remaining bytes after a
+-- partial copy or fill.
+subtractLength :: Length -> Length -> Length
+subtractLength (Length minuend) (Length subtrahend) =
+  Length (max 0 (minuend - subtrahend))
+
+-- | The amount by which a 'SignedOffset' has overshot into the
+-- negative range, expressed as a non-negative 'Length'. Returns
+-- zero if the cursor is non-negative. Used by apply workers when
+-- a relative-delta cursor has been driven below zero by a malformed
+-- patch and the leading out-of-range bytes need to be zero-filled.
+negativeOvershoot :: SignedOffset -> Length
+negativeOvershoot (SignedOffset position) = Length (max 0 (negate position))
+
+-- | Advance a raw byte pointer by a typed 'Offset'. Used at the
+-- FFI boundary in apply workers, where the typed cursor needs to
+-- be turned into a destination address for 'fillBytes', 'pokeByteOff',
+-- or similar primitives.
+plusOffset :: Ptr Word8 -> Offset -> Ptr Word8
+plusOffset pointer (Offset position) = pointer `plusPtr` position
+
 ----------------------------------------------------------------------------
 -- Arithmetic
 ----------------------------------------------------------------------------
@@ -237,18 +258,6 @@ narrowHunkUnbounded hunk = EncodedHunk
 
 narrowHunksUnbounded :: [Hunk] -> [EncodedHunk]
 narrowHunksUnbounded = map narrowHunkUnbounded
-
-----------------------------------------------------------------------------
--- Memory
-----------------------------------------------------------------------------
-
-copyRegion :: Ptr Word8 -> Offset -> ByteString -> Offset -> Length -> IO ()
-copyRegion _           _                 _      _              regionLength | unLength regionLength <= 0 = pure ()
-copyRegion destination destinationOffset source sourcePosition regionLength =
-  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-    copyBytes (destination `plusPtr` unOffset destinationOffset)
-              (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
-              (unLength regionLength)
 
 ----------------------------------------------------------------------------
 -- Encoding limits

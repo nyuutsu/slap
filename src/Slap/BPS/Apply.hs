@@ -3,10 +3,12 @@ module Slap.BPS.Apply
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
+import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
                      Cursor(..), clampToOffset, remainingFromOffset,
-                     firstAction, nextAction, copyRegion)
+                     firstAction, nextAction,
+                     subtractLength, negativeOvershoot, plusOffset)
 
 import Control.Monad (when, forM_)
 import Data.ByteString (ByteString)
@@ -15,10 +17,11 @@ import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
--- Caller validates checksums.
+-- | Apply a parsed BPS patch to a source ByteString. The caller is
+-- responsible for validating checksums; this function trusts the
+-- 'BPSPatch' record's CRC fields and does not re-verify them.
 applyBPS :: BPSPatch -> ByteString -> ByteString
 applyBPS patch source = unsafeCreate (unFileSize targetSize) $ \outputPointer ->
     let
@@ -41,9 +44,9 @@ applyBPS patch source = unsafeCreate (unFileSize targetSize) $ \outputPointer ->
                   sourceBoundsLength = min clampedLength (remainingFromOffset outputPosition sourceSize)
               copyRegion outputPointer outputPosition source outputPosition sourceBoundsLength
               when (sourceBoundsLength < clampedLength) $
-                fillBytes (outputPointer `plusPtr` (unOffset outputPosition + unLength sourceBoundsLength))
+                fillBytes (plusOffset outputPointer (advance outputPosition sourceBoundsLength))
                           0
-                          (unLength clampedLength - unLength sourceBoundsLength)
+                          (unLength (clampedLength `subtractLength` sourceBoundsLength))
               applyActionStream
                 (nextAction actionIndex)
                 (advance outputPosition clampedLength)
@@ -63,16 +66,16 @@ applyBPS patch source = unsafeCreate (unFileSize targetSize) $ \outputPointer ->
             SourceCopy actionLength actionDelta -> do
               let nextSourceRelative = displace sourceRelative actionDelta
                   clampedLength = min actionLength (remainingFromOffset outputPosition targetSize)
-                  leadingClipLength = Length (max 0 (negate (unSignedOffset nextSourceRelative)))
+                  leadingClipLength = negativeOvershoot nextSourceRelative
                   safeSourceStart = clampToOffset nextSourceRelative
                   availableFromSource = remainingFromOffset safeSourceStart sourceSize
-                  adjustedLength = Length (max 0 (unLength clampedLength - unLength leadingClipLength))
+                  adjustedLength = clampedLength `subtractLength` leadingClipLength
                   safeSourceLength = min adjustedLength availableFromSource
               -- Zero-fill any leading out-of-bounds bytes
               when (unLength leadingClipLength > 0) $
-                fillBytes (outputPointer `plusPtr` unOffset outputPosition)
+                fillBytes (plusOffset outputPointer outputPosition)
                           0
-                          (min (unLength leadingClipLength) (unLength clampedLength))
+                          (unLength (min leadingClipLength clampedLength))
               -- Bulk copy the in-bounds portion
               copyRegion outputPointer
                 (advance outputPosition leadingClipLength)
@@ -80,9 +83,9 @@ applyBPS patch source = unsafeCreate (unFileSize targetSize) $ \outputPointer ->
               -- Zero-fill any trailing out-of-bounds bytes
               let copiedLength = leadingClipLength <> safeSourceLength
               when (copiedLength < clampedLength) $
-                fillBytes (outputPointer `plusPtr` (unOffset outputPosition + unLength copiedLength))
+                fillBytes (plusOffset outputPointer (advance outputPosition copiedLength))
                           0
-                          (unLength clampedLength - unLength copiedLength)
+                          (unLength (clampedLength `subtractLength` copiedLength))
               applyActionStream
                 (nextAction actionIndex)
                 (advance outputPosition clampedLength)

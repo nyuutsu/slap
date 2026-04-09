@@ -1,5 +1,3 @@
-{-# LANGUAGE StrictData #-}
-
 module Slap.BPS.Types
   ( BPSAction(..)
   , BPSBody(..)
@@ -7,6 +5,7 @@ module Slap.BPS.Types
   , decodeSignedVarint
     -- * Named constants
   , bpsMagicSize
+  , bpsCRC32Size
   , bpsFooterSize
   , bpsTotalOverhead
   ) where
@@ -35,7 +34,7 @@ data BPSBody = BPSBody
 data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize
   , bpsTargetSize :: !FileSize
-  , bpsMetadata   :: ByteString
+  , bpsMetadata   :: !ByteString
   -- | Action stream as a boxed 'Vector'. Boxed (not unboxed/storable)
   -- because 'BPSAction' is a sum type containing a 'ByteString'. Stored
   -- as a 'Vector' rather than a list so the entire action stream lives
@@ -44,25 +43,29 @@ data BPSPatch = BPSPatch
   -- treat the action stream as a single object instead of millions of
   -- individually-allocated cells, dramatically reducing minor-GC walk
   -- cost during 'applyBPS'.
-  , bpsActions    :: Vector BPSAction
-  , bpsSourceCRC  :: CRC32
-  , bpsTargetCRC  :: CRC32
-  , bpsPatchCRC   :: CRC32
+  , bpsActions    :: !(Vector BPSAction)
+  , bpsSourceCRC  :: !CRC32
+  , bpsTargetCRC  :: !CRC32
+  , bpsPatchCRC   :: !CRC32
   } deriving (Show)
 
 -- | Magic ("BPS1") size in bytes.
 bpsMagicSize :: Int
 bpsMagicSize = 4
 
--- | Footer size: three CRC32s (source, target, patch) = 12 bytes.
+-- | Size of one CRC32 field in bytes.
+bpsCRC32Size :: Int
+bpsCRC32Size = 4
+
+-- | Footer size: three CRC32s (source, target, patch).
 bpsFooterSize :: Int
-bpsFooterSize = 12
+bpsFooterSize = 3 * bpsCRC32Size
 
 -- | Total framing overhead: magic + footer.
 bpsTotalOverhead :: Int
 bpsTotalOverhead = bpsMagicSize + bpsFooterSize
 
--- Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
+-- | Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64
 decodeSignedVarint encoded =
   let magnitude = shiftR encoded 1

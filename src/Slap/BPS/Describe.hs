@@ -2,6 +2,8 @@ module Slap.BPS.Describe
   ( bpsInfo
   , bpsMeta
   , explainBPS
+  , BPSRegionState(..)
+  , initialBPSRegionState
   , makeBPSRegion
   ) where
 
@@ -14,7 +16,8 @@ import Slap.Explain
     )
 import Slap.Checksum (showCRC32)
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     SignedOffset(..), Cursor(..))
 
 import Slap.TextEncoding (decodeLocaleField)
 
@@ -36,8 +39,8 @@ bpsMeta patch = concat
     metadataDisplay
       | ByteString.null metadata = "(none)"
       | otherwise        = show (ByteString.length metadata) ++ " bytes: "
-                        ++ map sanitize (decodeLocaleField (ByteString.take 200 metadata))
-                        ++ if ByteString.length metadata > 200 then "..." else ""
+                        ++ map sanitize (decodeLocaleField (ByteString.take metadataPreviewBytes metadata))
+                        ++ if ByteString.length metadata > metadataPreviewBytes then "..." else ""
     sanitize character
       | character >= ' ' && character <= '~' = character
       | otherwise                            = '.'
@@ -56,37 +59,57 @@ explainBPS patch = ExplainData
     -- 'explain' runs once per @slap explain@ invocation, not per byte,
     -- so the toList round-trip here is not in the hot path and the
     -- straightforward expression is preferable to a manual unfold.
-  , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion (0, 0) (Vector.toList (bpsActions patch))))]
+  , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion initialBPSRegionState (Vector.toList (bpsActions patch))))]
   , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
   , explainNotes    = []
   }
   where
     actionCount = Vector.length (bpsActions patch)
 
-makeBPSRegion :: (Int, Int) -> BPSAction -> ((Int, Int), ExplainRegion)
-makeBPSRegion (outputPosition, sourceRelative) action = case action of
+-- | Maximum number of metadata bytes shown in 'bpsInfo' output before
+-- truncation. Larger metadata blobs are truncated with an ellipsis.
+metadataPreviewBytes :: Int
+metadataPreviewBytes = 200
+
+-- | The accumulator state threaded through 'makeBPSRegion' as the
+-- BPS action stream is walked for explain output. 'regionSourceRelative'
+-- is a 'SignedOffset' for the same reason 'BPS.Apply' uses one: a
+-- 'SourceCopy' delta can drive the cursor briefly negative.
+data BPSRegionState = BPSRegionState
+  { regionOutputPosition :: !Offset
+  , regionSourceRelative :: !SignedOffset
+  } deriving (Show)
+
+-- | Initial state for walking the BPS action stream in 'makeBPSRegion'.
+initialBPSRegionState :: BPSRegionState
+initialBPSRegionState = BPSRegionState (Offset 0) (SignedOffset 0)
+
+makeBPSRegion :: BPSRegionState -> BPSAction -> (BPSRegionState, ExplainRegion)
+makeBPSRegion state action = case action of
   SourceRead actionLength ->
-    let dataLength = unLength actionLength
-    in ( (outputPosition + dataLength, sourceRelative)
-       , ExplainRegion (Offset outputPosition) actionLength "SourceRead " (PayloadCopy FromSource)
-           (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset outputPosition)])
-       )
+    ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
+    , ExplainRegion (regionOutputPosition state) actionLength "SourceRead " (PayloadCopy FromSource)
+        (AnnotAt AtOutput (regionOutputPosition state) [DetailSource (regionOutputPosition state)])
+    )
   TargetRead payload ->
-    let dataLength = ByteString.length payload
-    in ( (outputPosition + dataLength, sourceRelative)
-       , ExplainRegion (Offset outputPosition) (Length dataLength) "TargetRead " (PayloadWrite payload)
-           (AnnotAt AtOutput (Offset outputPosition) [])
+    let payloadLength = Length (ByteString.length payload)
+    in ( state { regionOutputPosition = advance (regionOutputPosition state) payloadLength }
+       , ExplainRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
+           (AnnotAt AtOutput (regionOutputPosition state) [])
        )
   SourceCopy actionLength actionDelta ->
-    let dataLength = unLength actionLength
-        nextSourceRelative = sourceRelative + unDelta actionDelta
-    in ( (outputPosition + dataLength, nextSourceRelative + dataLength)
-       , ExplainRegion (Offset outputPosition) actionLength "SourceCopy " (PayloadCopy FromSource)
-           (AnnotAt AtOutput (Offset outputPosition) [DetailSource (Offset nextSourceRelative), DetailDelta actionDelta])
+    let nextSourceRelative = displace (regionSourceRelative state) actionDelta
+        nextOutputPosition = advance (regionOutputPosition state) actionLength
+        advancedSourceRelative = advance nextSourceRelative actionLength
+    in ( BPSRegionState nextOutputPosition advancedSourceRelative
+       , ExplainRegion (regionOutputPosition state) actionLength "SourceCopy " (PayloadCopy FromSource)
+           (AnnotAt AtOutput (regionOutputPosition state)
+             [ DetailSource (Offset (unSignedOffset nextSourceRelative))
+             , DetailDelta actionDelta
+             ])
        )
   TargetCopy actionLength actionDelta ->
-    let dataLength = unLength actionLength
-    in ( (outputPosition + dataLength, sourceRelative)
-       , ExplainRegion (Offset outputPosition) actionLength "TargetCopy " (PayloadCopy FromTarget)
-           (AnnotAt AtOutput (Offset outputPosition) [DetailDelta actionDelta])
-       )
+    ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
+    , ExplainRegion (regionOutputPosition state) actionLength "TargetCopy " (PayloadCopy FromTarget)
+        (AnnotAt AtOutput (regionOutputPosition state) [DetailDelta actionDelta])
+    )

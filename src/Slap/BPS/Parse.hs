@@ -7,7 +7,7 @@ module Slap.BPS.Parse
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
-                       bpsMagicSize, bpsFooterSize, bpsTotalOverhead)
+                       bpsMagicSize, bpsCRC32Size, bpsFooterSize, bpsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -30,14 +30,14 @@ parseBPS input
   | ByteString.length input < bpsFooterSize =
       Left (InputTooShort LabelBPS (Length bpsFooterSize) (Length (ByteString.length input)))
   | otherwise = do
-      -- Validate patch CRC (covers everything except the last 4 bytes)
-      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
+      -- Validate patch CRC (covers everything except the trailing patch CRC)
+      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - bpsCRC32Size) input)
+          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - bpsCRC32Size) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelBPS storedPatchCRC actualPatchCRC)
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - bpsFooterSize) input)
-          targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
+          targetCRC = CRC32 (getWord32LE (ByteString.length input - 2 * bpsCRC32Size) input)
           -- Parse body between magic and footer using Get monad
           bodyBytes = ByteString.take (ByteString.length input - bpsTotalOverhead) (ByteString.drop bpsMagicSize input)
       case runGet parseBPSBody bodyBytes of
@@ -93,7 +93,6 @@ parseActions = do
       0 -> pure (SourceRead (Length dataLength))
       1 -> TargetRead <$> getBytes (Length dataLength)
       2 -> SourceCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
-      3 -> TargetCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
-      _ -> error "unreachable"  -- (.&. 3) is always 0-3; GHC can't see this
+      _ -> TargetCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
     remaining <- parseActions
     pure (action : remaining)

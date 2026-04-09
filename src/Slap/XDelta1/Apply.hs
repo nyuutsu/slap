@@ -5,7 +5,8 @@ module Slap.XDelta1.Apply
 import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..), XDelta1SourceKind(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset, copyRegion)
+import Slap.Binary (copyRegion)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset)
 
 import Data.Array (listArray, (!), bounds)
 import Data.ByteString (ByteString)

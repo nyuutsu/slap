@@ -8,8 +8,9 @@ import Data.ByteString.Internal (unsafeCreate)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), Cursor(..), remainingFromOffset, copyRegion)
+                     SignedOffset(..), Cursor(..), remainingFromOffset)
 import Data.Word (Word8)
 import Foreign.Storable (pokeByteOff)
 

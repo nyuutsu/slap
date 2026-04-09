@@ -25,6 +25,7 @@ module Slap.Binary
   , sha256
     -- * Bulk memory operations
   , copyByteStringRange
+  , copyRegion
     -- * Diff
   , diffHunks
     -- * String utilities
@@ -49,7 +50,7 @@ import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (Adler32, MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyAdler32)
-import Slap.Measure (Offset(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..))
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -186,6 +187,18 @@ copyByteStringRange _           _                 _      _            copyLength
 copyByteStringRange destination destinationOffset source sourceOffset copyLength =
   UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
     copyBytes (destination `plusPtr` destinationOffset) (castPtr sourcePointer `plusPtr` sourceOffset) copyLength
+
+-- | Bulk copy @regionLength@ bytes from a ByteString (at a typed
+-- 'Offset') to a raw pointer (at a typed 'Offset'). Uses memcpy
+-- internally. A no-op when @regionLength@ is zero or negative.
+copyRegion :: Ptr Word8 -> Offset -> ByteString -> Offset -> Length -> IO ()
+copyRegion _           _                 _      _              regionLength
+  | unLength regionLength <= 0 = pure ()
+copyRegion destination destinationOffset source sourcePosition regionLength =
+  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
+    copyBytes (destination `plusPtr` unOffset destinationOffset)
+              (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
+              (unLength regionLength)
 
 ----------------------------------------------------------------------------
 -- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)
