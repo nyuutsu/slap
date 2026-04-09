@@ -19,6 +19,18 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (xor)
 import Data.Int (Int64)
 
+-- | Create a UPS patch from source and target bytestrings.
+--
+-- KNOWN LIMITATION: This function cannot encode all source/target
+-- pairs per the UPS spec. Specifically, if the last byte of target
+-- differs from source (with virtual zero-padding past source end),
+-- or if source has non-zero bytes past target size, the emitted
+-- patch will be non-spec-compliant and will fail strict apply. The
+-- next commit (the createUPS algorithm rewrite) will address this
+-- by making createUPS return Either SlapError ByteString and
+-- refusing unencodeable pairs cleanly. For now, callers should
+-- either ensure the input is encodeable, or wrap this call and
+-- handle failures at apply time.
 createUPS :: ByteString -> ByteString -> ByteString
 createUPS original modified =
   let sourceCRC = rustyCRC32 original

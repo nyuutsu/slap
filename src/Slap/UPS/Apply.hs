@@ -3,11 +3,12 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..),
                      ActionIndex(..),
-                     Cursor(..), remainingFromOffset,
+                     RequestedLength(..), RemainingLength(..),
+                     Cursor(..), fitsWithin, remainingFromOffset,
                      firstAction, nextAction, plusOffset)
 
 import Control.Monad (when)
@@ -16,6 +17,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (copyBytes, fillBytes)
@@ -24,44 +26,51 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | Apply a parsed UPS patch to a source ByteString. Returns
--- 'Left' with a structured error if the declared target size is
--- negative; otherwise always succeeds. Source-shorter-than-target
--- is legal (spec-mandated zero-fill past source end), and blocks
--- that extend past target size are clipped — this happens normally
--- in shrinking patches and when the last block's terminator falls
--- at exactly target size. The caller is still responsible for CRC
--- validation before calling.
+-- 'Left' with a structured error if the patch is semantically
+-- malformed (declared target size is negative, or a block's total
+-- span exceeds target size). Source-shorter-than-target is legal
+-- (spec-mandated zero-fill past source end) and is handled inline
+-- by the helper functions, not as an error. The caller is still
+-- responsible for CRC validation before calling.
 applyUPS :: UPSPatch -> ByteString -> Either SlapError ByteString
 applyUPS patch source
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize LabelUPS targetSize)
   | unFileSize targetSize == 0 =
       Right ByteString.empty
-  | otherwise =
-      Right $ unsafePerformIO $
-        create (unFileSize targetSize) $ \outputPointer ->
-          unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
-            let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
-            in runApply outputPointer sourcePointer
+  | otherwise = unsafePerformIO $ do
+      errorRef <- newIORef Nothing
+      result <- create (unFileSize targetSize) $ \outputPointer ->
+        unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
+          let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
+          in runApply outputPointer sourcePointer errorRef
+      errorState <- readIORef errorRef
+      pure $ case errorState of
+        Just applyErr -> Left (ApplyFailed LabelUPS applyErr)
+        Nothing       -> Right result
   where
-    targetSize = upsTargetSize patch
-    sourceSize = FileSize (ByteString.length source)
-    targetEnd  = unFileSize targetSize
-    sourceEnd  = unFileSize sourceSize
-    blocks     = upsBlocks patch
-    blockCount = ActionIndex (Vector.length blocks)
+    targetSize     = upsTargetSize patch
+    sourceSize     = FileSize (ByteString.length source)
+    blocks         = upsBlocks patch
+    blockStreamEnd = ActionIndex (Vector.length blocks)
 
-    runApply outputPointer sourcePointer =
+    runApply outputPointer sourcePointer errorRef =
       let
+        abort :: ApplyError -> IO ()
+        abort applyErr = writeIORef errorRef (Just applyErr)
+
         -- | Copy bytes from source to output at the given position,
-        -- zero-filling past source end (spec-mandated) and clipping
-        -- to target end.
+        -- zero-filling past source end (spec-mandated for
+        -- source-shorter-than-target). The caller is responsible for
+        -- ensuring the copy fits within target bounds — this helper
+        -- does not clip to target end.
         copySourceSlice :: Offset -> Length -> IO ()
         copySourceSlice outputPosition copyLength = do
           let startPos       = unOffset outputPosition
-              clippedLen     = max 0 (min (unLength copyLength) (targetEnd - startPos))
-              inBoundsLength = max 0 (min clippedLen (sourceEnd - startPos))
-              zeroFillLength = clippedLen - inBoundsLength
+              sourceEnd      = unFileSize sourceSize
+              requestedLen   = unLength copyLength
+              inBoundsLength = max 0 (min requestedLen (sourceEnd - startPos))
+              zeroFillLength = requestedLen - inBoundsLength
           when (inBoundsLength > 0) $
             copyBytes
               (plusOffset outputPointer outputPosition)
@@ -75,16 +84,19 @@ applyUPS patch source
 
         -- | XOR source bytes with xorBytes, writing result to output.
         -- Past source end, source bytes are treated as 0x00 (so
-        -- xorBytes are written verbatim). Clipped to target end.
+        -- xorBytes are written verbatim). The caller is responsible
+        -- for ensuring the write fits within target bounds — this
+        -- helper does not clip to target end.
         xorSourceSlice :: Offset -> ByteString -> IO ()
         xorSourceSlice outputPosition xorBytes = do
-          let startPos   = unOffset outputPosition
-              clippedLen = max 0 (min (ByteString.length xorBytes) (targetEnd - startPos))
+          let xorLength = ByteString.length xorBytes
+              startPos  = unOffset outputPosition
+              sourceEnd = unFileSize sourceSize
               innerLoop !byteOffset
-                | byteOffset >= clippedLen = pure ()
+                | byteOffset >= xorLength = pure ()
                 | otherwise = do
                     let absolutePos = startPos + byteOffset
-                        xorByte    = ByteString.index xorBytes byteOffset
+                        xorByte     = ByteString.index xorBytes byteOffset
                     sourceByte <-
                       if absolutePos < sourceEnd
                         then peekByteOff sourcePointer absolutePos :: IO Word8
@@ -96,7 +108,7 @@ applyUPS patch source
 
         applyBlockStream :: ActionIndex -> Offset -> IO ()
         applyBlockStream !blockIndex !outputPosition
-          | blockIndex >= blockCount = do
+          | blockIndex >= blockStreamEnd = do
               -- End of stream: tail copy from source to target,
               -- zero-filling past source end. No ApplyTargetUnderfilled
               -- check — the tail copy always fills target exactly.
@@ -108,16 +120,23 @@ applyUPS patch source
 
         handleBlock :: ActionIndex -> Offset -> UPSBlock -> IO ()
         handleBlock blockIndex outputPosition (UPSBlock skipDelta xorBytes) =
-          let skipLen       = Length (unDelta skipDelta)
-              xorLen        = Length (ByteString.length xorBytes)
-              skipStart     = outputPosition
-              xorStart      = advance skipStart skipLen
-              terminatorPos = advance xorStart xorLen
-              nextPosition  = advance terminatorPos (Length 1)
-          in do
-            copySourceSlice skipStart skipLen
-            xorSourceSlice xorStart xorBytes
-            copySourceSlice terminatorPos (Length 1)
-            applyBlockStream (nextAction blockIndex) nextPosition
+          let skipLen        = Length (unDelta skipDelta)
+              xorLen         = Length (ByteString.length xorBytes)
+              terminatorLen  = Length 1
+              totalBlockLen  = Length (unLength skipLen + unLength xorLen + 1)
+              skipStart      = outputPosition
+              xorStart       = advance skipStart skipLen
+              terminatorPos  = advance xorStart xorLen
+              nextPosition   = advance terminatorPos terminatorLen
+              remainingSpace = remainingFromOffset outputPosition targetSize
+          in if not (fitsWithin outputPosition totalBlockLen targetSize)
+               then abort (ApplyWritesPastTarget blockIndex
+                            (RequestedLength totalBlockLen)
+                            (RemainingLength remainingSpace))
+               else do
+                 copySourceSlice skipStart skipLen
+                 xorSourceSlice xorStart xorBytes
+                 copySourceSlice terminatorPos terminatorLen
+                 applyBlockStream (nextAction blockIndex) nextPosition
 
       in applyBlockStream firstAction (Offset 0)
