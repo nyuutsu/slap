@@ -3,32 +3,28 @@ module Slap.GDIFF.Apply
   ) where
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), commandOutputSize)
-import Slap.Binary (copyByteStringRange)
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), copyRegion)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
-import Data.Word (Word8)
-import Foreign.Ptr (Ptr)
 
 applyGDIFF :: GDiffPatch -> ByteString -> ByteString
 applyGDIFF patch source
   | totalSize == 0 = ByteString.empty
   | otherwise = unsafeCreate totalSize $ \outputPointer ->
-      applyLoop outputPointer 0 (gdiffCommands patch)
+      let
+        applyLoop :: Offset -> [GDiffCommand] -> IO ()
+        applyLoop _outputPosition [] = pure ()
+        applyLoop !outputPosition (command:remaining) = case command of
+          GDiffData payload -> do
+            let dataLength = Length (ByteString.length payload)
+            copyRegion outputPointer outputPosition payload (Offset 0) dataLength
+            applyLoop (advance outputPosition dataLength) remaining
+          GDiffCopy sourceOffset copyLength -> do
+            let count = Length (unFileSize copyLength)
+            copyRegion outputPointer outputPosition source sourceOffset count
+            applyLoop (advance outputPosition count) remaining
+      in applyLoop (Offset 0) (gdiffCommands patch)
   where
     totalSize = sum (map commandOutputSize (gdiffCommands patch))
-
-    applyLoop :: Ptr Word8 -> Int -> [GDiffCommand] -> IO ()
-    applyLoop _outputPointer _position [] = pure ()
-    applyLoop outputPointer position (command:remaining) = case command of
-      GDiffData payload -> do
-        let dataLength = ByteString.length payload
-        copyByteStringRange outputPointer position payload 0 dataLength
-        applyLoop outputPointer (position + dataLength) remaining
-      GDiffCopy sourceOffset copyLength -> do
-        let sourceStart = unOffset sourceOffset
-            count = unFileSize copyLength
-        copyByteStringRange outputPointer position source sourceStart count
-        applyLoop outputPointer (position + count) remaining

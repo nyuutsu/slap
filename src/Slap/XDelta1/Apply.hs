@@ -3,17 +3,14 @@ module Slap.XDelta1.Apply
   ) where
 
 import Slap.XDelta1.Types (XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..), XDelta1SourceKind(..))
-import Slap.Binary (copyByteStringRange)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset, copyRegion)
 
 import Data.Array (listArray, (!), bounds)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
-import Data.Word (Word8)
-import Foreign.Ptr (Ptr)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -24,29 +21,30 @@ applyXDelta1 patch _source
   | unFileSize (xdelta1TargetLength patch) == 0 = Right ByteString.empty
   | unFileSize (xdelta1TargetLength patch) < 0  = Left (NegativeTargetSize LabelXDelta1 (xdelta1TargetLength patch))
 applyXDelta1 patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
-    applyLoop targetPointer 0 (xdelta1Instructions patch)
+    let
+      applyLoop :: Offset -> [XDelta1Instruction] -> IO ()
+      applyLoop _outputPosition [] = pure ()
+      applyLoop !outputPosition (instruction:rest) = do
+        let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
+            (lowBound, highBound) = bounds sourceArray
+            sourceBytes = if index >= lowBound && index <= highBound
+                             && xdelta1SourceKind (sourceArray ! index) == DataSegmentSource
+                          then dataSegment
+                          else source
+            instructionOffset = xdelta1InstructionOffset instruction
+            instructionLength = Length (unFileSize (xdelta1InstructionLength instruction))
+            safeLength = min instructionLength (remainingFromOffset outputPosition targetFileSize)
+            sourceSafeLength =
+              if unOffset instructionOffset >= 0
+                 && unOffset instructionOffset < ByteString.length sourceBytes
+              then min safeLength (Length (ByteString.length sourceBytes - unOffset instructionOffset))
+              else Length 0
+        copyRegion targetPointer outputPosition sourceBytes instructionOffset sourceSafeLength
+        applyLoop (advance outputPosition safeLength) rest
+    in applyLoop (Offset 0) (xdelta1Instructions patch)
   where
-    outputSize = unFileSize (xdelta1TargetLength patch)
-    sourceArray   = let sourceList = xdelta1Sources patch
-                    in listArray (0, length sourceList - 1) sourceList
+    outputSize     = unFileSize (xdelta1TargetLength patch)
+    targetFileSize = xdelta1TargetLength patch
+    sourceArray    = let sourceList = xdelta1Sources patch
+                     in listArray (0, length sourceList - 1) sourceList
     dataSegment    = xdelta1DataSegment patch
-
-    applyLoop :: Ptr Word8 -> Int -> [XDelta1Instruction] -> IO ()
-    applyLoop _targetPointer _position [] = pure ()
-    applyLoop targetPointer position (instruction:rest) = do
-      let index = fromIntegral (xdelta1InstructionIndex instruction) :: Int
-          (lowBound, highBound) = bounds sourceArray
-          sourceBytes = if index >= lowBound && index <= highBound
-                           && xdelta1SourceKind (sourceArray ! index) == DataSegmentSource
-                        then dataSegment
-                        else source
-          instructionOffset = unOffset (xdelta1InstructionOffset instruction)
-          instructionLength = unFileSize (xdelta1InstructionLength instruction)
-          -- Clamp to remaining output buffer
-          safeLength = max 0 $ min instructionLength (outputSize - position)
-          -- Clamp source read to available data
-          sourceSafeLength = if instructionOffset >= 0 && instructionOffset < ByteString.length sourceBytes
-                             then min safeLength (ByteString.length sourceBytes - instructionOffset)
-                             else 0
-      copyByteStringRange targetPointer position sourceBytes instructionOffset sourceSafeLength
-      applyLoop targetPointer (position + safeLength) rest
