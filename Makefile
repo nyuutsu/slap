@@ -13,7 +13,7 @@ TEST_GROUPS        := apply create crossval convert metadata undo cli failure-mo
 TEST_GROUP_TARGETS := $(addprefix test-full-,$(TEST_GROUPS))
 
 .PHONY: all rusty-slap cabal test test-full test-full-quick test-full-build \
-        test-full-groups $(TEST_GROUP_TARGETS) clean
+        test-full-check-groups test-full-groups $(TEST_GROUP_TARGETS) clean
 
 all: rusty-slap cabal
 
@@ -51,7 +51,10 @@ test: rusty-slap
 #
 # Phases 1 and 2 must finish before phase 3, because cabal can't be
 # invoked from multiple parallel make jobs without lockfile conflicts.
-test-full: test-full-quick test-full-build
+# A cheap sanity check runs between phases 2 and 3 to catch the
+# footgun where someone adds a new top-level test group in Haskell
+# and forgets to update TEST_GROUPS — see test-full-check-groups.
+test-full: test-full-quick test-full-build test-full-check-groups
 	@$(MAKE) -j$(words $(TEST_GROUPS)) --output-sync=target test-full-groups
 
 test-full-quick: rusty-slap
@@ -66,6 +69,30 @@ test-full-build: rusty-slap
 	fi
 	cabal build --extra-lib-dirs=$(RUSTY_LIB) --flag heavy-tests integration-full
 
+# Sanity-check that TEST_GROUPS above stays in sync with the canonical
+# 'topLevelGroupNames' constant in test/Integration/Runner.hs. Without
+# this, adding a new top-level group in Haskell would silently skip it
+# under `make test-full`: the per-group dispatch only iterates the
+# hardcoded TEST_GROUPS list, so a missing entry means the new group's
+# tests never run, while the suite still reports green.
+#
+# We sort both sides because TEST_GROUPS is ordered for human reading,
+# not for diffing. On mismatch we name both files so the fix is obvious.
+test-full-check-groups: test-full-build
+	@BIN=$$(cabal list-bin --extra-lib-dirs=$(RUSTY_LIB) --flag heavy-tests integration-full); \
+	expected=$$("$$BIN" --list-groups | sort | tr '\n' ' '); \
+	actual=$$(printf '%s\n' $(TEST_GROUPS) | sort | tr '\n' ' '); \
+	if [ "$$expected" != "$$actual" ]; then \
+	  echo "TEST_GROUPS in Makefile is out of sync with"; \
+	  echo "Integration.Runner.topLevelGroupNames."; \
+	  echo "  Makefile  : $$actual"; \
+	  echo "  Haskell   : $$expected"; \
+	  echo "Update both lists so they match:"; \
+	  echo "  - Makefile (TEST_GROUPS)"; \
+	  echo "  - test/Integration/Runner.hs (topLevelGroupNames)"; \
+	  exit 1; \
+	fi
+
 test-full-groups: $(TEST_GROUP_TARGETS)
 
 # Each per-group target runs the integration-full binary filtered to one
@@ -74,6 +101,16 @@ test-full-groups: $(TEST_GROUP_TARGETS)
 # group names appear inside test case names elsewhere — e.g. the cli
 # group has tests literally named "create/...", which would collide with
 # a naive /create/ regex.
+#
+# Three layers of dollar-sign evaluation, each by a different evaluator:
+#   $$BIN — shell expansion of the BIN variable set on the previous line
+#           (the doubled $$ escapes make's own expansion so the literal
+#           "$BIN" reaches the shell)
+#   $$2   — awk-style field reference, evaluated by tasty's pattern
+#           parser at test-runtime; refers to the second path component
+#           of each test name
+#   $*    — GNU make's stem expansion from the test-full-% pattern rule,
+#           e.g. "apply" when the target is test-full-apply
 $(TEST_GROUP_TARGETS): test-full-%:
 	@BIN=$$(cabal list-bin --extra-lib-dirs=$(RUSTY_LIB) --flag heavy-tests integration-full); \
 	echo "==> test-full-$*"; \

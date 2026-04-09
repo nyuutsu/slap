@@ -1,7 +1,7 @@
 -- | Shared entry-point machinery for the quick and full integration tiers.
 -- Each tier-specific main file picks a 'Tier' and hands off to
 -- 'runIntegrationSuite'; everything downstream is identical.
-module Integration.Runner (runIntegrationSuite) where
+module Integration.Runner (runIntegrationSuite, topLevelGroupNames) where
 
 import Test.Tasty (defaultMain, testGroup)
 import Integration.Apply (applyTests)
@@ -48,3 +48,23 @@ parSequence actions = do
     _ <- forkIO (action >>= putMVar mvar)
     pure mvar) actions
   mapM takeMVar mvars
+
+-- | The canonical list of top-level test groups inside the
+-- integration-full binary, in the order they're built by
+-- 'runIntegrationSuite'. Adding a new top-level test group
+-- requires updating this list AND the Makefile's
+-- @TEST_GROUPS@ variable; the Makefile sanity-checks the
+-- two stay in sync at the start of every @make test-full@
+-- run via the @--list-groups@ flag exposed by the
+-- integration-full binary's @Main@.
+topLevelGroupNames :: [String]
+topLevelGroupNames =
+  [ "apply"
+  , "create"
+  , "crossval"
+  , "convert"
+  , "metadata"
+  , "undo"
+  , "cli"
+  , "failure-mode"
+  ]
