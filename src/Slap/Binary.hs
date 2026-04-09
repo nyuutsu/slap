@@ -185,22 +185,23 @@ sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256
 -- | Bulk copy @copyLength@ bytes from a ByteString (at @sourceOffset@) to a
 -- raw pointer (at @destinationOffset@).  Uses memcpy internally.
 copyByteStringRange :: Ptr Word8 -> Int -> ByteString -> Int -> Int -> IO ()
-copyByteStringRange _           _                 _      _            copyLength | copyLength <= 0 = pure ()
 copyByteStringRange destination destinationOffset source sourceOffset copyLength =
-  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-    copyBytes (destination `plusPtr` destinationOffset) (castPtr sourcePointer `plusPtr` sourceOffset) copyLength
+  when (copyLength > 0) $
+    UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
+      copyBytes (destination `plusPtr` destinationOffset)
+                (castPtr sourcePointer `plusPtr` sourceOffset)
+                copyLength
 
 -- | Bulk copy @regionLength@ bytes from a ByteString (at a typed
 -- 'Offset') to a raw pointer (at a typed 'Offset'). Uses memcpy
 -- internally. A no-op when @regionLength@ is zero or negative.
 copyRegion :: Ptr Word8 -> Offset -> ByteString -> Offset -> Length -> IO ()
-copyRegion _           _                 _      _              regionLength
-  | unLength regionLength <= 0 = pure ()
 copyRegion destination destinationOffset source sourcePosition regionLength =
-  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-    copyBytes (destination `plusPtr` unOffset destinationOffset)
-              (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
-              (unLength regionLength)
+  when (unLength regionLength > 0) $
+    UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
+      copyBytes (destination `plusPtr` unOffset destinationOffset)
+                (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
+                (unLength regionLength)
 
 -- | Copy @regionLength@ bytes from one position in a buffer to
 -- another position in the SAME buffer. Used by apply workers for

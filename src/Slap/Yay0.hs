@@ -19,7 +19,7 @@ module Slap.Yay0 (isYay0, decompressYay0) where
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (testBit, shiftL, shiftR, (.&.), (.|.))
-import Control.Monad (forM_)
+import Control.Monad (forM_, unless)
 import Data.IORef
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr, plusPtr)
@@ -68,7 +68,7 @@ decompressYay0 input
           decompressLoop :: IO ()
           decompressLoop = do
             written <- readIORef outputPositionReference
-            if written >= decompressedSize then pure () else do
+            unless (written >= decompressedSize) $ do
               isLiteral <- nextBit
               if isLiteral
                 then do

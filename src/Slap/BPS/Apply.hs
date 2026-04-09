@@ -18,6 +18,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      remainingFromOffset,
                      firstAction, nextAction, plusOffset)
 
+import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
@@ -126,12 +127,10 @@ applyBPS patch source
               -- ApplyWritesPastTarget catches over-writes per-action
               -- before they can happen, so outputPosition > targetSize
               -- is unreachable here.
-              if unOffset outputPosition == unFileSize targetSize
-                then pure ()
-                else
-                  let actualWritten = ActualSize (FileSize (unOffset outputPosition))
-                      expected = ExpectedSize targetSize
-                  in abort (ApplyTargetUnderfilled actualWritten expected)
+              unless (unOffset outputPosition == unFileSize targetSize) $
+                let actualWritten = ActualSize (FileSize (unOffset outputPosition))
+                    expected = ExpectedSize targetSize
+                in abort (ApplyTargetUnderfilled actualWritten expected)
           | otherwise = case actionAt actionIndex of
               SourceRead actionLength ->
                 handleSourceRead actionLength
