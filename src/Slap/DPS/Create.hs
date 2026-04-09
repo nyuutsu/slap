@@ -8,7 +8,8 @@ module Slap.DPS.Create
 
 import Slap.DPS.Types (DPSStability, fromDPSStability, DPSFormatVersion(..), fromDPSFormatVersion, DPSRecord(..), dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..),
+                     OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -41,7 +42,7 @@ createDPS original modified name author version stability =
           warnings = case boundedTruncation result of
             Nothing -> []
             Just info -> [FieldTruncated LabelDPS fieldName
-                           (truncatedFrom info) (truncatedTo info)]
+                           (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
       in (boundedField result, warnings)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [DPSRecord]

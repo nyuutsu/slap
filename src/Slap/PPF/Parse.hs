@@ -11,7 +11,10 @@ import Slap.Error (SlapError(..), FieldName(..))
 import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE, int64LE)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     RequiredLength(..), ActualLength(..),
+                     ActualMagic(..), FoundVersion(..),
+                     EncodingMethodByte(..), RawFlagByte(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -42,13 +45,13 @@ wrapError label = either (Left . ParseError label) Right
 -- Version detection: bytes 0-3 as ASCII "PPF1" .. "PPF4".
 detectVersion :: ByteString -> Either SlapError Version
 detectVersion input
-  | ByteString.length input < 6    = Left (InputTooShort LabelPPF1 (Length 6) (Length (ByteString.length input)))
+  | ByteString.length input < 6    = Left (InputTooShort LabelPPF1 (RequiredLength (Length 6)) (ActualLength (Length (ByteString.length input))))
   | magic == "PPF1"        = Right PPF1
   | magic == "PPF2"        = Right PPF2
   | magic == "PPF3"        = Right PPF3
   | magic == "PPF4"        = Right PPF4
-  | ByteString.take 3 input == "PPF" = Left (BadVersion LabelPPF1 (ByteString.index input 3))
-  | otherwise              = Left (BadMagic LabelPPF1 (ByteString.take 5 input))
+  | ByteString.take 3 input == "PPF" = Left (BadVersion LabelPPF1 (FoundVersion (ByteString.index input 3)))
+  | otherwise              = Left (BadMagic LabelPPF1 (ActualMagic (ByteString.take 5 input)))
   where magic = ByteString.take 4 input
 
 -- Byte 5: encoding method.  PPF1 = 0x00, PPF2 = 0x01, PPF3 = 0x02.
@@ -57,7 +60,7 @@ checkEncoding :: Version -> ByteString -> Either SlapError ()
 checkEncoding PPF4 _ = Right ()
 checkEncoding version input
   | encoding == expected = Right ()
-  | otherwise = Left (UnsupportedEncodingMethod (versionLabel version) encoding)
+  | otherwise = Left (UnsupportedEncodingMethod (versionLabel version) (EncodingMethodByte encoding))
   where
     encoding = ByteString.index input 5
     expected = case version of
@@ -128,7 +131,7 @@ parsePPF3 input = do
   imageType <- case ppf3ImageTypeByte header of
     0x00 -> Right BIN
     0x01 -> Right GI
-    byte -> Left (UnknownFlag LabelPPF3 FieldImageType byte)
+    byte -> Left (UnknownFlag LabelPPF3 FieldImageType (RawFlagByte byte))
   let validation = Validation imageType <$> ppf3ValidationBlock header
       headerSize = if ppf3HasBlockCheck header then ppf3MinHeaderSize + unLength validationSize else ppf3MinHeaderSize
       fileId     = detectFileId getWord16LE 2 input

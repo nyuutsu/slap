@@ -15,6 +15,21 @@ module Slap.Measure
   , RemainingLength(..)
   , ActualSize(..)
   , ExpectedSize(..)
+    -- * Parse/create-error role newtypes
+  , RequiredLength(..)
+  , ActualLength(..)
+  , EncodedLength(..)
+  , MaxLength(..)
+  , OriginalLength(..)
+  , TruncatedLength(..)
+  , ActualOffset(..)
+  , MaxOffset(..)
+  , ExpectedMagic(..)
+  , ActualMagic(..)
+  , ParsedSizeValue(..)
+  , FoundVersion(..)
+  , RawFlagByte(..)
+  , EncodingMethodByte(..)
     -- * Records
   , Hunk(..)
   , UndoHunk(..)
@@ -120,6 +135,70 @@ newtype ActualSize = ActualSize { unActualSize :: FileSize }
 -- contexts where a bare 'FileSize' would be ambiguous with another
 -- size-valued field.
 newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+----------------------------------------------------------------------------
+-- Parse/create-error role newtypes
+----------------------------------------------------------------------------
+
+-- | The minimum length a parser requires before it can proceed.
+newtype RequiredLength = RequiredLength { unRequiredLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The actual length available when a parser found it insufficient.
+newtype ActualLength = ActualLength { unActualLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The encoded byte length of a field that exceeded its format's
+-- maximum.
+newtype EncodedLength = EncodedLength { unEncodedLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The maximum byte length a format allows for a given field.
+newtype MaxLength = MaxLength { unMaxLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The original byte length of a field before truncation.
+newtype OriginalLength = OriginalLength { unOriginalLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | The byte length of a field after truncation to fit its format.
+newtype TruncatedLength = TruncatedLength { unTruncatedLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | An offset that a hunk or record actually carried, used in
+-- encode-error contexts where a bare 'Offset' would be ambiguous.
+newtype ActualOffset = ActualOffset { unActualOffset :: Offset }
+  deriving (Eq, Ord, Show)
+
+-- | The maximum offset a format allows, used in encode-error
+-- contexts where a bare 'Offset' would be ambiguous.
+newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
+  deriving (Eq, Ord, Show)
+
+-- | The magic bytes a parser expected to find.
+newtype ExpectedMagic = ExpectedMagic { unExpectedMagic :: ByteString }
+  deriving (Eq, Show)
+
+-- | The magic bytes a parser actually found.
+newtype ActualMagic = ActualMagic { unActualMagic :: ByteString }
+  deriving (Eq, Show)
+
+-- | A size field whose decoded value was negative (an Int that
+-- should have been non-negative).
+newtype ParsedSizeValue = ParsedSizeValue { unParsedSizeValue :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | A version byte the parser did not recognise.
+newtype FoundVersion = FoundVersion { unFoundVersion :: Word8 }
+  deriving (Eq, Ord, Show)
+
+-- | A flag byte the parser did not recognise.
+newtype RawFlagByte = RawFlagByte { unRawFlagByte :: Word8 }
+  deriving (Eq, Ord, Show)
+
+-- | An encoding-method byte the parser did not recognise.
+newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------

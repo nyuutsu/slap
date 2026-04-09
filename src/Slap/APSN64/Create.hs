@@ -8,7 +8,8 @@ module Slap.APSN64.Create
 
 import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64DescriptionWidth, apsN64MaxChunkSize)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance)
+import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance,
+                     OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -29,7 +30,7 @@ encodeAPSN64 records destinationSize description =
         descriptionWarnings = case boundedTruncation bounded of
           Nothing -> []
           Just info -> [FieldTruncated LabelAPSN64 FieldDescription
-                         (truncatedFrom info) (truncatedTo info)]
+                         (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
             byteString "APS10"
             <> word8 (fromAPSPatchType APSSimple)

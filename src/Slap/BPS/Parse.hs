@@ -9,12 +9,14 @@ module Slap.BPS.Parse
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
                        bpsMagicSize, bpsCRC32Size, bpsFooterSize, bpsTotalOverhead)
 import Slap.Binary (getWord32LE)
-import Slap.Checksum (CRC32(..))
+import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
-import Slap.Measure (Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Length(..), FileSize(..), Delta(..),
+                     RequiredLength(..), ActualLength(..),
+                     ActualMagic(..), ParsedSizeValue(..))
 
 import Data.Bits ((.&.), shiftR)
 import Data.ByteString (ByteString)
@@ -24,17 +26,17 @@ import qualified Data.Vector as Vector
 parseBPS :: ByteString -> Either SlapError BPSPatch
 parseBPS input
   | ByteString.length input < bpsMagicSize =
-      Left (InputTooShort LabelBPS (Length bpsMagicSize) (Length (ByteString.length input)))
+      Left (InputTooShort LabelBPS (RequiredLength (Length bpsMagicSize)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take bpsMagicSize input /= "BPS1" =
-      Left (BadMagic LabelBPS (ByteString.take bpsMagicSize input))
+      Left (BadMagic LabelBPS (ActualMagic (ByteString.take bpsMagicSize input)))
   | ByteString.length input < bpsFooterSize =
-      Left (InputTooShort LabelBPS (Length bpsFooterSize) (Length (ByteString.length input)))
+      Left (InputTooShort LabelBPS (RequiredLength (Length bpsFooterSize)) (ActualLength (Length (ByteString.length input))))
   | otherwise = do
       -- Validate patch CRC (covers everything except the trailing patch CRC)
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - bpsCRC32Size) input)
           actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - bpsCRC32Size) input)
       if storedPatchCRC /= actualPatchCRC
-        then Left (PatchCRCMismatch LabelBPS storedPatchCRC actualPatchCRC)
+        then Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - bpsFooterSize) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 2 * bpsCRC32Size) input)
@@ -45,10 +47,10 @@ parseBPS input
         Right body
           | unFileSize (bpsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldSourceSize
-                (unFileSize (bpsBodySourceSize body)))
+                (ParsedSizeValue (unFileSize (bpsBodySourceSize body))))
           | unFileSize (bpsBodyTargetSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldTargetSize
-                (unFileSize (bpsBodyTargetSize body)))
+                (ParsedSizeValue (unFileSize (bpsBodyTargetSize body))))
           | otherwise ->
               Right BPSPatch
                 { bpsSourceSize = bpsBodySourceSize body

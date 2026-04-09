@@ -20,7 +20,8 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
-import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..))
+import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
+                     RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import Data.Bits (testBit)
 import Data.ByteString (ByteString)
@@ -36,8 +37,8 @@ parseVCDIFF = parseVCDIFFWith True
 
 parseVCDIFFWith :: Bool -> ByteString -> Either SlapError VCDIFFPatch
 parseVCDIFFWith allowCustom input
-  | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (Length 5) (Length (ByteString.length input)))
-  | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left (BadMagic LabelVCDIFF (ByteString.take 3 input))
+  | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)
       (maybeTableBytes, header, windows) <- wrapParse (runGet (parseHeader validatedVersion) input)

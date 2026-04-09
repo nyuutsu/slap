@@ -24,7 +24,8 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (Length(..), Offset(..),
+                     RequiredLength(..), ActualLength(..), ActualMagic(..))
 import Slap.Compress (zlibInflate)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 
@@ -38,8 +39,8 @@ import Numeric (readHex)
 
 parseNINJA1 :: ByteString -> Either SlapError NINJA1Patch
 parseNINJA1 input
-  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (Length 8) (Length (ByteString.length input)))
-  | ByteString.take 6 input /= "NINJA1"    = Left (BadMagic LabelNINJA1 (ByteString.take 6 input))
+  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.take 6 input /= "NINJA1"    = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
   | subFormatIdentifier == "B "                = parseBinary Ninja1Binary payload
   | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= parseBinary Ninja1BinaryCompressed
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
@@ -69,7 +70,7 @@ zlibDecompress compressed = case zlibInflate compressed of
 
 parseBinary :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
 parseBinary format payload
-  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (Length 41) (Length (ByteString.length payload)))
+  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (Length (ByteString.length payload))))
   | otherwise = case runGet (parseBinaryGet format) payload of
       Left errorMessage -> Left (ParseError LabelNINJA1 errorMessage)
       Right patch -> Right patch

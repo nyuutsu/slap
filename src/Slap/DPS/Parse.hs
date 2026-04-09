@@ -19,7 +19,8 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
-import Slap.Measure (Length(..), Offset(..), FileSize(..))
+import Slap.Measure (Length(..), Offset(..), FileSize(..),
+                     RequiredLength(..), ActualLength(..))
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -73,7 +74,7 @@ isDPS input
 
 parseDPS :: ByteString -> Either SlapError DPSPatch
 parseDPS input
-  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (Length dpsMinimumFileSize) (Length (ByteString.length input)))
+  | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (Length (ByteString.length input))))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
   | otherwise = case runGet parseDPSBody input of

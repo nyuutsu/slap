@@ -21,7 +21,9 @@ import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
-import Slap.Measure (Length(..), FileSize(..), Offset(..))
+import Slap.Measure (Length(..), FileSize(..), Offset(..),
+                     RequiredLength(..), ActualLength(..),
+                     ActualMagic(..), ExpectedMagic(..))
 import Slap.Compress (gzipInflate)
 
 import Data.ByteString (ByteString)
@@ -37,19 +39,19 @@ import qualified Data.IntSet as IntSet
 
 parseXDelta1 :: ByteString -> Either SlapError XDelta1Patch
 parseXDelta1 input
-  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (Length 20) (Length (ByteString.length input)))
+  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
   | magic == "%XDZ004%" = parseV11 input magic XDelta1v11
   | magic == "%XDZ003%" = parseV11 input magic XDelta1v104
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
-  | otherwise = Left (BadMagic LabelXDelta1 (ByteString.take 8 input))
+  | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
   where
     magic = ByteString.take 8 input
 
 parseV11 :: ByteString -> ByteString -> XDelta1Version -> Either SlapError XDelta1Patch
 parseV11 input expectedMagic version
-  | totalLength < 44 = Left (InputTooShort LabelXDelta1 (Length 44) (Length totalLength))
-  | trailingMagic /= expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic trailingMagic)
+  | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
+  | trailingMagic /= expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 (ExpectedMagic expectedMagic) (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw

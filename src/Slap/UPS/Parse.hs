@@ -11,29 +11,31 @@ module Slap.UPS.Parse
 import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicSize, upsFooterSize, upsTotalOverhead)
 import Slap.Binary (getWord32LE)
-import Slap.Checksum (CRC32(..))
+import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd)
-import Slap.Measure (Length(..), FileSize(..), Delta(..))
+import Slap.Measure (Length(..), FileSize(..), Delta(..),
+                     RequiredLength(..), ActualLength(..),
+                     ActualMagic(..), ParsedSizeValue(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 parseUPS :: ByteString -> Either SlapError UPSPatch
 parseUPS input
   | ByteString.length input < upsMagicSize =
-      Left (InputTooShort LabelUPS (Length upsMagicSize) (Length (ByteString.length input)))
+      Left (InputTooShort LabelUPS (RequiredLength (Length upsMagicSize)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take upsMagicSize input /= "UPS1" =
-      Left (BadMagic LabelUPS (ByteString.take upsMagicSize input))
+      Left (BadMagic LabelUPS (ActualMagic (ByteString.take upsMagicSize input)))
   | ByteString.length input < upsTotalOverhead =
-      Left (InputTooShort LabelUPS (Length upsTotalOverhead) (Length (ByteString.length input)))
+      Left (InputTooShort LabelUPS (RequiredLength (Length upsTotalOverhead)) (ActualLength (Length (ByteString.length input))))
   | otherwise = do
       -- Validate patch CRC
       let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
           actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
       if storedPatchCRC /= actualPatchCRC
-        then Left (PatchCRCMismatch LabelUPS storedPatchCRC actualPatchCRC)
+        then Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - upsFooterSize) input)
           targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
@@ -44,10 +46,10 @@ parseUPS input
         Right body
           | unFileSize (upsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldSourceSize
-                (fromIntegral (unFileSize (upsBodySourceSize body))))
+                (ParsedSizeValue (fromIntegral (unFileSize (upsBodySourceSize body)))))
           | unFileSize (upsBodyTargetSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldTargetSize
-                (fromIntegral (unFileSize (upsBodyTargetSize body))))
+                (ParsedSizeValue (fromIntegral (unFileSize (upsBodyTargetSize body)))))
           | otherwise ->
               Right UPSPatch
                 { upsSourceSize = upsBodySourceSize body

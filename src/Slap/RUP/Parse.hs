@@ -12,7 +12,8 @@ import Slap.RUP.Types
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
-import Slap.Measure (Length(..), Offset(..), FileSize(..))
+import Slap.Measure (Length(..), Offset(..), FileSize(..),
+                     RequiredLength(..), ActualLength(..), ActualMagic(..))
 import Slap.Format (padHex)
 
 import Data.ByteString (ByteString)
@@ -51,9 +52,9 @@ parseFixedHeader input = RUPInfo
 
 parseRUP :: ByteString -> Either SlapError RUPPatch
 parseRUP input
-  | ByteString.length input < 7 = Left (InputTooShort LabelRUP (Length 7) (Length (ByteString.length input)))
-  | ByteString.take 6 input /= "NINJA2" = Left (BadMagic LabelRUP (ByteString.take 6 input))
-  | ByteString.length input < headerSize = Left (InputTooShort LabelRUP (Length headerSize) (Length (ByteString.length input)))
+  | ByteString.length input < 7 = Left (InputTooShort LabelRUP (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.take 6 input /= "NINJA2" = Left (BadMagic LabelRUP (ActualMagic (ByteString.take 6 input)))
+  | ByteString.length input < headerSize = Left (InputTooShort LabelRUP (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
   | otherwise = case runGet parseRUPBody input of
       Left errorMessage -> Left (ParseError LabelRUP errorMessage)
       Right patch -> Right patch

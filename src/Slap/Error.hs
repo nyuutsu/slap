@@ -16,16 +16,23 @@ module Slap.Error
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word8)
 import Numeric (showHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
-import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32)
+import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
+                      ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Format (hexByteString)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
-                     ActualSize(..), ExpectedSize(..))
+                     ActualSize(..), ExpectedSize(..),
+                     RequiredLength(..), ActualLength(..),
+                     EncodedLength(..), MaxLength(..),
+                     OriginalLength(..), TruncatedLength(..),
+                     ActualOffset(..), MaxOffset(..),
+                     ExpectedMagic(..), ActualMagic(..),
+                     ParsedSizeValue(..), FoundVersion(..),
+                     RawFlagByte(..), EncodingMethodByte(..))
 import Slap.PatchField (PatchField, fieldName)
 
 ----------------------------------------------------------------------------
@@ -184,21 +191,21 @@ data SlapError
   | AmbiguousDetection [FormatLabel]
 
   -- Parse: structural
-  | InputTooShort FormatLabel Length Length
-  | BadMagic FormatLabel ByteString
-  | BadVersion FormatLabel Word8
+  | InputTooShort FormatLabel RequiredLength ActualLength
+  | BadMagic FormatLabel ActualMagic
+  | BadVersion FormatLabel FoundVersion
   | UnsupportedSubformat FormatLabel String
   | TruncatedRecord FormatLabel Int Length Length
-  | NegativeSize FormatLabel FieldName Int
+  | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed FormatLabel String
 
   -- Parse: integrity
-  | PatchCRCMismatch FormatLabel CRC32 CRC32
-  | TrailingMagicMismatch FormatLabel ByteString ByteString
+  | PatchCRCMismatch FormatLabel ExpectedCRC32 ActualCRC32
+  | TrailingMagicMismatch FormatLabel ExpectedMagic ActualMagic
 
   -- Parse: content
-  | UnknownFlag FormatLabel FieldName Word8
-  | UnsupportedEncodingMethod FormatLabel Word8
+  | UnknownFlag FormatLabel FieldName RawFlagByte
+  | UnsupportedEncodingMethod FormatLabel EncodingMethodByte
   | MalformedTextField FormatLabel String
   | EntryOutsideBlock FormatLabel String
 
@@ -210,9 +217,9 @@ data SlapError
   | ApplyFailed FormatLabel ApplyError
 
   -- Create / Encode
-  | OffsetExceedsRange FormatLabel Offset Offset
+  | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
   | SentinelCollision FormatLabel Offset
-  | FieldTooLong FormatLabel FieldName Length Length
+  | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
   | EncodingFailure FormatLabel FieldName String
 
   -- Convert
@@ -250,7 +257,7 @@ data SlapWarning
   | SourceHashesMissing FormatLabel
 
   -- Encoding
-  | FieldTruncated FormatLabel FieldName Length Length
+  | FieldTruncated FormatLabel FieldName OriginalLength TruncatedLength
   | EncodingGap FormatLabel FormatLabel
 
   -- Interop
@@ -327,16 +334,16 @@ renderSlapError (AmbiguousDetection labels) =
   "ambiguous format: could be "
   ++ commaList (map formatLabelName labels)
 
-renderSlapError (InputTooShort label needed actual) =
+renderSlapError (InputTooShort label (RequiredLength needed) (ActualLength actual)) =
   formatLabelName label ++ ": input too short (need "
   ++ show (unLength needed) ++ " bytes, have "
   ++ show (unLength actual) ++ ")"
 
-renderSlapError (BadMagic label actualBytes) =
+renderSlapError (BadMagic label (ActualMagic actualBytes)) =
   "not a " ++ formatLabelName label ++ " file (bad magic: "
   ++ show actualBytes ++ ")"
 
-renderSlapError (BadVersion label versionByte) =
+renderSlapError (BadVersion label (FoundVersion versionByte)) =
   formatLabelName label ++ ": unsupported version "
   ++ show versionByte
 
@@ -349,27 +356,27 @@ renderSlapError (TruncatedRecord label recordIndex needed available) =
   ++ " truncated (need " ++ show (unLength needed)
   ++ " bytes, have " ++ show (unLength available) ++ ")"
 
-renderSlapError (NegativeSize label name value) =
+renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
   formatLabelName label ++ ": negative "
   ++ fieldNameLabel name ++ ": " ++ show value
 
 renderSlapError (DecompressionFailed label detail) =
   formatLabelName label ++ ": decompression failed: " ++ detail
 
-renderSlapError (PatchCRCMismatch label stored computed) =
+renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 computed)) =
   formatLabelName label ++ ": patch CRC mismatch (stored "
   ++ showCRC32 stored ++ ", computed " ++ showCRC32 computed ++ ")"
 
-renderSlapError (TrailingMagicMismatch label expected actual) =
+renderSlapError (TrailingMagicMismatch label (ExpectedMagic expected) (ActualMagic actual)) =
   formatLabelName label ++ ": trailing magic mismatch (expected "
   ++ show expected ++ ", found " ++ show actual ++ ")"
 
-renderSlapError (UnknownFlag label name flagByte) =
+renderSlapError (UnknownFlag label name (RawFlagByte flagByte)) =
   formatLabelName label ++ ": unknown "
   ++ fieldNameLabel name ++ " flag: 0x"
   ++ showHex flagByte ""
 
-renderSlapError (UnsupportedEncodingMethod label methodByte) =
+renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)) =
   formatLabelName label ++ ": unsupported encoding method: 0x"
   ++ showHex methodByte ""
 
@@ -389,7 +396,7 @@ renderSlapError (NegativeTargetSize label size) =
 renderSlapError (ApplyFailed label applyErr) =
   formatLabelName label ++ " apply: " ++ renderApplyError applyErr
 
-renderSlapError (OffsetExceedsRange label actual maxOffset) =
+renderSlapError (OffsetExceedsRange label (ActualOffset actual) (MaxOffset maxOffset)) =
   formatLabelName label ++ ": hunk offset 0x"
   ++ showHex (unOffset actual) ""
   ++ " exceeds maximum offset 0x"
@@ -401,7 +408,7 @@ renderSlapError (SentinelCollision label sentinel) =
   ++ " collides with sentinel 0x"
   ++ showHex (unOffset sentinel) ""
 
-renderSlapError (FieldTooLong label name encodedLength maxLength) =
+renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLength maxLength)) =
   formatLabelName label ++ ": " ++ fieldNameLabel name
   ++ " too long (" ++ show (unLength encodedLength)
   ++ " bytes, maximum " ++ show (unLength maxLength) ++ ")"
@@ -469,11 +476,11 @@ renderSlapWarning IncludingValidationByDefault =
 renderSlapWarning (SourceHashesMissing _label) =
   "note: source verification hashes not available (populate with --with SOURCE)"
 
-renderSlapWarning (FieldTruncated label name actual truncated) =
+renderSlapWarning (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
   "note: " ++ formatLabelName label ++ " "
   ++ fieldNameLabel name ++ " truncated to fit "
   ++ show (unLength truncated) ++ "-byte field (was "
-  ++ show (unLength actual) ++ " bytes)"
+  ++ show (unLength original) ++ " bytes)"
 
 renderSlapWarning (EncodingGap fromLabel toLabel) =
   "note: " ++ formatLabelName fromLabel

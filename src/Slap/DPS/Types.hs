@@ -27,7 +27,7 @@ import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..))
 
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
@@ -46,7 +46,7 @@ data DPSFormatVersion = DPSVersion1
 
 toDPSFormatVersion :: Word8 -> Either SlapError DPSFormatVersion
 toDPSFormatVersion 1 = Right DPSVersion1
-toDPSFormatVersion byte = Left (BadVersion LabelDPS byte)
+toDPSFormatVersion byte = Left (BadVersion LabelDPS (FoundVersion byte))
 
 fromDPSFormatVersion :: DPSFormatVersion -> Word8
 fromDPSFormatVersion DPSVersion1 = 1

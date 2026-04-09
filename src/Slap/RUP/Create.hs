@@ -10,7 +10,8 @@ module Slap.RUP.Create
 import Slap.RUP.Types
 import Slap.Binary (diffHunks, md5)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..),
+                     OriginalLength(..), TruncatedLength(..))
 import Slap.Error (SlapWarning(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.TextEncoding (truncateUtf8, truncateLocale)
@@ -114,8 +115,8 @@ rupTruncationNotes _encoding info = concatMap checkField fields
     checkField (fieldLength, name, maybeValue) = case maybeValue of
       Just value | ByteString.length value > fieldLength ->
         [FieldTruncated LabelRUP name
-          (Length (ByteString.length value))
-          (Length fieldLength)]
+          (OriginalLength (Length (ByteString.length value)))
+          (TruncatedLength (Length fieldLength))]
       _ -> []
     fields =
       [ (rupAuthorWidth,      FieldAuthor,      rupAuthor info)

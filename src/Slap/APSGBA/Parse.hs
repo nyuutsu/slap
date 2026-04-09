@@ -14,16 +14,17 @@ import Slap.Checksum (CRC16(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
-import Slap.Measure (Length(..), FileSize(..), Offset(..))
+import Slap.Measure (Length(..), FileSize(..), Offset(..),
+                     RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import qualified Data.ByteString as ByteString
 
 parseAPSGBA :: ByteString.ByteString -> Either SlapError APSGBAPatch
 parseAPSGBA input
   | ByteString.length input < 4 =
-      Left (InputTooShort LabelAPSGBA (Length 4) (Length (ByteString.length input)))
+      Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 4 input /= "APS1" =
-      Left (BadMagic LabelAPSGBA (ByteString.take 4 input))
+      Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise =
       case runGet parseGBA input of
         Left errorMessage -> Left (ParseError LabelAPSGBA errorMessage)

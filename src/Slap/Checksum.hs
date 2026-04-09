@@ -4,6 +4,8 @@ module Slap.Checksum
   , Adler32(..)
   , MD5Hash(..)
   , SHA1Hash(..)
+  , ExpectedCRC32(..)
+  , ActualCRC32(..)
   , showCRC32
   , showCRC16
   , showAdler32
@@ -27,6 +29,14 @@ newtype MD5Hash = MD5Hash { unMD5Hash :: ByteString }
 
 newtype SHA1Hash = SHA1Hash { unSHA1Hash :: ByteString }
   deriving (Eq, Ord, Show)
+
+-- | A CRC32 value that a patch declared or stored.
+newtype ExpectedCRC32 = ExpectedCRC32 { unExpectedCRC32 :: CRC32 }
+  deriving (Eq, Show)
+
+-- | A CRC32 value that was computed from the actual data.
+newtype ActualCRC32 = ActualCRC32 { unActualCRC32 :: CRC32 }
+  deriving (Eq, Show)
 
 -- | "0x001A3B4C" — 8-digit zero-padded hex.
 showCRC32 :: CRC32 -> String

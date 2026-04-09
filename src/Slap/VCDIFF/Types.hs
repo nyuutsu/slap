@@ -32,7 +32,7 @@ module Slap.VCDIFF.Types
 import Slap.Checksum (Adler32)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..), Length(..))
+import Slap.Measure (Offset(..), FileSize(..), Length(..), FoundVersion(..))
 
 import Control.Monad (when)
 import Data.Array (Array, listArray, (!))
@@ -51,7 +51,7 @@ data VCDIFFVersion = VCDIFFStandard | VCDIFFXDelta3
 toVCDIFFVersion :: Word8 -> Either SlapError VCDIFFVersion
 toVCDIFFVersion 0    = Right VCDIFFStandard
 toVCDIFFVersion 0x53 = Right VCDIFFXDelta3
-toVCDIFFVersion byte = Left (BadVersion LabelVCDIFF byte)
+toVCDIFFVersion byte = Left (BadVersion LabelVCDIFF (FoundVersion byte))
 
 fromVCDIFFVersion :: VCDIFFVersion -> Word8
 fromVCDIFFVersion VCDIFFStandard = 0
