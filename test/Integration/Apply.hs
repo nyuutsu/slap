@@ -1,7 +1,8 @@
 module Integration.Apply (applyTests) where
 
 import Integration.Helpers
-  (repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
+  (Tier, isHeavySuiteName, restrictToTier,
+   repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
    sha1Hex, applyPatch, mmapRomFile)
 import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
@@ -13,13 +14,14 @@ import System.FilePath ((</>), takeExtension)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-applyTests :: IO TestTree
-applyTests = do
+applyTests :: Tier -> IO TestTree
+applyTests tier = do
   repo <- repoDir
   let suitesDir = repo </> "test" </> "suites"
-  files <- sort . filter (\fileName -> takeExtension fileName == ".suite")
-           <$> listDirectory suitesDir
-  groups <- mapM (makeSuiteGroup repo suitesDir) files
+  allFiles <- sort . filter (\fileName -> takeExtension fileName == ".suite")
+              <$> listDirectory suitesDir
+  groups <- mapM (makeSuiteGroup repo suitesDir)
+                 (restrictToTier tier isHeavySuiteName allFiles)
   pure (testGroup "apply" (concat groups))
 
 makeSuiteGroup :: FilePath -> FilePath -> String -> IO [TestTree]

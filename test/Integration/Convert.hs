@@ -1,7 +1,8 @@
 module Integration.Convert (convertTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
+  (Tier, isHeavyPath, restrictToTier,
+   repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, mmapRomFile)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.SomePatch (parseSome)
@@ -15,11 +16,12 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-convertTests :: IO TestTree
-convertTests = do
+convertTests :: Tier -> IO TestTree
+convertTests tier = do
   repo <- repoDir
-  rows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  tests <- mapM (makeConvertTest repo) rows
+  allRows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
+  tests <- mapM (makeConvertTest repo)
+                (restrictToTier tier (any isHeavyPath) allRows)
   pure (testGroup "convert" (concat tests))
 
 makeConvertTest :: FilePath -> [String] -> IO [TestTree]

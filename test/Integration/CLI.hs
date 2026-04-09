@@ -1,7 +1,8 @@
 module Integration.CLI (cliTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir,
+  (Tier(..), onlyAtFull,
+   repoDir, findSlapBinary, runSlap, sha1Hex, withTempFile, withTempDir,
    expectFail, expectOk, writeGarbage, ciContains, removeIfExists)
 import Slap.Error (renderSlapError, renderSlapWarning)
 import Slap.Explain (renderSummary)
@@ -19,8 +20,8 @@ import System.Process (readProcessWithExitCode)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-cliTests :: IO TestTree
-cliTests = do
+cliTests :: Tier -> IO TestTree
+cliTests tier = do
   repo <- repoDir
   maybeSlap <- findSlapBinary
   let inProcess = concat
@@ -36,24 +37,28 @@ cliTests = do
           dm4yIps  = repo </> "test/data/dm4y/patch.ips"
           dm4yUps  = repo </> "test/data/dm4y/patch.ups"
       baseExists <- doesFileExist dm4yBase
-      pure $ concat
-        [ if baseExists then dryrunTests slap dm4yBase dm4yBps else []
-        , if baseExists then forceTests slap dm4yBase dm4yUps else []
-        , if baseExists then noverifyTests slap dm4yBase dm4yBps else []
-        , if baseExists then inplaceTests slap dm4yBase dm4yIps else []
-        , if baseExists then collisionTests slap dm4yBase dm4yIps else []
-        , if baseExists then verboseTests slap dm4yBase dm4yIps else []
-        , if baseExists then undoErrorTests slap dm4yBase dm4yIps dm4yBps else []
-        , if baseExists then compoundTests slap dm4yBase dm4yIps dm4yBps else []
-        , if baseExists then createFlagTests slap dm4yBase dm4yBps else []
-        , if baseExists then archiveTests slap dm4yBase dm4yIps dm4yBps else []
-        , if baseExists then ipsTruncateTests slap dm4yBase else []
-        , customCodetableTests slap
-        , if baseExists then ninja1VerifyTests slap dm4yBase dm4yIps else []
-        , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
-        , explainModeTests slap dm4yIps
-            (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
-        ]
+      let quickSubprocess = concat
+            [ if baseExists then dryrunTests slap dm4yBase dm4yBps else []
+            , if baseExists then inplaceTests slap dm4yBase dm4yIps else []
+            , if baseExists then collisionTests slap dm4yBase dm4yIps else []
+            , if baseExists then verboseTests slap dm4yBase dm4yIps else []
+            , if baseExists then undoErrorTests slap dm4yBase dm4yIps dm4yBps else []
+            , if baseExists then compoundTests slap dm4yBase dm4yIps dm4yBps else []
+            , if baseExists then createFlagTests slap dm4yBase dm4yBps else []
+            , if baseExists then archiveTests slap dm4yBase dm4yIps dm4yBps else []
+            , if baseExists then ipsTruncateTests slap dm4yBase else []
+            , customCodetableTests slap
+            , if baseExists then ninja1VerifyTests Quick slap dm4yBase dm4yIps else []
+            , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
+            , explainModeTests slap dm4yIps
+                (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
+            ]
+          heavySubprocess = concat
+            [ if baseExists then forceTests slap dm4yBase dm4yUps else []
+            , if baseExists then noverifyTests slap dm4yBase dm4yBps else []
+            , if baseExists then ninja1VerifyTests Full slap dm4yBase dm4yIps else []
+            ]
+      pure (quickSubprocess ++ onlyAtFull tier heavySubprocess)
   pure $ testGroup "cli" (inProcess ++ subprocessTests)
 
 ----------------------------------------------------------------------------
@@ -442,51 +447,59 @@ pchtxtDetectTests =
                      ("PCHTXT" `isInfixOf` formatLabelName (patchFormat parsed))
   ]
 
-ninja1VerifyTests :: FilePath -> FilePath -> FilePath -> [TestTree]
-ninja1VerifyTests slap base ips =
-  [ testCase "ninja1-verify/info shows source CRC" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
-        expectOk slap ["info", patch] "ninja1/info" "source CRC"
+-- | NINJA1 source-verification CLI coverage. The first two cases just
+-- exercise the create+info+apply happy path on dm4y; the last two are
+-- gated to 'Full' because they each materialise a 4 MB garbage source
+-- file via 'writeGarbage'.
+ninja1VerifyTests :: Tier -> FilePath -> FilePath -> FilePath -> [TestTree]
+ninja1VerifyTests tier slap base ips = quickCases ++ onlyAtFull tier heavyCases
+  where
+    quickCases =
+      [ testCase "ninja1-verify/info shows source CRC" $
+          withTempFile "slap-target" $ \target ->
+          withTempFile "slap-patch" $ \patch -> do
+            ByteString.readFile base >>= ByteString.writeFile target
+            _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
+            _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
+            expectOk slap ["info", patch] "ninja1/info" "source CRC"
 
-  , testCase "ninja1-verify/correct source" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch ->
-      withTempFile "slap-out" $ \out -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
-        removeIfExists out
-        expectOk slap ["apply", patch, base, "-o", out] "ninja1/correct" "applied"
+      , testCase "ninja1-verify/correct source" $
+          withTempFile "slap-target" $ \target ->
+          withTempFile "slap-patch" $ \patch ->
+          withTempFile "slap-out" $ \out -> do
+            ByteString.readFile base >>= ByteString.writeFile target
+            _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
+            _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
+            removeIfExists out
+            expectOk slap ["apply", patch, base, "-o", out] "ninja1/correct" "applied"
+      ]
 
-  , testCase "ninja1-verify/wrong source rejected" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch ->
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
-        writeGarbage wrong (4096 * 1024)
-        removeIfExists out
-        expectFail slap ["apply", patch, wrong, "-o", out] "ninja1/wrong" "mismatch"
+    heavyCases =
+      [ testCase "ninja1-verify/wrong source rejected" $
+          withTempFile "slap-target" $ \target ->
+          withTempFile "slap-patch" $ \patch ->
+          withTempFile "slap-wrong" $ \wrong ->
+          withTempFile "slap-out" $ \out -> do
+            ByteString.readFile base >>= ByteString.writeFile target
+            _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
+            _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
+            writeGarbage wrong (4096 * 1024)
+            removeIfExists out
+            expectFail slap ["apply", patch, wrong, "-o", out] "ninja1/wrong" "mismatch"
 
-  , testCase "ninja1-verify/--no-verify bypasses" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch ->
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
-        writeGarbage wrong (4096 * 1024)
-        removeIfExists out
-        expectOk slap ["apply", patch, wrong, "-o", out, "--no-verify"]
-          "ninja1/--no-verify" "applied"
-  ]
+      , testCase "ninja1-verify/--no-verify bypasses" $
+          withTempFile "slap-target" $ \target ->
+          withTempFile "slap-patch" $ \patch ->
+          withTempFile "slap-wrong" $ \wrong ->
+          withTempFile "slap-out" $ \out -> do
+            ByteString.readFile base >>= ByteString.writeFile target
+            _ <- runSlap slap ["apply", ips, target, "--in-place", "--no-backup"]
+            _ <- runSlap slap ["create", "--format", "ninja1", base, target, patch]
+            writeGarbage wrong (4096 * 1024)
+            removeIfExists out
+            expectOk slap ["apply", patch, wrong, "-o", out, "--no-verify"]
+              "ninja1/--no-verify" "applied"
+      ]
 
 descriptionTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 descriptionTests slap base bps =

@@ -1,6 +1,12 @@
 module Integration.Helpers
-  ( -- * ROM access (mmap-backed, kernel page cache only)
-    mmapRomFile
+  ( -- * Test tier
+    Tier(..)
+  , isHeavyPath
+  , isHeavySuiteName
+  , restrictToTier
+  , onlyAtFull
+    -- * ROM access (mmap-backed, kernel page cache only)
+  , mmapRomFile
     -- * Shared bootstrap targets
   , BootstrapPair(..)
   , BootstrapTargets
@@ -72,6 +78,52 @@ import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
 import System.Process (readProcessWithExitCode, readProcess)
 
 ----------------------------------------------------------------------------
+-- Test tier
+----------------------------------------------------------------------------
+
+-- | Which tier of the integration suite a test belongs to. 'Quick' tests
+-- run on every @cabal test@ invocation: they finish fast, touch only small
+-- ROMs, and never shell out to a third-party tool. 'Full' covers everything
+-- — both the quick tests and the heavy ones — and is gated behind the
+-- @heavy-tests@ cabal flag so it only runs when explicitly invoked.
+data Tier = Quick | Full deriving (Eq, Show)
+
+-- | True if @path@ refers to one of the heavy ROMs the integration suite
+-- knows about: stadium2 (64 MB N64) or paper-mario (40 MB N64). Used as
+-- the row-/case-level filter for the 'Quick' tier across the spec-driven
+-- test groups (create, convert, metadata, undo, bootstrap collection).
+isHeavyPath :: FilePath -> Bool
+isHeavyPath path = "stadium2" `isInfixOf` path || "paper-mario" `isInfixOf` path
+
+-- | True if @suiteFileName@ is a @.suite@ file the 'Quick' apply tier
+-- should skip. The two stadium2 suites are excluded wholesale because
+-- they hash a 64 MB ROM per entry; @papermario-pmmq.suite@ is excluded
+-- specifically because its single PMSR/Yay0 entry takes ~77 seconds.
+-- Other paper-mario suites stay in 'Quick' since the apply path on a
+-- 40 MB ROM is still fast.
+isHeavySuiteName :: String -> Bool
+isHeavySuiteName suiteFileName =
+  "stadium2-" `isPrefixOf` suiteFileName
+  || suiteFileName == "papermario-pmmq.suite"
+
+-- | Drop entries the 'Quick' tier should skip; 'Full' keeps everything.
+-- The predicate names "is this entry heavy" — i.e. true for the entries
+-- 'Quick' excludes — so call sites read as
+-- @restrictToTier tier rowIsHeavy rows@.
+restrictToTier :: Tier -> (a -> Bool) -> [a] -> [a]
+restrictToTier Quick entryIsHeavy  items = filter (not . entryIsHeavy) items
+restrictToTier Full  _entryIsHeavy items = items
+
+-- | Extras that contribute only when the tier is 'Full'. Used with
+-- ordinary list concatenation, so the @(++)@ stays visible at the call
+-- site and this helper just encodes the "include only if Full" gating:
+--
+-- > pure (quickSubprocess ++ onlyAtFull tier heavySubprocess)
+onlyAtFull :: Tier -> [a] -> [a]
+onlyAtFull Quick _heavyExtras = []
+onlyAtFull Full  heavyExtras  = heavyExtras
+
+----------------------------------------------------------------------------
 -- ROM access
 ----------------------------------------------------------------------------
 
@@ -104,11 +156,13 @@ newtype BootstrapTargets = BootstrapTargets
 
 -- | Walk the create and crossval spec files (plus the failure-mode tests'
 -- hardcoded pairs) and produce the deduplicated list of bootstrap pairs the
--- test run will need targets for. Pairs whose base or patch files are
--- missing on disk are silently dropped — the corresponding tests already
--- self-skip in that situation.
-collectBootstrapPairs :: FilePath -> IO [BootstrapPair]
-collectBootstrapPairs repo = do
+-- test run will need targets for. In the 'Quick' tier, pairs that touch a
+-- heavy ROM (per 'isHeavyPath') are filtered out so the temp dir stays
+-- small and bootstrap is fast. Pairs whose base or patch files are missing
+-- on disk are silently dropped — the corresponding tests already self-skip
+-- in that situation.
+collectBootstrapPairs :: Tier -> FilePath -> IO [BootstrapPair]
+collectBootstrapPairs tier repo = do
   createRows   <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
   crossvalRows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
   let fromSpecRow row = case row of
@@ -125,8 +179,10 @@ collectBootstrapPairs repo = do
             (repo </> "test/data/stadium2/heavy-diff/patch.bps")
         ]
       allPairs = Set.toList (Set.fromList (specPairs ++ failureModePairs))
-  filterM bothFilesExist allPairs
+  filterM bothFilesExist (restrictToTier tier pairIsHeavy allPairs)
   where
+    pairIsHeavy pair = isHeavyPath (bootstrapBase pair)
+                    || isHeavyPath (bootstrapPatch pair)
     bothFilesExist pair = do
       baseExists  <- doesFileExist (bootstrapBase pair)
       patchExists <- doesFileExist (bootstrapPatch pair)

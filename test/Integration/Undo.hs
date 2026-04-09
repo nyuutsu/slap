@@ -1,7 +1,8 @@
 module Integration.Undo (undoTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch, mmapRomFile)
+  (Tier, isHeavyPath, restrictToTier,
+   repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch, mmapRomFile)
 import Slap.Error (renderSlapError)
 import Slap.SomePatch (parseSome)
 
@@ -11,12 +12,17 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-undoTests :: IO TestTree
-undoTests = do
+undoTests :: Tier -> IO TestTree
+undoTests tier = do
   repo <- repoDir
-  rows <- parseSpecFile (repo </> "test" </> "specs" </> "undo.txt")
-  tests <- mapM (makeUndoTest repo) (zip [1::Int ..] rows)
+  allRows <- parseSpecFile (repo </> "test" </> "specs" </> "undo.txt")
+  let tieredRows = restrictToTier tier rowIsHeavy allRows
+  tests <- mapM (makeUndoTest repo) (zip [1::Int ..] tieredRows)
   pure (testGroup "undo" (concat tests))
+  where
+    rowIsHeavy row = case row of
+      (_method : basePath : _) -> isHeavyPath basePath
+      _                        -> False
 
 makeUndoTest :: FilePath -> (Int, [String]) -> IO [TestTree]
 makeUndoTest repo (_, fields) = case fields of

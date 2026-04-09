@@ -1,6 +1,8 @@
 module Integration.Metadata (metadataTests) where
 
-import Integration.Helpers (repoDir, attemptConvert, parseCreateFormat, trim)
+import Integration.Helpers
+  (Tier, isHeavyPath, restrictToTier,
+   repoDir, attemptConvert, parseCreateFormat, trim)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
 import Slap.SomePatch (SomePatch(..), parseSome)
@@ -16,11 +18,14 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
 
-metadataTests :: IO TestTree
-metadataTests = do
+metadataTests :: Tier -> IO TestTree
+metadataTests tier = do
   repo <- repoDir
-  groups <- mapM (makeMetadataGroup repo) metadataCases
+  groups <- mapM (makeMetadataGroup repo)
+                 (restrictToTier tier caseIsHeavy metadataCases)
   pure (testGroup "metadata" (concat groups ++ [bpsMetadataGroup]))
+  where
+    caseIsHeavy (_format, relPath, _fields) = isHeavyPath relPath
 
 -- | (format, patch_path_relative, fields_to_check)
 metadataCases :: [(String, String, [String])]

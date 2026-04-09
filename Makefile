@@ -5,7 +5,7 @@ RUSTY_A   := $(RUSTY_LIB)/librusty_slap.a
 # picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal test clean
+.PHONY: all rusty-slap cabal test test-full clean
 
 all: rusty-slap cabal
 
@@ -27,6 +27,15 @@ test: rusty-slap
 	  cabal clean 2>/dev/null; touch .rusty-stamp; \
 	fi
 	cabal test --extra-lib-dirs=$(RUSTY_LIB)
+
+# Heavy integration tier: stadium2, cross-validation against third-party
+# tools, failure-mode subprocesses with multi-MB scratch files. Gated
+# behind the heavy-tests cabal flag so it never runs on a bare `cabal test`.
+test-full: rusty-slap
+	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
+	  cabal clean 2>/dev/null; touch .rusty-stamp; \
+	fi
+	cabal test --extra-lib-dirs=$(RUSTY_LIB) --flag heavy-tests
 
 clean:
 	cd rusty-slap && cargo clean

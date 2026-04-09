@@ -1,7 +1,8 @@
 module Integration.FailureMode (failureModeTests) where
 
 import Integration.Helpers
-  (repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
+  (Tier, onlyAtFull,
+   repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
    withTempFile, BootstrapTargets, lookupBootstrapTarget, mmapRomFile,
    parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
@@ -18,8 +19,8 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-failureModeTests :: BootstrapTargets -> IO TestTree
-failureModeTests bootstrapTargets = do
+failureModeTests :: Tier -> BootstrapTargets -> IO TestTree
+failureModeTests tier bootstrapTargets = do
   repo <- repoDir
   maybeSlap <- findSlapBinary
   let dm4yBase  = repo </> "test/data/dm4y/base.gbc"
@@ -34,16 +35,23 @@ failureModeTests bootstrapTargets = do
   dm4yExists   <- doesFileExist dm4yBase
   fftaExists   <- doesFileExist fftaBase
   stadium2Exists <- doesFileExist stadium2Base
-  tests <- case maybeSlap of
-    Nothing -> pure []
-    Just slap -> pure $ concat
-      [ if dm4yExists then wrongSourceTests slap dm4yBase
-          dm4yBps dm4yUps dm4yRup dm4yXdelta1 dm4yVcdiff else []
-      , if dm4yExists && fftaExists then wrongSourceApsGbaTests slap fftaBase fftaAps else []
-      , if dm4yExists then corruptPatchCRCTests dm4yBps dm4yUps else []
-      , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
-      ]
-  let inProcessTests = concat
+  -- Quick: pure parser-level CRC corruption checks. No subprocesses, no
+  -- multi-megabyte garbage files, no bootstrap targets.
+  let quickTests
+        | dm4yExists = corruptPatchCRCTests dm4yBps dm4yUps
+        | otherwise  = []
+  -- Full adds the heavy subprocess matrix and the in-process round-trip
+  -- groups (one of which exercises stadium2).
+  let heavySubprocessTests = case maybeSlap of
+        Nothing   -> []
+        Just slap -> concat
+          [ if dm4yExists then wrongSourceTests slap dm4yBase
+              dm4yBps dm4yUps dm4yRup dm4yXdelta1 dm4yVcdiff else []
+          , if dm4yExists && fftaExists
+              then wrongSourceApsGbaTests slap fftaBase fftaAps else []
+          , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
+          ]
+      heavyInProcessTests = concat
         [ if dm4yExists then crossFormatRoundTripTests dm4yBase dm4yBps else []
         , if dm4yExists && stadium2Exists
           then createRoundTripTests bootstrapTargets
@@ -51,7 +59,8 @@ failureModeTests bootstrapTargets = do
                  stadium2Base (repo </> "test/data/stadium2/heavy-diff/patch.bps")
           else []
         ]
-  pure $ testGroup "failure-mode" (tests ++ inProcessTests)
+      heavyTests = heavySubprocessTests ++ heavyInProcessTests
+  pure (testGroup "failure-mode" (quickTests ++ onlyAtFull tier heavyTests))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)

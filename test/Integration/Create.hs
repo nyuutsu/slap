@@ -1,7 +1,8 @@
 module Integration.Create (createTests) where
 
 import Integration.Helpers
-  (repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
+  (Tier, isHeavyPath, restrictToTier,
+   repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
@@ -13,12 +14,17 @@ import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-createTests :: BootstrapTargets -> IO TestTree
-createTests bootstrapTargets = do
+createTests :: Tier -> BootstrapTargets -> IO TestTree
+createTests tier bootstrapTargets = do
   repo <- repoDir
-  rows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
-  tests <- mapM (makeCreateTest bootstrapTargets repo) rows
+  allRows <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
+  tests <- mapM (makeCreateTest bootstrapTargets repo)
+                (restrictToTier tier rowIsHeavy allRows)
   pure (testGroup "create" (concat tests))
+  where
+    rowIsHeavy row = case row of
+      (_format : _scenario : basePath : _) -> isHeavyPath basePath
+      _                                    -> False
 
 makeCreateTest :: BootstrapTargets -> FilePath -> [String] -> IO [TestTree]
 makeCreateTest bootstrapTargets repo fields = case fields of
