@@ -1263,7 +1263,7 @@ test_ppf3OverflowWarning = do
     Left slapError -> assertBool ("parse: " ++ renderSlapError slapError) False
     Right parsed ->
       assertBool "description at most 50 bytes"
-        (ByteString.length (PPF.ppfDescription parsed) <= PPF.ppfDescriptionWidth)
+        (ByteString.length (PPF.ppfDescription parsed) <= unLength PPF.ppfDescriptionLength)
 
 -- PPF3 create with empty description: no warnings, empty after trimming
 test_ppf3EmptyDescription :: IO ()

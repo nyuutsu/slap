@@ -677,7 +677,7 @@ apsGbaStructure input =
                 [0 .. recordCount - 1])
 
 -- | Map PPF version to format label.
-ppfLabel :: PPF.Version -> FormatLabel
+ppfLabel :: PPF.PPFVersion -> FormatLabel
 ppfLabel PPF.PPF1 = LabelPPF1
 ppfLabel PPF.PPF2 = LabelPPF2
 ppfLabel PPF.PPF3 = LabelPPF3

@@ -2,8 +2,8 @@
 
 module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
-import Slap.PPF.Types (ImageType(..), fromImageType, ppfDescriptionWidth)
-import Slap.Measure (Offset(..), Hunk(..), UndoHunk(..),
+import Slap.PPF.Types (PPFImageType(..), fromImageType, ppfDescriptionLength)
+import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
@@ -13,18 +13,18 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Maybe (isJust)
+import Data.Maybe (fromMaybe, isJust)
 
 padDescription :: String -> CreateResult
 padDescription text =
-  let result = encodeBoundedLocale ppfDescriptionWidth text
+  let result = encodeBoundedLocale (unLength ppfDescriptionLength) text
       warnings = case boundedTruncation result of
         Nothing -> []
         Just info -> [FieldTruncated LabelPPF3 FieldDescription
                        (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
   in CreateResult (boundedField result) warnings
 
-buildHeader :: ByteString -> Bool -> Bool -> ByteString -> ImageType -> Builder
+buildHeader :: ByteString -> Bool -> Bool -> ByteString -> PPFImageType -> Builder
 buildHeader description blockCheck hasUndo validationBlock imageType =
   byteString "PPF30"                                    -- magic + version
   <> word8 0x02                                          -- encoding method
@@ -49,13 +49,13 @@ encodePPF3 :: [Hunk]
            -> String
            -> Maybe [UndoHunk]
            -> Maybe ByteString
-           -> ImageType
+           -> PPFImageType
            -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
   let descResult = padDescription description
       hasValidate = isJust validationBlock
       hasUndo     = isJust undoHunks
-      validationBytes = maybe ByteString.empty id validationBlock
+      validationBytes = fromMaybe ByteString.empty validationBlock
       header      = buildHeader (resultBytes descResult) hasValidate hasUndo
                       validationBytes imageType
       body = case undoHunks of

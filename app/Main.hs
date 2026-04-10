@@ -6,7 +6,7 @@ module Main (main) where
 import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
-import Slap.PPF.Types (ImageType(..))
+import Slap.PPF.Types (PPFImageType(..))
 import Slap.Platform (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
@@ -66,7 +66,7 @@ data Command
       , commandVersion    :: Maybe String
       , commandUnstable   :: Maybe Bool
       , commandRomType    :: Maybe PlatformType
-      , commandImageType  :: Maybe ImageType
+      , commandImageType  :: Maybe PPFImageType
       , commandGenre      :: Maybe String
       , commandLanguage   :: Maybe String
       , commandDate       :: Maybe String
@@ -89,7 +89,7 @@ data Command
       , commandConvertVersion   :: Maybe String
       , commandConvertUnstable  :: Maybe Bool
       , commandConvertRomType   :: Maybe PlatformType
-      , commandConvertImageType :: Maybe ImageType
+      , commandConvertImageType :: Maybe PPFImageType
       , commandConvertGenre     :: Maybe String
       , commandConvertLanguage  :: Maybe String
       , commandConvertDate      :: Maybe String
@@ -384,7 +384,7 @@ parseRomType typeString = case map toLower typeString of
   _ -> Left ("unknown ROM type: " ++ typeString
     ++ "\n  expected: raw, nes, fds, snes, n64, gb, gbc, gba, ngp, ngpc, sms, gg, mega, pce, ws, wsc, lynx, jag, gp32")
 
-parseImageType :: String -> Either String ImageType
+parseImageType :: String -> Either String PPFImageType
 parseImageType typeString = case map toLower typeString of
   "bin" -> Right BIN
   "gi"  -> Right GI

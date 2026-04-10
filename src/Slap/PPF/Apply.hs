@@ -1,6 +1,6 @@
 module Slap.PPF.Apply (applyPatchMemory, undoPatchMemory) where
 
-import Slap.PPF.Types
+import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Measure (offsetToInt)
 
@@ -15,7 +15,7 @@ import Data.Word (Word8)
 
 -- | Apply a PPF patch in memory.
 -- Simulates file-size tracking for Append records (PPF4).
-applyPatchMemory :: Patch -> ByteString -> ByteString
+applyPatchMemory :: PPFPatch -> ByteString -> ByteString
 applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $
@@ -42,7 +42,7 @@ applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
 
 -- | Undo a PPF patch in memory.
 -- Restores original bytes at each record offset using stored undo data.
-undoPatchMemory :: Patch -> ByteString -> ByteString
+undoPatchMemory :: PPFPatch -> ByteString -> ByteString
 undoPatchMemory patch input = unsafeCreate inputLength $ \outputPointer -> do
     copyByteStringRange outputPointer 0 input 0 inputLength
     mapM_ (undoRecord outputPointer) (ppfRecords patch)

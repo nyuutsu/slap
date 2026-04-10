@@ -1,6 +1,8 @@
 module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
-import Slap.PPF.Types
+import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
+                        PPFVersion(..), PPFValidation(..), PPFFileId(..),
+                        validationOffset)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 import Slap.Format (MetaField(..), renderField)
 import Slap.Explain
@@ -25,7 +27,7 @@ import Data.Word (Word64)
 import Numeric (showHex)
 
 -- | All key-value metadata carried by a PPF patch header.
-ppfMeta :: Patch -> [MetaField]
+ppfMeta :: PPFPatch -> [MetaField]
 ppfMeta patch = concat
   [ let description = decodeLocaleField (stripTrailing (ppfDescription patch))
     in [MetaField "description" description | not (null description)]
@@ -36,7 +38,7 @@ ppfMeta patch = concat
   , [MetaField "undo data" (if ppfHasUndo patch then "yes" else "no")]
   , case ppfFileId patch of
       Nothing             -> []
-      Just (FileId content) -> [MetaField "file_id.diz" (show (ByteString.length content) ++ " bytes")]
+      Just (PPFFileId content) -> [MetaField "file_id.diz" (show (ByteString.length content) ++ " bytes")]
   ]
   where
     validationString Nothing = "none"
@@ -46,7 +48,7 @@ ppfMeta patch = concat
       ++ " (" ++ show (ByteString.length (validationBlock validation)) ++ " bytes)"
 
 -- | Format a human-readable summary of a parsed PPF patch.
-ppfInfo :: Patch -> String
+ppfInfo :: PPFPatch -> String
 ppfInfo patch = unlines $ filter (not . null) $
   [ "format:      PPF" ++ versionString (ppfVersion patch) ]
   ++ map renderField (ppfMeta patch)
@@ -56,18 +58,18 @@ ppfInfo patch = unlines $ filter (not . null) $
      ]
   ++ fileIdLines (ppfFileId patch)
 
-versionString :: Version -> String
+versionString :: PPFVersion -> String
 versionString PPF1 = "1"
 versionString PPF2 = "2"
 versionString PPF3 = "3"
 versionString PPF4 = "4 (Pyriel internal format)"
 
-bytesInfo :: [Record] -> String
+bytesInfo :: [PPFRecord] -> String
 bytesInfo records =
   let total = sum (map (ByteString.length . recordData) records)
   in "total bytes: " ++ show total
 
-rangeInfo :: [Record] -> String
+rangeInfo :: [PPFRecord] -> String
 rangeInfo [] = "range:       (empty patch)"
 rangeInfo records =
   let lowest  = minimum (map (unOffset . recordOffset) records)
@@ -75,9 +77,9 @@ rangeInfo records =
   in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
      ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
 
-fileIdLines :: Maybe FileId -> [String]
+fileIdLines :: Maybe PPFFileId -> [String]
 fileIdLines Nothing = []
-fileIdLines (Just (FileId content)) = [decodeLocaleField content]
+fileIdLines (Just (PPFFileId content)) = [decodeLocaleField content]
 
 stripTrailing :: ByteString.ByteString -> ByteString.ByteString
 stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')
@@ -87,11 +89,11 @@ stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0
 ----------------------------------------------------------------------------
 
 -- | Build an ExplainData for a PPF patch, suitable for detailed rendering.
-explainPPF :: Patch -> ExplainData
+explainPPF :: PPFPatch -> ExplainData
 explainPPF patch = ExplainData
   { explainFormat   = ppfExplainVersionString (ppfVersion patch)
   , explainHeader   = ppfMeta patch
-  , explainSections = [SectionRegions (zipWith makePPFRegion [1..] (ppfRecords patch))]
+  , explainSections = [SectionRegions (map makePPFRegion (ppfRecords patch))]
   , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   , explainNotes    = []
   }
@@ -99,14 +101,14 @@ explainPPF patch = ExplainData
     recordCount = length (ppfRecords patch)
     totalBytes = sum (map (ByteString.length . recordData) (ppfRecords patch))
 
-ppfExplainVersionString :: Version -> String
+ppfExplainVersionString :: PPFVersion -> String
 ppfExplainVersionString PPF1 = "PPF1"
 ppfExplainVersionString PPF2 = "PPF2"
 ppfExplainVersionString PPF3 = "PPF3"
 ppfExplainVersionString PPF4 = "PPF4 (Pyriel internal format)"
 
-makePPFRegion :: Int -> Record -> ExplainRegion
-makePPFRegion _ record = ExplainRegion
+makePPFRegion :: PPFRecord -> ExplainRegion
+makePPFRegion record = ExplainRegion
   { regionOffset     = recordOffset record
   , regionSize       = Length (ByteString.length (recordData record))
   , regionLabel      = commandString

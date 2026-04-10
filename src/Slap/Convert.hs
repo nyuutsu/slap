@@ -22,7 +22,7 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF.Create as PPF
-import Slap.PPF.Types (ImageType(..))
+import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Create (splitHunks)
 import Slap.IPS.Types (ipsMaxRecordData)
@@ -84,7 +84,7 @@ data PatchContents = PatchContents
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
   , contentsRomType     :: Maybe PlatformType
-  , contentsImageType   :: Maybe ImageType
+  , contentsImageType   :: Maybe PPFImageType
   , contentsFileIdDiz   :: Maybe ByteString.ByteString
   , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
@@ -131,7 +131,7 @@ data CreateMeta = CreateMeta
     -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNinja1, platformToNinja2) handles lossy mappings.
-  , metaImageType   :: Maybe ImageType
+  , metaImageType   :: Maybe PPFImageType
   , metaGenre       :: Maybe String
   , metaLanguage    :: Maybe String
   , metaDate        :: Maybe String
@@ -293,7 +293,7 @@ ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe PlatformType -> Maybe ImageType -> [SlapWarning]
+defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe PlatformType -> Maybe PPFImageType -> [SlapWarning]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
   [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
