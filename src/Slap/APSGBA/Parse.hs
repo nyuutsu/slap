@@ -12,6 +12,7 @@ module Slap.APSGBA.Parse
 import Slap.APSGBA.Types
 import Slap.Checksum (CRC16(..))
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
@@ -19,8 +20,8 @@ import Slap.Measure (Length(..), FileSize(..), Offset(..),
 
 import qualified Data.ByteString as ByteString
 
-parseAPSGBA :: ByteString.ByteString -> Either SlapError APSGBAPatch
-parseAPSGBA input
+parseAPSGBA :: PatchFileContents -> Either SlapError APSGBAPatch
+parseAPSGBA (PatchFileContents input)
   | ByteString.length input < 4 =
       Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 4 input /= "APS1" =

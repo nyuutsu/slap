@@ -1,18 +1,19 @@
 -- | File contents newtypes.
 --
--- 'SourceFileContents' and 'TargetFileContents' encode the role each
--- 'ByteString' plays in the patch lifecycle. Apply functions consume
--- a 'SourceFileContents' and produce a 'TargetFileContents'. This
--- prevents the two from being confused at call sites and documents
--- the role of each byte buffer in the type.
+-- 'SourceFileContents', 'TargetFileContents', and 'PatchFileContents'
+-- encode the role each 'ByteString' plays in the patch lifecycle.
+-- Apply functions consume a 'SourceFileContents' and produce a
+-- 'TargetFileContents'. Parse functions consume a 'PatchFileContents'.
+-- This prevents the three from being confused at call sites and
+-- documents the role of each byte buffer in the type.
 --
--- Both are newtypes around 'ByteString' with zero runtime cost.
--- Use 'unSourceFileContents' and 'unTargetFileContents' at boundaries
--- (file I\/O, FFI, hash functions) where the underlying 'ByteString'
--- is needed.
+-- All three are newtypes around 'ByteString' with zero runtime cost.
+-- Use the @un*@ accessors at boundaries (file I\/O, FFI, hash
+-- functions) where the underlying 'ByteString' is needed.
 module Slap.FileContents
   ( SourceFileContents(..)
   , TargetFileContents(..)
+  , PatchFileContents(..)
   ) where
 
 import Data.ByteString (ByteString)
@@ -27,4 +28,12 @@ newtype SourceFileContents = SourceFileContents
 -- "target" or "modified" form.
 newtype TargetFileContents = TargetFileContents
   { unTargetFileContents :: ByteString }
+  deriving (Eq, Show)
+
+-- | The encoded bytes of a patch file itself. This is what parsers
+-- consume and creators produce. Distinct from 'SourceFileContents'
+-- and 'TargetFileContents' so a caller cannot pass a ROM where a
+-- patch is expected, or vice versa.
+newtype PatchFileContents = PatchFileContents
+  { unPatchFileContents :: ByteString }
   deriving (Eq, Show)

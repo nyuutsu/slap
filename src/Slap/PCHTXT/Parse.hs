@@ -12,6 +12,7 @@ module Slap.PCHTXT.Parse
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..), FlagResult(..))
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..))
 
@@ -25,8 +26,8 @@ import Data.List (dropWhileEnd, isPrefixOf)
 import Data.Word (Word8)
 import Numeric (readHex)
 
-parsePCHTXT :: ByteString -> Either SlapError PCHTXTPatch
-parsePCHTXT input = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (ByteString8.lines input)) Nothing [] Nothing 0 False Nothing
+parsePCHTXT :: PatchFileContents -> Either SlapError PCHTXTPatch
+parsePCHTXT (PatchFileContents input) = parseLines (map (Text.unpack . Text.decodeUtf8Lenient) (ByteString8.lines input)) Nothing [] Nothing 0 False Nothing
   where
     -- parseLines lines nsobid finishedBlocks lastComment shift shifted currentBlock
     -- currentBlock = Maybe (enabled, description, reversedEntries)

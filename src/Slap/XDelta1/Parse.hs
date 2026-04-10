@@ -19,6 +19,7 @@ import Slap.XDelta1.Types
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
@@ -37,8 +38,8 @@ import qualified Data.IntSet as IntSet
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseXDelta1 :: ByteString -> Either SlapError XDelta1Patch
-parseXDelta1 input
+parseXDelta1 :: PatchFileContents -> Either SlapError XDelta1Patch
+parseXDelta1 (PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
   | magic == "%XDZ004%" = parseV11 input magic XDelta1v11
   | magic == "%XDZ003%" = parseV11 input magic XDelta1v104

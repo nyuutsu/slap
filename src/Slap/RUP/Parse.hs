@@ -10,6 +10,7 @@ module Slap.RUP.Parse
 
 import Slap.RUP.Types
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
@@ -50,8 +51,8 @@ parseFixedHeader input = RUPInfo
 --   0x00: END
 ----------------------------------------------------------------------------
 
-parseRUP :: ByteString -> Either SlapError RUPPatch
-parseRUP input
+parseRUP :: PatchFileContents -> Either SlapError RUPPatch
+parseRUP (PatchFileContents input)
   | ByteString.length input < 7 = Left (InputTooShort LabelRUP (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 6 input /= "NINJA2" = Left (BadMagic LabelRUP (ActualMagic (ByteString.take 6 input)))
   | ByteString.length input < headerSize = Left (InputTooShort LabelRUP (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))

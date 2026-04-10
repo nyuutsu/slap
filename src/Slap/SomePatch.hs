@@ -12,7 +12,7 @@ module Slap.SomePatch
   , parseSome
   ) where
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
@@ -190,14 +190,14 @@ data SomePatch = SomePatch
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
-parseSome :: ByteString.ByteString -> Either SlapError SomePatch
-parseSome patchBytes = case detectFormat patchBytes of
+parseSome :: PatchFileContents -> Either SlapError SomePatch
+parseSome patchContents = case detectFormat patchContents of
   Nothing
-    | Yay0.isYay0 patchBytes -> parseYay0Container patchBytes
+    | Yay0.isYay0 rawBytes -> parseYay0Container patchContents
     | otherwise -> Left UnrecognizedFormat
 
   Just (PatchDirect FormatPPF) -> do
-    patch <- PPF.parsePatch patchBytes
+    patch <- PPF.parsePatch patchContents
     let records = PPF.ppfRecords patch
         hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
         ppfVerification = noVerification
@@ -252,7 +252,7 @@ parseSome patchBytes = case detectFormat patchBytes of
         }
 
   Just (PatchDirect FormatIPS) -> do
-    patch <- IPS.parseIPS patchBytes
+    patch <- IPS.parseIPS patchContents
     let records = IPS.ipsRecords patch
         expandIPS (IPS.IPSRecord recordOffset recordPayload) = Hunk recordOffset recordPayload
         expandIPS (IPS.IPSRecordRLE recordOffset fillCount fillByte) = Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte)
@@ -291,7 +291,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatBPS) -> do
-    patch <- BPS.parseBPS patchBytes
+    patch <- BPS.parseBPS patchContents
     let actions = BPS.bpsActions patch
         bpsMetaBlob = if ByteString.null (BPS.bpsMetadata patch) then Nothing
                       else Just (BPS.bpsMetadata patch)
@@ -315,7 +315,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatUPS) -> do
-    patch <- UPS.parseUPS patchBytes
+    patch <- UPS.parseUPS patchContents
     let blocks = UPS.upsBlocks patch
     Right SomePatch
       { patchFormat         = LabelUPS
@@ -343,7 +343,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatVCDIFF) -> do
-    patch <- VCDIFF.parseVCDIFF patchBytes
+    patch <- VCDIFF.parseVCDIFF patchContents
     let windows = VCDIFF.vcdiffWindows patch
         windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
         adlerChecks =
@@ -373,9 +373,9 @@ parseSome patchBytes = case detectFormat patchBytes of
   -- Disambiguate via GBA's fixed record structure (12 + N*65544 bytes,
   -- 64KB-aligned offsets).
   Just (PatchDirect FormatAPSN64)
-    | apsGbaStructure patchBytes -> parseAPSGBABlock patchBytes
+    | apsGbaStructure rawBytes -> parseAPSGBABlock patchContents
     | otherwise -> do
-    patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchBytes
+    patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchContents
     let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
         expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
     Right SomePatch
@@ -405,10 +405,10 @@ parseSome patchBytes = case detectFormat patchBytes of
             }
       }
 
-  Just (PatchDiff FormatAPSGBA) -> parseAPSGBABlock patchBytes
+  Just (PatchDiff FormatAPSGBA) -> parseAPSGBABlock patchContents
 
   Just (PatchDiff FormatRUP) -> do
-    patch <- RUP.parseRUP patchBytes
+    patch <- RUP.parseRUP patchContents
     let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
         filterZeroMD5 other = fmap MD5Hash other
         (platformType, platformWarnings) = ninja2ToPlatform (RUP.rupRomType patch)
@@ -447,7 +447,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDirect FormatNINJA1) -> do
-    patch <- NINJA1.parseNINJA1 patchBytes
+    patch <- NINJA1.parseNINJA1 patchContents
     let records = NINJA1.ninja1Records patch
         warnings = concat
           [ [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
@@ -487,7 +487,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatBSDiff) -> do
-    patch <- BSDiff.parseBSDiff patchBytes
+    patch <- BSDiff.parseBSDiff patchContents
     Right SomePatch
       { patchFormat         = LabelBSDiff
       , patchExplain        = BSDiff.explainBSDiff patch
@@ -505,7 +505,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatGDIFF) -> do
-    patch <- GDIFF.parseGDIFF patchBytes
+    patch <- GDIFF.parseGDIFF patchContents
     Right SomePatch
       { patchFormat         = LabelGDIFF
       , patchExplain        = GDIFF.explainGDIFF patch
@@ -523,7 +523,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDiff FormatXDelta1) -> do
-    patch <- XDelta1.parseXDelta1 patchBytes
+    patch <- XDelta1.parseXDelta1 patchContents
     let fileSources = filter (\entry -> XDelta1.xdelta1SourceKind entry == XDelta1.FileSource) (XDelta1.xdelta1Sources patch)
         xdeltaVerification = noVerification
           { verifySourceMD5 = case fileSources of
@@ -548,7 +548,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDirect FormatPMSR) -> do
-    patch <- PMSR.parsePMSR patchBytes
+    patch <- PMSR.parsePMSR patchContents
     let records = PMSR.pmsrRecords patch
     Right SomePatch
       { patchFormat         = LabelPMSR
@@ -568,7 +568,7 @@ parseSome patchBytes = case detectFormat patchBytes of
       }
 
   Just (PatchDirect FormatPCHTXT) -> do
-    patch <- PCHTXT.parsePCHTXT patchBytes
+    patch <- PCHTXT.parsePCHTXT patchContents
     let allBlocks = PCHTXT.pchtxtBlocks patch
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
@@ -593,14 +593,16 @@ parseSome patchBytes = case detectFormat patchBytes of
           }
       }
 
-  Just (PatchDiff FormatDPS) -> parseDPSBlock patchBytes
+  Just (PatchDiff FormatDPS) -> parseDPSBlock patchContents
+  where
+    rawBytes = unPatchFileContents patchContents
 
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
 
-parseDPSBlock :: ByteString.ByteString -> Either SlapError SomePatch
-parseDPSBlock input = case DPS.parseDPS input of
+parseDPSBlock :: PatchFileContents -> Either SlapError SomePatch
+parseDPSBlock patchContents = case DPS.parseDPS patchContents of
   Left slapError -> Left slapError
   Right patch  ->
     let records = DPS.dpsRecords patch
@@ -631,19 +633,19 @@ parseDPSBlock input = case DPS.parseDPS input of
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
 -- Decompress the envelope and recurse into parseSome on the inner bytes.
-parseYay0Container :: ByteString.ByteString -> Either SlapError SomePatch
-parseYay0Container input = case Yay0.decompressYay0 input of
+parseYay0Container :: PatchFileContents -> Either SlapError SomePatch
+parseYay0Container (PatchFileContents input) = case Yay0.decompressYay0 input of
   Left errorMessage   -> Left (Yay0DecompressionFailed errorMessage)
-  Right decompressedBytes -> case parseSome decompressedBytes of
+  Right decompressedBytes -> case parseSome (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
     Right parsed -> Right parsed
       { patchExplain = (patchExplain parsed)
           { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
       }
 
-parseAPSGBABlock :: ByteString.ByteString -> Either SlapError SomePatch
-parseAPSGBABlock input = do
-  patch@(APSGBA.APSGBAPatch header records) <- APSGBA.parseAPSGBA input
+parseAPSGBABlock :: PatchFileContents -> Either SlapError SomePatch
+parseAPSGBABlock patchContents = do
+  patch@(APSGBA.APSGBAPatch header records) <- APSGBA.parseAPSGBA patchContents
   Right SomePatch
     { patchFormat         = LabelAPSGBA
     , patchExplain        = APSGBA.explainAPSGBA patch

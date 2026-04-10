@@ -8,17 +8,17 @@ module Slap.GDIFF.Parse
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), FoundVersion(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseGDIFF :: ByteString -> Either SlapError GDiffPatch
-parseGDIFF input
+parseGDIFF :: PatchFileContents -> Either SlapError GDiffPatch
+parseGDIFF (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 4 input /= "\xd1\xff\xd1\xff" = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (FoundVersion (ByteString.index input 4)))

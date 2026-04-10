@@ -5,6 +5,7 @@ module Slap.Detect (detectFormat) where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
+import Slap.FileContents (PatchFileContents(..))
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import qualified Slap.DPS.Parse as DPS
 
@@ -33,8 +34,8 @@ pchtxtDirectives = ["@nsobid", "@flag ", "@enabled", "@disabled"]
 -- DPS uses a structural heuristic (version and stability flag bytes,
 -- tentative record walk).  PCHTXT scans for known directives on the
 -- first non-comment non-blank line.
-detectFormat :: ByteString -> Maybe PatchFormat
-detectFormat input
+detectFormat :: PatchFileContents -> Maybe PatchFormat
+detectFormat (PatchFileContents input)
   | ByteString.length input < 4 = Nothing
   | ByteString.take 3 magic4 == "PPF" = Just (PatchDirect FormatPPF)
   | magic5 == "PATCH"         = Just (PatchDirect FormatIPS)

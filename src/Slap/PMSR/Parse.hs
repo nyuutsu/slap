@@ -11,20 +11,20 @@ module Slap.PMSR.Parse
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 -- Format: 4 bytes "PMSR" magic, uint32BE record count,
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
-parsePMSR :: ByteString -> Either SlapError PMSRPatch
-parsePMSR input
+parsePMSR :: PatchFileContents -> Either SlapError PMSRPatch
+parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 4 input /= "PMSR" = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
   | otherwise = case runGet parsePMSRBody input of

@@ -6,7 +6,7 @@ import Integration.Helpers
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import Data.ByteString (ByteString)
@@ -51,7 +51,7 @@ roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
   case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-    Right (CreateResult patchBytes _) -> case parseSome patchBytes of
+    Right (CreateResult patchBytes _) -> case parseSome (PatchFileContents patchBytes) of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
         result <- applyPatch parsed (SourceFileContents baseBytes)

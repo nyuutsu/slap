@@ -5,6 +5,7 @@ import Integration.Helpers
    repoDir, attemptConvert, parseCreateFormat, trim)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
+import Slap.FileContents (PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
 import qualified Slap.BPS.Create as BPS
@@ -48,7 +49,7 @@ makeMetadataGroup repo (formatString, relPath, fieldNames) = do
 makeFieldTest :: FilePath -> CreateFormat -> String -> TestTree
 makeFieldTest patchPath format fieldName = testCase fieldName $ do
   patchBytes <- ByteString.readFile patchPath
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> assertFailure ("parseSome original failed: " ++ renderSlapError slapError)
     Right original -> do
       -- Self-convert: convert to same format
@@ -58,7 +59,7 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
       convResult <- attemptConvert original format Nothing meta
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
-        Right (CreateResult convertedBytes _) -> case parseSome convertedBytes of
+        Right (CreateResult convertedBytes _) -> case parseSome (PatchFileContents convertedBytes) of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
             let originalInfo = renderSummary Nothing (patchExplain original)
@@ -96,7 +97,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "<patch><title>Test</title></patch>"
           patchBytes = BPS.createBPS source target meta
-      case parseSome patchBytes of
+      case parseSome (PatchFileContents patchBytes) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
 
@@ -104,7 +105,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..15]
           target = ByteString.pack [16..31]
           patchBytes = BPS.createBPS source target ByteString.empty
-      case parseSome patchBytes of
+      case parseSome (PatchFileContents patchBytes) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
@@ -113,7 +114,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "hello-world-metadata"
           patchBytes = BPS.createBPS source target meta
-      case parseSome patchBytes of
+      case parseSome (PatchFileContents patchBytes) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
           let info = renderExplain Nothing (patchExplain parsed)
@@ -126,7 +127,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
           patchBytes = BPS.createBPS source target ByteString.empty
-      case parseSome patchBytes of
+      case parseSome (PatchFileContents patchBytes) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
           assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain Nothing (patchExplain parsed))

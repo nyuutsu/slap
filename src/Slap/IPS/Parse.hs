@@ -11,6 +11,7 @@ module Slap.IPS.Parse
 import Slap.IPS.Types (IPSVariant(..), IPSRecord(..), IPSPatch(..))
 import Slap.Binary (getWord24BE, getWord32BE)
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, getPosition, getInput,
                   remaining)
@@ -18,14 +19,13 @@ import Slap.Measure (Position(..), Offset(..), Length(..), FileSize(..),
                      ipsSentinel, ips32Sentinel, ActualMagic(..))
 import qualified Slap.Get as Get
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word32, Word64)
 import Control.Monad (when)
 import Numeric (showHex)
 
-parseIPS :: ByteString -> Either SlapError IPSPatch
-parseIPS input
+parseIPS :: PatchFileContents -> Either SlapError IPSPatch
+parseIPS (PatchFileContents input)
   | ByteString.take 5 input == "PATCH" =
       case runGet (skip (Length 5) >> parseRecords StandardIPS 3 ipsSentinel) input of
         Left errorMessage -> Left (ParseError LabelIPS errorMessage)

@@ -15,7 +15,7 @@ import Slap.VCDIFF.Types
     , serializedDefaultTable, decodeCustomTable
     )
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -25,7 +25,6 @@ import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import Data.Bits (testBit)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Control.Monad (when)
 
@@ -33,11 +32,11 @@ import Control.Monad (when)
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseVCDIFF :: ByteString -> Either SlapError VCDIFFPatch
+parseVCDIFF :: PatchFileContents -> Either SlapError VCDIFFPatch
 parseVCDIFF = parseVCDIFFWith True
 
-parseVCDIFFWith :: Bool -> ByteString -> Either SlapError VCDIFFPatch
-parseVCDIFFWith allowCustom input
+parseVCDIFFWith :: Bool -> PatchFileContents -> Either SlapError VCDIFFPatch
+parseVCDIFFWith allowCustom (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
@@ -48,7 +47,7 @@ parseVCDIFFWith allowCustom input
                                       defaultNearSize defaultSameSize)
         Just rawTableBytes -> do
           let applyInnerDelta deltaBytes = do
-                inner <- parseVCDIFFWith False deltaBytes
+                inner <- parseVCDIFFWith False (PatchFileContents deltaBytes)
                 fmap unTargetFileContents (applyVCDIFF inner (SourceFileContents serializedDefaultTable))
           (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
           Right (VCDIFFPatch header windows table nearSize sameSize)

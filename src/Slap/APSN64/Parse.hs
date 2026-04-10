@@ -11,16 +11,16 @@ module Slap.APSN64.Parse
 
 import Slap.APSN64.Types
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-parseAPSN64 :: ByteString -> Either SlapError APSN64Patch
-parseAPSN64 input
+parseAPSN64 :: PatchFileContents -> Either SlapError APSN64Patch
+parseAPSN64 (PatchFileContents input)
   | ByteString.length input < 5 =
       Left (InputTooShort LabelAPSN64 (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 5 input /= "APS10" =

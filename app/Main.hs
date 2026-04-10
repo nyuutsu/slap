@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (PPFImageType(..))
@@ -431,7 +431,7 @@ readMaybeUnwrap False = readUnwrap
 doInfo :: Command -> IO ()
 doInfo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       let explain = patchExplain parsed
@@ -451,7 +451,7 @@ doInfo parsedCommand = do
 doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
 doExplain patchFile records maybeWithPath raw = do
   patchBytes <- readUnwrap patchFile
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       maybeSource <- case maybeWithPath of
@@ -468,7 +468,7 @@ doExplain patchFile records maybeWithPath raw = do
 doApply :: Command -> IO ()
 doApply parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
@@ -529,7 +529,7 @@ doApply parsedCommand = do
 doUndo :: Command -> IO ()
 doUndo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
@@ -585,7 +585,7 @@ doCreate parsedCommand = do
 doConvert :: Command -> IO ()
 doConvert parsedCommand = do
   patchBytes <- readUnwrap (commandConvertPatch parsedCommand)
-  case parseSome patchBytes of
+  case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed

@@ -7,7 +7,7 @@ import Integration.Helpers
    parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
@@ -205,7 +205,7 @@ corruptPatchCRCTests bps ups =
       patchBytes <- ByteString.readFile bps
       -- Flip byte 10 (somewhere in the body, well before the footer)
       let corrupted = flipByte 10 patchBytes
-      case parseSome corrupted of
+      case parseSome (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
@@ -213,7 +213,7 @@ corruptPatchCRCTests bps ups =
   , testCase "corrupt-crc/UPS flipped byte" $ do
       patchBytes <- ByteString.readFile ups
       let corrupted = flipByte 10 patchBytes
-      case parseSome corrupted of
+      case parseSome (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
@@ -223,7 +223,7 @@ corruptPatchCRCTests bps ups =
       -- Flip a byte just before the 12-byte footer (srcCRC + tgtCRC + patchCRC)
       let position = ByteString.length patchBytes - 13
       let corrupted = flipByte position patchBytes
-      case parseSome corrupted of
+      case parseSome (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
@@ -299,7 +299,7 @@ crossFormatRoundTripTests base bps =
   [ testCase "round-trip/IPS -> EBP -> IPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome bpsBytes of
+      case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
@@ -310,7 +310,7 @@ crossFormatRoundTripTests base bps =
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome bpsBytes of
+      case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
@@ -321,7 +321,7 @@ crossFormatRoundTripTests base bps =
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome bpsBytes of
+      case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
@@ -339,7 +339,7 @@ crossFormatRoundTripTests base bps =
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
-          case parseSome patchA of
+          case parseSome (PatchFileContents patchA) of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
               resultA <- applyPatch parsedA (SourceFileContents baseBytes)
@@ -352,7 +352,7 @@ crossFormatRoundTripTests base bps =
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
-                      case parseSome patchB of
+                      case parseSome (PatchFileContents patchB) of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
                           resultB <- applyPatch parsedB (SourceFileContents baseBytes)
@@ -364,7 +364,7 @@ crossFormatRoundTripTests base bps =
                               case createFromMemory createFormatC baseBytes outputB defaultMeta Nothing of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
-                                  case parseSome patchC of
+                                  case parseSome (PatchFileContents patchC) of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
                                       resultC <- applyPatch parsedC (SourceFileContents baseBytes)
@@ -425,7 +425,7 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
       case createFromMemory createFormat baseBytes targetBytes defaultMeta Nothing of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
-          case parseSome patchBytes of
+          case parseSome (PatchFileContents patchBytes) of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
               result <- applyPatch parsed (SourceFileContents baseBytes)

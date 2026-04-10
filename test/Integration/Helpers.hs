@@ -54,7 +54,7 @@ import Slap.Error (SlapError, CreateResult(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, IOException)
@@ -203,7 +203,7 @@ buildBootstrapTargets tempDir pairs = do
     bootstrap (index, pair) = do
       baseBytes  <- mmapRomFile (bootstrapBase pair)
       patchBytes <- ByteString.readFile (bootstrapPatch pair)
-      case parseSome patchBytes of
+      case parseSome (PatchFileContents patchBytes) of
         Left slapError ->
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
                  ++ ": " ++ renderSlapError slapError)

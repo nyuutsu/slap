@@ -12,6 +12,7 @@ import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..),
@@ -19,12 +20,11 @@ import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      ActualMagic(..), ParsedSizeValue(..))
 
 import Data.Bits ((.&.), shiftR)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-parseBPS :: ByteString -> Either SlapError BPSPatch
-parseBPS input
+parseBPS :: PatchFileContents -> Either SlapError BPSPatch
+parseBPS (PatchFileContents input)
   | ByteString.length input < unLength bpsMagicLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (Length (ByteString.length input))))
   | ByteString.take (unLength bpsMagicLength) input /= "BPS1" =

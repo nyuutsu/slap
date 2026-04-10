@@ -14,17 +14,17 @@ import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..))
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-parseUPS :: ByteString -> Either SlapError UPSPatch
-parseUPS input
+parseUPS :: PatchFileContents -> Either SlapError UPSPatch
+parseUPS (PatchFileContents input)
   | ByteString.length input < unLength upsMagicLength =
       Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (Length (ByteString.length input))))
   | ByteString.take (unLength upsMagicLength) input /= "UPS1" =

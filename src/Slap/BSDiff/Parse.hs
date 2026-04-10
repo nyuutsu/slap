@@ -16,6 +16,7 @@ import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffControlRecordSize)
 import Slap.Compress (bz2Decompress)
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
@@ -50,8 +51,8 @@ safeDecompressBZip label compressed = case bz2Decompress compressed of
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseBSDiff :: ByteString -> Either SlapError BSDiffPatch
-parseBSDiff input
+parseBSDiff :: PatchFileContents -> Either SlapError BSDiffPatch
+parseBSDiff (PatchFileContents input)
   | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (RequiredLength (Length 32)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 8 input /= "BSDIFF40" = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left (ParseError LabelBSDiff "invalid header (negative size)")

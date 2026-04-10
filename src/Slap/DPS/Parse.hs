@@ -16,6 +16,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
@@ -72,8 +73,8 @@ isDPS input
 -- Parse
 ----------------------------------------------------------------------------
 
-parseDPS :: ByteString -> Either SlapError DPSPatch
-parseDPS input
+parseDPS :: PatchFileContents -> Either SlapError DPSPatch
+parseDPS (PatchFileContents input)
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (Length (ByteString.length input))))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError

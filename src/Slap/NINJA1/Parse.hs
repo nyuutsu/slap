@@ -22,6 +22,7 @@ module Slap.NINJA1.Parse
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType)
 import Slap.Error (SlapError(..))
+import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..),
@@ -37,15 +38,15 @@ import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 
-parseNINJA1 :: ByteString -> Either SlapError NINJA1Patch
-parseNINJA1 input
+parseNINJA1 :: PatchFileContents -> Either SlapError NINJA1Patch
+parseNINJA1 (PatchFileContents input)
   | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 6 input /= "NINJA1"    = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
-  | subFormatIdentifier == "B "                = parseBinary Ninja1Binary payload
-  | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= parseBinary Ninja1BinaryCompressed
+  | subFormatIdentifier == "B "                = parseBinary Ninja1Binary (PatchFileContents payload)
+  | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents)
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
-  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = parseText Ninja1Text payload    -- "T\n"
-  | subFormatIdentifier == "TZ"                = zlibDecompress payload >>= parseText Ninja1TextCompressed
+  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = parseText Ninja1Text (PatchFileContents payload)    -- "T\n"
+  | subFormatIdentifier == "TZ"                = zlibDecompress payload >>= (parseText Ninja1TextCompressed . PatchFileContents)
   | otherwise                    = Left (UnsupportedSubformat LabelNINJA1 (show subFormatIdentifier))
   where
     subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
@@ -68,8 +69,8 @@ zlibDecompress compressed = case zlibInflate compressed of
 -- Large file hash sampling (>0x1e00000): see ninja1HashInput.
 ----------------------------------------------------------------------------
 
-parseBinary :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
-parseBinary format payload
+parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
+parseBinary format (PatchFileContents payload)
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (Length (ByteString.length payload))))
   | otherwise = case runGet (parseBinaryGet format) payload of
       Left errorMessage -> Left (ParseError LabelNINJA1 errorMessage)
@@ -131,8 +132,8 @@ parseBinaryRecords = parseLoop []
 -- Record lines: OFFSET HEXDATA (both hex strings, no 0x prefix)
 ----------------------------------------------------------------------------
 
-parseText :: NINJA1SubFormat -> ByteString -> Either SlapError NINJA1Patch
-parseText format payload = do
+parseText :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
+parseText format (PatchFileContents payload) = do
   let stripCR = ByteString8.takeWhile (/= '\r')
       contentLines = filter (not . isSkippable) (map stripCR (ByteString8.lines payload))
   case contentLines of
