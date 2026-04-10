@@ -6,6 +6,7 @@ module Slap.Get
     -- * Primitives
   , getByte
   , getBytes
+  , getUntilByte
   , skip
   , getPosition
   , setPosition
@@ -90,6 +91,18 @@ getBytes (Length count)
       if position + count <= ByteString.length input
       then Right (ByteString.take count (ByteString.drop position input), Position (position + count))
       else Left ("getBytes: need " ++ show count ++ " bytes at offset " ++ show position ++ " but only " ++ show (ByteString.length input - position) ++ " available")
+
+-- | Scan the remaining input for the first occurrence of the given
+-- byte. Return the prefix as a zero-copy ByteString slice and advance
+-- past the terminator. Fail if the byte is not found before end of
+-- input.
+getUntilByte :: Word8 -> Get ByteString
+getUntilByte terminatorByte = Get $ \input (Position position) ->
+  let remainingBytes = ByteString.drop position input
+  in case ByteString.elemIndex terminatorByte remainingBytes of
+    Nothing -> Left ("getUntilByte: terminator not found at offset " ++ show position)
+    Just index ->
+      Right (ByteString.take index remainingBytes, Position (position + index + 1))
 
 skip :: Length -> Get ()
 skip (Length count)

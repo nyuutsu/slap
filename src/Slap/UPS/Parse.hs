@@ -15,7 +15,7 @@ import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, byuuVarint, atEnd)
+import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..))
@@ -82,13 +82,6 @@ parseBlocks = do
   if done then pure []
   else do
     skipCount <- Delta . fromIntegral <$> byuuVarint
-    xorBytes <- collectXor []
+    xorBytes  <- getUntilByte 0x00
     remaining <- parseBlocks
     pure (UPSBlock skipCount xorBytes : remaining)
-  where
-    -- Collect nonzero XOR bytes until 0x00 terminator
-    collectXor accumulated = do
-      byte <- getByte
-      if byte == 0x00
-        then pure (ByteString.pack (reverse accumulated))
-        else collectXor (byte : accumulated)
