@@ -82,21 +82,21 @@ applyUPS patch source
               0
               zeroFillLength
 
-        -- | XOR source bytes with xorBytes, writing result to output.
+        -- | XOR source bytes with xorData, writing result to output.
         -- Past source end, source bytes are treated as 0x00 (so
-        -- xorBytes are written verbatim). The caller is responsible
+        -- xorData are written verbatim). The caller is responsible
         -- for ensuring the write fits within target bounds — this
         -- helper does not clip to target end.
         xorSourceSlice :: Offset -> ByteString -> IO ()
-        xorSourceSlice outputPosition xorBytes = do
-          let xorLength = ByteString.length xorBytes
+        xorSourceSlice outputPosition xorData = do
+          let xorDataLength = ByteString.length xorData
               startPos  = unOffset outputPosition
               sourceEnd = unFileSize sourceSize
               innerLoop !byteOffset
-                | byteOffset >= xorLength = pure ()
+                | byteOffset >= xorDataLength = pure ()
                 | otherwise = do
                     let absolutePos = startPos + byteOffset
-                        xorByte     = ByteString.index xorBytes byteOffset
+                        xorByte     = ByteString.index xorData byteOffset
                     sourceByte <-
                       if absolutePos < sourceEnd
                         then peekByteOff sourcePointer absolutePos :: IO Word8
@@ -119,9 +119,9 @@ applyUPS patch source
                 (Vector.unsafeIndex blocks (unActionIndex blockIndex))
 
         handleBlock :: ActionIndex -> Offset -> UPSBlock -> IO ()
-        handleBlock blockIndex outputPosition (UPSBlock skipDelta xorBytes) =
+        handleBlock blockIndex outputPosition (UPSBlock skipDelta xorData) =
           let skipLen        = Length (unDelta skipDelta)
-              xorLen         = Length (ByteString.length xorBytes)
+              xorLen         = Length (ByteString.length xorData)
               terminatorLen  = Length 1
               totalBlockLen  = Length (unLength skipLen + unLength xorLen + 1)
               skipStart      = outputPosition
@@ -135,7 +135,7 @@ applyUPS patch source
                             (RemainingLength remainingSpace))
                else do
                  copySourceSlice skipStart skipLen
-                 xorSourceSlice xorStart xorBytes
+                 xorSourceSlice xorStart xorData
                  copySourceSlice terminatorPos terminatorLen
                  applyBlockStream (nextAction blockIndex) nextPosition
 

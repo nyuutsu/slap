@@ -5,7 +5,7 @@ module Slap.UPS.Describe
   , makeUPSRegion
   ) where
 
-import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
+import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteSize)
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), ExplainSummary(..)
@@ -16,7 +16,6 @@ import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, displace)
 
 import qualified Data.ByteString as ByteString
-import Data.List (mapAccumL)
 import qualified Data.Vector as Vector
 
 upsMeta :: UPSPatch -> [MetaField]
@@ -38,7 +37,12 @@ explainUPS :: UPSPatch -> ExplainData
 explainUPS patch = ExplainData
   { explainFormat   = "UPS"
   , explainHeader   = upsMeta patch
-  , explainSections = [SectionRegions (snd (mapAccumL makeUPSRegion (Offset 0) (Vector.toList (upsBlocks patch))))]
+  , explainSections =
+      let buildRegion (currentPosition, accumulatedRegions) block =
+            let (nextPosition, region) = makeUPSRegion currentPosition block
+            in (nextPosition, region : accumulatedRegions)
+          (_, reversedRegions) = Vector.foldl' buildRegion (Offset 0, []) (upsBlocks patch)
+      in [SectionRegions (reverse reversedRegions)]
   , explainSummary  = Summary (SummaryInfo blockCount "blocks" Nothing)
   , explainNotes    = []
   }
@@ -46,11 +50,11 @@ explainUPS patch = ExplainData
     blockCount = Vector.length (upsBlocks patch)
 
 makeUPSRegion :: Offset -> UPSBlock -> (Offset, ExplainRegion)
-makeUPSRegion position (UPSBlock skipDelta deltaBytes) =
+makeUPSRegion position (UPSBlock skipDelta xorData) =
   let xorOffset = displace position skipDelta
-      dataLength = ByteString.length deltaBytes
-      nextPosition = advance xorOffset (Length (dataLength + 1))  -- +1 for 0x00 terminator byte
+      xorDataLength = ByteString.length xorData
+      nextPosition = advance xorOffset (Length (xorDataLength + upsTerminatorByteSize))
   in ( nextPosition
-     , ExplainRegion xorOffset (Length dataLength) "XOR  " (PayloadXOR (Just deltaBytes))
+     , ExplainRegion xorOffset (Length xorDataLength) "XOR  " (PayloadXOR (Just xorData))
          (AnnotAt AtOffset xorOffset [DetailSkip skipDelta])
      )

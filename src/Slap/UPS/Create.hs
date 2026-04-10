@@ -39,7 +39,8 @@ createUPS original modified = do
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  Right (bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC))))
+  let patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+  Right (bodyBytes <> patchCRCBytes)
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipDelta xorData) =
@@ -83,11 +84,17 @@ diffToBlocks source target
     -- within targetLength (terminator would fall past target end).
     collectRun :: Int -> Either SlapError (ByteString, Int)
     collectRun start =
-      let runEnd = scanForMatch start
+      let runEnd = findFirstMatchPosition start
           runLength = runEnd - start
       in if runEnd >= targetLength
            then Left (UPSUnencodeablePair LabelUPS UPSLastByteDiffers)
            else
+             -- unsafeCreate (not create) is safe here because the
+             -- buffer-fill callback writes only to the freshly-allocated
+             -- local buffer with no observable effects beyond that write —
+             -- no IORef, no shared state, deterministic output. The 'unsafe'
+             -- refers to allowing the IO action to be duplicated by GHC,
+             -- which is fine because duplication produces identical output.
              let runBytes = unsafeCreate runLength $ \outputPointer ->
                    let writeLoop !byteOffset
                          | byteOffset >= runLength = pure ()
@@ -100,10 +107,13 @@ diffToBlocks source target
                    in writeLoop 0
              in Right (runBytes, runEnd + 1)
 
-    -- First position >= start where source[p] == target[p] (with
-    -- virtual zero-padding). Stops at targetLength if no match exists.
-    scanForMatch :: Int -> Int
-    scanForMatch !position
+    -- | Return the first position p in [start, targetLength) where
+    -- source[p] == target[p] (with virtual zero-padding past either
+    -- end). If no such position exists, returns targetLength as a
+    -- sentinel — the caller compares against targetLength to detect
+    -- the no-match case.
+    findFirstMatchPosition :: Int -> Int
+    findFirstMatchPosition !position
       | position >= targetLength = position
       | byteAt source position == byteAt target position = position
-      | otherwise = scanForMatch (position + 1)
+      | otherwise = findFirstMatchPosition (position + 1)

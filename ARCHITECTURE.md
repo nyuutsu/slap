@@ -44,7 +44,7 @@ Foo/Describe.hs — FooPatch → [MetaField] + ExplainData
 Foo/Create.hs   — (optional) → CreateResult (patch bytes + [SlapWarning])
 ```
 
-BPS, DPS, and GDIFF apply functions are total (return `ByteString` directly). BSDiff, VCDIFF, and XDelta1 return `Either SlapError ByteString`.
+Most apply functions return `Either SlapError ByteString` and validate inputs strictly. Two formats are still permissive (return `ByteString` directly, silently producing wrong output for malformed input): DPS and GDIFF. The strict-apply campaign for those formats is upcoming.
 
 No format module imports another format module. They are fully isolated siblings. Each depends only on the foundation layer.
 

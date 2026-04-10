@@ -9,7 +9,7 @@ module Slap.UPS.Parse
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
 import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
-                       upsMagicSize, upsFooterSize, upsTotalOverhead)
+                       upsMagicSize, upsCRC32Size, upsFooterSize, upsTotalOverhead)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -33,13 +33,13 @@ parseUPS input
       Left (InputTooShort LabelUPS (RequiredLength (Length upsTotalOverhead)) (ActualLength (Length (ByteString.length input))))
   | otherwise = do
       -- Validate patch CRC
-      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - 4) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - 4) input)
+      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - upsCRC32Size) input)
+          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - upsCRC32Size) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (ByteString.length input - upsFooterSize) input)
-          targetCRC = CRC32 (getWord32LE (ByteString.length input - 8)  input)
+          targetCRC = CRC32 (getWord32LE (ByteString.length input - 2 * upsCRC32Size) input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (ByteString.length input - upsTotalOverhead) (ByteString.drop upsMagicSize input)
       case runGet parseUPSBody bodyBytes of
@@ -47,10 +47,10 @@ parseUPS input
         Right body
           | unFileSize (upsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldSourceSize
-                (ParsedSizeValue (fromIntegral (unFileSize (upsBodySourceSize body)))))
+                (ParsedSizeValue (unFileSize (upsBodySourceSize body))))
           | unFileSize (upsBodyTargetSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldTargetSize
-                (ParsedSizeValue (fromIntegral (unFileSize (upsBodyTargetSize body)))))
+                (ParsedSizeValue (unFileSize (upsBodyTargetSize body))))
           | otherwise ->
               Right UPSPatch
                 { upsSourceSize = upsBodySourceSize body
@@ -82,6 +82,6 @@ parseBlocks = do
   if done then pure []
   else do
     skipCount <- Delta . fromIntegral <$> byuuVarint
-    xorBytes  <- getUntilByte 0x00
+    xorData   <- getUntilByte 0x00
     remaining <- parseBlocks
-    pure (UPSBlock skipCount xorBytes : remaining)
+    pure (UPSBlock skipCount xorData : remaining)
