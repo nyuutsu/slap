@@ -2,8 +2,6 @@
 
 module Slap.UPS.Create
   ( createUPS
-  , encodeUPSBlock
-  , diffToBlocks
   ) where
 
 import Slap.UPS.Types (UPSBlock(..))
@@ -13,9 +11,9 @@ import Slap.Error (SlapError(..), UnencodeabilityReason(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Data.Bits (xor)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString

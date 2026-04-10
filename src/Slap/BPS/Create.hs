@@ -7,7 +7,6 @@ module Slap.BPS.Create
 import Slap.Binary (putWord32LE, putByuuVarint)
 import Slap.Checksum (CRC32(..))
 import Slap.FFI (rustyCRC32, rustyBpsDiff)
-
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Data.ByteString (ByteString)

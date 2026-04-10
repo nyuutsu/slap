@@ -10,7 +10,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength,
                      firstAction, nextAction, plusOffset)
-
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import qualified Data.ByteString as ByteString

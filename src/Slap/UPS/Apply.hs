@@ -11,7 +11,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength,
                      firstAction, nextAction, plusOffset)
-
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import Control.Monad (when)
