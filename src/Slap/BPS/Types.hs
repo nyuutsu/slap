@@ -4,10 +4,10 @@ module Slap.BPS.Types
   , BPSPatch(..)
   , decodeSignedVarint
     -- * Named constants
-  , bpsMagicSize
-  , bpsCRC32Size
-  , bpsFooterSize
-  , bpsTotalOverhead
+  , bpsMagicLength
+  , bpsCRC32Length
+  , bpsFooterLength
+  , bpsOverheadLength
   ) where
 
 import Data.Bits (shiftR, testBit)
@@ -49,21 +49,22 @@ data BPSPatch = BPSPatch
   , bpsPatchCRC   :: !CRC32
   } deriving (Show)
 
--- | Magic ("BPS1") size in bytes.
-bpsMagicSize :: Int
-bpsMagicSize = 4
+-- | Length of the BPS magic ("BPS1") at the start of every patch.
+bpsMagicLength :: Length
+bpsMagicLength = Length 4
 
--- | Size of one CRC32 field in bytes.
-bpsCRC32Size :: Int
-bpsCRC32Size = 4
+-- | Length of one CRC32 field in a BPS patch.
+bpsCRC32Length :: Length
+bpsCRC32Length = Length 4
 
--- | Footer size: three CRC32s (source, target, patch).
-bpsFooterSize :: Int
-bpsFooterSize = 3 * bpsCRC32Size
+-- | Length of the BPS footer: three CRC32 fields (source, target, patch).
+bpsFooterLength :: Length
+bpsFooterLength = bpsCRC32Length <> bpsCRC32Length <> bpsCRC32Length
 
--- | Total framing overhead: magic + footer.
-bpsTotalOverhead :: Int
-bpsTotalOverhead = bpsMagicSize + bpsFooterSize
+-- | Total framing overhead of a BPS patch: magic plus footer. The body
+-- bytes (sizes, metadata, action stream) occupy the remainder.
+bpsOverheadLength :: Length
+bpsOverheadLength = bpsMagicLength <> bpsFooterLength
 
 -- | Decode a signed varint: bit 0 = sign (1 = negative), bits 1+ = magnitude.
 decodeSignedVarint :: Int64 -> Int64

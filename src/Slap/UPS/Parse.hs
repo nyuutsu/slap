@@ -9,7 +9,7 @@ module Slap.UPS.Parse
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
 import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
-                       upsMagicSize, upsCRC32Size, upsFooterSize, upsTotalOverhead)
+                       upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -25,23 +25,28 @@ import qualified Data.Vector as Vector
 
 parseUPS :: ByteString -> Either SlapError UPSPatch
 parseUPS input
-  | ByteString.length input < upsMagicSize =
-      Left (InputTooShort LabelUPS (RequiredLength (Length upsMagicSize)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take upsMagicSize input /= "UPS1" =
-      Left (BadMagic LabelUPS (ActualMagic (ByteString.take upsMagicSize input)))
-  | ByteString.length input < upsTotalOverhead =
-      Left (InputTooShort LabelUPS (RequiredLength (Length upsTotalOverhead)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < unLength upsMagicLength =
+      Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (Length (ByteString.length input))))
+  | ByteString.take (unLength upsMagicLength) input /= "UPS1" =
+      Left (BadMagic LabelUPS (ActualMagic (ByteString.take (unLength upsMagicLength) input)))
+  | ByteString.length input < unLength upsOverheadLength =
+      Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (Length (ByteString.length input))))
   | otherwise = do
       -- Validate patch CRC
-      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - upsCRC32Size) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - upsCRC32Size) input)
+      let inputLength    = ByteString.length input
+          crcLength      = unLength upsCRC32Length
+          footerLength   = unLength upsFooterLength
+          overheadLength = unLength upsOverheadLength
+          magicLength    = unLength upsMagicLength
+          storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
+          actualPatchCRC = rustyCRC32 (ByteString.take (inputLength - crcLength) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()
-      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - upsFooterSize) input)
-          targetCRC = CRC32 (getWord32LE (ByteString.length input - 2 * upsCRC32Size) input)
+      let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
+          targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
           -- Parse body between magic and footer
-          bodyBytes = ByteString.take (ByteString.length input - upsTotalOverhead) (ByteString.drop upsMagicSize input)
+          bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
       case runGet parseUPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelUPS errorMessage)
         Right body

@@ -3,10 +3,10 @@ module Slap.UPS.Types
   , UPSBody(..)
   , UPSPatch(..)
     -- * Named constants
-  , upsMagicSize
-  , upsCRC32Size
-  , upsFooterSize
-  , upsTotalOverhead
+  , upsMagicLength
+  , upsCRC32Length
+  , upsFooterLength
+  , upsOverheadLength
   , upsTerminatorByteLength
   ) where
 
@@ -44,21 +44,22 @@ data UPSPatch = UPSPatch
   , upsPatchCRC   :: !CRC32
   } deriving (Show)
 
--- | Magic ("UPS1") size in bytes.
-upsMagicSize :: Int
-upsMagicSize = 4
+-- | Length of the UPS magic ("UPS1") at the start of every patch.
+upsMagicLength :: Length
+upsMagicLength = Length 4
 
--- | Size of one CRC32 field in bytes.
-upsCRC32Size :: Int
-upsCRC32Size = 4
+-- | Length of one CRC32 field in a UPS patch.
+upsCRC32Length :: Length
+upsCRC32Length = Length 4
 
--- | Footer size: three CRC32s (source, target, patch).
-upsFooterSize :: Int
-upsFooterSize = 3 * upsCRC32Size
+-- | Length of the UPS footer: three CRC32 fields (source, target, patch).
+upsFooterLength :: Length
+upsFooterLength = upsCRC32Length <> upsCRC32Length <> upsCRC32Length
 
--- | Total framing overhead: magic + footer.
-upsTotalOverhead :: Int
-upsTotalOverhead = upsMagicSize + upsFooterSize
+-- | Total framing overhead of a UPS patch: magic plus footer. The body
+-- bytes (sizes, block stream) occupy the remainder.
+upsOverheadLength :: Length
+upsOverheadLength = upsMagicLength <> upsFooterLength
 
 -- | Per the UPS spec, every diff block ends with a 0x00 terminator
 -- byte that counts against the target file pointer. This is the

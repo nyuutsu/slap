@@ -267,12 +267,12 @@ detectFileId readLength lengthSize input
   | ByteString.length input < 4 + lengthSize = Nothing
   | ByteString.take 4 (ByteString.drop (ByteString.length input - 4 - lengthSize) input) == ".DIZ" =
       let idLength    = fromIntegral (readLength (ByteString.length input - lengthSize) input)
-          trailerSize = fileIdMarkerSize + idLength + fileIdFooterSize + lengthSize
-      in Just (FileId (ByteString.take idLength (ByteString.drop (ByteString.length input - trailerSize + fileIdMarkerSize) input)))
+          trailerSize = unLength fileIdMarkerLength + idLength + unLength fileIdFooterLength + lengthSize
+      in Just (FileId (ByteString.take idLength (ByteString.drop (ByteString.length input - trailerSize + unLength fileIdMarkerLength) input)))
   | otherwise = Nothing
 
 -- Strip File_ID.diz trailer bytes from the record body.
 stripFileId :: Int -> Maybe FileId -> ByteString -> ByteString
 stripFileId _ Nothing body = body
 stripFileId lengthSize (Just (FileId content)) body =
-  ByteString.take (ByteString.length body - fileIdMarkerSize - ByteString.length content - fileIdFooterSize - lengthSize) body
+  ByteString.take (ByteString.length body - unLength fileIdMarkerLength - ByteString.length content - unLength fileIdFooterLength - lengthSize) body

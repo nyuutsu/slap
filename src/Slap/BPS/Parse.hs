@@ -7,7 +7,7 @@ module Slap.BPS.Parse
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
-                       bpsMagicSize, bpsCRC32Size, bpsFooterSize, bpsTotalOverhead)
+                       bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -25,23 +25,28 @@ import qualified Data.Vector as Vector
 
 parseBPS :: ByteString -> Either SlapError BPSPatch
 parseBPS input
-  | ByteString.length input < bpsMagicSize =
-      Left (InputTooShort LabelBPS (RequiredLength (Length bpsMagicSize)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take bpsMagicSize input /= "BPS1" =
-      Left (BadMagic LabelBPS (ActualMagic (ByteString.take bpsMagicSize input)))
-  | ByteString.length input < bpsFooterSize =
-      Left (InputTooShort LabelBPS (RequiredLength (Length bpsFooterSize)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < unLength bpsMagicLength =
+      Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (Length (ByteString.length input))))
+  | ByteString.take (unLength bpsMagicLength) input /= "BPS1" =
+      Left (BadMagic LabelBPS (ActualMagic (ByteString.take (unLength bpsMagicLength) input)))
+  | ByteString.length input < unLength bpsFooterLength =
+      Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (Length (ByteString.length input))))
   | otherwise = do
       -- Validate patch CRC (covers everything except the trailing patch CRC)
-      let storedPatchCRC = CRC32 (getWord32LE (ByteString.length input - bpsCRC32Size) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (ByteString.length input - bpsCRC32Size) input)
+      let inputLength    = ByteString.length input
+          crcLength      = unLength bpsCRC32Length
+          footerLength   = unLength bpsFooterLength
+          overheadLength = unLength bpsOverheadLength
+          magicLength    = unLength bpsMagicLength
+          storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
+          actualPatchCRC = rustyCRC32 (ByteString.take (inputLength - crcLength) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()
-      let sourceCRC = CRC32 (getWord32LE (ByteString.length input - bpsFooterSize) input)
-          targetCRC = CRC32 (getWord32LE (ByteString.length input - 2 * bpsCRC32Size) input)
+      let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
+          targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
           -- Parse body between magic and footer using Get monad
-          bodyBytes = ByteString.take (ByteString.length input - bpsTotalOverhead) (ByteString.drop bpsMagicSize input)
+          bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
       case runGet parseBPSBody bodyBytes of
         Left errorMessage -> Left (ParseError LabelBPS errorMessage)
         Right body

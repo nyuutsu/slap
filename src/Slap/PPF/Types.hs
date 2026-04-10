@@ -18,8 +18,8 @@ module Slap.PPF.Types
     , ppf2HeaderSize
     , ppf3MinHeaderSize
     , ppf4HeaderSize
-    , fileIdMarkerSize
-    , fileIdFooterSize
+    , fileIdMarkerLength
+    , fileIdFooterLength
     ) where
 
 import Data.ByteString (ByteString)
@@ -106,10 +106,10 @@ ppf3MinHeaderSize = 60
 ppf4HeaderSize :: Int
 ppf4HeaderSize = 60
 
--- | "FILE_ID.DIZ" marker prefix size in the File_ID.diz trailer.
-fileIdMarkerSize :: Int
-fileIdMarkerSize = 18
+-- | Length of the "FILE_ID.DIZ" marker prefix in the File_ID.diz trailer.
+fileIdMarkerLength :: Length
+fileIdMarkerLength = Length 18
 
--- | Fixed footer size after the File_ID.diz content.
-fileIdFooterSize :: Int
-fileIdFooterSize = 16
+-- | Length of the fixed footer after the File_ID.diz content.
+fileIdFooterLength :: Length
+fileIdFooterLength = Length 16
