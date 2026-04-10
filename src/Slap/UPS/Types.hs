@@ -7,17 +7,17 @@ module Slap.UPS.Types
   , upsCRC32Size
   , upsFooterSize
   , upsTotalOverhead
-  , upsTerminatorByteSize
+  , upsTerminatorByteLength
   ) where
 
 import Slap.Checksum (CRC32)
-import Slap.Measure (FileSize(..), Delta(..))
+import Slap.Measure (Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 
 data UPSBlock = UPSBlock
-  { upsSkip    :: !Delta
+  { upsSkip    :: !Length
     -- ^ Number of bytes to skip (copied verbatim from source) before
     -- the XOR delta begins.
   , upsXorData :: !ByteString
@@ -62,6 +62,6 @@ upsTotalOverhead = upsMagicSize + upsFooterSize
 
 -- | Per the UPS spec, every diff block ends with a 0x00 terminator
 -- byte that counts against the target file pointer. This is the
--- size of that terminator (always 1).
-upsTerminatorByteSize :: Int
-upsTerminatorByteSize = 1
+-- length of that terminator (always 1).
+upsTerminatorByteLength :: Length
+upsTerminatorByteLength = Length 1

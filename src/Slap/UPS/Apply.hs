@@ -2,10 +2,10 @@ module Slap.UPS.Apply
   ( applyUPS
   ) where
 
-import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteSize)
+import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
                      RequestedLength(..), RemainingLength(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
@@ -137,15 +137,13 @@ applyUPS patch source
                 (Vector.unsafeIndex blocks (unActionIndex blockIndex))
 
         handleBlock :: ActionIndex -> Offset -> UPSBlock -> IO ()
-        handleBlock blockIndex outputPosition (UPSBlock skipDelta xorData) =
-          let skipLen        = Length (unDelta skipDelta)
-              xorLen         = Length (ByteString.length xorData)
-              terminatorLen  = Length upsTerminatorByteSize
-              totalBlockLen  = skipLen <> xorLen <> terminatorLen
+        handleBlock blockIndex outputPosition (UPSBlock skipLen xorData) =
+          let xorLen         = Length (ByteString.length xorData)
+              totalBlockLen  = skipLen <> xorLen <> upsTerminatorByteLength
               skipStart      = outputPosition
               xorStart       = advance skipStart skipLen
               terminatorPos  = advance xorStart xorLen
-              nextPosition   = advance terminatorPos terminatorLen
+              nextPosition   = advance terminatorPos upsTerminatorByteLength
               remainingSpace = remainingFromOffset outputPosition targetSize
           in if not (fitsWithin outputPosition totalBlockLen targetSize)
                then abort (ApplyWritesPastTarget blockIndex
@@ -154,7 +152,7 @@ applyUPS patch source
                else do
                  copySourceSlice skipStart skipLen
                  xorSourceSlice xorStart xorLen xorData
-                 copySourceSlice terminatorPos terminatorLen
+                 copySourceSlice terminatorPos upsTerminatorByteLength
                  applyBlockStream (nextAction blockIndex) nextPosition
 
       in applyBlockStream firstAction (Offset 0)

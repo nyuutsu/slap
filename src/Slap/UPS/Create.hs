@@ -12,7 +12,7 @@ import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), UnencodeabilityReason(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Delta(..))
+import Slap.Measure (Length(..))
 
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -43,8 +43,8 @@ createUPS original modified = do
   Right (bodyBytes <> patchCRCBytes)
 
 encodeUPSBlock :: UPSBlock -> Builder
-encodeUPSBlock (UPSBlock skipDelta xorData) =
-  putByuuVarint (fromIntegral (unDelta skipDelta))
+encodeUPSBlock (UPSBlock skipLength xorData) =
+  putByuuVarint (fromIntegral (unLength skipLength))
   <> byteString xorData
   <> word8 0x00  -- terminator
 
@@ -76,7 +76,7 @@ diffToBlocks source target
           scan (position + 1) (skipCount + 1) accumulatedBlocks
       | otherwise = do
           (runBytes, nextPosition) <- collectRun position
-          let block = UPSBlock (Delta (fromIntegral skipCount)) runBytes
+          let block = UPSBlock (Length skipCount) runBytes
           scan nextPosition 0 (block : accumulatedBlocks)
 
     -- Scan forward from 'start' while bytes differ, then consume the

@@ -5,7 +5,7 @@ module Slap.UPS.Describe
   , makeUPSRegion
   ) where
 
-import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteSize)
+import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), ExplainSummary(..)
@@ -13,7 +13,7 @@ import Slap.Explain
     )
 import Slap.Checksum (showCRC32)
 import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, displace)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -50,11 +50,11 @@ explainUPS patch = ExplainData
     blockCount = Vector.length (upsBlocks patch)
 
 makeUPSRegion :: Offset -> UPSBlock -> (Offset, ExplainRegion)
-makeUPSRegion position (UPSBlock skipDelta xorData) =
-  let xorOffset = displace position skipDelta
-      xorDataLength = ByteString.length xorData
-      nextPosition = advance xorOffset (Length (xorDataLength + upsTerminatorByteSize))
+makeUPSRegion position (UPSBlock skipLength xorData) =
+  let xorOffset = advance position skipLength
+      xorDataLength = Length (ByteString.length xorData)
+      nextPosition = advance xorOffset (xorDataLength <> upsTerminatorByteLength)
   in ( nextPosition
-     , ExplainRegion xorOffset (Length xorDataLength) "XOR  " (PayloadXOR (Just xorData))
-         (AnnotAt AtOffset xorOffset [DetailSkip skipDelta])
+     , ExplainRegion xorOffset xorDataLength "XOR  " (PayloadXOR (Just xorData))
+         (AnnotAt AtOffset xorOffset [DetailSkip skipLength])
      )

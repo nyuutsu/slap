@@ -16,7 +16,7 @@ import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
-import Slap.Measure (Length(..), FileSize(..), Delta(..),
+import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..))
 import Data.ByteString (ByteString)
@@ -81,7 +81,7 @@ parseBlocks = do
   done <- atEnd
   if done then pure []
   else do
-    skipCount <- Delta . fromIntegral <$> byuuVarint
+    skipCount <- Length . fromIntegral <$> byuuVarint
     xorData   <- getUntilByte 0x00
     remaining <- parseBlocks
     pure (UPSBlock skipCount xorData : remaining)

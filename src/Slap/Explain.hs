@@ -99,7 +99,7 @@ data AnnotDetail
   = DetailRLE                   -- "(RLE)"
   | DetailUndo                  -- "(undo data)"
   | DetailDelta Delta           -- "(delta +N)"
-  | DetailSkip Delta            -- "(skip N)"
+  | DetailSkip Length           -- "(skip N)"
   | DetailSource Offset         -- "(source 0xN)"
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
   | DetailCRC16 CRC16 CRC16     -- "(src CRC16 0xN, tgt CRC16 0xN)"
@@ -222,7 +222,7 @@ renderDetail :: AnnotDetail -> String
 renderDetail DetailRLE                      = "  (RLE)"
 renderDetail DetailUndo                     = "  (undo data)"
 renderDetail (DetailDelta delta)            = "  (delta " ++ showSigned (unDelta delta) ++ ")"
-renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show (unDelta skipAmount) ++ ")"
+renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show (unLength skipAmount) ++ ")"
 renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 (unOffset sourceOffset) ++ ")"
 renderDetail (DetailSourceIndex _)          = ""
 renderDetail (DetailCRC16 sourceCrc targetCrc) =
