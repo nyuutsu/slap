@@ -113,7 +113,7 @@ getByuuVarint offset input = decode offset 0 1 (0 :: Int)
   where
     inputLength = ByteString.length input
     decode position accumulated multiplier !iterations
-      | iterations > 9 =
+      | iterations >= 9 =
           Left ("varint overflow at offset " ++ show offset
                 ++ " (too many continuation bytes)")
       | position >= inputLength =
@@ -136,7 +136,7 @@ getVcdiffVarint offset input = decode offset 0 (0 :: Int)
   where
     inputLength = ByteString.length input
     decode position accumulated !iterations
-      | iterations > 9 =
+      | iterations >= 9 =
           Left ("varint overflow at offset " ++ show offset
                 ++ " (too many continuation bytes)")
       | position >= inputLength =

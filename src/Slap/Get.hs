@@ -192,7 +192,7 @@ edsioVarint :: Get Int64
 edsioVarint = decode 0 0
   where
     decode accumulated bitOffset
-      | bitOffset > 63 = fail "varint overflow (too many continuation bytes)"
+      | bitOffset >= 63 = fail "varint overflow (too many continuation bytes)"
       | otherwise = do
           byte <- getByte
           let payload = fromIntegral (byte .&. 0x7F) :: Int64
