@@ -14,6 +14,8 @@ import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLo
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
+import Slap.FileContents (PatchFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
@@ -38,7 +40,7 @@ encodeAPSN64 records destinationSize description =
             <> byteString (boundedField bounded)
             <> putWord32LE destinationSize
             <> foldMap encodeN64Record (splitLong records)
-    in CreateResult patchBytes descriptionWarnings
+    in CreateResult (PatchFileContents patchBytes) descriptionWarnings
 
 splitLong :: [EncodedHunk] -> [EncodedHunk]
 splitLong = concatMap splitRecord

@@ -9,6 +9,8 @@ import Slap.APSGBA.Apply (safeSlice)
 import Slap.APSGBA.Types (apsGbaBlockSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE)
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -16,8 +18,8 @@ import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
 
-createAPSGBA :: ByteString -> ByteString -> ByteString
-createAPSGBA original modified = LazyByteString.toStrict $ toLazyByteString $
+createAPSGBA :: SourceFileContents -> TargetFileContents -> PatchFileContents
+createAPSGBA (SourceFileContents original) (TargetFileContents modified) = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
     byteString "APS1"
     <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
     <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)

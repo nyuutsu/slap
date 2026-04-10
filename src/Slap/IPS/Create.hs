@@ -26,6 +26,8 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..), Delta(..), Hunk(..), 
                      offsetToInt, advance, displace, ipsSentinel, ips32Sentinel)
 import Slap.Format (padHex)
 
+import Slap.FileContents (SourceFileContents(..), PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
@@ -89,8 +91,8 @@ avoidSentinel sentinel source = map adjustRecord
 
 -- | Encode pre-split records as an IPS patch. Records must have offsets
 -- <= 0xFFFFFF and data <= ipsMaxRecordData bytes each.
-encodeIPS :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
-encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString $
+encodeIPS :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> PatchFileContents
+encodeIPS (SourceFileContents source) records truncation = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"
@@ -98,8 +100,8 @@ encodeIPS source records truncation = LazyByteString.toStrict $ toLazyByteString
 
 -- | Encode pre-split records as an IPS32 patch. Records must have data
 -- <= ipsMaxRecordData bytes each.
-encodeIPS32 :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString
-encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteString $
+encodeIPS32 :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> PatchFileContents
+encodeIPS32 (SourceFileContents source) records truncation = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
   byteString "IPS32"
   <> foldMap (encodeIPSRecord 4) (avoidSentinel (fromIntegral ips32Sentinel) source records)
   <> byteString "EEOF"
@@ -107,8 +109,8 @@ encodeIPS32 source records truncation = LazyByteString.toStrict $ toLazyByteStri
 
 -- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
 -- Truncation marker (if any) goes between EOF and JSON.
-encodeEBP :: ByteString -> [EncodedHunk] -> Maybe FileSize -> String -> String -> String -> ByteString
-encodeEBP source records truncation title author description = LazyByteString.toStrict $ toLazyByteString $
+encodeEBP :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> String -> String -> String -> PatchFileContents
+encodeEBP (SourceFileContents source) records truncation title author description = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"
@@ -117,8 +119,8 @@ encodeEBP source records truncation title author description = LazyByteString.to
 
 -- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
 -- Used by direct conversion to preserve source EBP metadata as-is.
-encodeEBPRaw :: ByteString -> [EncodedHunk] -> Maybe FileSize -> ByteString -> ByteString
-encodeEBPRaw source records truncation meta = LazyByteString.toStrict $ toLazyByteString $
+encodeEBPRaw :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> ByteString -> PatchFileContents
+encodeEBPRaw (SourceFileContents source) records truncation meta = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
   byteString "PATCH"
   <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
   <> byteString "EOF"

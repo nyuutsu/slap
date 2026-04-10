@@ -364,8 +364,8 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     targetResult <- applyPatch somePatch (SourceFileContents baseBytes)
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
-      Right (TargetFileContents targetBytes) ->
-        case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
+      Right target ->
+        case createFromMemory targetFormat (SourceFileContents baseBytes) target meta (patchContents somePatch) of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
   Nothing -> case patchContents somePatch of

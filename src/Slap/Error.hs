@@ -16,8 +16,8 @@ module Slap.Error
   , renderSlapWarning
   ) where
 
-import Data.ByteString (ByteString)
 import Numeric (showHex)
+import Slap.FileContents (PatchFileContents)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
                       ExpectedCRC32(..), ActualCRC32(..))
@@ -304,7 +304,7 @@ data SlapWarning
 ----------------------------------------------------------------------------
 
 data CreateResult = CreateResult
-  { resultBytes    :: !ByteString
+  { resultBytes    :: !PatchFileContents
   , resultWarnings :: ![SlapWarning]
   } deriving (Show)
 

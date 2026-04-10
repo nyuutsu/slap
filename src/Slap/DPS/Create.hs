@@ -14,6 +14,8 @@ import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLo
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -22,8 +24,8 @@ import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: ByteString -> ByteString -> String -> String -> String -> DPSStability -> CreateResult
-createDPS original modified name author version stability =
+createDPS :: SourceFileContents -> TargetFileContents -> String -> String -> String -> DPSStability -> CreateResult
+createDPS (SourceFileContents original) (TargetFileContents modified) name author version stability =
     let (nameBytes, nameWarnings)       = encodeField FieldPatchName name
         (authorBytes, authorWarnings)   = encodeField FieldAuthor author
         (versionBytes, versionWarnings) = encodeField FieldVersion version
@@ -35,7 +37,7 @@ createDPS original modified name author version stability =
             <> word8 (fromDPSFormatVersion DPSVersion1)
             <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
             <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
-    in CreateResult patchBytes (nameWarnings ++ authorWarnings ++ versionWarnings)
+    in CreateResult (PatchFileContents patchBytes) (nameWarnings ++ authorWarnings ++ versionWarnings)
   where
     encodeField fieldName fieldString =
       let result = encodeBoundedLocale dpsFieldWidth fieldString

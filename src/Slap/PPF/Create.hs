@@ -9,20 +9,22 @@ import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLo
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
+import Slap.FileContents (PatchFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Maybe (fromMaybe, isJust)
 
-padDescription :: String -> CreateResult
+padDescription :: String -> (ByteString, [SlapWarning])
 padDescription text =
   let result = encodeBoundedLocale (unLength ppfDescriptionLength) text
       warnings = case boundedTruncation result of
         Nothing -> []
         Just info -> [FieldTruncated LabelPPF3 FieldDescription
                        (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
-  in CreateResult (boundedField result) warnings
+  in (boundedField result, warnings)
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> PPFImageType -> Builder
 buildHeader description blockCheck hasUndo validationBlock imageType =
@@ -52,16 +54,16 @@ encodePPF3 :: [Hunk]
            -> PPFImageType
            -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
-  let descResult = padDescription description
+  let (descriptionBytes, descriptionWarnings) = padDescription description
       hasValidate = isJust validationBlock
       hasUndo     = isJust undoHunks
       validationBytes = fromMaybe ByteString.empty validationBlock
-      header      = buildHeader (resultBytes descResult) hasValidate hasUndo
+      header      = buildHeader descriptionBytes hasValidate hasUndo
                       validationBytes imageType
       body = case undoHunks of
         Just hunks -> foldMap (encodeUndoRecord True) hunks
         Nothing    -> foldMap encodeWriteRecord records
-  in CreateResult (LazyByteString.toStrict (toLazyByteString (header <> body))) (resultWarnings descResult)
+  in CreateResult (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body)))) descriptionWarnings
 
 -- | Encode a write record (no undo data).
 encodeWriteRecord :: Hunk -> Builder

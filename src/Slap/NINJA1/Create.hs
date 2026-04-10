@@ -13,6 +13,8 @@ import Slap.Checksum (CRC32(..))
 import Slap.Measure (Offset(..), EncodedHunk(..))
 import Slap.Compress (zlibDeflate)
 
+import Slap.FileContents (PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -28,10 +30,10 @@ encodeNINJA1 :: [EncodedHunk]
              -> ByteString      -- source SHA1 (20 bytes)
              -> NINJA1RomType   -- ROM platform type
              -> Bool            -- compress (BZ subformat)
-             -> ByteString
+             -> PatchFileContents
 encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
-  | doCompress = "NINJA1BZ" <> zlibDeflate payload
-  | otherwise  = "NINJA1B " <> payload
+  | doCompress = PatchFileContents $ "NINJA1BZ" <> zlibDeflate payload
+  | otherwise  = PatchFileContents $ "NINJA1B " <> payload
   where
     payload = LazyByteString.toStrict $ toLazyByteString $
         word8 (fromNINJA1RomType romType)

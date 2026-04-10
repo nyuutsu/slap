@@ -10,6 +10,8 @@ module Slap.PCHTXT.Create
 import Slap.PCHTXT.Types (PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Measure (Offset(..), EncodedHunk(..))
 
+import Slap.FileContents (PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (intToDigit, isHexDigit, toUpper)
@@ -21,8 +23,8 @@ import Numeric (showHex)
 -- | Encode records as PCHTXT text (for direct conversion and create).
 -- If a description is provided and looks like a hex build ID (all hex, 32+ chars),
 -- emit @nsobid-<id>; otherwise emit // <description> as a comment.
-encodePCHTXT :: [EncodedHunk] -> Maybe String -> ByteString
-encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
+encodePCHTXT :: [EncodedHunk] -> Maybe String -> PatchFileContents
+encodePCHTXT records maybeDescription = PatchFileContents $ Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ "@enabled" : map encodeHunkEntry records
   where
     descriptionLines = case maybeDescription of
@@ -36,8 +38,8 @@ encodePCHTXT records maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
     encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (unOffset hunkOffset) ++ " " ++ hexBytes hunkPayload
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
-encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe String -> ByteString
-encodePCHTXTBlocks blocks maybeDescription = Text.encodeUtf8 $ Text.pack $ unlines $
+encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe String -> PatchFileContents
+encodePCHTXTBlocks blocks maybeDescription = PatchFileContents $ Text.encodeUtf8 $ Text.pack $ unlines $
   descriptionLines ++ concatMap encodeBlock blocks
   where
     descriptionLines = case maybeDescription of

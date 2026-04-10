@@ -335,11 +335,11 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createFromMemory createFormatA baseBytes targetBytes defaultMeta Nothing of
+      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
-          case parseSome (PatchFileContents patchA) of
+          case parseSome patchA of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
               resultA <- applyPatch parsedA (SourceFileContents baseBytes)
@@ -348,11 +348,11 @@ crossFormatRoundTripTests base bps =
                 Right (TargetFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createFromMemory createFormatB baseBytes outputA defaultMeta Nothing of
+                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) defaultMeta Nothing of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
-                      case parseSome (PatchFileContents patchB) of
+                      case parseSome patchB of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
                           resultB <- applyPatch parsedB (SourceFileContents baseBytes)
@@ -361,10 +361,10 @@ crossFormatRoundTripTests base bps =
                             Right (TargetFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createFromMemory createFormatC baseBytes outputB defaultMeta Nothing of
+                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) defaultMeta Nothing of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
-                                  case parseSome (PatchFileContents patchC) of
+                                  case parseSome patchC of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
                                       resultC <- applyPatch parsedC (SourceFileContents baseBytes)
@@ -422,10 +422,10 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createFromMemory createFormat baseBytes targetBytes defaultMeta Nothing of
+      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
-          case parseSome (PatchFileContents patchBytes) of
+          case parseSome patchBytes of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
               result <- applyPatch parsed (SourceFileContents baseBytes)

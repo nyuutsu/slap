@@ -16,6 +16,8 @@ import Slap.Error (SlapWarning(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.TextEncoding (truncateUtf8, truncateLocale)
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -25,9 +27,9 @@ import Data.Bits (xor)
 
 -- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createRUP :: ByteString -> ByteString -> RUPInfo -> NINJA2RomType -> PatchEncoding -> ByteString
-createRUP original modified info romType encoding =
-    LazyByteString.toStrict $ toLazyByteString $
+createRUP :: SourceFileContents -> TargetFileContents -> RUPInfo -> NINJA2RomType -> PatchEncoding -> PatchFileContents
+createRUP (SourceFileContents original) (TargetFileContents modified) info romType encoding =
+    PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
       byteString "NINJA2"                     -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header

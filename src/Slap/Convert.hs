@@ -53,6 +53,7 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.PatchField (PatchField(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
 
@@ -419,7 +420,7 @@ convertDirect contents (CreateDirect target) meta = do
       -- Full limits including sentinel: convertDirect has no source bytes,
       -- so avoidSentinel can't fix collisions at encode time.
       let notes = conversionNotes contents target spec meta
-      encoded <- encodeDirect contents ByteString.empty target meta (encodingLimits target)
+      encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target)
       Right CreateResult
         { resultBytes    = resultBytes encoded
         , resultWarnings = notes ++ resultWarnings encoded
@@ -435,7 +436,7 @@ encodingLimits _           = Nothing
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
-encodeDirect :: PatchContents -> ByteString.ByteString -> DirectCreate -> CreateMeta
+encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> CreateMeta
              -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
@@ -470,7 +471,8 @@ encodeDirect contents source target meta limits = case target of
                       (contentsUndoData contents) (contentsValidation contents) imageType
     in Right $ case contentsFileIdDiz contents of
          Nothing  -> ppfResult
-         Just diz -> ppfResult { resultBytes = resultBytes ppfResult <> PPF.encodeFileIdDiz diz }
+         Just diz -> ppfResult { resultBytes = PatchFileContents
+                       (unPatchFileContents (resultBytes ppfResult) <> PPF.encodeFileIdDiz diz) }
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
@@ -521,7 +523,7 @@ encodeDirect contents source target meta limits = case target of
 -- The optional 'PatchContents' carries structural data from the source patch
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
-createFromMemory :: CreateFormat -> ByteString.ByteString -> ByteString.ByteString
+createFromMemory :: CreateFormat -> SourceFileContents -> TargetFileContents
                  -> CreateMeta -> Maybe PatchContents -> Either SlapError CreateResult
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
@@ -531,8 +533,8 @@ createFromMemory (CreateDirect format) source target meta sourceContents =
   in encodeDirect contents source format meta strippedLimits
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
   CreateBPS    -> Right (CreateResult (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))) [])
-  CreateUPS    -> do patchBytes <- UPS.createUPS source target
-                     Right (CreateResult patchBytes [])
+  CreateUPS    -> do patchContents <- UPS.createUPS source target
+                     Right (CreateResult patchContents [])
   CreateDPS    -> Right (DPS.createDPS source target
                        (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                        (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
@@ -558,9 +560,9 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) from the original
 -- patch for inheritance during @--with@ conversion.
-buildContents :: DirectCreate -> ByteString.ByteString -> ByteString.ByteString
+buildContents :: DirectCreate -> SourceFileContents -> TargetFileContents
               -> CreateMeta -> Maybe PatchContents -> PatchContents
-buildContents format source target meta sourceContents = PatchContents
+buildContents format (SourceFileContents source) (TargetFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
   , contentsSourceCRC32 = if needs FSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing

@@ -6,7 +6,7 @@ import Integration.Helpers
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import Data.ByteString (ByteString)
@@ -49,9 +49,9 @@ makeCreateTest bootstrapTargets repo fields = case fields of
 -- | Create a patch, parse it back, apply to base, verify SHA1.
 roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
-  case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
+  case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-    Right (CreateResult patchBytes _) -> case parseSome (PatchFileContents patchBytes) of
+    Right (CreateResult patchBytes _) -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
         result <- applyPatch parsed (SourceFileContents baseBytes)

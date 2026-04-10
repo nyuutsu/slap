@@ -15,6 +15,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..))
 
 import Data.Bits (xor)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
@@ -26,8 +28,8 @@ import Foreign.Storable (pokeByteOff)
 -- | Create a UPS patch from source and target bytestrings. Returns
 -- 'Left' if the pair is unencodeable per the UPS spec (diff run with
 -- no valid terminator position within target bounds).
-createUPS :: ByteString -> ByteString -> Either SlapError ByteString
-createUPS original modified = do
+createUPS :: SourceFileContents -> TargetFileContents -> Either SlapError PatchFileContents
+createUPS (SourceFileContents original) (TargetFileContents modified) = do
   blocks <- diffToBlocks original modified
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
@@ -40,7 +42,7 @@ createUPS original modified = do
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
   let patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
-  Right (bodyBytes <> patchCRCBytes)
+  Right (PatchFileContents (bodyBytes <> patchCRCBytes))
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipLength xorData) =

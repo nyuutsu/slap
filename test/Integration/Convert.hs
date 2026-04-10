@@ -92,7 +92,7 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
                   baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
-                  case parseSome (PatchFileContents convertedBytes) of
+                  case parseSome convertedBytes of
                     Left slapError -> assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
                       applied <- applyPatch convertedParsed (SourceFileContents baseBytes)

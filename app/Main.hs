@@ -571,11 +571,11 @@ doCreate parsedCommand = do
         }
   let defaultWarnings = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-  case createFromMemory (commandCreateFormat parsedCommand) originalBytes modifiedBytes createMeta Nothing of
+  case createFromMemory (commandCreateFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing of
     Left slapError -> dieError slapError
     Right result -> do
       forM_ (resultWarnings result) $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-      ByteString.writeFile (commandCreateOutput parsedCommand) (resultBytes result)
+      ByteString.writeFile (commandCreateOutput parsedCommand) (unPatchFileContents (resultBytes result))
       putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
 
 ----------------------------------------------------------------------------
@@ -638,14 +638,14 @@ doConvert parsedCommand = do
                 { metaUndo     = metaUndo mergedMeta     <|> Just True
                 , metaValidate = metaValidate mergedMeta <|> Just True
                 }
-          case createFromMemory (commandConvertTo parsedCommand) sourceBytes (unTargetFileContents target) withMeta (patchContents parsed) of
+          case createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target withMeta (patchContents parsed) of
             Left slapError -> dieError slapError
             Right createResult -> do
               printWarnings (patchSourceNotes parsed ++ metaWarnings
                             ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
                             ++ resultWarnings createResult)
               forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
-              ByteString.writeFile outputFile (resultBytes createResult)
+              ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
         Nothing -> case patchContents parsed of
           Nothing -> die (needSourceMessage parsed)
@@ -653,7 +653,7 @@ doConvert parsedCommand = do
             Left slapError -> dieError slapError
             Right convertResult -> do
               printWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
-              ByteString.writeFile outputFile (resultBytes convertResult)
+              ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).

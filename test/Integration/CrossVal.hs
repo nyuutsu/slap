@@ -7,6 +7,7 @@ import Integration.Helpers
    mmapRomFile)
 import Slap.Convert (CreateFormat(..), defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import System.Directory (doesFileExist, listDirectory, copyFile, makeAbsolute)
@@ -50,14 +51,14 @@ mkCrossValTest bootstrapTargets repo fields = case fields of
                 baseBytes <- mmapRomFile basePath
                 let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
                 -- Create patch with slap
-                case createFromMemory format baseBytes targetBytes defaultMeta Nothing of
+                case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
                   Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
                   Right (CreateResult patchBytes _) ->
                     -- Apply with external tool, verify SHA1
                     withTempFile "slap-xv-patch" $ \patchFile ->
                     withTempFile "slap-xv-base" $ \baseFile ->
                     withTempFile "slap-xv-out" $ \outFile -> do
-                      ByteString.writeFile patchFile patchBytes
+                      ByteString.writeFile patchFile (unPatchFileContents patchBytes)
                       ByteString.writeFile baseFile baseBytes
                       applyExternal tool toolName format baseFile patchFile outFile
                       resultBytes <- ByteString.readFile outFile
