@@ -537,9 +537,13 @@ doUndo parsedCommand = do
         Nothing -> die "undo not supported for this format"
         Just (UndoInMemory revert) -> do
           modified <- ByteString.readFile (commandSource parsedCommand)
-          let result = revert modified
-          ByteString.writeFile (fromMaybe (commandSource parsedCommand) (commandOutput parsedCommand)) result
-          putStrLn "reverted"
+          case revert (TargetFileContents modified) of
+            Left slapError -> dieError slapError
+            Right (SourceFileContents result) -> do
+              ByteString.writeFile
+                (fromMaybe (commandSource parsedCommand) (commandOutput parsedCommand))
+                result
+              putStrLn "reverted"
 
 ----------------------------------------------------------------------------
 -- Create

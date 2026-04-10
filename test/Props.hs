@@ -606,7 +606,8 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
       Right parsed ->
         case PPF.applyPatchMemory parsed (SourceFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False
-          Right (TargetFileContents applied) -> PPF.undoPatchMemory parsed applied === source
+          Right applied ->
+            PPF.undoPatchMemory parsed applied === Right (SourceFileContents source)
 
 ----------------------------------------------------------------------------
 -- Contract properties

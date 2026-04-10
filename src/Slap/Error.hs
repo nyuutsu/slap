@@ -241,6 +241,9 @@ data SlapError
   | NegativeTargetSize FormatLabel FileSize
   | ApplyFailed FormatLabel ApplyError
 
+  -- Undo
+  | UndoFailed FormatLabel ApplyError
+
   -- Create / Encode
   | UPSUnencodeablePair FormatLabel UnencodeabilityReason
   | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
@@ -425,6 +428,9 @@ renderSlapError (NegativeTargetSize label size) =
 
 renderSlapError (ApplyFailed label applyErr) =
   formatLabelName label ++ " apply: " ++ renderApplyError applyErr
+
+renderSlapError (UndoFailed label applyErr) =
+  formatLabelName label ++ " undo: " ++ renderApplyError applyErr
 
 renderSlapError (UPSUnencodeablePair label reason) =
   formatLabelName label ++ ": cannot encode pair: "

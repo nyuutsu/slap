@@ -157,10 +157,12 @@ noVerification = Verification
   }
 
 -- | Strategy for undoing a patch.
--- The undo function takes modified bytes and returns the original.
--- For self-inverse formats like UPS (XOR-based), the apply function
--- itself serves as the undo, so UndoInMemory simply wraps it.
-newtype UndoStrategy = UndoInMemory (ByteString.ByteString -> ByteString.ByteString)
+-- The undo function takes the modified file contents and returns the
+-- original. Returns 'Left' on malformed undo data (bounds violations,
+-- negative offsets). For self-inverse formats like UPS (XOR-based),
+-- the apply function itself serves as the undo.
+newtype UndoStrategy = UndoInMemory
+  (TargetFileContents -> Either SlapError SourceFileContents)
 
 -- | Record count and unit label for display.
 data RecordSummary = RecordSummary
@@ -323,13 +325,13 @@ parseSome patchContents = case detectFormat patchContents of
       , patchIsDifferential = True
       , patchApply          = InMemory
           { inMemoryApply     = \source -> pure (UPS.applyUPS patch source) }
-      , patchUndo           = Just $ UndoInMemory $ \modified ->
+      , patchUndo           = Just $ UndoInMemory $ \(TargetFileContents modified) ->
           -- UPS is self-inverse (XOR-based): applying the patch to the
           -- target recovers the source. For a well-parsed patch this
           -- reapplication cannot fail.
           case UPS.applyUPS patch (SourceFileContents modified) of
-            Right (TargetFileContents reverted) -> reverted
-            Left err       -> error ("UPS undo: " ++ show err)
+            Right (TargetFileContents reverted) -> Right (SourceFileContents reverted)
+            Left err -> Left err
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
           , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)

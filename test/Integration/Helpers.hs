@@ -340,10 +340,12 @@ applyPatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFile
 applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
-undoPatch :: SomePatch -> ByteString -> IO (Either String ByteString)
-undoPatch somePatch patched = case patchUndo somePatch of
+undoPatch :: SomePatch -> TargetFileContents -> IO (Either String SourceFileContents)
+undoPatch somePatch target = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
-  Just (UndoInMemory undoFunction) -> pure (Right (undoFunction patched))
+  Just (UndoInMemory undoFunction) -> case undoFunction target of
+    Left err -> pure (Left (renderSlapError err))
+    Right result -> pure (Right result)
 
 removeIfExists :: FilePath -> IO ()
 removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pure ())

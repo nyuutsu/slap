@@ -4,7 +4,7 @@ import Integration.Helpers
   (Tier, isHeavyPath, restrictToTier,
    repoDir, parseSpecFile, sha1Hex, applyPatch, undoPatch, mmapRomFile)
 import Slap.Error (renderSlapError)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (PatchFileContents(..), SourceFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -44,12 +44,12 @@ makeUndoTest repo (_, fields) = case fields of
             applied <- applyPatch parsed (SourceFileContents baseBytes)
             case applied of
               Left slapError -> assertFailure ("apply failed: " ++ renderSlapError slapError)
-              Right (TargetFileContents patchedBytes) -> do
+              Right target -> do
                 -- Undo
-                undone <- undoPatch parsed patchedBytes
+                undone <- undoPatch parsed target
                 case undone of
                   Left errorMessage -> assertFailure ("undo failed: " ++ errorMessage)
-                  Right restoredBytes ->
+                  Right (SourceFileContents restoredBytes) ->
                     assertEqual "SHA1 after undo" baseSha (sha1Hex restoredBytes)
       ]
     where

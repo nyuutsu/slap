@@ -2,23 +2,22 @@ module Slap.PPF.Apply (applyPatchMemory, undoPatchMemory) where
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
                         ppfVersionLabel)
-import Slap.Binary (copyByteStringRange, copyRegion)
+import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength, offsetToInt,
+                     advance, byteLength,
                      firstAction, nextAction, plusOffset)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create, unsafeCreate)
+import Data.ByteString.Internal (create)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
-import Control.Monad (when, unless)
+import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
@@ -112,17 +111,54 @@ applyPatchMemory patch (SourceFileContents source)
     abort errorRef applyErr = writeIORef errorRef (Just applyErr)
 
 -- | Undo a PPF patch in memory.
--- Restores original bytes at each record offset using stored undo data.
-undoPatchMemory :: PPFPatch -> ByteString -> ByteString
-undoPatchMemory patch input = unsafeCreate inputLength $ \outputPointer -> do
-    copyByteStringRange outputPointer 0 input 0 inputLength
-    mapM_ (undoRecord outputPointer) (ppfRecords patch)
+-- Validates every record write against the input buffer bounds.
+-- Returns 'Left' on malformed undo data (negative offsets, writes past
+-- the buffer); returns 'Right' with byte-identical output on success.
+undoPatchMemory :: PPFPatch -> TargetFileContents -> Either SlapError SourceFileContents
+undoPatchMemory patch (TargetFileContents input)
+  | inputLength == 0 =
+      Right (SourceFileContents ByteString.empty)
+  | otherwise = unsafePerformIO $ do
+      errorRef <- newIORef Nothing
+      result <- create inputLength $ \outputPointer -> do
+        copyRegion outputPointer (Offset 0) input (Offset 0) (Length inputLength)
+        undoRecordStream outputPointer errorRef firstAction (ppfRecords patch)
+      errorState <- readIORef errorRef
+      pure $ case errorState of
+        Just applyErr -> Left (UndoFailed label applyErr)
+        Nothing       -> Right (SourceFileContents result)
   where
+    label       = ppfVersionLabel (ppfVersion patch)
     inputLength = ByteString.length input
-    undoRecord outputPointer record = case recordCommand record of
-      Replace ->
-        let undoPayload = fromMaybe ByteString.empty (recordUndo record)
-        in unless (ByteString.null undoPayload) $
-             copyByteStringRange outputPointer (offsetToInt (recordOffset record))
-               undoPayload 0 (ByteString.length undoPayload)
-      Append -> pure ()
+
+    undoRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
+                     -> ActionIndex -> [PPFRecord] -> IO ()
+    undoRecordStream _ _ _ [] = pure ()
+    undoRecordStream outputPointer errorRef recordIndex (record : rest) =
+      case recordCommand record of
+        Replace -> handleUndoReplace outputPointer errorRef recordIndex record rest
+        Append  -> abort errorRef (ApplyWritesPastTarget recordIndex
+                     (RequestedLength (byteLength (recordData record)))
+                     (RemainingLength (Length 0)))
+
+    handleUndoReplace outputPointer errorRef recordIndex record rest
+      | ByteString.null undoPayload =
+          -- No undo data for this record — skip (defensive; parser guarantees
+          -- undo data exists for every record when ppfHasUndo is true)
+          undoRecordStream outputPointer errorRef (nextAction recordIndex) rest
+      | unOffset writeOffset < 0 =
+          abort errorRef (ApplyNegativeRecordOffset recordIndex writeOffset)
+      | not (fitsWithin writeOffset payloadLength (FileSize inputLength)) =
+          abort errorRef (ApplyWritesPastTarget recordIndex
+                           (RequestedLength payloadLength)
+                           (RemainingLength (remainingFromOffset writeOffset (FileSize inputLength))))
+      | otherwise = do
+          copyRegion outputPointer writeOffset undoPayload (Offset 0) payloadLength
+          undoRecordStream outputPointer errorRef (nextAction recordIndex) rest
+      where
+        writeOffset   = recordOffset record
+        undoPayload   = fromMaybe ByteString.empty (recordUndo record)
+        payloadLength = byteLength undoPayload
+
+    abort :: IORef (Maybe ApplyError) -> ApplyError -> IO ()
+    abort errorRef applyErr = writeIORef errorRef (Just applyErr)
