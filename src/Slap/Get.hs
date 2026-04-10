@@ -144,14 +144,16 @@ liftRead (Length width) reader = Get $ \input (Position position) ->
   then Right (reader position input, Position (position + width))
   else Left ("liftRead: need " ++ show width ++ " bytes at offset " ++ show position)
 
-liftReadVarint :: (Int -> ByteString -> VarintResult) -> Get Int64
+liftReadVarint :: (Int -> ByteString -> Either String VarintResult) -> Get Int64
 liftReadVarint reader = Get $ \input (Position position) ->
   if position >= ByteString.length input
   then Left ("liftReadVarint: read past end at offset " ++ show position)
-  else let VarintResult result consumed = reader position input
-       in if position + consumed > ByteString.length input
-          then Left ("liftReadVarint: varint overran buffer at offset " ++ show position)
-          else Right (result, Position (position + consumed))
+  else case reader position input of
+    Left errorMessage -> Left errorMessage
+    Right (VarintResult result consumed) ->
+      if position + consumed > ByteString.length input
+      then Left ("liftReadVarint: varint overran buffer at offset " ++ show position)
+      else Right (result, Position (position + consumed))
 
 word16LE :: Get Word16
 word16LE = liftRead (Length 2) getWord16LE

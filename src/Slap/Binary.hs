@@ -108,35 +108,46 @@ getInt64BE offset input =
 -- High bit clear = more bytes follow. High bit set = final byte.
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
 -- Returns (value, bytes consumed).
-getByuuVarint :: Int -> ByteString -> VarintResult
-getByuuVarint offset input = decode offset 0 1
+getByuuVarint :: Int -> ByteString -> Either String VarintResult
+getByuuVarint offset input = decode offset 0 1 (0 :: Int)
   where
     inputLength = ByteString.length input
-    decode position accumulated multiplier
-      | position >= inputLength = VarintResult accumulated (position - offset)
+    decode position accumulated multiplier !iterations
+      | iterations > 9 =
+          Left ("varint overflow at offset " ++ show offset
+                ++ " (too many continuation bytes)")
+      | position >= inputLength =
+          Left ("unterminated varint at offset " ++ show offset
+                ++ " (reached end of input after " ++ show (position - offset) ++ " bytes)")
       | otherwise =
           let byte = ByteString.index input position
               payload = fromIntegral (byte .&. 0x7F) :: Int64
               total = accumulated + payload * multiplier
           in if testBit byte 7
-             then VarintResult total (position - offset + 1)
+             then Right (VarintResult total (position - offset + 1))
              else let nextMultiplier = multiplier `shiftL` 7
                   in decode (position + 1) (total + nextMultiplier) nextMultiplier
+                            (iterations + 1)
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
-getVcdiffVarint :: Int -> ByteString -> VarintResult
-getVcdiffVarint offset input = decode offset 0
+getVcdiffVarint :: Int -> ByteString -> Either String VarintResult
+getVcdiffVarint offset input = decode offset 0 (0 :: Int)
   where
     inputLength = ByteString.length input
-    decode position accumulated
-      | position >= inputLength = VarintResult accumulated (position - offset)
+    decode position accumulated !iterations
+      | iterations > 9 =
+          Left ("varint overflow at offset " ++ show offset
+                ++ " (too many continuation bytes)")
+      | position >= inputLength =
+          Left ("unterminated varint at offset " ++ show offset
+                ++ " (reached end of input after " ++ show (position - offset) ++ " bytes)")
       | otherwise =
           let byte = ByteString.index input position
               total = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
           in if testBit byte 7
-             then decode (position + 1) total
-             else VarintResult total (position - offset + 1)
+             then decode (position + 1) total (iterations + 1)
+             else Right (VarintResult total (position - offset + 1))
 
 ----------------------------------------------------------------------------
 -- Builders

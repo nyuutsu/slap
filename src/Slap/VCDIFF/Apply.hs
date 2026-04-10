@@ -83,32 +83,35 @@ decodeAddress cache mode here addressPositionReference addressBytes
       -- Self mode
       position <- readIORef addressPositionReference
       if position >= ByteString.length addressBytes then pure 0
-      else do
-        let VarintResult value consumed = getVcdiffVarint position addressBytes
-        writeIORef addressPositionReference (position + consumed)
-        updateCache cache value
-        pure value
+      else case getVcdiffVarint position addressBytes of
+        Left _err -> pure 0
+        Right (VarintResult value consumed) -> do
+          writeIORef addressPositionReference (position + consumed)
+          updateCache cache value
+          pure value
   | mode == 1 = do
       -- Here mode
       position <- readIORef addressPositionReference
       if position >= ByteString.length addressBytes then pure 0
-      else do
-        let VarintResult value consumed = getVcdiffVarint position addressBytes
-        writeIORef addressPositionReference (position + consumed)
-        let address = here - value
-        updateCache cache address
-        pure address
+      else case getVcdiffVarint position addressBytes of
+        Left _err -> pure 0
+        Right (VarintResult value consumed) -> do
+          writeIORef addressPositionReference (position + consumed)
+          let address = here - value
+          updateCache cache address
+          pure address
   | mode < cacheNearSize cache + 2 = do
       -- Near mode
       position <- readIORef addressPositionReference
       if position >= ByteString.length addressBytes then pure 0
-      else do
-        let VarintResult value consumed = getVcdiffVarint position addressBytes
-        writeIORef addressPositionReference (position + consumed)
-        base <- readIORef (cacheNear cache ! (mode - 2))
-        let address = base + value
-        updateCache cache address
-        pure address
+      else case getVcdiffVarint position addressBytes of
+        Left _err -> pure 0
+        Right (VarintResult value consumed) -> do
+          writeIORef addressPositionReference (position + consumed)
+          base <- readIORef (cacheNear cache ! (mode - 2))
+          let address = base + value
+          updateCache cache address
+          pure address
   | otherwise = do
       -- Same mode
       position <- readIORef addressPositionReference
@@ -196,10 +199,11 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
       readInstructionVarint = do
         position <- readIORef instructionPositionReference
         if position >= ByteString.length instructionBytes then pure 0
-        else do
-          let VarintResult value consumed = getVcdiffVarint position instructionBytes
-          writeIORef instructionPositionReference (position + consumed)
-          pure value
+        else case getVcdiffVarint position instructionBytes of
+          Left _err -> pure 0
+          Right (VarintResult value consumed) -> do
+            writeIORef instructionPositionReference (position + consumed)
+            pure value
 
       executeInstruction :: VCDIFFInstruction -> IO ()
       executeInstruction VcdiffNoop = pure ()
@@ -314,30 +318,33 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             | mode == 0 = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
-                else do
-                  let VarintResult value consumed = getVcdiffVarint position addressBytes
-                  writeSTRef addressPositionReference (position + consumed)
-                  updateCacheST value
-                  pure value
+                else case getVcdiffVarint position addressBytes of
+                  Left _err -> pure 0
+                  Right (VarintResult value consumed) -> do
+                    writeSTRef addressPositionReference (position + consumed)
+                    updateCacheST value
+                    pure value
             | mode == 1 = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
-                else do
-                  let VarintResult value consumed = getVcdiffVarint position addressBytes
-                  writeSTRef addressPositionReference (position + consumed)
-                  let address = here - value
-                  updateCacheST address
-                  pure address
+                else case getVcdiffVarint position addressBytes of
+                  Left _err -> pure 0
+                  Right (VarintResult value consumed) -> do
+                    writeSTRef addressPositionReference (position + consumed)
+                    let address = here - value
+                    updateCacheST address
+                    pure address
             | mode < nearSize + 2 = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
-                else do
-                  let VarintResult value consumed = getVcdiffVarint position addressBytes
-                  writeSTRef addressPositionReference (position + consumed)
-                  base <- readArray nearArray (mode - 2)
-                  let address = base + value
-                  updateCacheST address
-                  pure address
+                else case getVcdiffVarint position addressBytes of
+                  Left _err -> pure 0
+                  Right (VarintResult value consumed) -> do
+                    writeSTRef addressPositionReference (position + consumed)
+                    base <- readArray nearArray (mode - 2)
+                    let address = base + value
+                    updateCacheST address
+                    pure address
             | otherwise = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
@@ -365,10 +372,11 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
           readInstructionVarint = do
             position <- readSTRef instructionPositionReference
             if position >= ByteString.length instructionBytes then pure 0
-            else do
-              let VarintResult value consumed = getVcdiffVarint position instructionBytes
-              writeSTRef instructionPositionReference (position + consumed)
-              pure value
+            else case getVcdiffVarint position instructionBytes of
+              Left _err -> pure 0
+              Right (VarintResult value consumed) -> do
+                writeSTRef instructionPositionReference (position + consumed)
+                pure value
 
           executeInstruction :: VCDIFFInstruction -> ST s ()
           executeInstruction VcdiffNoop = pure ()
