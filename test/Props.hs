@@ -454,7 +454,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> PPF.applyPatchMemory parsed source === target
+       Right parsed -> PPF.applyPatchMemory parsed source === Right target
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
@@ -603,8 +603,9 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        let applied = PPF.applyPatchMemory parsed source
-        in PPF.undoPatchMemory parsed applied === source
+        case PPF.applyPatchMemory parsed source of
+          Left err -> counterexample ("apply failed: " ++ show err) $ property False
+          Right applied -> PPF.undoPatchMemory parsed applied === source
 
 ----------------------------------------------------------------------------
 -- Contract properties

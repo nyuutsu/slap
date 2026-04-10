@@ -14,7 +14,8 @@ import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
                         ppfPreambleLength, ppfDescriptionLength,
                         ppf2HeaderLength, ppf3MinHeaderLength,
                         ppf4PostDescriptionLength, validationSize,
-                        fileIdMarkerLength, fileIdFooterLength)
+                        fileIdMarkerLength, fileIdFooterLength,
+                        ppfVersionLabel)
 import Slap.Binary (getWord16LE, getWord32LE)
 import Slap.Error (SlapError(..), FieldName(..))
 import Slap.Format (padHex)
@@ -40,13 +41,6 @@ parsePatch input = do
     PPF3 -> parsePPF3 input
     PPF4 -> parsePPF4 input
 
--- | Map a PPF version to its format label.
-versionLabel :: PPFVersion -> FormatLabel
-versionLabel PPF1 = LabelPPF1
-versionLabel PPF2 = LabelPPF2
-versionLabel PPF3 = LabelPPF3
-versionLabel PPF4 = LabelPPF4
-
 -- | Wrap a Get error string into a SlapError.
 wrapError :: FormatLabel -> Either String a -> Either SlapError a
 wrapError label = either (Left . ParseError label) Right
@@ -69,7 +63,7 @@ checkEncoding :: PPFVersion -> ByteString -> Either SlapError ()
 checkEncoding PPF4 _ = Right ()
 checkEncoding version input
   | encoding == expected = Right ()
-  | otherwise = Left (UnsupportedEncodingMethod (versionLabel version) (EncodingMethodByte encoding))
+  | otherwise = Left (UnsupportedEncodingMethod (ppfVersionLabel version) (EncodingMethodByte encoding))
   where
     encoding = ByteString.index input 5
     expected = case version of

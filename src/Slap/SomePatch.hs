@@ -206,16 +206,16 @@ parseSome patchBytes = case detectFormat patchBytes of
             , verifyFileSize = PPF.ppfFileSize patch
             }
     Right SomePatch
-        { patchFormat         = ppfLabel (PPF.ppfVersion patch)
+        { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
         , patchExplain        = PPF.explainPPF patch
         , patchIsDifferential = False
         , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (Right (PPF.applyPatchMemory patch source)) }
+            { inMemoryApply = \source -> pure (PPF.applyPatchMemory patch source) }
         , patchUndo           = if PPF.ppfHasUndo patch
                                  then Just (UndoInMemory $ PPF.undoPatchMemory patch)
                                  else Nothing
         , patchVerification   = ppfVerification
-        , patchWarnings       = [EmptyPatch (ppfLabel (PPF.ppfVersion patch)) "records" | null records]
+        , patchWarnings       = [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
         , patchRecordSummary  = RecordSummary (length records) "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
@@ -676,9 +676,3 @@ apsGbaStructure input =
                        in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
                 [0 .. recordCount - 1])
 
--- | Map PPF version to format label.
-ppfLabel :: PPF.PPFVersion -> FormatLabel
-ppfLabel PPF.PPF1 = LabelPPF1
-ppfLabel PPF.PPF2 = LabelPPF2
-ppfLabel PPF.PPF3 = LabelPPF3
-ppfLabel PPF.PPF4 = LabelPPF4

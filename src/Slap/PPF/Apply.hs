@@ -1,44 +1,113 @@
 module Slap.PPF.Apply (applyPatchMemory, undoPatchMemory) where
 
-import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..))
-import Slap.Binary (copyByteStringRange)
-import Slap.Measure (offsetToInt)
+import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
+                        ppfVersionLabel)
+import Slap.Binary (copyByteStringRange, copyRegion)
+import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     ActionIndex(..),
+                     RequestedLength(..), RemainingLength(..),
+                     fitsWithin, remainingFromOffset, minLength,
+                     advance, byteLength, offsetToInt,
+                     firstAction, nextAction, plusOffset)
 
-import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
-import Data.ByteString.Internal (unsafeCreate)
+import qualified Data.ByteString as ByteString
+import Data.ByteString.Internal (create, unsafeCreate)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
-import Control.Monad (foldM_, when, unless)
+import Control.Monad (when, unless)
 import Foreign.Marshal.Utils (fillBytes)
-import Foreign.Ptr (plusPtr)
+import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
+import System.IO.Unsafe (unsafePerformIO)
 
 -- | Apply a PPF patch in memory.
--- Simulates file-size tracking for Append records (PPF4).
-applyPatchMemory :: PPFPatch -> ByteString -> ByteString
-applyPatchMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
-    copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
-    when (outputLength > sourceLength) $
-      fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
-    -- Track current end-of-file position for Append records
-    foldM_ (applyRecord outputPointer) sourceLength (ppfRecords patch)
+-- Validates every record write against the output buffer bounds.
+-- Returns 'Left' on malformed patches (negative offsets, writes past
+-- the buffer); returns 'Right' with byte-identical output on success.
+applyPatchMemory :: PPFPatch -> ByteString -> Either SlapError ByteString
+applyPatchMemory patch source
+  | unFileSize outputFileSize < 0 =
+      Left (NegativeTargetSize label outputFileSize)
+  | unFileSize outputFileSize == 0 =
+      Right ByteString.empty
+  | otherwise = unsafePerformIO $ do
+      errorRef <- newIORef Nothing
+      result <- create (unFileSize outputFileSize) $ \outputPointer -> do
+        -- Copy source bytes to output buffer
+        copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
+        -- Zero-fill any growth past source end
+        when (unFileSize outputFileSize > unFileSize sourceFileSize) $
+          fillBytes (plusOffset outputPointer (Offset (unFileSize sourceFileSize)))
+                    (0 :: Word8)
+                    (unFileSize outputFileSize - unFileSize sourceFileSize)
+        -- Apply records with bounds checking
+        applyRecordStream outputPointer errorRef firstAction
+                          (Offset (unFileSize sourceFileSize))
+                          (ppfRecords patch)
+      errorState <- readIORef errorRef
+      pure $ case errorState of
+        Just applyErr -> Left (ApplyFailed label applyErr)
+        Nothing       -> Right result
   where
-    sourceLength = ByteString.length source
-    -- Compute output size: simulate file growth from Replace and Append
-    outputLength = foldl' accumulateSize sourceLength (ppfRecords patch)
-    accumulateSize currentSize record = case recordCommand record of
-      Replace -> max currentSize (offsetToInt (recordOffset record) + ByteString.length (recordData record))
-      Append  -> currentSize + ByteString.length (recordData record)
-    applyRecord outputPointer currentEnd record
-      | ByteString.null (recordData record) = pure currentEnd
-      | otherwise = case recordCommand record of
-          Replace -> do
-            let writePosition = offsetToInt (recordOffset record)
-            copyByteStringRange outputPointer writePosition (recordData record) 0 (ByteString.length (recordData record))
-            pure (max currentEnd (writePosition + ByteString.length (recordData record)))
-          Append -> do
-            copyByteStringRange outputPointer currentEnd (recordData record) 0 (ByteString.length (recordData record))
-            pure (currentEnd + ByteString.length (recordData record))
+    label          = ppfVersionLabel (ppfVersion patch)
+    sourceFileSize = FileSize (ByteString.length source)
+    outputFileSize = computeOutputFileSize sourceFileSize (ppfRecords patch)
+    initialCopyLength = minLength
+                          (remainingFromOffset (Offset 0) sourceFileSize)
+                          (remainingFromOffset (Offset 0) outputFileSize)
+
+    computeOutputFileSize :: FileSize -> [PPFRecord] -> FileSize
+    computeOutputFileSize sourceSize records = foldl' accumulateSize sourceSize records
+      where
+        accumulateSize :: FileSize -> PPFRecord -> FileSize
+        accumulateSize currentSize record = case recordCommand record of
+          Replace ->
+            let writeEnd = advance (recordOffset record) (byteLength (recordData record))
+            in FileSize (max (unFileSize currentSize) (unOffset writeEnd))
+          Append ->
+            FileSize (unFileSize currentSize + unLength (byteLength (recordData record)))
+
+    applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
+                      -> ActionIndex -> Offset -> [PPFRecord] -> IO ()
+    applyRecordStream _ _ _ _ [] = pure ()
+    applyRecordStream outputPointer errorRef recordIndex currentEnd (record : rest) =
+      case recordCommand record of
+        Replace -> handleReplace outputPointer errorRef recordIndex currentEnd record rest
+        Append  -> handleAppend outputPointer errorRef recordIndex currentEnd record rest
+
+    handleReplace outputPointer errorRef recordIndex currentEnd record rest
+      | unOffset writeOffset < 0 =
+          abort errorRef (ApplyNegativeRecordOffset recordIndex writeOffset)
+      | not (fitsWithin writeOffset payloadLength outputFileSize) =
+          abort errorRef (ApplyWritesPastTarget recordIndex
+                           (RequestedLength payloadLength)
+                           (RemainingLength (remainingFromOffset writeOffset outputFileSize)))
+      | otherwise = do
+          copyRegion outputPointer writeOffset (recordData record) (Offset 0) payloadLength
+          let writeEnd = Offset (max (unOffset currentEnd)
+                                     (unOffset writeOffset + unLength payloadLength))
+          applyRecordStream outputPointer errorRef
+            (nextAction recordIndex) writeEnd rest
+      where
+        writeOffset   = recordOffset record
+        payloadLength = byteLength (recordData record)
+
+    handleAppend outputPointer errorRef recordIndex currentEnd record rest
+      | not (fitsWithin currentEnd payloadLength outputFileSize) =
+          abort errorRef (ApplyWritesPastTarget recordIndex
+                           (RequestedLength payloadLength)
+                           (RemainingLength (remainingFromOffset currentEnd outputFileSize)))
+      | otherwise = do
+          copyRegion outputPointer currentEnd (recordData record) (Offset 0) payloadLength
+          applyRecordStream outputPointer errorRef
+            (nextAction recordIndex) (advance currentEnd payloadLength) rest
+      where
+        payloadLength = byteLength (recordData record)
+
+    abort :: IORef (Maybe ApplyError) -> ApplyError -> IO ()
+    abort errorRef applyErr = writeIORef errorRef (Just applyErr)
 
 -- | Undo a PPF patch in memory.
 -- Restores original bytes at each record offset using stored undo data.

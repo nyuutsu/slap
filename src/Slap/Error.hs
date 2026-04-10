@@ -198,6 +198,11 @@ data ApplyError
   -- against remaining space before the copy runs.)
   | ApplyTargetUnderfilled ActualSize ExpectedSize
 
+  -- | A record's offset is negative. Only possible for formats that
+  -- store signed offsets (PPF3 uses signed 64-bit). The Offset is
+  -- the negative value as parsed.
+  | ApplyNegativeRecordOffset ActionIndex Offset
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -341,6 +346,10 @@ renderApplyError (ApplyTargetUnderfilled (ActualSize actualSize) (ExpectedSize e
   "target under-filled ("
   ++ show (unFileSize actualSize) ++ " of "
   ++ show (unFileSize expectedSize) ++ " bytes written before action stream exhausted)"
+
+renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
+  "record " ++ show (unActionIndex actionIndex)
+  ++ " has negative offset " ++ show (unOffset offset)
 
 ----------------------------------------------------------------------------
 -- renderSlapError

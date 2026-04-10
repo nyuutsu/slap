@@ -18,10 +18,13 @@ module Slap.PPF.Types
     , ppf4PostDescriptionLength
     , fileIdMarkerLength
     , fileIdFooterLength
+      -- * Labels
+    , ppfVersionLabel
     ) where
 
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize)
 
 -- | PPF format version.
@@ -115,3 +118,10 @@ fileIdMarkerLength = Length 18
 -- | Length of the fixed footer after the File_ID.diz content.
 fileIdFooterLength :: Length
 fileIdFooterLength = Length 16
+
+-- | Map a PPF version to its format label.
+ppfVersionLabel :: PPFVersion -> FormatLabel
+ppfVersionLabel PPF1 = LabelPPF1
+ppfVersionLabel PPF2 = LabelPPF2
+ppfVersionLabel PPF3 = LabelPPF3
+ppfVersionLabel PPF4 = LabelPPF4
