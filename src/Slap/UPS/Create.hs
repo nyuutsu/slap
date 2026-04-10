@@ -3,47 +3,34 @@
 module Slap.UPS.Create
   ( createUPS
   , encodeUPSBlock
-  , xorToBlocks
+  , diffToBlocks
   ) where
 
 import Slap.UPS.Types (UPSBlock(..))
 import Slap.Binary (putWord32LE, putByuuVarint)
 import Slap.Checksum (CRC32(..))
+import Slap.Error (SlapError(..), UnencodeabilityReason(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Delta(..))
 
+import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
+import Data.ByteString.Internal (unsafeCreate)
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Bits (xor)
-import Data.Int (Int64)
+import Data.Word (Word8)
+import Foreign.Storable (pokeByteOff)
 
--- | Create a UPS patch from source and target bytestrings.
---
--- KNOWN LIMITATION: This function cannot encode all source/target
--- pairs per the UPS spec. Specifically, if the last byte of target
--- differs from source (with virtual zero-padding past source end),
--- or if source has non-zero bytes past target size, the emitted
--- patch will be non-spec-compliant and will fail strict apply. The
--- next commit (the createUPS algorithm rewrite) will address this
--- by making createUPS return Either SlapError ByteString and
--- refusing unencodeable pairs cleanly. For now, callers should
--- either ensure the input is encodeable, or wrap this call and
--- handle failures at apply time.
-createUPS :: ByteString -> ByteString -> ByteString
-createUPS original modified =
+-- | Create a UPS patch from source and target bytestrings. Returns
+-- 'Left' if the pair is unencodeable per the UPS spec (diff run with
+-- no valid terminator position within target bounds).
+createUPS :: ByteString -> ByteString -> Either SlapError ByteString
+createUPS original modified = do
+  blocks <- diffToBlocks original modified
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
-      maxLength = max (ByteString.length original) (ByteString.length modified)
-      paddedSource = if ByteString.length original < maxLength
-               then original <> ByteString.replicate (maxLength - ByteString.length original) 0
-               else original
-      paddedTarget = if ByteString.length modified < maxLength
-               then modified <> ByteString.replicate (maxLength - ByteString.length modified) 0
-               else modified
-      xorBytes = ByteString.packZipWith xor paddedSource paddedTarget
-      blocks = xorToBlocks xorBytes
       body = byteString "UPS1"
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
@@ -52,7 +39,7 @@ createUPS original modified =
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  in bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+  Right (bodyBytes <> LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC))))
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipDelta xorData) =
@@ -60,34 +47,63 @@ encodeUPSBlock (UPSBlock skipDelta xorData) =
   <> byteString xorData
   <> word8 0x00  -- terminator
 
--- | Convert XOR byte array into UPS blocks (skip + nonzero runs).
-xorToBlocks :: ByteString -> [UPSBlock]
-xorToBlocks input = scanLoop 0
+-- | Walk source and target in lockstep, emitting UPS diff blocks.
+-- Returns 'Left' if the pair is unencodeable (diff run whose
+-- terminator would fall past target end, or source has non-zero
+-- bytes past target size).
+diffToBlocks :: ByteString -> ByteString -> Either SlapError [UPSBlock]
+diffToBlocks source target
+  | not sourceTailAllZero =
+      Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)
+  | otherwise = scan 0 0 []
   where
-    inputLength = ByteString.length input
+    targetLength = ByteString.length target
+    sourceTailAllZero = ByteString.all (== 0) (ByteString.drop targetLength source)
 
-    scanLoop position
-      | position >= inputLength = []
-      | otherwise =
-          let skip = countZeros position
-              runStart = position + fromIntegral skip
-          in if runStart >= inputLength
-             then []
-             else let (xorData, end) = collectNonzero runStart
-                  in UPSBlock (Delta (fromIntegral skip)) xorData : scanLoop end
+    byteAt :: ByteString -> Int -> Word8
+    byteAt bytes position
+      | position < ByteString.length bytes = ByteString.index bytes position
+      | otherwise = 0
 
-    countZeros :: Int -> Int64
-    countZeros startPosition = countFrom startPosition
-      where
-        countFrom scanPosition
-          | scanPosition >= inputLength = fromIntegral (scanPosition - startPosition)
-          | ByteString.index input scanPosition == 0 = countFrom (scanPosition + 1)
-          | otherwise = fromIntegral (scanPosition - startPosition)
+    -- Tail-recursive scan. Accumulates skip count while bytes match;
+    -- on diff, collects the run and emits a block.
+    scan :: Int -> Int -> [UPSBlock] -> Either SlapError [UPSBlock]
+    scan !position !skipCount !accumulatedBlocks
+      | position >= targetLength =
+          Right (reverse accumulatedBlocks)
+      | byteAt source position == byteAt target position =
+          scan (position + 1) (skipCount + 1) accumulatedBlocks
+      | otherwise = do
+          (runBytes, nextPosition) <- collectRun position
+          let block = UPSBlock (Delta (fromIntegral skipCount)) runBytes
+          scan nextPosition 0 (block : accumulatedBlocks)
 
-    collectNonzero :: Int -> (ByteString, Int)
-    collectNonzero start = collectFrom start []
-      where
-        collectFrom scanPosition accumulated
-          | scanPosition >= inputLength = (ByteString.pack (reverse accumulated), scanPosition)
-          | ByteString.index input scanPosition == 0 = (ByteString.pack (reverse accumulated), scanPosition + 1)  -- +1: consume terminator position
-          | otherwise = collectFrom (scanPosition + 1) (ByteString.index input scanPosition : accumulated)
+    -- Scan forward from 'start' while bytes differ, then consume the
+    -- terminating matching byte. Returns Left if no match is found
+    -- within targetLength (terminator would fall past target end).
+    collectRun :: Int -> Either SlapError (ByteString, Int)
+    collectRun start =
+      let runEnd = scanForMatch start
+          runLength = runEnd - start
+      in if runEnd >= targetLength
+           then Left (UPSUnencodeablePair LabelUPS UPSLastByteDiffers)
+           else
+             let runBytes = unsafeCreate runLength $ \outputPointer ->
+                   let writeLoop !byteOffset
+                         | byteOffset >= runLength = pure ()
+                         | otherwise = do
+                             let sourceByte = byteAt source (start + byteOffset)
+                                 targetByte = byteAt target (start + byteOffset)
+                             pokeByteOff outputPointer byteOffset
+                               (sourceByte `xor` targetByte :: Word8)
+                             writeLoop (byteOffset + 1)
+                   in writeLoop 0
+             in Right (runBytes, runEnd + 1)
+
+    -- First position >= start where source[p] == target[p] (with
+    -- virtual zero-padding). Stops at targetLength if no match exists.
+    scanForMatch :: Int -> Int
+    scanForMatch !position
+      | position >= targetLength = position
+      | byteAt source position == byteAt target position = position
+      | otherwise = scanForMatch (position + 1)

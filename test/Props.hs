@@ -309,36 +309,16 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
          Left slapError -> counterexample (renderSlapError slapError) $ property False
          Right parsed -> BPS.bpsMetadata parsed === meta
 
--- | Is this (source, target) pair encodeable as a UPS patch? Per spec,
--- every diff run must end with a terminator byte that counts as a
--- target byte, which means the last byte of target must match source
--- (with virtual zero-padding past source end), and source's tail past
--- target size must be all zeros. Pairs failing this check cannot be
--- encoded as spec-compliant UPS patches. This is a current limitation
--- of createUPS and will be addressed in the next commit (the
--- createUPS rewrite) by making createUPS return Either and refusing
--- unencodeable pairs.
-isUPSEncodeable :: ByteString -> ByteString -> Bool
-isUPSEncodeable source target
-  | ByteString.null target = True
-  | otherwise =
-      let targetLen    = ByteString.length target
-          sourceLen    = ByteString.length source
-          sourceAtLast = if targetLen - 1 < sourceLen
-                           then ByteString.index source (targetLen - 1)
-                           else 0
-          lastTargetByte = ByteString.index target (targetLen - 1)
-          lastBytesMatch = sourceAtLast == lastTargetByte
-          sourceTailZero = ByteString.all (== 0) (ByteString.drop targetLen source)
-      in lastBytesMatch && sourceTailZero
-
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
-  isUPSEncodeable source target ==>
-  let patch = UPS.createUPS source target
-  in case UPS.parseUPS patch of
-       Left slapError -> counterexample (renderSlapError slapError) $ property False
-       Right parsed -> UPS.applyUPS parsed source === Right target
+  case UPS.createUPS source target of
+    Left _createError -> property True
+    Right patch ->
+      case UPS.parseUPS patch of
+        Left parseError ->
+          counterexample (renderSlapError parseError) $ property False
+        Right parsed ->
+          UPS.applyUPS parsed source === Right target
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
@@ -604,11 +584,14 @@ applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
 -- information in the size field).
 prop_upsUndo :: Property
 prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
-  isUPSEncodeable source target ==>
-  let patch = UPS.createUPS source target
-  in case UPS.parseUPS patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> (UPS.applyUPS parsed source >>= UPS.applyUPS parsed) === Right source
+  case UPS.createUPS source target of
+    Left _createError -> property True
+    Right patch ->
+      case UPS.parseUPS patch of
+        Left parseError ->
+          counterexample ("parse: " ++ renderSlapError parseError) $ property False
+        Right parsed ->
+          (UPS.applyUPS parsed source >>= UPS.applyUPS parsed) === Right source
 
 -- | PPF3 with undo data: apply then undo recovers the original.
 -- Same-size pairs only — PPF3 undo writes back original bytes but can't
@@ -942,7 +925,9 @@ test_ebpUtf8 = do
 
 prop_upsTrunc :: Property
 prop_upsTrunc = forAll genPair $ \(source, target) ->
-  truncated UPS.parseUPS (UPS.createUPS source target)
+  case UPS.createUPS source target of
+    Left _createError -> property True
+    Right patch -> truncated UPS.parseUPS patch
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->

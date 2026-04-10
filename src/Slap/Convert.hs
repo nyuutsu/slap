@@ -531,7 +531,8 @@ createFromMemory (CreateDirect format) source target meta sourceContents =
   in encodeDirect contents source format meta strippedLimits
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
   CreateBPS    -> Right (CreateResult (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))) [])
-  CreateUPS    -> Right (CreateResult (UPS.createUPS source target) [])
+  CreateUPS    -> do patchBytes <- UPS.createUPS source target
+                     Right (CreateResult patchBytes [])
   CreateDPS    -> Right (DPS.createDPS source target
                        (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                        (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))

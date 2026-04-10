@@ -5,6 +5,7 @@ module Slap.Error
   , SlapWarning(..)
   , ApplyError(..)
   , CursorKind(..)
+  , UnencodeabilityReason(..)
   , DroppedValue(..)
   , CreateResult(..)
   , FieldName(..)
@@ -130,6 +131,25 @@ data CursorKind = SourceCursor | TargetCursor
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
+-- UnencodeabilityReason
+----------------------------------------------------------------------------
+
+-- | Why a (source, target) pair cannot be encoded as a UPS patch.
+-- Per the UPS spec, each diff run must end with a terminator byte
+-- that counts against the target file pointer; this makes certain
+-- byte configurations impossible to represent.
+data UnencodeabilityReason
+  = UPSLastByteDiffers     -- ^ target's final byte differs from source (with
+                           --   virtual zero-padding past source end), so any
+                           --   diff run at that position would need a terminator
+                           --   past target end
+  | UPSSourceTailNonZero   -- ^ source has non-zero bytes past target size,
+                           --   which appear as diffs against virtual-zero
+                           --   target and cannot be represented without
+                           --   writing past target end
+  deriving (Eq, Show)
+
+----------------------------------------------------------------------------
 -- ApplyError
 ----------------------------------------------------------------------------
 
@@ -217,6 +237,7 @@ data SlapError
   | ApplyFailed FormatLabel ApplyError
 
   -- Create / Encode
+  | UPSUnencodeablePair FormatLabel UnencodeabilityReason
   | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
   | SentinelCollision FormatLabel Offset
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
@@ -396,6 +417,10 @@ renderSlapError (NegativeTargetSize label size) =
 renderSlapError (ApplyFailed label applyErr) =
   formatLabelName label ++ " apply: " ++ renderApplyError applyErr
 
+renderSlapError (UPSUnencodeablePair label reason) =
+  formatLabelName label ++ ": cannot encode pair: "
+  ++ renderUnencodeabilityReason reason
+
 renderSlapError (OffsetExceedsRange label (ActualOffset actual) (MaxOffset maxOffset)) =
   formatLabelName label ++ ": hunk offset 0x"
   ++ showHex (unOffset actual) ""
@@ -509,6 +534,14 @@ renderSlapWarning OffsetShiftApplied =
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
+
+renderUnencodeabilityReason :: UnencodeabilityReason -> String
+renderUnencodeabilityReason UPSLastByteDiffers =
+  "target's final byte differs from source (with virtual zero-padding);"
+  ++ " no terminator byte can be placed past target end"
+renderUnencodeabilityReason UPSSourceTailNonZero =
+  "source has non-zero bytes past target size;"
+  ++ " these cannot be represented in a UPS patch"
 
 commaList :: [String] -> String
 commaList []     = ""
