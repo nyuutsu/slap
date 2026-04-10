@@ -8,7 +8,8 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..))
 import Slap.Measure (seekTo, offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Control.Monad (forM_, when)
@@ -32,8 +33,8 @@ applyRecord handle (NINJA1Record writeOffset writePayload) = do
   ByteString.hPut handle writePayload
 
 -- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
-applyNINJA1Memory :: NINJA1Patch -> ByteString -> ByteString
-applyNINJA1Memory patch source = unsafeCreate outputSize $ \outputPointer -> do
+applyNINJA1Memory :: NINJA1Patch -> SourceFileContents -> TargetFileContents
+applyNINJA1Memory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

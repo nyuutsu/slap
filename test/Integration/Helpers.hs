@@ -54,6 +54,7 @@ import Slap.Error (SlapError, CreateResult(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect, createFromMemory)
 
 import Control.Exception (catch, IOException)
@@ -207,12 +208,12 @@ buildBootstrapTargets tempDir pairs = do
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
                  ++ ": " ++ renderSlapError slapError)
         Right parsed -> do
-          result <- applyPatch parsed baseBytes
+          result <- applyPatch parsed (SourceFileContents baseBytes)
           case result of
             Left slapError ->
               error ("bootstrap apply failed for " ++ bootstrapPatch pair
                      ++ ": " ++ renderSlapError slapError)
-            Right targetBytes -> do
+            Right (TargetFileContents targetBytes) -> do
               let targetFile = tempDir </> ("target-" ++ show index ++ ".bin")
               ByteString.writeFile targetFile targetBytes
               mmappedTarget <- mmapRomFile targetFile
@@ -335,7 +336,7 @@ parseCreateFormat formatString = case map toLower formatString of
 ----------------------------------------------------------------------------
 
 -- | Apply a parsed patch to source bytes.
-applyPatch :: SomePatch -> ByteString -> IO (Either SlapError ByteString)
+applyPatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
 applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
@@ -360,10 +361,10 @@ attemptConvert
   -> IO (Either String CreateResult)
 attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
-    targetResult <- applyPatch somePatch baseBytes
+    targetResult <- applyPatch somePatch (SourceFileContents baseBytes)
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
-      Right targetBytes ->
+      Right (TargetFileContents targetBytes) ->
         case createFromMemory targetFormat baseBytes targetBytes meta (patchContents somePatch) of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)

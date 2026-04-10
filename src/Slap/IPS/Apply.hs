@@ -8,7 +8,8 @@ import Slap.IPS.Types (IPSRecord(..), IPSPatch(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Measure (Length(..), FileSize(..), seekTo, offsetToInt)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Word (Word8)
@@ -40,8 +41,8 @@ applyRecords handle records = do
 
 -- | Apply an IPS patch in memory. Supports truncation (ipsTruncate) and
 -- RLE records -- both are optional IPS features that many patchers omit.
-applyIPSMemory :: IPSPatch -> ByteString -> ByteString
-applyIPSMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
+applyIPSMemory :: IPSPatch -> SourceFileContents -> TargetFileContents
+applyIPSMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputLength $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)

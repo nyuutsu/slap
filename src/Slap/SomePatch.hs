@@ -12,6 +12,7 @@ module Slap.SomePatch
   , parseSome
   ) where
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
@@ -100,7 +101,7 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 -- source; differential formats (BPS, UPS, VCDIFF, etc.) compute the
 -- target from source bytes and patch instructions.
 newtype ApplyStrategy = InMemory
-  { inMemoryApply :: ByteString.ByteString -> IO (Either SlapError ByteString.ByteString) }
+  { inMemoryApply :: SourceFileContents -> IO (Either SlapError TargetFileContents) }
 
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
@@ -326,8 +327,8 @@ parseSome patchBytes = case detectFormat patchBytes of
           -- UPS is self-inverse (XOR-based): applying the patch to the
           -- target recovers the source. For a well-parsed patch this
           -- reapplication cannot fail.
-          case UPS.applyUPS patch modified of
-            Right reverted -> reverted
+          case UPS.applyUPS patch (SourceFileContents modified) of
+            Right (TargetFileContents reverted) -> reverted
             Left err       -> error ("UPS undo: " ++ show err)
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)

@@ -2,6 +2,8 @@ module Slap.BSDiff.Apply
   ( applyBSDiff
   ) where
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -14,11 +16,11 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Data.Word (Word8)
 import Foreign.Storable (pokeByteOff)
 
-applyBSDiff :: BSDiffPatch -> ByteString -> Either SlapError ByteString
-applyBSDiff patch _source
-  | unFileSize (bsdiffTargetSize patch) == 0 = Right ByteString.empty
+applyBSDiff :: BSDiffPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyBSDiff patch _
+  | unFileSize (bsdiffTargetSize patch) == 0 = Right (TargetFileContents ByteString.empty)
   | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
-applyBSDiff patch source = Right $ unsafeCreate outputSize $ \targetPointer ->
+applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer ->
     let
       applyLoop
         :: Offset -> Offset -> SignedOffset -> Offset -> [BSDiffControl] -> IO ()

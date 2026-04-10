@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (PPFImageType(..))
@@ -509,13 +510,14 @@ doApply parsedCommand = do
 
       let apply = inMemoryApply (patchApply parsed)
       sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
-      verifySource noVerify verification sourceBytes
-      result <- apply sourceBytes
+      let source = SourceFileContents sourceBytes
+      verifySource noVerify verification source
+      result <- apply source
       case result of
         Left slapError -> dieError slapError
         Right target -> do
           verifyTarget noVerify verification target
-          ByteString.writeFile outputPath target
+          ByteString.writeFile outputPath (unTargetFileContents target)
           let appliedSummary = patchRecordSummary parsed
           putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
                   ++ " \8594 " ++ outputPath
@@ -628,14 +630,15 @@ doConvert parsedCommand = do
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
           sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) sourcePath
-          verifySource (commandNoVerify parsedCommand) (patchVerification parsed) sourceBytes
-          targetBytes <- applyForConvert parsed sourceBytes
+          let source = SourceFileContents sourceBytes
+          verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
+          target <- applyForConvert parsed source
           -- For --with conversion, default undo/validate to True (preservation)
           let withMeta = mergedMeta
                 { metaUndo     = metaUndo mergedMeta     <|> Just True
                 , metaValidate = metaValidate mergedMeta <|> Just True
                 }
-          case createFromMemory (commandConvertTo parsedCommand) sourceBytes targetBytes withMeta (patchContents parsed) of
+          case createFromMemory (commandConvertTo parsedCommand) sourceBytes (unTargetFileContents target) withMeta (patchContents parsed) of
             Left slapError -> dieError slapError
             Right createResult -> do
               printWarnings (patchSourceNotes parsed ++ metaWarnings
@@ -654,9 +657,9 @@ doConvert parsedCommand = do
               putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
-applyForConvert :: SomePatch -> ByteString.ByteString -> IO ByteString.ByteString
-applyForConvert somePatch sourceBytes = do
-  result <- inMemoryApply (patchApply somePatch) sourceBytes
+applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
+applyForConvert somePatch source = do
+  result <- inMemoryApply (patchApply somePatch) source
   case result of
     Left slapError -> dieError slapError
     Right target      -> pure target
@@ -685,8 +688,8 @@ deriveOutput patchPath sourcePath =
 -- Verification helpers
 ----------------------------------------------------------------------------
 
-verifySource :: Bool -> Verification -> ByteString.ByteString -> IO ()
-verifySource noVerify verification sourceBytes = do
+verifySource :: Bool -> Verification -> SourceFileContents -> IO ()
+verifySource noVerify verification (SourceFileContents sourceBytes) = do
   let preprocessed = verifySourcePreHash verification sourceBytes
   forM_ (verifySourceCRC32 verification) $ \expected ->
     checkCRC noVerify "source" expected (rustyCRC32 preprocessed)
@@ -705,8 +708,8 @@ verifySource noVerify verification sourceBytes = do
     forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
       warnSourceBytes checkLabel checkOffset expectedData sourceBytes
 
-verifyTarget :: Bool -> Verification -> ByteString.ByteString -> IO ()
-verifyTarget noVerify verification targetBytes = do
+verifyTarget :: Bool -> Verification -> TargetFileContents -> IO ()
+verifyTarget noVerify verification (TargetFileContents targetBytes) = do
   forM_ (verifyTargetCRC32 verification) $ \expected ->
     checkCRC noVerify "target" expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->

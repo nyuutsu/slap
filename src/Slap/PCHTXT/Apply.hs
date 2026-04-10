@@ -7,7 +7,8 @@ import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Measure (seekTo, offsetToInt)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Control.Monad (forM_, when)
@@ -26,8 +27,8 @@ applyPCHTXT patch target = withBinaryFile target ReadWriteMode $ \handle -> do
   pure (length entries)
 
 -- | Apply a PCHTXT patch in memory: copy source, then overwrite at offsets.
-applyPCHTXTMemory :: PCHTXTPatch -> ByteString -> ByteString
-applyPCHTXTMemory patch source = unsafeCreate outputSize $ \outputPointer -> do
+applyPCHTXTMemory :: PCHTXTPatch -> SourceFileContents -> TargetFileContents
+applyPCHTXTMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

@@ -7,6 +7,7 @@ import Integration.Helpers
    parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
 import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
 
@@ -301,10 +302,10 @@ crossFormatRoundTripTests base bps =
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed baseBytes
+          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
+            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- mmapRomFile base
@@ -312,10 +313,10 @@ crossFormatRoundTripTests base bps =
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed baseBytes
+          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right targetBytes -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
+            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- mmapRomFile base
@@ -323,10 +324,10 @@ crossFormatRoundTripTests base bps =
       case parseSome bpsBytes of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed baseBytes
+          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right targetBytes -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
+            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
     roundTripVia :: ByteString -> ByteString -> String -> String -> String -> IO ()
@@ -341,10 +342,10 @@ crossFormatRoundTripTests base bps =
           case parseSome patchA of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
-              resultA <- applyPatch parsedA baseBytes
+              resultA <- applyPatch parsedA (SourceFileContents baseBytes)
               case resultA of
                 Left slapError -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ renderSlapError slapError)
-                Right outputA -> do
+                Right (TargetFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
                   case createFromMemory createFormatB baseBytes outputA defaultMeta Nothing of
@@ -354,10 +355,10 @@ crossFormatRoundTripTests base bps =
                       case parseSome patchB of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
-                          resultB <- applyPatch parsedB baseBytes
+                          resultB <- applyPatch parsedB (SourceFileContents baseBytes)
                           case resultB of
                             Left slapError -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ renderSlapError slapError)
-                            Right outputB -> do
+                            Right (TargetFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
                               case createFromMemory createFormatC baseBytes outputB defaultMeta Nothing of
@@ -366,10 +367,10 @@ crossFormatRoundTripTests base bps =
                                   case parseSome patchC of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
-                                      resultC <- applyPatch parsedC baseBytes
+                                      resultC <- applyPatch parsedC (SourceFileContents baseBytes)
                                       case resultC of
                                         Left slapError -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ renderSlapError slapError)
-                                        Right outputC ->
+                                        Right (TargetFileContents outputC) ->
                                           assertEqual (formatA ++ " -> " ++ formatB ++ " -> " ++ formatC ++ " output SHA1")
                                             expectedSha (sha1Hex outputC)
 
@@ -427,8 +428,8 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
           case parseSome patchBytes of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
-              result <- applyPatch parsed baseBytes
+              result <- applyPatch parsed (SourceFileContents baseBytes)
               case result of
                 Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
-                Right output ->
+                Right (TargetFileContents output) ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)

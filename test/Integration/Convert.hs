@@ -5,6 +5,7 @@ import Integration.Helpers
    repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, mmapRomFile)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
 
@@ -94,10 +95,10 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
                   case parseSome convertedBytes of
                     Left slapError -> assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
-                      applied <- applyPatch convertedParsed baseBytes
+                      applied <- applyPatch convertedParsed (SourceFileContents baseBytes)
                       case applied of
                         Left slapError -> assertFailure ("apply converted failed: " ++ renderSlapError slapError)
-                        Right output ->
+                        Right (TargetFileContents output) ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
 -- | Check that each comma-separated expected pattern matches at least one note.

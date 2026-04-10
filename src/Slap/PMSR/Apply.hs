@@ -7,7 +7,8 @@ import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Measure (seekTo, offsetToInt)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Word (Word8)
@@ -26,8 +27,8 @@ applyPMSR patch target = withBinaryFile target ReadWriteMode $ \handle -> do
       ByteString.hPut handle (pmsrData record)
 
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
-applyPMSRMemory :: PMSRPatch -> ByteString -> ByteString
-applyPMSRMemory patch source = unsafeCreate outputSize $ \targetPointer -> do
+applyPMSRMemory :: PMSRPatch -> SourceFileContents -> TargetFileContents
+applyPMSRMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

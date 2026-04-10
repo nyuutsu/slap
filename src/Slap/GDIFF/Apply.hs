@@ -6,14 +6,15 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), commandOutputSize)
 import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..))
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 
-applyGDIFF :: GDiffPatch -> ByteString -> ByteString
-applyGDIFF patch source
-  | totalSize == 0 = ByteString.empty
-  | otherwise = unsafeCreate totalSize $ \outputPointer ->
+applyGDIFF :: GDiffPatch -> SourceFileContents -> TargetFileContents
+applyGDIFF patch (SourceFileContents source)
+  | totalSize == 0 = TargetFileContents ByteString.empty
+  | otherwise = TargetFileContents $ unsafeCreate totalSize $ \outputPointer ->
       let
         applyLoop :: Offset -> [GDiffCommand] -> IO ()
         applyLoop _outputPosition [] = pure ()

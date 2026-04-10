@@ -11,6 +11,8 @@ import Slap.APSGBA.Types
 import Slap.Binary (copyByteStringRange)
 import Slap.Measure (FileSize(..), Offset(..))
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -47,8 +49,8 @@ applyGBARecords source (APSGBARecord recordOffset _ _ xorPayload : rest) = do
       result = before <> patchedBlock <> after
   applyGBARecords result rest
 
-applyAPSGBAMemory :: APSGBAPatch -> ByteString -> ByteString
-applyAPSGBAMemory (APSGBAPatch header records) source = unsafeCreate targetSize $ \targetPointer -> do
+applyAPSGBAMemory :: APSGBAPatch -> SourceFileContents -> TargetFileContents
+applyAPSGBAMemory (APSGBAPatch header records) (SourceFileContents source) = TargetFileContents $ unsafeCreate targetSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
     when (targetSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)

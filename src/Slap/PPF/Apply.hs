@@ -11,6 +11,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      advance, byteLength, offsetToInt,
                      firstAction, nextAction, plusOffset)
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create, unsafeCreate)
@@ -26,12 +28,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Validates every record write against the output buffer bounds.
 -- Returns 'Left' on malformed patches (negative offsets, writes past
 -- the buffer); returns 'Right' with byte-identical output on success.
-applyPatchMemory :: PPFPatch -> ByteString -> Either SlapError ByteString
-applyPatchMemory patch source
+applyPatchMemory :: PPFPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyPatchMemory patch (SourceFileContents source)
   | unFileSize outputFileSize < 0 =
       Left (NegativeTargetSize label outputFileSize)
   | unFileSize outputFileSize == 0 =
-      Right ByteString.empty
+      Right (TargetFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize outputFileSize) $ \outputPointer -> do
@@ -49,7 +51,7 @@ applyPatchMemory patch source
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed label applyErr)
-        Nothing       -> Right result
+        Nothing       -> Right (TargetFileContents result)
   where
     label          = ppfVersionLabel (ppfVersion patch)
     sourceFileSize = FileSize (ByteString.length source)

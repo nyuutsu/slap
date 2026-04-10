@@ -15,6 +15,7 @@ import Slap.VCDIFF.Types
     , serializedDefaultTable, decodeCustomTable
     )
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Checksum (Adler32(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -48,7 +49,7 @@ parseVCDIFFWith allowCustom input
         Just rawTableBytes -> do
           let applyInnerDelta deltaBytes = do
                 inner <- parseVCDIFFWith False deltaBytes
-                applyVCDIFF inner serializedDefaultTable
+                fmap unTargetFileContents (applyVCDIFF inner (SourceFileContents serializedDefaultTable))
           (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
           Right (VCDIFFPatch header windows table nearSize sameSize)
   where

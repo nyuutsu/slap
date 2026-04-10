@@ -8,7 +8,8 @@ import Slap.APSN64.Types
 import Slap.Measure (offsetToInt, seekTo)
 import Slap.Binary (copyByteStringRange)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Word (Word8)
@@ -30,8 +31,8 @@ applyN64Record handle (APSN64RLE writeOffset fillValue fillCount) = do
   seekTo handle writeOffset
   ByteString.hPut handle (ByteString.replicate (fromIntegral fillCount) fillValue)
 
-applyAPSN64Memory :: APSN64Patch -> ByteString -> ByteString
-applyAPSN64Memory (APSN64Patch _ records) source = unsafeCreate outputLength $ \targetPointer -> do
+applyAPSN64Memory :: APSN64Patch -> SourceFileContents -> TargetFileContents
+applyAPSN64Memory (APSN64Patch _ records) (SourceFileContents source) = TargetFileContents $ unsafeCreate outputLength $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)

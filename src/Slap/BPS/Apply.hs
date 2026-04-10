@@ -18,8 +18,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      remainingFromOffset,
                      firstAction, nextAction, plusOffset)
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Control.Monad (unless)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
 import Data.IORef (newIORef, readIORef, writeIORef)
@@ -77,12 +78,12 @@ classifyTargetCopy readStart writePos copyLength
 -- still responsible for validating CRCs before calling this; a
 -- 'Left' return here means the action stream is semantically
 -- invalid, not that the patch bytes were corrupted.
-applyBPS :: BPSPatch -> ByteString -> Either SlapError ByteString
-applyBPS patch source
+applyBPS :: BPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyBPS patch (SourceFileContents source)
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize LabelBPS targetSize)
   | unFileSize targetSize == 0 =
-      Right ByteString.empty
+      Right (TargetFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize targetSize) $ \outputPointer ->
@@ -90,7 +91,7 @@ applyBPS patch source
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed LabelBPS applyErr)
-        Nothing       -> Right result
+        Nothing       -> Right (TargetFileContents result)
   where
     targetSize      = bpsTargetSize patch
     sourceSize      = FileSize (ByteString.length source)

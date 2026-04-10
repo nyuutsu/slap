@@ -8,7 +8,8 @@ import Slap.RUP.Types
 import Slap.Measure (Offset(..), FileSize(..), offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
-import Data.ByteString (ByteString)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (xor)
@@ -47,8 +48,8 @@ applyRecord handle (RUPRecord writeOffset xorPayload) = do
   ByteString.hPut handle result
 
 -- | Apply a RUP patch in memory: XOR records + overflow handling.
-applyRUPMemory :: RUPPatch -> ByteString -> ByteString
-applyRUPMemory patch source = unsafeCreate outputLength $ \outputPointer -> do
+applyRUPMemory :: RUPPatch -> SourceFileContents -> TargetFileContents
+applyRUPMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputLength $ \outputPointer -> do
     -- Copy source, zero-fill any extension
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $

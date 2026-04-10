@@ -58,6 +58,7 @@ library slap-internal
     , Slap.BSDiff.Parse
     , Slap.BSDiff.Types
     , Slap.Detect
+    , Slap.FileContents
     , Slap.Error
     , Slap.Explain
     , Slap.GDIFF.Apply

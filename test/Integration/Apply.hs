@@ -5,6 +5,7 @@ import Integration.Helpers
    repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
    sha1Hex, applyPatch, mmapRomFile)
 import Slap.Error (renderSlapError)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -54,8 +55,8 @@ makePatchTest repo basePath expectedSha entry =
         case parseSome patchBytes of
           Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> do
-            result <- applyPatch parsed baseBytes
+            result <- applyPatch parsed (SourceFileContents baseBytes)
             case result of
               Left slapError -> assertFailure ("apply failed: " ++ renderSlapError slapError)
-              Right output -> assertEqual "SHA1 mismatch"
+              Right (TargetFileContents output) -> assertEqual "SHA1 mismatch"
                 expectedSha (sha1Hex output)

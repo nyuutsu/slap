@@ -58,6 +58,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                       Hunk(..), EncodedHunk(..), UndoHunk(..))
 import Slap.FFI (rustyCRC32)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), parseSome)
 import Slap.Convert (PatchContents(..), DirectCreate(..), DiffCreate(..), CreateFormat(..),
                       FormatSpecification(..), CreateMeta(..), PatchEncoding(..),
@@ -299,7 +300,7 @@ prop_bps = forAll genPair $ \(source, target) ->
   let patch = BPS.createBPS source target ByteString.empty
   in case BPS.parseBPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> BPS.applyBPS parsed source === Right target
+       Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
@@ -318,7 +319,7 @@ prop_ups = forAll genPair $ \(source, target) ->
         Left parseError ->
           counterexample (renderSlapError parseError) $ property False
         Right parsed ->
-          UPS.applyUPS parsed source === Right target
+          UPS.applyUPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
@@ -412,7 +413,7 @@ prop_gdiff = forAll genPair $ \(source, target) ->
   let patch = GDIFF.createGDIFF source target
   in case GDIFF.parseGDIFF patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> GDIFF.applyGDIFF parsed source === target
+       Right parsed -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
@@ -454,7 +455,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> PPF.applyPatchMemory parsed source === Right target
+       Right parsed -> PPF.applyPatchMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
@@ -494,7 +495,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
   let patch = resultBytes (DPS.createDPS source target "" "" "" DPS.DPSStable)
   in case DPS.parseDPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> DPS.applyDPS parsed source === target
+       Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === TargetFileContents target
 
 prop_rup :: Property
 prop_rup = forAll genPair $ \(source, target) ->
@@ -566,13 +567,13 @@ prop_identity format = forAll genByteString $ \source -> not (ByteString.null so
     Right (CreateResult patch _) -> case parseSome patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
-        result <- applySomePatch parsed source
+        result <- applySomePatch parsed (SourceFileContents source)
         pure $ case result of
           Left slapError -> counterexample ("apply: " ++ renderSlapError slapError) $ property False
-          Right out -> out === source
+          Right (TargetFileContents out) -> out === source
 
 -- | Apply through the SomePatch closure.
-applySomePatch :: SomePatch -> ByteString -> IO (Either SlapError ByteString)
+applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
 applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
 
 ----------------------------------------------------------------------------
@@ -591,7 +592,7 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
         Left parseError ->
           counterexample ("parse: " ++ renderSlapError parseError) $ property False
         Right parsed ->
-          (UPS.applyUPS parsed source >>= UPS.applyUPS parsed) === Right source
+          (UPS.applyUPS parsed (SourceFileContents source) >>= \(TargetFileContents intermediate) -> UPS.applyUPS parsed (SourceFileContents intermediate)) === Right (TargetFileContents source)
 
 -- | PPF3 with undo data: apply then undo recovers the original.
 -- Same-size pairs only — PPF3 undo writes back original bytes but can't
@@ -603,9 +604,9 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed ->
-        case PPF.applyPatchMemory parsed source of
+        case PPF.applyPatchMemory parsed (SourceFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False
-          Right applied -> PPF.undoPatchMemory parsed applied === source
+          Right (TargetFileContents applied) -> PPF.undoPatchMemory parsed applied === source
 
 ----------------------------------------------------------------------------
 -- Contract properties
@@ -788,7 +789,7 @@ prop_bpsBlockMove = once $
      conjoin
        [ case BPS.parseBPS patch of
            Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-           Right parsed -> BPS.applyBPS parsed source === Right target
+           Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
        , property (ByteString.length patch < 1024)
        ]
 

@@ -12,6 +12,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      subtractLength, minLength,
                      firstAction, nextAction, plusOffset)
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Control.Monad (when)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -33,12 +35,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- (spec-mandated zero-fill past source end) and is handled inline
 -- by the helper functions, not as an error. The caller is still
 -- responsible for CRC validation before calling.
-applyUPS :: UPSPatch -> ByteString -> Either SlapError ByteString
-applyUPS patch source
+applyUPS :: UPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyUPS patch (SourceFileContents source)
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize LabelUPS targetSize)
   | unFileSize targetSize == 0 =
-      Right ByteString.empty
+      Right (TargetFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize targetSize) $ \outputPointer ->
@@ -48,7 +50,7 @@ applyUPS patch source
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed LabelUPS applyErr)
-        Nothing       -> Right result
+        Nothing       -> Right (TargetFileContents result)
   where
     targetSize     = upsTargetSize patch
     sourceSize     = FileSize (ByteString.length source)

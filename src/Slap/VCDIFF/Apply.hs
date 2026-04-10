@@ -20,6 +20,8 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Length(..))
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Data.Array (Array, listArray, (!))
 import Data.Array.ST (STArray, newArray, readArray, writeArray)
 import Data.ByteString (ByteString)
@@ -126,12 +128,12 @@ decodeAddress cache mode here addressPositionReference addressBytes
 -- Apply
 ----------------------------------------------------------------------------
 
-applyVCDIFF :: VCDIFFPatch -> ByteString -> Either SlapError ByteString
-applyVCDIFF patch source
+applyVCDIFF :: VCDIFFPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyVCDIFF patch (SourceFileContents source)
   | totalSize < 0  = Left (NegativeTargetSize LabelVCDIFF (FileSize totalSize))
-  | totalSize == 0 = Right ByteString.empty
+  | totalSize == 0 = Right (TargetFileContents ByteString.empty)
   | otherwise =
-      Right $ unsafeCreate totalSize $ \outputPointer -> do
+      Right $ TargetFileContents $ unsafeCreate totalSize $ \outputPointer -> do
         globalOutputOffsetRef <- newIORef (0 :: Int)
         mapM_ (applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalSize) (vcdiffWindows patch)
   where

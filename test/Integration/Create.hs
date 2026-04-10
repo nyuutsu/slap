@@ -6,6 +6,7 @@ import Integration.Helpers
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
 import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import Data.ByteString (ByteString)
@@ -53,8 +54,8 @@ roundTrip format baseBytes targetBytes expectedSha = do
     Right (CreateResult patchBytes _) -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
-        result <- applyPatch parsed baseBytes
+        result <- applyPatch parsed (SourceFileContents baseBytes)
         case result of
           Left slapError -> assertFailure ("re-apply failed: " ++ renderSlapError slapError)
-          Right output ->
+          Right (TargetFileContents output) ->
             assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

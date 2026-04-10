@@ -8,12 +8,14 @@ module Slap.DPS.Apply
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..))
 import Slap.Measure (Offset(..), Length(..))
 
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 -- | Apply a DPS patch. Builds output from source ROM + embedded data.
-applyDPS :: DPSPatch -> ByteString -> ByteString
-applyDPS patch source = buildOutput source (dpsRecords patch)
+applyDPS :: DPSPatch -> SourceFileContents -> TargetFileContents
+applyDPS patch (SourceFileContents source) = TargetFileContents $ buildOutput source (dpsRecords patch)
 
 buildOutput :: ByteString -> [DPSRecord] -> ByteString
 buildOutput source records =
