@@ -2,13 +2,14 @@ module Slap.UPS.Apply
   ( applyUPS
   ) where
 
-import Slap.UPS.Types (UPSPatch(..), UPSBlock(..))
+import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteSize)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..),
                      ActionIndex(..),
                      RequestedLength(..), RemainingLength(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
+                     subtractLength, minLength,
                      firstAction, nextAction, plusOffset)
 
 import Control.Monad (when)
@@ -16,7 +17,7 @@ import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
-import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
+import Data.ByteString.Unsafe (unsafeIndex, unsafeUseAsCStringLen)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
@@ -60,51 +61,68 @@ applyUPS patch source
         abort applyErr = writeIORef errorRef (Just applyErr)
 
         -- | Copy bytes from source to output at the given position,
-        -- zero-filling past source end (spec-mandated for
-        -- source-shorter-than-target). The caller is responsible for
-        -- ensuring the copy fits within target bounds — this helper
-        -- does not clip to target end.
+        -- zero-filling past source end (spec-mandated for source-
+        -- shorter-than-target). The caller is responsible for ensuring
+        -- the copy fits within target bounds — this helper does not
+        -- clip to target.
         copySourceSlice :: Offset -> Length -> IO ()
         copySourceSlice outputPosition copyLength = do
-          let startPos       = unOffset outputPosition
-              sourceEnd      = unFileSize sourceSize
-              requestedLen   = unLength copyLength
-              inBoundsLength = max 0 (min requestedLen (sourceEnd - startPos))
-              zeroFillLength = requestedLen - inBoundsLength
-          when (inBoundsLength > 0) $
+          let availableInSource = remainingFromOffset outputPosition sourceSize
+              inBoundsLength    = minLength copyLength availableInSource
+              zeroFillLength    = subtractLength copyLength inBoundsLength
+              zeroFillStart     = advance outputPosition inBoundsLength
+          when (unLength inBoundsLength > 0) $
             copyBytes
               (plusOffset outputPointer outputPosition)
-              (sourcePointer `plusPtr` startPos)
-              inBoundsLength
-          when (zeroFillLength > 0) $
+              (sourcePointer `plusPtr` unOffset outputPosition)
+              (unLength inBoundsLength)
+          when (unLength zeroFillLength > 0) $
             fillBytes
-              (plusOffset outputPointer (Offset (startPos + inBoundsLength)))
+              (plusOffset outputPointer zeroFillStart)
               0
-              zeroFillLength
+              (unLength zeroFillLength)
 
         -- | XOR source bytes with xorData, writing result to output.
         -- Past source end, source bytes are treated as 0x00 (so
-        -- xorData are written verbatim). The caller is responsible
-        -- for ensuring the write fits within target bounds — this
-        -- helper does not clip to target end.
-        xorSourceSlice :: Offset -> ByteString -> IO ()
-        xorSourceSlice outputPosition xorData = do
-          let xorDataLength = ByteString.length xorData
-              startPos  = unOffset outputPosition
-              sourceEnd = unFileSize sourceSize
-              innerLoop !byteOffset
-                | byteOffset >= xorDataLength = pure ()
+        -- xorData bytes are written verbatim — x XOR 0 == x). The
+        -- caller is responsible for ensuring the write fits within
+        -- target bounds — this helper does not clip to target.
+        --
+        -- Two-phase loop: a tight in-bounds phase reads source via
+        -- the raw pinned pointer and XORs against xorData; a tight
+        -- zero-fill phase writes xorData verbatim. This mirrors
+        -- copySourceSlice's split-phase structure and BPS's
+        -- generalOverlapLoop hoisted-base-pointer style.
+        xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
+        xorSourceSlice outputPosition xorDataLength xorData = do
+          let availableInSource = remainingFromOffset outputPosition sourceSize
+              inBoundsLength    = minLength xorDataLength availableInSource
+              readBase          = sourcePointer `plusPtr` unOffset outputPosition
+              writeBase         = plusOffset outputPointer outputPosition
+              inBoundsBytes     = unLength inBoundsLength
+              totalBytes        = unLength xorDataLength
+
+              -- Phase 1: source is in bounds. Read source, XOR with
+              -- xorData, poke result.
+              inBoundsLoop !byteOffset
+                | byteOffset >= inBoundsBytes = pure ()
                 | otherwise = do
-                    let absolutePos = startPos + byteOffset
-                        xorByte     = ByteString.index xorData byteOffset
-                    sourceByte <-
-                      if absolutePos < sourceEnd
-                        then peekByteOff sourcePointer absolutePos :: IO Word8
-                        else pure 0
-                    pokeByteOff outputPointer absolutePos
+                    sourceByte <- peekByteOff readBase byteOffset :: IO Word8
+                    let xorByte = unsafeIndex xorData byteOffset
+                    pokeByteOff writeBase byteOffset
                       (sourceByte `xor` xorByte :: Word8)
-                    innerLoop (byteOffset + 1)
-          innerLoop 0
+                    inBoundsLoop (byteOffset + 1)
+
+              -- Phase 2: source is past end. Source byte is virtually
+              -- 0, so the result is just xorData[byteOffset].
+              zeroFillLoop !byteOffset
+                | byteOffset >= totalBytes = pure ()
+                | otherwise = do
+                    let xorByte = unsafeIndex xorData byteOffset
+                    pokeByteOff writeBase byteOffset xorByte
+                    zeroFillLoop (byteOffset + 1)
+          inBoundsLoop 0
+          zeroFillLoop inBoundsBytes
 
         applyBlockStream :: ActionIndex -> Offset -> IO ()
         applyBlockStream !blockIndex !outputPosition
@@ -122,8 +140,8 @@ applyUPS patch source
         handleBlock blockIndex outputPosition (UPSBlock skipDelta xorData) =
           let skipLen        = Length (unDelta skipDelta)
               xorLen         = Length (ByteString.length xorData)
-              terminatorLen  = Length 1
-              totalBlockLen  = Length (unLength skipLen + unLength xorLen + 1)
+              terminatorLen  = Length upsTerminatorByteSize
+              totalBlockLen  = skipLen <> xorLen <> terminatorLen
               skipStart      = outputPosition
               xorStart       = advance skipStart skipLen
               terminatorPos  = advance xorStart xorLen
@@ -135,7 +153,7 @@ applyUPS patch source
                             (RemainingLength remainingSpace))
                else do
                  copySourceSlice skipStart skipLen
-                 xorSourceSlice xorStart xorData
+                 xorSourceSlice xorStart xorLen xorData
                  copySourceSlice terminatorPos terminatorLen
                  applyBlockStream (nextAction blockIndex) nextPosition
 

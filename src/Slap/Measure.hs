@@ -50,6 +50,7 @@ module Slap.Measure
   , firstAction
   , nextAction
   , subtractLength
+  , minLength
   , negativeOvershoot
   , plusOffset
   , SignedOffsetSign(..)
@@ -317,6 +318,13 @@ nextAction (ActionIndex index) = ActionIndex (index + 1)
 subtractLength :: Length -> Length -> Length
 subtractLength (Length minuend) (Length subtrahend) =
   Length (max 0 (minuend - subtrahend))
+
+-- | The smaller of two 'Length' values. Used in apply workers when
+-- splitting a region into in-bounds and zero-fill phases: the
+-- in-bounds length is the minimum of the requested length and the
+-- bytes remaining in source.
+minLength :: Length -> Length -> Length
+minLength (Length left) (Length right) = Length (min left right)
 
 -- | The amount by which a 'SignedOffset' has overshot into the
 -- negative range, expressed as a non-negative 'Length'. Returns
