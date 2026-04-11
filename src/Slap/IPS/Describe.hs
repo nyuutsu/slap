@@ -1,151 +1,319 @@
+-- | Describe layer for the IPS family — what slap\'s @info@ and
+-- @explain@ verbs consume for already-parsed 'IPSPatch' and
+-- 'EBPPatch' values. Counterparts to @bpsInfo@ / @explainBPS@ in
+-- 'Slap.BPS.Describe' and @upsInfo@ / @explainUPS@ in
+-- 'Slap.UPS.Describe'.
+--
+-- Two top-level function families rather than one taking an
+-- @Either IPSPatch EBPPatch@: 'Slap.IPS.Parse' already discriminates
+-- plain IPS from EBP-wrapped on the parse-result side, and making
+-- Describe re-discriminate would duplicate the case for no benefit.
+-- The caller (currently 'Slap.SomePatch') routes on the parse
+-- result and hands the right patch to the right function.
+--
+-- Describe trusts its inputs. Every value reaching this module has
+-- already been validated by 'Slap.IPS.Parse', so there are no error
+-- paths here — only rendering. In particular, EBP metadata is
+-- treated as an opaque byte blob for display purposes: the
+-- @title@/@author@/@description@ extraction the old Describe layer
+-- did is gone on purpose, because it reached past the
+-- \"shape-recognize, don\'t schema-validate\" boundary that
+-- 'Slap.IPS.Parse' draws.
 module Slap.IPS.Describe
-  ( ipsInfo
+  ( -- * Plain IPS
+    ipsInfo
   , ipsMeta
-  , jsonPairs
-  , jsonFieldCI
   , explainIPS
+    -- * EBP-wrapped IPS
+  , ebpInfo
+  , ebpMeta
+  , explainEBP
+    -- * Region builder
   , makeIPSRegion
   ) where
 
-import Slap.IPS.Types (IPSVariant(..), IPSRecord(..), IPSPatch(..))
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
-                      SummaryByteInfo(..), SummaryBytes(..),
-                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
+import Slap.IPS.Types
+  ( IPSVariant(..)
+  , OffsetWidth(..)
+  , IPSVariantSpec(..)
+  , IPSRecord(..)
+  , IPSPatch(..)
+  , EBPMetadata(..)
+  , EBPPatch(..)
+  , ipsRecordOffset
+  , recordPayloadLength
+  , variantSpec
+  )
+import Slap.Explain
+  ( ExplainData(..)
+  , ExplainSection(..)
+  , ExplainRegion(..)
+  , ExplainPayload(..)
+  , ExplainSummary(..)
+  , SummaryInfo(..)
+  , SummaryByteInfo(..)
+  , SummaryBytes(..)
+  , Annotation(..)
+  , OffsetKind(..)
+  , AnnotDetail(..)
+  )
+import Slap.Format (MetaField(..), padHex, hexByteString, renderField)
+import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Char (toLower)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import Data.List (sortBy)
-import Data.Ord (comparing)
-import Data.Word (Word64)
-import Numeric (showHex)
+import qualified Data.ByteString.Char8 as ByteString8
+import qualified Data.Vector as Vector
+import Data.Word (Word8)
 
+----------------------------------------------------------------------------
+-- ipsInfo / ipsMeta — plain IPSPatch
+----------------------------------------------------------------------------
+
+-- | One-line-per-field metadata for an 'IPSPatch'. The variant\'s
+-- wire facts come from 'variantSpec' so nothing in this module
+-- hardcodes @"PATCH"@ / @"IPS32"@ / @"EOF"@ / @"EEOF"@ strings or
+-- the 24\/32-bit offset widths. The truncation line is emitted
+-- only when the parser observed a Flips-style truncation marker.
 ipsMeta :: IPSPatch -> [MetaField]
-ipsMeta patch = concat
-  [ case ipsTruncate patch of
-      Nothing        -> []
-      Just truncSize -> [MetaField "truncate" (show (unFileSize truncSize) ++ " bytes")]
-  , ebpFields
-  ]
-  where
-    ebpFields = case ipsEBPMeta patch of
-      Nothing   -> []
-      Just meta ->
-        let pairs = jsonPairs meta
-            known = ["patcher", "title", "author", "description"]
-            knownFields = [ MetaField key value | key <- known
-                          , Just value <- [jsonFieldCI pairs key]
-                          , not (null value) ]
-            unknownFields = map (uncurry MetaField) $ sortBy (comparing fst)
-                          [ (key, value) | (key, value) <- pairs
-                          , map toLower key `notElem` known
-                          , not (null value) ]
-        in knownFields ++ unknownFields
+ipsMeta patch =
+  ipsVariantMetaFields (ipsVariant patch)
+  ++ truncationMetaField (ipsTruncatedTargetSize patch)
 
-ipsInfo :: IPSPatch -> String
-ipsInfo patch = unlines $ filter (not . null) $
-  [ "format:      " ++ case ipsVariant patch of
-      StandardIPS -> case ipsEBPMeta patch of
-        Nothing -> "IPS"
-        Just _  -> "IPS (EBP)"
-      IPS32       -> "IPS32"
-  ]
-  ++ map renderField (ipsMeta patch)
-  ++ [ "records:     " ++ show (length (ipsRecords patch))
-     , "total bytes: " ++ show totalBytes
-     , rangeString
+-- | The per-variant wire-fact meta fields that both 'ipsMeta' and
+-- 'ebpMeta' emit. Pulled from 'variantSpec' to keep Describe from
+-- owning its own copy of the magic\/marker\/width\/ceiling facts.
+-- Shared between the plain and EBP paths because EBP wraps a
+-- 'StandardIPS' record stream and the underlying wire facts are
+-- worth surfacing regardless of wrapper.
+ipsVariantMetaFields :: IPSVariant -> [MetaField]
+ipsVariantMetaFields variant =
+  let spec = variantSpec variant
+  in [ MetaField "magic"      (renderMarkerBytes (ipsVariantMagic spec))
+     , MetaField "offset"     (renderOffsetWidth (ipsVariantOffsetWidth spec))
+     , MetaField "EOF marker" (renderMarkerBytes (ipsVariantEOFMarker spec))
+     , MetaField "max offset" (renderMaxOffset    (ipsVariantMaxAddressableOffset spec))
      ]
-  where
-    totalBytes = sum (map ipsPayloadSize (ipsRecords patch))
-    ipsPayloadSize (IPSRecord _ payload)          = ByteString.length payload
-    ipsPayloadSize (IPSRecordRLE _ fillCount _)   = unLength fillCount
 
-    rangeString
-      | null (ipsRecords patch) = "range:       (empty patch)"
-      | otherwise =
-          let lowest  = minimum [ unOffset (ipsOffset record) | record <- ipsRecords patch ]
-              highest = unOffset (maximum [ advance (ipsOffset record) (Length (ipsPayloadSize record))
-                                          | record <- ipsRecords patch ])
-          in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
-             ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
+-- | The optional truncation field. @Just n@ renders as a single
+-- @"truncate"@ line stating the post-apply target size; 'Nothing'
+-- emits no line at all (no @"no truncation"@ noise).
+truncationMetaField :: Maybe FileSize -> [MetaField]
+truncationMetaField Nothing =
+  []
+truncationMetaField (Just truncatedTargetSize) =
+  [MetaField "truncate" (show (unFileSize truncatedTargetSize) ++ " bytes")]
 
-    ipsOffset (IPSRecord recordOffset _)       = recordOffset
-    ipsOffset (IPSRecordRLE recordOffset _ _)  = recordOffset
-
--- | Extract all string key-value pairs from a flat JSON object.
-jsonPairs :: ByteString -> [(String, String)]
-jsonPairs = extractPairs . Text.unpack . Text.decodeUtf8Lenient
-  where
-    extractPairs text = case dropWhile (/= '{') text of
-      ('{':rest) -> scanEntries rest
-      _          -> []
-    scanEntries text = case dropWhile (\char -> char == ' ' || char == ',' || char == '\n' || char == '\r') text of
-      ('}':_)    -> []
-      ('"':rest) -> case takeQuoted rest of
-        (key, afterKey) -> case dropWhile (\char -> char == ' ' || char == ':') afterKey of
-          ('"':valueRest) -> case takeQuoted valueRest of
-            (value, afterValue) -> (key, value) : scanEntries afterValue
-          other -> scanEntries other   -- non-string value, skip
-      _ -> []
-    takeQuoted = scanQuoted []
-      where
-        scanQuoted accumulated ('"' : rest)         = (reverse accumulated, rest)
-        scanQuoted accumulated ('\\' : '"' : rest)  = scanQuoted ('"' : accumulated) rest
-        scanQuoted accumulated ('\\' : '\\' : rest) = scanQuoted ('\\' : accumulated) rest
-        scanQuoted accumulated ('\\' : char : rest) = scanQuoted (char : accumulated) rest
-        scanQuoted accumulated (char : rest)        = scanQuoted (char : accumulated) rest
-        scanQuoted accumulated []                   = (reverse accumulated, [])
-
--- | Case-insensitive key lookup in extracted JSON pairs.
-jsonFieldCI :: [(String, String)] -> String -> Maybe String
-jsonFieldCI pairs key =
-  let lowerKey = map toLower key
-  in lookup lowerKey [(map toLower entryKey, value) | (entryKey, value) <- pairs]
+-- | Short per-patch summary for @slap info@ on a plain IPS patch.
+-- Mirrors the shape of 'Slap.BPS.Describe.bpsInfo' and
+-- 'Slap.UPS.Describe.upsInfo': a @format:@ line, the 'ipsMeta'
+-- fields rendered column-aligned, and a trailing record count.
+ipsInfo :: IPSPatch -> String
+ipsInfo patch = unlines $
+  [ "format:      " ++ ipsVariantDisplayName (ipsVariant patch) ]
+  ++ map renderField (ipsMeta patch)
+  ++ [ "records:     " ++ show (Vector.length (ipsRecords patch)) ]
 
 ----------------------------------------------------------------------------
--- Explain
+-- ebpInfo / ebpMeta — EBP-wrapped IPSPatch
 ----------------------------------------------------------------------------
 
+-- | One-line-per-field metadata for an 'EBPPatch'. Delegates the
+-- wire-fact fields to 'ipsMeta' on the underlying 'IPSPatch', then
+-- appends a single @metadata@ line carrying the blob byte count and
+-- a shape-recognized preview. Shape-only: the preview is either the
+-- raw bytes decoded as ASCII (when every previewed byte is
+-- printable) or a hex dump (when any byte is not). The JSON is
+-- never parsed past that.
+ebpMeta :: EBPPatch -> [MetaField]
+ebpMeta patch =
+  ipsMeta (ebpBasePatch patch)
+  ++ [ MetaField "metadata"
+         (renderEBPMetadata (unEBPMetadata (ebpMetadata patch))) ]
+
+-- | Short per-patch summary for @slap info@ on an EBP-wrapped patch.
+-- The format line hardcodes @"EBP"@ because EBP is a wrapper format
+-- whose underlying variant is always 'StandardIPS' by invariant;
+-- the variant-specific wire facts still appear in 'ebpMeta'.
+ebpInfo :: EBPPatch -> String
+ebpInfo patch = unlines $
+  [ "format:      EBP" ]
+  ++ map renderField (ebpMeta patch)
+  ++ [ "records:     "
+       ++ show (Vector.length (ipsRecords (ebpBasePatch patch))) ]
+
+----------------------------------------------------------------------------
+-- explain — structured description for the explain renderer
+----------------------------------------------------------------------------
+
+-- | Build structured 'ExplainData' for a plain 'IPSPatch'. Every
+-- record becomes one 'ExplainRegion' via 'makeIPSRegion'; the
+-- patch-level header reuses 'ipsMeta'; the summary reports the
+-- record count and the total bytes that the stream would write to
+-- the target.
+--
+-- The record walk stays lazy over the underlying 'Vector' via
+-- 'Vector.toList': 'renderExplain' consumes the region list in
+-- order, so materialising the whole list is not a
+-- 7000-records-at-once memory hit. The total-bytes computation uses
+-- a strict 'Vector.foldl'' so the traversal is a single pass and
+-- the accumulator cannot build a thunk chain even on the
+-- stadium2-scale @.ips32@ fixture.
 explainIPS :: IPSPatch -> ExplainData
 explainIPS patch = ExplainData
-  { explainFormat   = case ipsVariant patch of
-      StandardIPS -> case ipsEBPMeta patch of
-        Nothing -> "IPS"
-        Just _  -> "IPS (EBP)"
-      IPS32       -> "IPS32"
+  { explainFormat   = ipsVariantDisplayName (ipsVariant patch)
   , explainHeader   = ipsMeta patch
-  , explainSections = [SectionRegions (map makeIPSRegion (ipsRecords patch))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = truncNote
+  , explainSections =
+      [ SectionRegions
+          (map makeIPSRegion (Vector.toList (ipsRecords patch))) ]
+  , explainSummary  = Summary (SummaryInfo recordCount "records"
+                                 (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , explainNotes    = []
   }
   where
-    recordCount = length (ipsRecords patch)
-    totalBytes = sum (map ipsRecordSize (ipsRecords patch))
-    truncNote = case ipsTruncate patch of
-      Nothing         -> []
-      Just outputSize -> ["truncate to " ++ show (unFileSize outputSize) ++ " bytes"]
+    recordVector = ipsRecords patch
+    recordCount  = Vector.length recordVector
+    totalBytes   = Vector.foldl'
+                     (\runningTotal record ->
+                        runningTotal + unLength (recordPayloadLength record))
+                     0
+                     recordVector
 
+-- | Build structured 'ExplainData' for an 'EBPPatch'. Delegates to
+-- 'explainIPS' for the record walk and summary, then rewrites the
+-- format name to @"EBP"@ and swaps the header for 'ebpMeta' so the
+-- metadata line shows up in the explain output alongside the
+-- variant facts.
+explainEBP :: EBPPatch -> ExplainData
+explainEBP patch =
+  (explainIPS (ebpBasePatch patch))
+    { explainFormat = "EBP"
+    , explainHeader = ebpMeta patch
+    }
+
+-- | Build a single 'ExplainRegion' from an 'IPSRecord'. Copy records
+-- become 'PayloadWrite' regions carrying their literal bytes; RLE
+-- records become 'PayloadFill' regions tagged with 'DetailRLE'.
+-- The offset and the region size are both taken from the
+-- constructor-agnostic 'ipsRecordOffset' and 'recordPayloadLength'
+-- helpers, so this walk never re-pattern-matches to recompute
+-- either.
 makeIPSRegion :: IPSRecord -> ExplainRegion
-makeIPSRegion (IPSRecord recordOffset recordPayload) = ExplainRegion
-  { regionOffset     = recordOffset
-  , regionSize       = Length (ByteString.length recordPayload)
-  , regionLabel      = "Write  "
-  , regionPayload    = PayloadWrite recordPayload
-  , regionAnnotation = AnnotAt AtOffset recordOffset []
+makeIPSRegion record = ExplainRegion
+  { regionOffset     = recordTargetOffset
+  , regionSize       = recordPayloadLength record
+  , regionLabel      = regionLabelString
+  , regionPayload    = regionPayloadValue
+  , regionAnnotation = AnnotAt AtOffset recordTargetOffset annotationDetails
   }
-makeIPSRegion (IPSRecordRLE recordOffset fillCount fillByte) = ExplainRegion
-  { regionOffset     = recordOffset
-  , regionSize       = fillCount
-  , regionLabel      = "Fill "
-  , regionPayload    = PayloadFill fillByte fillCount
-  , regionAnnotation = AnnotAt AtOffset recordOffset [DetailRLE]
-  }
+  where
+    recordTargetOffset = ipsRecordOffset record
+    (regionLabelString, regionPayloadValue, annotationDetails) = case record of
+      IPSRecordCopy { ipsCopyPayload = payload } ->
+        ("Write  ", PayloadWrite payload, [])
+      IPSRecordRLE  { ipsRleCount = runLength
+                    , ipsRleFill  = fillByte } ->
+        ("Fill ",   PayloadFill fillByte runLength, [DetailRLE])
 
-ipsRecordSize :: IPSRecord -> Int
-ipsRecordSize (IPSRecord _ recordPayload) = ByteString.length recordPayload
-ipsRecordSize (IPSRecordRLE _ fillCount _) = unLength fillCount
+----------------------------------------------------------------------------
+-- Display helpers
+----------------------------------------------------------------------------
+
+-- | The human-facing format name for an 'IPSVariant'. Used on the
+-- @format:@ line by 'ipsInfo' and 'explainIPS'. Not a wire fact
+-- (the bytes are in 'ipsVariantMagic'; this is a different thing —
+-- what the user calls the variant in prose) and therefore not on
+-- 'IPSVariantSpec'. 'EBPPatch' does not use this helper — it
+-- hardcodes @"EBP"@ because EBP is a wrapper format and its
+-- underlying variant is always 'StandardIPS' by invariant.
+ipsVariantDisplayName :: IPSVariant -> String
+ipsVariantDisplayName StandardIPS = "IPS"
+ipsVariantDisplayName IPS32       = "IPS32"
+
+-- | Human-readable rendering of an 'OffsetWidth'. Used by
+-- 'ipsVariantMetaFields' so the reader sees @"24-bit"@ rather than
+-- a bare @3@ byte count. The 3 \/ 4 byte-count mapping still lives
+-- only in 'Slap.IPS.Types.offsetWidthByteCount'; this helper is a
+-- parallel display mapping that never touches the byte count.
+renderOffsetWidth :: OffsetWidth -> String
+renderOffsetWidth Offset24 = "24-bit"
+renderOffsetWidth Offset32 = "32-bit"
+
+-- | Render a variant\'s maximum addressable offset as a zero-padded
+-- hex literal. Eight hex digits accommodates the largest
+-- 'IPS32' ceiling (@0xFFFFFFFF@); 'StandardIPS'\'s smaller
+-- @0xFFFFFF@ gets the same eight-digit padding for visual
+-- alignment across variants.
+renderMaxOffset :: Offset -> String
+renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
+
+----------------------------------------------------------------------------
+-- Shape-recognised byte display
+----------------------------------------------------------------------------
+
+-- | Render a raw marker byte sequence (the variant\'s magic or EOF
+-- marker, as it appears on the wire) for inclusion in a 'MetaField'.
+-- Returns the bytes decoded as ASCII when every byte is in the
+-- printable ASCII range — the common case for every variant slap
+-- supports, since @"PATCH"@, @"IPS32"@, @"EOF"@, and @"EEOF"@ are
+-- all printable — and falls back to a hex dump when any byte is
+-- outside that range. The fallback exists so a hypothetical future
+-- variant with a non-ASCII marker still renders legibly instead of
+-- smuggling control bytes into the info stream.
+--
+-- Mirrors the 'Slap.Error.renderTrailerMarkerName' pattern from
+-- prompt 4.5. A parallel copy rather than a shared helper because
+-- 'Slap.Error' does not export its private @isPrintableAscii@
+-- predicate and the prompt\'s contract locks 'Slap.Error' and
+-- 'Slap.Format' against modification.
+renderMarkerBytes :: ByteString -> String
+renderMarkerBytes markerBytes
+  | ByteString.all isPrintableAscii markerBytes =
+      ByteString8.unpack markerBytes
+  | otherwise =
+      "0x" ++ hexByteString markerBytes
+
+-- | Render a raw EBP metadata blob for the @metadata:@ header field:
+-- the byte count followed by a shape-recognised preview of the
+-- leading 'metadataPreviewBytes' bytes, with a trailing ellipsis
+-- when the blob is longer than the preview.
+--
+-- Shape-only: the preview is either the preview bytes decoded as
+-- ASCII (when every previewed byte is printable) or a hex dump of
+-- the preview bytes (when any byte is not). This is the same
+-- 'renderTrailerMarkerName'-style fallback as 'renderMarkerBytes',
+-- lifted to a truncated preview. The function deliberately does
+-- not parse, validate, or extract fields from the JSON — that line
+-- is drawn in 'Slap.IPS.Parse' and Describe honours it.
+renderEBPMetadata :: ByteString -> String
+renderEBPMetadata metadataBytes
+  | ByteString.null metadataBytes =
+      "(none)"
+  | otherwise =
+      let totalByteCount = ByteString.length metadataBytes
+          previewBytes   = ByteString.take metadataPreviewBytes metadataBytes
+          previewText
+            | ByteString.all isPrintableAscii previewBytes =
+                ByteString8.unpack previewBytes
+            | otherwise =
+                "0x" ++ hexByteString previewBytes
+          ellipsis
+            | totalByteCount > metadataPreviewBytes = "..."
+            | otherwise                             = ""
+      in show totalByteCount ++ " bytes: " ++ previewText ++ ellipsis
+
+-- | Maximum number of EBP metadata bytes shown in 'renderEBPMetadata'
+-- before the preview is truncated with an ellipsis. Matches BPS\'s
+-- 'Slap.BPS.Describe.metadataPreviewBytes' for consistency — both
+-- formats cap metadata previews at the same length so @slap info@
+-- output doesn\'t flood the terminal on a large blob.
+metadataPreviewBytes :: Int
+metadataPreviewBytes = 200
+
+-- | True for the printable ASCII range (space through tilde
+-- inclusive). The same predicate 'Slap.Error' uses internally for
+-- 'renderTrailerMarkerName'; duplicated locally because
+-- 'Slap.Error' does not export it and the prompt\'s contract
+-- locks both 'Slap.Error' and 'Slap.Format'.
+isPrintableAscii :: Word8 -> Bool
+isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
