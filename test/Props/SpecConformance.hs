@@ -18,12 +18,13 @@ import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..))
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), ApplyError(..), renderSlapError)
+import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (FileSize(..))
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
+import Slap.UPS.Types (UPSPatch(..))
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -42,6 +43,7 @@ specConformanceTests = testGroup "SpecConformance"
       [ testGroup "round-trip"
           [ testProperty "decode-inverts-encode" prop_varintRoundTrip
           , testProperty "encode-inverts-decode" prop_varintDecodeEncodeRoundTrip
+          , testProperty "canonical-form-is-unique" prop_varintCanonical
           ]
       , testGroup "boundary-values"
           [ testCase "zero" (varintCase 0 [0x80])
@@ -54,6 +56,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "16383 (max two-byte)" (varintCase 16383 [0x7F, 0xFE])
           , testCase "16384 (min three-byte)" (varintCase 16384 [0x00, 0xFF])
           , testCase "65536" (varintCase 65536 [0x00, 0x7F, 0x82])
+          , testCase "near-int64-maxbound" test_varintNearMaxBound
           ]
       , testGroup "decode-rejects"
           [ testCase "unterminated-single-continuation"
@@ -62,6 +65,8 @@ specConformanceTests = testGroup "SpecConformance"
               (varintRejectsCase [0x00, 0x00, 0x00])
           , testCase "empty-input"
               (varintRejectsCase [])
+          , testCase "ten-continuation-bytes-overflows"
+              (varintRejectsCase (replicate 10 0x00))
           ]
       ]
   , testGroup "BPS"
@@ -73,9 +78,15 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "source-copy-negative-delta" bpsSourceCopyNegativeDelta
           , testCase "target-copy-run-length" bpsTargetCopyRunLength
           , testCase "target-copy-general-overlap" bpsTargetCopyGeneralOverlap
+          , testCase "target-copy-chained-from-target-copy"
+              bpsTargetCopyChained
           , testCase "mixed-actions" bpsMixedActions
           , testCase "metadata-preserved" bpsMetadataPreserved
           , testCase "large-source-read" bpsLargeSourceRead
+          , testCase "source-crc-read-literally" bpsSourceCRCReadLiterally
+          , testCase "target-crc-read-literally" bpsTargetCRCReadLiterally
+          , testCase "declared-source-size-ignored-by-apply"
+              bpsDeclaredSourceSizeIgnored
           ]
       , testGroup "spec-reject"
           [ testCase "wrong-magic" bpsWrongMagic
@@ -91,6 +102,10 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "action-stream-underfills-target" bpsApplyUnderfills
           , testCase "source-copy-reads-past-source" bpsApplySourceCopyPastSource
           , testCase "target-copy-reads-unwritten" bpsApplyTargetCopyUnwritten
+          , testCase "source-copy-cursor-underflow"
+              bpsApplySourceCursorUnderflow
+          , testCase "target-copy-cursor-underflow"
+              bpsApplyTargetCursorUnderflow
           ]
       ]
   , testGroup "UPS"
@@ -103,11 +118,17 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "self-inverse" upsSelfInverse
           , testCase "all-tail-copy" upsAllTailCopy
           , testCase "large-skip" upsLargeSkip
+          , testCase "source-crc-read-literally" upsSourceCRCReadLiterally
+          , testCase "target-crc-read-literally" upsTargetCRCReadLiterally
+          , testCase "declared-source-size-ignored-by-apply"
+              upsDeclaredSourceSizeIgnored
           ]
       , testGroup "spec-reject"
           [ testCase "wrong-magic" upsWrongMagic
           , testCase "wrong-patch-crc" upsWrongPatchCRC
           , testCase "too-short-for-magic" upsTooShortForMagic
+          , testCase "too-short-for-footer" upsTooShortForFooter
+          , testCase "block-missing-terminator" upsBlockMissingTerminator
           ]
       , testGroup "apply-errors"
           [ testCase "block-writes-past-target" upsApplyBlockPastTarget
@@ -787,3 +808,297 @@ upsApplyBlockPastTarget =
       patch = buildUPS body source target
   in assertApplyError parseUPS (\parsed src -> fmap (const ()) (applyUPS parsed src))
        patch source isWritesPastTarget "block writes past target"
+
+----------------------------------------------------------------------------
+-- BPS apply cursor-underflow errors
+--
+-- SourceCopy and TargetCopy each maintain a persistent 'SignedOffset'
+-- cursor across actions. The cursor starts at zero and is displaced
+-- by the signed delta of each copy action. If the delta drives the
+-- cursor below zero, apply must abort with 'ApplyCursorUnderflow'.
+-- These are the two remaining 'ApplyError' constructors not exercised
+-- by the earlier apply-error tests.
+----------------------------------------------------------------------------
+
+-- | SourceCopy as the first action with a negative delta that drives
+-- the source cursor below zero. Initial sourceRelative is 0; delta -1
+-- produces SignedOffset -1, which 'examineSignedOffset' reports as
+-- 'NegativeCursor', firing 'ApplyCursorUnderflow SourceCursor'.
+bpsApplySourceCursorUnderflow :: Assertion
+bpsApplySourceCursorUnderflow =
+  let source = ByteString.pack [0xAA, 0xBB, 0xCC, 0xDD]
+      -- Target size large enough that fitsWithin passes, so we reach
+      -- the cursor check instead of bailing on "writes past target".
+      target = ByteString.pack [0x00, 0x00]
+      actions = bpsActionVarint bpsSourceCopyCode 2
+                <> bpsSignedDelta (-1)
+      body = bpsBody 4 2 ByteString.empty actions
+      patch = buildBPS body source target
+  in assertApplyError parseBPS (\parsed src -> fmap (const ()) (applyBPS parsed src))
+       patch source isSourceCursorUnderflow "SourceCopy negative cursor"
+
+-- | TargetCopy as the first action with a negative delta. Same
+-- structure as the SourceCopy case but exercises the target cursor
+-- branch of the apply worker.
+bpsApplyTargetCursorUnderflow :: Assertion
+bpsApplyTargetCursorUnderflow =
+  let source = ByteString.empty
+      target = ByteString.pack [0x00, 0x00]
+      actions = bpsActionVarint bpsTargetCopyCode 2
+                <> bpsSignedDelta (-1)
+      body = bpsBody 0 2 ByteString.empty actions
+      patch = buildBPS body source target
+  in assertApplyError parseBPS (\parsed src -> fmap (const ()) (applyBPS parsed src))
+       patch source isTargetCursorUnderflow "TargetCopy negative cursor"
+
+isSourceCursorUnderflow :: SlapError -> Bool
+isSourceCursorUnderflow (ApplyFailed _ (ApplyCursorUnderflow SourceCursor _ _)) = True
+isSourceCursorUnderflow _ = False
+
+isTargetCursorUnderflow :: SlapError -> Bool
+isTargetCursorUnderflow (ApplyFailed _ (ApplyCursorUnderflow TargetCursor _ _)) = True
+isTargetCursorUnderflow _ = False
+
+----------------------------------------------------------------------------
+-- BPS chained TargetCopy
+--
+-- TargetCopy is allowed to read bytes that any previous action wrote,
+-- including bytes written by a previous TargetCopy. This is the
+-- LZ77-style chaining that lets BPS patches stay small on repeated
+-- byte runs.
+----------------------------------------------------------------------------
+
+-- | TargetRead writes two bytes. First TargetCopy reads those two bytes
+-- back (adding two more). Second TargetCopy reads from the bytes the
+-- first TargetCopy wrote (adding four more). All copies must land on
+-- already-written target, proving the write-pointer moves forward
+-- between actions and the read pointer can land on any byte written
+-- by any prior action (not just the initial TargetRead).
+bpsTargetCopyChained :: Assertion
+bpsTargetCopyChained =
+  let source = ByteString.empty
+      -- Target: [0x01, 0x02, 0x01, 0x02, 0x01, 0x02, 0x01, 0x02]
+      target = ByteString.pack [0x01, 0x02, 0x01, 0x02, 0x01, 0x02, 0x01, 0x02]
+      -- Action 1: TargetRead length=2, bytes [0x01, 0x02]
+      -- Action 2: TargetCopy length=2 delta=0 (targetCursor 0 -> 0)
+      --   Reads target[0..1] = [0x01, 0x02], writes target[2..3]
+      --   After: writePos=4, targetRelative cursor = 0 + length 2 = 2
+      -- Action 3: TargetCopy length=4 delta=0 (targetCursor 2 -> 2)
+      --   Reads target[2..5] starting at position 2, but positions
+      --   4 and 5 become written during this copy — LZ77 self-reference.
+      --   Result: target[2..5] reads from target[2..3] then target[4..5]
+      --   which becomes target[2..3] again. Writes: [0x01, 0x02, 0x01, 0x02].
+      actions = bpsActionVarint bpsTargetReadCode 2
+                <> word8 0x01 <> word8 0x02
+                <> bpsActionVarint bpsTargetCopyCode 2
+                <> bpsSignedDelta 0
+                <> bpsActionVarint bpsTargetCopyCode 4
+                <> bpsSignedDelta 0
+      body = bpsBody 0 8 ByteString.empty actions
+      patch = buildBPS body source target
+  in assertParseApply parseAndApplyBPS patch source target
+
+----------------------------------------------------------------------------
+-- BPS CRC fields are read literally by parse
+--
+-- The parser verifies the *patch* CRC (footer word 3) to detect
+-- corruption of the patch file itself. The source and target CRCs
+-- (footer words 1 and 2) are not checked at parse time: they describe
+-- the source and target byte streams, not the patch bytes, so they
+-- can only be verified against the actual source at apply time (via
+-- the Verification layer in SomePatch). These tests pin that contract
+-- by constructing patches with wrong source/target CRCs and asserting
+-- parse accepts them and the field comes through unchanged.
+----------------------------------------------------------------------------
+
+bpsSourceCRCReadLiterally :: Assertion
+bpsSourceCRCReadLiterally =
+  let target = ByteString.pack [0xFF]
+      actions = bpsActionVarint bpsTargetReadCode 1 <> word8 0xFF
+      body = bpsBody 1 1 ByteString.empty actions
+      wrongSourceCRC = CRC32 0xDEADBEEF
+      patch = buildBPSWithCRCs body wrongSourceCRC (rustyCRC32 target)
+  in case parseBPS patch of
+    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Right parsed -> assertEqual "source CRC field" wrongSourceCRC (bpsSourceCRC parsed)
+
+bpsTargetCRCReadLiterally :: Assertion
+bpsTargetCRCReadLiterally =
+  let source = ByteString.pack [0x00]
+      actions = bpsActionVarint bpsTargetReadCode 1 <> word8 0xFF
+      body = bpsBody 1 1 ByteString.empty actions
+      wrongTargetCRC = CRC32 0xCAFEBABE
+      patch = buildBPSWithCRCs body (rustyCRC32 source) wrongTargetCRC
+  in case parseBPS patch of
+    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Right parsed -> assertEqual "target CRC field" wrongTargetCRC (bpsTargetCRC parsed)
+
+-- | The declared source size in a BPS body is descriptive only; apply
+-- uses the actual length of the 'SourceFileContents' ByteString the
+-- caller supplies. This test pins that behavior: a patch claiming
+-- sourceSize=100 applied to a 1-byte source proceeds as long as the
+-- actions only read from the actual source bytes.
+bpsDeclaredSourceSizeIgnored :: Assertion
+bpsDeclaredSourceSizeIgnored =
+  let actualSource = ByteString.pack [0x42]
+      target = ByteString.pack [0x42]
+      -- Patch declares sourceSize = 100, but actions only do a
+      -- SourceRead of 1 byte. Applying against a 1-byte source
+      -- works; the declared 100 is ignored.
+      actions = bpsActionVarint bpsSourceReadCode 1
+      body = bpsBody 100 1 ByteString.empty actions
+      patch = buildBPS body actualSource target
+  in assertParseApply parseAndApplyBPS patch actualSource target
+
+----------------------------------------------------------------------------
+-- UPS reject: too short for footer, missing block terminator
+----------------------------------------------------------------------------
+
+upsTooShortForFooter :: Assertion
+upsTooShortForFooter =
+  assertParseRejects parseUPS (PatchFileContents "UPS1") ""
+
+-- | A block whose xorData run is not terminated by 0x00 before end of
+-- body. 'getUntilByte' must fail with "terminator not found".
+upsBlockMissingTerminator :: Assertion
+upsBlockMissingTerminator =
+  let source = ByteString.pack [0x00, 0x00]
+      target = ByteString.pack [0xAA, 0xBB]
+      -- Body content manually constructed: source size 2, target size 2,
+      -- skip 0, xorData with no terminator at all. Everything after
+      -- the skip varint is interpreted as xorData bytes, which run
+      -- off the end of the body with no 0x00 in sight.
+      rawBody = toStrict $
+        putByuuVarint 2
+        <> putByuuVarint 2
+        <> putByuuVarint 0    -- skip
+        <> word8 0xAA         -- xorData byte, no 0x00 terminator follows
+        <> word8 0xBB         -- more xorData
+      patch = buildUPS rawBody source target
+  in assertParseRejects parseUPS patch ""
+
+upsSourceCRCReadLiterally :: Assertion
+upsSourceCRCReadLiterally =
+  let target = ByteString.pack [0x11, 0x22]
+      body = upsBody 2 2 mempty
+      wrongSourceCRC = CRC32 0xDEADBEEF
+      patch = buildUPSWithCRCs body wrongSourceCRC (rustyCRC32 target)
+  in case parseUPS patch of
+    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Right parsed -> assertEqual "source CRC field" wrongSourceCRC (upsSourceCRC parsed)
+
+upsTargetCRCReadLiterally :: Assertion
+upsTargetCRCReadLiterally =
+  let source = ByteString.pack [0x11, 0x22]
+      body = upsBody 2 2 mempty
+      wrongTargetCRC = CRC32 0xCAFEBABE
+      patch = buildUPSWithCRCs body (rustyCRC32 source) wrongTargetCRC
+  in case parseUPS patch of
+    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Right parsed -> assertEqual "target CRC field" wrongTargetCRC (upsTargetCRC parsed)
+
+-- | As with BPS: the declared source size in UPS is descriptive only;
+-- apply uses the actual length of the 'SourceFileContents' ByteString.
+-- A patch claiming sourceSize=100 applied to a 2-byte source still
+-- works as long as the blocks don't require more source than is
+-- actually present.
+upsDeclaredSourceSizeIgnored :: Assertion
+upsDeclaredSourceSizeIgnored =
+  let actualSource = ByteString.pack [0x11, 0x22]
+      target = ByteString.pack [0x11, 0x22]
+      -- Patch declares sourceSize = 100 but apply only touches the
+      -- real 2 bytes because there are zero diff blocks.
+      body = upsBody 100 2 mempty
+      patch = buildUPS body actualSource target
+  in assertParseApply parseAndApplyUPS patch actualSource target
+
+----------------------------------------------------------------------------
+-- Varint canonicality and boundary value
+--
+-- The byuu varint's subtract-one trick partitions non-negative
+-- integers into disjoint ranges by encoded byte count. Every value
+-- has exactly one valid encoding; every byte sequence the decoder
+-- accepts is the canonical encoding of its decoded value. This
+-- property holds by construction (not by convention), but the test
+-- provides defense in depth against a future decoder regression
+-- that might accept a non-canonical form.
+----------------------------------------------------------------------------
+
+-- | For every byte sequence the decoder accepts, re-encoding the
+-- decoded value must reproduce exactly the bytes the decoder consumed.
+-- Equivalently: the encoding is a bijection between the set of valid
+-- terminated varint byte sequences and the set of representable values.
+prop_varintCanonical :: Property
+prop_varintCanonical =
+  forAll genWellFormedVarint $ \bytes ->
+    case getByuuVarint 0 bytes of
+      Left errorMessage ->
+        counterexample ("unexpected decode failure: " ++ errorMessage) (property False)
+      Right (VarintResult value consumed) ->
+        counterexample ("input bytes: " ++ show (ByteString.unpack bytes)
+                        ++ ", decoded: " ++ show value
+                        ++ ", consumed: " ++ show consumed) $
+        encodeVarint value === ByteString.take consumed bytes
+  where
+    -- Generate structurally valid byuu varints: 0-8 continuation bytes
+    -- (high bit clear) followed by one terminator byte (high bit set).
+    -- Payloads are random within their 7-bit range so we cover the
+    -- whole representable value space, not just canonical encoder
+    -- output. With a pure 'arbitrary' byte generator most samples are
+    -- unterminated and get discarded; this shape guarantees every
+    -- sample decodes.
+    genWellFormedVarint :: Gen ByteString
+    genWellFormedVarint = do
+      continuationCount <- chooseInt (0, 8)
+      continuationBytes <- vectorOf continuationCount (choose (0x00, 0x7F))
+      terminatorByte    <- choose (0x80, 0xFF)
+      pure (ByteString.pack (continuationBytes ++ [terminatorByte]))
+
+-- | A value close to 'maxBound :: Int64' that still fits in a 9-byte
+-- byuu varint. The off-by-one fix in commit e49f2a1 tightened the
+-- overflow guard from 'iterations > 9' to 'iterations >= 9'; at the
+-- old threshold the multiplier shift overflowed signed Int64. This
+-- test exercises the region near that boundary to catch regression.
+test_varintNearMaxBound :: Assertion
+test_varintNearMaxBound = do
+  -- 2^56 fits comfortably in 9 bytes (well below the 63-bit ceiling)
+  -- and exercises the high-byte-count path without risking overflow.
+  let largeValue = 2 ^ (56 :: Int) :: Int64
+      encoded = encodeVarint largeValue
+  case getByuuVarint 0 encoded of
+    Left errorMessage -> assertFailure ("decode failed: " ++ errorMessage)
+    Right (VarintResult decoded consumed) -> do
+      assertEqual "round-trip" largeValue decoded
+      assertEqual "consumed equals encoded length"
+        (ByteString.length encoded) consumed
+
+----------------------------------------------------------------------------
+-- BPS and UPS CRC builders (used by CRC-read-literally tests)
+--
+-- Variants of 'buildBPS' / 'buildUPS' that take explicit source and
+-- target CRC values instead of computing them from actual bytes. Lets
+-- the test construct a patch whose footer disagrees with the actual
+-- data — useful for pinning the "parse reads, doesn't verify" contract.
+----------------------------------------------------------------------------
+
+buildBPSWithCRCs :: ByteString -> CRC32 -> CRC32 -> PatchFileContents
+buildBPSWithCRCs bodyContent sourceCRC targetCRC =
+  let withoutPatchCRC = toStrict $
+        byteString "BPS1"
+        <> byteString bodyContent
+        <> putWord32LE (unCRC32 sourceCRC)
+        <> putWord32LE (unCRC32 targetCRC)
+      patchCRC = rustyCRC32 withoutPatchCRC
+      complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
+  in PatchFileContents complete
+
+buildUPSWithCRCs :: ByteString -> CRC32 -> CRC32 -> PatchFileContents
+buildUPSWithCRCs bodyContent sourceCRC targetCRC =
+  let withoutPatchCRC = toStrict $
+        byteString "UPS1"
+        <> byteString bodyContent
+        <> putWord32LE (unCRC32 sourceCRC)
+        <> putWord32LE (unCRC32 targetCRC)
+      patchCRC = rustyCRC32 withoutPatchCRC
+      complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
+  in PatchFileContents complete
