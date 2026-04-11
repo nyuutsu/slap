@@ -10,6 +10,7 @@ module Slap.Get
   , skip
   , getPosition
   , setPosition
+  , lookAhead
   , getInput
   , atEnd
   , remaining
@@ -121,6 +122,21 @@ setPosition target@(Position targetValue) = Get $ \input _ ->
   if targetValue >= 0 && targetValue <= ByteString.length input
   then Right ((), target)
   else Left ("setPosition: " ++ show targetValue ++ " out of bounds")
+
+-- | Run the given sub-parser for its result, then restore the cursor
+-- to where it was before the sub-parser ran. The parser's state is
+-- unchanged from the caller's perspective; only the returned value
+-- reflects the sub-parse. If the sub-parser fails, 'lookAhead' fails
+-- with the same error — peeks are real runs, not symbolic ones.
+--
+-- Standard parser-combinator shape; matches the 'lookAhead' found in
+-- attoparsec, megaparsec, parsec, binary, and cereal.
+lookAhead :: Get a -> Get a
+lookAhead parser = do
+  savedPosition <- getPosition
+  result <- parser
+  setPosition savedPosition
+  pure result
 
 getInput :: Get ByteString
 getInput = Get $ \input position -> Right (input, position)
