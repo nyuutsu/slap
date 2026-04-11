@@ -2,7 +2,8 @@ module Slap.IPS.Apply
   ( applyIPS
   ) where
 
-import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), ipsRecordOffset)
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), ipsRecordOffset,
+                       recordPayloadLength)
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -22,21 +23,6 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
 import System.IO.Unsafe (unsafePerformIO)
-
-----------------------------------------------------------------------------
--- Pure helpers
-----------------------------------------------------------------------------
-
--- | The number of bytes a single record will write to the target
--- when applied. For a copy record this is the payload byte length;
--- for an RLE record this is the run length. Both the target-size
--- derivation at the top of 'applyIPS' and the per-record bounds
--- guard inside the apply loop need this same value, so it lives
--- outside the apply function rather than being recomputed at each
--- site.
-recordPayloadLength :: IPSRecord -> Length
-recordPayloadLength IPSRecordCopy { ipsCopyPayload = payload  } = byteLength payload
-recordPayloadLength IPSRecordRLE  { ipsRleCount    = runLength } = runLength
 
 ----------------------------------------------------------------------------
 -- applyIPS

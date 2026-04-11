@@ -5,6 +5,7 @@ module Slap.IPS.Types
   , IPSVariantSpec(..)
   , IPSRecord(..)
   , ipsRecordOffset
+  , recordPayloadLength
   , IPSPatch(..)
   , EBPMetadata(..)
   , EBPPatch(..)
@@ -37,6 +38,7 @@ import Slap.Measure
   , Length(..)
   , FileSize
   , Cursor(..)
+  , byteLength
   , ipsSentinel
   , ips32Sentinel
   )
@@ -135,6 +137,19 @@ data IPSRecord
 ipsRecordOffset :: IPSRecord -> Offset
 ipsRecordOffset (IPSRecordCopy { ipsCopyOffset = offset }) = offset
 ipsRecordOffset (IPSRecordRLE  { ipsRleOffset  = offset }) = offset
+
+-- | The number of bytes a single 'IPSRecord' will write to the
+-- target when applied. For a copy record this is the payload byte
+-- length; for an RLE record this is the run length. Used by both
+-- 'Slap.IPS.Parse' (for the per-record ceiling check's end-offset
+-- computation) and 'Slap.IPS.Apply' (for the target-size derivation
+-- and the per-record bounds guard). Lives here in 'Slap.IPS.Types'
+-- rather than at either call site because the concept is variant-
+-- agnostic and constructor-aware in the same constructor-agnostic
+-- way 'ipsRecordOffset' is.
+recordPayloadLength :: IPSRecord -> Length
+recordPayloadLength IPSRecordCopy { ipsCopyPayload = payload   } = byteLength payload
+recordPayloadLength IPSRecordRLE  { ipsRleCount    = runLength } = runLength
 
 -- | A parsed IPS-family patch, independent of whether the on-wire
 -- form was 'StandardIPS' or 'IPS32'. EBP is not represented here:

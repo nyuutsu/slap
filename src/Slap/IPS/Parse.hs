@@ -15,6 +15,7 @@ import Slap.IPS.Types
   , EBPMetadata(..)
   , EBPPatch(..)
   , ipsRecordOffset
+  , recordPayloadLength
   , variantSpec
   , ipsVariantMaxRecordEnd
   , ipsMagicLength
@@ -50,6 +51,7 @@ import Slap.Measure
   , ActualMagic(..)
   , ActualOffset(..)
   , MaxOffset(..)
+  , TrailerMarker(..)
   )
 
 import Data.ByteString (ByteString)
@@ -209,15 +211,6 @@ parseRecordsAndCaptureTrailer variant = do
 -- Pure validation pass — variant ceiling and RLE-zero rejection
 ----------------------------------------------------------------------------
 
--- | The on-wire byte count a single record will emit when applied.
--- Used by the per-record ceiling check to compute each record's
--- end offset. Local to Parse rather than threaded through Types
--- because 'Slap.IPS.Apply' already has its own copy with the same
--- shape and Types is locked from modification in this commit.
-recordPayloadLength :: IPSRecord -> Length
-recordPayloadLength IPSRecordCopy { ipsCopyPayload = payload  } = byteLength payload
-recordPayloadLength IPSRecordRLE  { ipsRleCount    = runCount } = runCount
-
 -- | Walk the parsed record list, rejecting any record that would
 -- overflow the variant's spec ceiling and any RLE record whose run
 -- length is zero. Both checks fire per-record; both fail with a
@@ -370,12 +363,9 @@ buildResultPatch StandardIPS recordVector trailingBytes
            , ebpMetadata  = EBPMetadata trailingBytes
            })
   | otherwise =
-      Left (ParseError LabelIPS
-              ("unrecognised trailing bytes after EOF marker ("
-              ++ show (ByteString.length trailingBytes)
-              ++ " bytes; expected 0, "
-              ++ show (unLength ipsTruncationMarkerLength)
-              ++ ", or a JSON object beginning with '{')"))
+      Left (UnrecognizedTrailer LabelIPS
+              (TrailerMarker (ipsVariantEOFMarker (variantSpec StandardIPS)))
+              (ActualLength (Length (ByteString.length trailingBytes))))
 buildResultPatch IPS32 recordVector trailingBytes
   | ByteString.null trailingBytes =
       Right (Left IPSPatch
@@ -384,7 +374,6 @@ buildResultPatch IPS32 recordVector trailingBytes
         , ipsTruncatedTargetSize = Nothing
         })
   | otherwise =
-      Left (ParseError LabelIPS
-              ("trailing bytes after EEOF marker ("
-              ++ show (ByteString.length trailingBytes)
-              ++ " bytes); IPS32 has no defined post-trailer shape"))
+      Left (UnrecognizedTrailer LabelIPS
+              (TrailerMarker (ipsVariantEOFMarker (variantSpec IPS32)))
+              (ActualLength (Length (ByteString.length trailingBytes))))

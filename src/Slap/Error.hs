@@ -32,9 +32,15 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OriginalLength(..), TruncatedLength(..),
                      ActualOffset(..), MaxOffset(..),
                      ExpectedMagic(..), ActualMagic(..),
+                     TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.PatchField (PatchField, fieldName)
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
+import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- FieldName
@@ -248,6 +254,20 @@ data SlapError
   -- negative).
   | MalformedRecordField FormatLabel ActionIndex FieldName
 
+  -- | A parser found bytes after a recognized stream-closing trailer
+  -- marker that don't match any post-trailer shape the format
+  -- accepts. The motivating example is the IPS family: 'StandardIPS'
+  -- accepts an empty post-@"EOF"@ trailer, a Flips-style truncation
+  -- marker, or an EBP JSON metadata blob, while 'IPS32' accepts only
+  -- the empty post-@"EEOF"@ trailer; bytes outside those shapes are
+  -- a structured parse failure rather than a 'Get'-monad
+  -- passthrough. The 'TrailerMarker' carries the marker bytes the
+  -- parser was anchored to so the renderer can name them (\"after
+  -- EOF marker\", \"after EEOF marker\") without knowing about
+  -- format-specific variants. The 'ActualLength' is the byte count
+  -- of the unrecognized trailer slice.
+  | UnrecognizedTrailer FormatLabel TrailerMarker ActualLength
+
   -- Parse: integrity
   | PatchCRCMismatch FormatLabel ExpectedCRC32 ActualCRC32
   | TrailingMagicMismatch FormatLabel ExpectedMagic ActualMagic
@@ -430,6 +450,11 @@ renderSlapError (MalformedRecordField label recordIndex name) =
   formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
   ++ " has malformed " ++ fieldNameLabel name
 
+renderSlapError (UnrecognizedTrailer label (TrailerMarker markerBytes) (ActualLength actualLength)) =
+  formatLabelName label ++ ": unrecognized trailing bytes after "
+  ++ renderTrailerMarkerName markerBytes ++ " marker ("
+  ++ show (unLength actualLength) ++ " bytes)"
+
 renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 computed)) =
   formatLabelName label ++ ": patch CRC mismatch (stored "
   ++ showCRC32 stored ++ ", computed " ++ showCRC32 computed ++ ")"
@@ -591,6 +616,26 @@ renderUnencodeabilityReason UPSLastByteDiffers =
 renderUnencodeabilityReason UPSSourceTailNonZero =
   "source has non-zero bytes past target size;"
   ++ " these cannot be represented in a UPS patch"
+
+-- | Render a trailer marker's raw bytes for inclusion in an error
+-- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable
+-- (@"EOF"@, @"EEOF"@), so the common case is the literal string. For
+-- a hypothetical future trailer marker that contained any non-
+-- printable byte, the renderer falls back to a hex dump rather than
+-- emitting raw control characters into the error stream.
+renderTrailerMarkerName :: ByteString -> String
+renderTrailerMarkerName markerBytes
+  | ByteString.all isPrintableAscii markerBytes =
+      ByteString8.unpack markerBytes
+  | otherwise =
+      "0x" ++ hexByteString markerBytes
+
+-- | True for the printable ASCII range (space through tilde
+-- inclusive). Used by 'renderTrailerMarkerName' to decide whether a
+-- marker can be displayed as its literal characters or needs the
+-- hex fallback.
+isPrintableAscii :: Word8 -> Bool
+isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
 
 commaList :: [String] -> String
 commaList []     = ""

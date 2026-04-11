@@ -26,6 +26,7 @@ module Slap.Measure
   , MaxOffset(..)
   , ExpectedMagic(..)
   , ActualMagic(..)
+  , TrailerMarker(..)
   , ParsedSizeValue(..)
   , FoundVersion(..)
   , RawFlagByte(..)
@@ -183,6 +184,17 @@ newtype ExpectedMagic = ExpectedMagic { unExpectedMagic :: ByteString }
 
 -- | The magic bytes a parser actually found.
 newtype ActualMagic = ActualMagic { unActualMagic :: ByteString }
+  deriving (Eq, Show)
+
+-- | The trailer-marker bytes a parser was looking for when it
+-- encountered unrecognized post-trailer content. The IPS family\'s
+-- @"EOF"@ and @"EEOF"@ markers are the motivating example: when
+-- 'Slap.IPS.Parse' rejects bytes that follow one of these markers,
+-- the marker bytes are carried in the resulting error so the
+-- renderer can name the marker the parser was anchored to without
+-- knowing about IPS variants. The bytes are stored verbatim;
+-- whether they print as ASCII or hex is the renderer\'s problem.
+newtype TrailerMarker = TrailerMarker { unTrailerMarker :: ByteString }
   deriving (Eq, Show)
 
 -- | A size field whose decoded value was negative (an Int that
