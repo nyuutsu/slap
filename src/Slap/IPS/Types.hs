@@ -25,6 +25,7 @@ module Slap.IPS.Types
   , ipsMaxRecordPayload
     -- * Per-variant dispatch
   , variantSpec
+  , ipsVariantMaxRecordEnd
   ) where
 
 import Data.ByteString (ByteString)
@@ -35,6 +36,7 @@ import Slap.Measure
   ( Offset(..)
   , Length(..)
   , FileSize
+  , Cursor(..)
   , ipsSentinel
   , ips32Sentinel
   )
@@ -300,3 +302,20 @@ variantSpec IPS32 = IPSVariantSpec
   , ipsVariantSentinel             = Offset (fromIntegral ips32Sentinel)
   , ipsVariantMaxAddressableOffset = Offset 0xFFFFFFFF
   }
+
+-- | The arithmetic spec ceiling for where a single record can end
+-- in the given variant: the sum of 'ipsVariantMaxAddressableOffset'
+-- (the largest offset a record can name in the variant) and
+-- 'ipsMaxRecordPayload' (the largest payload the 16-bit size field
+-- can carry, shared by both variants). A record whose
+-- @offset + payloadLength@ exceeds this value cannot be represented
+-- on the wire by any encoder that respects the format's offset and
+-- size fields.
+--
+-- 'Slap.IPS.Parse' consumes this as its per-record acceptance bound.
+-- 'Slap.IPS.Apply' trusts the parse precondition and does not
+-- recompute the formula.
+ipsVariantMaxRecordEnd :: IPSVariant -> Offset
+ipsVariantMaxRecordEnd variant =
+  advance (ipsVariantMaxAddressableOffset (variantSpec variant))
+          ipsMaxRecordPayload
