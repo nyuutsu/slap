@@ -22,6 +22,7 @@ import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..), renderSlapErro
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (FileSize(..))
+import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
 import Slap.UPS.Types (UPSPatch(..))
@@ -85,8 +86,10 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "large-source-read" bpsLargeSourceRead
           , testCase "source-crc-read-literally" bpsSourceCRCReadLiterally
           , testCase "target-crc-read-literally" bpsTargetCRCReadLiterally
-          , testCase "declared-source-size-ignored-by-apply"
-              bpsDeclaredSourceSizeIgnored
+          , testCase "apply-defers-source-size-check-to-verification-layer"
+              bpsApplyDefersSourceSizeCheckToVerificationLayer
+          , testCase "parseSome-populates-verifyFileSize"
+              bpsVerificationCarriesDeclaredSize
           ]
       , testGroup "spec-reject"
           [ testCase "wrong-magic" bpsWrongMagic
@@ -120,8 +123,10 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "large-skip" upsLargeSkip
           , testCase "source-crc-read-literally" upsSourceCRCReadLiterally
           , testCase "target-crc-read-literally" upsTargetCRCReadLiterally
-          , testCase "declared-source-size-ignored-by-apply"
-              upsDeclaredSourceSizeIgnored
+          , testCase "apply-defers-source-size-check-to-verification-layer"
+              upsApplyDefersSourceSizeCheckToVerificationLayer
+          , testCase "parseSome-populates-verifyFileSize"
+              upsVerificationCarriesDeclaredSize
           ]
       , testGroup "spec-reject"
           [ testCase "wrong-magic" upsWrongMagic
@@ -933,22 +938,51 @@ bpsTargetCRCReadLiterally =
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right parsed -> assertEqual "target CRC field" wrongTargetCRC (bpsTargetCRC parsed)
 
--- | The declared source size in a BPS body is descriptive only; apply
--- uses the actual length of the 'SourceFileContents' ByteString the
--- caller supplies. This test pins that behavior: a patch claiming
--- sourceSize=100 applied to a 1-byte source proceeds as long as the
--- actions only read from the actual source bytes.
-bpsDeclaredSourceSizeIgnored :: Assertion
-bpsDeclaredSourceSizeIgnored =
+-- | 'applyBPS' is a low-level executor: it trusts the caller to have
+-- already verified the source matches the patch's expectations, and
+-- just does the mechanical work with whatever 'SourceFileContents' it
+-- receives. Size verification happens one layer up, at the
+-- 'Verification' layer consumed by 'Main.verifySource'. This test
+-- pins the apply-layer contract by calling 'applyBPS' directly with
+-- a patch that declares @sourceSize = 100@ against a 1-byte source —
+-- apply ignores the declared size and proceeds as long as the actions
+-- fit within the actual source bytes.
+--
+-- The complementary 'bpsVerificationCarriesDeclaredSize' test below
+-- pins the other end of the contract: that 'parseSome' exposes the
+-- declared size through 'verifyFileSize' so the Verification layer
+-- has something to check.
+bpsApplyDefersSourceSizeCheckToVerificationLayer :: Assertion
+bpsApplyDefersSourceSizeCheckToVerificationLayer =
   let actualSource = ByteString.pack [0x42]
       target = ByteString.pack [0x42]
       -- Patch declares sourceSize = 100, but actions only do a
       -- SourceRead of 1 byte. Applying against a 1-byte source
-      -- works; the declared 100 is ignored.
+      -- works; the apply worker uses the actual source length.
       actions = bpsActionVarint bpsSourceReadCode 1
       body = bpsBody 100 1 ByteString.empty actions
       patch = buildBPS body actualSource target
   in assertParseApply parseAndApplyBPS patch actualSource target
+
+-- | 'parseSome' must populate 'verifyFileSize' with the declared
+-- source size so the Verification layer can diagnose mismatches.
+-- The BPS spec declares source-size in the header; this test pins
+-- that the field survives through to the verification record.
+-- (The warn-vs-die policy lives in 'Main.verifySource'; this test
+-- only asserts the data-plumbing contract.)
+bpsVerificationCarriesDeclaredSize :: Assertion
+bpsVerificationCarriesDeclaredSize =
+  let source = ByteString.pack [0x42, 0x42, 0x42, 0x42]
+      target = ByteString.pack [0x43, 0x43, 0x43, 0x43]
+      actions = bpsActionVarint bpsTargetReadCode 4
+                <> byteString target
+      body = bpsBody 4 4 ByteString.empty actions
+      patch = buildBPS body source target
+  in case parseSome patch of
+    Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
+    Right somePatch ->
+      assertEqual "verifyFileSize" (Just (FileSize 4))
+        (verifyFileSize (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- UPS reject: too short for footer, missing block terminator
@@ -997,13 +1031,21 @@ upsTargetCRCReadLiterally =
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right parsed -> assertEqual "target CRC field" wrongTargetCRC (upsTargetCRC parsed)
 
--- | As with BPS: the declared source size in UPS is descriptive only;
--- apply uses the actual length of the 'SourceFileContents' ByteString.
--- A patch claiming sourceSize=100 applied to a 2-byte source still
--- works as long as the blocks don't require more source than is
--- actually present.
-upsDeclaredSourceSizeIgnored :: Assertion
-upsDeclaredSourceSizeIgnored =
+-- | Same apply-layer contract as BPS: 'applyUPS' uses the actual
+-- length of the 'SourceFileContents' ByteString, not the declared
+-- sourceSize in the patch header. Size verification is the
+-- 'Verification' layer's responsibility (see
+-- 'upsVerificationCarriesDeclaredSize' below).
+--
+-- Note that for UPS specifically, 'Main.doUndo' bypasses the
+-- Verification layer entirely and calls the format's revert closure
+-- directly. This is necessary because UPS is self-inverse: the undo
+-- path legitimately feeds the patch bytes that have target-size (not
+-- source-size) to 'applyUPS', which would fail a strict size check.
+-- The apply-layer contract "ignore declared size, use actual length"
+-- is what makes this work.
+upsApplyDefersSourceSizeCheckToVerificationLayer :: Assertion
+upsApplyDefersSourceSizeCheckToVerificationLayer =
   let actualSource = ByteString.pack [0x11, 0x22]
       target = ByteString.pack [0x11, 0x22]
       -- Patch declares sourceSize = 100 but apply only touches the
@@ -1011,6 +1053,20 @@ upsDeclaredSourceSizeIgnored =
       body = upsBody 100 2 mempty
       patch = buildUPS body actualSource target
   in assertParseApply parseAndApplyUPS patch actualSource target
+
+-- | Parallel to 'bpsVerificationCarriesDeclaredSize'. 'parseSome'
+-- must expose UPS's declared source-size through 'verifyFileSize'.
+upsVerificationCarriesDeclaredSize :: Assertion
+upsVerificationCarriesDeclaredSize =
+  let source = ByteString.pack [0x11, 0x22, 0x33, 0x44]
+      target = ByteString.pack [0x11, 0x22, 0x33, 0x44]
+      body = upsBody 4 4 mempty
+      patch = buildUPS body source target
+  in case parseSome patch of
+    Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
+    Right somePatch ->
+      assertEqual "verifyFileSize" (Just (FileSize 4))
+        (verifyFileSize (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- Varint canonicality and boundary value

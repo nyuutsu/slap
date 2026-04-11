@@ -307,6 +307,15 @@ parseSome patchContents = case detectFormat patchContents of
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
           , verifyTargetCRC32 = Just (BPS.bpsTargetCRC patch)
+          -- The BPS spec declares source-size in the header and says
+          -- the source checksum "verifies that the input file is
+          -- correct". The spec doesn't mandate rejection on size
+          -- mismatch (only CRC rejection), so we populate the size
+          -- for warn-level diagnostics without changing the fatal-
+          -- error semantics. A wrong-size source still fails via
+          -- the source CRC check; the size warning just makes the
+          -- diagnostic more specific before the CRC hard-errors.
+          , verifyFileSize    = Just (BPS.bpsSourceSize patch)
           }
       , patchWarnings       = [EmptyPatch LabelBPS "actions" | Vector.null actions]
       , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
@@ -335,6 +344,16 @@ parseSome patchContents = case detectFormat patchContents of
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
           , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
+          -- See the BPS branch above for the reasoning: UPS spec
+          -- declares source-size in the header but doesn't mandate
+          -- size-based rejection. Populate for warn-level diagnostics
+          -- on the forward-apply path. The undo/reverse-apply path
+          -- bypasses the Verification layer entirely in Main.doUndo,
+          -- so this doesn't interfere with UPS's self-inverse
+          -- property — undoing a patch where the "source" actually
+          -- has target-size still works because undo never consults
+          -- verifyFileSize.
+          , verifyFileSize    = Just (UPS.upsSourceSize patch)
           }
       , patchWarnings       = [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
       , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
