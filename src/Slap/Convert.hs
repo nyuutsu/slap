@@ -24,7 +24,6 @@ module Slap.Convert
 import qualified Slap.PPF.Create as PPF
 import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
-import Slap.IPS.Create (splitHunks)
 import Slap.IPS.Types (ipsMaxRecordData)
 import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
@@ -48,7 +47,7 @@ import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
-                      advance, narrowHunks, narrowHunksUnbounded,
+                      advance, narrowHunks, narrowHunksUnbounded, splitHunks,
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))

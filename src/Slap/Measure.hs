@@ -66,6 +66,8 @@ module Slap.Measure
   , narrowHunks
   , narrowHunkUnbounded
   , narrowHunksUnbounded
+    -- * Splitting
+  , splitHunks
     -- * Encoding limits
   , ipsLimits
   , ips32Limits
@@ -425,6 +427,21 @@ narrowHunkUnbounded hunk = EncodedHunk
 
 narrowHunksUnbounded :: [Hunk] -> [EncodedHunk]
 narrowHunksUnbounded = map narrowHunkUnbounded
+
+----------------------------------------------------------------------------
+-- Splitting
+----------------------------------------------------------------------------
+
+-- | Split hunks so each payload is <= maxSize bytes.
+splitHunks :: Int -> [Hunk] -> [Hunk]
+splitHunks maxSize = concatMap splitOne
+  where
+    splitOne (Hunk hunkOffset hunkPayload)
+      | ByteString.length hunkPayload <= maxSize = [Hunk hunkOffset hunkPayload]
+      | otherwise =
+          let (chunk, remaining) = ByteString.splitAt maxSize hunkPayload
+              nextOffset = advance hunkOffset (Length maxSize)
+          in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
 
 ----------------------------------------------------------------------------
 -- Encoding limits

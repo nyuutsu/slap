@@ -17,13 +17,12 @@ module Slap.IPS.Create
   , partitionOptimal
   , findByteRuns
   , ensureMaxGap
-  , splitHunks
   ) where
 
 import Slap.Binary (putWord16BE)
 import Slap.IPS.Types (ipsMaxRecordData)
-import Slap.Measure (Offset(..), FileSize(..), Length(..), Delta(..), Hunk(..), EncodedHunk(..),
-                     offsetToInt, advance, displace, ipsSentinel, ips32Sentinel)
+import Slap.Measure (Offset(..), FileSize(..), Delta(..), EncodedHunk(..),
+                     offsetToInt, displace, ipsSentinel, ips32Sentinel)
 import Slap.Format (padHex)
 
 import Slap.FileContents (SourceFileContents(..), PatchFileContents(..))
@@ -272,17 +271,6 @@ ensureMaxGap _ [single] = [single]
 ensureMaxGap maxGap (first:second:rest)
   | second - first <= maxGap = first : ensureMaxGap maxGap (second : rest)
   | otherwise                = first : ensureMaxGap maxGap ((first + maxGap) : second : rest)
-
--- | Split hunks so each payload is <= maxSize bytes.
-splitHunks :: Int -> [Hunk] -> [Hunk]
-splitHunks maxSize = concatMap splitOne
-  where
-    splitOne (Hunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= maxSize = [Hunk hunkOffset hunkPayload]
-      | otherwise =
-          let (chunk, remaining) = ByteString.splitAt maxSize hunkPayload
-              nextOffset = advance hunkOffset (Length maxSize)
-          in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
 
 -- | Remove consecutive duplicates from a sorted list.
 deduplicate :: (Eq a) => [a] -> [a]
