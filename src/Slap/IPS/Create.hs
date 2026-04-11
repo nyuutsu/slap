@@ -1,290 +1,354 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Wire encoder and high-level diff entry points for the IPS
+-- family. This module is the IPS analog of 'Slap.BPS.Create' and
+-- 'Slap.UPS.Create' — it owns the byte-laying side of patch
+-- creation. The decision side (which records to emit, what shape
+-- they should take, how to merge or split runs) lives in
+-- 'Slap.IPS.Optimize'.
+--
+-- The single 'encodeIPSPatch' wire encoder replaces the four
+-- near-duplicate top-level encoders of the previous module
+-- (@encodeIPS@, @encodeIPS32@, @encodeEBP@, @encodeEBPRaw@). The
+-- variant differences — magic bytes, offset width, EOF marker,
+-- sentinel offset — are looked up via 'variantSpec' instead of
+-- duplicated by hand at four call sites. EBP encoding is a thin
+-- wrapper ('encodeEBPPatch') that calls 'encodeIPSPatch' for the
+-- standard-IPS body and appends the JSON metadata trailer.
+--
+-- The public diff-based entry points 'createIPS', 'createIPS32',
+-- and 'createEBP' compose the optimizer with the wire encoder.
+-- They are the IPS analogues of 'Slap.BPS.Create.createBPS' and
+-- 'Slap.UPS.Create.createUPS' — source and target in, patch bytes
+-- out — but split three ways for the three on-wire shapes.
 module Slap.IPS.Create
-  ( encodeIPSRecord
+  ( -- * Public diff-based entry points
+    createIPS
+  , createIPS32
+  , createEBP
+    -- * Lower-level wire encoder (used by 'Slap.Convert')
+  , encodeIPSPatch
+  , encodeEBPPatch
+    -- * Wire-emission helpers
+  , encodeIPSRecord
   , encodeOffset
-  , allSame
+  , encodeTruncationMarker
   , avoidSentinel
-  , encodeIPS
-  , encodeIPS32
-  , encodeEBP
-  , encodeEBPRaw
-  , encodeTruncation
-  , ebpJson
+  , buildEBPMetadataJSON
+    -- * Optimizer pass-through (re-exported for callers and tests)
   , optimalIPSRecords
-  , diffRaw
-  , mergeGaps
-  , partitionOptimal
-  , findByteRuns
-  , ensureMaxGap
   ) where
 
 import Slap.Binary (putWord16BE)
-import Slap.IPS.Types (ipsMaxRecordData)
-import Slap.Measure (Offset(..), FileSize(..), Delta(..), EncodedHunk(..),
-                     offsetToInt, displace, ipsSentinel, ips32Sentinel)
+import Slap.FileContents
+  ( SourceFileContents(..)
+  , TargetFileContents
+  , PatchFileContents(..)
+  , unPatchFileContents
+  )
 import Slap.Format (padHex)
+import Slap.IPS.Optimize (optimalIPSRecords)
+import Slap.IPS.Types
+  ( IPSVariant(..)
+  , OffsetWidth(..)
+  , IPSVariantSpec(..)
+  , EBPMetadata(..)
+  , variantSpec
+  )
+import Slap.Measure
+  ( Offset(..)
+  , FileSize(..)
+  , Delta(..)
+  , Cursor(..)
+  , EncodedHunk(..)
+  , offsetToInt
+  )
 
-import Slap.FileContents (SourceFileContents(..), PatchFileContents(..))
-
+import Data.Bits (shiftR, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
+  ( Builder
+  , byteString
+  , toLazyByteString
+  , word8
+  )
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Bits (shiftR, (.&.))
-import Data.List (sort)
-import Control.Monad (forM_)
-import Control.Monad.ST (ST, runST)
-import Data.Array (Array, listArray, (!))
-import Data.Array.MArray (newArray, readArray, writeArray)
-import Data.Array.ST (STUArray)
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 
-encodeIPSRecord :: Int -> EncodedHunk -> Builder
-encodeIPSRecord offsetWidth (EncodedHunk offset payload) =
-  encodeOffset offsetWidth (offsetToInt offset)
-  -- Check for RLE: all same byte and length >= 3
-  <> if ByteString.length payload >= 3 && allSame payload
-     then -- RLE record: size=0, then rle_count, rle_value
-       word8 0 <> word8 0
-       <> putWord16BE (fromIntegral (ByteString.length payload))
-       <> word8 (ByteString.index payload 0)
-     else -- Normal record: size, data
-       putWord16BE (fromIntegral (ByteString.length payload))
-       <> byteString payload
+----------------------------------------------------------------------------
+-- Public diff-based entry points
+----------------------------------------------------------------------------
 
--- | Encode an offset as big-endian bytes (3 for IPS, 4 for IPS32).
-encodeOffset :: Int -> Int -> Builder
-encodeOffset 3 offset =
-  word8 (fromIntegral (offset `shiftR` 16))
-  <> word8 (fromIntegral ((offset `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (offset .&. 0xFF))
-encodeOffset _ offset =
-  word8 (fromIntegral (offset `shiftR` 24))
-  <> word8 (fromIntegral ((offset `shiftR` 16) .&. 0xFF))
-  <> word8 (fromIntegral ((offset `shiftR` 8) .&. 0xFF))
-  <> word8 (fromIntegral (offset .&. 0xFF))
+-- | Create a 'StandardIPS' patch from source and target files.
+-- The optimizer chooses the record set; the wire encoder lays the
+-- bytes down. The 'IPSPatch' that results from parsing this output,
+-- applied to the same source, yields the original target — the
+-- BPS/UPS-style canonical create-parse-apply round trip.
+--
+-- IPS is structurally weaker than BPS or UPS in that it carries no
+-- header field for the target size, no checksum, and no metadata.
+-- This API doesn't pretend otherwise: it takes only source and
+-- target, and the cost-of-correctness is paid at the optimizer
+-- and encoder boundaries rather than via a richer config.
+createIPS :: SourceFileContents -> TargetFileContents -> PatchFileContents
+createIPS source target =
+  encodeIPSPatch StandardIPS source
+                 (optimalIPSRecords Offset24 source target)
+                 Nothing
 
-allSame :: ByteString -> Bool
-allSame input
-  | ByteString.null input = True
-  | otherwise     = ByteString.all (== ByteString.index input 0) input
+-- | Create an 'IPS32' patch from source and target files. The
+-- IPS32 variant widens the offset field to 32 bits, addressing
+-- files up to 4 GiB. There is no community-recognised IPS32
+-- truncation marker; the encoder does not emit one and
+-- 'Slap.IPS.Parse' refuses any trailing bytes after @"EEOF"@ —
+-- see the symmetric strictness pact in @docs/ips/proposal.md@.
+createIPS32 :: SourceFileContents -> TargetFileContents -> PatchFileContents
+createIPS32 source target =
+  encodeIPSPatch IPS32 source
+                 (optimalIPSRecords Offset32 source target)
+                 Nothing
 
--- | Shift any record that starts exactly at a sentinel offset back by one byte,
--- prepending the source byte at (off-1) so the encoder never emits the sentinel
--- as a record offset.  No-op when the source is too short for the lookup.
+-- | Create an EBP patch (a 'StandardIPS' patch with a trailing
+-- JSON metadata blob) from source and target files plus the EBP
+-- metadata to embed. The metadata 'ByteString' is written verbatim;
+-- this layer does not validate its structure. Callers that want
+-- to construct the JSON from CLI title/author/description fields
+-- should call 'buildEBPMetadataJSON' first and wrap the result in
+-- an 'EBPMetadata'.
+createEBP
+  :: SourceFileContents
+  -> TargetFileContents
+  -> EBPMetadata
+  -> PatchFileContents
+createEBP source target metadata =
+  encodeEBPPatch source
+                 (optimalIPSRecords Offset24 source target)
+                 metadata
+
+----------------------------------------------------------------------------
+-- Parameterized wire encoder
+----------------------------------------------------------------------------
+
+-- | Encode a record list as the bytes of an IPS-family patch under
+-- the given variant. This is the single wire emitter that replaces
+-- the four near-duplicate functions of the previous module; each
+-- of those is now either a thin wrapper around this function (the
+-- two non-EBP cases) or a thin wrapper around 'encodeEBPPatch' (the
+-- two EBP cases).
+--
+-- The @source@ argument is needed only for 'avoidSentinel', which
+-- shifts records sitting at the variant's EOF-collision offset
+-- back by one byte and prepends the source byte at the new offset.
+-- The encoder does not otherwise touch the source.
+--
+-- The @optionalTruncation@ argument is honoured only for the
+-- 'StandardIPS' variant. For 'IPS32', the truncation marker has
+-- no defined wire shape (no community implementation supports
+-- it), so the encoder silently drops any truncation passed for
+-- IPS32 — emitting one would produce bytes that 'Slap.IPS.Parse'
+-- would then reject under the symmetric strictness pact. The
+-- 'createIPS32' entry point never passes a non-'Nothing' truncation
+-- in the first place; the silent drop is for the 'Slap.Convert'
+-- direct path, which threads a 'PatchContents' truncation field
+-- without knowing the wire format's appetite for it.
+--
+-- This function does not validate the records: it assumes each
+-- record's offset and length are already within the variant's
+-- wire-format range. The optimizer guarantees this by construction;
+-- the convert path's 'narrowHunks' pre-pass enforces it for records
+-- sourced from other formats.
+encodeIPSPatch
+  :: IPSVariant
+  -> SourceFileContents
+  -> [EncodedHunk]
+  -> Maybe FileSize
+  -> PatchFileContents
+encodeIPSPatch variant (SourceFileContents source) records optionalTruncation =
+  PatchFileContents
+    (LazyByteString.toStrict (toLazyByteString patchBuilder))
+  where
+    spec        = variantSpec variant
+    offsetWidth = ipsVariantOffsetWidth spec
+
+    sentinelAvoidedRecords =
+      avoidSentinel (offsetToInt (ipsVariantSentinel spec))
+                    source
+                    records
+
+    truncationBuilder = case variant of
+      StandardIPS ->
+        maybe mempty (encodeTruncationMarker offsetWidth) optionalTruncation
+      IPS32 -> mempty
+
+    patchBuilder =
+      byteString (ipsVariantMagic spec)
+      <> foldMap (encodeIPSRecord offsetWidth) sentinelAvoidedRecords
+      <> byteString (ipsVariantEOFMarker spec)
+      <> truncationBuilder
+
+-- | Encode a record list as an EBP patch (a 'StandardIPS' patch
+-- with a trailing JSON metadata blob). EBP has no IPS32 analogue,
+-- so the variant is fixed.
+--
+-- The truncation marker is intentionally not supported here. The
+-- IPS_AUDIT brief found no reference implementation that emits
+-- truncation-then-JSON inside an EBP patch, and 'Slap.IPS.Parse'
+-- only accepts EBP trailers that begin with the JSON opening byte
+-- @{@. Emitting a truncation marker before the JSON would produce
+-- bytes neither this parser nor any third-party EBP parser would
+-- round-trip cleanly.
+encodeEBPPatch
+  :: SourceFileContents
+  -> [EncodedHunk]
+  -> EBPMetadata
+  -> PatchFileContents
+encodeEBPPatch source records (EBPMetadata metadataBytes) =
+  let baseStandardIPSBytes =
+        unPatchFileContents
+          (encodeIPSPatch StandardIPS source records Nothing)
+  in PatchFileContents (baseStandardIPSBytes <> metadataBytes)
+
+----------------------------------------------------------------------------
+-- Wire-emission helpers
+----------------------------------------------------------------------------
+
+-- | Encode a single 'EncodedHunk' as one IPS record. The
+-- constructor choice (RLE vs. literal) is made here, by the same
+-- heuristic the DP optimizer uses internally: a payload of length
+-- ≥ 3 whose every byte is identical is emitted as an RLE record
+-- (8 bytes for 'StandardIPS', 9 bytes for 'IPS32', regardless of
+-- run length); everything else is emitted as a literal copy
+-- record.
+--
+-- The size threshold of 3 is the smallest run for which RLE ties
+-- copy on bytes — for runs of length ≥ 4 RLE is strictly cheaper.
+-- We accept the tie at length 3 because emitting RLE there
+-- preserves byte-identity with patches generated under the same
+-- heuristic by the upstream tool ecosystem (Flips, Lunar IPS).
+encodeIPSRecord :: OffsetWidth -> EncodedHunk -> Builder
+encodeIPSRecord offsetWidth (EncodedHunk recordOffset recordPayload) =
+  encodeOffset offsetWidth (offsetToInt recordOffset)
+  <> if shouldEncodeAsRLE recordPayload
+       then runLengthEncodedBody
+       else literalCopyBody
+  where
+    payloadLength = ByteString.length recordPayload
+
+    -- RLE record body: zero in the size field acts as the RLE
+    -- sentinel, followed by the run length and the fill byte.
+    runLengthEncodedBody =
+         word8 0x00
+      <> word8 0x00
+      <> putWord16BE (fromIntegral payloadLength)
+      <> word8 (ByteString.index recordPayload 0)
+
+    -- Literal copy record body: the payload length in the size
+    -- field followed by the payload bytes verbatim.
+    literalCopyBody =
+         putWord16BE (fromIntegral payloadLength)
+      <> byteString recordPayload
+
+-- | Decide whether a payload should be encoded as an RLE record.
+-- True when the payload is at least three bytes long and every
+-- byte is identical. See 'encodeIPSRecord' for the cost analysis.
+shouldEncodeAsRLE :: ByteString -> Bool
+shouldEncodeAsRLE payload =
+  ByteString.length payload >= 3
+  && ByteString.all (== ByteString.index payload 0) payload
+
+-- | Encode an integer as a big-endian offset field whose width is
+-- determined by the variant. 'Offset24' and 'Offset32' are the
+-- only two cases — there is no fall-through default branch, so
+-- adding a new 'OffsetWidth' constructor in 'Slap.IPS.Types' would
+-- force a compile error here, which is exactly what we want.
+encodeOffset :: OffsetWidth -> Int -> Builder
+encodeOffset Offset24 offsetValue =
+     word8 (fromIntegral (offsetValue `shiftR` 16))
+  <> word8 (fromIntegral ((offsetValue `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (offsetValue .&. 0xFF))
+encodeOffset Offset32 offsetValue =
+     word8 (fromIntegral (offsetValue `shiftR` 24))
+  <> word8 (fromIntegral ((offsetValue `shiftR` 16) .&. 0xFF))
+  <> word8 (fromIntegral ((offsetValue `shiftR` 8) .&. 0xFF))
+  <> word8 (fromIntegral (offsetValue .&. 0xFF))
+
+-- | Encode a Flips-style truncation marker: a single big-endian
+-- offset value, in the same width as the variant's record offsets.
+-- Only emitted for 'StandardIPS'; see 'encodeIPSPatch' for the
+-- IPS32 rationale.
+encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
+encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
+  encodeOffset offsetWidth truncatedSizeBytes
+
+-- | Shift any record sitting at the variant's EOF-collision offset
+-- back by one byte, prepending the source byte at the new offset.
+-- The Archiveteam wiki recommends exactly this fix for the
+-- @0x454F46@ collision; Flips' @libips.cpp@ implements it inline
+-- for both standard IPS and a hypothetical IPS32 generalisation.
+-- See @docs/ips/spec.md § "The EOF ambiguity"@ for context.
+--
+-- A no-op when the record is not at the sentinel offset, when the
+-- sentinel is the very first byte of the source (no preceding
+-- byte to prepend), or when the source is too short to contain
+-- the preceding byte. Conversion paths that encode without a
+-- source (the contract layer's source-less direct conversion)
+-- detect the collision separately and refuse the conversion
+-- outright; this function is the encode-time fix-up for the
+-- with-source case.
 avoidSentinel :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
-avoidSentinel sentinel source = map adjustRecord
+avoidSentinel sentinelOffsetValue source = map shiftIfAtSentinel
   where
-    sentinelOffset = Offset (fromIntegral sentinel)
-    adjustRecord (EncodedHunk hunkOffset hunkPayload)
-      | hunkOffset == sentinelOffset, offsetToInt hunkOffset > 0, offsetToInt hunkOffset - 1 < ByteString.length source =
-          let shiftedIndex = offsetToInt hunkOffset - 1
-          in EncodedHunk (displace hunkOffset (Delta (-1))) (ByteString.cons (ByteString.index source shiftedIndex) hunkPayload)
-      | otherwise = EncodedHunk hunkOffset hunkPayload
+    sentinelOffset = Offset sentinelOffsetValue
+    sourceLength   = ByteString.length source
 
-----------------------------------------------------------------------------
--- Encode from pre-split records (used by direct conversion)
-----------------------------------------------------------------------------
+    shiftIfAtSentinel record@(EncodedHunk hunkOffset hunkPayload)
+      | hunkOffset == sentinelOffset
+      , offsetToInt hunkOffset > 0
+      , offsetToInt hunkOffset - 1 < sourceLength =
+          let precedingByteIndex = offsetToInt hunkOffset - 1
+              precedingByte      =
+                ByteString.index source precedingByteIndex
+              extendedPayload    =
+                ByteString.cons precedingByte hunkPayload
+          in EncodedHunk
+               { encodedOffset  = displace hunkOffset (Delta (-1))
+               , encodedPayload = extendedPayload
+               }
+      | otherwise = record
 
--- | Encode pre-split records as an IPS patch. Records must have offsets
--- <= 0xFFFFFF and data <= ipsMaxRecordData bytes each.
-encodeIPS :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> PatchFileContents
-encodeIPS (SourceFileContents source) records truncation = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-  byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
-  <> byteString "EOF"
-  <> maybe mempty (encodeTruncation 3) truncation
-
--- | Encode pre-split records as an IPS32 patch. Records must have data
--- <= ipsMaxRecordData bytes each.
-encodeIPS32 :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> PatchFileContents
-encodeIPS32 (SourceFileContents source) records truncation = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-  byteString "IPS32"
-  <> foldMap (encodeIPSRecord 4) (avoidSentinel (fromIntegral ips32Sentinel) source records)
-  <> byteString "EEOF"
-  <> maybe mempty (encodeTruncation 4) truncation
-
--- | Encode pre-split records as an EBP patch (IPS + JSON metadata).
--- Truncation marker (if any) goes between EOF and JSON.
-encodeEBP :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> String -> String -> String -> PatchFileContents
-encodeEBP (SourceFileContents source) records truncation title author description = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-  byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
-  <> byteString "EOF"
-  <> maybe mempty (encodeTruncation 3) truncation
-  <> byteString (ebpJson title author description)
-
--- | Encode pre-split records as an EBP patch with raw JSON metadata blob.
--- Used by direct conversion to preserve source EBP metadata as-is.
-encodeEBPRaw :: SourceFileContents -> [EncodedHunk] -> Maybe FileSize -> ByteString -> PatchFileContents
-encodeEBPRaw (SourceFileContents source) records truncation meta = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-  byteString "PATCH"
-  <> foldMap (encodeIPSRecord 3) (avoidSentinel (fromIntegral ipsSentinel) source records)
-  <> byteString "EOF"
-  <> maybe mempty (encodeTruncation 3) truncation
-  <> byteString meta
-
-encodeTruncation :: Int -> FileSize -> Builder
-encodeTruncation width truncSize = encodeOffset width (unFileSize truncSize)
-
-ebpJson :: String -> String -> String -> ByteString
-ebpJson title author description = Text.encodeUtf8 $ Text.pack $
-  "{\"patcher\":\"slap\",\"title\":\"" ++ escapeJson title
-  ++ "\",\"author\":\"" ++ escapeJson author
-  ++ "\",\"description\":\"" ++ escapeJson description ++ "\"}"
+-- | Build the EBP-style JSON metadata blob from CLI-supplied
+-- title / author / description fields. The four-key shape
+-- (@patcher@, @title@, @author@, @description@) matches what
+-- EBPatcher and every long-standing community tool emits. slap
+-- fixes @patcher@ to @"slap"@ to identify itself as the source.
+--
+-- The encoding is a hand-rolled minimal JSON object — only the
+-- two characters @"@ and @\\@ get escaped, and control bytes
+-- below @0x20@ are emitted as @\\u00XX@ escapes. Pulling in
+-- @aeson@ for what is effectively four string interpolations
+-- would be wildly disproportionate.
+buildEBPMetadataJSON :: String -> String -> String -> ByteString
+buildEBPMetadataJSON title author description =
+  TextEncoding.encodeUtf8 (Text.pack jsonText)
   where
-    escapeJson [] = []
-    escapeJson ('"':rest)  = '\\' : '"'  : escapeJson rest
-    escapeJson ('\\':rest) = '\\' : '\\' : escapeJson rest
-    escapeJson (char:rest)
-      | char < ' ' = "\\u00" ++ padHex 2 (fromEnum char) ++ escapeJson rest
-      | otherwise  = char : escapeJson rest
+    jsonText =
+      "{\"patcher\":\"slap\",\"title\":\""
+        ++ escapeJSONString title
+        ++ "\",\"author\":\""
+        ++ escapeJSONString author
+        ++ "\",\"description\":\""
+        ++ escapeJSONString description
+        ++ "\"}"
 
-----------------------------------------------------------------------------
--- Optimal IPS record generation via DP
-----------------------------------------------------------------------------
-
--- | Compute optimal IPS record set via DP.
--- Considers RLE extraction and gap merging with format-aware thresholds.
--- offsetWidth is 3 for IPS/EBP, 4 for IPS32.
-optimalIPSRecords :: Int -> ByteString -> ByteString -> [EncodedHunk]
-optimalIPSRecords offsetWidth source target =
-  concatMap (partitionOptimal offsetWidth) (mergeGaps offsetWidth target (diffRaw source target))
-
--- | Diff without gap merging -- raw changed regions.
-diffRaw :: ByteString -> ByteString -> [EncodedHunk]
-diffRaw original modified = scanDiffs 0 ++ extension
-  where
-    originalLength = ByteString.length original
-    modifiedLength = ByteString.length modified
-    sharedLength = min originalLength modifiedLength
-    extension
-      | modifiedLength > originalLength = [EncodedHunk (Offset originalLength) (ByteString.drop originalLength modified)]
-      | otherwise                       = []
-    scanDiffs position
-      | position >= sharedLength = []
-      | ByteString.index original position == ByteString.index modified position = scanDiffs (position + 1)
+    escapeJSONString [] = []
+    escapeJSONString ('"'  : rest) = '\\' : '"'  : escapeJSONString rest
+    escapeJSONString ('\\' : rest) = '\\' : '\\' : escapeJSONString rest
+    escapeJSONString (currentChar : rest)
+      | currentChar < ' ' =
+          "\\u00"
+            ++ padHex 2 (fromEnum currentChar)
+            ++ escapeJSONString rest
       | otherwise =
-          let diffEnd = findDiffEnd (position + 1)
-          in EncodedHunk (Offset position) (ByteString.take (diffEnd - position) (ByteString.drop position modified)) : scanDiffs diffEnd
-    findDiffEnd position
-      | position >= sharedLength = sharedLength
-      | ByteString.index original position /= ByteString.index modified position = findDiffEnd (position + 1)
-      | otherwise = position
-
--- | Merge hunks with gaps <= offsetWidth+1 (the break-even for separate records).
-mergeGaps :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
-mergeGaps _ _ [] = []
-mergeGaps _ _ [hunk] = [hunk]
-mergeGaps offsetWidth target (EncodedHunk firstOffset firstData : EncodedHunk nextOffset nextData : rest)
-  | offsetToInt nextOffset - (offsetToInt firstOffset + ByteString.length firstData) <= offsetWidth + 1 =
-      let merged = ByteString.take (offsetToInt nextOffset + ByteString.length nextData - offsetToInt firstOffset)
-                     (ByteString.drop (offsetToInt firstOffset) target)
-      in mergeGaps offsetWidth target (EncodedHunk firstOffset merged : rest)
-  | otherwise = EncodedHunk firstOffset firstData : mergeGaps offsetWidth target (EncodedHunk nextOffset nextData : rest)
-
--- | DP within a single block to find optimal Copy/RLE record partition.
--- Returns records with absolute offsets and data <= ipsMaxRecordData bytes each.
-partitionOptimal :: Int -> EncodedHunk -> [EncodedHunk]
-partitionOptimal offsetWidth (EncodedHunk blockOffset blockData)
-  | ByteString.null blockData = []
-  | otherwise = runST buildOptimal
-  where
-    blockLength = ByteString.length blockData
-    upperBound = blockLength * (offsetWidth + 7) + 1
-    runs = findByteRuns blockData
-    rawPositions = deduplicate . sort $
-      [0, blockLength] ++ concatMap (\(runStart, runEnd) -> [runStart, runEnd]) runs
-    positions = ensureMaxGap ipsMaxRecordData rawPositions
-    positionCount = length positions
-    positionArray = listArray (0, positionCount - 1) positions :: Array Int Int
-    rlePredecessors = listArray (0, positionCount - 1) (computeRLEPredecessors positions runs)
-                       :: Array Int Int
-
-    blockOffsetInt = offsetToInt blockOffset
-    buildOptimal :: forall s. ST s [EncodedHunk]
-    buildOptimal = do
-      costArray <- newArray (0, positionCount - 1) upperBound :: ST s (STUArray s Int Int)
-      predecessorArray <- newArray (0, positionCount - 1) (-1) :: ST s (STUArray s Int Int)
-      writeArray costArray 0 0
-
-      forM_ [1 .. positionCount - 1] $ \targetIndex -> do
-        let targetPosition = positionArray ! targetIndex
-
-        -- Copy: scan backward within ipsMaxRecordData window
-        let scanCopy bestCost bestSource sourceIndex
-              | sourceIndex < 0 = pure (bestCost, bestSource)
-              | targetPosition - (positionArray ! sourceIndex) > ipsMaxRecordData = pure (bestCost, bestSource)
-              | otherwise = do
-                  sourceCost <- readArray costArray sourceIndex
-                  let candidateCost = sourceCost + offsetWidth + 2 + targetPosition - (positionArray ! sourceIndex)
-                  if candidateCost < bestCost
-                    then scanCopy candidateCost sourceIndex (sourceIndex - 1)
-                    else scanCopy bestCost bestSource (sourceIndex - 1)
-        (copyCost, copySource) <- scanCopy upperBound (-1) (targetIndex - 1)
-
-        -- RLE option
-        let rlePredecessor = rlePredecessors ! targetIndex
-        (bestCost, bestSource) <-
-          if rlePredecessor >= 0 && targetPosition - (positionArray ! rlePredecessor) > 3 then do
-            rlePredecessorCost <- readArray costArray rlePredecessor
-            let rleCost = rlePredecessorCost + offsetWidth + 5
-            pure $ if rleCost < copyCost
-              then (rleCost, rlePredecessor)
-              else (copyCost, copySource)
-          else pure (copyCost, copySource)
-
-        writeArray costArray targetIndex bestCost
-        writeArray predecessorArray targetIndex bestSource
-
-      -- Backtrack from final position to extract records in order
-      let extract targetIndex accumulated
-            | targetIndex <= 0 = pure accumulated
-            | otherwise = do
-                sourceIndex <- readArray predecessorArray targetIndex
-                let startPosition = positionArray ! sourceIndex
-                    endPosition   = positionArray ! targetIndex
-                    payload  = ByteString.take (endPosition - startPosition) (ByteString.drop startPosition blockData)
-                extract sourceIndex (EncodedHunk (Offset (blockOffsetInt + startPosition)) payload : accumulated)
-
-      extract (positionCount - 1) []
-
--- | Find maximal same-byte runs >= 4 bytes.  Returns [(start, end)].
-findByteRuns :: ByteString -> [(Int, Int)]
-findByteRuns input
-  | ByteString.null input = []
-  | otherwise     = scanRuns 0 (ByteString.index input 0) 1
-  where
-    inputLength = ByteString.length input
-    scanRuns runStart runByte position
-      | position >= inputLength = [(runStart, inputLength) | inputLength - runStart >= 4]
-      | ByteString.index input position == runByte = scanRuns runStart runByte (position + 1)
-      | otherwise = [(runStart, position) | position - runStart >= 4]
-                    ++ scanRuns position (ByteString.index input position) (position + 1)
-
--- | Ensure no two consecutive positions are more than maxGap apart.
-ensureMaxGap :: Int -> [Int] -> [Int]
-ensureMaxGap _ [] = []
-ensureMaxGap _ [single] = [single]
-ensureMaxGap maxGap (first:second:rest)
-  | second - first <= maxGap = first : ensureMaxGap maxGap (second : rest)
-  | otherwise                = first : ensureMaxGap maxGap ((first + maxGap) : second : rest)
-
--- | Remove consecutive duplicates from a sorted list.
-deduplicate :: (Eq a) => [a] -> [a]
-deduplicate [] = []
-deduplicate [single] = [single]
-deduplicate (first:second:rest)
-  | first == second = deduplicate (second : rest)
-  | otherwise       = first : deduplicate (second : rest)
-
--- | For each position, find the RLE predecessor (previous position in same
--- maximal run), or -1 if none.
-computeRLEPredecessors :: [Int] -> [(Int, Int)] -> [Int]
-computeRLEPredecessors positions runs =
-  (-1) : [ if sameRun previous current then positionIndex - 1 else (-1)
-         | (positionIndex, (previous, current)) <- zip [1..] (zip positions (drop 1 positions)) ]
-  where
-    sameRun previous current = any (\(runStart, runEnd) -> runStart <= previous && current <= runEnd) runs
+          currentChar : escapeJSONString rest

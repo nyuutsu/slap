@@ -24,7 +24,8 @@ module Slap.Convert
 import qualified Slap.PPF.Create as PPF
 import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
-import Slap.IPS.Types (ipsMaxRecordData)
+import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
+                       ipsMaxRecordPayload)
 import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -439,13 +440,21 @@ encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> CreateMet
              -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
-    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
-    Right (CreateResult (IPS.encodeIPS source records (contentsTruncation contents)) [])
+    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    Right (CreateResult
+            (IPS.encodeIPSPatch StandardIPS source records (contentsTruncation contents))
+            [])
   CreateIPS32 -> do
-    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
-    Right (CreateResult (IPS.encodeIPS32 source records (contentsTruncation contents)) [])
+    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    -- IPS32 has no community-recognised truncation marker; encodeIPSPatch
+    -- silently drops the truncation argument for IPS32, but we pass
+    -- 'Nothing' explicitly here to make the decision visible at the call
+    -- site.
+    Right (CreateResult
+            (IPS.encodeIPSPatch IPS32 source records Nothing)
+            [])
   CreateEBP -> do
-    records <- narrow (splitHunks ipsMaxRecordData (contentsRecords contents))
+    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
@@ -460,10 +469,12 @@ encodeDirect contents source target meta limits = case target of
                   && cliAuthor == normalizeEmpty (jsonFieldCI pairs "author")
                then Just raw
                else Nothing
-    Right $ case passthrough of
-      Just raw -> CreateResult (IPS.encodeEBPRaw source records (contentsTruncation contents) raw) []
-      Nothing  -> CreateResult (IPS.encodeEBP source records (contentsTruncation contents)
-                    ebpTitle ebpAuthor description) []
+        ebpMetadataBytes = case passthrough of
+          Just raw -> raw
+          Nothing  -> IPS.buildEBPMetadataJSON ebpTitle ebpAuthor description
+    Right (CreateResult
+            (IPS.encodeEBPPatch source records (EBPMetadata ebpMetadataBytes))
+            [])
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
     let ppfResult = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
@@ -592,9 +603,15 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   where
     encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk hunkOffset hunkPayload
     patchHunks = case format of
-      CreateIPS   -> map encodedToHunk (IPS.optimalIPSRecords 3 source target)
-      CreateIPS32 -> map encodedToHunk (IPS.optimalIPSRecords 4 source target)
-      CreateEBP   -> map encodedToHunk (IPS.optimalIPSRecords 3 source target)
+      CreateIPS   -> map encodedToHunk
+                       (IPS.optimalIPSRecords Offset24
+                          (SourceFileContents source) (TargetFileContents target))
+      CreateIPS32 -> map encodedToHunk
+                       (IPS.optimalIPSRecords Offset32
+                          (SourceFileContents source) (TargetFileContents target))
+      CreateEBP   -> map encodedToHunk
+                       (IPS.optimalIPSRecords Offset24
+                          (SourceFileContents source) (TargetFileContents target))
       _         -> diffHunks source target
     hashSource   = case format of
       CreateNINJA1 -> NINJA1.ninja1HashInput source

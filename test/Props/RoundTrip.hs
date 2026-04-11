@@ -15,6 +15,7 @@ import qualified Slap.BPS.Types as BPS
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (avoidSentinel, optimalIPSRecords)
+import Slap.IPS.Types (OffsetWidth(..))
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
@@ -189,7 +190,8 @@ prop_avoidSentinel = property $
 -- | DP patch size must not exceed greedy patch size for IPS (offWidth=3).
 prop_dpNotLarger :: Property
 prop_dpNotLarger = forAll genPair $ \(source, target) ->
-  let dynamicProgrammingRecords = optimalIPSRecords 3 source target
+  let dynamicProgrammingRecords =
+        optimalIPSRecords Offset24 (SourceFileContents source) (TargetFileContents target)
       greedyRecords = splitMax 0xFFFF (diffHunks source target)
       dynamicProgrammingSize = ipsEncodedSize 3 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 3 greedyRecords
@@ -199,7 +201,8 @@ prop_dpNotLarger = forAll genPair $ \(source, target) ->
 -- | DP patch size must not exceed greedy patch size for IPS32 (offWidth=4).
 prop_dpIPS32NotLarger :: Property
 prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
-  let dynamicProgrammingRecords = optimalIPSRecords 4 source target
+  let dynamicProgrammingRecords =
+        optimalIPSRecords Offset32 (SourceFileContents source) (TargetFileContents target)
       greedyRecords = splitMax 0xFFFF (diffHunks source target)
       dynamicProgrammingSize = ipsEncodedSize 4 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 4 greedyRecords

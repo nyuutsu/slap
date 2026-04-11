@@ -69,6 +69,7 @@ library slap-internal
     , Slap.IPS.Apply
     , Slap.IPS.Create
     , Slap.IPS.Describe
+    , Slap.IPS.Optimize
     , Slap.IPS.Parse
     , Slap.IPS.Types
     , Slap.Measure

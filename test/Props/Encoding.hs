@@ -10,7 +10,7 @@
 -- description bytes during RUP creation.
 module Props.Encoding (encodingTests) where
 
-import Slap.IPS.Create (ebpJson)
+import Slap.IPS.Create (buildEBPMetadataJSON)
 import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Types as PPF
@@ -88,7 +88,7 @@ encodingTests = testGroup "Encoding"
 -- | EBP JSON metadata must round-trip non-ASCII characters through UTF-8.
 test_ebpUtf8 :: IO ()
 test_ebpUtf8 = do
-  let json = ebpJson "Pok\xE9mon" "Andr\xE9" "\xDCn\xEFc\xF6d\xE9 \x2122"
+  let json = buildEBPMetadataJSON "Pok\xE9mon" "Andr\xE9" "\xDCn\xEFc\xF6d\xE9 \x2122"
       pairs = jsonPairs json
   assertEqual "title" (Just "Pok\xE9mon") (jsonFieldCI pairs "title")
   assertEqual "author" (Just "Andr\xE9") (jsonFieldCI pairs "author")
