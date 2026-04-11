@@ -144,6 +144,17 @@ executable slap
 test-suite props
   type:             exitcode-stdio-1.0
   main-is:          Props.hs
+  other-modules:    Props.ClassifyTargetCopy
+                  , Props.Contracts
+                  , Props.Detection
+                  , Props.Encoding
+                  , Props.Helpers
+                  , Props.Identity
+                  , Props.RoundTrip
+                  , Props.SpecConformance
+                  , Props.TextEncoding
+                  , Props.Truncation
+                  , Props.Undo
   hs-source-dirs:   test
   default-language: GHC2024
   ghc-options:      -Wall -Werror -threaded -rtsopts "-with-rtsopts=-N"

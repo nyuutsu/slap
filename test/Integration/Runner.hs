@@ -54,7 +54,7 @@ parSequence actions = do
 -- 'runIntegrationSuite'. Adding a new top-level test group
 -- requires updating this list AND the Makefile's
 -- @TEST_GROUPS@ variable; the Makefile sanity-checks the
--- two stay in sync at the start of every @make test-full@
+-- two stay in sync at the start of every @make test@
 -- run via the @--list-groups@ flag exposed by the
 -- integration-full binary's @Main@.
 topLevelGroupNames :: [String]

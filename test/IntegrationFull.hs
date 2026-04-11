@@ -8,7 +8,7 @@
 -- The @--list-groups@ flag is intercepted before tasty ever sees the
 -- argv: it prints 'topLevelGroupNames' one per line and exits, giving
 -- the Makefile something to diff its hardcoded @TEST_GROUPS@ list
--- against on every @make test-full@ run.
+-- against on every @make test@ run.
 module Main (main) where
 
 import Integration.Helpers (Tier(..))

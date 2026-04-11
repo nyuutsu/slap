@@ -1,0 +1,173 @@
+module Props.Helpers
+  ( -- * Generators
+    genByteString
+  , genPair
+  , genPairNoShrink
+  , genSameSizePair
+  , genEofPair
+    -- * Apply helpers
+  , applyViaFile
+  , applySomePatch
+    -- * Truncation
+  , truncated
+  , truncatedFile
+    -- * IPS encoding helpers
+  , splitMax
+  , ipsEncodedSize
+    -- * RUP helpers
+  , emptyRupInfo
+    -- * Warning helpers
+  , isFieldTruncatedFor
+    -- * Re-exports for convenience
+  , isLeft
+  , isRight
+  ) where
+
+import qualified Slap.RUP.Types as RUP
+import Slap.Error (SlapError, SlapWarning(..))
+import Slap.FormatLabel (FormatLabel)
+import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
+
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
+import System.Directory (getTemporaryDirectory, removeFile)
+import System.IO (hClose, openBinaryTempFile)
+import Test.Tasty.QuickCheck
+
+----------------------------------------------------------------------------
+-- Generators
+----------------------------------------------------------------------------
+
+-- | Arbitrary ByteString up to ~64 KB, biased toward small sizes and edge cases.
+genByteString :: Gen ByteString
+genByteString = frequency
+  [ (1, pure ByteString.empty)
+  , (2, ByteString.singleton <$> arbitrary)
+  , (5, sized $ \sizeHint -> do
+      byteCount <- choose (0, min (sizeHint * 64) 65536)
+      ByteString.pack <$> vectorOf byteCount arbitrary)
+  ]
+
+-- | Arbitrary (source, target) pair with no size constraints.
+genPair :: Gen (ByteString, ByteString)
+genPair = (,) <$> genByteString <*> genByteString
+
+-- | (source, target) where len(target) >= len(source).
+-- Formats that lack truncation support can only grow or stay same-size.
+genPairNoShrink :: Gen (ByteString, ByteString)
+genPairNoShrink = do
+  shorter <- genByteString
+  longer <- genByteString
+  pure $ if ByteString.length shorter <= ByteString.length longer then (shorter, longer) else (longer, shorter)
+
+-- | (source, target) of equal length.  UPS undo is only lossless when
+-- source and target sizes match (the normal ROM patching case).
+genSameSizePair :: Gen (ByteString, ByteString)
+genSameSizePair = do
+  source <- genByteString
+  target <- ByteString.pack <$> vectorOf (ByteString.length source) arbitrary
+  pure (source, target)
+
+-- | Source and target that differ starting at exactly offset 0x454F46.
+genEofPair :: Gen (ByteString, ByteString)
+genEofPair = do
+  let eofOffset = 0x454F46
+  count <- choose (1, 100)
+  diffBytes <- ByteString.pack <$> vectorOf count (choose (1, 255))
+  let source = ByteString.replicate (eofOffset + count) 0
+      target = ByteString.replicate eofOffset 0 <> diffBytes
+  pure (source, target)
+
+----------------------------------------------------------------------------
+-- Apply helpers
+----------------------------------------------------------------------------
+
+-- | Apply a patch via temp file, return result bytes.
+applyViaFile :: (patch -> FilePath -> IO result) -> patch -> ByteString -> IO ByteString
+applyViaFile applyFunction parsed source = do
+  directory <- getTemporaryDirectory
+  (temporary, handle) <- openBinaryTempFile directory "slap-prop"
+  ByteString.hPut handle source
+  hClose handle
+  _ <- applyFunction parsed temporary
+  output <- ByteString.readFile temporary
+  removeFile temporary
+  pure output
+
+-- | Apply through the SomePatch closure.
+applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
+applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
+
+----------------------------------------------------------------------------
+-- Truncation
+----------------------------------------------------------------------------
+
+-- | Truncate a patch to a random length and verify parse returns Left or Right
+-- (never crashes).
+truncated :: (PatchFileContents -> Either SlapError a) -> PatchFileContents -> Property
+truncated parseFunction (PatchFileContents patch) =
+  forAll (choose (0, ByteString.length patch - 1)) $ \truncationLength ->
+    case parseFunction (PatchFileContents (ByteString.take truncationLength patch)) of
+      Left _  -> property True
+      Right _ -> property True
+
+-- | Truncate a real patch file from disk to random lengths.
+truncatedFile :: (PatchFileContents -> Either SlapError a) -> FilePath -> Property
+truncatedFile parseFunction path = ioProperty $ do
+  patchBytes <- ByteString.readFile path
+  pure $ forAll (choose (0, ByteString.length patchBytes - 1)) $ \truncationLength ->
+    case parseFunction (PatchFileContents (ByteString.take truncationLength patchBytes)) of
+      Left _  -> property True
+      Right _ -> property True
+
+----------------------------------------------------------------------------
+-- IPS encoding helpers
+----------------------------------------------------------------------------
+
+-- | Split hunks at maxSize boundaries.
+splitMax :: Int -> [Hunk] -> [EncodedHunk]
+splitMax maxRecordSize = concatMap splitRecord . map hunkToEncoded
+  where
+    hunkToEncoded (Hunk hunkOffset hunkPayload) = EncodedHunk hunkOffset hunkPayload
+    splitRecord (EncodedHunk hunkOffset hunkPayload)
+      | ByteString.length hunkPayload <= maxRecordSize = [EncodedHunk hunkOffset hunkPayload]
+      | otherwise =
+          let (chunk, remaining) = ByteString.splitAt maxRecordSize hunkPayload
+          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + fromIntegral maxRecordSize)) remaining)
+
+-- | Total encoded IPS record size (excluding magic/EOF marker).
+ipsEncodedSize :: Int -> [EncodedHunk] -> Int
+ipsEncodedSize offWidth = sum . map recordSize
+  where
+    recordSize (EncodedHunk _ payload)
+      | ByteString.length payload >= 3, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
+      | otherwise = offWidth + 2 + ByteString.length payload
+
+----------------------------------------------------------------------------
+-- RUP helpers
+----------------------------------------------------------------------------
+
+emptyRupInfo :: RUP.RUPInfo
+emptyRupInfo = RUP.RUPInfo Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+
+----------------------------------------------------------------------------
+-- Warning helpers
+----------------------------------------------------------------------------
+
+isFieldTruncatedFor :: FormatLabel -> SlapWarning -> Bool
+isFieldTruncatedFor expectedLabel (FieldTruncated warningLabel _ _ _) = expectedLabel == warningLabel
+isFieldTruncatedFor _ _ = False
+
+----------------------------------------------------------------------------
+-- Predicate helpers
+----------------------------------------------------------------------------
+
+isLeft :: Either a b -> Bool
+isLeft (Left _) = True
+isLeft _        = False
+
+isRight :: Either a b -> Bool
+isRight (Right _) = True
+isRight _         = False

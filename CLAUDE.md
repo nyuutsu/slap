@@ -41,6 +41,7 @@ See something: say something. We want to do things correctly and to be kind to o
 ## Building
 
 ```
-make           # builds rusty-slap then Haskell via cabal
-make test      # QuickCheck properties + tasty integration suite
+make             # builds rusty-slap then Haskell via cabal
+make test        # full test run: props + quick integration + heavy integration
+make test-quick  # fast subset: props + quick integration (skips heavy ROMs)
 ```
