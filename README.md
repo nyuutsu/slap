@@ -16,6 +16,8 @@ If your patch is tucked inside a `zip`, `rar`, or `7z` archive (📦), `slap` wi
 
 Looking inside the core of that onion: each format is described declaratively. (i.e.) what fields it carries, what it requires, and what it can provide. Conversion compatability between formats *falls out* of these descriptions. If you like hearing about internals, `ARCHITECTURE.md` has *much* to say on the shape of the program.
 
+`Slap.BPS` and `Slap.UPS` are the two format modules that I'm most pleased with. `Slap.IPS` is being tidied up so as to be similarly pretty. The rest of the formats are still waiting their turn for that kind of care.
+
 ## Applying 🍄
 
 This is the most common thing you'd do with it. Give it a patch and a rom and it does the thing.
@@ -191,8 +193,6 @@ Thank you for trying it out!
 make
 make test
 ```
-
-## Misc
 
 # footnotes (👣)
 
