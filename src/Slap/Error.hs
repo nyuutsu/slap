@@ -69,6 +69,8 @@ data FieldName
   | FieldSourceCRC
   | FieldTargetCRC
   | FieldPatchCRC
+  -- Record fields
+  | FieldRLERunLength
   deriving (Show, Eq, Enum, Bounded)
 
 fieldNameLabel :: FieldName -> String
@@ -96,6 +98,7 @@ fieldNameLabel FieldDestinationSize = "destination size"
 fieldNameLabel FieldSourceCRC       = "source CRC"
 fieldNameLabel FieldTargetCRC       = "target CRC"
 fieldNameLabel FieldPatchCRC        = "patch CRC"
+fieldNameLabel FieldRLERunLength    = "RLE run length"
 
 ----------------------------------------------------------------------------
 -- DroppedValue
@@ -223,6 +226,27 @@ data SlapError
   | TruncatedRecord FormatLabel Int Length Length
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed FormatLabel String
+
+  -- | A parsed record's effective end position lies beyond the
+  -- variant's wire-format spec ceiling. The 'ActionIndex' names the
+  -- offending record's position in the wire stream; the
+  -- 'ActualOffset' is the record's computed end position
+  -- (@offset + payloadLength@); the 'MaxOffset' is the variant's
+  -- maximum addressable end (typically @maxAddressableOffset +
+  -- maxRecordPayload@). Used by IPS-family parsers to reject
+  -- records that name a position the format cannot represent on
+  -- the wire, before they can flow through to the apply layer.
+  | RecordExceedsAddressableRange FormatLabel ActionIndex ActualOffset MaxOffset
+
+  -- | A parsed record carries a structurally malformed field — for
+  -- example an RLE record whose run length is zero, or any other
+  -- per-record value the spec or slap's strict discipline rejects
+  -- as invalid. The 'ActionIndex' names the offending record; the
+  -- 'FieldName' identifies which field of that record was
+  -- malformed. Distinct from 'TruncatedRecord' (record was too
+  -- short) and 'NegativeSize' (a top-level header size was
+  -- negative).
+  | MalformedRecordField FormatLabel ActionIndex FieldName
 
   -- Parse: integrity
   | PatchCRCMismatch FormatLabel ExpectedCRC32 ActualCRC32
@@ -395,6 +419,16 @@ renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
 
 renderSlapError (DecompressionFailed label detail) =
   formatLabelName label ++ ": decompression failed: " ++ detail
+
+renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
+  formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
+  ++ " ends at offset 0x" ++ showHex (unOffset endOffset) ""
+  ++ ", exceeding the variant's maximum addressable end 0x"
+  ++ showHex (unOffset maxEndOffset) ""
+
+renderSlapError (MalformedRecordField label recordIndex name) =
+  formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
+  ++ " has malformed " ++ fieldNameLabel name
 
 renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 computed)) =
   formatLabelName label ++ ": patch CRC mismatch (stored "
