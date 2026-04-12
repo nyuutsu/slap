@@ -40,13 +40,15 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
+import Slap.Error (SlapError(..))
 import Slap.FileContents
   ( SourceFileContents(..)
-  , TargetFileContents
+  , TargetFileContents(..)
   , PatchFileContents(..)
   , unPatchFileContents
   )
 import Slap.Format (padHex)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
   ( IPSVariant(..)
@@ -61,6 +63,8 @@ import Slap.Measure
   , Delta(..)
   , Cursor(..)
   , EncodedHunk(..)
+  , ActualSize(..)
+  , ExpectedSize(..)
   , offsetToInt
   )
 
@@ -104,11 +108,24 @@ createIPS source target =
 -- truncation marker; the encoder does not emit one and
 -- 'Slap.IPS.Parse' refuses any trailing bytes after @"EEOF"@ —
 -- see the symmetric strictness pact in @docs/ips/proposal.md@.
-createIPS32 :: SourceFileContents -> TargetFileContents -> PatchFileContents
-createIPS32 source target =
-  encodeIPSPatch IPS32 source
-                 (optimalIPSRecords Offset32 source target)
-                 Nothing
+--
+-- Returns 'Left' if the target is strictly smaller than the source,
+-- because IPS32 has no truncation marker and therefore cannot express
+-- target shrinkage on the wire.
+createIPS32 :: SourceFileContents -> TargetFileContents -> Either SlapError PatchFileContents
+createIPS32 source@(SourceFileContents sourceBytes) (TargetFileContents targetBytes)
+  | targetSize < sourceSize =
+      Left (CannotExpressTargetShrinkage LabelIPS32
+              (ActualSize (FileSize sourceSize))
+              (ExpectedSize (FileSize targetSize)))
+  | otherwise =
+      Right (encodeIPSPatch IPS32 source
+               (optimalIPSRecords Offset32 source target)
+               Nothing)
+  where
+    sourceSize = ByteString.length sourceBytes
+    targetSize = ByteString.length targetBytes
+    target     = TargetFileContents targetBytes
 
 -- | Create an EBP patch (a 'StandardIPS' patch with a trailing
 -- JSON metadata blob) from source and target files plus the EBP
@@ -117,15 +134,28 @@ createIPS32 source target =
 -- to construct the JSON from CLI title/author/description fields
 -- should call 'buildEBPMetadataJSON' first and wrap the result in
 -- an 'EBPMetadata'.
+--
+-- Returns 'Left' if the target is strictly smaller than the source,
+-- because EBP's trailer slot is occupied by JSON metadata and
+-- therefore cannot express target shrinkage on the wire.
 createEBP
   :: SourceFileContents
   -> TargetFileContents
   -> EBPMetadata
-  -> PatchFileContents
-createEBP source target metadata =
-  encodeEBPPatch source
-                 (optimalIPSRecords Offset24 source target)
-                 metadata
+  -> Either SlapError PatchFileContents
+createEBP source@(SourceFileContents sourceBytes) (TargetFileContents targetBytes) metadata
+  | targetSize < sourceSize =
+      Left (CannotExpressTargetShrinkage LabelEBP
+              (ActualSize (FileSize sourceSize))
+              (ExpectedSize (FileSize targetSize)))
+  | otherwise =
+      Right (encodeEBPPatch source
+               (optimalIPSRecords Offset24 source target)
+               metadata)
+  where
+    sourceSize = ByteString.length sourceBytes
+    targetSize = ByteString.length targetBytes
+    target     = TargetFileContents targetBytes
 
 ----------------------------------------------------------------------------
 -- Parameterized wire encoder

@@ -48,6 +48,7 @@ import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits(..),
+                      ActualSize(..), ExpectedSize(..),
                       advance, narrowHunks, narrowHunksUnbounded, splitHunks,
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
@@ -445,6 +446,7 @@ encodeDirect contents source target meta limits = case target of
             (IPS.encodeIPSPatch StandardIPS source records (contentsTruncation contents))
             [])
   CreateIPS32 -> do
+    rejectTruncation LabelIPS32 contents source
     records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
     -- IPS32 has no community-recognised truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
@@ -454,6 +456,7 @@ encodeDirect contents source target meta limits = case target of
             (IPS.encodeIPSPatch IPS32 source records Nothing)
             [])
   CreateEBP -> do
+    rejectTruncation LabelEBP contents source
     records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
@@ -512,6 +515,14 @@ encodeDirect contents source target meta limits = case target of
     wrapNarrow :: Either String a -> Either SlapError a
     wrapNarrow (Right value) = Right value
     wrapNarrow (Left errorMessage) = Left (ParseError (directLabel target) errorMessage)
+    rejectTruncation :: FormatLabel -> PatchContents -> SourceFileContents -> Either SlapError ()
+    rejectTruncation label patchContents (SourceFileContents sourceBytes) =
+      case contentsTruncation patchContents of
+        Just truncatedTargetSize ->
+          Left (CannotExpressTargetShrinkage label
+                  (ActualSize (FileSize (ByteString.length sourceBytes)))
+                  (ExpectedSize truncatedTargetSize))
+        Nothing -> Right ()
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta

@@ -228,11 +228,11 @@ prop_apsGba = forAll genPair $ \(source, target) ->
          pure $ result === target
 
 ----------------------------------------------------------------------------
--- Formats with truncation support (any size combination)
+-- IPS32 / EBP: no truncation marker, target must be >= source
 ----------------------------------------------------------------------------
 
 prop_ips32 :: Property
-prop_ips32 = forAll genPair $ \(source, target) ->
+prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateIPS32) (SourceFileContents source) (TargetFileContents target) defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
@@ -243,7 +243,7 @@ prop_ips32 = forAll genPair $ \(source, target) ->
         counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_ebp :: Property
-prop_ebp = forAll genPair $ \(source, target) ->
+prop_ebp = forAll genPairNoShrink $ \(source, target) ->
   case createFromMemory (CreateDirect CreateEBP) (SourceFileContents source) (TargetFileContents target) defaultMeta Nothing of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of

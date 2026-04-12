@@ -286,6 +286,7 @@ data SlapError
   | UndoFailed FormatLabel ApplyError
 
   -- Create / Encode
+  | CannotExpressTargetShrinkage FormatLabel ActualSize ExpectedSize
   | UPSUnencodeablePair FormatLabel UnencodeabilityReason
   | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
   | SentinelCollision FormatLabel Offset
@@ -487,6 +488,12 @@ renderSlapError (ApplyFailed label applyErr) =
 
 renderSlapError (UndoFailed label applyErr) =
   formatLabelName label ++ " undo: " ++ renderApplyError applyErr
+
+renderSlapError (CannotExpressTargetShrinkage label (ActualSize sourceSize) (ExpectedSize targetSize)) =
+  formatLabelName label ++ ": cannot express a target file smaller than the source"
+  ++ " (source: 0x" ++ showHex (unFileSize sourceSize) ""
+  ++ " bytes, target: 0x" ++ showHex (unFileSize targetSize) ""
+  ++ " bytes); this format has no truncation marker"
 
 renderSlapError (UPSUnencodeablePair label reason) =
   formatLabelName label ++ ": cannot encode pair: "
