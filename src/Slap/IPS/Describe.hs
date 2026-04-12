@@ -57,14 +57,13 @@ import Slap.Explain
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Format (MetaField(..), padHex, hexByteString, renderField)
+import Slap.Format (MetaField(..), padHex, renderField,
+                    renderPrintableASCIIOrHex, renderUTF8OrByteCount)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import qualified Data.Vector as Vector
-import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- ipsInfo / ipsMeta — plain IPSPatch
@@ -260,47 +259,24 @@ renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
 -- outside that range. The fallback exists so a hypothetical future
 -- variant with a non-ASCII marker still renders legibly instead of
 -- smuggling control bytes into the info stream.
---
--- Mirrors the 'Slap.Error.renderTrailerMarkerName' pattern from
--- prompt 4.5. A parallel copy rather than a shared helper because
--- 'Slap.Error' does not export its private @isPrintableAscii@
--- predicate and the prompt\'s contract locks 'Slap.Error' and
--- 'Slap.Format' against modification.
 renderMarkerBytes :: ByteString -> String
-renderMarkerBytes markerBytes
-  | ByteString.all isPrintableAscii markerBytes =
-      ByteString8.unpack markerBytes
-  | otherwise =
-      "0x" ++ hexByteString markerBytes
+renderMarkerBytes = renderPrintableASCIIOrHex
 
 -- | Render a raw EBP metadata blob for the @metadata:@ header field:
 -- the byte count followed by a shape-recognised preview of the
--- leading 'metadataPreviewBytes' bytes, with a trailing ellipsis
--- when the blob is longer than the preview.
---
--- Shape-only: the preview is either the preview bytes decoded as
--- ASCII (when every previewed byte is printable) or a hex dump of
--- the preview bytes (when any byte is not). This is the same
--- 'renderTrailerMarkerName'-style fallback as 'renderMarkerBytes',
--- lifted to a truncated preview. The function deliberately does
--- not parse, validate, or extract fields from the JSON — that line
--- is drawn in 'Slap.IPS.Parse' and Describe honours it.
+-- leading 'metadataPreviewBytes' bytes. EBP metadata is UTF-8 by
+-- convention (per the EBPatcher reference implementation), so the
+-- preview decodes as UTF-8 when valid and falls back to a byte count
+-- description when not. The function deliberately does not parse,
+-- validate, or extract fields from the JSON — that line is drawn in
+-- 'Slap.IPS.Parse' and Describe honours it.
 renderEBPMetadata :: ByteString -> String
 renderEBPMetadata metadataBytes
   | ByteString.null metadataBytes =
       "(none)"
   | otherwise =
-      let totalByteCount = ByteString.length metadataBytes
-          previewBytes   = ByteString.take metadataPreviewBytes metadataBytes
-          previewText
-            | ByteString.all isPrintableAscii previewBytes =
-                ByteString8.unpack previewBytes
-            | otherwise =
-                "0x" ++ hexByteString previewBytes
-          ellipsis
-            | totalByteCount > metadataPreviewBytes = "..."
-            | otherwise                             = ""
-      in show totalByteCount ++ " bytes: " ++ previewText ++ ellipsis
+      show (ByteString.length metadataBytes) ++ " bytes: "
+      ++ renderUTF8OrByteCount metadataPreviewBytes metadataBytes
 
 -- | Maximum number of EBP metadata bytes shown in 'renderEBPMetadata'
 -- before the preview is truncated with an ellipsis. Matches BPS\'s
@@ -310,10 +286,3 @@ renderEBPMetadata metadataBytes
 metadataPreviewBytes :: Int
 metadataPreviewBytes = 200
 
--- | True for the printable ASCII range (space through tilde
--- inclusive). The same predicate 'Slap.Error' uses internally for
--- 'renderTrailerMarkerName'; duplicated locally because
--- 'Slap.Error' does not export it and the prompt\'s contract
--- locks both 'Slap.Error' and 'Slap.Format'.
-isPrintableAscii :: Word8 -> Bool
-isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E

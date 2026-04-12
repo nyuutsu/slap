@@ -21,7 +21,7 @@ import Slap.FileContents (PatchFileContents)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
                       ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Format (hexByteString)
+import Slap.Format (hexByteString, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
                      ReadOffset(..), WritePosition(..),
@@ -38,9 +38,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.PatchField (PatchField, fieldName)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
-import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- FieldName
@@ -624,18 +621,7 @@ renderUnencodeabilityReason UPSSourceTailNonZero =
 -- printable byte, the renderer falls back to a hex dump rather than
 -- emitting raw control characters into the error stream.
 renderTrailerMarkerName :: ByteString -> String
-renderTrailerMarkerName markerBytes
-  | ByteString.all isPrintableAscii markerBytes =
-      ByteString8.unpack markerBytes
-  | otherwise =
-      "0x" ++ hexByteString markerBytes
-
--- | True for the printable ASCII range (space through tilde
--- inclusive). Used by 'renderTrailerMarkerName' to decide whether a
--- marker can be displayed as its literal characters or needs the
--- hex fallback.
-isPrintableAscii :: Word8 -> Bool
-isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
+renderTrailerMarkerName = renderPrintableASCIIOrHex
 
 commaList :: [String] -> String
 commaList []     = ""

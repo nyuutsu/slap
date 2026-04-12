@@ -13,10 +13,16 @@ module Slap.Format
     -- * Hex dump
   , hexDump
   , chunksOf
+    -- * Shape-recognised byte display
+  , renderPrintableASCIIOrHex
+  , renderUTF8OrByteCount
   ) where
+
+import Slap.TextEncoding (isValidUtf8, decodeUtf8Field, truncateUtf8)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Char8 as ByteString8
 import Data.Word (Word8, Word32, Word64)
 import Numeric (showHex)
 
@@ -81,3 +87,47 @@ chunksOf size items = let (chunk, rest) = splitAt size items in chunk : chunksOf
 -- | Render a ByteString as a lowercase hex string (e.g. "a3f0...").
 hexByteString :: ByteString -> String
 hexByteString = concatMap (\byte -> padHex 2 byte) . ByteString.unpack
+
+----------------------------------------------------------------------------
+-- Shape-recognised byte display
+----------------------------------------------------------------------------
+
+-- | Render a byte sequence as ASCII text if every byte is in the
+-- printable range (0x20–0x7E inclusive). Falls back to a hex dump
+-- prefixed with @0x@ otherwise. Suitable for protocol bytes that
+-- are spec'd ASCII (e.g. magic bytes, trailer markers) where the
+-- printable case is the common path and the hex fallback exists
+-- as defensive cover for malformed or unexpected input.
+renderPrintableASCIIOrHex :: ByteString -> String
+renderPrintableASCIIOrHex bytes
+  | ByteString.all isPrintableAscii bytes =
+      ByteString8.unpack bytes
+  | otherwise =
+      "0x" ++ hexByteString bytes
+
+-- | Render a byte sequence as text if it is valid UTF-8, truncated
+-- to a maximum length for display. Falls back to a description of
+-- byte count and "not valid UTF-8" if decoding fails. Suitable for
+-- content bytes that are UTF-8 by spec or convention (e.g. EBP
+-- metadata) where the goal is human-legible display rather than
+-- byte-exact rendering.
+--
+-- The truncation cap counts bytes of the original UTF-8, not
+-- decoded characters; for human display previews this is usually
+-- what's wanted (a 200-byte cap shows ~200 bytes worth of content
+-- regardless of character width).
+renderUTF8OrByteCount :: Int -> ByteString -> String
+renderUTF8OrByteCount maxPreviewBytes bytes
+  | isValidUtf8 bytes =
+      let preview  = truncateUtf8 maxPreviewBytes bytes
+          ellipsis = if ByteString.length bytes > maxPreviewBytes
+                     then "..."
+                     else ""
+      in decodeUtf8Field preview ++ ellipsis
+  | otherwise =
+      show (ByteString.length bytes) ++ " bytes, not valid UTF-8"
+
+-- | True for the printable ASCII range (space through tilde
+-- inclusive).
+isPrintableAscii :: Word8 -> Bool
+isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
