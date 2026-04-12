@@ -26,7 +26,7 @@ import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        ipsMaxRecordPayload)
-import Slap.IPS.Describe (jsonPairs, jsonFieldCI)
+import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Create as APSN64

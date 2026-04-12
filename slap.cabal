@@ -66,6 +66,7 @@ library slap-internal
     , Slap.GDIFF.Describe
     , Slap.GDIFF.Parse
     , Slap.GDIFF.Types
+    , Slap.JSON
     , Slap.IPS.Apply
     , Slap.IPS.Create
     , Slap.IPS.Describe
