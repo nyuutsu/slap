@@ -254,8 +254,7 @@ parseSome patchContents = case detectFormat patchContents of
             }
         }
 
-  Just (PatchDirect FormatIPS) -> do
-    parseResult <- IPS.parseIPS patchContents
+  Just (PatchDirect FormatIPS) ->
     let expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
                                            , ipsCopyPayload = recordPayload }) =
           Hunk recordOffset recordPayload
@@ -263,58 +262,88 @@ parseSome patchContents = case detectFormat patchContents of
                                           , ipsRleCount = fillCount
                                           , ipsRleFill = fillByte }) =
           Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte)
-    case parseResult of
-      Left ipsPatch ->
-        let records = IPS.ipsRecords ipsPatch
-            label = case IPS.ipsVariant ipsPatch of
-              IPS.StandardIPS -> LabelIPS
-              IPS.IPS32       -> LabelIPS32
+    in case IPS.parseIPS patchContents of
+      -- Get-monad failure: the body was too truncated to decode even
+      -- one record or EOF marker.  Return a 0-record patch with a
+      -- NoEOFMarker warning so recognised-but-truncated IPS files
+      -- still produce useful output from info/explain.
+      Left (ParseError LabelIPS _) ->
+        let truncatedFallback = IPS.IPSPatch
+              { IPS.ipsVariant             = IPS.StandardIPS
+              , IPS.ipsRecords             = Vector.empty
+              , IPS.ipsTruncatedTargetSize = Nothing
+              }
         in Right SomePatch
-          { patchFormat         = label
-          , patchExplain        = IPS.explainIPS ipsPatch
+          { patchFormat         = LabelIPS
+          , patchExplain        = IPS.explainIPS truncatedFallback
           , patchIsDifferential = False
           , patchApply          = InMemory
-                { inMemoryApply = \source -> pure (IPS.applyIPS source ipsPatch) }
+                { inMemoryApply = \source -> pure (IPS.applyIPS source truncatedFallback) }
           , patchUndo           = Nothing
           , patchVerification   = noVerification
-          , patchWarnings       = [EmptyPatch label "records" | Vector.null records]
-          , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+          , patchWarnings       = [NoEOFMarker LabelIPS, EmptyPatch LabelIPS "records"]
+          , patchRecordSummary  = RecordSummary 0 "records"
           , patchSourceNotes    = []
           , patchMetadata       = Nothing
           , patchExtractedMeta  = defaultMeta
-          , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
-              { contentsTruncation = IPS.ipsTruncatedTargetSize ipsPatch
+          , patchContents       = Just (emptyContents [])
+              { contentsTruncation = Nothing
               , contentsEBPMeta    = Nothing
               }
           }
-      Right ebpPatch ->
-        let basePatch = IPS.ebpBasePatch ebpPatch
-            records = IPS.ipsRecords basePatch
-            ebpPairs = jsonPairs (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
-            nonEmptyField decoded = if null decoded then Nothing else Just decoded
-            extractedMeta = defaultMeta
-              { metaTitle       = jsonFieldCI ebpPairs "title" >>= nonEmptyField
-              , metaAuthor      = jsonFieldCI ebpPairs "author" >>= nonEmptyField
-              , metaDescription = jsonFieldCI ebpPairs "description" >>= nonEmptyField
-              }
-        in Right SomePatch
-          { patchFormat         = LabelEBP
-          , patchExplain        = IPS.explainEBP ebpPatch
-          , patchIsDifferential = False
-          , patchApply          = InMemory
-                { inMemoryApply = \source -> pure (IPS.applyIPS source basePatch) }
-          , patchUndo           = Nothing
-          , patchVerification   = noVerification
-          , patchWarnings       = [EmptyPatch LabelEBP "records" | Vector.null records]
-          , patchRecordSummary  = RecordSummary (Vector.length records) "records"
-          , patchSourceNotes    = []
-          , patchMetadata       = Nothing
-          , patchExtractedMeta  = extractedMeta
-          , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
-              { contentsTruncation = IPS.ipsTruncatedTargetSize basePatch
-              , contentsEBPMeta    = Just (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
-              }
-          }
+      Left otherError -> Left otherError
+      Right parseResult -> case parseResult of
+        Left ipsPatch ->
+          let records = IPS.ipsRecords ipsPatch
+              label = case IPS.ipsVariant ipsPatch of
+                IPS.StandardIPS -> LabelIPS
+                IPS.IPS32       -> LabelIPS32
+          in Right SomePatch
+            { patchFormat         = label
+            , patchExplain        = IPS.explainIPS ipsPatch
+            , patchIsDifferential = False
+            , patchApply          = InMemory
+                  { inMemoryApply = \source -> pure (IPS.applyIPS source ipsPatch) }
+            , patchUndo           = Nothing
+            , patchVerification   = noVerification
+            , patchWarnings       = [EmptyPatch label "records" | Vector.null records]
+            , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+            , patchSourceNotes    = []
+            , patchMetadata       = Nothing
+            , patchExtractedMeta  = defaultMeta
+            , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+                { contentsTruncation = IPS.ipsTruncatedTargetSize ipsPatch
+                , contentsEBPMeta    = Nothing
+                }
+            }
+        Right ebpPatch ->
+          let basePatch = IPS.ebpBasePatch ebpPatch
+              records = IPS.ipsRecords basePatch
+              ebpPairs = jsonPairs (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+              nonEmptyField decoded = if null decoded then Nothing else Just decoded
+              extractedMeta = defaultMeta
+                { metaTitle       = jsonFieldCI ebpPairs "title" >>= nonEmptyField
+                , metaAuthor      = jsonFieldCI ebpPairs "author" >>= nonEmptyField
+                , metaDescription = jsonFieldCI ebpPairs "description" >>= nonEmptyField
+                }
+          in Right SomePatch
+            { patchFormat         = LabelEBP
+            , patchExplain        = IPS.explainEBP ebpPatch
+            , patchIsDifferential = False
+            , patchApply          = InMemory
+                  { inMemoryApply = \source -> pure (IPS.applyIPS source basePatch) }
+            , patchUndo           = Nothing
+            , patchVerification   = noVerification
+            , patchWarnings       = [EmptyPatch LabelEBP "records" | Vector.null records]
+            , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+            , patchSourceNotes    = []
+            , patchMetadata       = Nothing
+            , patchExtractedMeta  = extractedMeta
+            , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+                { contentsTruncation = IPS.ipsTruncatedTargetSize basePatch
+                , contentsEBPMeta    = Just (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+                }
+            }
 
   Just (PatchDiff FormatBPS) -> do
     patch <- BPS.parseBPS patchContents
