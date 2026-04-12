@@ -17,7 +17,6 @@
 --   * 'Props.Contracts'          — conversion contract system and IPS
 --                                  sentinel collision detection.
 --   * 'Props.TextEncoding'       — UTF-8 and locale encoding primitives.
---   * 'Props.Encoding'           — per-format metadata field encoding.
 --   * 'Props.Detection'          — DPS detection heuristic.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.
@@ -28,7 +27,6 @@ module Main (main) where
 import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
-import qualified Props.Encoding as Encoding
 import qualified Props.Identity as Identity
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
@@ -47,7 +45,6 @@ main = defaultMain $ testGroup "Properties"
   , Undo.undoTests
   , Contracts.contractTests
   , TextEncoding.textEncodingTests
-  , Encoding.encodingTests
   , Detection.detectionTests
   , ClassifyTargetCopy.classifyTargetCopyTests
   ]

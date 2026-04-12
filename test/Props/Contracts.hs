@@ -175,6 +175,7 @@ prop_ipsSentinelWithSource =
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-         Right parsed -> ioProperty $ do
-           result <- applyViaFile IPS.applyIPS parsed source
-           pure $ result === target
+         Right (Left ipsPatch) ->
+           IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+         Right (Right _ebpPatch) ->
+           counterexample "test fixture unexpectedly EBP" $ property False

@@ -15,7 +15,7 @@ import qualified Slap.BPS.Types as BPS
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (avoidSentinel, optimalIPSRecords)
-import Slap.IPS.Types (OffsetWidth(..))
+import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..))
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
@@ -155,9 +155,10 @@ prop_ips = forAll genPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
-        result <- applyViaFile IPS.applyIPS parsed source
-        pure $ result === target
+      Right (Left ipsPatch) ->
+        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+      Right (Right _ebpPatch) ->
+        counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
@@ -165,9 +166,10 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
-        result <- applyViaFile IPS.applyIPS parsed source
-        pure $ result === target
+      Right (Left ipsPatch) ->
+        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+      Right (Right _ebpPatch) ->
+        counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_avoidSentinel :: Property
 prop_avoidSentinel = property $
@@ -235,9 +237,10 @@ prop_ips32 = forAll genPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
-        result <- applyViaFile IPS.applyIPS parsed source
-        pure $ result === target
+      Right (Left ipsPatch) ->
+        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+      Right (Right _ebpPatch) ->
+        counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_ebp :: Property
 prop_ebp = forAll genPair $ \(source, target) ->
@@ -245,9 +248,10 @@ prop_ebp = forAll genPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
-        result <- applyViaFile IPS.applyIPS parsed source
-        pure $ result === target
+      Right (Right ebpPatch) ->
+        IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch) === Right (TargetFileContents target)
+      Right (Left _ipsPatch) ->
+        counterexample "test fixture unexpectedly plain IPS" $ property False
 
 -- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
