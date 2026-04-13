@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Slap.RUP.Create
-  ( createRUP
+module Slap.NINJA2.Create
+  ( createNINJA2
   , encodeFixedHeader
   , encodeXorRecord
-  , rupTruncationNotes
+  , ninja2TruncationNotes
   ) where
 
-import Slap.RUP.Types
+import Slap.NINJA2.Types
 import Slap.Binary (diffHunks, md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
@@ -25,10 +25,10 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 
 
--- | Create a RUP/NINJA2 patch from original and modified ByteStrings.
+-- | Create a NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createRUP :: SourceFileContents -> TargetFileContents -> RUPInfo -> NINJA2RomType -> PatchEncoding -> PatchFileContents
-createRUP (SourceFileContents original) (TargetFileContents modified) info romType encoding =
+createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Info -> NINJA2RomType -> PatchEncoding -> PatchFileContents
+createNINJA2 (SourceFileContents original) (TargetFileContents modified) info romType encoding =
     PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
       byteString "NINJA2"                     -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
@@ -71,13 +71,13 @@ createRUP (SourceFileContents original) (TargetFileContents modified) info romTy
              <> byteString (ByteString.map (xor 0xFF) extra)
       | otherwise = mempty
 
--- | Encode a RUPInfo into the fixed header region (bytes 7..2047).
+-- | Encode a NINJA2Info into the fixed header region (bytes 7..2047).
 -- Mirrors parseFixedHeader layout: author@0x007/84, version@0x05B/11,
 -- title@0x066/256, genre@0x166/48, language@0x196/48, date@0x1C6/8,
 -- website@0x1CE/512, description@0x3CE/1074.
 -- Fields that exceed their byte width are truncated at the last complete
 -- codepoint boundary (UTF-8) or byte boundary (system encoding).
-encodeFixedHeader :: PatchEncoding -> RUPInfo -> ByteString
+encodeFixedHeader :: PatchEncoding -> NINJA2Info -> ByteString
 encodeFixedHeader encoding info =
     ByteString.pack $ map byteAt [0 .. headerSize - 8]
   where
@@ -92,14 +92,14 @@ encodeFixedHeader encoding info =
         in zip [fieldOffset..fieldOffset+fieldLength-1] (ByteString.unpack (zeroPadTo fieldLength truncated))
     zeroPadTo count input = ByteString.take count input <> ByteString.replicate (max 0 (count - ByteString.length input)) 0
     fields =
-      [ (0x007 - 7, rupAuthorWidth,      rupAuthor info)
-      , (0x05B - 7, rupVersionWidth,     rupVersion info)
-      , (0x066 - 7, rupTitleWidth,       rupTitle info)
-      , (0x166 - 7, rupGenreWidth,       rupGenre info)
-      , (0x196 - 7, rupLanguageWidth,    rupLanguage info)
-      , (0x1C6 - 7, rupDateWidth,        rupDate info)
-      , (0x1CE - 7, rupWebsiteWidth,     rupWebsite info)
-      , (0x3CE - 7, rupDescriptionWidth, rupDescription info)
+      [ (0x007 - 7, ninja2AuthorWidth,      ninja2Author info)
+      , (0x05B - 7, ninja2VersionWidth,     ninja2Version info)
+      , (0x066 - 7, ninja2TitleWidth,       ninja2Title info)
+      , (0x166 - 7, ninja2GenreWidth,       ninja2Genre info)
+      , (0x196 - 7, ninja2LanguageWidth,    ninja2Language info)
+      , (0x1C6 - 7, ninja2DateWidth,        ninja2Date info)
+      , (0x1CE - 7, ninja2WebsiteWidth,     ninja2Website info)
+      , (0x3CE - 7, ninja2DescriptionWidth, ninja2Description info)
       ]
 
 -- | Truncate a field value to fit within the given byte width.
@@ -109,26 +109,26 @@ truncateField :: PatchEncoding -> Int -> ByteString -> ByteString
 truncateField PatchEncodingUTF8 = truncateUtf8
 truncateField _                 = truncateLocale
 
--- | Check which RUPInfo fields would be truncated by encodeFixedHeader,
+-- | Check which NINJA2Info fields would be truncated by encodeFixedHeader,
 -- and return a warning for each one.
-rupTruncationNotes :: PatchEncoding -> RUPInfo -> [SlapWarning]
-rupTruncationNotes _encoding info = concatMap checkField fields
+ninja2TruncationNotes :: PatchEncoding -> NINJA2Info -> [SlapWarning]
+ninja2TruncationNotes _encoding info = concatMap checkField fields
   where
     checkField (fieldLength, name, maybeValue) = case maybeValue of
       Just value | ByteString.length value > fieldLength ->
-        [FieldTruncated LabelRUP name
+        [FieldTruncated LabelNINJA2 name
           (OriginalLength (Length (ByteString.length value)))
           (TruncatedLength (Length fieldLength))]
       _ -> []
     fields =
-      [ (rupAuthorWidth,      FieldAuthor,      rupAuthor info)
-      , (rupVersionWidth,     FieldVersion,     rupVersion info)
-      , (rupTitleWidth,       FieldTitle,       rupTitle info)
-      , (rupGenreWidth,       FieldGenre,       rupGenre info)
-      , (rupLanguageWidth,    FieldLanguage,    rupLanguage info)
-      , (rupDateWidth,        FieldDate,        rupDate info)
-      , (rupWebsiteWidth,     FieldWebsite,     rupWebsite info)
-      , (rupDescriptionWidth, FieldDescription, rupDescription info)
+      [ (ninja2AuthorWidth,      FieldAuthor,      ninja2Author info)
+      , (ninja2VersionWidth,     FieldVersion,     ninja2Version info)
+      , (ninja2TitleWidth,       FieldTitle,        ninja2Title info)
+      , (ninja2GenreWidth,       FieldGenre,       ninja2Genre info)
+      , (ninja2LanguageWidth,    FieldLanguage,    ninja2Language info)
+      , (ninja2DateWidth,        FieldDate,        ninja2Date info)
+      , (ninja2WebsiteWidth,     FieldWebsite,     ninja2Website info)
+      , (ninja2DescriptionWidth, FieldDescription, ninja2Description info)
       ]
 
 encodeXorRecord :: XorRecord -> Builder

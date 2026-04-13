@@ -132,7 +132,7 @@ encodeBoundedLocale fieldWidth inputText =
 
 -- | Check whether a ByteString is valid UTF-8.
 -- Used during conversion from opaque-bytes formats to
--- encoding-flagged formats (e.g. PPF → RUP): if the bytes
+-- encoding-flagged formats (e.g. PPF → NINJA2): if the bytes
 -- pass UTF-8 validation, we can set PATCH_ENC=1 confidently.
 isValidUtf8 :: ByteString -> Bool
 isValidUtf8 bytes = case Text.decodeUtf8' bytes of

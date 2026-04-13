@@ -211,37 +211,37 @@ undoParser = do
 createParser :: Parser Command
 createParser = do
     createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
-        <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+        <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
     raw <- rawFlag
     original <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
     modified <- argument str (metavar "MODIFIED" <> help "Modified file")
     outputFile <- argument str (metavar "OUTPUT" <> help "Output patch file")
     description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-        <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+        <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
     title <- optional (option str (long "title" <> metavar "TEXT"
-        <> help "Patch title (EBP/RUP)"))
+        <> help "Patch title (EBP/NINJA2)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
-        <> help "Patch author (EBP/DPS/RUP)"))
+        <> help "Patch author (EBP/DPS/NINJA2)"))
     includeUndo <- optional (flag' True (long "undo" <> short 'u' <> help "Include undo data (PPF3 only)"))
     includeValidation <- optional (flag' True (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)"))
     version <- optional (option str (long "version" <> metavar "TEXT"
-        <> help "Patch version (DPS/RUP)"))
+        <> help "Patch version (DPS/NINJA2)"))
     unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/RUP): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
+        <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
     genre <- optional (option str (long "genre" <> metavar "TEXT"
-        <> help "Genre (RUP)"))
+        <> help "Genre (NINJA2)"))
     language <- optional (option str (long "language" <> metavar "TEXT"
-        <> help "Language (RUP)"))
+        <> help "Language (NINJA2)"))
     date <- optional (option str (long "date" <> metavar "YYYYMMDD"
-        <> help "Date (RUP)"))
+        <> help "Date (NINJA2)"))
     website <- optional (option str (long "website" <> metavar "URL"
-        <> help "Website (RUP)"))
+        <> help "Website (NINJA2)"))
     patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
         <> value PatchEncodingUTF8
-        <> help "Text encoding for RUP metadata: utf8 (default), system")
+        <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandCreate
@@ -271,41 +271,41 @@ convertParser :: Parser Command
 convertParser = do
     patchFile <- argument str (metavar "PATCH" <> help "Patch file to convert")
     targetFormat <- option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
-        <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+        <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
     outputFile <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
         <> help "Output file (default: replace input extension)"))
     conversionSource <- optional (option str (long "with" <> metavar "SOURCE"
         <> help "Source ROM (required for differential formats)"))
     raw <- rawFlag
     description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-        <> help "Patch description (DPS/PPF3/EBP/APS-N64/RUP/PCHTXT)"))
+        <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
     title <- optional (option str (long "title" <> metavar "TEXT"
-        <> help "Patch title (EBP/RUP)"))
+        <> help "Patch title (EBP/NINJA2)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
-        <> help "Patch author (EBP/DPS/RUP)"))
+        <> help "Patch author (EBP/DPS/NINJA2)"))
     includeUndo <- optional (flag' True (long "undo" <> help "Include undo data (PPF3)")
                          <|> flag' False (long "no-undo" <> help "Omit undo data (PPF3)"))
     includeValidation <- optional (flag' True (long "validate" <> help "Include validation block (PPF3)")
                                <|> flag' False (long "no-validate" <> help "Omit validation block (PPF3)"))
     noVerify <- noVerifyFlag
     version <- optional (option str (long "version" <> metavar "TEXT"
-        <> help "Patch version (DPS/RUP)"))
+        <> help "Patch version (DPS/NINJA2)"))
     unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/RUP): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
+        <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
         <> help "Image type (PPF3): bin, gi"))
     genre <- optional (option str (long "genre" <> metavar "TEXT"
-        <> help "Genre (RUP)"))
+        <> help "Genre (NINJA2)"))
     language <- optional (option str (long "language" <> metavar "TEXT"
-        <> help "Language (RUP)"))
+        <> help "Language (NINJA2)"))
     date <- optional (option str (long "date" <> metavar "YYYYMMDD"
-        <> help "Date (RUP)"))
+        <> help "Date (NINJA2)"))
     website <- optional (option str (long "website" <> metavar "URL"
-        <> help "Website (RUP)"))
+        <> help "Website (NINJA2)"))
     patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
         <> value PatchEncodingUTF8
-        <> help "Text encoding for RUP metadata: utf8 (default), system")
+        <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
     metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
         <> help "Metadata file to embed (BPS)"))
     pure CommandConvert
@@ -344,15 +344,14 @@ parseCreateFormat formatString = case map toLower formatString of
   "pmsr"    -> Right (CreateDirect CreatePMSR)
   "ninja1"  -> Right (CreateDirect CreateNINJA1)
   "dps"     -> Right (CreateDiff CreateDPS)
-  "rup"     -> Right (CreateDiff CreateRUP)
-  "ninja2"  -> Right (CreateDiff CreateRUP)
+  "ninja2"  -> Right (CreateDiff CreateNINJA2)
   "aps-n64" -> Right (CreateDirect CreateAPSN64)
   "apsn64"  -> Right (CreateDirect CreateAPSN64)
   "aps-gba" -> Right (CreateDiff CreateAPSGBA)
   "apsgba"  -> Right (CreateDiff CreateAPSGBA)
   "gdiff"   -> Right (CreateDiff CreateGDIFF)
   "pchtxt"  -> Right (CreateDirect CreatePCHTXT)
-  _ -> Left ("unknown format: " ++ formatString ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, dps, rup, aps-n64, aps-gba, gdiff, pchtxt")
+  _ -> Left ("unknown format: " ++ formatString ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
 
 parsePatchEncoding :: String -> Either String PatchEncoding
 parsePatchEncoding encodingString = case map toLower encodingString of

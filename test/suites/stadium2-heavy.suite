@@ -13,6 +13,6 @@ PPF3     | test/data/stadium2/heavy-diff/patch.ppf        | synthetic | MakePPF3
 VCDIFF   | test/data/stadium2/heavy-diff/patch.vcdiff     | synthetic | xdelta3 -S none
 bsdiff   | test/data/stadium2/heavy-diff/patch.bsdiff     | synthetic | bsdiff
 APS-N64  | test/data/stadium2/heavy-diff/patch.aps    | synthetic | RomPatcher.js (type=1, cart P3E)
-RUP      | test/data/stadium2/heavy-diff/patch.rup    | synthetic | RomPatcher.js
+NINJA2   | test/data/stadium2/heavy-diff/patch.rup    | synthetic | RomPatcher.js
 xdelta1  | test/data/stadium2/heavy-diff/patch.xdelta1    | synthetic | xdelta 1.1.4
 GDIFF    | test/data/stadium2/heavy-diff/patch.gdiff      | synthetic | javaxdelta

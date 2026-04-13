@@ -35,7 +35,7 @@ allCreateFormats =
   , ("PMSR",    CreateDirect CreatePMSR)
   , ("NINJA1",  CreateDirect CreateNINJA1)
   , ("DPS",     CreateDiff CreateDPS)
-  , ("RUP",     CreateDiff CreateRUP)
+  , ("NINJA2",  CreateDiff CreateNINJA2)
   , ("APS-N64", CreateDirect CreateAPSN64)
   , ("APS-GBA", CreateDiff CreateAPSGBA)
   , ("GDIFF",   CreateDiff CreateGDIFF)

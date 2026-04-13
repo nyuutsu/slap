@@ -108,22 +108,22 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
         expectOkWithWarning slap ["apply", ups, wrong, "-o", out, "--no-verify"]
           "wrong-source/UPS --no-verify" "applied"
 
-  -- RUP: CRC32 source verification
-  , testCase "wrong-source/RUP rejects" $
+  -- NINJA2: MD5 source verification
+  , testCase "wrong-source/NINJA2 rejects" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
         expectFail slap ["apply", rup, wrong, "-o", out]
-          "wrong-source/RUP" "mismatch"
+          "wrong-source/NINJA2" "mismatch"
 
-  , testCase "wrong-source/RUP --no-verify proceeds" $
+  , testCase "wrong-source/NINJA2 --no-verify proceeds" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
         expectOkWithWarning slap ["apply", rup, wrong, "-o", out, "--no-verify"]
-          "wrong-source/RUP --no-verify" "applied"
+          "wrong-source/NINJA2 --no-verify" "applied"
 
   -- xdelta1: CRC32 source verification
   , testCase "wrong-source/xdelta1 rejects" $

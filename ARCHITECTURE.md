@@ -150,7 +150,7 @@ Three type design choices shape everything else:
 | BPS     | Differential   | Yes |
 | UPS     | Differential   | Yes |
 | DPS     | Differential   | Yes |
-| RUP     | Differential   | Yes (NINJA2) |
+| NINJA2  | Differential   | Yes |
 | APSGBA  | Differential   | Yes |
 | GDIFF   | Differential   | Yes |
 | VCDIFF  | Differential   | No |

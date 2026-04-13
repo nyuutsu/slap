@@ -17,7 +17,7 @@ data FormatLabel
   | LabelBSDiff
   | LabelAPSN64
   | LabelAPSGBA
-  | LabelRUP
+  | LabelNINJA2
   | LabelNINJA1
   | LabelGDIFF
   | LabelXDelta1
@@ -40,7 +40,7 @@ formatLabelName LabelVCDIFF  = "VCDIFF"
 formatLabelName LabelBSDiff  = "BSDiff"
 formatLabelName LabelAPSN64  = "APS-N64"
 formatLabelName LabelAPSGBA  = "APS-GBA"
-formatLabelName LabelRUP     = "RUP"
+formatLabelName LabelNINJA2  = "NINJA2"
 formatLabelName LabelNINJA1  = "NINJA1"
 formatLabelName LabelGDIFF   = "GDIFF"
 formatLabelName LabelXDelta1 = "xdelta1"

@@ -47,10 +47,10 @@ import qualified Slap.APSGBA.Types as APSGBA
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Describe as APSGBA
-import qualified Slap.RUP.Types as RUP
-import qualified Slap.RUP.Parse as RUP
-import qualified Slap.RUP.Apply as RUP
-import qualified Slap.RUP.Describe as RUP
+import qualified Slap.NINJA2.Types as NINJA2
+import qualified Slap.NINJA2.Parse as NINJA2
+import qualified Slap.NINJA2.Apply as NINJA2
+import qualified Slap.NINJA2.Describe as NINJA2
 import qualified Slap.BSDiff.Types as BSDiff
 import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.BSDiff.Apply as BSDiff
@@ -481,40 +481,40 @@ parseSome patchContents = case detectFormat patchContents of
 
   Just (PatchDiff FormatAPSGBA) -> parseAPSGBABlock patchContents
 
-  Just (PatchDiff FormatRUP) -> do
-    patch <- RUP.parseRUP patchContents
+  Just (PatchDiff FormatNINJA2) -> do
+    patch <- NINJA2.parseNINJA2 patchContents
     let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
         filterZeroMD5 other = fmap MD5Hash other
-        (platformType, platformWarnings) = ninja2ToPlatform (RUP.rupRomType patch)
+        (platformType, platformWarnings) = ninja2ToPlatform (NINJA2.ninja2RomType patch)
     Right SomePatch
-      { patchFormat         = LabelRUP
-      , patchExplain        = RUP.explainRUP patch
+      { patchFormat         = LabelNINJA2
+      , patchExplain        = NINJA2.explainNINJA2 patch
       , patchIsDifferential = True
       , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (Right (RUP.applyRUPMemory patch source)) }
+            { inMemoryApply = \source -> pure (Right (NINJA2.applyNINJA2Memory patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-          { verifySourceMD5 = filterZeroMD5 (RUP.rupSourceMD5 patch)
-          , verifyTargetMD5 = filterZeroMD5 (RUP.rupTargetMD5 patch)
+          { verifySourceMD5 = filterZeroMD5 (NINJA2.ninja2SourceMD5 patch)
+          , verifyTargetMD5 = filterZeroMD5 (NINJA2.ninja2TargetMD5 patch)
           }
-      , patchWarnings       = [EmptyPatch LabelRUP "records" | null (RUP.rupRecords patch)]
+      , patchWarnings       = [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
                                ++ platformWarnings
-      , patchRecordSummary  = RecordSummary (length (RUP.rupRecords patch)) "records"
+      , patchRecordSummary  = RecordSummary (length (NINJA2.ninja2Records patch)) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let decode = RUP.decodeRUPField (RUP.rupPatchEncoding patch)
+      , patchExtractedMeta  = let decode = NINJA2.decodeNINJA2Field (NINJA2.ninja2PatchEncoding patch)
                                   nonEmptyField fieldBytes = let decoded = decode fieldBytes
                                                               in if null decoded then Nothing else Just decoded
-                                  info = RUP.rupHeader patch
+                                  info = NINJA2.ninja2Header patch
                               in defaultMeta
-                                { metaTitle       = RUP.rupTitle info >>= nonEmptyField
-                                , metaAuthor      = RUP.rupAuthor info >>= nonEmptyField
-                                , metaVersion     = RUP.rupVersion info >>= nonEmptyField
-                                , metaGenre       = RUP.rupGenre info >>= nonEmptyField
-                                , metaLanguage    = RUP.rupLanguage info >>= nonEmptyField
-                                , metaDate        = RUP.rupDate info >>= nonEmptyField
-                                , metaWebsite     = RUP.rupWebsite info >>= nonEmptyField
-                                , metaDescription = RUP.rupDescription info >>= nonEmptyField
+                                { metaTitle       = NINJA2.ninja2Title info >>= nonEmptyField
+                                , metaAuthor      = NINJA2.ninja2Author info >>= nonEmptyField
+                                , metaVersion     = NINJA2.ninja2Version info >>= nonEmptyField
+                                , metaGenre       = NINJA2.ninja2Genre info >>= nonEmptyField
+                                , metaLanguage    = NINJA2.ninja2Language info >>= nonEmptyField
+                                , metaDate        = NINJA2.ninja2Date info >>= nonEmptyField
+                                , metaWebsite     = NINJA2.ninja2Website info >>= nonEmptyField
+                                , metaDescription = NINJA2.ninja2Description info >>= nonEmptyField
                                 , metaRomType     = Just platformType
                                 }
       , patchContents  = Nothing

@@ -15,7 +15,7 @@ PPF1     | test/data/dm4y/patch.ppf1  | converted | RomPatcher.js
 PPF2     | test/data/dm4y/patch.ppf2  | converted | RomPatcher.js
 EBP      | test/data/dm4y/patch.ebp       | converted | RomPatcher.js
 APS-N64  | test/data/dm4y/patch.aps       | converted | RomPatcher.js
-RUP      | test/data/dm4y/patch.rup       | converted | RomPatcher.js
+NINJA2   | test/data/dm4y/patch.rup       | converted | RomPatcher.js
 VCDIFF   | test/data/dm4y/patch.vcdiff    | converted | xdelta3 -S none
 bsdiff   | test/data/dm4y/patch.bsdiff    | converted | bsdiff
 xdelta1  | test/data/dm4y/patch.xdelta1   | converted | xdelta 1.1.4

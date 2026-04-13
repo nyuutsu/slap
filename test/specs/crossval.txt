@@ -33,7 +33,7 @@ ups    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heav
 ups    | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 1155bbd39201617638aab3f3b1087d3a11413b08 | flips
 #
 # ============================================================================
-# RomPatcher.js (EBP, PPF3, APS-N64, APS-GBA, RUP, PMSR)
+# RomPatcher.js (EBP, PPF3, APS-N64, APS-GBA, NINJA2, PMSR)
 # ============================================================================
 #
 # --- EBP (emerald, ≤16 MB offsets) ---
@@ -48,8 +48,8 @@ apsn64 | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heav
 # --- APS-GBA (apsgba alias) ---
 apsgba | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | rompatcher
 #
-# --- RUP / NINJA2 ---
-rup    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | rompatcher
+# --- NINJA2 ---
+ninja2 | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | rompatcher
 #
 # --- PMSR (paper-mario, hardcoded ROM validation in RPJS) ---
 pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mario/pmmq-jr.mod        | 50e583fca0d58173a6b3dbd7ae9aa0783e281ff2 | rompatcher

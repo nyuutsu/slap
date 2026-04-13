@@ -86,11 +86,11 @@ library slap-internal
     , Slap.PMSR.Describe
     , Slap.PMSR.Parse
     , Slap.PMSR.Types
-    , Slap.RUP.Apply
-    , Slap.RUP.Create
-    , Slap.RUP.Describe
-    , Slap.RUP.Parse
-    , Slap.RUP.Types
+    , Slap.NINJA2.Apply
+    , Slap.NINJA2.Create
+    , Slap.NINJA2.Describe
+    , Slap.NINJA2.Parse
+    , Slap.NINJA2.Types
     , Slap.SomePatch
     , Slap.TextEncoding
     , Slap.Types

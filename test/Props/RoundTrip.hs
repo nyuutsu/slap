@@ -4,7 +4,7 @@
 -- > applyFmt (parseFmt (createFmt src tgt)) src == tgt
 --
 -- Plus a handful of format-specific round-trip-adjacent properties
--- (hash preservation for NINJA1/RUP, patch size bounds for BPS, etc.)
+-- (hash preservation for NINJA1/NINJA2, patch size bounds for BPS, etc.)
 -- that are naturally expressed as extensions of the basic round-trip.
 module Props.RoundTrip (roundTripTests) where
 
@@ -28,10 +28,10 @@ import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Apply as DPS
 import qualified Slap.DPS.Create as DPS
-import qualified Slap.RUP.Types as RUP
-import qualified Slap.RUP.Parse as RUP
-import qualified Slap.RUP.Apply as RUP
-import qualified Slap.RUP.Create as RUP
+import qualified Slap.NINJA2.Types as NINJA2
+import qualified Slap.NINJA2.Parse as NINJA2
+import qualified Slap.NINJA2.Apply as NINJA2
+import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
@@ -99,9 +99,9 @@ roundTripTests = testGroup "RoundTrip"
   , testGroup "DPS"
       [ testProperty "round-trip" prop_dps
       ]
-  , testGroup "RUP"
-      [ testProperty "round-trip" prop_rup
-      , testProperty "hashes" prop_rupHashes
+  , testGroup "NINJA2"
+      [ testProperty "round-trip" prop_ninja2
+      , testProperty "hashes" prop_ninja2Hashes
       ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -302,23 +302,23 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === TargetFileContents target
 
-prop_rup :: Property
-prop_rup = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP (SourceFileContents source) (TargetFileContents target) emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8
-  in case RUP.parseRUP patch of
+prop_ninja2 :: Property
+prop_ninja2 = forAll genPair $ \(source, target) ->
+  let patch = NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8
+  in case NINJA2.parseNINJA2 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> ioProperty $ do
-         result <- applyViaFile RUP.applyRUP parsed source
+         result <- applyViaFile NINJA2.applyNINJA2 parsed source
          pure $ result === target
 
-prop_rupHashes :: Property
-prop_rupHashes = forAll genPair $ \(source, target) ->
-  let patch = RUP.createRUP (SourceFileContents source) (TargetFileContents target) emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8
-  in case RUP.parseRUP patch of
+prop_ninja2Hashes :: Property
+prop_ninja2Hashes = forAll genPair $ \(source, target) ->
+  let patch = NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8
+  in case NINJA2.parseNINJA2 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed ->
-         RUP.rupSourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
-         RUP.rupTargetMD5 parsed === Just (unMD5Hash (md5 target))
+         NINJA2.ninja2SourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
+         NINJA2.ninja2TargetMD5 parsed === Just (unMD5Hash (md5 target))
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property

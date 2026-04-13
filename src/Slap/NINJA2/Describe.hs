@@ -1,0 +1,89 @@
+module Slap.NINJA2.Describe
+  ( ninja2Info
+  , ninja2Meta
+  , explainNINJA2
+  , makeNINJA2Region
+  ) where
+
+import Slap.NINJA2.Types
+import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.Measure (Length(..), FileSize(..))
+import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
+                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+                     Annotation(..), OffsetKind(..))
+
+import qualified Data.ByteString as ByteString
+
+----------------------------------------------------------------------------
+-- Info
+----------------------------------------------------------------------------
+
+ninja2Meta :: NINJA2Patch -> [MetaField]
+ninja2Meta patch = concat
+  [ optionalField "title"       (ninja2Title (ninja2Header patch))
+  , optionalField "author"      (ninja2Author (ninja2Header patch))
+  , optionalField "version"     (ninja2Version (ninja2Header patch))
+  , optionalField "date"        (ninja2Date (ninja2Header patch))
+  , optionalField "genre"       (ninja2Genre (ninja2Header patch))
+  , optionalField "language"    (ninja2Language (ninja2Header patch))
+  , optionalField "website"     (ninja2Website (ninja2Header patch))
+  , optionalField "description" (ninja2Description (ninja2Header patch))
+  , romTypeField
+  , sizeFields
+  , md5Field "source MD5" (ninja2SourceMD5 patch)
+  , md5Field "target MD5" (ninja2TargetMD5 patch)
+  , overflowField
+  ]
+  where
+    encoding = ninja2PatchEncoding patch
+    optionalField _ Nothing = []
+    optionalField label (Just value) = [MetaField label (decodeNINJA2Field encoding value)]
+
+    romTypeField = case ninja2RomType patch of
+      Ninja2Raw -> []
+      romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
+
+    sizeFields
+      | unFileSize (ninja2SourceSize patch) == 0 && unFileSize (ninja2TargetSize patch) == 0 = []
+      | otherwise = [ MetaField "source size" (show (unFileSize (ninja2SourceSize patch)))
+                     , MetaField "target size" (show (unFileSize (ninja2TargetSize patch))) ]
+
+    md5Field _ Nothing = []
+    md5Field label (Just hash) =
+      [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+
+    overflowField = case (ninja2OverflowType patch, ninja2Overflow patch) of
+      (Just OverflowAppend,   Just payload) -> [MetaField "overflow" ("append " ++ show (ByteString.length payload) ++ " bytes")]
+      (Just OverflowTruncate, Just payload) -> [MetaField "overflow" ("truncate " ++ show (ByteString.length payload) ++ " bytes")]
+      (_, Just payload)                     -> [MetaField "overflow" (show (ByteString.length payload) ++ " bytes")]
+      _                                     -> []
+
+ninja2Info :: NINJA2Patch -> String
+ninja2Info patch = unlines $ filter (not . null) $
+  [ "format:      NINJA2" ]
+  ++ map renderField (ninja2Meta patch)
+  ++ [ "records:     " ++ show (length (ninja2Records patch)) ]
+
+----------------------------------------------------------------------------
+-- Explain
+----------------------------------------------------------------------------
+
+explainNINJA2 :: NINJA2Patch -> ExplainData
+explainNINJA2 patch = ExplainData
+  { explainFormat   = "NINJA2"
+  , explainHeader   = ninja2Meta patch
+  , explainSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch))]
+  , explainSummary  = Summary (SummaryInfo recordCount "records" Nothing)
+  , explainNotes    = []
+  }
+  where
+    recordCount = length (ninja2Records patch)
+
+makeNINJA2Region :: NINJA2Record -> ExplainRegion
+makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = ExplainRegion
+  { regionOffset     = recordOffset
+  , regionSize       = Length (ByteString.length deltaBytes)
+  , regionLabel      = "XOR  "
+  , regionPayload    = PayloadXOR (Just deltaBytes)
+  , regionAnnotation = AnnotAt AtOffset recordOffset []
+  }

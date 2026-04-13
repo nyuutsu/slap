@@ -1,9 +1,9 @@
 {-# LANGUAGE StrictData #-}
 
-module Slap.RUP.Types
-  ( RUPPatch(..)
-  , RUPRecord(..)
-  , RUPInfo(..)
+module Slap.NINJA2.Types
+  ( NINJA2Patch(..)
+  , NINJA2Record(..)
+  , NINJA2Info(..)
   , XorRecord(..)
   , OverflowMode(..)
   , toOverflowMode
@@ -16,22 +16,22 @@ module Slap.RUP.Types
   , toNINJA2RomType
   , fromNINJA2RomType
   , ninja2RomTypeName
-  , encodeRUPString
-  , decodeRUPField
+  , encodeNINJA2String
+  , decodeNINJA2Field
   , parsePackedInteger
   , parsePackedByteString
   , encodeVariableLengthValue
   , variableLengthValueBytes
   , headerSize
     -- * Field widths
-  , rupAuthorWidth
-  , rupVersionWidth
-  , rupTitleWidth
-  , rupGenreWidth
-  , rupLanguageWidth
-  , rupDateWidth
-  , rupWebsiteWidth
-  , rupDescriptionWidth
+  , ninja2AuthorWidth
+  , ninja2VersionWidth
+  , ninja2TitleWidth
+  , ninja2GenreWidth
+  , ninja2LanguageWidth
+  , ninja2DateWidth
+  , ninja2WebsiteWidth
+  , ninja2DescriptionWidth
   ) where
 
 -- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
@@ -156,44 +156,44 @@ ninja2RomTypeName Ninja2Lynx                   = "Lynx"
 ninja2RomTypeName (Ninja2UnknownRomType value) = "unknown (" ++ show value ++ ")"
 
 -- | Encode a String as bytes using the given patch encoding.
-encodeRUPString :: PatchEncoding -> String -> ByteString
-encodeRUPString PatchEncodingUTF8 = encodeUtf8Field
-encodeRUPString _                 = encodeLocaleField
+encodeNINJA2String :: PatchEncoding -> String -> ByteString
+encodeNINJA2String PatchEncodingUTF8 = encodeUtf8Field
+encodeNINJA2String _                 = encodeLocaleField
 
 -- | Decode a raw field ByteString to String based on the patch encoding.
 -- UTF-8 decodes leniently (invalid bytes become U+FFFD).
 -- System and unknown encodings use the system locale.
-decodeRUPField :: PatchEncoding -> ByteString -> String
-decodeRUPField PatchEncodingUTF8 = decodeUtf8Field
-decodeRUPField _                 = decodeLocaleField
+decodeNINJA2Field :: PatchEncoding -> ByteString -> String
+decodeNINJA2Field PatchEncodingUTF8 = decodeUtf8Field
+decodeNINJA2Field _                 = decodeLocaleField
 
-data RUPPatch = RUPPatch
-  { rupHeader         :: RUPInfo
-  , rupRecords        :: [RUPRecord]
-  , rupOverflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
-  , rupOverflowType   :: Maybe OverflowMode
-  , rupSourceMD5      :: Maybe ByteString  -- 16 bytes
-  , rupTargetMD5      :: Maybe ByteString  -- 16 bytes
-  , rupSourceSize     :: !FileSize
-  , rupTargetSize     :: !FileSize
-  , rupPatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
-  , rupRomType        :: NINJA2RomType     -- ROM type from OPEN_NEW_FILE command
+data NINJA2Patch = NINJA2Patch
+  { ninja2Header         :: NINJA2Info
+  , ninja2Records        :: [NINJA2Record]
+  , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
+  , ninja2OverflowType   :: Maybe OverflowMode
+  , ninja2SourceMD5      :: Maybe ByteString  -- 16 bytes
+  , ninja2TargetMD5      :: Maybe ByteString  -- 16 bytes
+  , ninja2SourceSize     :: !FileSize
+  , ninja2TargetSize     :: !FileSize
+  , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
+  , ninja2RomType        :: NINJA2RomType     -- ROM type from OPEN_NEW_FILE command
   } deriving (Show)
 
-data RUPInfo = RUPInfo
-  { rupAuthor      :: Maybe ByteString
-  , rupVersion     :: Maybe ByteString
-  , rupTitle       :: Maybe ByteString
-  , rupGenre       :: Maybe ByteString
-  , rupLanguage    :: Maybe ByteString
-  , rupDate        :: Maybe ByteString
-  , rupWebsite     :: Maybe ByteString
-  , rupDescription :: Maybe ByteString
+data NINJA2Info = NINJA2Info
+  { ninja2Author      :: Maybe ByteString
+  , ninja2Version     :: Maybe ByteString
+  , ninja2Title       :: Maybe ByteString
+  , ninja2Genre       :: Maybe ByteString
+  , ninja2Language    :: Maybe ByteString
+  , ninja2Date        :: Maybe ByteString
+  , ninja2Website     :: Maybe ByteString
+  , ninja2Description :: Maybe ByteString
   } deriving (Show)
 
-data RUPRecord = RUPRecord
-  { rupRecordOffset :: !Offset
-  , rupRecordXor    :: !ByteString
+data NINJA2Record = NINJA2Record
+  { ninja2RecordOffset :: !Offset
+  , ninja2RecordXor    :: !ByteString
   } deriving (Show)
 
 -- | An XOR record for encoding: offset + XOR'd payload.
@@ -225,16 +225,16 @@ headerSize :: Int
 headerSize = 0x800  -- NINJA2 spec: fixed 2048-byte header
 
 -- | Fixed-header field widths (bytes) per ninja2-filespec20.txt §2.
-rupAuthorWidth, rupVersionWidth, rupTitleWidth, rupGenreWidth :: Int
-rupLanguageWidth, rupDateWidth, rupWebsiteWidth, rupDescriptionWidth :: Int
-rupAuthorWidth      = 84
-rupVersionWidth     = 11
-rupTitleWidth       = 256
-rupGenreWidth       = 48
-rupLanguageWidth    = 48
-rupDateWidth        = 8
-rupWebsiteWidth     = 512
-rupDescriptionWidth = 1074
+ninja2AuthorWidth, ninja2VersionWidth, ninja2TitleWidth, ninja2GenreWidth :: Int
+ninja2LanguageWidth, ninja2DateWidth, ninja2WebsiteWidth, ninja2DescriptionWidth :: Int
+ninja2AuthorWidth      = 84
+ninja2VersionWidth     = 11
+ninja2TitleWidth       = 256
+ninja2GenreWidth       = 48
+ninja2LanguageWidth    = 48
+ninja2DateWidth        = 8
+ninja2WebsiteWidth     = 512
+ninja2DescriptionWidth = 1074
 
 -- | VLV: 1-byte length prefix, then N bytes little-endian.
 encodeVariableLengthValue :: Int64 -> Builder

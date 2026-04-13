@@ -15,7 +15,7 @@ data DirectFormat
 -- | Differential patch format: encodes instructions that transform
 -- source bytes into target bytes.  The source file is required.
 data DiffFormat
-  = FormatBPS | FormatUPS | FormatVCDIFF | FormatAPSGBA | FormatRUP
+  = FormatBPS | FormatUPS | FormatVCDIFF | FormatAPSGBA | FormatNINJA2
   | FormatBSDiff | FormatGDIFF | FormatXDelta1 | FormatDPS
   deriving (Show, Eq, Enum, Bounded)
 

@@ -17,9 +17,9 @@ import qualified Slap.NINJA1.Parse as NINJA1
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Create as DPS
-import qualified Slap.RUP.Parse as RUP
-import qualified Slap.RUP.Create as RUP
-import qualified Slap.RUP.Types as RUP
+import qualified Slap.NINJA2.Parse as NINJA2
+import qualified Slap.NINJA2.Create as NINJA2
+import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Create as APSGBA
@@ -52,7 +52,7 @@ truncationTests = testGroup "Truncation"
   , testProperty "PMSR"    prop_pmsrTrunc
   , testProperty "NINJA1"  prop_ninja1Trunc
   , testProperty "DPS"     prop_dpsTrunc
-  , testProperty "RUP"     prop_rupTrunc
+  , testProperty "NINJA2"  prop_ninja2Trunc
   , testProperty "APS-N64" prop_apsN64Trunc
   , testProperty "APS-GBA" prop_apsGbaTrunc
   , testProperty "GDIFF"   prop_gdiffTrunc
@@ -112,9 +112,9 @@ prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
   truncated DPS.parseDPS (resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target) "" "" "" DPS.DPSStable))
 
-prop_rupTrunc :: Property
-prop_rupTrunc = forAll genPair $ \(source, target) ->
-  truncated RUP.parseRUP (RUP.createRUP (SourceFileContents source) (TargetFileContents target) emptyRupInfo RUP.Ninja2Raw RUP.PatchEncodingUTF8)
+prop_ninja2Trunc :: Property
+prop_ninja2Trunc = forAll genPair $ \(source, target) ->
+  truncated NINJA2.parseNINJA2 (NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8)
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->

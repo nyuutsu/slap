@@ -6,7 +6,7 @@
 
 On conversion: if a conversion would lose data, it tells you what's being left behind. If it can't do what you're asking, it says so and in most cases explains what is missing and how to provide it so as to make the operation succeed.
 
-`slap` understands[^UNDERSTANDS]: `IPS`, `IPS32`, `EBP`, `BPS`, `UPS`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `VCDIFF` (qua RFC 3284), `xdelta3`[^XDELTA3]), `BSDiff`, `GDIFF`, `xdelta1`[^XDELTA1], `APS-N64`[^APS], `APS-GBA`[^APS], `RUP`/`ninja2`[^RUP], `NINJA1`[^RUP], `PMSR`, `PCHTXT`, and `DPS`.
+`slap` understands[^UNDERSTANDS]: `IPS`, `IPS32`, `EBP`, `BPS`, `UPS`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `VCDIFF` (qua RFC 3284), `xdelta3`[^XDELTA3]), `BSDiff`, `GDIFF`, `xdelta1`[^XDELTA1], `APS-N64`[^APS], `APS-GBA`[^APS], `NINJA2`[^NINJA], `NINJA1`[^NINJA], `PMSR`, `PCHTXT`, and `DPS`.
 
 If your patch is tucked inside a `zip`, `rar`, or `7z` archive (📦), `slap` will attempt to find and retrieve it.
 
@@ -63,7 +63,7 @@ slap create --format ips original.gba modified.gba patch.ips
 
 Without `--format`, slap makes a `BPS` patch.
 
-`--format`: Specify the patch format to be any of: `bps`, `ips`, `ips32`, `ebp`, `ups`, `ppf3`, `pmsr`, `ninja1`, `dps`, `rup`, `aps-n64`, `aps-gba`, `gdiff`, `pchtxt`.
+`--format`: Specify the patch format to be any of: `bps`, `ips`, `ips32`, `ebp`, `ups`, `ppf3`, `pmsr`, `ninja1`, `ninja2`, `dps`, `aps-n64`, `aps-gba`, `gdiff`, `pchtxt`.
 
 `--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!!!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. You could, and shouldn't, use this to produce diffs of zip files.
 
@@ -71,25 +71,25 @@ Without `--format`, slap makes a `BPS` patch.
 
 Some formats have room for text fields. I *think* the right way to explain this is to list the flags at the top level and for each list the formats that store it.
 
-`--description` or `-d`: `EBP`, `PPF3`, `DPS`, `APS-N64`, `RUP`, `PCHTXT`
+`--description` or `-d`: `EBP`, `PPF3`, `DPS`, `APS-N64`, `NINJA2`, `PCHTXT`
 
-`--title`: `EBP`, `RUP`
+`--title`: `EBP`, `NINJA2`
 
-`--author`: `EBP`, `DPS`, `RUP`
+`--author`: `EBP`, `DPS`, `NINJA2`
 
-`--version`: `DPS`, `RUP`
+`--version`: `DPS`, `NINJA2`
 
-`--genre`: `RUP`
+`--genre`: `NINJA2`
  
-`--language`: `RUP`
+`--language`: `NINJA2`
  
-`--date`: `RUP`
+`--date`: `NINJA2`
 
 The format is YYYYMMDD
 
-`--website`: `RUP`
+`--website`: `NINJA2`
 
-`--patch-encoding`: `RUP`:
+`--patch-encoding`: `NINJA2`:
 
 The supported values are `utf8` and `system`. If left unspecified, `slap` goes with `utf8`. `system` means "'use' the locale/codepage of "the computer"[^CODEPAGE].
 
@@ -103,7 +103,7 @@ The supported values are `utf8` and `system`. If left unspecified, `slap` goes w
 
 You could express non-playstation patches in this format. If you do, it is sort of pointless to bother with setting `--validate`, since doing so is either implicitly or explicitly answering `--image-type`, and the format only allows that `gi` or `bin`, and either of these answers is a declaration of "this is the kind of playstation media representation I am".
 
-### NINJA1 and RUP/NINJA2
+### NINJA1 and NINJA2
 
 `--rom-type`: Tag the patch, with the platform its rom is from, and thus what preprocessing options to expose. There are 18 kinds of rom: `raw`, `nes`, `snes`, `n64`, `gb`, `gbc`, `gba`, `ngp`, `ngpc`, `sms`, `gg`, `mega`, `pce`, `ws`, `wsc`, `lynx`, `jag`, `gp32`. `raw` means "no preprocessing", so, if unspecified, `slap` tags the patch as `raw`.
 
@@ -208,7 +208,7 @@ make test
 
 [^APS]: The formats I'm calling "`APS-N64`" and "`APS-GBA`" are entirely unrelated, and only coincidentally share a name. In common practice people usually say "APS" without qualifiers, and do so to refer to the "GBA" format. The N64 one is comparatively obscure.
 
-[^RUP]: There are two formats: `ninja1` and `ninja2`. Both might use the extension `rup`. Your patch *probably* is not `ninja1`. I will probably change `rup`'s in-program name to `ninja2`.
+[^NINJA]: There are two formats: `ninja1` and `ninja2`. Both use the file extension `.rup`. Your patch *probably* is not `ninja1`.
 
 [^ONION]: Fun fact: in the USA, onions come with a *restrictive license*: it  is [illegal to trade onion futures](https://en.wikipedia.org/wiki/Onion_Futures_Act). In contrast, you're allowed to do almost anything with, or, to `slap`.
 

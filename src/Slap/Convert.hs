@@ -31,9 +31,9 @@ import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
-import Slap.RUP.Types (PatchEncoding(..), NINJA2RomType(..))
-import qualified Slap.RUP.Types as RUP
-import qualified Slap.RUP.Create as RUP
+import Slap.NINJA2.Types (PatchEncoding(..), NINJA2RomType(..))
+import qualified Slap.NINJA2.Types as NINJA2
+import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
@@ -94,7 +94,7 @@ data PatchContents = PatchContents
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   , contentsPatchEncoding :: Maybe PatchEncoding
     -- ^ Text encoding of description/metadata fields, when the source
-    -- format carries an encoding flag (e.g. RUP PATCH_ENC).  Nothing
+    -- format carries an encoding flag (e.g. NINJA2 PATCH_ENC).  Nothing
     -- for formats with opaque byte fields (PPF, DPS, APSN64).
   }
 
@@ -110,7 +110,7 @@ data DirectCreate
 -- create (VCDIFF, BSDiff, XDelta1) belong to DiffFormat (the format
 -- taxonomy) but not here (slap's current creation capability).
 data DiffCreate
-  = CreateBPS | CreateUPS | CreateDPS | CreateRUP
+  = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
   | CreateAPSGBA | CreateGDIFF
   deriving (Show, Eq)
 
@@ -129,7 +129,7 @@ data CreateMeta = CreateMeta
   , metaValidate    :: Maybe Bool
   , metaUnstable    :: Maybe Bool
   , metaRomType     :: Maybe PlatformType
-    -- ^ Shared platform type: NINJA1 and NINJA2 (RUP) define different
+    -- ^ Shared platform type: NINJA1 and NINJA2 define different
     -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNinja1, platformToNinja2) handles lossy mappings.
@@ -279,7 +279,7 @@ encodingGapNotes :: PatchContents -> DirectCreate -> [SlapWarning]
 encodingGapNotes contents target = case contentsPatchEncoding contents of
   Just _ | isJust (contentsDescription contents)
          , target `elem` [CreatePPF3, CreateAPSN64]
-         -> [EncodingGap LabelRUP (directLabel target)]
+         -> [EncodingGap LabelNINJA2 (directLabel target)]
   _ -> []
 
 -- | Warn when EBP output has both truncation and metadata — RomPatcher.js
@@ -310,26 +310,26 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
-createDefaultNotes (CreateDiff CreateRUP) meta = snd (prepareRUP meta)
+createDefaultNotes (CreateDiff CreateNINJA2) meta = snd (prepareNINJA2 meta)
 createDefaultNotes (CreateDiff _) _ = []
 
--- | Build a RUPInfo from CreateMeta and compute its truncation warnings.
--- Single source of truth for RUPInfo construction — used by both the create
--- path (which needs the RUPInfo) and the notes path (which needs the warnings).
-prepareRUP :: CreateMeta -> (RUP.RUPInfo, [SlapWarning])
-prepareRUP meta = (rupInfo, RUP.rupTruncationNotes patchEncoding rupInfo)
+-- | Build a NINJA2Info from CreateMeta and compute its truncation warnings.
+-- Single source of truth for NINJA2Info construction — used by both the create
+-- path (which needs the NINJA2Info) and the notes path (which needs the warnings).
+prepareNINJA2 :: CreateMeta -> (NINJA2.NINJA2Info, [SlapWarning])
+prepareNINJA2 meta = (ninja2Info, NINJA2.ninja2TruncationNotes patchEncoding ninja2Info)
   where
     patchEncoding = metaPatchEncoding meta
-    encode = RUP.encodeRUPString patchEncoding
-    rupInfo = RUP.RUPInfo
-      { RUP.rupAuthor      = fmap encode (metaAuthor meta)
-      , RUP.rupVersion     = fmap encode (metaVersion meta)
-      , RUP.rupTitle       = fmap encode (metaTitle meta)
-      , RUP.rupGenre       = fmap encode (metaGenre meta)
-      , RUP.rupLanguage    = fmap encode (metaLanguage meta)
-      , RUP.rupDate        = fmap encode (metaDate meta)
-      , RUP.rupWebsite     = fmap encode (metaWebsite meta)
-      , RUP.rupDescription = fmap encode (metaDescription meta)
+    encode = NINJA2.encodeNINJA2String patchEncoding
+    ninja2Info = NINJA2.NINJA2Info
+      { NINJA2.ninja2Author      = fmap encode (metaAuthor meta)
+      , NINJA2.ninja2Version     = fmap encode (metaVersion meta)
+      , NINJA2.ninja2Title       = fmap encode (metaTitle meta)
+      , NINJA2.ninja2Genre       = fmap encode (metaGenre meta)
+      , NINJA2.ninja2Language    = fmap encode (metaLanguage meta)
+      , NINJA2.ninja2Date        = fmap encode (metaDate meta)
+      , NINJA2.ninja2Website     = fmap encode (metaWebsite meta)
+      , NINJA2.ninja2Description = fmap encode (metaDescription meta)
       }
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
@@ -560,7 +560,7 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
                        (fromMaybe "" (metaTitle meta <|> metaDescription meta))
                        (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
                        (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
-  CreateRUP    ->
+  CreateNINJA2    ->
     let -- When source patch has opaque description bytes, detect encoding
         -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
         -- If source already has known encoding, respect it.
@@ -570,9 +570,9 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
             _ -> metaPatchEncoding meta
         adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
-        (rupInfo, truncWarnings) = prepareRUP adjustedMeta
+        (ninja2Info, truncWarnings) = prepareNINJA2 adjustedMeta
         (ninja2Type, ninja2Warnings) = maybe (Ninja2Raw, []) platformToNinja2 (metaRomType adjustedMeta)
-    in Right (CreateResult (RUP.createRUP source target rupInfo ninja2Type detectedEncoding)
+    in Right (CreateResult (NINJA2.createNINJA2 source target ninja2Info ninja2Type detectedEncoding)
               (truncWarnings ++ ninja2Warnings))
   CreateAPSGBA -> Right (CreateResult (APSGBA.createAPSGBA source target) [])
   CreateGDIFF  -> Right (CreateResult (GDIFF.createGDIFF source target) [])
@@ -708,7 +708,7 @@ diffExtension :: DiffCreate -> String
 diffExtension CreateBPS    = ".bps"
 diffExtension CreateUPS    = ".ups"
 diffExtension CreateDPS    = ".dps"
-diffExtension CreateRUP    = ".rup"
+diffExtension CreateNINJA2    = ".rup"
 diffExtension CreateAPSGBA = ".aps"
 diffExtension CreateGDIFF  = ".gdiff"
 
@@ -726,7 +726,7 @@ diffName :: DiffCreate -> String
 diffName CreateBPS    = "BPS"
 diffName CreateUPS    = "UPS"
 diffName CreateDPS    = "DPS"
-diffName CreateRUP    = "RUP"
+diffName CreateNINJA2    = "NINJA2"
 diffName CreateAPSGBA = "APS (GBA)"
 diffName CreateGDIFF  = "GDIFF"
 
@@ -744,6 +744,6 @@ diffLabel :: DiffCreate -> FormatLabel
 diffLabel CreateBPS    = LabelBPS
 diffLabel CreateUPS    = LabelUPS
 diffLabel CreateDPS    = LabelDPS
-diffLabel CreateRUP    = LabelRUP
+diffLabel CreateNINJA2    = LabelNINJA2
 diffLabel CreateAPSGBA = LabelAPSGBA
 diffLabel CreateGDIFF  = LabelGDIFF

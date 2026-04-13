@@ -14,8 +14,8 @@ module Props.Helpers
     -- * IPS encoding helpers
   , splitMax
   , ipsEncodedSize
-    -- * RUP helpers
-  , emptyRupInfo
+    -- * NINJA2 helpers
+  , emptyNinja2Info
     -- * Warning helpers
   , isFieldTruncatedFor
     -- * Re-exports for convenience
@@ -23,7 +23,7 @@ module Props.Helpers
   , isRight
   ) where
 
-import qualified Slap.RUP.Types as RUP
+import qualified Slap.NINJA2.Types as NINJA2
 import Slap.Error (SlapError, SlapWarning(..))
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..))
@@ -146,11 +146,11 @@ ipsEncodedSize offWidth = sum . map recordSize
       | otherwise = offWidth + 2 + ByteString.length payload
 
 ----------------------------------------------------------------------------
--- RUP helpers
+-- NINJA2 helpers
 ----------------------------------------------------------------------------
 
-emptyRupInfo :: RUP.RUPInfo
-emptyRupInfo = RUP.RUPInfo Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+emptyNinja2Info :: NINJA2.NINJA2Info
+emptyNinja2Info = NINJA2.NINJA2Info Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
 
 ----------------------------------------------------------------------------
 -- Warning helpers
