@@ -11,12 +11,6 @@ license-file:  LICENSE
 author:        nyuu
 build-type:    Simple
 
-flag heavy-tests
-  description: Build and run the heavy integration test suite
-               (stadium2, cross-validation, failure-mode subprocesses).
-  default:     False
-  manual:      True
-
 library slap-internal
   exposed-modules:
       Slap.Archive
@@ -202,33 +196,3 @@ test-suite integration
     , mmap          >= 0.5
     , slap:slap-internal
 
-test-suite integration-full
-  type:             exitcode-stdio-1.0
-  main-is:          IntegrationFull.hs
-  hs-source-dirs:   test
-  other-modules:    Integration.Helpers
-                  , Integration.Runner
-                  , Integration.Apply
-                  , Integration.Create
-                  , Integration.CrossVal
-                  , Integration.Convert
-                  , Integration.Metadata
-                  , Integration.Undo
-                  , Integration.CLI
-                  , Integration.FailureMode
-  default-language: GHC2024
-  ghc-options:      -Wall -Werror -threaded -rtsopts "-with-rtsopts=-N"
-  if !flag(heavy-tests)
-    buildable: False
-  build-depends:
-      base          >= 4.18 && < 5
-    , bytestring    >= 0.11
-    , containers    >= 0.6
-    , directory     >= 1.3
-    , filepath      >= 1.4
-    , process       >= 1.6
-    , temporary     >= 1.3
-    , tasty         >= 1.4
-    , tasty-hunit   >= 0.10
-    , mmap          >= 0.5
-    , slap:slap-internal

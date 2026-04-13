@@ -49,7 +49,7 @@ cliTests tier = do
             , if baseExists then archiveTests slap dm4yBase dm4yIps dm4yBps else []
             , if baseExists then ipsTruncateTests slap dm4yBase else []
             , customCodetableTests slap
-            , if baseExists then ninja1VerifyTests Quick slap dm4yBase dm4yIps else []
+            , if baseExists then ninja1VerifyTests tier slap dm4yBase dm4yIps else []
             , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
             , explainModeTests slap dm4yIps
                 (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
@@ -57,7 +57,6 @@ cliTests tier = do
           heavySubprocess = concat
             [ if baseExists then forceTests slap dm4yBase dm4yUps else []
             , if baseExists then noverifyTests slap dm4yBase dm4yBps else []
-            , if baseExists then ninja1VerifyTests Full slap dm4yBase dm4yIps else []
             ]
       pure (quickSubprocess ++ onlyAtFull tier heavySubprocess)
   pure $ testGroup "cli" (inProcess ++ subprocessTests)

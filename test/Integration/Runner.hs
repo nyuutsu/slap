@@ -1,7 +1,6 @@
--- | Shared entry-point machinery for the quick and full integration tiers.
--- Each tier-specific main file picks a 'Tier' and hands off to
--- 'runIntegrationSuite'; everything downstream is identical.
-module Integration.Runner (runIntegrationSuite, topLevelGroupNames) where
+-- | Shared entry point for the integration suite. The main file passes
+-- a 'Tier' to 'runIntegrationSuite'; everything downstream is identical.
+module Integration.Runner (runIntegrationSuite) where
 
 import Test.Tasty (defaultMain, testGroup)
 import Integration.Apply (applyTests)
@@ -18,11 +17,9 @@ import Integration.Helpers
 import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, forkIO)
 import System.IO.Temp (withSystemTempDirectory)
 
--- | Bootstrap the shared targets for @tier@, then run every integration
--- test group at that tier and hand the resulting tree to tasty's
--- 'defaultMain'. The bootstrap pair set, the test groups themselves, and
--- the size of the temp directory all shrink automatically when @tier@ is
--- 'Integration.Helpers.Quick'.
+-- | Bootstrap the shared targets, then run every integration test group and
+-- hand the resulting tree to tasty's 'defaultMain'. The 'Tier' parameter is
+-- a placeholder for future re-tiering; today it is always 'AllTests'.
 runIntegrationSuite :: Tier -> IO ()
 runIntegrationSuite tier = do
   repo  <- repoDir
@@ -48,23 +45,3 @@ parSequence actions = do
     _ <- forkIO (action >>= putMVar mvar)
     pure mvar) actions
   mapM takeMVar mvars
-
--- | The canonical list of top-level test groups inside the
--- integration-full binary, in the order they're built by
--- 'runIntegrationSuite'. Adding a new top-level test group
--- requires updating this list AND the Makefile's
--- @TEST_GROUPS@ variable; the Makefile sanity-checks the
--- two stay in sync at the start of every @make test@
--- run via the @--list-groups@ flag exposed by the
--- integration-full binary's @Main@.
-topLevelGroupNames :: [String]
-topLevelGroupNames =
-  [ "apply"
-  , "create"
-  , "crossval"
-  , "convert"
-  , "metadata"
-  , "undo"
-  , "cli"
-  , "failure-mode"
-  ]

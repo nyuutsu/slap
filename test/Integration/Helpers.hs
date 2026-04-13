@@ -82,12 +82,11 @@ import System.Process (readProcessWithExitCode, readProcess)
 -- Test tier
 ----------------------------------------------------------------------------
 
--- | Which tier of the integration suite a test belongs to. 'Quick' tests
--- run on every @cabal test@ invocation: they finish fast, touch only small
--- ROMs, and never shell out to a third-party tool. 'Full' covers everything
--- — both the quick tests and the heavy ones — and is gated behind the
--- @heavy-tests@ cabal flag so it only runs when explicitly invoked.
-data Tier = Quick | Full deriving (Eq, Show)
+-- | Which tier of the integration suite to run. Currently a single-constructor
+-- placeholder: every test runs unconditionally under 'AllTests'. The type is
+-- preserved so that re-introducing a tier split later is a small, local change
+-- (add a constructor, update 'restrictToTier' and 'onlyAtFull').
+data Tier = AllTests deriving (Eq, Show)
 
 -- | True if @path@ refers to one of the heavy ROMs the integration suite
 -- knows about: stadium2 (64 MB N64) or paper-mario (40 MB N64). Used as
@@ -107,22 +106,17 @@ isHeavySuiteName suiteFileName =
   "stadium2-" `isPrefixOf` suiteFileName
   || suiteFileName == "papermario-pmmq.suite"
 
--- | Drop entries the 'Quick' tier should skip; 'Full' keeps everything.
--- The predicate names "is this entry heavy" — i.e. true for the entries
--- 'Quick' excludes — so call sites read as
--- @restrictToTier tier rowIsHeavy rows@.
+-- | Filter entries by tier. With only 'AllTests' today, this is the identity
+-- on the list — every entry is included. The signature and call sites are
+-- preserved so that re-introducing a filtering tier is a one-line change here.
 restrictToTier :: Tier -> (a -> Bool) -> [a] -> [a]
-restrictToTier Quick entryIsHeavy  items = filter (not . entryIsHeavy) items
-restrictToTier Full  _entryIsHeavy items = items
+restrictToTier AllTests _entryIsHeavy items = items
 
--- | Extras that contribute only when the tier is 'Full'. Used with
--- ordinary list concatenation, so the @(++)@ stays visible at the call
--- site and this helper just encodes the "include only if Full" gating:
---
--- > pure (quickSubprocess ++ onlyAtFull tier heavySubprocess)
+-- | Extras that contribute only at the heaviest tier. With only 'AllTests'
+-- today, this always includes everything. Call sites are preserved so that
+-- re-introducing a light tier is a one-line change here.
 onlyAtFull :: Tier -> [a] -> [a]
-onlyAtFull Quick _heavyExtras = []
-onlyAtFull Full  heavyExtras  = heavyExtras
+onlyAtFull AllTests extras = extras
 
 ----------------------------------------------------------------------------
 -- ROM access
@@ -157,9 +151,7 @@ newtype BootstrapTargets = BootstrapTargets
 
 -- | Walk the create and crossval spec files (plus the failure-mode tests'
 -- hardcoded pairs) and produce the deduplicated list of bootstrap pairs the
--- test run will need targets for. In the 'Quick' tier, pairs that touch a
--- heavy ROM (per 'isHeavyPath') are filtered out so the temp dir stays
--- small and bootstrap is fast. Pairs whose base or patch files are missing
+-- test run will need targets for. Pairs whose base or patch files are missing
 -- on disk are silently dropped — the corresponding tests already self-skip
 -- in that situation.
 collectBootstrapPairs :: Tier -> FilePath -> IO [BootstrapPair]

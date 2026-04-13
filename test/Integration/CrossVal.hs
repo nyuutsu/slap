@@ -18,14 +18,11 @@ import System.Process (readProcessWithExitCode, proc, cwd, readCreateProcessWith
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
--- | The entire crossval group depends on third-party tools (Flips,
+-- | The crossval group depends on third-party tools (Flips,
 -- RomPatcher.js, bspatch, xdelta3) and ROM bytes flowing across a
--- subprocess boundary, so it is wholesale 'Full'-only. 'Quick' returns
--- an empty group rather than an absent group, to keep the integration
--- tree shape stable across tiers.
+-- subprocess boundary.
 crossValTests :: Tier -> BootstrapTargets -> IO TestTree
-crossValTests Quick _                = pure (testGroup "crossval" [])
-crossValTests Full  bootstrapTargets = do
+crossValTests AllTests bootstrapTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
   tests <- mapM (mkCrossValTest bootstrapTargets repo) rows
