@@ -300,7 +300,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
   let patch = resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target) "" "" "" DPS.DPSStable)
   in case DPS.parseDPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === TargetFileContents target
+       Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->

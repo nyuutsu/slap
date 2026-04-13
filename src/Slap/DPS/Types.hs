@@ -21,9 +21,12 @@ module Slap.DPS.Types
   , dpsEnclosedDataMode
   , dpsRecordHeaderSize
   , dpsCopyRecordSize
+    -- * Derived sizes
+  , dpsOutputExtent
   ) where
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -116,3 +119,22 @@ dpsRecordHeaderSize = 5
 -- | Full CopyFromROM record: mode + outputOffset + sourceOffset + length (1 + 4 + 4 + 4).
 dpsCopyRecordSize :: Int
 dpsCopyRecordSize = 13
+
+----------------------------------------------------------------------------
+-- Derived sizes
+----------------------------------------------------------------------------
+
+-- | The minimum output buffer size needed to hold the result of applying
+-- a DPS record list: @max(recordOutputOffset + recordLength)@ across all
+-- records. Returns @FileSize 0@ for an empty record list — the caller
+-- decides whether that means an empty output or a parse-level warning.
+dpsOutputExtent :: [DPSRecord] -> FileSize
+dpsOutputExtent = foldl' stepMaxEnd (FileSize 0)
+  where
+    stepMaxEnd :: FileSize -> DPSRecord -> FileSize
+    stepMaxEnd currentMax (DPSCopyFromROM outputOffset _sourceOffset copyLength) =
+      let recordEnd = unOffset outputOffset + unLength copyLength
+      in FileSize (max (unFileSize currentMax) recordEnd)
+    stepMaxEnd currentMax (DPSEnclosedData outputOffset payload) =
+      let recordEnd = unOffset outputOffset + ByteString.length payload
+      in FileSize (max (unFileSize currentMax) recordEnd)

@@ -1,51 +1,92 @@
 module Slap.DPS.Apply
   ( applyDPS
-  , buildOutput
-  , overwriteAt
-  , takePadded
   ) where
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..))
-import Slap.Measure (Offset(..), Length(..))
-
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
+import Slap.Binary (copyRegion)
+import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     ActionIndex(..),
+                     RequestedLength(..), RemainingLength(..),
+                     fitsWithin, remainingFromOffset,
+                     byteLength,
+                     firstAction, nextAction)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.ByteString.Internal (create)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Word (Word8)
+import Foreign.Ptr (Ptr)
+import System.IO.Unsafe (unsafePerformIO)
 
--- | Apply a DPS patch. Builds output from source ROM + embedded data.
-applyDPS :: DPSPatch -> SourceFileContents -> TargetFileContents
-applyDPS patch (SourceFileContents source) = TargetFileContents $ buildOutput source (dpsRecords patch)
+----------------------------------------------------------------------------
+-- applyDPS
+----------------------------------------------------------------------------
 
-buildOutput :: ByteString -> [DPSRecord] -> ByteString
-buildOutput source records =
-  -- DPS builds output by writing chunks at specified offsets.
-  -- Start with a copy of the source, then overwrite at each record's offset.
-  let base = source
-      applyRecord buffer (DPSEnclosedData outputOffset payload) =
-        overwriteAt buffer (unOffset outputOffset) payload
-      applyRecord buffer (DPSCopyFromROM outputOffset sourceOffset copyLength) =
-        let chunk = takePadded (unLength copyLength) (unOffset sourceOffset) source
-        in overwriteAt buffer (unOffset outputOffset) chunk
-  in foldl' applyRecord base records
+-- | Apply a parsed DPS patch to a source ByteString. The output buffer
+-- is zero-filled and sized to the furthest record write extent — bytes
+-- not named by any record are zero, matching the reference
+-- implementation (dpspatcher.exe). Returns 'Left' with a structured
+-- error if a CopyFromROM record references bytes past the end of the
+-- source or if a record's write region exceeds the computed output
+-- extent.
+applyDPS :: DPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyDPS patch (SourceFileContents source)
+  | unFileSize outputSize < 0 =
+      Left (NegativeTargetSize LabelDPS outputSize)
+  | unFileSize outputSize == 0 =
+      Right (TargetFileContents ByteString.empty)
+  | otherwise = unsafePerformIO $ do
+      errorRef <- newIORef Nothing
+      result <- create (unFileSize outputSize) $ \outputPointer ->
+        runApply outputPointer errorRef
+      errorState <- readIORef errorRef
+      pure $ case errorState of
+        Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
+        Nothing       -> Right (TargetFileContents result)
+  where
+    records    = dpsRecords patch
+    sourceSize = FileSize (ByteString.length source)
+    outputSize = dpsOutputExtent records
 
--- | Write bytes at a given offset, extending with zeros if needed.
-overwriteAt :: ByteString -> Int -> ByteString -> ByteString
-overwriteAt buffer offset payload
-  | offset + ByteString.length payload <= ByteString.length buffer =
-      let (before, rest) = ByteString.splitAt offset buffer
-          after = ByteString.drop (ByteString.length payload) rest
-      in before <> payload <> after
-  | offset <= ByteString.length buffer =
-      ByteString.take offset buffer <> payload
-  | otherwise =
-      buffer <> ByteString.replicate (offset - ByteString.length buffer) 0 <> payload
+    runApply :: Ptr Word8 -> IORef (Maybe ApplyError) -> IO ()
+    runApply outputPointer errorRef =
+      let
+        abort :: ApplyError -> IO ()
+        abort applyErr = writeIORef errorRef (Just applyErr)
 
--- | Safe slice from a ByteString, padding with zeros if out of range.
-takePadded :: Int -> Int -> ByteString -> ByteString
-takePadded dataLength offset input
-  | offset >= ByteString.length input = ByteString.replicate dataLength 0
-  | offset + dataLength > ByteString.length input =
-      let available = ByteString.take (ByteString.length input - offset) (ByteString.drop offset input)
-      in available <> ByteString.replicate (dataLength - ByteString.length available) 0
-  | otherwise = ByteString.take dataLength (ByteString.drop offset input)
+        applyRecordStream :: ActionIndex -> [DPSRecord] -> IO ()
+        applyRecordStream !_recordIndex [] = pure ()
+        applyRecordStream !recordIndex (record : remaining) =
+          handleRecord recordIndex record remaining
+
+        handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO ()
+
+        handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remaining =
+          let readEnd        = Offset (unOffset sourceOffset + unLength copyLength)
+              writeLength    = copyLength
+              remainingSpace = remainingFromOffset outputOffset outputSize
+          in if not (fitsWithin sourceOffset copyLength sourceSize)
+               then abort (ApplySourceReadOutOfBounds recordIndex readEnd sourceSize)
+               else if not (fitsWithin outputOffset writeLength outputSize)
+               then abort (ApplyWritesPastTarget recordIndex
+                            (RequestedLength writeLength)
+                            (RemainingLength remainingSpace))
+               else do
+                 copyRegion outputPointer outputOffset source sourceOffset copyLength
+                 applyRecordStream (nextAction recordIndex) remaining
+
+        handleRecord recordIndex (DPSEnclosedData outputOffset payload) remaining =
+          let writeLength    = byteLength payload
+              remainingSpace = remainingFromOffset outputOffset outputSize
+          in if not (fitsWithin outputOffset writeLength outputSize)
+               then abort (ApplyWritesPastTarget recordIndex
+                            (RequestedLength writeLength)
+                            (RemainingLength remainingSpace))
+               else do
+                 copyRegion outputPointer outputOffset payload (Offset 0) writeLength
+                 applyRecordStream (nextAction recordIndex) remaining
+
+      in applyRecordStream firstAction records

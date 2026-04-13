@@ -48,9 +48,16 @@ createDPS (SourceFileContents original) (TargetFileContents modified) name autho
       in (boundedField result, warnings)
 
 dpsRecordsFromDiff :: ByteString -> ByteString -> [DPSRecord]
+dpsRecordsFromDiff _original modified | ByteString.null modified = []
 dpsRecordsFromDiff original modified = buildRecords 0 (diffHunks original modified)
   where
-    buildRecords _ [] = []
+    modifiedLength = ByteString.length modified
+    trailingCopy position
+      | position < modifiedLength =
+          [DPSCopyFromROM (Offset position)
+             (Offset position) (Length (modifiedLength - position))]
+      | otherwise = []
+    buildRecords position [] = trailingCopy position
     buildRecords position (Hunk rawOffset rawData : rest) =
       let intOffset = unOffset rawOffset
       in if intOffset > position

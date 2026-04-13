@@ -15,13 +15,14 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
-                     RequiredLength(..), ActualLength(..))
+                     RequiredLength(..), ActualLength(..),
+                     RawFlagByte(..))
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -79,10 +80,11 @@ parseDPS (PatchFileContents input)
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
   | otherwise = case runGet parseDPSBody input of
-      Left errorMessage -> Left (ParseError LabelDPS errorMessage)
-      Right patch -> Right patch
+      Left errorMessage        -> Left (ParseError LabelDPS errorMessage)
+      Right (Left slapError)   -> Left slapError
+      Right (Right patch)      -> Right patch
 
-parseDPSBody :: Get DPSPatch
+parseDPSBody :: Get (Either SlapError DPSPatch)
 parseDPSBody = do
   name    <- trimNull <$> getBytes (Length dpsFieldWidth)
   author  <- trimNull <$> getBytes (Length dpsFieldWidth)
@@ -93,33 +95,39 @@ parseDPSBody = do
     Right stability -> do
       _ <- getByte  -- version byte (validated by parseDPS guard)
       originalSize  <- FileSize . fromIntegral <$> Get.word32LE
-      records    <- parseRecords
-      pure DPSPatch
-        { dpsName       = name
-        , dpsAuthor     = author
-        , dpsVersion    = version
-        , dpsStability       = stability
-        , dpsFormatVersion = DPSVersion1
-        , dpsOriginalSize   = originalSize
-        , dpsRecords    = records
-        }
+      recordsResult <- parseRecords
+      pure $ case recordsResult of
+        Left slapError -> Left slapError
+        Right records  -> Right DPSPatch
+          { dpsName       = name
+          , dpsAuthor     = author
+          , dpsVersion    = version
+          , dpsStability       = stability
+          , dpsFormatVersion = DPSVersion1
+          , dpsOriginalSize   = originalSize
+          , dpsRecords    = records
+          }
 
-parseRecords :: Get [DPSRecord]
+parseRecords :: Get (Either SlapError [DPSRecord])
 parseRecords = do
   available <- remaining
-  if unLength available < 5 then pure []
+  if unLength available < 5 then pure (Right [])
   else do
     mode <- getByte
     outputOffset <- Offset . fromIntegral <$> Get.word32LE
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
-    record <- case mode of
+    case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
         sourceOffset <- Offset . fromIntegral <$> Get.word32LE
         copyLength   <- Length . fromIntegral <$> Get.word32LE
-        pure (DPSCopyFromROM outputOffset sourceOffset copyLength)
-      _ -> do  -- EnclosedData: read length + data from patch
+        let record = DPSCopyFromROM outputOffset sourceOffset copyLength
+        rest <- parseRecords
+        pure (fmap (record :) rest)
+      1 -> do  -- EnclosedData: read length + data from patch
         dataLength  <- fromIntegral <$> Get.word32LE :: Get Int
         payload  <- getBytes (Length dataLength)
-        pure (DPSEnclosedData outputOffset payload)
-    rest <- parseRecords
-    pure (record : rest)
+        let record = DPSEnclosedData outputOffset payload
+        rest <- parseRecords
+        pure (fmap (record :) rest)
+      unknownByte ->
+        pure (Left (UnknownFlag LabelDPS FieldRecordMode (RawFlagByte unknownByte)))

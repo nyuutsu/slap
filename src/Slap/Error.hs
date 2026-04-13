@@ -74,6 +74,7 @@ data FieldName
   | FieldPatchCRC
   -- Record fields
   | FieldRLERunLength
+  | FieldRecordMode
   deriving (Show, Eq, Enum, Bounded)
 
 fieldNameLabel :: FieldName -> String
@@ -102,6 +103,7 @@ fieldNameLabel FieldSourceCRC       = "source CRC"
 fieldNameLabel FieldTargetCRC       = "target CRC"
 fieldNameLabel FieldPatchCRC        = "patch CRC"
 fieldNameLabel FieldRLERunLength    = "RLE run length"
+fieldNameLabel FieldRecordMode      = "record mode"
 
 ----------------------------------------------------------------------------
 -- DroppedValue
