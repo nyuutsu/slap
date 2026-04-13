@@ -29,6 +29,7 @@ import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
+import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
 import Slap.NINJA2.Types (PatchEncoding(..), NINJA2RomType(..))
@@ -509,7 +510,7 @@ encodeDirect contents source target meta limits = case target of
     records <- narrow (contentsRecords contents)
     case contentsDestinationSize contents of
       Just targetSize ->
-        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
+        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
       Nothing -> error "unreachable: canConvert verified FDestinationSize"
   where
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]

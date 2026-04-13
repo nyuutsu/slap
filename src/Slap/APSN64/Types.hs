@@ -4,6 +4,7 @@ module Slap.APSN64.Types
   ( APSN64Patch(..)
   , APSN64Record(..)
   , APSN64Header(..)
+  , APSN64Description(..)
   , APSPatchType(..)
   , APSImageFormat(..)
   , APSRecordEncoding(..)
@@ -21,6 +22,12 @@ module Slap.APSN64.Types
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import Slap.Measure (FileSize, Offset(..))
+
+-- | The description field of an APS-N64 patch header. Locale-encoded
+-- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
+-- 'FieldTruncated' warning emitted on overflow.
+newtype APSN64Description = APSN64Description { unAPSN64Description :: String }
+  deriving (Show, Eq)
 
 data APSPatchType = APSSimple | APSN64Specific
   deriving (Show, Eq)
