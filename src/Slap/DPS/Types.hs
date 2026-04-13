@@ -3,6 +3,7 @@
 module Slap.DPS.Types
   ( DPSPatch(..)
   , DPSRecord(..)
+  , DPSMetadata(..)
   , DPSStability(..)
   , DPSFormatVersion(..)
   , toDPSStability
@@ -53,6 +54,15 @@ toDPSFormatVersion byte = Left (BadVersion LabelDPS (FoundVersion byte))
 
 fromDPSFormatVersion :: DPSFormatVersion -> Word8
 fromDPSFormatVersion DPSVersion1 = 1
+
+-- | Metadata fields for a DPS patch's header. Each field is
+-- locale-encoded and truncated/padded to 'dpsFieldWidth' bytes
+-- on create, with a 'FieldTruncated' warning emitted on overflow.
+data DPSMetadata = DPSMetadata
+  { dpsMetadataName    :: !String
+  , dpsMetadataAuthor  :: !String
+  , dpsMetadataVersion :: !String
+  } deriving (Show, Eq)
 
 data DPSPatch = DPSPatch
   { dpsName       :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed

@@ -6,7 +6,7 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSStability, fromDPSStability, DPSFormatVersion(..), fromDPSFormatVersion, DPSRecord(..), dpsFieldWidth)
+import Slap.DPS.Types (DPSMetadata(..), DPSStability, fromDPSStability, DPSFormatVersion(..), fromDPSFormatVersion, DPSRecord(..), dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
@@ -24,11 +24,11 @@ import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
 -- as CopyFromROM records.
-createDPS :: SourceFileContents -> TargetFileContents -> String -> String -> String -> DPSStability -> CreateResult
-createDPS (SourceFileContents original) (TargetFileContents modified) name author version stability =
-    let (nameBytes, nameWarnings)       = encodeField FieldPatchName name
-        (authorBytes, authorWarnings)   = encodeField FieldAuthor author
-        (versionBytes, versionWarnings) = encodeField FieldVersion version
+createDPS :: SourceFileContents -> TargetFileContents -> DPSMetadata -> DPSStability -> CreateResult
+createDPS (SourceFileContents original) (TargetFileContents modified) metadata stability =
+    let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
+        (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
+        (versionBytes, versionWarnings) = encodeField FieldVersion (dpsMetadataVersion metadata)
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
             byteString nameBytes
             <> byteString authorBytes

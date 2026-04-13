@@ -297,7 +297,9 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
-  let patch = resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target) "" "" "" DPS.DPSStable)
+  let patch = resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+                (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+                DPS.DPSStable)
   in case DPS.parseDPS patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)

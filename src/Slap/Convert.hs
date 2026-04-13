@@ -557,8 +557,11 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
   CreateUPS    -> do patchContents <- UPS.createUPS source target
                      Right (CreateResult patchContents [])
   CreateDPS    -> Right (DPS.createDPS source target
-                       (fromMaybe "" (metaTitle meta <|> metaDescription meta))
-                       (fromMaybe "" (metaAuthor meta)) (fromMaybe "" (metaVersion meta))
+                       (DPS.DPSMetadata
+                         { DPS.dpsMetadataName    = fromMaybe "" (metaTitle meta <|> metaDescription meta)
+                         , DPS.dpsMetadataAuthor  = fromMaybe "" (metaAuthor meta)
+                         , DPS.dpsMetadataVersion = fromMaybe "" (metaVersion meta)
+                         })
                        (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
   CreateNINJA2    ->
     let -- When source patch has opaque description bytes, detect encoding

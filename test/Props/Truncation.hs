@@ -110,7 +110,9 @@ prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
-  truncated DPS.parseDPS (resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target) "" "" "" DPS.DPSStable))
+  truncated DPS.parseDPS (resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+    (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+    DPS.DPSStable))
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
