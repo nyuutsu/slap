@@ -697,9 +697,9 @@ verifySource noVerify verification (SourceFileContents sourceBytes) = do
   forM_ (verifySourceCRC32 verification) $ \expected ->
     checkCRC noVerify SourceSide expected (rustyCRC32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
-    checkHash noVerify "source MD5" (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
+    checkHash noVerify SourceSide MD5 (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
   forM_ (verifySourceSHA1 verification) $ \expected ->
-    checkHash noVerify "source SHA1" (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
+    checkHash noVerify SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
   unless noVerify $ do
     forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
@@ -718,7 +718,7 @@ verifyTarget noVerify verification (TargetFileContents targetBytes) = do
   forM_ (verifyTargetCRC32 verification) $ \expected ->
     checkCRC noVerify TargetSide expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
-    checkHash noVerify "target MD5" (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
+    checkHash noVerify TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
   unless noVerify $
     forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
       warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))
@@ -732,6 +732,13 @@ verificationSideLabel :: VerificationSide -> String
 verificationSideLabel SourceSide = "source"
 verificationSideLabel TargetSide = "target"
 
+data HashAlgorithm = MD5 | SHA1
+  deriving (Show, Eq)
+
+hashAlgorithmLabel :: HashAlgorithm -> String
+hashAlgorithmLabel MD5  = "MD5"
+hashAlgorithmLabel SHA1 = "SHA1"
+
 checkCRC :: Bool -> VerificationSide -> CRC32 -> CRC32 -> IO ()
 checkCRC noVerify side expected actual
   | expected == actual = pure ()
@@ -742,11 +749,12 @@ checkCRC noVerify side expected actual
                      ++ ")\n  use --no-verify to apply anyway")
   where label = verificationSideLabel side
 
-checkHash :: Bool -> String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-checkHash noVerify label expected actual
+checkHash :: Bool -> VerificationSide -> HashAlgorithm -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+checkHash noVerify side algorithm expected actual
   | expected == actual = pure ()
   | noVerify = warn (label ++ " mismatch")
   | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
+  where label = verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm
 
 checkAdler :: Bool -> Offset -> Adler32 -> Adler32 -> IO ()
 checkAdler noVerify windowOffset expected actual
