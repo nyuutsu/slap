@@ -695,7 +695,7 @@ verifySource :: Bool -> Verification -> SourceFileContents -> IO ()
 verifySource noVerify verification (SourceFileContents sourceBytes) = do
   let preprocessed = verifySourcePreHash verification sourceBytes
   forM_ (verifySourceCRC32 verification) $ \expected ->
-    checkCRC noVerify "source" expected (rustyCRC32 preprocessed)
+    checkCRC noVerify SourceSide expected (rustyCRC32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
     checkHash noVerify "source MD5" (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
   forM_ (verifySourceSHA1 verification) $ \expected ->
@@ -706,15 +706,17 @@ verifySource noVerify verification (SourceFileContents sourceBytes) = do
       warnBlock "source" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes)))
     forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
       warnPPFBlock blockOffset expectedData sourceBytes
-    forM_ (verifyFileSize verification) $ \expectedSize ->
+    forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
       warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
     forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
       warnSourceBytes checkLabel checkOffset expectedData sourceBytes
+  forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
+    checkFileSize noVerify SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
 
 verifyTarget :: Bool -> Verification -> TargetFileContents -> IO ()
 verifyTarget noVerify verification (TargetFileContents targetBytes) = do
   forM_ (verifyTargetCRC32 verification) $ \expected ->
-    checkCRC noVerify "target" expected (rustyCRC32 targetBytes)
+    checkCRC noVerify TargetSide expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash noVerify "target MD5" (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
   unless noVerify $
@@ -723,14 +725,22 @@ verifyTarget noVerify verification (TargetFileContents targetBytes) = do
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler noVerify windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
-checkCRC :: Bool -> String -> CRC32 -> CRC32 -> IO ()
-checkCRC noVerify label expected actual
+data VerificationSide = SourceSide | TargetSide
+  deriving (Show, Eq)
+
+verificationSideLabel :: VerificationSide -> String
+verificationSideLabel SourceSide = "source"
+verificationSideLabel TargetSide = "target"
+
+checkCRC :: Bool -> VerificationSide -> CRC32 -> CRC32 -> IO ()
+checkCRC noVerify side expected actual
   | expected == actual = pure ()
   | noVerify = warn (label ++ " CRC mismatch (expected "
                ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")")
   | otherwise = die (label ++ " CRC mismatch (expected "
                      ++ formatCRC expected ++ ", got " ++ formatCRC actual
                      ++ ")\n  use --no-verify to apply anyway")
+  where label = verificationSideLabel side
 
 checkHash :: Bool -> String -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 checkHash noVerify label expected actual
@@ -762,6 +772,16 @@ warnFileSize :: FileSize -> FileSize -> IO ()
 warnFileSize (FileSize expectedSize) (FileSize actualSize) =
   when (expectedSize /= actualSize) $
     warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
+
+checkFileSize :: Bool -> VerificationSide -> FileSize -> FileSize -> IO ()
+checkFileSize noVerify side (FileSize expectedSize) (FileSize actualSize)
+  | expectedSize == actualSize = pure ()
+  | noVerify = warn (label ++ " file size mismatch (expected "
+               ++ show expectedSize ++ " bytes, got " ++ show actualSize ++ " bytes)")
+  | otherwise = die (label ++ " file size mismatch (expected "
+                     ++ show expectedSize ++ " bytes, got " ++ show actualSize
+                     ++ " bytes)\n  use --no-verify to apply anyway")
+  where label = verificationSideLabel side
 
 warnSourceBytes :: String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 warnSourceBytes label checkOffset expectedData sourceBytes =

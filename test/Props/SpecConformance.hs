@@ -88,7 +88,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "target-crc-read-literally" bpsTargetCRCReadLiterally
           , testCase "apply-defers-source-size-check-to-verification-layer"
               bpsApplyDefersSourceSizeCheckToVerificationLayer
-          , testCase "parseSome-populates-verifyFileSize"
+          , testCase "parseSome-populates-verifyFileSizeAdvisory"
               bpsVerificationCarriesDeclaredSize
           ]
       , testGroup "spec-reject"
@@ -125,7 +125,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "target-crc-read-literally" upsTargetCRCReadLiterally
           , testCase "apply-defers-source-size-check-to-verification-layer"
               upsApplyDefersSourceSizeCheckToVerificationLayer
-          , testCase "parseSome-populates-verifyFileSize"
+          , testCase "parseSome-populates-verifyFileSizeAdvisory"
               upsVerificationCarriesDeclaredSize
           ]
       , testGroup "spec-reject"
@@ -950,7 +950,7 @@ bpsTargetCRCReadLiterally =
 --
 -- The complementary 'bpsVerificationCarriesDeclaredSize' test below
 -- pins the other end of the contract: that 'parseSome' exposes the
--- declared size through 'verifyFileSize' so the Verification layer
+-- declared size through 'verifyFileSizeAdvisory' so the Verification layer
 -- has something to check.
 bpsApplyDefersSourceSizeCheckToVerificationLayer :: Assertion
 bpsApplyDefersSourceSizeCheckToVerificationLayer =
@@ -964,7 +964,7 @@ bpsApplyDefersSourceSizeCheckToVerificationLayer =
       patch = buildBPS body actualSource target
   in assertParseApply parseAndApplyBPS patch actualSource target
 
--- | 'parseSome' must populate 'verifyFileSize' with the declared
+-- | 'parseSome' must populate 'verifyFileSizeAdvisory' with the declared
 -- source size so the Verification layer can diagnose mismatches.
 -- The BPS spec declares source-size in the header; this test pins
 -- that the field survives through to the verification record.
@@ -981,8 +981,8 @@ bpsVerificationCarriesDeclaredSize =
   in case parseSome patch of
     Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
     Right somePatch ->
-      assertEqual "verifyFileSize" (Just (FileSize 4))
-        (verifyFileSize (patchVerification somePatch))
+      assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
+        (verifyFileSizeAdvisory (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- UPS reject: too short for footer, missing block terminator
@@ -1055,7 +1055,7 @@ upsApplyDefersSourceSizeCheckToVerificationLayer =
   in assertParseApply parseAndApplyUPS patch actualSource target
 
 -- | Parallel to 'bpsVerificationCarriesDeclaredSize'. 'parseSome'
--- must expose UPS's declared source-size through 'verifyFileSize'.
+-- must expose UPS's declared source-size through 'verifyFileSizeAdvisory'.
 upsVerificationCarriesDeclaredSize :: Assertion
 upsVerificationCarriesDeclaredSize =
   let source = ByteString.pack [0x11, 0x22, 0x33, 0x44]
@@ -1065,8 +1065,8 @@ upsVerificationCarriesDeclaredSize =
   in case parseSome patch of
     Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
     Right somePatch ->
-      assertEqual "verifyFileSize" (Just (FileSize 4))
-        (verifyFileSize (patchVerification somePatch))
+      assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
+        (verifyFileSizeAdvisory (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- Varint canonicality and boundary value

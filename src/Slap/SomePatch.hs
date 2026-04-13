@@ -115,7 +115,14 @@ data Verification = Verification
   , verifySourceBlocks  :: [BlockCheck]
   , verifyTargetBlocks  :: [BlockCheck]
   , verifyPPFBlock      :: Maybe ValidationBlock
-  , verifyFileSize      :: Maybe FileSize
+    -- | Advisory file-size check for formats that have a stronger
+    -- integrity gate (e.g. CRC32).  Mismatch emits a warning but does
+    -- not fail the apply — the CRC will catch real corruption.
+  , verifyFileSizeAdvisory :: Maybe FileSize
+    -- | Required file-size check for formats where file size is the
+    -- only integrity gate (no CRC, no hash).  Mismatch fails the
+    -- apply unless @--no-verify@ is set.
+  , verifyFileSizeRequired :: Maybe FileSize
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]
   , verifySourcePreHash :: ByteString.ByteString -> ByteString.ByteString -- transform source before hashing (NINJA1 sampling)
@@ -152,7 +159,7 @@ noVerification = Verification
   { verifySourceCRC32 = Nothing, verifySourceMD5 = Nothing, verifySourceSHA1 = Nothing
   , verifyTargetCRC32 = Nothing, verifyTargetMD5 = Nothing
   , verifySourceBlocks = [], verifyTargetBlocks = []
-  , verifyPPFBlock = Nothing, verifyFileSize = Nothing
+  , verifyPPFBlock = Nothing, verifyFileSizeAdvisory = Nothing, verifyFileSizeRequired = Nothing
   , verifyWindowAdler32 = [], verifySourceBytes = []
   , verifySourcePreHash = id
   }
@@ -207,7 +214,7 @@ parseSome patchContents = case detectFormat patchContents of
             { verifyPPFBlock = case PPF.ppfValidation patch of
                 Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
                 Nothing  -> Nothing
-            , verifyFileSize = PPF.ppfFileSize patch
+            , verifyFileSizeAdvisory = PPF.ppfFileSize patch
             }
     Right SomePatch
         { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
@@ -368,7 +375,7 @@ parseSome patchContents = case detectFormat patchContents of
           -- error semantics. A wrong-size source still fails via
           -- the source CRC check; the size warning just makes the
           -- diagnostic more specific before the CRC hard-errors.
-          , verifyFileSize    = Just (BPS.bpsSourceSize patch)
+          , verifyFileSizeAdvisory = Just (BPS.bpsSourceSize patch)
           }
       , patchWarnings       = [EmptyPatch LabelBPS "actions" | Vector.null actions]
       , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
@@ -405,8 +412,8 @@ parseSome patchContents = case detectFormat patchContents of
           -- so this doesn't interfere with UPS's self-inverse
           -- property — undoing a patch where the "source" actually
           -- has target-size still works because undo never consults
-          -- verifyFileSize.
-          , verifyFileSize    = Just (UPS.upsSourceSize patch)
+          -- verifyFileSizeAdvisory.
+          , verifyFileSizeAdvisory = Just (UPS.upsSourceSize patch)
           }
       , patchWarnings       = [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
       , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
@@ -730,7 +737,7 @@ parseAPSGBABlock patchContents = do
     , patchVerification   = noVerification
           { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records
           , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
-          , verifyFileSize = Just (APSGBA.apsGbaSourceSize header)
+          , verifyFileSizeAdvisory = Just (APSGBA.apsGbaSourceSize header)
           }
     , patchWarnings       = [EmptyPatch LabelAPSGBA "blocks" | null records]
     , patchRecordSummary  = RecordSummary (length records) "blocks"
