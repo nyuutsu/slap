@@ -22,7 +22,7 @@ The user's interest in code beauty as a few motivations:
 
 ## Orientation
 
-For the full dependency graph and architectural details, see `ARCHITECTURE.md`. Said document is *very* long and by its nature runs the risk of going stale; if you happen to read it, and reality seems to disagree with the document, reality wins.
+For the full dependency graph and architectural details, see `ARCHITECTURE.md`. Said document is somewhat long and by its nature runs the risk of going stale; if you happen to read it, and reality seems to disagree with the document, reality wins. If the reality isn't pretty, say something.
 
 The heart of the program is the "format declarations". Each subfolder of `src/Slap/` contains a declaration or a family tightly coupled declarations. By describing each target format in the right way, "what would it take to convert format a into format b?" *falls out* of the declarations without us really having to do any bespoke work. Because parallel structure and modularity are pretty, each format or family is broken out into components: `Types.hs`, `Parse.hs`, `Apply.hs`, `Describe.hs`, and `Create.hs` when creation is supported.
 
@@ -42,6 +42,6 @@ See something: say something. We want to do things correctly and to be kind to o
 
 ```
 make             # builds rusty-slap then Haskell via cabal
-make test        # full test run: props + quick integration + heavy integration
-make test-quick  # fast subset: props + quick integration (skips heavy ROMs)
+make test        # test run: props + integration
 ```
+
