@@ -4,7 +4,7 @@ module Slap.UPS.Create
   ( createUPS
   ) where
 
-import Slap.UPS.Types (UPSBlock(..))
+import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
 import Slap.Binary (putWord32LE, putByuuVarint)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), UnencodeabilityReason(..))
@@ -31,7 +31,7 @@ createUPS (SourceFileContents original) (TargetFileContents modified) = do
   blocks <- diffToBlocks original modified
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
-      body = byteString "UPS1"
+      body = byteString upsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
              <> foldMap encodeUPSBlock blocks

@@ -1,9 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.BPS.Types
   ( BPSAction(..)
   , BPSBody(..)
   , BPSPatch(..)
   , decodeSignedVarint
     -- * Named constants
+  , bpsMagicBytes
   , bpsMagicLength
   , bpsCRC32Length
   , bpsFooterLength
@@ -48,6 +51,10 @@ data BPSPatch = BPSPatch
   , bpsTargetCRC  :: !CRC32
   , bpsPatchCRC   :: !CRC32
   } deriving (Show)
+
+-- | BPS magic bytes (@"BPS1"@) at the start of every patch.
+bpsMagicBytes :: ByteString
+bpsMagicBytes = "BPS1"
 
 -- | Length of the BPS magic ("BPS1") at the start of every patch.
 bpsMagicLength :: Length

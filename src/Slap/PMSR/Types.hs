@@ -1,8 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.PMSR.Types
   ( PMSRRecord(..)
   , PMSRPatch(..)
+    -- * Named constants
+  , pmsrMagicBytes
   ) where
 
 import Data.ByteString (ByteString)
@@ -18,3 +21,7 @@ data PMSRRecord = PMSRRecord
 data PMSRPatch = PMSRPatch
   { pmsrRecords :: [PMSRRecord]
   } deriving (Show)
+
+-- | PMSR magic bytes (@"PMSR"@) per Star Rod (Paper Mario 64).
+pmsrMagicBytes :: ByteString
+pmsrMagicBytes = "PMSR"

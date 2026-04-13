@@ -7,6 +7,7 @@ module Slap.GDIFF.Create
   ) where
 
 import Slap.Binary (diffHunks, putWord16BE, putWord32BE, putInt64BE)
+import Slap.GDIFF.Types (gdiffMagicBytes)
 import Slap.Measure (Offset(..), Hunk(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -20,7 +21,7 @@ import Data.Int (Int32, Int64)
 -- | Unchanged regions become COPY commands; changed regions become DATA commands.
 createGDIFF :: SourceFileContents -> TargetFileContents -> PatchFileContents
 createGDIFF (SourceFileContents original) (TargetFileContents modified) = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-    byteString "\xd1\xff\xd1\xff"   -- magic
+    byteString gdiffMagicBytes       -- magic
     <> word8 4                       -- version
     <> buildCommands 0 (diffHunks original modified)
     <> word8 0                       -- EOF command

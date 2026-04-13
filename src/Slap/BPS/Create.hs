@@ -5,6 +5,7 @@ module Slap.BPS.Create
   ) where
 
 import Slap.Binary (putWord32LE, putByuuVarint)
+import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Checksum (CRC32(..))
 import Slap.FFI (rustyCRC32, rustyBpsDiff)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -20,7 +21,7 @@ createBPS (SourceFileContents original) (TargetFileContents modified) metadata =
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
       actionBytes = rustyBpsDiff original modified
-      body = byteString "BPS1"
+      body = byteString bpsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
              <> putByuuVarint (fromIntegral (ByteString.length metadata))

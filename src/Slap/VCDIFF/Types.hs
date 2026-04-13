@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.VCDIFF.Types
@@ -24,6 +25,7 @@ module Slap.VCDIFF.Types
   , instructionSize
   , instructionMode
     -- * Named constants
+  , vcdiffMagicBytes
   , sameCacheSlots
   ) where
 
@@ -149,6 +151,10 @@ data VCDIFFDecodedInstruction
 
 -- | Slot count per same-cache entry (RFC 3284 §5.3).
 -- Each same-cache entry maps 256 byte values to addresses.
+-- | VCDIFF magic bytes (@0xD6 0xC3 0xC4@) per RFC 3284.
+vcdiffMagicBytes :: ByteString
+vcdiffMagicBytes = "\xd6\xc3\xc4"
+
 sameCacheSlots :: Int
 sameCacheSlots = 256
 

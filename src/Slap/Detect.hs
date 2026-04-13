@@ -5,19 +5,94 @@ module Slap.Detect (detectFormat) where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Slap.FileContents (PatchFileContents(..))
-import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
+import Data.List (find)
+import Slap.APSGBA.Types (apsGbaMagicBytes)
+import Slap.APSN64.Types (apsN64MagicBytes)
+import Slap.BPS.Types (bpsMagicBytes)
+import Slap.BSDiff.Types (bsdiffMagicBytes)
 import qualified Slap.DPS.Parse as DPS
+import Slap.FileContents (PatchFileContents(..))
+import Slap.GDIFF.Types (gdiffMagicBytes)
+import Slap.IPS.Types (ipsMagicBytes, ips32MagicBytes)
+import Slap.NINJA1.Types (ninja1MagicBytes)
+import Slap.NINJA2.Types (ninja2MagicBytes)
+import Slap.PMSR.Types (pmsrMagicBytes)
+import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
+import Slap.UPS.Types (upsMagicBytes)
+import Slap.VCDIFF.Types (vcdiffMagicBytes)
 
 ----------------------------------------------------------------------------
--- Named magic byte constants
+-- Magic prefix detection
 ----------------------------------------------------------------------------
 
-vcdiffMagic :: ByteString
-vcdiffMagic = "\xd6\xc3\xc4"
+-- | A byte sequence that, when present at the start of a patch file,
+-- identifies its format.  Exists so that 'probeMatches' can
+-- distinguish the needle (the magic to test) from the haystack (the
+-- file contents being classified) at the type level — without it,
+-- both arguments to 'ByteString.isPrefixOf' would be bare
+-- 'ByteString' and a transposition would silently invert the
+-- semantics.
+newtype MagicPrefix = MagicPrefix { unMagicPrefix :: ByteString }
 
-gdiffMagic :: ByteString
-gdiffMagic = "\xd1\xff\xd1\xff"
+data FormatProbe = FormatProbe
+  { probeMagic  :: !MagicPrefix
+  , probeFormat :: !PatchFormat
+  }
+
+-- | Ordered by descending prefix length so that a longer probe
+-- always wins over a shorter one that happens to be its prefix.
+-- The pairs where this matters today: 'apsN64MagicBytes'
+-- (@"APS10"@, 5 bytes) before 'apsGbaMagicBytes' (@"APS1"@,
+-- 4 bytes), and @"%XDELTA"@ (7 bytes) before @"%XDZ"@ (4 bytes).
+-- When two probes share no prefix, their relative order is
+-- irrelevant.
+--
+-- Formats whose detection requires structural inspection rather
+-- than a leading byte sequence (PCHTXT, DPS) are not in this table
+-- and are handled as fallbacks in 'detectFormat'.
+magicProbes :: [FormatProbe]
+magicProbes =
+  [ FormatProbe (MagicPrefix bsdiffMagicBytes)  (PatchDiff   FormatBSDiff)
+  , FormatProbe (MagicPrefix "%XDELTA")         (PatchDiff   FormatXDelta1)
+  , FormatProbe (MagicPrefix ninja2MagicBytes)  (PatchDiff   FormatNINJA2)
+  , FormatProbe (MagicPrefix ninja1MagicBytes)  (PatchDirect FormatNINJA1)
+  , FormatProbe (MagicPrefix apsN64MagicBytes)  (PatchDirect FormatAPSN64)
+  , FormatProbe (MagicPrefix ipsMagicBytes)     (PatchDirect FormatIPS)
+  , FormatProbe (MagicPrefix ips32MagicBytes)   (PatchDirect FormatIPS)
+  , FormatProbe (MagicPrefix bpsMagicBytes)     (PatchDiff   FormatBPS)
+  , FormatProbe (MagicPrefix upsMagicBytes)     (PatchDiff   FormatUPS)
+  , FormatProbe (MagicPrefix apsGbaMagicBytes)  (PatchDiff   FormatAPSGBA)
+  , FormatProbe (MagicPrefix "%XDZ")            (PatchDiff   FormatXDelta1)
+  , FormatProbe (MagicPrefix pmsrMagicBytes)    (PatchDirect FormatPMSR)
+  , FormatProbe (MagicPrefix gdiffMagicBytes)   (PatchDiff   FormatGDIFF)
+  , FormatProbe (MagicPrefix "PPF")             (PatchDirect FormatPPF)
+  , FormatProbe (MagicPrefix vcdiffMagicBytes)  (PatchDiff   FormatVCDIFF)
+  ]
+
+probeMatches :: PatchFileContents -> FormatProbe -> Bool
+probeMatches (PatchFileContents fileBytes) probe =
+  unMagicPrefix (probeMagic probe) `ByteString.isPrefixOf` fileBytes
+
+----------------------------------------------------------------------------
+-- Detection
+----------------------------------------------------------------------------
+
+-- | Detect patch format.  Most formats are identified by a magic byte
+-- sequence at the start of the file, matched against the
+-- 'magicProbes' table.  Two formats require structural inspection
+-- instead: DPS has no magic and is detected by a heuristic walk
+-- ('Slap.DPS.Parse.isDPS'), and PCHTXT is detected by scanning for
+-- a known directive on the first non-comment non-blank line.
+detectFormat :: PatchFileContents -> Maybe PatchFormat
+detectFormat patchFile =
+  case find (probeMatches patchFile) magicProbes of
+    Just probe -> Just (probeFormat probe)
+    Nothing
+      | detectPCHTXT fileBytes -> Just (PatchDirect FormatPCHTXT)
+      | DPS.isDPS fileBytes    -> Just (PatchDiff   FormatDPS)
+      | otherwise              -> Nothing
+  where
+    PatchFileContents fileBytes = patchFile
 
 ----------------------------------------------------------------------------
 -- PCHTXT directives
@@ -25,39 +100,6 @@ gdiffMagic = "\xd1\xff\xd1\xff"
 
 pchtxtDirectives :: [ByteString]
 pchtxtDirectives = ["@nsobid", "@flag ", "@enabled", "@disabled"]
-
-----------------------------------------------------------------------------
--- Detection
-----------------------------------------------------------------------------
-
--- | Detect patch format.  Most formats are identified by magic bytes.
--- DPS uses a structural heuristic (version and stability flag bytes,
--- tentative record walk).  PCHTXT scans for known directives on the
--- first non-comment non-blank line.
-detectFormat :: PatchFileContents -> Maybe PatchFormat
-detectFormat (PatchFileContents input)
-  | ByteString.length input < 4 = Nothing
-  | ByteString.take 3 magic4 == "PPF" = Just (PatchDirect FormatPPF)
-  | magic5 == "PATCH"         = Just (PatchDirect FormatIPS)
-  | magic5 == "IPS32"         = Just (PatchDirect FormatIPS)   -- IPS32
-  | magic4 == "BPS1"          = Just (PatchDiff FormatBPS)
-  | magic4 == "UPS1"          = Just (PatchDiff FormatUPS)
-  | ByteString.take 3 magic4 == vcdiffMagic = Just (PatchDiff FormatVCDIFF)
-  | magic5 == "APS10"         = Just (PatchDirect FormatAPSN64)
-  | magic4 == "APS1"          = Just (PatchDiff FormatAPSGBA)
-  | ByteString.length input >= 6 && ByteString.take 6 input == "NINJA2" = Just (PatchDiff FormatNINJA2)
-  | ByteString.length input >= 8 && ByteString.take 6 input == "NINJA1"  = Just (PatchDirect FormatNINJA1)
-  | ByteString.length input >= 8 && ByteString.take 8 input == "BSDIFF40" = Just (PatchDiff FormatBSDiff)
-  | magic4 == gdiffMagic      = Just (PatchDiff FormatGDIFF)
-  | ByteString.length input >= 8 && ByteString.take 4 input == "%XDZ" = Just (PatchDiff FormatXDelta1)
-  | ByteString.length input >= 7 && ByteString.take 7 input == "%XDELTA" = Just (PatchDiff FormatXDelta1)
-  | magic4 == "PMSR"          = Just (PatchDirect FormatPMSR)
-  | detectPCHTXT input        = Just (PatchDirect FormatPCHTXT)
-  | DPS.isDPS input           = Just (PatchDiff FormatDPS)
-  | otherwise                 = Nothing
-  where
-    magic4 = ByteString.take 4 input
-    magic5 = ByteString.take 5 input
 
 -- | Detect PCHTXT by scanning for a known directive on the first
 -- non-comment non-blank line.  Scans the full input (directives

@@ -1,9 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.GDIFF.Types
   ( GDiffPatch(..)
   , GDiffCommand(..)
   , commandOutputSize
+    -- * Named constants
+  , gdiffMagicBytes
   ) where
 
 import Slap.Measure (Offset(..), FileSize(..))
@@ -18,6 +21,10 @@ data GDiffCommand
 data GDiffPatch = GDiffPatch
   { gdiffCommands :: [GDiffCommand]
   } deriving (Show)
+
+-- | GDIFF magic bytes (@0xD1 0xFF 0xD1 0xFF@) per W3C NOTE-GDIFF-19970901.
+gdiffMagicBytes :: ByteString
+gdiffMagicBytes = "\xd1\xff\xd1\xff"
 
 commandOutputSize :: GDiffCommand -> Int
 commandOutputSize (GDiffData payload)       = ByteString.length payload

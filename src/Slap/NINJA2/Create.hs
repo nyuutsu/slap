@@ -30,7 +30,7 @@ import Data.Bits (xor)
 createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Info -> NINJA2RomType -> PatchEncoding -> PatchFileContents
 createNINJA2 (SourceFileContents original) (TargetFileContents modified) info romType encoding =
     PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-      byteString "NINJA2"                     -- magic (6 bytes)
+      byteString ninja2MagicBytes              -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header
       <> word8 0x01                           -- OPEN_NEW_FILE command

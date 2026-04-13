@@ -9,7 +9,7 @@ module Slap.UPS.Parse
 -- Canonical reference: https://www.romhacking.net/documents/392/ (byuu UPS spec, near.sh mirror)
 
 import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
-                       upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
+                       upsMagicBytes, upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -27,7 +27,7 @@ parseUPS :: PatchFileContents -> Either SlapError UPSPatch
 parseUPS (PatchFileContents input)
   | ByteString.length input < unLength upsMagicLength =
       Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take (unLength upsMagicLength) input /= "UPS1" =
+  | ByteString.take (unLength upsMagicLength) input /= upsMagicBytes =
       Left (BadMagic LabelUPS (ActualMagic (ByteString.take (unLength upsMagicLength) input)))
   | ByteString.length input < unLength upsOverheadLength =
       Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (Length (ByteString.length input))))

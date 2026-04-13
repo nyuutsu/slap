@@ -6,7 +6,7 @@ module Slap.APSGBA.Create
   ) where
 
 import Slap.APSGBA.Apply (safeSlice)
-import Slap.APSGBA.Types (apsGbaBlockSize)
+import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -20,7 +20,7 @@ import Data.Word (Word32)
 
 createAPSGBA :: SourceFileContents -> TargetFileContents -> PatchFileContents
 createAPSGBA (SourceFileContents original) (TargetFileContents modified) = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-    byteString "APS1"
+    byteString apsGbaMagicBytes
     <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
     <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
     <> foldMap (encodeGBABlock original modified) changedBlocks

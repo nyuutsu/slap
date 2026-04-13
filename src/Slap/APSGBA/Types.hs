@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.APSGBA.Types
@@ -5,6 +6,7 @@ module Slap.APSGBA.Types
   , APSGBAHeader(..)
   , APSGBARecord(..)
     -- * Named constants
+  , apsGbaMagicBytes
   , apsGbaHeaderSize
   , apsGbaBlockSize
   , apsGbaRecordSize
@@ -28,6 +30,11 @@ data APSGBARecord = APSGBARecord
   , apsGbaTargetCRC :: CRC16
   , apsGbaXorData   :: ByteString  -- apsGbaBlockSize bytes
   } deriving (Show)
+
+-- | APS-GBA magic bytes (@"APS1"@). Shared prefix with APS-N64
+-- (@"APS10"@) — detection must check the longer probe first.
+apsGbaMagicBytes :: ByteString
+apsGbaMagicBytes = "APS1"
 
 -- | File header size: 4-byte magic + 4-byte source size + 4-byte target size.
 apsGbaHeaderSize :: Int

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.NINJA2.Types
@@ -23,6 +24,8 @@ module Slap.NINJA2.Types
   , encodeVariableLengthValue
   , variableLengthValueBytes
   , headerSize
+    -- * Named constants
+  , ninja2MagicBytes
     -- * Field widths
   , ninja2AuthorWidth
   , ninja2VersionWidth
@@ -220,6 +223,10 @@ parsePackedByteString :: Get ByteString
 parsePackedByteString = do
   dataLength <- fromIntegral <$> parsePackedInteger
   getBytes (Length dataLength)
+
+-- | NINJA2 magic bytes (@"NINJA2"@) at the start of every NINJA2 patch.
+ninja2MagicBytes :: ByteString
+ninja2MagicBytes = "NINJA2"
 
 headerSize :: Int
 headerSize = 0x800  -- NINJA2 spec: fixed 2048-byte header

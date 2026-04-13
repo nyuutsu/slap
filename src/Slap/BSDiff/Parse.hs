@@ -13,7 +13,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffControlRecordSize)
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffMagicBytes, bsdiffControlRecordSize)
 import Slap.Compress (bz2Decompress)
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -54,7 +54,7 @@ safeDecompressBZip label compressed = case bz2Decompress compressed of
 parseBSDiff :: PatchFileContents -> Either SlapError BSDiffPatch
 parseBSDiff (PatchFileContents input)
   | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (RequiredLength (Length 32)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 8 input /= "BSDIFF40" = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
+  | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left (ParseError LabelBSDiff "invalid header (negative size)")
   | otherwise = do
       controlData  <- safeDecompressBZip "control" controlCompressed

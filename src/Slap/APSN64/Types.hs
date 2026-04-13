@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.APSN64.Types
@@ -15,6 +16,7 @@ module Slap.APSN64.Types
   , toAPSRecordEncoding
   , fromAPSRecordEncoding
     -- * Named constants
+  , apsN64MagicBytes
   , apsN64DescriptionWidth
   , apsN64MaxChunkSize
   ) where
@@ -92,6 +94,11 @@ data APSN64Record
       , apsN64RLERepeatCount :: !Word8
       }
   deriving (Show)
+
+-- | APS-N64 magic bytes (@"APS10"@). One byte longer than
+-- APS-GBA's @"APS1"@ — detection must check this probe first.
+apsN64MagicBytes :: ByteString
+apsN64MagicBytes = "APS10"
 
 -- | Description field width: 50 bytes, null-padded.
 apsN64DescriptionWidth :: Int

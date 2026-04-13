@@ -9,7 +9,9 @@ module Slap.APSN64.Parse
 -- Canonical reference: https://github.com/btimofeev/UniPatcher/wiki/APS-(N64) (Blackbag spec, 1998)
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
-import Slap.APSN64.Types
+import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
+                           APSPatchType(..), toAPSPatchType, toAPSImageFormat,
+                           toAPSRecordEncoding, apsN64MagicBytes, apsN64DescriptionWidth)
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -23,7 +25,7 @@ parseAPSN64 :: PatchFileContents -> Either SlapError APSN64Patch
 parseAPSN64 (PatchFileContents input)
   | ByteString.length input < 5 =
       Left (InputTooShort LabelAPSN64 (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 5 input /= "APS10" =
+  | ByteString.take 5 input /= apsN64MagicBytes =
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take 5 input)))
   | otherwise =
       case runGet parseN64 input of

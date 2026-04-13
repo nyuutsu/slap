@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.NINJA1.Types
@@ -11,6 +12,8 @@ module Slap.NINJA1.Types
   , fromNINJA1RomType
   , romTypeName
   , subFormatName
+    -- * Named constants
+  , ninja1MagicBytes
   ) where
 
 import Data.ByteString (ByteString)
@@ -99,6 +102,12 @@ data NINJA1Record = NINJA1Record
   { ninja1RecordOffset :: !Offset
   , ninja1RecordData   :: !ByteString
   } deriving (Show)
+
+-- | NINJA1 magic bytes (@"NINJA1"@) at the start of every NINJA1 patch.
+-- The two bytes following the magic identify the subformat (binary,
+-- binary-compressed, text, text-compressed).
+ninja1MagicBytes :: ByteString
+ninja1MagicBytes = "NINJA1"
 
 romTypeName :: NINJA1RomType -> String
 romTypeName RomRAW            = "RAW"

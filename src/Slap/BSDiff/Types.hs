@@ -1,9 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.BSDiff.Types
   ( BSDiffPatch(..)
   , BSDiffControl(..)
     -- * Named constants
+  , bsdiffMagicBytes
   , bsdiffControlRecordSize
   ) where
 
@@ -25,6 +27,10 @@ data BSDiffControl = BSDiffControl
   , controlCopy :: !Length  -- bytes to copy from extra stream
   , controlSeek :: !Delta   -- signed seek offset in source
   } deriving (Show)
+
+-- | BSDiff magic bytes (@"BSDIFF40"@) per bsdiff 4.3 (Colin Percival).
+bsdiffMagicBytes :: ByteString
+bsdiffMagicBytes = "BSDIFF40"
 
 -- | Size of one control record: three 8-byte sign-magnitude values
 -- (add length, copy length, seek offset).

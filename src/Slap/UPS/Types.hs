@@ -1,8 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.UPS.Types
   ( UPSBlock(..)
   , UPSBody(..)
   , UPSPatch(..)
     -- * Named constants
+  , upsMagicBytes
   , upsMagicLength
   , upsCRC32Length
   , upsFooterLength
@@ -43,6 +46,10 @@ data UPSPatch = UPSPatch
   , upsTargetCRC  :: !CRC32
   , upsPatchCRC   :: !CRC32
   } deriving (Show)
+
+-- | UPS magic bytes (@"UPS1"@) at the start of every patch.
+upsMagicBytes :: ByteString
+upsMagicBytes = "UPS1"
 
 -- | Length of the UPS magic ("UPS1") at the start of every patch.
 upsMagicLength :: Length

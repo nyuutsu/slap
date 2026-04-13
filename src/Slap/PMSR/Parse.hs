@@ -9,7 +9,7 @@ module Slap.PMSR.Parse
 -- Canonical reference: Star Rod (Paper Mario 64 modding tool, Java, big-endian)
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
-import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
+import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -26,7 +26,7 @@ import qualified Data.ByteString as ByteString
 parsePMSR :: PatchFileContents -> Either SlapError PMSRPatch
 parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 4 input /= "PMSR" = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
+  | ByteString.take 4 input /= pmsrMagicBytes = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
   | otherwise = case runGet parsePMSRBody input of
       Left errorMessage -> Left (ParseError LabelPMSR errorMessage)
       Right result -> Right result

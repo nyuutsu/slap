@@ -9,7 +9,8 @@ module Slap.APSGBA.Parse
 -- Canonical reference: https://github.com/btimofeev/UniPatcher/wiki/APS-(GBA)
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_gba.js
 
-import Slap.APSGBA.Types
+import Slap.APSGBA.Types (APSGBAPatch(..), APSGBAHeader(..), APSGBARecord(..),
+                           apsGbaMagicBytes, apsGbaBlockSize, apsGbaRecordSize)
 import Slap.Checksum (CRC16(..))
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -24,7 +25,7 @@ parseAPSGBA :: PatchFileContents -> Either SlapError APSGBAPatch
 parseAPSGBA (PatchFileContents input)
   | ByteString.length input < 4 =
       Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 4 input /= "APS1" =
+  | ByteString.take 4 input /= apsGbaMagicBytes =
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise =
       case runGet parseGBA input of

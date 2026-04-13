@@ -7,7 +7,7 @@ module Slap.BPS.Parse
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
-                       bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
+                       bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), FieldName(..))
@@ -27,7 +27,7 @@ parseBPS :: PatchFileContents -> Either SlapError BPSPatch
 parseBPS (PatchFileContents input)
   | ByteString.length input < unLength bpsMagicLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take (unLength bpsMagicLength) input /= "BPS1" =
+  | ByteString.take (unLength bpsMagicLength) input /= bpsMagicBytes =
       Left (BadMagic LabelBPS (ActualMagic (ByteString.take (unLength bpsMagicLength) input)))
   | ByteString.length input < unLength bpsFooterLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (Length (ByteString.length input))))

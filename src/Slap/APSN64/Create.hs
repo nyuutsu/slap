@@ -6,7 +6,7 @@ module Slap.APSN64.Create
   , encodeN64Record
   ) where
 
-import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), APSN64Description(..), apsN64DescriptionWidth, apsN64MaxChunkSize)
+import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), APSN64Description(..), apsN64MagicBytes, apsN64DescriptionWidth, apsN64MaxChunkSize)
 import Slap.Binary (putWord32LE)
 import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance,
                      OriginalLength(..), TruncatedLength(..))
@@ -34,7 +34,7 @@ encodeAPSN64 records destinationSize description =
           Just info -> [FieldTruncated LabelAPSN64 FieldDescription
                          (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
-            byteString "APS10"
+            byteString apsN64MagicBytes
             <> word8 (fromAPSPatchType APSSimple)
             <> word8 (fromAPSRecordEncoding APSDefaultRecordEncoding)
             <> byteString (boundedField bounded)

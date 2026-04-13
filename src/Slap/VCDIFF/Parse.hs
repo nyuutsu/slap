@@ -13,6 +13,7 @@ import Slap.VCDIFF.Types
     , toVCDIFFWindowSource, toVCDIFFSecondaryCompression
     , defaultCodeTable
     , serializedDefaultTable, decodeCustomTable
+    , vcdiffMagicBytes
     )
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -38,7 +39,7 @@ parseVCDIFF = parseVCDIFFWith True
 parseVCDIFFWith :: Bool -> PatchFileContents -> Either SlapError VCDIFFPatch
 parseVCDIFFWith allowCustom (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 3 input /= "\xd6\xc3\xc4" = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
+  | ByteString.take 3 input /= vcdiffMagicBytes = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)
       (maybeTableBytes, header, windows) <- wrapParse (runGet (parseHeader validatedVersion) input)

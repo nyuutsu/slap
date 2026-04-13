@@ -54,7 +54,7 @@ parseFixedHeader input = NINJA2Info
 parseNINJA2 :: PatchFileContents -> Either SlapError NINJA2Patch
 parseNINJA2 (PatchFileContents input)
   | ByteString.length input < 7 = Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 6 input /= "NINJA2" = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
+  | ByteString.take 6 input /= ninja2MagicBytes = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | ByteString.length input < headerSize = Left (InputTooShort LabelNINJA2 (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
   | otherwise = case runGet parseNINJA2Body input of
       Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)

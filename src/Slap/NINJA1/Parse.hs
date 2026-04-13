@@ -20,7 +20,7 @@ module Slap.NINJA1.Parse
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
-                           NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType)
+                           NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -41,7 +41,7 @@ import Numeric (readHex)
 parseNINJA1 :: PatchFileContents -> Either SlapError NINJA1Patch
 parseNINJA1 (PatchFileContents input)
   | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 6 input /= "NINJA1"    = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
+  | ByteString.take 6 input /= ninja1MagicBytes = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
   | subFormatIdentifier == "B "                = parseBinary Ninja1Binary (PatchFileContents payload)
   | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents)
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.

@@ -6,7 +6,7 @@ module Slap.GDIFF.Parse
 
 -- Canonical reference: W3C NOTE-GDIFF-19970901
 
-import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
+import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), gdiffMagicBytes)
 import Slap.Error (SlapError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -20,7 +20,7 @@ import qualified Data.ByteString as ByteString
 parseGDIFF :: PatchFileContents -> Either SlapError GDiffPatch
 parseGDIFF (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 4 input /= "\xd1\xff\xd1\xff" = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
+  | ByteString.take 4 input /= gdiffMagicBytes = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (FoundVersion (ByteString.index input 4)))
   | otherwise = case runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input of
       Left errorMessage -> Left (ParseError LabelGDIFF errorMessage)
