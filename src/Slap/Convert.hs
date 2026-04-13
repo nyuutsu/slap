@@ -531,8 +531,18 @@ encodeDirect contents source target meta limits = case target of
     cliDescription   = metaDescription meta
     cliTitle  = metaTitle meta
     cliAuthor = metaAuthor meta
-    description   = resolveDescription cliDescription (contentsEBPMeta contents) (contentsDescription contents) ""
-    apsDescription = resolveDescription cliDescription Nothing (contentsDescription contents) (replicate 50 ' ')
+    description   = resolveDescription DescriptionSources
+      { descriptionSourceCLI      = cliDescription
+      , descriptionSourceEBPMeta  = contentsEBPMeta contents
+      , descriptionSourceRawBytes = contentsDescription contents
+      , descriptionSourceFallback = ""
+      }
+    apsDescription = resolveDescription DescriptionSources
+      { descriptionSourceCLI      = cliDescription
+      , descriptionSourceEBPMeta  = Nothing
+      , descriptionSourceRawBytes = contentsDescription contents
+      , descriptionSourceFallback = replicate 50 ' '
+      }
     pchtxtDescription = cliDescription <|> fmap decodeLocaleField (contentsDescription contents)
     ebpFieldPairs = maybe [] jsonPairs (contentsEBPMeta contents)
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
@@ -670,15 +680,25 @@ computeUndo source = concatMap splitUndo
 -- Internal helpers
 ----------------------------------------------------------------------------
 
+-- | Sources for 'resolveDescription' to consider, in priority order:
+-- CLI flag wins over EBP metadata, EBP metadata wins over raw
+-- description bytes, raw bytes win over fallback.
+data DescriptionSources = DescriptionSources
+  { descriptionSourceCLI      :: !(Maybe String)
+  , descriptionSourceEBPMeta  :: !(Maybe ByteString.ByteString)
+  , descriptionSourceRawBytes :: !(Maybe ByteString.ByteString)
+  , descriptionSourceFallback :: !String
+  }
+
 -- | Resolve a description from CLI flag, EBP metadata, raw description, or default.
-resolveDescription :: Maybe String -> Maybe ByteString.ByteString -> Maybe ByteString.ByteString -> String -> String
-resolveDescription cliDescription ebpMeta rawDescription fallback
-  | Just description <- cliDescription = description
-  | Just meta <- ebpMeta
+resolveDescription :: DescriptionSources -> String
+resolveDescription sources
+  | Just description <- descriptionSourceCLI sources = description
+  | Just meta <- descriptionSourceEBPMeta sources
   , Just description <- jsonFieldCI (jsonPairs meta) "description"
   , not (null description) = description
-  | Just raw <- rawDescription    = trimNullSpace (decodeLocaleField raw)
-  | otherwise              = fallback
+  | Just raw <- descriptionSourceRawBytes sources = trimNullSpace (decodeLocaleField raw)
+  | otherwise = descriptionSourceFallback sources
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
 resolveField :: Maybe String -> [(String, String)] -> String -> String
