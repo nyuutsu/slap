@@ -55,6 +55,7 @@ import Slap.IPS.Types
   , OffsetWidth(..)
   , IPSVariantSpec(..)
   , EBPMetadata(..)
+  , EBPMetadataFields(..)
   , variantSpec
   )
 import Slap.Measure
@@ -359,17 +360,17 @@ avoidSentinel sentinelOffsetValue source = map shiftIfAtSentinel
 -- below @0x20@ are emitted as @\\u00XX@ escapes. Pulling in
 -- @aeson@ for what is effectively four string interpolations
 -- would be wildly disproportionate.
-buildEBPMetadataJSON :: String -> String -> String -> ByteString
-buildEBPMetadataJSON title author description =
+buildEBPMetadataJSON :: EBPMetadataFields -> ByteString
+buildEBPMetadataJSON fields =
   TextEncoding.encodeUtf8 (Text.pack jsonText)
   where
     jsonText =
       "{\"patcher\":\"slap\",\"title\":\""
-        ++ escapeJSONString title
+        ++ escapeJSONString (ebpMetadataTitle fields)
         ++ "\",\"author\":\""
-        ++ escapeJSONString author
+        ++ escapeJSONString (ebpMetadataAuthor fields)
         ++ "\",\"description\":\""
-        ++ escapeJSONString description
+        ++ escapeJSONString (ebpMetadataDescription fields)
         ++ "\"}"
 
     escapeJSONString [] = []

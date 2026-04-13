@@ -25,7 +25,7 @@ import qualified Slap.PPF.Create as PPF
 import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
-                       ipsMaxRecordPayload)
+                       EBPMetadataFields(..), ipsMaxRecordPayload)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -474,7 +474,11 @@ encodeDirect contents source target meta limits = case target of
                else Nothing
         ebpMetadataBytes = case passthrough of
           Just raw -> raw
-          Nothing  -> IPS.buildEBPMetadataJSON ebpTitle ebpAuthor description
+          Nothing  -> IPS.buildEBPMetadataJSON EBPMetadataFields
+                        { ebpMetadataTitle       = ebpTitle
+                        , ebpMetadataAuthor      = ebpAuthor
+                        , ebpMetadataDescription = description
+                        }
     Right (CreateResult
             (IPS.encodeEBPPatch source records (EBPMetadata ebpMetadataBytes))
             [])

@@ -8,6 +8,7 @@ module Slap.IPS.Types
   , recordPayloadLength
   , IPSPatch(..)
   , EBPMetadata(..)
+  , EBPMetadataFields(..)
   , EBPPatch(..)
     -- * Named constants
   , ipsMagicBytes
@@ -192,6 +193,16 @@ data IPSPatch = IPSPatch
 -- everything below Describe treats the blob as opaque bytes.
 newtype EBPMetadata = EBPMetadata { unEBPMetadata :: ByteString }
   deriving (Eq, Show)
+
+-- | Structured input for 'buildEBPMetadataJSON'. The three fields
+-- slap emits in EBP metadata blobs, following the EBPatcher
+-- convention. The @patcher@ field is always set to @"slap"@ by
+-- 'buildEBPMetadataJSON' itself and is not exposed here.
+data EBPMetadataFields = EBPMetadataFields
+  { ebpMetadataTitle       :: !String
+  , ebpMetadataAuthor      :: !String
+  , ebpMetadataDescription :: !String
+  } deriving (Show, Eq)
 
 -- | An EBP patch. Structurally, EBP is a 'StandardIPS' patch with a
 -- trailing JSON metadata blob, so the type is a wrapper: an
