@@ -511,7 +511,7 @@ encodeDirect contents source target meta limits = case target of
     case contentsDestinationSize contents of
       Just targetSize ->
         Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
-      Nothing -> error "unreachable: canConvert verified FDestinationSize"
+      Nothing -> Left (MissingRequiredField LabelAPSN64 FDestinationSize)
   where
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
