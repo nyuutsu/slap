@@ -1,5 +1,7 @@
 # slap 👋
 
+To be honest this program isn't ready for prime-time just yet. There is some stuff that ain't right. The log of such things is: in my head. I will remove this message when I feel like it is ready for use. Until then: beware!
+
 ## In a nutshell 🌰
 
 `slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool. It knows how to work with a lot of patch formats. It probably knows (🎓) more than you'll actually need. Most people just need to apply patches; `slap` does this, and also creates them, converts between formats[^CONVERTS], and lets you look inside them.
