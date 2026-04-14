@@ -802,17 +802,27 @@ upsTooShortForMagic =
 ----------------------------------------------------------------------------
 
 -- | A block whose total span (skip + xorLen + terminator) exceeds
--- the remaining target space.
+-- the remaining target space. Apply clips the out-of-bounds portion
+-- (the terminator byte lands 1 past the declared output size) and
+-- produces correct output. This matches real-world UPS patches from
+-- NUPS/Tsukuyomi where the final block's terminator overshoots by 1.
 upsApplyBlockPastTarget :: Assertion
 upsApplyBlockPastTarget =
   let source = ByteString.pack [0x00, 0x00]
       -- Target size 2, but block: skip=0, xorData=[0xAA, 0xBB] = 2 bytes + terminator = 3.
       -- Total block span = 3, but only 2 bytes of target remain.
+      -- Apply clips the terminator (which would write 0x00 XOR source[2]
+      -- to offset 2) and produces the correct 2-byte output.
       body = upsBody 2 2 (upsBlock 0 [0xAA, 0xBB])
-      target = ByteString.pack [0xAA, 0xBB]
-      patch = buildUPS body source target
-  in assertApplyError parseUPS (\parsed src -> fmap (const ()) (applyUPS parsed src))
-       patch source isWritesPastTarget "block writes past target"
+      expectedOutput = ByteString.pack [0xAA, 0xBB]
+      patch = buildUPS body source expectedOutput
+  in case parseUPS patch of
+       Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
+       Right parsed ->
+         case applyUPS parsed (SourceFileContents source) of
+           Left slapError -> assertFailure ("apply failed (expected success with OOB clipping): " ++ renderSlapError slapError)
+           Right (TargetFileContents result) ->
+             assertEqual "OOB-clipped output" expectedOutput result
 
 ----------------------------------------------------------------------------
 -- BPS apply cursor-underflow errors

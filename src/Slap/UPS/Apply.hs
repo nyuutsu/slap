@@ -1,13 +1,13 @@
 module Slap.UPS.Apply
   ( applyUPS
+  , detectOOBBlocks
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Error (SlapError(..), SlapWarning(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
-                     RequestedLength(..), RemainingLength(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength,
                      firstAction, nextAction, plusOffset)
@@ -19,7 +19,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
 import Data.ByteString.Unsafe (unsafeIndex, unsafeUseAsCStringLen)
-import Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (copyBytes, fillBytes)
@@ -28,39 +27,38 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | Apply a parsed UPS patch to a source ByteString. Returns
--- 'Left' with a structured error if the patch is semantically
--- malformed (declared target size is negative, or a block's total
--- span exceeds target size). Source-shorter-than-target is legal
--- (spec-mandated zero-fill past source end) and is handled inline
--- by the helper functions, not as an error. The caller is still
--- responsible for CRC validation before calling.
+-- 'Left' with a structured error if the declared target size is
+-- negative (unreachable by construction but defensively guarded).
+-- Blocks whose span exceeds the declared target size are clipped
+-- to target bounds — the in-bounds portion is written and the
+-- out-of-bounds portion is silently skipped. This tolerates the
+-- common creation-tool artifact where the final block's terminator
+-- byte lands 1 past the declared output size. Use 'detectOOBBlocks'
+-- at parse time to surface these as warnings to the user.
+--
+-- Source-shorter-than-target is legal (spec-mandated zero-fill past
+-- source end) and is handled inline by the helper functions, not as
+-- an error. The caller is still responsible for CRC validation
+-- before calling.
 applyUPS :: UPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
 applyUPS patch (SourceFileContents source)
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize LabelUPS targetSize)
   | unFileSize targetSize == 0 =
       Right (TargetFileContents ByteString.empty)
-  | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize targetSize) $ \outputPointer ->
+  | otherwise = Right $ TargetFileContents $ unsafePerformIO $
+      create (unFileSize targetSize) $ \outputPointer ->
         unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
           let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
-          in runApply outputPointer sourcePointer errorRef
-      errorState <- readIORef errorRef
-      pure $ case errorState of
-        Just applyErr -> Left (ApplyFailed LabelUPS applyErr)
-        Nothing       -> Right (TargetFileContents result)
+          in runApply outputPointer sourcePointer
   where
     targetSize     = upsTargetSize patch
     sourceSize     = FileSize (ByteString.length source)
     blocks         = upsBlocks patch
     blockStreamEnd = ActionIndex (Vector.length blocks)
 
-    runApply outputPointer sourcePointer errorRef =
+    runApply outputPointer sourcePointer =
       let
-        abort :: ApplyError -> IO ()
-        abort applyErr = writeIORef errorRef (Just applyErr)
-
         -- | Copy bytes from source to output at the given position,
         -- zero-filling past source end (spec-mandated for source-
         -- shorter-than-target). The caller is responsible for ensuring
@@ -145,15 +143,72 @@ applyUPS patch (SourceFileContents source)
               xorStart       = advance skipStart skipLen
               terminatorPos  = advance xorStart xorLen
               nextPosition   = advance terminatorPos upsTerminatorByteLength
-              remainingSpace = remainingFromOffset outputPosition targetSize
-          in if not (fitsWithin outputPosition totalBlockLen targetSize)
-               then abort (ApplyWritesPastTarget blockIndex
-                            (RequestedLength totalBlockLen)
-                            (RemainingLength remainingSpace))
-               else do
+          in if fitsWithin outputPosition totalBlockLen targetSize
+               then do
+                 -- Fast path: entire block fits within target.
                  copySourceSlice skipStart skipLen
                  xorSourceSlice xorStart xorLen xorData
                  copySourceSlice terminatorPos upsTerminatorByteLength
                  applyBlockStream (nextAction blockIndex) nextPosition
+               else do
+                 -- OOB path: clip each sub-operation to remaining
+                 -- target space. The cursor advances by the full
+                 -- block span regardless — the patch was authored
+                 -- with that stride, and any subsequent blocks (rare
+                 -- but legal) depend on it.
+                 let available      = remainingFromOffset outputPosition targetSize
+                     clippedSkipLen = minLength skipLen available
+                     afterSkip      = subtractLength available clippedSkipLen
+                     clippedXorLen  = minLength xorLen afterSkip
+                     afterXor       = subtractLength afterSkip clippedXorLen
+                     clippedTermLen = minLength upsTerminatorByteLength afterXor
+                 when (unLength clippedSkipLen > 0) $
+                   copySourceSlice skipStart clippedSkipLen
+                 when (unLength clippedXorLen > 0) $
+                   xorSourceSlice xorStart clippedXorLen
+                     (ByteString.take (unLength clippedXorLen) xorData)
+                 when (unLength clippedTermLen > 0) $
+                   copySourceSlice terminatorPos clippedTermLen
+                 applyBlockStream (nextAction blockIndex) nextPosition
 
       in applyBlockStream firstAction (Offset 0)
+
+----------------------------------------------------------------------------
+-- OOB block detection
+----------------------------------------------------------------------------
+
+-- | Walk the block stream and detect blocks whose span exceeds the
+-- declared target size. Returns a single summary warning if any OOB
+-- blocks exist, or an empty list if all blocks fit. Called at parse
+-- time from 'Slap.SomePatch' to populate 'patchWarnings' — the
+-- user sees the diagnostic before apply runs, and 'applyUPS' clips
+-- the writes silently.
+detectOOBBlocks :: UPSPatch -> [SlapWarning]
+detectOOBBlocks patch =
+  case firstOOBIndex of
+    Nothing       -> []
+    Just firstIdx ->
+      [ApplyOOBBlocksSkipped LabelUPS oobBlockCount firstIdx
+                             totalOvershoot targetFileSize]
+  where
+    targetFileSize = upsTargetSize patch
+
+    (_, oobBlockCount, firstOOBIndex, totalOvershoot) =
+      Vector.ifoldl' walkBlock (Offset 0, 0, Nothing, Length 0) (upsBlocks patch)
+
+    walkBlock (position, count, firstIdx, overshoot) blockIdx
+              (UPSBlock skipLen xorData) =
+      let xorLen        = Length (ByteString.length xorData)
+          totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
+          nextPosition  = advance position totalBlockLen
+      in if fitsWithin position totalBlockLen targetFileSize
+           then (nextPosition, count, firstIdx, overshoot)
+           else let remaining      = remainingFromOffset position targetFileSize
+                    blockOvershoot = subtractLength totalBlockLen remaining
+                in ( nextPosition
+                   , count + 1
+                   , case firstIdx of
+                       Just _  -> firstIdx
+                       Nothing -> Just (ActionIndex blockIdx)
+                   , overshoot <> blockOvershoot
+                   )

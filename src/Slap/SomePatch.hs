@@ -416,6 +416,7 @@ parseSome patchContents = case detectFormat patchContents of
           , verifyFileSizeAdvisory = Just (UPS.upsSourceSize patch)
           }
       , patchWarnings       = [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
+                              ++ UPS.detectOOBBlocks patch
       , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing

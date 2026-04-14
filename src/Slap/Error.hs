@@ -340,6 +340,9 @@ data SlapWarning
   | PlatformNotAvailable FormatLabel String  -- target format, platform name
   | PlatformAmbiguous FormatLabel String String String  -- source format, combined name, default name, override value
 
+  -- Apply: out-of-bounds block clipping
+  | ApplyOOBBlocksSkipped FormatLabel Int ActionIndex Length FileSize
+
   -- Format-specific
   | SubformatConverted FormatLabel String String
   | OffsetShiftApplied
@@ -603,6 +606,16 @@ renderSlapWarning (PlatformAmbiguous label combined chosen override) =
   "note: " ++ formatLabelName label ++ " ROM type " ++ combined
   ++ " is ambiguous; defaults to " ++ chosen
   ++ " on conversion (override with --rom-type " ++ override ++ ")"
+
+renderSlapWarning (ApplyOOBBlocksSkipped label count firstIndex overshoot declaredSize) =
+  formatLabelName label ++ " apply: "
+  ++ show count ++ plural count " block writes" " blocks write"
+  ++ " past declared target size ("
+  ++ show (unFileSize declaredSize) ++ " bytes); first at step #"
+  ++ show (unActionIndex firstIndex) ++ ", "
+  ++ show (unLength overshoot) ++ plural (unLength overshoot) " byte" " bytes"
+  ++ " total overshoot — clipped to target bounds"
+  where plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 renderSlapWarning (SubformatConverted label fromSub toSub) =
   "note: " ++ formatLabelName label ++ " "
