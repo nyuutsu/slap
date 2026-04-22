@@ -37,7 +37,7 @@ dpsMeta patch = concat
 
 dpsInfo :: DPSPatch -> String
 dpsInfo patch = unlines $ filter (not . null) $
-  [ "format:      DPS (Deufeufeu Patching System)" ]
+  [ "format:      DPS" ]
   ++ map renderField (dpsMeta patch)
   ++ [ "records:     " ++ show (length (dpsRecords patch))
      , "  copy:      " ++ show copyCount
@@ -53,7 +53,7 @@ dpsInfo patch = unlines $ filter (not . null) $
 
 explainDPS :: DPSPatch -> ExplainData
 explainDPS patch = ExplainData
-  { explainFormat   = "DPS (Deufeufeu Patching System)"
+  { explainFormat   = "DPS"
   , explainHeader   = dpsMeta patch
   , explainSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
   , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
