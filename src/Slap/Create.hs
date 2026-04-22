@@ -1,5 +1,5 @@
 -- | Coordination-layer porcelain for patch creation. This module
--- is the single home for \"the thing that makes a patch\": one
+-- is the single home for "the thing that makes a patch": one
 -- named entry point per format slap can emit, each written as a
 -- thin wrapper over the underlying format-level encoder (for
 -- differential formats) or over 'createFromMemory' (for direct
@@ -11,14 +11,14 @@
 -- 'PatchContents' pipeline, the 'FormatSpecification' contract
 -- checker, and the 'convertDirect' engine. Slap.Create owns the
 -- creation porcelain — the per-format front doors that know which
--- format they\'re targeting statically. Callers that arrive with a
--- 'CreateFormat' tag (notably the CLI in @app\/Main.hs@) use
+-- format they're targeting statically. Callers that arrive with a
+-- 'CreateFormat' tag (notably the CLI in @app/Main.hs@) use
 -- 'createFromMemory', which Slap.Create re-exports from Slap.Convert;
 -- callers whose target format is fixed at compile time use the
 -- per-format porcelain here.
 --
 -- The diff-format porcelain is genuinely thin: each function
--- either re-exports or forwards directly to the format\'s
+-- either re-exports or forwards directly to the format's
 -- @Slap.Foo.Create.createFoo@. Those entry points already accept
 -- source and target file contents plus whatever structured extras
 -- the format needs, so there is nothing to coordinate beyond the
@@ -32,13 +32,13 @@
 -- format. The per-format direct wrappers therefore assemble a
 -- 'CreateMeta' (and, for 'createNINJA1', a seed 'PatchContents' to
 -- carry the compression flag through the @--with@ inheritance slot)
--- and call 'createFromMemory'. This asymmetry isn\'t an apology —
--- it\'s a statement of what the types express: the direct family
--- shares a pipeline, the differential family doesn\'t, and the
+-- and call 'createFromMemory'. This asymmetry isn't an apology —
+-- it's a statement of what the types express: the direct family
+-- shares a pipeline, the differential family doesn't, and the
 -- porcelain reflects the underlying shape rather than hiding it
 -- behind per-format facades.
 --
--- The \"extras\" on the direct-format porcelain are design-fresh:
+-- The "extras" on the direct-format porcelain are design-fresh:
 -- 'BPSMetadata', 'PPFDescription', and 'PCHTXTDescription' are
 -- newtype wrappers introduced so a call site can say what a raw
 -- 'ByteString' or 'String' is for; 'PPFOptions' and 'NINJA1Options'
@@ -171,12 +171,12 @@ createNINJA2 = NINJA2.createNINJA2
 --
 -- Every function in this section is a thin wrapper over
 -- 'createFromMemory': 'CreateDirect' tag, a 'CreateMeta' carrying
--- the format\'s extras (if any), and an optional seed 'PatchContents'
+-- the format's extras (if any), and an optional seed 'PatchContents'
 -- used only by 'createNINJA1' to thread the compression flag through
--- 'buildContents'\'s inheritance slot. The uniformity is deliberate
+-- 'buildContents''s inheritance slot. The uniformity is deliberate
 -- — direct-format creation is a 'PatchContents' pipeline owned by
 -- "Slap.Convert", and the per-format wrappers only decide how their
--- extras map onto that pipeline\'s existing inputs.
+-- extras map onto that pipeline's existing inputs.
 ----------------------------------------------------------------------------
 
 -- | Create a standard IPS patch (@"PATCH"@ magic, 24-bit offsets).
@@ -252,7 +252,7 @@ createPPF3 source target (PPFDescription descriptionString) options imageType =
 -- translation and its warnings run inside 'encodeDirect') and the
 -- compression choice. The compression choice is threaded through a
 -- seed 'PatchContents' — 'buildContents' reads 'contentsNINJA1Compressed'
--- from the optional source-patch slot, and that\'s the one place the
+-- from the optional source-patch slot, and that's the one place the
 -- pipeline will look for it.
 createNINJA1
   :: SourceFileContents
@@ -281,8 +281,8 @@ createPMSR source target =
   createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing
 
 -- | Create a PCHTXT patch. The optional 'PCHTXTDescription' becomes
--- either an @\@nsobid-...@ build-ID header (when it\'s a 32+-character
--- hex digest) or a @\/\/ ...@ comment line.
+-- either an @\@nsobid-...@ build-ID header (when it's a 32+-character
+-- hex digest) or a @// ...@ comment line.
 createPCHTXT
   :: SourceFileContents
   -> TargetFileContents

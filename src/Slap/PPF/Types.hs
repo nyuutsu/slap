@@ -80,14 +80,14 @@ data PPFPatch = PPFPatch
 -- | The description field of a PPF3 patch header. Locale-encoded and
 -- truncated to 'ppfDescriptionLength' bytes on create, with a
 -- 'FieldTruncated' warning emitted on overflow. Introduced so the
--- porcelain surface distinguishes \"the 50-byte description\" from
+-- porcelain surface distinguishes "the 50-byte description" from
 -- every other 'String' that flows through 'Slap.PPF.Create.encodePPF3'.
 newtype PPFDescription = PPFDescription { unPPFDescription :: String }
   deriving (Eq, Show)
 
 -- | Whether a PPF3 patch should carry an undo block. A two-constructor
 -- sum rather than a 'Bool' so call sites and error renderings name
--- the states rather than spell \"True\" or \"False\".
+-- the states rather than spell "True" or "False".
 data PPFUndoInclusion = PPFIncludeUndo | PPFOmitUndo
   deriving (Eq, Show)
 
@@ -127,7 +127,7 @@ ppf3MinHeaderLength = Length 60
 ppf4HeaderLength :: Length
 ppf4HeaderLength = Length 60
 
--- | Length of the flag\/padding bytes after the description field in a
+-- | Length of the flag/padding bytes after the description field in a
 -- PPF4 header. Per Pyriel's source: image_type (1) + validation_flag (1)
 -- + undo_flag (1) + expansion (1).
 ppf4PostDescriptionLength :: Length

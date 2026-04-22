@@ -30,7 +30,7 @@ import Data.Bits (xor)
 -- Field-truncation warnings (from fields too long to fit the fixed
 -- header) and platform warnings (from 'PlatformType' values NINJA2
 -- can't express) are both folded into 'CreateResult.resultWarnings'
--- so the caller doesn\'t have to remember to collect them separately.
+-- so the caller doesn't have to remember to collect them separately.
 createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Metadata
              -> Either SlapError CreateResult
 createNINJA2 (SourceFileContents original) (TargetFileContents modified) metadata =

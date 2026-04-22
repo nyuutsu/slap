@@ -8,7 +8,7 @@
 -- documents the role of each byte buffer in the type.
 --
 -- All three are newtypes around 'ByteString' with zero runtime cost.
--- Use the @un*@ accessors at boundaries (file I\/O, FFI, hash
+-- Use the @un*@ accessors at boundaries (file I/O, FFI, hash
 -- functions) where the underlying 'ByteString' is needed.
 module Slap.FileContents
   ( SourceFileContents(..)

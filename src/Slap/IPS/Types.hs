@@ -260,8 +260,8 @@ ips32EEOFMarkerLength = Length 4
 -- | Length of the two-byte big-endian size field present in every
 -- record (both copy and RLE), regardless of variant. For a copy
 -- record this is the payload length that follows; for an RLE
--- record this is zero, used as a sentinel for \"the following
--- bytes encode a run, not a payload\".
+-- record this is zero, used as a sentinel for "the following
+-- bytes encode a run, not a payload".
 ipsRecordSizeFieldLength :: Length
 ipsRecordSizeFieldLength = Length 2
 

@@ -57,7 +57,7 @@ data BPSPatch = BPSPatch
 -- BPS spec treats these bytes as opaque — community practice is a
 -- small XML document, but nothing below the porcelain layer assumes
 -- a shape. This newtype exists so the porcelain surface distinguishes
--- \"the metadata blob\" from every other 'ByteString' that flows
+-- "the metadata blob" from every other 'ByteString' that flows
 -- through 'Slap.BPS.Create.createBPS'; the wire-level encoder still
 -- takes raw bytes and unwrapping happens at the 'Slap.Create'
 -- boundary.

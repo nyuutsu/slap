@@ -263,8 +263,8 @@ data SlapError
   -- the empty post-@"EEOF"@ trailer; bytes outside those shapes are
   -- a structured parse failure rather than a 'Get'-monad
   -- passthrough. The 'TrailerMarker' carries the marker bytes the
-  -- parser was anchored to so the renderer can name them (\"after
-  -- EOF marker\", \"after EEOF marker\") without knowing about
+  -- parser was anchored to so the renderer can name them ("after
+  -- EOF marker", "after EEOF marker") without knowing about
   -- format-specific variants. The 'ActualLength' is the byte count
   -- of the unrecognized trailer slice.
   | UnrecognizedTrailer FormatLabel TrailerMarker ActualLength
@@ -304,7 +304,7 @@ data SlapError
   -- platforms the cap is ~9 EB and this error is effectively dead.
   | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
 
-  -- | A record\'s offset lands on the format\'s trailer sentinel and
+  -- | A record's offset lands on the format's trailer sentinel and
   -- the encoder has no way to shift it back: either the source bytes
   -- needed for the shift-and-prepend fix are absent (source-less
   -- conversion), the source is shorter than the preceding-byte index,

@@ -123,8 +123,8 @@ parseIPS (PatchFileContents inputBytes)
 -- would reinvent it inline and is forbidden by the prep commit's
 -- design.
 --
--- Why peek at all: the IPS \"EOF\" sentinel is a famous footgun.
--- The bytes @0x45 0x4F 0x46@ are simultaneously the ASCII \"EOF\"
+-- Why peek at all: the IPS "EOF" sentinel is a famous footgun.
+-- The bytes @0x45 0x4F 0x46@ are simultaneously the ASCII "EOF"
 -- trailer and a perfectly valid 24-bit big-endian offset value
 -- (4,542,278). A parser that consumes the next three bytes
 -- unconditionally cannot tell whether it just read the next
@@ -224,7 +224,7 @@ parseRecordsAndCaptureTrailer variant = do
 -- The naive bound @offset ≤ maxAddressableOffset@ would falsely
 -- reject conformant patches like fe6 whose final record sits at
 -- offset @0xFFFFFF@ and writes a payload that ends at @0x1000000@:
--- the offset by itself is at the limit but the record\'s end
+-- the offset by itself is at the limit but the record's end
 -- position has another @ipsMaxRecordPayload@ bytes of legal range
 -- still ahead of it. The sum-of-two-limits ceiling makes that case
 -- legal exactly because the offset and payload caps are
@@ -232,7 +232,7 @@ parseRecordsAndCaptureTrailer variant = do
 --
 -- The RLE-zero check rejects @IPSRecordRLE { ipsRleCount = Length
 -- 0 }@. The spec is silent on RLE records with run length zero;
--- slap\'s strict discipline rejects them rather than silently
+-- slap's strict discipline rejects them rather than silently
 -- treating them as no-ops, on the principle that a malformed-field
 -- record is a parse error, not a runtime curiosity for 'Apply' to
 -- inherit.
@@ -285,15 +285,15 @@ validateRecordList variant = walkAt firstAction
 -- shape-only: the JSON is captured as opaque bytes and never
 -- validated against the EBPatcher schema, the discriminator field,
 -- or anything else below 'Slap.IPS.Describe'. Validating against a
--- specific patcher\'s conventions would couple Parse to one
--- implementation\'s metadata format and reject perfectly-valid
+-- specific patcher's conventions would couple Parse to one
+-- implementation's metadata format and reject perfectly-valid
 -- variants from other tools.
 ebpJSONOpeningByte :: Word8
 ebpJSONOpeningByte = 0x7B
 
 -- | The exact byte length of a Flips-style truncation marker that
 -- may follow a 'StandardIPS' @"EOF"@ trailer. The marker carries a
--- big-endian truncation offset whose width matches the variant\'s
+-- big-endian truncation offset whose width matches the variant's
 -- own offset field — three bytes for 'StandardIPS'. Local to Parse
 -- because the constant has no use elsewhere in the codebase, and
 -- expressed as a function of 'variantSpec' so the 3 / Offset24
@@ -306,7 +306,7 @@ ipsTruncationMarkerLength =
 -- record vector and the captured post-trailer bytes.
 --
 -- 'StandardIPS' post-@"EOF"@ has four accepted shapes (Q2
--- resolution from @docs\/ips\/proposal.md@):
+-- resolution from @docs/ips/proposal.md@):
 --
 --   1. empty trailer → plain 'IPSPatch' with no truncation. The
 --      canonical case from the original SNESTool spec.
@@ -327,7 +327,7 @@ ipsTruncationMarkerLength =
 --
 -- 'IPS32' post-@"EEOF"@ accepts only the empty trailer (Q1
 -- resolution). Any trailing bytes at all are 'SlapError'. The
--- harder no after @"EEOF"@ versus @"EOF"@ reflects the variants\'
+-- harder no after @"EEOF"@ versus @"EOF"@ reflects the variants'
 -- ecosystem histories: 'StandardIPS' has accumulated three
 -- well-attested post-trailer shapes through Flips, EBP, and the
 -- original spec; 'IPS32' has none. There is no shape to recognise

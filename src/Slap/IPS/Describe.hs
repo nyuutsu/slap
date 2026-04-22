@@ -1,4 +1,4 @@
--- | Describe layer for the IPS family — what slap\'s @info@ and
+-- | Describe layer for the IPS family — what slap's @info@ and
 -- @explain@ verbs consume for already-parsed 'IPSPatch' and
 -- 'EBPPatch' values. Counterparts to @bpsInfo@ / @explainBPS@ in
 -- 'Slap.BPS.Describe' and @upsInfo@ / @explainUPS@ in
@@ -17,7 +17,7 @@
 -- treated as an opaque byte blob for display purposes: the
 -- @title@/@author@/@description@ extraction the old Describe layer
 -- did is gone on purpose, because it reached past the
--- \"shape-recognize, don\'t schema-validate\" boundary that
+-- "shape-recognize, don't schema-validate" boundary that
 -- 'Slap.IPS.Parse' draws.
 module Slap.IPS.Describe
   ( -- * Plain IPS
@@ -69,10 +69,10 @@ import qualified Data.Vector as Vector
 -- ipsInfo / ipsMeta — plain IPSPatch
 ----------------------------------------------------------------------------
 
--- | One-line-per-field metadata for an 'IPSPatch'. The variant\'s
+-- | One-line-per-field metadata for an 'IPSPatch'. The variant's
 -- wire facts come from 'variantSpec' so nothing in this module
 -- hardcodes @"PATCH"@ / @"IPS32"@ / @"EOF"@ / @"EEOF"@ strings or
--- the 24\/32-bit offset widths. The truncation line is emitted
+-- the 24/32-bit offset widths. The truncation line is emitted
 -- only when the parser observed a Flips-style truncation marker.
 ipsMeta :: IPSPatch -> [MetaField]
 ipsMeta patch =
@@ -81,7 +81,7 @@ ipsMeta patch =
 
 -- | The per-variant wire-fact meta fields that both 'ipsMeta' and
 -- 'ebpMeta' emit. Pulled from 'variantSpec' to keep Describe from
--- owning its own copy of the magic\/marker\/width\/ceiling facts.
+-- owning its own copy of the magic/marker/width/ceiling facts.
 -- Shared between the plain and EBP paths because EBP wraps a
 -- 'StandardIPS' record stream and the underlying wire facts are
 -- worth surfacing regardless of wrapper.
@@ -231,16 +231,16 @@ ipsVariantDisplayName IPS32       = "IPS32"
 
 -- | Human-readable rendering of an 'OffsetWidth'. Used by
 -- 'ipsVariantMetaFields' so the reader sees @"24-bit"@ rather than
--- a bare @3@ byte count. The 3 \/ 4 byte-count mapping still lives
+-- a bare @3@ byte count. The 3 / 4 byte-count mapping still lives
 -- only in 'Slap.IPS.Types.offsetWidthByteCount'; this helper is a
 -- parallel display mapping that never touches the byte count.
 renderOffsetWidth :: OffsetWidth -> String
 renderOffsetWidth Offset24 = "24-bit"
 renderOffsetWidth Offset32 = "32-bit"
 
--- | Render a variant\'s maximum addressable offset as a zero-padded
+-- | Render a variant's maximum addressable offset as a zero-padded
 -- hex literal. Eight hex digits accommodates the largest
--- 'IPS32' ceiling (@0xFFFFFFFF@); 'StandardIPS'\'s smaller
+-- 'IPS32' ceiling (@0xFFFFFFFF@); 'StandardIPS''s smaller
 -- @0xFFFFFF@ gets the same eight-digit padding for visual
 -- alignment across variants.
 renderMaxOffset :: Offset -> String
@@ -250,7 +250,7 @@ renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
 -- Shape-recognised byte display
 ----------------------------------------------------------------------------
 
--- | Render a raw marker byte sequence (the variant\'s magic or EOF
+-- | Render a raw marker byte sequence (the variant's magic or EOF
 -- marker, as it appears on the wire) for inclusion in a 'MetaField'.
 -- Returns the bytes decoded as ASCII when every byte is in the
 -- printable ASCII range — the common case for every variant slap
@@ -279,10 +279,10 @@ renderEBPMetadata metadataBytes
       ++ renderUTF8OrByteCount metadataPreviewBytes metadataBytes
 
 -- | Maximum number of EBP metadata bytes shown in 'renderEBPMetadata'
--- before the preview is truncated with an ellipsis. Matches BPS\'s
+-- before the preview is truncated with an ellipsis. Matches BPS's
 -- 'Slap.BPS.Describe.metadataPreviewBytes' for consistency — both
 -- formats cap metadata previews at the same length so @slap info@
--- output doesn\'t flood the terminal on a large blob.
+-- output doesn't flood the terminal on a large blob.
 metadataPreviewBytes :: Int
 metadataPreviewBytes = 200
 

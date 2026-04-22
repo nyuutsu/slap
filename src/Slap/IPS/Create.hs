@@ -224,17 +224,17 @@ encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
 encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
   encodeOffset offsetWidth truncatedSizeBytes
 
--- | Resolve every record that sits on the variant\'s trailer
+-- | Resolve every record that sits on the variant's trailer
 -- sentinel. Two outcomes per record:
 --
--- * \"Fixable\": the record\'s offset equals the sentinel, offset \> 0,
+-- * "Fixable": the record's offset equals the sentinel, offset \> 0,
 --   and the source contains the byte at @sentinel - 1@. The record
 --   is rewritten to begin one byte earlier with that preceding byte
 --   prepended to its payload — the same shift-and-prepend trick the
---   Archiveteam wiki recommends for IPS\'s @0x454F46@ collision and
---   that Flips\' @libips.cpp@ implements inline.
+--   Archiveteam wiki recommends for IPS's @0x454F46@ collision and
+--   that Flips' @libips.cpp@ implements inline.
 --
--- * \"Unfixable\": the record\'s offset equals the sentinel but the
+-- * "Unfixable": the record's offset equals the sentinel but the
 --   source has no byte to prepend — either because the source is
 --   empty (source-less direct conversion), the source is shorter
 --   than @sentinel@, or the sentinel sits at offset @0@ so there is
@@ -244,7 +244,7 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 --   emitting bytes a parser could not faithfully round-trip.
 --
 -- Records whose offset is not the sentinel pass through unchanged —
--- the explicit \"not a collision\" branch, not a silent catch-all.
+-- the explicit "not a collision" branch, not a silent catch-all.
 --
 -- Both 'Slap.Convert.createFromMemory' (with real source bytes) and
 -- 'Slap.Convert.convertDirect' (with an empty 'SourceFileContents')

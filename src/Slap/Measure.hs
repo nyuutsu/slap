@@ -191,11 +191,11 @@ newtype ActualOffset = ActualOffset { unActualOffset :: Offset }
 newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
   deriving (Eq, Ord, Show)
 
--- | The offset at which a format\'s trailer sentinel sits: the
--- big-endian encoding of this offset collides with the format\'s
+-- | The offset at which a format's trailer sentinel sits: the
+-- big-endian encoding of this offset collides with the format's
 -- stream-closing marker on the wire, so a record emitted at this
--- offset would be indistinguishable from the trailer. IPS\'s
--- @0x454F46@ (\"EOF\") and IPS32\'s @0x45454F46@ (\"EEOF\") are the
+-- offset would be indistinguishable from the trailer. IPS's
+-- @0x454F46@ ("EOF") and IPS32's @0x45454F46@ ("EEOF") are the
 -- motivating examples. Carried distinct from plain 'Offset' so that
 -- sentinel-collision code can never accidentally be passed a record
 -- offset, and vice versa.
@@ -211,13 +211,13 @@ newtype ActualMagic = ActualMagic { unActualMagic :: ByteString }
   deriving (Eq, Show)
 
 -- | The trailer-marker bytes a parser was looking for when it
--- encountered unrecognized post-trailer content. The IPS family\'s
+-- encountered unrecognized post-trailer content. The IPS family's
 -- @"EOF"@ and @"EEOF"@ markers are the motivating example: when
 -- 'Slap.IPS.Parse' rejects bytes that follow one of these markers,
 -- the marker bytes are carried in the resulting error so the
 -- renderer can name the marker the parser was anchored to without
 -- knowing about IPS variants. The bytes are stored verbatim;
--- whether they print as ASCII or hex is the renderer\'s problem.
+-- whether they print as ASCII or hex is the renderer's problem.
 newtype TrailerMarker = TrailerMarker { unTrailerMarker :: ByteString }
   deriving (Eq, Show)
 
