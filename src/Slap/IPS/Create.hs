@@ -1,11 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Wire encoder and high-level diff entry points for the IPS
--- family. This module is the IPS analog of 'Slap.BPS.Create' and
--- 'Slap.UPS.Create' — it owns the byte-laying side of patch
--- creation. The decision side (which records to emit, what shape
--- they should take, how to merge or split runs) lives in
--- 'Slap.IPS.Optimize'.
+-- | Wire encoder for the IPS family. This module owns the
+-- byte-laying side of patch creation: given a record list and a
+-- variant, it produces the patch bytes. The decision side (which
+-- records to emit, what shape they should take, how to merge or
+-- split runs) lives in 'Slap.IPS.Optimize'.
 --
 -- The single 'encodeIPSPatch' wire encoder replaces the four
 -- near-duplicate top-level encoders of the previous module
@@ -16,18 +15,18 @@
 -- wrapper ('encodeEBPPatch') that calls 'encodeIPSPatch' for the
 -- standard-IPS body and appends the JSON metadata trailer.
 --
--- The public diff-based entry points 'createIPS', 'createIPS32',
--- and 'createEBP' compose the optimizer with the wire encoder.
--- They are the IPS analogues of 'Slap.BPS.Create.createBPS' and
--- 'Slap.UPS.Create.createUPS' — source and target in, patch bytes
--- out — but split three ways for the three on-wire shapes.
+-- There is no @createIPS@ / @createIPS32@ / @createEBP@ porcelain
+-- here. End-to-end creation for direct formats is a coordination-layer
+-- concern — the 'Slap.Convert.createFromMemory' pipeline threads
+-- a 'PatchContents' through 'buildContents' and 'encodeDirect',
+-- which is where the IPS family's live creation path runs today.
+-- A future @Slap.Create@ coordination module is planned to host
+-- per-format creation porcelain for the IPS family and every
+-- other format, so that callers looking for "the thing that makes
+-- a patch" find a single named place.
 module Slap.IPS.Create
-  ( -- * Public diff-based entry points
-    createIPS
-  , createIPS32
-  , createEBP
-    -- * Lower-level wire encoder (used by 'Slap.Convert')
-  , encodeIPSPatch
+  ( -- * Wire encoder (used by 'Slap.Convert')
+    encodeIPSPatch
   , encodeEBPPatch
     -- * Wire-emission helpers
   , encodeIPSRecord
@@ -40,15 +39,12 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
-import Slap.Error (SlapError(..))
 import Slap.FileContents
   ( SourceFileContents(..)
-  , TargetFileContents(..)
   , PatchFileContents(..)
   , unPatchFileContents
   )
 import Slap.Format (padHex)
-import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
   ( IPSVariant(..)
@@ -64,8 +60,6 @@ import Slap.Measure
   , Delta(..)
   , Cursor(..)
   , EncodedHunk(..)
-  , ActualSize(..)
-  , ExpectedSize(..)
   , offsetToInt
   )
 
@@ -81,82 +75,6 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
-
-----------------------------------------------------------------------------
--- Public diff-based entry points
-----------------------------------------------------------------------------
-
--- | Create a 'StandardIPS' patch from source and target files.
--- The optimizer chooses the record set; the wire encoder lays the
--- bytes down. The 'IPSPatch' that results from parsing this output,
--- applied to the same source, yields the original target — the
--- BPS/UPS-style canonical create-parse-apply round trip.
---
--- IPS is structurally weaker than BPS or UPS in that it carries no
--- header field for the target size, no checksum, and no metadata.
--- This API doesn't pretend otherwise: it takes only source and
--- target, and the cost-of-correctness is paid at the optimizer
--- and encoder boundaries rather than via a richer config.
-createIPS :: SourceFileContents -> TargetFileContents -> PatchFileContents
-createIPS source target =
-  encodeIPSPatch StandardIPS source
-                 (optimalIPSRecords Offset24 source target)
-                 Nothing
-
--- | Create an 'IPS32' patch from source and target files. The
--- IPS32 variant widens the offset field to 32 bits, addressing
--- files up to 4 GiB. There is no community-recognised IPS32
--- truncation marker; the encoder does not emit one and
--- 'Slap.IPS.Parse' refuses any trailing bytes after @"EEOF"@ —
--- see the symmetric strictness pact in @docs/ips/proposal.md@.
---
--- Returns 'Left' if the target is strictly smaller than the source,
--- because IPS32 has no truncation marker and therefore cannot express
--- target shrinkage on the wire.
-createIPS32 :: SourceFileContents -> TargetFileContents -> Either SlapError PatchFileContents
-createIPS32 source@(SourceFileContents sourceBytes) (TargetFileContents targetBytes)
-  | targetSize < sourceSize =
-      Left (CannotExpressTargetShrinkage LabelIPS32
-              (ActualSize (FileSize sourceSize))
-              (ExpectedSize (FileSize targetSize)))
-  | otherwise =
-      Right (encodeIPSPatch IPS32 source
-               (optimalIPSRecords Offset32 source target)
-               Nothing)
-  where
-    sourceSize = ByteString.length sourceBytes
-    targetSize = ByteString.length targetBytes
-    target     = TargetFileContents targetBytes
-
--- | Create an EBP patch (a 'StandardIPS' patch with a trailing
--- JSON metadata blob) from source and target files plus the EBP
--- metadata to embed. The metadata 'ByteString' is written verbatim;
--- this layer does not validate its structure. Callers that want
--- to construct the JSON from CLI title/author/description fields
--- should call 'buildEBPMetadataJSON' first and wrap the result in
--- an 'EBPMetadata'.
---
--- Returns 'Left' if the target is strictly smaller than the source,
--- because EBP's trailer slot is occupied by JSON metadata and
--- therefore cannot express target shrinkage on the wire.
-createEBP
-  :: SourceFileContents
-  -> TargetFileContents
-  -> EBPMetadata
-  -> Either SlapError PatchFileContents
-createEBP source@(SourceFileContents sourceBytes) (TargetFileContents targetBytes) metadata
-  | targetSize < sourceSize =
-      Left (CannotExpressTargetShrinkage LabelEBP
-              (ActualSize (FileSize sourceSize))
-              (ExpectedSize (FileSize targetSize)))
-  | otherwise =
-      Right (encodeEBPPatch source
-               (optimalIPSRecords Offset24 source target)
-               metadata)
-  where
-    sourceSize = ByteString.length sourceBytes
-    targetSize = ByteString.length targetBytes
-    target     = TargetFileContents targetBytes
 
 ----------------------------------------------------------------------------
 -- Parameterized wire encoder
@@ -180,10 +98,9 @@ createEBP source@(SourceFileContents sourceBytes) (TargetFileContents targetByte
 -- it), so the encoder silently drops any truncation passed for
 -- IPS32 — emitting one would produce bytes that 'Slap.IPS.Parse'
 -- would then reject under the symmetric strictness pact. The
--- 'createIPS32' entry point never passes a non-'Nothing' truncation
--- in the first place; the silent drop is for the 'Slap.Convert'
--- direct path, which threads a 'PatchContents' truncation field
--- without knowing the wire format's appetite for it.
+-- silent drop exists for the 'Slap.Convert' direct path, which
+-- threads a 'PatchContents' truncation field without knowing the
+-- wire format's appetite for it.
 --
 -- This function does not validate the records: it assumes each
 -- record's offset and length are already within the variant's
