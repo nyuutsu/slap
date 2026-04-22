@@ -27,6 +27,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
+                     MaxAddressableSize(..),
                      RequiredLength(..), ActualLength(..),
                      EncodedLength(..), MaxLength(..),
                      OriginalLength(..), TruncatedLength(..),
@@ -293,6 +294,16 @@ data SlapError
   | UPSUnencodeablePair FormatLabel UnencodeabilityReason
   | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
 
+  -- | A create-path input (source or target) is larger than the
+  -- host platform's addressable range. slap's varint encoders
+  -- shuttle lengths through 'Int', so on a 32-bit platform where
+  -- 'Int' is 31-bit-addressable, a file over ~2 GB would truncate
+  -- via 'fromIntegral' and produce a malformed patch. The
+  -- 'ActualSize' is the offending file's size; the
+  -- 'MaxAddressableSize' is the host's 'maxBound :: Int'. On 64-bit
+  -- platforms the cap is ~9 EB and this error is effectively dead.
+  | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
+
   -- | A record\'s offset lands on the format\'s trailer sentinel and
   -- the encoder has no way to shift it back: either the source bytes
   -- needed for the shift-and-prepend fix are absent (source-less
@@ -520,6 +531,11 @@ renderSlapError (OffsetExceedsRange label (ActualOffset actual) (MaxOffset maxOf
   ++ showHex (unOffset actual) ""
   ++ " exceeds maximum offset 0x"
   ++ showHex (unOffset maxOffset) ""
+
+renderSlapError (FileExceedsAddressableRange label (ActualSize actualSize) (MaxAddressableSize maxSize)) =
+  formatLabelName label ++ ": input file is "
+  ++ show (unFileSize actualSize) ++ " bytes, exceeding the host platform's "
+  ++ show (unFileSize maxSize) ++ "-byte addressable range"
 
 renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
   formatLabelName label ++ ": hunk offset 0x"

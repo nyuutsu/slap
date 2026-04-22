@@ -11,7 +11,7 @@ import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -23,8 +23,11 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
--- as CopyFromROM records.
-createDPS :: SourceFileContents -> TargetFileContents -> DPSMetadata -> DPSStability -> CreateResult
+-- as CopyFromROM records. Returns 'Either' for parity with the other
+-- diff-format create entry points; DPS has no current failure modes,
+-- so the result is always 'Right'.
+createDPS :: SourceFileContents -> TargetFileContents -> DPSMetadata -> DPSStability
+          -> Either SlapError CreateResult
 createDPS (SourceFileContents original) (TargetFileContents modified) metadata stability =
     let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
         (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
@@ -37,7 +40,8 @@ createDPS (SourceFileContents original) (TargetFileContents modified) metadata s
             <> word8 (fromDPSFormatVersion DPSVersion1)
             <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
             <> foldMap encodeRecord (dpsRecordsFromDiff original modified)
-    in CreateResult (PatchFileContents patchBytes) (nameWarnings ++ authorWarnings ++ versionWarnings)
+    in Right (CreateResult (PatchFileContents patchBytes)
+                           (nameWarnings ++ authorWarnings ++ versionWarnings))
   where
     encodeField fieldName fieldString =
       let result = encodeBoundedLocale dpsFieldWidth fieldString

@@ -127,24 +127,26 @@ roundTripTests = testGroup "RoundTrip"
 
 prop_bps :: Property
 prop_bps = forAll genPair $ \(source, target) ->
-  let patch = BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty
-  in case BPS.parseBPS patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case BPS.parseBPS patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
   forAll genByteString $ \meta ->
-    let patch = BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta
-    in case BPS.parseBPS patch of
-         Left slapError -> counterexample (renderSlapError slapError) $ property False
-         Right parsed -> BPS.bpsMetadata parsed === meta
+    case BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta of
+      Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+      Right (CreateResult patch _) -> case BPS.parseBPS patch of
+        Left slapError -> counterexample (renderSlapError slapError) $ property False
+        Right parsed -> BPS.bpsMetadata parsed === meta
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
   case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
-    Right patch ->
+    Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
           counterexample (renderSlapError parseError) $ property False
@@ -243,19 +245,21 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
 
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(source, target) ->
-  let patch = GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target)
-  in case GDIFF.parseGDIFF patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
+  case GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
-  let patch = APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target)
-  in case APSGBA.parseAPSGBA patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
-         result <- applyViaFile APSGBA.applyAPSGBA parsed source
-         pure $ result === target
+  case APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed -> ioProperty $ do
+        result <- applyViaFile APSGBA.applyAPSGBA parsed source
+        pure $ result === target
 
 ----------------------------------------------------------------------------
 -- IPS32 / EBP: no truncation marker, target must be >= source
@@ -327,30 +331,33 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
-  let patch = resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target)
-                (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
-                DPS.DPSStable)
-  in case DPS.parseDPS patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+  case DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+         (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+         DPS.DPSStable of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case DPS.parseDPS patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
-  let patch = NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8
-  in case NINJA2.parseNINJA2 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
-         result <- applyViaFile NINJA2.applyNINJA2 parsed source
-         pure $ result === target
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed -> ioProperty $ do
+        result <- applyViaFile NINJA2.applyNINJA2 parsed source
+        pure $ result === target
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
-  let patch = NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8
-  in case NINJA2.parseNINJA2 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed ->
-         NINJA2.ninja2SourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
-         NINJA2.ninja2TargetMD5 parsed === Just (unMD5Hash (md5 target))
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right parsed ->
+        NINJA2.ninja2SourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
+        NINJA2.ninja2TargetMD5 parsed === Just (unMD5Hash (md5 target))
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
@@ -390,27 +397,31 @@ prop_bpsBlockMove = once $
       sourceLength = padding2 + blockSize
       source = ByteString.replicate padding1 0 <> block <> ByteString.replicate (sourceLength - padding1 - blockSize) 0
       target = ByteString.replicate padding2 0 <> block
-      patch = BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty
-  in counterexample ("patch size: " ++ show (ByteString.length (unPatchFileContents patch))
-                      ++ " (block: " ++ show blockSize ++ ")") $
-     conjoin
-       [ case BPS.parseBPS patch of
-           Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-           Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
-       , property (ByteString.length (unPatchFileContents patch) < 1024)
-       ]
+  in case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+       Right (CreateResult patch _) ->
+         counterexample ("patch size: " ++ show (ByteString.length (unPatchFileContents patch))
+                          ++ " (block: " ++ show blockSize ++ ")") $
+         conjoin
+           [ case BPS.parseBPS patch of
+               Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+               Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+           , property (ByteString.length (unPatchFileContents patch) < 1024)
+           ]
 
 -- | Patch size should not regress: a random diff with the rolling-hash
 -- algorithm must produce patches no larger than a pure-literal encoding
 -- (TargetRead for every byte), which costs targetLen + small overhead.
 prop_bpsNoSizeRegression :: Property
 prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
-  let patch = BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty
-      maxPatchSize = ByteString.length target + 100
-      patchSize = ByteString.length (unPatchFileContents patch)
-  in counterexample ("patch size: " ++ show patchSize
-                      ++ ", max: " ++ show maxPatchSize) $
-     patchSize <= maxPatchSize
+  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) ->
+      let maxPatchSize = ByteString.length target + 100
+          patchSize = ByteString.length (unPatchFileContents patch)
+      in counterexample ("patch size: " ++ show patchSize
+                          ++ ", max: " ++ show maxPatchSize) $
+         patchSize <= maxPatchSize
 
 ----------------------------------------------------------------------------
 -- PCHTXT parse unit tests

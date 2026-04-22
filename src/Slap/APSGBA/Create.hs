@@ -8,6 +8,7 @@ module Slap.APSGBA.Create
 import Slap.APSGBA.Apply (safeSlice)
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE)
+import Slap.Error (SlapError, CreateResult(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
@@ -18,13 +19,16 @@ import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
 
-createAPSGBA :: SourceFileContents -> TargetFileContents -> PatchFileContents
-createAPSGBA (SourceFileContents original) (TargetFileContents modified) = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
-    byteString apsGbaMagicBytes
-    <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
-    <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
-    <> foldMap (encodeGBABlock original modified) changedBlocks
+createAPSGBA :: SourceFileContents -> TargetFileContents
+             -> Either SlapError CreateResult
+createAPSGBA (SourceFileContents original) (TargetFileContents modified) =
+    Right (CreateResult (PatchFileContents patchBytes) [])
   where
+    patchBytes = LazyByteString.toStrict $ toLazyByteString $
+      byteString apsGbaMagicBytes
+      <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
+      <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
+      <> foldMap (encodeGBABlock original modified) changedBlocks
     blockSize = apsGbaBlockSize
     blockCount = max (blocksOf original) (blocksOf modified)
     blocksOf input = (ByteString.length input + blockSize - 1) `div` blockSize

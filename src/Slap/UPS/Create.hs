@@ -7,7 +7,7 @@ module Slap.UPS.Create
 import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
 import Slap.Binary (putWord32LE, putByuuVarint)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), UnencodeabilityReason(..))
+import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..))
@@ -26,7 +26,8 @@ import Foreign.Storable (pokeByteOff)
 -- | Create a UPS patch from source and target bytestrings. Returns
 -- 'Left' if the pair is unencodeable per the UPS spec (diff run with
 -- no valid terminator position within target bounds).
-createUPS :: SourceFileContents -> TargetFileContents -> Either SlapError PatchFileContents
+createUPS :: SourceFileContents -> TargetFileContents
+          -> Either SlapError CreateResult
 createUPS (SourceFileContents original) (TargetFileContents modified) = do
   blocks <- diffToBlocks original modified
   let sourceCRC = rustyCRC32 original
@@ -39,8 +40,8 @@ createUPS (SourceFileContents original) (TargetFileContents modified) = do
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-  let patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
-  Right (PatchFileContents (bodyBytes <> patchCRCBytes))
+      patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+  Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
 
 encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipLength xorData) =

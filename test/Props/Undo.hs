@@ -37,7 +37,7 @@ prop_upsUndo :: Property
 prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
   case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
-    Right patch ->
+    Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
           counterexample ("parse: " ++ renderSlapError parseError) $ property False

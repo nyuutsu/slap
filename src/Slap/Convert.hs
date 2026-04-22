@@ -313,27 +313,27 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
-createDefaultNotes (CreateDiff CreateNINJA2) meta = snd (prepareNINJA2 meta)
+createDefaultNotes (CreateDiff CreateNINJA2) meta =
+  NINJA2.ninja2TruncationNotes (metaPatchEncoding meta) (ninja2InfoFromMeta meta)
 createDefaultNotes (CreateDiff _) _ = []
 
--- | Build a NINJA2Info from CreateMeta and compute its truncation warnings.
--- Single source of truth for NINJA2Info construction — used by both the create
--- path (which needs the NINJA2Info) and the notes path (which needs the warnings).
-prepareNINJA2 :: CreateMeta -> (NINJA2.NINJA2Info, [SlapWarning])
-prepareNINJA2 meta = (ninja2Info, NINJA2.ninja2TruncationNotes patchEncoding ninja2Info)
+-- | Build a NINJA2Info from CreateMeta. Single source of truth for NINJA2Info
+-- construction — shared between the create path (which hands it to
+-- 'NINJA2.createNINJA2') and the notes path (which feeds it to
+-- 'NINJA2.ninja2TruncationNotes' without producing a patch).
+ninja2InfoFromMeta :: CreateMeta -> NINJA2.NINJA2Info
+ninja2InfoFromMeta meta = NINJA2.NINJA2Info
+  { NINJA2.ninja2Author      = fmap encode (metaAuthor meta)
+  , NINJA2.ninja2Version     = fmap encode (metaVersion meta)
+  , NINJA2.ninja2Title       = fmap encode (metaTitle meta)
+  , NINJA2.ninja2Genre       = fmap encode (metaGenre meta)
+  , NINJA2.ninja2Language    = fmap encode (metaLanguage meta)
+  , NINJA2.ninja2Date        = fmap encode (metaDate meta)
+  , NINJA2.ninja2Website     = fmap encode (metaWebsite meta)
+  , NINJA2.ninja2Description = fmap encode (metaDescription meta)
+  }
   where
-    patchEncoding = metaPatchEncoding meta
-    encode = NINJA2.encodeNINJA2String patchEncoding
-    ninja2Info = NINJA2.NINJA2Info
-      { NINJA2.ninja2Author      = fmap encode (metaAuthor meta)
-      , NINJA2.ninja2Version     = fmap encode (metaVersion meta)
-      , NINJA2.ninja2Title       = fmap encode (metaTitle meta)
-      , NINJA2.ninja2Genre       = fmap encode (metaGenre meta)
-      , NINJA2.ninja2Language    = fmap encode (metaLanguage meta)
-      , NINJA2.ninja2Date        = fmap encode (metaDate meta)
-      , NINJA2.ninja2Website     = fmap encode (metaWebsite meta)
-      , NINJA2.ninja2Description = fmap encode (metaDescription meta)
-      }
+    encode = NINJA2.encodeNINJA2String (metaPatchEncoding meta)
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
@@ -578,32 +578,32 @@ createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format)
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
-  CreateBPS    -> Right (CreateResult (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))) [])
-  CreateUPS    -> do patchContents <- UPS.createUPS source target
-                     Right (CreateResult patchContents [])
-  CreateDPS    -> Right (DPS.createDPS source target
-                       (DPS.DPSMetadata
-                         { DPS.dpsMetadataName    = fromMaybe "" (metaTitle meta <|> metaDescription meta)
-                         , DPS.dpsMetadataAuthor  = fromMaybe "" (metaAuthor meta)
-                         , DPS.dpsMetadataVersion = fromMaybe "" (metaVersion meta)
-                         })
-                       (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable))
-  CreateNINJA2    ->
-    let -- When source patch has opaque description bytes, detect encoding
-        -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
-        -- If source already has known encoding, respect it.
-        detectedEncoding = case sourceContents >>= contentsPatchEncoding of
+  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))
+  CreateUPS    -> UPS.createUPS source target
+  CreateDPS    -> DPS.createDPS source target
+                    (DPS.DPSMetadata
+                      { DPS.dpsMetadataName    = fromMaybe "" (metaTitle meta <|> metaDescription meta)
+                      , DPS.dpsMetadataAuthor  = fromMaybe "" (metaAuthor meta)
+                      , DPS.dpsMetadataVersion = fromMaybe "" (metaVersion meta)
+                      })
+                    (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable)
+  CreateNINJA2 -> do
+    -- When source patch has opaque description bytes, detect encoding
+    -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
+    -- If source already has known encoding, respect it.
+    let detectedEncoding = case sourceContents >>= contentsPatchEncoding of
           Just patchEncoding -> patchEncoding
           Nothing  -> case sourceContents >>= contentsDescription of
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
             _ -> metaPatchEncoding meta
         adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
-        (ninja2Info, truncWarnings) = prepareNINJA2 adjustedMeta
-        (ninja2Type, ninja2Warnings) = maybe (Ninja2Raw, []) platformToNinja2 (metaRomType adjustedMeta)
-    in Right (CreateResult (NINJA2.createNINJA2 source target ninja2Info ninja2Type detectedEncoding)
-              (truncWarnings ++ ninja2Warnings))
-  CreateAPSGBA -> Right (CreateResult (APSGBA.createAPSGBA source target) [])
-  CreateGDIFF  -> Right (CreateResult (GDIFF.createGDIFF source target) [])
+        ninja2Info = ninja2InfoFromMeta adjustedMeta
+        (ninja2Type, platformWarnings) =
+          maybe (Ninja2Raw, []) platformToNinja2 (metaRomType adjustedMeta)
+    result <- NINJA2.createNINJA2 source target ninja2Info ninja2Type detectedEncoding
+    Right result { resultWarnings = resultWarnings result ++ platformWarnings }
+  CreateAPSGBA -> APSGBA.createAPSGBA source target
+  CreateGDIFF  -> GDIFF.createGDIFF source target
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,

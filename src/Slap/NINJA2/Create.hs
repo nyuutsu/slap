@@ -12,7 +12,7 @@ import Slap.Binary (diffHunks, md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
-import Slap.Error (SlapWarning(..), FieldName(..))
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.TextEncoding (truncateUtf8, truncateLocale)
 
@@ -27,9 +27,15 @@ import Data.Bits (xor)
 
 -- | Create a NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
-createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Info -> NINJA2RomType -> PatchEncoding -> PatchFileContents
+-- Field-truncation warnings produced by the fixed-header encoder are
+-- folded into 'CreateResult.resultWarnings' so the caller doesn\'t have
+-- to remember to query 'ninja2TruncationNotes' separately.
+createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Info -> NINJA2RomType -> PatchEncoding
+             -> Either SlapError CreateResult
 createNINJA2 (SourceFileContents original) (TargetFileContents modified) info romType encoding =
-    PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
+    Right (CreateResult (PatchFileContents patchBytes) (ninja2TruncationNotes encoding info))
+  where
+    patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header
@@ -43,7 +49,6 @@ createNINJA2 (SourceFileContents original) (TargetFileContents modified) info ro
       <> overflowPart
       <> foldMap encodeXorRecord xorHunks
       <> word8 0x00                           -- END command
-  where
     -- XOR hunks over the shared region
     minimumLength = min (ByteString.length original) (ByteString.length modified)
     sourceTrimmed = ByteString.take minimumLength original

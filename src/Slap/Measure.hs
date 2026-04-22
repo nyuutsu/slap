@@ -15,6 +15,7 @@ module Slap.Measure
   , RemainingLength(..)
   , ActualSize(..)
   , ExpectedSize(..)
+  , MaxAddressableSize(..)
     -- * Parse/create-error role newtypes
   , RequiredLength(..)
   , ActualLength(..)
@@ -140,6 +141,15 @@ newtype ActualSize = ActualSize { unActualSize :: FileSize }
 -- contexts where a bare 'FileSize' would be ambiguous with another
 -- size-valued field.
 newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | The maximum size slap can address on the host platform, given
+-- that offsets and lengths flow through 'Int'. Used in error contexts
+-- where a create-path size guard rejects an input larger than the
+-- platform's 'Int' range (the byuu-varint encoder in BPS would
+-- silently produce a malformed patch via 'fromIntegral' truncation
+-- on 32-bit, where 'Int' is 31-bit-addressable).
+newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------

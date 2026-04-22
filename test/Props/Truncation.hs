@@ -64,7 +64,9 @@ truncationTests = testGroup "Truncation"
 
 prop_bpsTrunc :: Property
 prop_bpsTrunc = forAll genPair $ \(source, target) ->
-  truncated BPS.parseBPS (BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty)
+  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+    Left _ -> discard
+    Right (CreateResult patch _) -> truncated BPS.parseBPS patch
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(source, target) ->
@@ -88,7 +90,7 @@ prop_upsTrunc :: Property
 prop_upsTrunc = forAll genPair $ \(source, target) ->
   case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
-    Right patch -> truncated UPS.parseUPS patch
+    Right (CreateResult patch _) -> truncated UPS.parseUPS patch
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
@@ -110,13 +112,17 @@ prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
-  truncated DPS.parseDPS (resultBytes (DPS.createDPS (SourceFileContents source) (TargetFileContents target)
-    (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
-    DPS.DPSStable))
+  case DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+         (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+         DPS.DPSStable of
+    Left _ -> discard
+    Right (CreateResult patch _) -> truncated DPS.parseDPS patch
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
-  truncated NINJA2.parseNINJA2 (NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8)
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+    Left _ -> discard
+    Right (CreateResult patch _) -> truncated NINJA2.parseNINJA2 patch
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
@@ -126,11 +132,15 @@ prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(source, target) ->
-  truncated APSGBA.parseAPSGBA (APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target))
+  case APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+    Left _ -> discard
+    Right (CreateResult patch _) -> truncated APSGBA.parseAPSGBA patch
 
 prop_gdiffTrunc :: Property
 prop_gdiffTrunc = forAll genPair $ \(source, target) ->
-  truncated GDIFF.parseGDIFF (GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target))
+  case GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target) of
+    Left _ -> discard
+    Right (CreateResult patch _) -> truncated GDIFF.parseGDIFF patch
 
 prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(source, target) ->

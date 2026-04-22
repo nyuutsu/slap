@@ -96,7 +96,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "<patch><title>Test</title></patch>"
-          patchBytes = BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta
+      patchBytes <- createBPSOrFail source target meta
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
@@ -104,7 +104,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
   , testCase "empty metadata gives Nothing" $ do
       let source = ByteString.pack [0..15]
           target = ByteString.pack [16..31]
-          patchBytes = BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty
+      patchBytes <- createBPSOrFail source target ByteString.empty
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
@@ -113,7 +113,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "hello-world-metadata"
-          patchBytes = BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta
+      patchBytes <- createBPSOrFail source target meta
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
@@ -126,9 +126,18 @@ bpsMetadataGroup = testGroup "bps-metadata"
   , testCase "info shows (none) without metadata" $ do
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
-          patchBytes = BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty
+      patchBytes <- createBPSOrFail source target ByteString.empty
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
           assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain Nothing (patchExplain parsed))
   ]
+
+-- | Run 'BPS.createBPS' and unwrap. Test inputs are small and well-formed,
+-- so a 'Left' indicates a test-infrastructure bug rather than an expected path.
+createBPSOrFail :: ByteString.ByteString -> ByteString.ByteString -> ByteString.ByteString -> IO PatchFileContents
+createBPSOrFail source target meta =
+  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta of
+    Left slapError ->
+      assertFailure ("createBPS failed: " ++ renderSlapError slapError)
+    Right (CreateResult patchBytes _) -> pure patchBytes
