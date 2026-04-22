@@ -1,5 +1,5 @@
 //! BPS diff engine based on Alcaro's suffix-array approach from Flips
-//! (`libbps-suf.cpp`).  See `docs/bps-diff-algorithm.md` for a writeup.
+//! (`libbps-suf.cpp`).
 //!
 //! Concatenates target (windowed) + source, suffix-sorts, then walks the
 //! target left-to-right choosing the cheapest BPS action at each position.
@@ -189,7 +189,15 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
             }
         };
 
-        // Classify match and apply cost heuristic (see docs/bps-diff-algorithm.md).
+        // Classify the match and decide whether encoding it beats staying
+        // in TargetRead mode.  `cost` counts bytes of the encoded action:
+        // a flat 1 for the action-prefix varint (approximated — its true
+        // width depends on `mlen`), plus the delta varint's width for
+        // SourceCopy / TargetCopy.  The `has_pending` term pays for the
+        // forced TargetRead flush that emitting would cause; the `mlen == 1`
+        // term breaks ties against a one-byte copy.  Formula traced from
+        // Alcaro's `use_match` in `libbps-suf.cpp` — it's heuristic, not
+        // derived, hence the trial-and-error shape.
         let emit = best.and_then(|(pos, mlen)| {
             let is_source = pos >= sortedsize;
             let file_pos = if is_source { pos - sortedsize } else { pos };
