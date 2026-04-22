@@ -8,6 +8,7 @@ module Slap.NINJA1.Types
   , NINJA1TextHeader(..)
   , NINJA1SubFormat(..)
   , NINJA1RomType(..)
+  , NINJA1Compression(..)
   , toNINJA1RomType
   , fromNINJA1RomType
   , romTypeName
@@ -22,6 +23,14 @@ import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Measure (Offset(..))
 
 data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
+  deriving (Show, Eq)
+
+-- | Whether the NINJA1 payload is written to disk as raw bytes
+-- ('NINJA1Uncompressed', the @"NINJA1B "@ subformat) or zlib-deflated
+-- ('NINJA1Compressed', the @"NINJA1BZ"@ subformat). A two-constructor
+-- sum rather than a 'Bool' so the BZ vs non-BZ distinction is named
+-- at call sites and in error renderings.
+data NINJA1Compression = NINJA1Uncompressed | NINJA1Compressed
   deriving (Show, Eq)
 
 -- | ROM platform type. Values 0-17 are defined by the NINJA1 spec;

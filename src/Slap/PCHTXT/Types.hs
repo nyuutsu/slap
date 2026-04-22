@@ -4,6 +4,7 @@ module Slap.PCHTXT.Types
   ( PCHTXTEntry(..)
   , PCHTXTBlock(..)
   , PCHTXTPatch(..)
+  , PCHTXTDescription(..)
   , FlagResult(..)
   ) where
 
@@ -31,3 +32,11 @@ data PCHTXTPatch = PCHTXTPatch
   } deriving (Show)
 
 data FlagResult = FlagShift Int | FlagIgnored | FlagError String
+
+-- | Free-form header description for a PCHTXT patch. Emitted verbatim
+-- as either an @\@nsobid-...@ build-ID header (when the string is a
+-- 32+-character hex digest) or a @\/\/ ...@ comment line. Introduced
+-- so the porcelain surface distinguishes \"the header description\"
+-- from every other 'String' at a 'Slap.PCHTXT.Create' call site.
+newtype PCHTXTDescription = PCHTXTDescription { unPCHTXTDescription :: String }
+  deriving (Eq, Show)

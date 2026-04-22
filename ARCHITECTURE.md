@@ -105,6 +105,16 @@ semantics:
   `createFromMemory` takes the parsed source patch's `PatchContents`
   as an optional metadata donor for exactly this reason.
 
+`Convert`'s sibling in the coordination layer is `Create`: the single
+home for "the thing that makes a patch", exposing one named entry
+point per format slap can emit. The differential porcelain there
+forwards directly to each format's `Slap/Foo/Create.createFoo`; the
+direct porcelain is a thin layer over `createFromMemory`, since
+direct-format creation is a `PatchContents` pipeline that `Convert`
+owns. Callers that arrive with a `CreateFormat` tag (the CLI) still
+use `createFromMemory`; callers whose target is fixed statically use
+the per-format porcelain in `Create`.
+
 ## Types that do the work
 
 Three type design choices shape everything else:
