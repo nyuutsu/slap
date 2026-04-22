@@ -23,7 +23,8 @@ import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                      SentinelOffset(..))
 import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       FormatSpecification(..), defaultMeta, formatSpecification,
-                      emptyContents, canConvert, convertDirect, conversionNotes, createFromMemory)
+                      emptyContents, canConvert, convertDirect, conversionNotes)
+import Slap.Create (createFromMemory)
 import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
 

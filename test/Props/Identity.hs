@@ -10,7 +10,8 @@ import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
-                     defaultMeta, createFromMemory)
+                     defaultMeta)
+import Slap.Create (createFromMemory)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty

@@ -9,7 +9,8 @@ import Integration.Helpers
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
-import Slap.Convert (CreateFormat, createFromMemory, defaultMeta)
+import Slap.Convert (CreateFormat, defaultMeta)
+import Slap.Create (createFromMemory)
 
 import Data.Bits (xor)
 import Data.ByteString (ByteString)

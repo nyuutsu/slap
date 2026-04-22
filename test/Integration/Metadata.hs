@@ -8,7 +8,8 @@ import Slap.Explain (renderExplain, renderSummary)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
-import qualified Slap.BPS.Create as BPS
+import Slap.Create (createBPS)
+import Slap.BPS.Types (BPSMetadata(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
@@ -133,11 +134,11 @@ bpsMetadataGroup = testGroup "bps-metadata"
           assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain Nothing (patchExplain parsed))
   ]
 
--- | Run 'BPS.createBPS' and unwrap. Test inputs are small and well-formed,
+-- | Run 'createBPS' and unwrap. Test inputs are small and well-formed,
 -- so a 'Left' indicates a test-infrastructure bug rather than an expected path.
 createBPSOrFail :: ByteString.ByteString -> ByteString.ByteString -> ByteString.ByteString -> IO PatchFileContents
 createBPSOrFail source target meta =
-  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta of
+  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata meta) of
     Left slapError ->
       assertFailure ("createBPS failed: " ++ renderSlapError slapError)
     Right (CreateResult patchBytes _) -> pure patchBytes

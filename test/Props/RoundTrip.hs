@@ -9,15 +9,14 @@
 module Props.RoundTrip (roundTripTests) where
 
 import qualified Slap.BPS.Apply as BPS
-import qualified Slap.BPS.Create as BPS
 import qualified Slap.BPS.Parse as BPS
 import qualified Slap.BPS.Types as BPS
+import Slap.BPS.Types (BPSMetadata(..))
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
 import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..))
 import qualified Slap.UPS.Apply as UPS
-import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PMSR.Parse as PMSR
 import qualified Slap.PMSR.Apply as PMSR
@@ -27,19 +26,15 @@ import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Apply as DPS
-import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.NINJA2.Apply as NINJA2
-import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Apply as APSGBA
-import qualified Slap.APSGBA.Create as APSGBA
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Apply as GDIFF
-import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Apply as PPF
 import qualified Slap.PCHTXT.Parse as PCHTXT
@@ -54,7 +49,9 @@ import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..), SentinelOffset(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
-                     defaultMeta, createFromMemory, convertDirect, emptyContents)
+                     defaultMeta, convertDirect, emptyContents)
+import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
+                    createAPSGBA, createGDIFF, createFromMemory)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -127,7 +124,7 @@ roundTripTests = testGroup "RoundTrip"
 
 prop_bps :: Property
 prop_bps = forAll genPair $ \(source, target) ->
-  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case BPS.parseBPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -136,7 +133,7 @@ prop_bps = forAll genPair $ \(source, target) ->
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
   forAll genByteString $ \meta ->
-    case BPS.createBPS (SourceFileContents source) (TargetFileContents target) meta of
+    case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata meta) of
       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
         Left slapError -> counterexample (renderSlapError slapError) $ property False
@@ -144,7 +141,7 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
-  case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
+  case createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
@@ -245,7 +242,7 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
 
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(source, target) ->
-  case GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target) of
+  case createGDIFF (SourceFileContents source) (TargetFileContents target) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -253,7 +250,7 @@ prop_gdiff = forAll genPair $ \(source, target) ->
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
-  case APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+  case createAPSGBA (SourceFileContents source) (TargetFileContents target) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -331,7 +328,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
-  case DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+  case createDPS (SourceFileContents source) (TargetFileContents target)
          (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
          DPS.DPSStable of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
@@ -341,7 +338,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -351,7 +348,7 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -397,7 +394,7 @@ prop_bpsBlockMove = once $
       sourceLength = padding2 + blockSize
       source = ByteString.replicate padding1 0 <> block <> ByteString.replicate (sourceLength - padding1 - blockSize) 0
       target = ByteString.replicate padding2 0 <> block
-  in case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+  in case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
        Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
        Right (CreateResult patch _) ->
          counterexample ("patch size: " ++ show (ByteString.length (unPatchFileContents patch))
@@ -414,7 +411,7 @@ prop_bpsBlockMove = once $
 -- (TargetRead for every byte), which costs targetLen + small overhead.
 prop_bpsNoSizeRegression :: Property
 prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
-  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) ->
       let maxPatchSize = ByteString.length target + 100

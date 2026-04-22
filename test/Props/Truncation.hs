@@ -7,23 +7,18 @@
 -- are tested against known-good real-world patch files on disk.
 module Props.Truncation (truncationTests) where
 
-import qualified Slap.BPS.Create as BPS
 import qualified Slap.BPS.Parse as BPS
+import Slap.BPS.Types (BPSMetadata(..))
 import qualified Slap.IPS.Parse as IPS
-import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PMSR.Parse as PMSR
 import qualified Slap.NINJA1.Parse as NINJA1
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
-import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA2.Parse as NINJA2
-import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
-import qualified Slap.APSGBA.Create as APSGBA
 import qualified Slap.GDIFF.Parse as GDIFF
-import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.VCDIFF.Parse as VCDIFF
@@ -32,7 +27,9 @@ import qualified Slap.XDelta1.Parse as XDelta1
 
 import Slap.Error (CreateResult(..))
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
-import Slap.Convert (DirectCreate(..), CreateFormat(..), defaultMeta, createFromMemory)
+import Slap.Convert (DirectCreate(..), CreateFormat(..), defaultMeta)
+import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
+                    createAPSGBA, createGDIFF, createFromMemory)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -63,7 +60,7 @@ truncationTests = testGroup "Truncation"
 
 prop_bpsTrunc :: Property
 prop_bpsTrunc = forAll genPair $ \(source, target) ->
-  case BPS.createBPS (SourceFileContents source) (TargetFileContents target) ByteString.empty of
+  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated BPS.parseBPS patch
 
@@ -87,7 +84,7 @@ prop_ebpTrunc = forAll genPair $ \(source, target) ->
 
 prop_upsTrunc :: Property
 prop_upsTrunc = forAll genPair $ \(source, target) ->
-  case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
+  case createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) -> truncated UPS.parseUPS patch
 
@@ -111,7 +108,7 @@ prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case DPS.createDPS (SourceFileContents source) (TargetFileContents target)
+  case createDPS (SourceFileContents source) (TargetFileContents target)
          (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
          DPS.DPSStable of
     Left _ -> discard
@@ -119,7 +116,7 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated NINJA2.parseNINJA2 patch
 
@@ -131,13 +128,13 @@ prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(source, target) ->
-  case APSGBA.createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+  case createAPSGBA (SourceFileContents source) (TargetFileContents target) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated APSGBA.parseAPSGBA patch
 
 prop_gdiffTrunc :: Property
 prop_gdiffTrunc = forAll genPair $ \(source, target) ->
-  case GDIFF.createGDIFF (SourceFileContents source) (TargetFileContents target) of
+  case createGDIFF (SourceFileContents source) (TargetFileContents target) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated GDIFF.parseGDIFF patch
 

@@ -8,7 +8,6 @@
 module Props.Undo (undoTests) where
 
 import qualified Slap.UPS.Apply as UPS
-import qualified Slap.UPS.Create as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Apply as PPF
@@ -16,7 +15,8 @@ import qualified Slap.PPF.Apply as PPF
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), CreateMeta(..),
-                     defaultMeta, createFromMemory)
+                     defaultMeta)
+import Slap.Create (createUPS, createFromMemory)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -35,7 +35,7 @@ undoTests = testGroup "Undo"
 -- information in the size field).
 prop_upsUndo :: Property
 prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
-  case UPS.createUPS (SourceFileContents source) (TargetFileContents target) of
+  case createUPS (SourceFileContents source) (TargetFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of

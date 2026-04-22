@@ -4,7 +4,8 @@ import Integration.Helpers
   (Tier, isHeavyPath, restrictToTier,
    repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
-import Slap.Convert (CreateFormat, defaultMeta, createFromMemory)
+import Slap.Convert (CreateFormat, defaultMeta)
+import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
