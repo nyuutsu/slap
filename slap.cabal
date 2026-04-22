@@ -70,6 +70,7 @@ library slap-internal
     , Slap.Measure
     , Slap.Convert
     , Slap.Platform
+    , Slap.PlatformType
     , Slap.PCHTXT.Apply
     , Slap.PCHTXT.Create
     , Slap.PCHTXT.Describe

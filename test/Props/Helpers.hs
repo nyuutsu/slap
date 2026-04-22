@@ -15,7 +15,7 @@ module Props.Helpers
   , splitMax
   , ipsEncodedSize
     -- * NINJA2 helpers
-  , emptyNinja2Info
+  , emptyNINJA2Metadata
     -- * Warning helpers
   , isFieldTruncatedFor
     -- * Re-exports for convenience
@@ -149,8 +149,19 @@ ipsEncodedSize offWidth = sum . map recordSize
 -- NINJA2 helpers
 ----------------------------------------------------------------------------
 
-emptyNinja2Info :: NINJA2.NINJA2Info
-emptyNinja2Info = NINJA2.NINJA2Info Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+emptyNINJA2Metadata :: NINJA2.NINJA2Metadata
+emptyNINJA2Metadata = NINJA2.NINJA2Metadata
+  { NINJA2.ninja2MetadataAuthor      = Nothing
+  , NINJA2.ninja2MetadataVersion     = Nothing
+  , NINJA2.ninja2MetadataTitle       = Nothing
+  , NINJA2.ninja2MetadataGenre       = Nothing
+  , NINJA2.ninja2MetadataLanguage    = Nothing
+  , NINJA2.ninja2MetadataDate        = Nothing
+  , NINJA2.ninja2MetadataWebsite     = Nothing
+  , NINJA2.ninja2MetadataDescription = Nothing
+  , NINJA2.ninja2MetadataEncoding    = NINJA2.PatchEncodingUTF8
+  , NINJA2.ninja2MetadataPlatform    = Nothing
+  }
 
 ----------------------------------------------------------------------------
 -- Warning helpers

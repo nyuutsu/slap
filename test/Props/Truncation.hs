@@ -19,7 +19,6 @@ import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
-import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Create as APSGBA
@@ -120,7 +119,7 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated NINJA2.parseNINJA2 patch
 

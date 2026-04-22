@@ -8,7 +8,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchF
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createFromMemory, createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
 import Slap.PPF.Types (PPFImageType(..))
-import Slap.Platform (PlatformType(..))
+import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)

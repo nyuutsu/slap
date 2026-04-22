@@ -33,7 +33,7 @@ import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
-import Slap.NINJA2.Types (PatchEncoding(..), NINJA2RomType(..))
+import Slap.NINJA2.Types (PatchEncoding(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
@@ -42,7 +42,8 @@ import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
-import Slap.Platform (PlatformType(..), platformToNinja1, platformToNinja2)
+import Slap.PlatformType (PlatformType(..))
+import Slap.Platform (platformToNinja1)
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
@@ -313,27 +314,7 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> CreateMeta -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
-createDefaultNotes (CreateDiff CreateNINJA2) meta =
-  NINJA2.ninja2TruncationNotes (metaPatchEncoding meta) (ninja2InfoFromMeta meta)
 createDefaultNotes (CreateDiff _) _ = []
-
--- | Build a NINJA2Info from CreateMeta. Single source of truth for NINJA2Info
--- construction — shared between the create path (which hands it to
--- 'NINJA2.createNINJA2') and the notes path (which feeds it to
--- 'NINJA2.ninja2TruncationNotes' without producing a patch).
-ninja2InfoFromMeta :: CreateMeta -> NINJA2.NINJA2Info
-ninja2InfoFromMeta meta = NINJA2.NINJA2Info
-  { NINJA2.ninja2Author      = fmap encode (metaAuthor meta)
-  , NINJA2.ninja2Version     = fmap encode (metaVersion meta)
-  , NINJA2.ninja2Title       = fmap encode (metaTitle meta)
-  , NINJA2.ninja2Genre       = fmap encode (metaGenre meta)
-  , NINJA2.ninja2Language    = fmap encode (metaLanguage meta)
-  , NINJA2.ninja2Date        = fmap encode (metaDate meta)
-  , NINJA2.ninja2Website     = fmap encode (metaWebsite meta)
-  , NINJA2.ninja2Description = fmap encode (metaDescription meta)
-  }
-  where
-    encode = NINJA2.encodeNINJA2String (metaPatchEncoding meta)
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
@@ -596,12 +577,19 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
           Nothing  -> case sourceContents >>= contentsDescription of
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
             _ -> metaPatchEncoding meta
-        adjustedMeta = meta { metaPatchEncoding = detectedEncoding }
-        ninja2Info = ninja2InfoFromMeta adjustedMeta
-        (ninja2Type, platformWarnings) =
-          maybe (Ninja2Raw, []) platformToNinja2 (metaRomType adjustedMeta)
-    result <- NINJA2.createNINJA2 source target ninja2Info ninja2Type detectedEncoding
-    Right result { resultWarnings = resultWarnings result ++ platformWarnings }
+        ninja2Meta = NINJA2.NINJA2Metadata
+          { NINJA2.ninja2MetadataAuthor      = metaAuthor meta
+          , NINJA2.ninja2MetadataVersion     = metaVersion meta
+          , NINJA2.ninja2MetadataTitle       = metaTitle meta
+          , NINJA2.ninja2MetadataGenre       = metaGenre meta
+          , NINJA2.ninja2MetadataLanguage    = metaLanguage meta
+          , NINJA2.ninja2MetadataDate        = metaDate meta
+          , NINJA2.ninja2MetadataWebsite     = metaWebsite meta
+          , NINJA2.ninja2MetadataDescription = metaDescription meta
+          , NINJA2.ninja2MetadataEncoding    = detectedEncoding
+          , NINJA2.ninja2MetadataPlatform    = metaRomType meta
+          }
+    NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA -> APSGBA.createAPSGBA source target
   CreateGDIFF  -> GDIFF.createGDIFF source target
 

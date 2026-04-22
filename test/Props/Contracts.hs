@@ -25,7 +25,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       FormatSpecification(..), defaultMeta, formatSpecification,
                       emptyContents, canConvert, convertDirect, conversionNotes, createFromMemory)
 import Slap.PatchField (PatchField(..))
-import Slap.Platform (PlatformType(..))
+import Slap.PlatformType (PlatformType(..))
 
 import qualified Data.ByteString as ByteString
 import Data.List (isPrefixOf)

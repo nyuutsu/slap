@@ -4,7 +4,6 @@ module Slap.NINJA2.Create
   ( createNINJA2
   , encodeFixedHeader
   , encodeXorRecord
-  , ninja2TruncationNotes
   ) where
 
 import Slap.NINJA2.Types
@@ -14,6 +13,7 @@ import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.Platform (platformToNinja2)
 import Slap.TextEncoding (truncateUtf8, truncateLocale)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -27,14 +27,30 @@ import Data.Bits (xor)
 
 -- | Create a NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
--- Field-truncation warnings produced by the fixed-header encoder are
--- folded into 'CreateResult.resultWarnings' so the caller doesn\'t have
--- to remember to query 'ninja2TruncationNotes' separately.
-createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Info -> NINJA2RomType -> PatchEncoding
+-- Field-truncation warnings (from fields too long to fit the fixed
+-- header) and platform warnings (from 'PlatformType' values NINJA2
+-- can't express) are both folded into 'CreateResult.resultWarnings'
+-- so the caller doesn\'t have to remember to collect them separately.
+createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Metadata
              -> Either SlapError CreateResult
-createNINJA2 (SourceFileContents original) (TargetFileContents modified) info romType encoding =
-    Right (CreateResult (PatchFileContents patchBytes) (ninja2TruncationNotes encoding info))
+createNINJA2 (SourceFileContents original) (TargetFileContents modified) metadata =
+    Right (CreateResult (PatchFileContents patchBytes)
+                        (ninja2TruncationNotes info ++ platformWarnings))
   where
+    encoding = ninja2MetadataEncoding metadata
+    encodeField = encodeNINJA2String encoding
+    info = NINJA2Info
+      { ninja2Author      = fmap encodeField (ninja2MetadataAuthor      metadata)
+      , ninja2Version     = fmap encodeField (ninja2MetadataVersion     metadata)
+      , ninja2Title       = fmap encodeField (ninja2MetadataTitle       metadata)
+      , ninja2Genre       = fmap encodeField (ninja2MetadataGenre       metadata)
+      , ninja2Language    = fmap encodeField (ninja2MetadataLanguage    metadata)
+      , ninja2Date        = fmap encodeField (ninja2MetadataDate        metadata)
+      , ninja2Website     = fmap encodeField (ninja2MetadataWebsite     metadata)
+      , ninja2Description = fmap encodeField (ninja2MetadataDescription metadata)
+      }
+    (romType, platformWarnings) =
+      maybe (Ninja2Raw, []) platformToNinja2 (ninja2MetadataPlatform metadata)
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)   -- text encoding
@@ -116,8 +132,8 @@ truncateField _                 = truncateLocale
 
 -- | Check which NINJA2Info fields would be truncated by encodeFixedHeader,
 -- and return a warning for each one.
-ninja2TruncationNotes :: PatchEncoding -> NINJA2Info -> [SlapWarning]
-ninja2TruncationNotes _encoding info = concatMap checkField fields
+ninja2TruncationNotes :: NINJA2Info -> [SlapWarning]
+ninja2TruncationNotes info = concatMap checkField fields
   where
     checkField (fieldLength, name, maybeValue) = case maybeValue of
       Just value | ByteString.length value > fieldLength ->

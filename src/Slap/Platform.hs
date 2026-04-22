@@ -1,42 +1,16 @@
 module Slap.Platform
-  ( PlatformType(..)
-  , platformName
+  ( platformName
   , ninja1ToPlatform
   , platformToNinja1
   , ninja2ToPlatform
   , platformToNinja2
   ) where
 
+import Slap.PlatformType (PlatformType(..))
 import Slap.NINJA1.Types (NINJA1RomType(..))
 import Slap.NINJA2.Types (NINJA2RomType(..))
 import Slap.Error (SlapWarning(..))
 import Slap.FormatLabel (FormatLabel(..))
-
--- | Platform type representing the union of all platforms known to
--- NINJA1 and NINJA2.  Used as the lingua franca for cross-format
--- ROM type conversion; format-specific types (NINJA1RomType,
--- NINJA2RomType) preserve per-format details at the boundaries.
-data PlatformType
-  = PlatformRaw
-  | PlatformNES
-  | PlatformFDS              -- NINJA2 only
-  | PlatformSNES
-  | PlatformN64
-  | PlatformGB
-  | PlatformGBC              -- NINJA1 only
-  | PlatformGBA              -- NINJA1 only
-  | PlatformNGP              -- NINJA1 only
-  | PlatformNGPC             -- NINJA1 only
-  | PlatformSMS
-  | PlatformGameGear         -- NINJA1 only (NINJA2 combines with SMS)
-  | PlatformGenesis
-  | PlatformPCEngine
-  | PlatformWonderSwan       -- NINJA1 only
-  | PlatformWonderSwanColor  -- NINJA1 only
-  | PlatformLynx
-  | PlatformJaguar           -- NINJA1 only
-  | PlatformGP32             -- NINJA1 only
-  deriving (Show, Eq)
 
 platformName :: PlatformType -> String
 platformName PlatformRaw            = "Raw"

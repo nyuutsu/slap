@@ -5,6 +5,7 @@ module Slap.NINJA2.Types
   ( NINJA2Patch(..)
   , NINJA2Record(..)
   , NINJA2Info(..)
+  , NINJA2Metadata(..)
   , XorRecord(..)
   , OverflowMode(..)
   , toOverflowMode
@@ -42,11 +43,12 @@ module Slap.NINJA2.Types
 -- Secondary: RomPatcher.js modules/RomPatcher.format.rup.js
 -- NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
 -- see docs/specs/ninja2-cliusage.txt.  Cross-format conversion goes
--- through Slap.Platform.PlatformType.
+-- through 'Slap.PlatformType.PlatformType'.
 
 import Slap.Get (Get, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Format (padHex)
+import Slap.PlatformType (PlatformType)
 
 import Slap.TextEncoding (encodeUtf8Field, encodeLocaleField,
                           decodeUtf8Field, decodeLocaleField)
@@ -183,6 +185,11 @@ data NINJA2Patch = NINJA2Patch
   , ninja2RomType        :: NINJA2RomType     -- ROM type from OPEN_NEW_FILE command
   } deriving (Show)
 
+-- | The parsed fixed-header fields from a NINJA2 patch, as raw
+-- pre-decoded bytes in whatever encoding the wire declares.
+-- Create-path callers should use 'NINJA2Metadata' instead; this type
+-- is for the parse side, which reads bytes and surfaces them for later
+-- decoding via 'decodeNINJA2Field'.
 data NINJA2Info = NINJA2Info
   { ninja2Author      :: Maybe ByteString
   , ninja2Version     :: Maybe ByteString
@@ -192,6 +199,27 @@ data NINJA2Info = NINJA2Info
   , ninja2Date        :: Maybe ByteString
   , ninja2Website     :: Maybe ByteString
   , ninja2Description :: Maybe ByteString
+  } deriving (Show)
+
+-- | User-intent input for 'Slap.NINJA2.Create.createNINJA2'.
+-- Strings are held as 'String' (not pre-encoded bytes) so the chosen
+-- 'PatchEncoding' travels with the strings that will be encoded under
+-- it, and encoding happens exactly once — inside 'createNINJA2'.
+-- Platform is held as 'Maybe' 'PlatformType' (not 'NINJA2RomType')
+-- so the lossy shared-to-NINJA2 translation, and the warnings it
+-- produces for platforms NINJA2 cannot express, also live inside
+-- 'createNINJA2'.
+data NINJA2Metadata = NINJA2Metadata
+  { ninja2MetadataAuthor      :: Maybe String
+  , ninja2MetadataVersion     :: Maybe String
+  , ninja2MetadataTitle       :: Maybe String
+  , ninja2MetadataGenre       :: Maybe String
+  , ninja2MetadataLanguage    :: Maybe String
+  , ninja2MetadataDate        :: Maybe String
+  , ninja2MetadataWebsite     :: Maybe String
+  , ninja2MetadataDescription :: Maybe String
+  , ninja2MetadataEncoding    :: PatchEncoding
+  , ninja2MetadataPlatform    :: Maybe PlatformType
   } deriving (Show)
 
 data NINJA2Record = NINJA2Record

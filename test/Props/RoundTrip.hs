@@ -341,7 +341,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -351,7 +351,7 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
-  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNinja2Info NINJA2.Ninja2Raw NINJA2.PatchEncodingUTF8 of
+  case NINJA2.createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
