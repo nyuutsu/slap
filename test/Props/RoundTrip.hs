@@ -14,7 +14,7 @@ import qualified Slap.BPS.Parse as BPS
 import qualified Slap.BPS.Types as BPS
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
-import Slap.IPS.Create (avoidSentinel, optimalIPSRecords)
+import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
 import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..))
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Create as UPS
@@ -48,12 +48,13 @@ import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.Measure (Offset(..), EncodedHunk(..))
+import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..), SentinelOffset(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
-                     defaultMeta, createFromMemory)
+                     defaultMeta, createFromMemory, convertDirect, emptyContents)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -73,7 +74,8 @@ roundTripTests = testGroup "RoundTrip"
   , testGroup "IPS"
       [ testProperty "round-trip" prop_ips
       , testProperty "eof-collision" prop_ipsEofCollision
-      , testProperty "avoidSentinel" prop_avoidSentinel
+      , testProperty "resolveSentinelCollisions" prop_resolveSentinelCollisions
+      , testProperty "source-less convert rejects sentinel" prop_sourcelessSentinelRejected
       , testProperty "dp-not-larger" prop_dpNotLarger
       ]
   , testGroup "IPS32"
@@ -171,23 +173,51 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
       Right (Right _ebpPatch) ->
         counterexample "test fixture unexpectedly EBP" $ property False
 
-prop_avoidSentinel :: Property
-prop_avoidSentinel = property $
-  let source = ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7]
+prop_resolveSentinelCollisions :: Property
+prop_resolveSentinelCollisions = once $
+  let source       = SourceFileContents (ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7])
+      emptySource  = SourceFileContents ByteString.empty
+      sentinelAt5  = SentinelOffset (Offset 5)
+      sentinelAt0  = SentinelOffset (Offset 0)
   in conjoin
-    [ -- Record at sentinel is shifted back
-      avoidSentinel 5 source [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
-        === [EncodedHunk (Offset 4) (ByteString.pack [4, 0xFF])]
-    , -- Record NOT at sentinel is unchanged
-      avoidSentinel 5 source [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
-        === [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
-    , -- Source too short: no-op
-      avoidSentinel 5 ByteString.empty [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
-        === [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
-    , -- Sentinel at offset 0: can't extend backward, no-op
-      avoidSentinel 0 source [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
-        === [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
+    [ -- Record at sentinel is shifted back and the preceding source byte prepended.
+      resolveSentinelCollisions LabelIPS sentinelAt5 source
+        [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
+        === Right [EncodedHunk (Offset 4) (ByteString.pack [4, 0xFF])]
+    , -- Record NOT at sentinel passes through unchanged.
+      resolveSentinelCollisions LabelIPS sentinelAt5 source
+        [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
+        === Right [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
+    , -- Empty source: collision is unfixable, returns a structured error.
+      resolveSentinelCollisions LabelIPS sentinelAt5 emptySource
+        [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
+        === Left (SentinelCollisionUnfixable LabelIPS sentinelAt5)
+    , -- Sentinel at offset 0: no preceding byte exists, returns a structured error.
+      resolveSentinelCollisions LabelIPS sentinelAt0 source
+        [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
+        === Left (SentinelCollisionUnfixable LabelIPS sentinelAt0)
     ]
+
+-- | Source-less conversion of a record sitting on the IPS sentinel offset must
+-- raise 'SentinelCollisionUnfixable' rather than silently passing through or
+-- crashing. Exercises the 'convertDirect' path, which is the live home of the
+-- source-less code branch introduced by the sentinel-unification refactor.
+-- 'CreateResult' has no 'Eq' instance, so the property pattern-matches on the
+-- expected 'Left' rather than comparing with @===@.
+prop_sourcelessSentinelRejected :: Property
+prop_sourcelessSentinelRejected = once $
+  let ipsSentinelOffset = SentinelOffset (Offset 0x454F46)
+      collidingContents =
+        emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
+  in case convertDirect collidingContents (CreateDirect CreateIPS) defaultMeta of
+       Left (SentinelCollisionUnfixable LabelIPS offset) ->
+         offset === ipsSentinelOffset
+       Left other ->
+         counterexample ("unexpected error: " ++ renderSlapError other) $
+           property False
+       Right _ ->
+         counterexample "expected Left SentinelCollisionUnfixable, got Right" $
+           property False
 
 -- | DP patch size must not exceed greedy patch size for IPS (offWidth=3).
 prop_dpNotLarger :: Property

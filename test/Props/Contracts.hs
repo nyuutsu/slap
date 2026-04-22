@@ -16,9 +16,11 @@ import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
+import Slap.Error (CreateResult(..), SlapError(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
+                     SentinelOffset(..))
 import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       FormatSpecification(..), defaultMeta, formatSpecification,
                       emptyContents, canConvert, convertDirect, conversionNotes, createFromMemory)
@@ -26,7 +28,7 @@ import Slap.PatchField (PatchField(..))
 import Slap.Platform (PlatformType(..))
 
 import qualified Data.ByteString as ByteString
-import Data.List (isInfixOf, isPrefixOf)
+import Data.List (isPrefixOf)
 import qualified Data.Set as Set
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -131,17 +133,17 @@ prop_ppf3ValidateRejectsEmpty =
 prop_ipsSentinelDirect :: Property
 prop_ipsSentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
-  in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
-       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
-       Right _  -> False
+  in property $
+       assertSentinelUnfixable LabelIPS (SentinelOffset (Offset 0x454F46))
+         (convertDirect patchContent (CreateDirect CreateIPS) defaultMeta)
 
 -- | Direct conversion to IPS32 must reject a record at the EEOF sentinel offset.
 prop_ips32SentinelDirect :: Property
 prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
-  in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
-       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
-       Right _  -> False
+  in property $
+       assertSentinelUnfixable LabelIPS32 (SentinelOffset (Offset 0x45454F46))
+         (convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta)
 
 -- | A hunk that doesn't start at the sentinel but produces a split fragment
 -- at the sentinel offset must be rejected.  Splitting at 0xFFFF turns a hunk
@@ -151,9 +153,9 @@ prop_ipsSentinelSplitDirect =
   let startOffset = 0x454F46 - 0xFFFF  -- 0x444F47: split fragment lands on sentinel
       payload = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces split
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
-  in property $ case convertDirect patchContent (CreateDirect CreateIPS) defaultMeta of
-       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
-       Right _  -> False
+  in property $
+       assertSentinelUnfixable LabelIPS (SentinelOffset (Offset 0x454F46))
+         (convertDirect patchContent (CreateDirect CreateIPS) defaultMeta)
 
 -- | Same as above for IPS32: split fragment at EEOF sentinel 0x45454F46.
 prop_ips32SentinelSplitDirect :: Property
@@ -161,9 +163,27 @@ prop_ips32SentinelSplitDirect =
   let startOffset = 0x45454F46 - 0xFFFF
       payload = ByteString.replicate 0x10000 0xFF
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
-  in property $ case convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta of
-       Left slapError -> "collides with sentinel" `isInfixOf` renderSlapError slapError
-       Right _  -> False
+  in property $
+       assertSentinelUnfixable LabelIPS32 (SentinelOffset (Offset 0x45454F46))
+         (convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta)
+
+-- | Assert a 'convertDirect' result is 'Left' 'SentinelCollisionUnfixable'
+-- with the expected label and sentinel offset. 'CreateResult' has no
+-- 'Eq' instance, so the check pattern-matches on the expected error shape
+-- rather than comparing the whole result for equality.
+assertSentinelUnfixable
+  :: FormatLabel
+  -> SentinelOffset
+  -> Either SlapError CreateResult
+  -> Property
+assertSentinelUnfixable expectedLabel expectedSentinel result = case result of
+  Left (SentinelCollisionUnfixable actualLabel actualSentinel) ->
+    (actualLabel, actualSentinel) === (expectedLabel, expectedSentinel)
+  Left other ->
+    counterexample ("unexpected error: " ++ renderSlapError other) (property False)
+  Right _ ->
+    counterexample "expected SentinelCollisionUnfixable, got successful conversion"
+      (property False)
 
 -- | Create path (with source bytes) must handle the sentinel offset correctly.
 prop_ipsSentinelWithSource :: Property

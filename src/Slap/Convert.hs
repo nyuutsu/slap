@@ -25,7 +25,8 @@ import qualified Slap.PPF.Create as PPF
 import Slap.PPF.Types (PPFImageType(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
-                       EBPMetadataFields(..), ipsMaxRecordPayload)
+                       EBPMetadataFields(..), IPSVariantSpec(..),
+                       ipsMaxRecordPayload, variantSpec)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -48,8 +49,9 @@ import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..),
-                      EncodedHunk(..), EncodingLimits(..),
+                      EncodedHunk(..), EncodingLimits,
                       ActualSize(..), ExpectedSize(..),
+                      SentinelOffset(..),
                       advance, narrowHunks, narrowHunksUnbounded, splitHunks,
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
@@ -419,8 +421,10 @@ convertDirect contents (CreateDirect target) meta = do
   case canConvert contents spec of
     Left missing -> Left (MissingRequiredField (directLabel target) (Set.findMin missing))
     Right () -> do
-      -- Full limits including sentinel: convertDirect has no source bytes,
-      -- so avoidSentinel can't fix collisions at encode time.
+      -- Source-less path: 'encodeDirect' still runs 'resolveSentinelCollisions'
+      -- but with an empty 'SourceFileContents', so any record sitting on the
+      -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
+      -- than silently passing through.
       let notes = conversionNotes contents target spec meta
       encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target)
       Right CreateResult
@@ -442,23 +446,26 @@ encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> CreateMet
              -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
-    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    records <- resolveIPSSentinel LabelIPS StandardIPS narrowed
     Right (CreateResult
-            (IPS.encodeIPSPatch StandardIPS source records (contentsTruncation contents))
+            (IPS.encodeIPSPatch StandardIPS records (contentsTruncation contents))
             [])
   CreateIPS32 -> do
     rejectTruncation LabelIPS32 contents source
-    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    records <- resolveIPSSentinel LabelIPS32 IPS32 narrowed
     -- IPS32 has no community-recognised truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
     -- 'Nothing' explicitly here to make the decision visible at the call
     -- site.
     Right (CreateResult
-            (IPS.encodeIPSPatch IPS32 source records Nothing)
+            (IPS.encodeIPSPatch IPS32 records Nothing)
             [])
   CreateEBP -> do
     rejectTruncation LabelEBP contents source
-    records <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    records <- resolveIPSSentinel LabelEBP StandardIPS narrowed
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
@@ -481,7 +488,7 @@ encodeDirect contents source target meta limits = case target of
                         , ebpMetadataDescription = description
                         }
     Right (CreateResult
-            (IPS.encodeEBPPatch source records (EBPMetadata ebpMetadataBytes))
+            (IPS.encodeEBPPatch records (EBPMetadata ebpMetadataBytes))
             [])
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
@@ -520,6 +527,12 @@ encodeDirect contents source target meta limits = case target of
     wrapNarrow :: Either String a -> Either SlapError a
     wrapNarrow (Right value) = Right value
     wrapNarrow (Left errorMessage) = Left (ParseError (directLabel target) errorMessage)
+    resolveIPSSentinel :: FormatLabel -> IPSVariant -> [EncodedHunk]
+                       -> Either SlapError [EncodedHunk]
+    resolveIPSSentinel label variant =
+      IPS.resolveSentinelCollisions label
+        (SentinelOffset (ipsVariantSentinel (variantSpec variant)))
+        source
     rejectTruncation :: FormatLabel -> PatchContents -> SourceFileContents -> Either SlapError ()
     rejectTruncation label patchContents (SourceFileContents sourceBytes) =
       case contentsTruncation patchContents of
@@ -563,10 +576,7 @@ createFromMemory :: CreateFormat -> SourceFileContents -> TargetFileContents
                  -> CreateMeta -> Maybe PatchContents -> Either SlapError CreateResult
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
-      -- Source bytes available: avoidSentinel handles sentinel collisions
-      -- at encode time, so only validate offset ranges here (sentinel stripped).
-      strippedLimits = fmap (\lim -> lim { sentinelOffset = Nothing }) (encodingLimits format)
-  in encodeDirect contents source format meta strippedLimits
+  in encodeDirect contents source format meta (encodingLimits format)
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
   CreateBPS    -> Right (CreateResult (BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))) [])
   CreateUPS    -> do patchContents <- UPS.createUPS source target

@@ -31,6 +31,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      EncodedLength(..), MaxLength(..),
                      OriginalLength(..), TruncatedLength(..),
                      ActualOffset(..), MaxOffset(..),
+                     SentinelOffset(..),
                      ExpectedMagic(..), ActualMagic(..),
                      TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
@@ -291,7 +292,17 @@ data SlapError
   | CannotExpressTargetShrinkage FormatLabel ActualSize ExpectedSize
   | UPSUnencodeablePair FormatLabel UnencodeabilityReason
   | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
-  | SentinelCollision FormatLabel Offset
+
+  -- | A record\'s offset lands on the format\'s trailer sentinel and
+  -- the encoder has no way to shift it back: either the source bytes
+  -- needed for the shift-and-prepend fix are absent (source-less
+  -- conversion), the source is shorter than the preceding-byte index,
+  -- or the sentinel sits at offset @0@ so there is no preceding byte
+  -- to consume. IPS and IPS32 are the only affected formats today;
+  -- see 'Slap.IPS.Create.resolveSentinelCollisions' for the fix path
+  -- that this error is the failure mode of.
+  | SentinelCollisionUnfixable FormatLabel SentinelOffset
+
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
   | EncodingFailure FormatLabel FieldName String
 
@@ -510,11 +521,11 @@ renderSlapError (OffsetExceedsRange label (ActualOffset actual) (MaxOffset maxOf
   ++ " exceeds maximum offset 0x"
   ++ showHex (unOffset maxOffset) ""
 
-renderSlapError (SentinelCollision label sentinel) =
+renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
   formatLabelName label ++ ": hunk offset 0x"
   ++ showHex (unOffset sentinel) ""
-  ++ " collides with sentinel 0x"
-  ++ showHex (unOffset sentinel) ""
+  ++ " collides with trailer sentinel and cannot be shifted"
+  ++ " (no preceding source byte available to prepend)"
 
 renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLength maxLength)) =
   formatLabelName label ++ ": " ++ fieldNameLabel name

@@ -24,6 +24,7 @@ module Slap.Measure
   , TruncatedLength(..)
   , ActualOffset(..)
   , MaxOffset(..)
+  , SentinelOffset(..)
   , ExpectedMagic(..)
   , ActualMagic(..)
   , TrailerMarker(..)
@@ -180,6 +181,17 @@ newtype ActualOffset = ActualOffset { unActualOffset :: Offset }
 newtype MaxOffset = MaxOffset { unMaxOffset :: Offset }
   deriving (Eq, Ord, Show)
 
+-- | The offset at which a format\'s trailer sentinel sits: the
+-- big-endian encoding of this offset collides with the format\'s
+-- stream-closing marker on the wire, so a record emitted at this
+-- offset would be indistinguishable from the trailer. IPS\'s
+-- @0x454F46@ (\"EOF\") and IPS32\'s @0x45454F46@ (\"EEOF\") are the
+-- motivating examples. Carried distinct from plain 'Offset' so that
+-- sentinel-collision code can never accidentally be passed a record
+-- offset, and vice versa.
+newtype SentinelOffset = SentinelOffset { unSentinelOffset :: Offset }
+  deriving (Eq, Ord, Show)
+
 -- | The magic bytes a parser expected to find.
 newtype ExpectedMagic = ExpectedMagic { unExpectedMagic :: ByteString }
   deriving (Eq, Show)
@@ -238,7 +250,6 @@ data EncodedHunk = EncodedHunk
 
 data EncodingLimits = EncodingLimits
   { maximumOffset  :: !Offset
-  , sentinelOffset :: !(Maybe Offset)
   , formatLabel    :: !FormatLabel
   } deriving (Show)
 
@@ -404,12 +415,6 @@ narrowHunk limits hunk
             ++ showHex (unOffset (hunkOffset hunk)) ""
             ++ " exceeds maximum offset 0x"
             ++ showHex (unOffset (maximumOffset limits)) "")
-  | Just sentinel <- sentinelOffset limits
-  , hunkOffset hunk == sentinel =
-      Left (formatLabelName (formatLabel limits) ++ ": hunk offset 0x"
-            ++ showHex (unOffset sentinel) ""
-            ++ " collides with sentinel 0x"
-            ++ showHex (unOffset sentinel) "")
   | otherwise =
       Right EncodedHunk
         { encodedOffset  = hunkOffset hunk
@@ -450,21 +455,18 @@ splitHunks maxSize = concatMap splitOne
 ipsLimits :: EncodingLimits
 ipsLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
-  , sentinelOffset = Just (Offset (fromIntegral ipsSentinel))
   , formatLabel    = LabelIPS
   }
 
 ips32Limits :: EncodingLimits
 ips32Limits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFFFF
-  , sentinelOffset = Just (Offset (fromIntegral ips32Sentinel))
   , formatLabel    = LabelIPS32
   }
 
 ebpLimits :: EncodingLimits
 ebpLimits = EncodingLimits
   { maximumOffset  = Offset 0xFFFFFF
-  , sentinelOffset = Just (Offset (fromIntegral ipsSentinel))
   , formatLabel    = LabelEBP
   }
 

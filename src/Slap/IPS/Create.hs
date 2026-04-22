@@ -28,23 +28,26 @@ module Slap.IPS.Create
   ( -- * Wire encoder (used by 'Slap.Convert')
     encodeIPSPatch
   , encodeEBPPatch
+    -- * Sentinel-collision resolution (used by 'Slap.Convert')
+  , resolveSentinelCollisions
     -- * Wire-emission helpers
   , encodeIPSRecord
   , encodeOffset
   , encodeTruncationMarker
-  , avoidSentinel
   , buildEBPMetadataJSON
     -- * Optimizer pass-through (re-exported for callers and tests)
   , optimalIPSRecords
   ) where
 
 import Slap.Binary (putWord16BE)
+import Slap.Error (SlapError(..))
 import Slap.FileContents
-  ( SourceFileContents(..)
-  , PatchFileContents(..)
+  ( PatchFileContents(..)
+  , SourceFileContents(..)
   , unPatchFileContents
   )
 import Slap.Format (padHex)
+import Slap.FormatLabel (FormatLabel)
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
   ( IPSVariant(..)
@@ -55,11 +58,11 @@ import Slap.IPS.Types
   , variantSpec
   )
 import Slap.Measure
-  ( Offset(..)
-  , FileSize(..)
+  ( FileSize(..)
   , Delta(..)
   , Cursor(..)
   , EncodedHunk(..)
+  , SentinelOffset(..)
   , offsetToInt
   )
 
@@ -87,11 +90,6 @@ import qualified Data.Text.Encoding as TextEncoding
 -- two non-EBP cases) or a thin wrapper around 'encodeEBPPatch' (the
 -- two EBP cases).
 --
--- The @source@ argument is needed only for 'avoidSentinel', which
--- shifts records sitting at the variant's EOF-collision offset
--- back by one byte and prepends the source byte at the new offset.
--- The encoder does not otherwise touch the source.
---
 -- The @optionalTruncation@ argument is honoured only for the
 -- 'StandardIPS' variant. For 'IPS32', the truncation marker has
 -- no defined wire shape (no community implementation supports
@@ -102,28 +100,25 @@ import qualified Data.Text.Encoding as TextEncoding
 -- threads a 'PatchContents' truncation field without knowing the
 -- wire format's appetite for it.
 --
--- This function does not validate the records: it assumes each
--- record's offset and length are already within the variant's
--- wire-format range. The optimizer guarantees this by construction;
--- the convert path's 'narrowHunks' pre-pass enforces it for records
--- sourced from other formats.
+-- This function does not validate the records and does not resolve
+-- sentinel collisions: it assumes each record's offset and length
+-- are already within the variant's wire-format range, and that any
+-- record sitting on the variant's trailer sentinel has already been
+-- shifted or rejected by 'resolveSentinelCollisions'. The optimizer
+-- guarantees the range precondition by construction, and the
+-- convert-path pipeline in 'Slap.Convert.encodeDirect' runs
+-- 'narrowHunks' and 'resolveSentinelCollisions' before calling here.
 encodeIPSPatch
   :: IPSVariant
-  -> SourceFileContents
   -> [EncodedHunk]
   -> Maybe FileSize
   -> PatchFileContents
-encodeIPSPatch variant (SourceFileContents source) records optionalTruncation =
+encodeIPSPatch variant records optionalTruncation =
   PatchFileContents
     (LazyByteString.toStrict (toLazyByteString patchBuilder))
   where
     spec        = variantSpec variant
     offsetWidth = ipsVariantOffsetWidth spec
-
-    sentinelAvoidedRecords =
-      avoidSentinel (offsetToInt (ipsVariantSentinel spec))
-                    source
-                    records
 
     truncationBuilder = case variant of
       StandardIPS ->
@@ -132,7 +127,7 @@ encodeIPSPatch variant (SourceFileContents source) records optionalTruncation =
 
     patchBuilder =
       byteString (ipsVariantMagic spec)
-      <> foldMap (encodeIPSRecord offsetWidth) sentinelAvoidedRecords
+      <> foldMap (encodeIPSRecord offsetWidth) records
       <> byteString (ipsVariantEOFMarker spec)
       <> truncationBuilder
 
@@ -148,14 +143,13 @@ encodeIPSPatch variant (SourceFileContents source) records optionalTruncation =
 -- bytes neither this parser nor any third-party EBP parser would
 -- round-trip cleanly.
 encodeEBPPatch
-  :: SourceFileContents
-  -> [EncodedHunk]
+  :: [EncodedHunk]
   -> EBPMetadata
   -> PatchFileContents
-encodeEBPPatch source records (EBPMetadata metadataBytes) =
+encodeEBPPatch records (EBPMetadata metadataBytes) =
   let baseStandardIPSBytes =
         unPatchFileContents
-          (encodeIPSPatch StandardIPS source records Nothing)
+          (encodeIPSPatch StandardIPS records Nothing)
   in PatchFileContents (baseStandardIPSBytes <> metadataBytes)
 
 ----------------------------------------------------------------------------
@@ -230,41 +224,61 @@ encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
 encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
   encodeOffset offsetWidth truncatedSizeBytes
 
--- | Shift any record sitting at the variant's EOF-collision offset
--- back by one byte, prepending the source byte at the new offset.
--- The Archiveteam wiki recommends exactly this fix for the
--- @0x454F46@ collision; Flips' @libips.cpp@ implements it inline
--- for both standard IPS and a hypothetical IPS32 generalisation.
--- See @docs/ips/spec.md § "The EOF ambiguity"@ for context.
+-- | Resolve every record that sits on the variant\'s trailer
+-- sentinel. Two outcomes per record:
 --
--- A no-op when the record is not at the sentinel offset, when the
--- sentinel is the very first byte of the source (no preceding
--- byte to prepend), or when the source is too short to contain
--- the preceding byte. Conversion paths that encode without a
--- source (the contract layer's source-less direct conversion)
--- detect the collision separately and refuse the conversion
--- outright; this function is the encode-time fix-up for the
--- with-source case.
-avoidSentinel :: Int -> ByteString -> [EncodedHunk] -> [EncodedHunk]
-avoidSentinel sentinelOffsetValue source = map shiftIfAtSentinel
+-- * \"Fixable\": the record\'s offset equals the sentinel, offset \> 0,
+--   and the source contains the byte at @sentinel - 1@. The record
+--   is rewritten to begin one byte earlier with that preceding byte
+--   prepended to its payload — the same shift-and-prepend trick the
+--   Archiveteam wiki recommends for IPS\'s @0x454F46@ collision and
+--   that Flips\' @libips.cpp@ implements inline.
+--
+-- * \"Unfixable\": the record\'s offset equals the sentinel but the
+--   source has no byte to prepend — either because the source is
+--   empty (source-less direct conversion), the source is shorter
+--   than @sentinel@, or the sentinel sits at offset @0@ so there is
+--   no preceding position. The whole call returns
+--   'Left' 'SentinelCollisionUnfixable' with the format label and
+--   the colliding offset, and the conversion aborts rather than
+--   emitting bytes a parser could not faithfully round-trip.
+--
+-- Records whose offset is not the sentinel pass through unchanged —
+-- the explicit \"not a collision\" branch, not a silent catch-all.
+--
+-- Both 'Slap.Convert.createFromMemory' (with real source bytes) and
+-- 'Slap.Convert.convertDirect' (with an empty 'SourceFileContents')
+-- call through this function. The shape of the source bytes decides
+-- whether a given collision is fixable; the caller decides whether
+-- to invoke sentinel resolution at all based on whether the format
+-- has a sentinel (IPS, IPS32, EBP do; nothing else does).
+resolveSentinelCollisions
+  :: FormatLabel
+  -> SentinelOffset
+  -> SourceFileContents
+  -> [EncodedHunk]
+  -> Either SlapError [EncodedHunk]
+resolveSentinelCollisions label sentinel (SourceFileContents source) =
+  traverse resolveOne
   where
-    sentinelOffset = Offset sentinelOffsetValue
-    sourceLength   = ByteString.length source
+    SentinelOffset sentinelPosition = sentinel
+    sourceLength                    = ByteString.length source
 
-    shiftIfAtSentinel record@(EncodedHunk hunkOffset hunkPayload)
-      | hunkOffset == sentinelOffset
-      , offsetToInt hunkOffset > 0
+    resolveOne record@(EncodedHunk hunkOffset hunkPayload)
+      | hunkOffset /= sentinelPosition = Right record
+      | offsetToInt hunkOffset > 0
       , offsetToInt hunkOffset - 1 < sourceLength =
           let precedingByteIndex = offsetToInt hunkOffset - 1
               precedingByte      =
                 ByteString.index source precedingByteIndex
               extendedPayload    =
                 ByteString.cons precedingByte hunkPayload
-          in EncodedHunk
+          in Right EncodedHunk
                { encodedOffset  = displace hunkOffset (Delta (-1))
                , encodedPayload = extendedPayload
                }
-      | otherwise = record
+      | otherwise =
+          Left (SentinelCollisionUnfixable label sentinel)
 
 -- | Build the EBP-style JSON metadata blob from CLI-supplied
 -- title / author / description fields. The four-key shape
