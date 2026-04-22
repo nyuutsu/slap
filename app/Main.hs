@@ -106,7 +106,7 @@ data Command
 ----------------------------------------------------------------------------
 
 main :: IO ()
-main = execParser options >>= \case
+main = customExecParser (prefs showHelpOnEmpty) options >>= \case
   parsedCommand@CommandApply{}   -> doApply parsedCommand
   parsedCommand@CommandUndo{}    -> doUndo parsedCommand
   parsedCommand@CommandCreate{}  -> doCreate parsedCommand
