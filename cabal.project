@@ -1,0 +1,2 @@
+packages: .
+extra-lib-dirs: /home/nyuu/repos/slap/rusty-slap/target/release

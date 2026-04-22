@@ -16,6 +16,8 @@ planned-formats.md
 
 # External reference tools (moved in, not tracked)
 tools/
+roms/
+docs/
 
 # Large ROM files (test ROMs placed by user)
 *.z64
@@ -30,9 +32,6 @@ tools/
 *.iso
 *.img
 *.cue
-
-# Staging folder for unsorted test material
-sort-or-integrate-what-you-need-and-dont-commit-this-folder/
 
 # User-provided test material staging area
 Suikoden*/

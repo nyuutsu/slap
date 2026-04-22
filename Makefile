@@ -20,7 +20,7 @@ cabal: rusty-slap
 	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
 	  cabal clean 2>/dev/null; touch .rusty-stamp; \
 	fi
-	cabal build --extra-lib-dirs=$(RUSTY_LIB)
+	cabal build
 
 # Run every test: props (QuickCheck + spec conformance) and the full
 # integration suite. Identical to `cabal test` modulo the rusty-stamp
@@ -29,7 +29,7 @@ test: rusty-slap
 	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
 	  cabal clean 2>/dev/null; touch .rusty-stamp; \
 	fi
-	cabal test --extra-lib-dirs=$(RUSTY_LIB)
+	cabal test
 
 clean:
 	cd rusty-slap && cargo clean
