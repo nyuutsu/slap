@@ -21,7 +21,10 @@ import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..), Parsed(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Measure (FileSize(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.IPS.Apply (applyIPS)
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..))
+import Slap.Measure (FileSize(..), Offset(..))
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
@@ -33,6 +36,7 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, toLazyByteString, byteString, word8)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Int (Int64)
+import qualified Data.Vector as Vector
 import Data.Word (Word8, Word32)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -109,6 +113,12 @@ specConformanceTests = testGroup "SpecConformance"
               bpsApplySourceCursorUnderflow
           , testCase "target-copy-cursor-underflow"
               bpsApplyTargetCursorUnderflow
+          ]
+      ]
+  , testGroup "IPS"
+      [ testGroup "apply-errors"
+          [ testCase "zero-target-with-records-rejected"
+              ipsApplyZeroTargetWithRecordsRejected
           ]
       ]
   , testGroup "UPS"
@@ -823,6 +833,28 @@ upsApplyBlockPastTarget =
            Left slapError -> assertFailure ("apply failed (expected success with OOB clipping): " ++ renderSlapError slapError)
            Right (TargetFileContents result) ->
              assertEqual "OOB-clipped output" expectedOutput result
+
+----------------------------------------------------------------------------
+-- IPS apply error paths
+----------------------------------------------------------------------------
+
+-- | A 'StandardIPS' patch whose Flips-style truncation marker declares
+-- a zero-byte target but whose record stream is non-empty. Apply's
+-- zero-target short-circuit fires only when the record vector is also
+-- empty; this case must instead reach the per-record bounds guard and
+-- surface as 'ApplyWritesPastTarget', rather than silently discarding
+-- the record and returning an empty target.
+ipsApplyZeroTargetWithRecordsRejected :: Assertion
+ipsApplyZeroTargetWithRecordsRejected =
+  let record = IPSRecordCopy { ipsCopyOffset  = Offset 0
+                             , ipsCopyPayload = ByteString.pack [0xFF] }
+      patch  = IPSPatch { ipsVariant             = StandardIPS
+                        , ipsRecords             = Vector.singleton record
+                        , ipsTruncatedTargetSize = Just (FileSize 0) }
+  in case applyIPS (SourceFileContents ByteString.empty) patch of
+       Left (ApplyFailed LabelIPS ApplyWritesPastTarget{}) -> pure ()
+       outcome -> assertFailure
+         ("expected ApplyWritesPastTarget, got: " ++ show outcome)
 
 ----------------------------------------------------------------------------
 -- BPS apply cursor-underflow errors
