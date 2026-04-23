@@ -2,8 +2,8 @@ module Slap.IPS.Apply
   ( applyIPS
   ) where
 
-import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), ipsRecordOffset,
-                       recordPayloadLength)
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
+                       ipsRecordOffset, recordPayloadLength)
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -55,10 +55,19 @@ import System.IO.Unsafe (unsafePerformIO)
 -- ceiling ('Slap.IPS.Types.ipsVariantMaxRecordEnd'). That axis is
 -- owned by 'Slap.IPS.Parse', which rejects any record whose end
 -- exceeds the ceiling before an 'IPSPatch' can reach this function.
+--
+-- The 'FormatLabel' attached to any returned error is derived from
+-- the patch's 'ipsVariant' ('LabelIPS' for 'StandardIPS',
+-- 'LabelIPS32' for 'IPS32'), not the parse-level label of whatever
+-- container the patch arrived in. An EBP-wrapped patch, whose body
+-- is a 'StandardIPS' record stream, therefore surfaces apply errors
+-- as 'LabelIPS' rather than 'LabelEBP' — the failure is structurally
+-- an IPS apply failure, and the EBP wrapper has already been peeled
+-- away by the time this function runs.
 applyIPS :: SourceFileContents -> IPSPatch -> Either SlapError TargetFileContents
 applyIPS (SourceFileContents source) patch
   | unFileSize targetSize < 0 =
-      Left (NegativeTargetSize LabelIPS targetSize)
+      Left (NegativeTargetSize patchLabel targetSize)
   | unFileSize targetSize == 0 =
       Right (TargetFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
@@ -67,9 +76,12 @@ applyIPS (SourceFileContents source) patch
         runApply outputPointer errorRef
       errorState <- readIORef errorRef
       pure $ case errorState of
-        Just applyErr -> Left (ApplyFailed LabelIPS applyErr)
+        Just applyErr -> Left (ApplyFailed patchLabel applyErr)
         Nothing       -> Right (TargetFileContents result)
   where
+    patchLabel      = case ipsVariant patch of
+                        StandardIPS -> LabelIPS
+                        IPS32       -> LabelIPS32
     records         = ipsRecords patch
     sourceSize      = FileSize (ByteString.length source)
     maxRecordEnd    = Vector.foldl' stepMaxEnd (FileSize 0) records
