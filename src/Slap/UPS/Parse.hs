@@ -12,7 +12,7 @@ import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicBytes, upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -23,7 +23,7 @@ import Slap.Measure (Length(..), FileSize(..),
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-parseUPS :: PatchFileContents -> Either SlapError UPSPatch
+parseUPS :: PatchFileContents -> Either SlapError (Parsed UPSPatch)
 parseUPS (PatchFileContents input)
   | ByteString.length input < unLength upsMagicLength =
       Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (Length (ByteString.length input))))
@@ -57,14 +57,16 @@ parseUPS (PatchFileContents input)
               Left (NegativeSize LabelUPS FieldTargetSize
                 (ParsedSizeValue (unFileSize (upsBodyTargetSize body))))
           | otherwise ->
-              Right UPSPatch
-                { upsSourceSize = upsBodySourceSize body
-                , upsTargetSize = upsBodyTargetSize body
-                , upsBlocks     = upsBodyBlocks body
-                , upsSourceCRC  = sourceCRC
-                , upsTargetCRC  = targetCRC
-                , upsPatchCRC   = storedPatchCRC
-                }
+              Right (Parsed
+                UPSPatch
+                  { upsSourceSize = upsBodySourceSize body
+                  , upsTargetSize = upsBodyTargetSize body
+                  , upsBlocks     = upsBodyBlocks body
+                  , upsSourceCRC  = sourceCRC
+                  , upsTargetCRC  = targetCRC
+                  , upsPatchCRC   = storedPatchCRC
+                  }
+                [])
 
 parseUPSBody :: Get UPSBody
 parseUPSBody = do

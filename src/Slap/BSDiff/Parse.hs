@@ -15,7 +15,7 @@ import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffMagicBytes, bsdiffControlRecordSize)
 import Slap.Compress (bz2Decompress)
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
@@ -51,7 +51,7 @@ safeDecompressBZip label compressed = case bz2Decompress compressed of
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseBSDiff :: PatchFileContents -> Either SlapError BSDiffPatch
+parseBSDiff :: PatchFileContents -> Either SlapError (Parsed BSDiffPatch)
 parseBSDiff (PatchFileContents input)
   | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (RequiredLength (Length 32)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
@@ -62,7 +62,7 @@ parseBSDiff (PatchFileContents input)
       extraData <- safeDecompressBZip "extra" extraCompressed
       let controls = parseControls controlData
           rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
-      Right (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) controls diffData extraData)
+      Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) controls diffData extraData) [])
   where
     rawControlSize = getSignMagnitude64 8 input
     rawDiffSize = getSignMagnitude64 16 input

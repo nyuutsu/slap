@@ -12,7 +12,7 @@ import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Apply as PPF
 
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Error (CreateResult(..), Parsed(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), CreateMeta(..),
                      defaultMeta)
@@ -41,7 +41,7 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
       case UPS.parseUPS patch of
         Left parseError ->
           counterexample ("parse: " ++ renderSlapError parseError) $ property False
-        Right parsed ->
+        Right (Parsed parsed _parseWarnings) ->
           (UPS.applyUPS parsed (SourceFileContents source) >>= \(TargetFileContents intermediate) -> UPS.applyUPS parsed (SourceFileContents intermediate)) === Right (TargetFileContents source)
 
 -- | PPF3 with undo data: apply then undo recovers the original.
@@ -53,7 +53,7 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
     Left _ -> discard
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed ->
+      Right (Parsed parsed _parseWarnings) ->
         case PPF.applyPatchMemory parsed (SourceFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False
           Right applied ->

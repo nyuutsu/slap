@@ -22,7 +22,7 @@ import Slap.IPS.Types
   , offsetWidthByteCount
   )
 import Slap.Binary (getWord24BE)
-import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get
@@ -76,7 +76,7 @@ import Data.Word (Word8)
 -- 'ipsVariantMagic'. Everything downstream — offset width, EOF
 -- marker bytes, ceiling — is a function of that single decision,
 -- looked up via 'variantSpec'.
-parseIPS :: PatchFileContents -> Either SlapError (Either IPSPatch EBPPatch)
+parseIPS :: PatchFileContents -> Either SlapError (Parsed (Either IPSPatch EBPPatch))
 parseIPS (PatchFileContents inputBytes)
   | ByteString.length inputBytes < unLength ipsMagicLength =
       Left (InputTooShort LabelIPS
@@ -102,9 +102,10 @@ parseIPS (PatchFileContents inputBytes)
              case validateRecordList variant recordList of
                Left validationFailure -> Left validationFailure
                Right ()               ->
-                 buildResultPatch variant
-                                  (Vector.fromList recordList)
-                                  trailingBytes
+                 fmap (\resultPayload -> Parsed resultPayload [])
+                      (buildResultPatch variant
+                                        (Vector.fromList recordList)
+                                        trailingBytes)
 
 ----------------------------------------------------------------------------
 -- parseRecords — Get-monad inner record loop

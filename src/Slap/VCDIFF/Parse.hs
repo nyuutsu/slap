@@ -18,7 +18,7 @@ import Slap.VCDIFF.Types
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
@@ -33,10 +33,10 @@ import Control.Monad (when)
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseVCDIFF :: PatchFileContents -> Either SlapError VCDIFFPatch
+parseVCDIFF :: PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
 parseVCDIFF = parseVCDIFFWith True
 
-parseVCDIFFWith :: Bool -> PatchFileContents -> Either SlapError VCDIFFPatch
+parseVCDIFFWith :: Bool -> PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
 parseVCDIFFWith allowCustom (PatchFileContents input)
   | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 3 input /= vcdiffMagicBytes = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
@@ -44,14 +44,15 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)
       (maybeTableBytes, header, windows) <- wrapParse (runGet (parseHeader validatedVersion) input)
       case maybeTableBytes of
-        Nothing -> Right (VCDIFFPatch header windows defaultCodeTable
-                                      defaultNearSize defaultSameSize)
+        Nothing -> Right (Parsed (VCDIFFPatch header windows defaultCodeTable
+                                              defaultNearSize defaultSameSize) [])
         Just rawTableBytes -> do
           let applyInnerDelta deltaBytes = do
-                inner <- parseVCDIFFWith False (PatchFileContents deltaBytes)
+                Parsed inner _innerWarnings <-
+                  parseVCDIFFWith False (PatchFileContents deltaBytes)
                 fmap unTargetFileContents (applyVCDIFF inner (SourceFileContents serializedDefaultTable))
           (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
-          Right (VCDIFFPatch header windows table nearSize sameSize)
+          Right (Parsed (VCDIFFPatch header windows table nearSize sameSize) [])
   where
     parseHeader validatedVersion = do
       skip (Length 4)  -- magic + version byte (already validated)

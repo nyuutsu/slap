@@ -18,7 +18,7 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
@@ -38,16 +38,17 @@ import qualified Data.IntSet as IntSet
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseXDelta1 :: PatchFileContents -> Either SlapError XDelta1Patch
+parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 (PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
-  | magic == "%XDZ004%" = parseV11 input magic XDelta1v11
-  | magic == "%XDZ003%" = parseV11 input magic XDelta1v104
+  | magic == "%XDZ004%" = wrapParsed (parseV11 input magic XDelta1v11)
+  | magic == "%XDZ003%" = wrapParsed (parseV11 input magic XDelta1v104)
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
   | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
   where
     magic = ByteString.take 8 input
+    wrapParsed = fmap (\patch -> Parsed patch [])
 
 parseV11 :: ByteString -> ByteString -> XDelta1Version -> Either SlapError XDelta1Patch
 parseV11 input expectedMagic version

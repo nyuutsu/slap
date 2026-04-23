@@ -8,6 +8,7 @@ module Slap.Error
   , UnencodeabilityReason(..)
   , DroppedValue(..)
   , CreateResult(..)
+  , Parsed(..)
   , FieldName(..)
   , fieldNameLabel
   , renderSlapError
@@ -378,6 +379,20 @@ data SlapWarning
 data CreateResult = CreateResult
   { resultBytes    :: !PatchFileContents
   , resultWarnings :: ![SlapWarning]
+  } deriving (Show)
+
+----------------------------------------------------------------------------
+-- Parsed
+----------------------------------------------------------------------------
+
+-- | The parse-side companion to 'CreateResult': a successfully parsed
+-- payload paired with any warnings the parser accumulated. Today every
+-- parser emits an empty warning list; the channel is infrastructure for
+-- future parsers that want to flag recoverable shape anomalies without
+-- failing outright.
+data Parsed value = Parsed
+  { parsedValue    :: !value
+  , parsedWarnings :: ![SlapWarning]
   } deriving (Show)
 
 ----------------------------------------------------------------------------

@@ -9,7 +9,7 @@ module Slap.NINJA2.Parse
   ) where
 
 import Slap.NINJA2.Types
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
@@ -51,14 +51,14 @@ parseFixedHeader input = NINJA2Info
 --   0x00: END
 ----------------------------------------------------------------------------
 
-parseNINJA2 :: PatchFileContents -> Either SlapError NINJA2Patch
+parseNINJA2 :: PatchFileContents -> Either SlapError (Parsed NINJA2Patch)
 parseNINJA2 (PatchFileContents input)
   | ByteString.length input < 7 = Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 6 input /= ninja2MagicBytes = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | ByteString.length input < headerSize = Left (InputTooShort LabelNINJA2 (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
   | otherwise = case runGet parseNINJA2Body input of
       Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)
-      Right patch -> Right patch
+      Right patch -> Right (Parsed patch [])
   where
     parseNINJA2Body :: Get NINJA2Patch
     parseNINJA2Body = do

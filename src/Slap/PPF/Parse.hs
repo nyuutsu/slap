@@ -17,7 +17,7 @@ import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
                         fileIdMarkerLength, fileIdFooterLength,
                         ppfVersionLabel)
 import Slap.Binary (getWord16LE, getWord32LE)
-import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Format (padHex)
 import Slap.FormatLabel (FormatLabel(..))
@@ -32,15 +32,16 @@ import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 
 -- | Parse a PPF patch file from raw bytes.
-parsePatch :: PatchFileContents -> Either SlapError PPFPatch
+parsePatch :: PatchFileContents -> Either SlapError (Parsed PPFPatch)
 parsePatch (PatchFileContents input) = do
   version <- detectVersion input
   checkEncoding version input
-  case version of
+  patch <- case version of
     PPF1 -> parsePPF1 input
     PPF2 -> parsePPF2 input
     PPF3 -> parsePPF3 input
     PPF4 -> parsePPF4 input
+  pure (Parsed patch [])
 
 -- | Wrap a Get error string into a SlapError.
 wrapError :: FormatLabel -> Either String a -> Either SlapError a

@@ -15,7 +15,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
-import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
@@ -74,7 +74,7 @@ isDPS input
 -- Parse
 ----------------------------------------------------------------------------
 
-parseDPS :: PatchFileContents -> Either SlapError DPSPatch
+parseDPS :: PatchFileContents -> Either SlapError (Parsed DPSPatch)
 parseDPS (PatchFileContents input)
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (Length (ByteString.length input))))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
@@ -82,7 +82,7 @@ parseDPS (PatchFileContents input)
   | otherwise = case runGet parseDPSBody input of
       Left errorMessage        -> Left (ParseError LabelDPS errorMessage)
       Right (Left slapError)   -> Left slapError
-      Right (Right patch)      -> Right patch
+      Right (Right patch)      -> Right (Parsed patch [])
 
 parseDPSBody :: Get (Either SlapError DPSPatch)
 parseDPSBody = do

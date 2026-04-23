@@ -21,7 +21,7 @@ module Slap.NINJA1.Parse
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
-import Slap.Error (SlapError(..))
+import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
@@ -38,19 +38,20 @@ import Data.Int (Int64)
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 
-parseNINJA1 :: PatchFileContents -> Either SlapError NINJA1Patch
+parseNINJA1 :: PatchFileContents -> Either SlapError (Parsed NINJA1Patch)
 parseNINJA1 (PatchFileContents input)
   | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 6 input /= ninja1MagicBytes = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
-  | subFormatIdentifier == "B "                = parseBinary Ninja1Binary (PatchFileContents payload)
-  | subFormatIdentifier == "BZ"                = zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents)
+  | subFormatIdentifier == "B "                = wrapParsed (parseBinary Ninja1Binary (PatchFileContents payload))
+  | subFormatIdentifier == "BZ"                = wrapParsed (zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents))
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
-  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = parseText Ninja1Text (PatchFileContents payload)    -- "T\n"
-  | subFormatIdentifier == "TZ"                = zlibDecompress payload >>= (parseText Ninja1TextCompressed . PatchFileContents)
+  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = wrapParsed (parseText Ninja1Text (PatchFileContents payload))    -- "T\n"
+  | subFormatIdentifier == "TZ"                = wrapParsed (zlibDecompress payload >>= (parseText Ninja1TextCompressed . PatchFileContents))
   | otherwise                    = Left (UnsupportedSubformat LabelNINJA1 (show subFormatIdentifier))
   where
     subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
     payload = ByteString.drop 8 input
+    wrapParsed = fmap (\patch -> Parsed patch [])
 
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
 zlibDecompress :: ByteString -> Either SlapError ByteString

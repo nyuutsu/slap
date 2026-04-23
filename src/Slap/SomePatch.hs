@@ -82,7 +82,7 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
 import Slap.Explain (ExplainData(..))
-import Slap.Error (SlapError(..), SlapWarning(..))
+import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
 import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Yay0 as Yay0
 
@@ -207,7 +207,7 @@ parseSome patchContents = case detectFormat patchContents of
     | otherwise -> Left UnrecognizedFormat
 
   Just (PatchDirect FormatPPF) -> do
-    patch <- PPF.parsePatch patchContents
+    Parsed patch parseWarnings <- PPF.parsePatch patchContents
     let records = PPF.ppfRecords patch
         hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
         ppfVerification = noVerification
@@ -226,7 +226,8 @@ parseSome patchContents = case detectFormat patchContents of
                                  then Just (UndoInMemory $ PPF.undoPatchMemory patch)
                                  else Nothing
         , patchVerification   = ppfVerification
-        , patchWarnings       = [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
+        , patchWarnings       = parseWarnings
+                                ++ [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
         , patchRecordSummary  = RecordSummary (length records) "records"
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
@@ -299,7 +300,7 @@ parseSome patchContents = case detectFormat patchContents of
               }
           }
       Left otherError -> Left otherError
-      Right parseResult -> case parseResult of
+      Right (Parsed parseResult parseWarnings) -> case parseResult of
         Left ipsPatch ->
           let records = IPS.ipsRecords ipsPatch
               label = case IPS.ipsVariant ipsPatch of
@@ -313,7 +314,8 @@ parseSome patchContents = case detectFormat patchContents of
                   { inMemoryApply = \source -> pure (IPS.applyIPS source ipsPatch) }
             , patchUndo           = Nothing
             , patchVerification   = noVerification
-            , patchWarnings       = [EmptyPatch label "records" | Vector.null records]
+            , patchWarnings       = parseWarnings
+                                    ++ [EmptyPatch label "records" | Vector.null records]
             , patchRecordSummary  = RecordSummary (Vector.length records) "records"
             , patchSourceNotes    = []
             , patchMetadata       = Nothing
@@ -341,7 +343,8 @@ parseSome patchContents = case detectFormat patchContents of
                   { inMemoryApply = \source -> pure (IPS.applyIPS source basePatch) }
             , patchUndo           = Nothing
             , patchVerification   = noVerification
-            , patchWarnings       = [EmptyPatch LabelEBP "records" | Vector.null records]
+            , patchWarnings       = parseWarnings
+                                    ++ [EmptyPatch LabelEBP "records" | Vector.null records]
             , patchRecordSummary  = RecordSummary (Vector.length records) "records"
             , patchSourceNotes    = []
             , patchMetadata       = Nothing
@@ -353,7 +356,7 @@ parseSome patchContents = case detectFormat patchContents of
             }
 
   Just (PatchDiff FormatBPS) -> do
-    patch <- BPS.parseBPS patchContents
+    Parsed patch parseWarnings <- BPS.parseBPS patchContents
     let actions = BPS.bpsActions patch
         bpsMetaBlob = if ByteString.null (BPS.bpsMetadata patch) then Nothing
                       else Just (BPS.bpsMetadata patch)
@@ -377,7 +380,8 @@ parseSome patchContents = case detectFormat patchContents of
           -- diagnostic more specific before the CRC hard-errors.
           , verifyFileSizeAdvisory = Just (BPS.bpsSourceSize patch)
           }
-      , patchWarnings       = [EmptyPatch LabelBPS "actions" | Vector.null actions]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelBPS "actions" | Vector.null actions]
       , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
       , patchSourceNotes    = []
       , patchMetadata       = bpsMetaBlob
@@ -386,7 +390,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDiff FormatUPS) -> do
-    patch <- UPS.parseUPS patchContents
+    Parsed patch parseWarnings <- UPS.parseUPS patchContents
     let blocks = UPS.upsBlocks patch
     Right SomePatch
       { patchFormat         = LabelUPS
@@ -415,7 +419,8 @@ parseSome patchContents = case detectFormat patchContents of
           -- verifyFileSizeAdvisory.
           , verifyFileSizeAdvisory = Just (UPS.upsSourceSize patch)
           }
-      , patchWarnings       = [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
                               ++ UPS.detectOOBBlocks patch
       , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
       , patchSourceNotes    = []
@@ -425,7 +430,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDiff FormatVCDIFF) -> do
-    patch <- VCDIFF.parseVCDIFF patchContents
+    Parsed patch parseWarnings <- VCDIFF.parseVCDIFF patchContents
     let windows = VCDIFF.vcdiffWindows patch
         windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
         adlerChecks =
@@ -441,7 +446,8 @@ parseSome patchContents = case detectFormat patchContents of
           { inMemoryApply     = \source -> pure (VCDIFF.applyVCDIFF patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
-      , patchWarnings       = [EmptyPatch LabelVCDIFF "windows" | null windows]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelVCDIFF "windows" | null windows]
       , patchRecordSummary  = RecordSummary (length windows) "windows"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -457,7 +463,7 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDirect FormatAPSN64)
     | apsGbaStructure rawBytes -> parseAPSGBABlock patchContents
     | otherwise -> do
-    patch@(APSN64.APSN64Patch header records) <- APSN64.parseAPSN64 patchContents
+    Parsed patch@(APSN64.APSN64Patch header records) parseWarnings <- APSN64.parseAPSN64 patchContents
     let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
         expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
     Right SomePatch
@@ -474,7 +480,8 @@ parseSome patchContents = case detectFormat patchContents of
                 , maybe [] (\crc -> [ByteCheck (Offset 0x10) crc "N64 CRC"]) (APSN64.apsN64Crc header)
                 ]
             }
-      , patchWarnings       = [EmptyPatch LabelAPSN64 "records" | null records]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelAPSN64 "records" | null records]
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -490,7 +497,7 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDiff FormatAPSGBA) -> parseAPSGBABlock patchContents
 
   Just (PatchDiff FormatNINJA2) -> do
-    patch <- NINJA2.parseNINJA2 patchContents
+    Parsed patch parseWarnings <- NINJA2.parseNINJA2 patchContents
     let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
         filterZeroMD5 other = fmap MD5Hash other
         (platformType, platformWarnings) = ninja2ToPlatform (NINJA2.ninja2RomType patch)
@@ -505,7 +512,8 @@ parseSome patchContents = case detectFormat patchContents of
           { verifySourceMD5 = filterZeroMD5 (NINJA2.ninja2SourceMD5 patch)
           , verifyTargetMD5 = filterZeroMD5 (NINJA2.ninja2TargetMD5 patch)
           }
-      , patchWarnings       = [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
+      , patchWarnings       = parseWarnings
+                               ++ [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
                                ++ platformWarnings
       , patchRecordSummary  = RecordSummary (length (NINJA2.ninja2Records patch)) "records"
       , patchSourceNotes    = []
@@ -529,10 +537,11 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDirect FormatNINJA1) -> do
-    patch <- NINJA1.parseNINJA1 patchContents
+    Parsed patch parseWarnings <- NINJA1.parseNINJA1 patchContents
     let records = NINJA1.ninja1Records patch
         warnings = concat
-          [ [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
+          [ parseWarnings
+          , [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
           , [EmptyPatch LabelNINJA1 "records" | null records]
           ]
         compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.Ninja1BinaryCompressed, NINJA1.Ninja1TextCompressed]
@@ -569,7 +578,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDiff FormatBSDiff) -> do
-    patch <- BSDiff.parseBSDiff patchContents
+    Parsed patch parseWarnings <- BSDiff.parseBSDiff patchContents
     Right SomePatch
       { patchFormat         = LabelBSDiff
       , patchExplain        = BSDiff.explainBSDiff patch
@@ -578,7 +587,8 @@ parseSome patchContents = case detectFormat patchContents of
           { inMemoryApply     = \source -> pure (BSDiff.applyBSDiff patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = [EmptyPatch LabelBSDiff "control tuples" | null (BSDiff.bsdiffControls patch)]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelBSDiff "control tuples" | null (BSDiff.bsdiffControls patch)]
       , patchRecordSummary  = RecordSummary (length (BSDiff.bsdiffControls patch)) "control tuples"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -587,7 +597,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDiff FormatGDIFF) -> do
-    patch <- GDIFF.parseGDIFF patchContents
+    Parsed patch parseWarnings <- GDIFF.parseGDIFF patchContents
     Right SomePatch
       { patchFormat         = LabelGDIFF
       , patchExplain        = GDIFF.explainGDIFF patch
@@ -596,7 +606,8 @@ parseSome patchContents = case detectFormat patchContents of
           { inMemoryApply     = \source -> pure (Right (GDIFF.applyGDIFF patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = [EmptyPatch LabelGDIFF "commands" | null (GDIFF.gdiffCommands patch)]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelGDIFF "commands" | null (GDIFF.gdiffCommands patch)]
       , patchRecordSummary  = RecordSummary (length (GDIFF.gdiffCommands patch)) "commands"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -605,7 +616,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDiff FormatXDelta1) -> do
-    patch <- XDelta1.parseXDelta1 patchContents
+    Parsed patch parseWarnings <- XDelta1.parseXDelta1 patchContents
     let fileSources = filter (\entry -> XDelta1.xdelta1SourceKind entry == XDelta1.FileSource) (XDelta1.xdelta1Sources patch)
         xdeltaVerification = noVerification
           { verifySourceMD5 = case fileSources of
@@ -621,7 +632,8 @@ parseSome patchContents = case detectFormat patchContents of
           { inMemoryApply     = \source -> pure (XDelta1.applyXDelta1 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = xdeltaVerification
-      , patchWarnings       = [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
       , patchRecordSummary  = RecordSummary (length (XDelta1.xdelta1Instructions patch)) "instructions"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -630,7 +642,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDirect FormatPMSR) -> do
-    patch <- PMSR.parsePMSR patchContents
+    Parsed patch parseWarnings <- PMSR.parsePMSR patchContents
     let records = PMSR.pmsrRecords patch
     Right SomePatch
       { patchFormat         = LabelPMSR
@@ -640,7 +652,8 @@ parseSome patchContents = case detectFormat patchContents of
             { inMemoryApply = \source -> pure (Right (PMSR.applyPMSRMemory patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = [EmptyPatch LabelPMSR "records" | null records]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelPMSR "records" | null records]
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
@@ -650,7 +663,7 @@ parseSome patchContents = case detectFormat patchContents of
       }
 
   Just (PatchDirect FormatPCHTXT) -> do
-    patch <- PCHTXT.parsePCHTXT patchContents
+    Parsed patch parseWarnings <- PCHTXT.parsePCHTXT patchContents
     let allBlocks = PCHTXT.pchtxtBlocks patch
         enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
         entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
@@ -664,7 +677,8 @@ parseSome patchContents = case detectFormat patchContents of
             { inMemoryApply = \source -> pure (Right (PCHTXT.applyPCHTXTMemory patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = [EmptyPatch LabelPCHTXT "entries" | null entries]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelPCHTXT "entries" | null entries]
       , patchRecordSummary  = RecordSummary (length entries) "entries"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
@@ -686,7 +700,7 @@ parseSome patchContents = case detectFormat patchContents of
 parseDPSBlock :: PatchFileContents -> Either SlapError SomePatch
 parseDPSBlock patchContents = case DPS.parseDPS patchContents of
   Left slapError -> Left slapError
-  Right patch  ->
+  Right (Parsed patch parseWarnings) ->
     let records = DPS.dpsRecords patch
     in Right SomePatch
       { patchFormat         = LabelDPS
@@ -697,7 +711,8 @@ parseDPSBlock patchContents = case DPS.parseDPS patchContents of
       , patchVerification   = noVerification
             { verifyFileSizeRequired = Just (DPS.dpsOriginalSize patch) }
       , patchUndo           = Nothing
-      , patchWarnings       = [EmptyPatch LabelDPS "records" | null records]
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelDPS "records" | null records]
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchContents  = Nothing
@@ -728,7 +743,7 @@ parseYay0Container (PatchFileContents input) = case Yay0.decompressYay0 input of
 
 parseAPSGBABlock :: PatchFileContents -> Either SlapError SomePatch
 parseAPSGBABlock patchContents = do
-  patch@(APSGBA.APSGBAPatch header records) <- APSGBA.parseAPSGBA patchContents
+  Parsed patch@(APSGBA.APSGBAPatch header records) parseWarnings <- APSGBA.parseAPSGBA patchContents
   Right SomePatch
     { patchFormat         = LabelAPSGBA
     , patchExplain        = APSGBA.explainAPSGBA patch
@@ -741,7 +756,8 @@ parseAPSGBABlock patchContents = do
           , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
           , verifyFileSizeAdvisory = Just (APSGBA.apsGbaSourceSize header)
           }
-    , patchWarnings       = [EmptyPatch LabelAPSGBA "blocks" | null records]
+    , patchWarnings       = parseWarnings
+                            ++ [EmptyPatch LabelAPSGBA "blocks" | null records]
     , patchRecordSummary  = RecordSummary (length records) "blocks"
     , patchSourceNotes    = []
     , patchMetadata       = Nothing

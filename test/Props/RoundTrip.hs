@@ -43,7 +43,7 @@ import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
+import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..), SentinelOffset(..))
 import Slap.FFI (rustyCRC32)
@@ -128,7 +128,7 @@ prop_bps = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case BPS.parseBPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+      Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
@@ -137,7 +137,7 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
         Left slapError -> counterexample (renderSlapError slapError) $ property False
-        Right parsed -> BPS.bpsMetadata parsed === meta
+        Right (Parsed parsed _parseWarnings) -> BPS.bpsMetadata parsed === meta
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
@@ -147,7 +147,7 @@ prop_ups = forAll genPair $ \(source, target) ->
       case UPS.parseUPS patch of
         Left parseError ->
           counterexample (renderSlapError parseError) $ property False
-        Right parsed ->
+        Right (Parsed parsed _parseWarnings) ->
           UPS.applyUPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ips :: Property
@@ -156,9 +156,9 @@ prop_ips = forAll genPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Left ipsPatch) ->
+      Right (Parsed (Left ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Right _ebpPatch) ->
+      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_ipsEofCollision :: Property
@@ -167,9 +167,9 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Left ipsPatch) ->
+      Right (Parsed (Left ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Right _ebpPatch) ->
+      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_resolveSentinelCollisions :: Property
@@ -246,7 +246,7 @@ prop_gdiff = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
+      Right (Parsed parsed _parseWarnings) -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
@@ -254,7 +254,7 @@ prop_apsGba = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
+      Right (Parsed parsed _parseWarnings) -> ioProperty $ do
         result <- applyViaFile APSGBA.applyAPSGBA parsed source
         pure $ result === target
 
@@ -268,9 +268,9 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Left ipsPatch) ->
+      Right (Parsed (Left ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Right _ebpPatch) ->
+      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
 
 prop_ebp :: Property
@@ -279,9 +279,9 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Right ebpPatch) ->
+      Right (Parsed (Right ebpPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch) === Right (TargetFileContents target)
-      Right (Left _ipsPatch) ->
+      Right (Parsed (Left _ipsPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly plain IPS" $ property False
 
 -- Direct formats: no truncation, target must be >= source
@@ -291,7 +291,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> PPF.applyPatchMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF.applyPatchMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
@@ -299,7 +299,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
+       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
          result <- applyViaFile PMSR.applyPMSR parsed source
          pure $ result === target
 
@@ -309,7 +309,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
+       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
          result <- applyViaFile NINJA1.applyNINJA1 parsed source
          pure $ result === target
 
@@ -320,7 +320,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed ->
+       Right (Parsed parsed _parseWarnings) ->
          NINJA1.ninja1SourceCRC parsed === Just (rustyCRC32 source) .&&.
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
          NINJA1.ninja1SourceSHA1 parsed === Just (sha1 source)
@@ -334,7 +334,7 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case DPS.parseDPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+      Right (Parsed parsed _parseWarnings) -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
@@ -342,7 +342,7 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed -> ioProperty $ do
+      Right (Parsed parsed _parseWarnings) -> ioProperty $ do
         result <- applyViaFile NINJA2.applyNINJA2 parsed source
         pure $ result === target
 
@@ -352,7 +352,7 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right parsed ->
+      Right (Parsed parsed _parseWarnings) ->
         NINJA2.ninja2SourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
         NINJA2.ninja2TargetMD5 parsed === Just (unMD5Hash (md5 target))
 
@@ -363,7 +363,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
+       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
          result <- applyViaFile PCHTXT.applyPCHTXT parsed source
          pure $ result === target
 
@@ -374,7 +374,7 @@ prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right parsed -> ioProperty $ do
+       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
          result <- applyViaFile APSN64.applyAPSN64 parsed source
          pure $ result === target
 
@@ -402,7 +402,7 @@ prop_bpsBlockMove = once $
          conjoin
            [ case BPS.parseBPS patch of
                Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-               Right parsed -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+               Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
            , property (ByteString.length (unPatchFileContents patch) < 1024)
            ]
 
@@ -429,7 +429,7 @@ parsePchtxtEscapes = do
   raw <- ByteString.readFile "test/data/pchtxt/escapes.pchtxt"
   case PCHTXT.parsePCHTXT (PatchFileContents raw) of
     Left slapError -> assertEqual ("parse failed: " ++ renderSlapError slapError) True False
-    Right parsed -> assertEqual "expected 2 entries" 2
+    Right (Parsed parsed _parseWarnings) -> assertEqual "expected 2 entries" 2
       (length (concatMap PCHTXT.pchtxtBlockEntries (PCHTXT.pchtxtBlocks parsed)))
 
 parsePchtxtSphinx :: IO ()
@@ -437,7 +437,7 @@ parsePchtxtSphinx = do
   raw <- ByteString.readFile "test/data/pchtxt/sphinx.pchtxt"
   case PCHTXT.parsePCHTXT (PatchFileContents raw) of
     Left slapError -> assertEqual ("parse failed: " ++ renderSlapError slapError) True False
-    Right parsed -> do
+    Right (Parsed parsed _parseWarnings) -> do
       assertEqual "expected nsobid" True (PCHTXT.pchtxtNsobid parsed /= Nothing)
       case PCHTXT.pchtxtBlocks parsed of
         [block] -> assertEqual "block should be disabled" False (PCHTXT.pchtxtBlockEnabled block)

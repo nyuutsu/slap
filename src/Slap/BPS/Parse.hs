@@ -10,7 +10,7 @@ import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVar
                        bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Error (SlapError(..), FieldName(..))
+import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -23,7 +23,7 @@ import Data.Bits ((.&.), shiftR)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-parseBPS :: PatchFileContents -> Either SlapError BPSPatch
+parseBPS :: PatchFileContents -> Either SlapError (Parsed BPSPatch)
 parseBPS (PatchFileContents input)
   | ByteString.length input < unLength bpsMagicLength =
       Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (Length (ByteString.length input))))
@@ -57,20 +57,22 @@ parseBPS (PatchFileContents input)
               Left (NegativeSize LabelBPS FieldTargetSize
                 (ParsedSizeValue (unFileSize (bpsBodyTargetSize body))))
           | otherwise ->
-              Right BPSPatch
-                { bpsSourceSize = bpsBodySourceSize body
-                , bpsTargetSize = bpsBodyTargetSize body
-                , bpsMetadata   = bpsBodyMetadata body
-                -- The parser builds the action stream as a list (cheap
-                -- cons during 'parseActions'); we materialise it into
-                -- one contiguous 'Vector' here at the boundary so the
-                -- intermediate cons cells become collectable as soon as
-                -- the BPSPatch escapes this scope.
-                , bpsActions    = Vector.fromList (bpsBodyActions body)
-                , bpsSourceCRC  = sourceCRC
-                , bpsTargetCRC  = targetCRC
-                , bpsPatchCRC   = storedPatchCRC
-                }
+              Right (Parsed
+                BPSPatch
+                  { bpsSourceSize = bpsBodySourceSize body
+                  , bpsTargetSize = bpsBodyTargetSize body
+                  , bpsMetadata   = bpsBodyMetadata body
+                  -- The parser builds the action stream as a list (cheap
+                  -- cons during 'parseActions'); we materialise it into
+                  -- one contiguous 'Vector' here at the boundary so the
+                  -- intermediate cons cells become collectable as soon as
+                  -- the BPSPatch escapes this scope.
+                  , bpsActions    = Vector.fromList (bpsBodyActions body)
+                  , bpsSourceCRC  = sourceCRC
+                  , bpsTargetCRC  = targetCRC
+                  , bpsPatchCRC   = storedPatchCRC
+                  }
+                [])
 
 parseBPSBody :: Get BPSBody
 parseBPSBody = do
