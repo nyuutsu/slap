@@ -23,7 +23,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                      SentinelOffset(..))
 import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
-                      FormatSpecification(..), defaultMeta, formatSpecification,
+                      FormatSpecification(..), noMetadataRequested, formatSpecification,
                       emptyContents, canConvert, convertDirect, conversionNotes)
 import Slap.Create (createFromMemory)
 import Slap.PatchField (PatchField(..))
@@ -120,7 +120,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsRomType     = if FRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
             , contentsImageType   = if FImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
-          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format spec defaultMeta))
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format spec noMetadataRequested))
       in droppedNotes === []
   | format <- directFormats
   ]
@@ -151,7 +151,7 @@ prop_ipsSentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
   in property $
        assertSentinelUnfixable LabelIPS (SentinelOffset (Offset 0x454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS) defaultMeta)
+         (convertDirect patchContent (CreateDirect CreateIPS) noMetadataRequested)
 
 -- | Direct conversion to IPS32 must reject a record at the EEOF sentinel offset.
 prop_ips32SentinelDirect :: Property
@@ -159,7 +159,7 @@ prop_ips32SentinelDirect =
   let patchContent = emptyContents [Hunk (Offset 0x45454F46) (ByteString.pack [0xFF])]
   in property $
        assertSentinelUnfixable LabelIPS32 (SentinelOffset (Offset 0x45454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta)
+         (convertDirect patchContent (CreateDirect CreateIPS32) noMetadataRequested)
 
 -- | A hunk that doesn't start at the sentinel but produces a split fragment
 -- at the sentinel offset must be rejected.  Splitting at 0xFFFF turns a hunk
@@ -171,7 +171,7 @@ prop_ipsSentinelSplitDirect =
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
   in property $
        assertSentinelUnfixable LabelIPS (SentinelOffset (Offset 0x454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS) defaultMeta)
+         (convertDirect patchContent (CreateDirect CreateIPS) noMetadataRequested)
 
 -- | Same as above for IPS32: split fragment at EEOF sentinel 0x45454F46.
 prop_ips32SentinelSplitDirect :: Property
@@ -181,7 +181,7 @@ prop_ips32SentinelSplitDirect =
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
   in property $
        assertSentinelUnfixable LabelIPS32 (SentinelOffset (Offset 0x45454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS32) defaultMeta)
+         (convertDirect patchContent (CreateDirect CreateIPS32) noMetadataRequested)
 
 -- | Assert a 'convertDirect' result is 'Left' 'SentinelCollisionUnfixable'
 -- with the expected label and sentinel offset. 'CreateResult' has no
@@ -207,7 +207,7 @@ prop_ipsSentinelWithSource =
   let eofOffset = 0x454F46
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
-  in case createFromMemory (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) defaultMeta Nothing of
+  in case createFromMemory (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing of
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

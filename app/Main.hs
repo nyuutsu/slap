@@ -6,7 +6,11 @@ module Main (main) where
 import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), PatchEncoding(..), createDefaultNotes, convertDirect, mergeMeta, formatExtension, formatName)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
+                     RequestedPatchMetadata(..),
+                     UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
+                     PatchEncoding(..), createDefaultNotes, convertDirect,
+                     mergeRequestedMetadata, formatExtension, formatName)
 import Slap.Create (createFromMemory)
 import Slap.PPF.Types (PPFImageType(..))
 import Slap.PlatformType (PlatformType(..))
@@ -549,6 +553,22 @@ doUndo parsedCommand = do
 -- Create
 ----------------------------------------------------------------------------
 
+-- Small boundary adapters: the CLI still models each of these flags as a
+-- 'Maybe Bool' on 'Command'; 'RequestedPatchMetadata' has promoted each
+-- to a named sum. These three helpers do the bridging at the construction
+-- site; once the CLI layer grows its own typed request record, these go away.
+boolToUndoInclusion :: Bool -> UndoInclusion
+boolToUndoInclusion True  = IncludeUndoData
+boolToUndoInclusion False = OmitUndoData
+
+boolToValidationInclusion :: Bool -> ValidationInclusion
+boolToValidationInclusion True  = IncludeValidationBlock
+boolToValidationInclusion False = OmitValidationBlock
+
+boolToStability :: Bool -> PatchStability
+boolToStability True  = UnstablePatch
+boolToStability False = StablePatch
+
 doCreate :: Command -> IO ()
 doCreate parsedCommand = do
   originalBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandOriginal parsedCommand)
@@ -556,22 +576,22 @@ doCreate parsedCommand = do
   maybeMeta <- case commandMetadata parsedCommand of
     Nothing   -> pure Nothing
     Just path -> Just <$> ByteString.readFile path
-  let createMeta = CreateMeta
-        { metaTitle       = commandTitle parsedCommand
-        , metaAuthor      = commandAuthor parsedCommand
-        , metaDescription        = commandDescription parsedCommand
-        , metaVersion     = commandVersion parsedCommand
-        , metaUndo        = commandUndo parsedCommand
-        , metaValidate    = commandValidate parsedCommand
-        , metaUnstable    = commandUnstable parsedCommand
-        , metaRomType     = commandRomType parsedCommand
-        , metaImageType   = commandImageType parsedCommand
-        , metaGenre       = commandGenre parsedCommand
-        , metaLanguage    = commandLanguage parsedCommand
-        , metaDate        = commandDate parsedCommand
-        , metaWebsite     = commandWebsite parsedCommand
-        , metaPatchEncoding = commandPatchEncoding parsedCommand
-        , metaBPSMetadata = maybeMeta
+  let createMeta = RequestedPatchMetadata
+        { requestedTitle               = commandTitle       parsedCommand
+        , requestedAuthor              = commandAuthor      parsedCommand
+        , requestedDescription         = commandDescription parsedCommand
+        , requestedVersion             = commandVersion     parsedCommand
+        , requestedUndoInclusion       = fmap boolToUndoInclusion       (commandUndo     parsedCommand)
+        , requestedValidationInclusion = fmap boolToValidationInclusion (commandValidate parsedCommand)
+        , requestedStability           = fmap boolToStability           (commandUnstable parsedCommand)
+        , requestedRomType             = commandRomType       parsedCommand
+        , requestedImageType           = commandImageType     parsedCommand
+        , requestedGenre               = commandGenre         parsedCommand
+        , requestedLanguage            = commandLanguage      parsedCommand
+        , requestedDate                = commandDate          parsedCommand
+        , requestedWebsite             = commandWebsite       parsedCommand
+        , requestedPatchEncoding       = commandPatchEncoding parsedCommand
+        , requestedEmbeddedBlob        = maybeMeta
         }
   let defaultWarnings = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
@@ -597,24 +617,24 @@ doConvert parsedCommand = do
       maybeMetadata <- case commandConvertMetadata parsedCommand of
         Nothing   -> pure Nothing
         Just path -> Just <$> ByteString.readFile path
-      let cliMeta = CreateMeta
-            { metaTitle       = commandConvertTitle parsedCommand
-            , metaAuthor      = commandConvertAuthor parsedCommand
-            , metaDescription        = commandConvertDescription parsedCommand
-            , metaVersion     = commandConvertVersion parsedCommand
-            , metaUndo        = commandConvertUndo parsedCommand
-            , metaValidate    = commandConvertValidate parsedCommand
-            , metaUnstable    = commandConvertUnstable parsedCommand
-            , metaRomType     = commandConvertRomType parsedCommand
-            , metaImageType   = commandConvertImageType parsedCommand
-            , metaGenre       = commandConvertGenre parsedCommand
-            , metaLanguage    = commandConvertLanguage parsedCommand
-            , metaDate        = commandConvertDate parsedCommand
-            , metaWebsite     = commandConvertWebsite parsedCommand
-            , metaPatchEncoding = commandConvertPatchEncoding parsedCommand
-            , metaBPSMetadata = maybeMetadata
+      let cliMeta = RequestedPatchMetadata
+            { requestedTitle               = commandConvertTitle       parsedCommand
+            , requestedAuthor              = commandConvertAuthor      parsedCommand
+            , requestedDescription         = commandConvertDescription parsedCommand
+            , requestedVersion             = commandConvertVersion     parsedCommand
+            , requestedUndoInclusion       = fmap boolToUndoInclusion       (commandConvertUndo     parsedCommand)
+            , requestedValidationInclusion = fmap boolToValidationInclusion (commandConvertValidate parsedCommand)
+            , requestedStability           = fmap boolToStability           (commandConvertUnstable parsedCommand)
+            , requestedRomType             = commandConvertRomType       parsedCommand
+            , requestedImageType           = commandConvertImageType     parsedCommand
+            , requestedGenre               = commandConvertGenre         parsedCommand
+            , requestedLanguage            = commandConvertLanguage      parsedCommand
+            , requestedDate                = commandConvertDate          parsedCommand
+            , requestedWebsite             = commandConvertWebsite       parsedCommand
+            , requestedPatchEncoding       = commandConvertPatchEncoding parsedCommand
+            , requestedEmbeddedBlob        = maybeMetadata
             }
-          mergedMeta = mergeMeta cliMeta (patchExtractedMeta parsed)
+          mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
       let printWarnings warnings = forM_ warnings $ \warning ->
               hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
           metaWarnings = case patchMetadata parsed of
@@ -626,7 +646,7 @@ doConvert parsedCommand = do
                  else [MetadataDropped metaSize]
           metaCarryNote = case patchMetadata parsed of
             Just metaBytes | commandConvertTo parsedCommand == CreateDiff CreateBPS
-                           , isNothing (metaBPSMetadata mergedMeta) ->
+                           , isNothing (requestedEmbeddedBlob mergedMeta) ->
               Just ("note: source has " ++ show (ByteString.length metaBytes)
                     ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
             _ -> Nothing
@@ -637,10 +657,10 @@ doConvert parsedCommand = do
           let source = SourceFileContents sourceBytes
           verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
           target <- applyForConvert parsed source
-          -- For --with conversion, default undo/validate to True (preservation)
+          -- For --with conversion, default undo/validate to "include" (preservation)
           let withMeta = mergedMeta
-                { metaUndo     = metaUndo mergedMeta     <|> Just True
-                , metaValidate = metaValidate mergedMeta <|> Just True
+                { requestedUndoInclusion       = requestedUndoInclusion       mergedMeta <|> Just IncludeUndoData
+                , requestedValidationInclusion = requestedValidationInclusion mergedMeta <|> Just IncludeValidationBlock
                 }
           case createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target withMeta (patchContents parsed) of
             Left slapError -> dieError slapError

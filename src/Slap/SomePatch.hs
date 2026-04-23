@@ -15,7 +15,9 @@ module Slap.SomePatch
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
 import Slap.Detect (detectFormat)
-import Slap.Convert (PatchContents(..), emptyContents, CreateMeta(..), defaultMeta, trimNullSpace)
+import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
+                     UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
+                     noMetadataRequested, trimNullSpace)
 import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..), UndoHunk(..))
@@ -193,7 +195,7 @@ data SomePatch = SomePatch
   , patchContents       :: Maybe PatchContents
   , patchSourceNotes    :: [SlapWarning]
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
-  , patchExtractedMeta  :: CreateMeta  -- ^ Text metadata extracted at parse time for conversion
+  , patchExtractedMeta  :: RequestedPatchMetadata  -- ^ Text metadata extracted at parse time for conversion
   }
 
 ----------------------------------------------------------------------------
@@ -232,11 +234,11 @@ parseSome patchContents = case detectFormat patchContents of
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
-                                in defaultMeta
-                                  { metaDescription = if null description then Nothing else Just description
-                                  , metaImageType   = PPF.ppfImageType patch
-                                  , metaUndo        = if PPF.ppfHasUndo patch then Just True else Nothing
-                                  , metaValidate    = if isJust (PPF.ppfValidation patch) then Just True else Nothing
+                                in noMetadataRequested
+                                  { requestedDescription         = if null description then Nothing else Just description
+                                  , requestedImageType           = PPF.ppfImageType patch
+                                  , requestedUndoInclusion       = if PPF.ppfHasUndo patch then Just IncludeUndoData else Nothing
+                                  , requestedValidationInclusion = if isJust (PPF.ppfValidation patch) then Just IncludeValidationBlock else Nothing
                                   }
         , patchContents  = if hasAppend then Nothing else Just PatchContents
             { contentsRecords     = map (\record -> Hunk (PPF.recordOffset record) (PPF.recordData record)) records
@@ -291,7 +293,7 @@ parseSome patchContents = case detectFormat patchContents of
             , patchRecordSummary  = RecordSummary (Vector.length records) "records"
             , patchSourceNotes    = []
             , patchMetadata       = Nothing
-            , patchExtractedMeta  = defaultMeta
+            , patchExtractedMeta  = noMetadataRequested
             , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
                 { contentsTruncation = IPS.ipsTruncatedTargetSize ipsPatch
                 , contentsEBPMeta    = Nothing
@@ -302,10 +304,10 @@ parseSome patchContents = case detectFormat patchContents of
               records = IPS.ipsRecords basePatch
               ebpPairs = jsonPairs (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
               nonEmptyField decoded = if null decoded then Nothing else Just decoded
-              extractedMeta = defaultMeta
-                { metaTitle       = jsonFieldCI ebpPairs "title" >>= nonEmptyField
-                , metaAuthor      = jsonFieldCI ebpPairs "author" >>= nonEmptyField
-                , metaDescription = jsonFieldCI ebpPairs "description" >>= nonEmptyField
+              extractedMeta = noMetadataRequested
+                { requestedTitle       = jsonFieldCI ebpPairs "title" >>= nonEmptyField
+                , requestedAuthor      = jsonFieldCI ebpPairs "author" >>= nonEmptyField
+                , requestedDescription = jsonFieldCI ebpPairs "description" >>= nonEmptyField
                 }
           in Right SomePatch
             { patchFormat         = LabelEBP
@@ -348,7 +350,7 @@ parseSome patchContents = case detectFormat patchContents of
             , patchRecordSummary  = RecordSummary (Vector.length records) "records"
             , patchSourceNotes    = []
             , patchMetadata       = Nothing
-            , patchExtractedMeta  = defaultMeta
+            , patchExtractedMeta  = noMetadataRequested
             , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
                 { contentsTruncation = Nothing
                 , contentsEBPMeta    = Nothing
@@ -385,7 +387,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
       , patchSourceNotes    = []
       , patchMetadata       = bpsMetaBlob
-      , patchExtractedMeta  = defaultMeta { metaBPSMetadata = bpsMetaBlob }
+      , patchExtractedMeta  = noMetadataRequested { requestedEmbeddedBlob = bpsMetaBlob }
       , patchContents  = Nothing
       }
 
@@ -425,7 +427,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Nothing
       }
 
@@ -451,7 +453,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length windows) "windows"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Nothing
       }
 
@@ -486,8 +488,8 @@ parseSome patchContents = case detectFormat patchContents of
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
-                              in defaultMeta
-                                { metaDescription = if null description then Nothing else Just description }
+                              in noMetadataRequested
+                                { requestedDescription = if null description then Nothing else Just description }
       , patchContents  = Just (emptyContents (map expandN64 records))
             { contentsDescription = Just (APSN64.apsN64Description header)
             , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
@@ -522,16 +524,16 @@ parseSome patchContents = case detectFormat patchContents of
                                   nonEmptyField fieldBytes = let decoded = decode fieldBytes
                                                               in if null decoded then Nothing else Just decoded
                                   info = NINJA2.ninja2Header patch
-                              in defaultMeta
-                                { metaTitle       = NINJA2.ninja2Title info >>= nonEmptyField
-                                , metaAuthor      = NINJA2.ninja2Author info >>= nonEmptyField
-                                , metaVersion     = NINJA2.ninja2Version info >>= nonEmptyField
-                                , metaGenre       = NINJA2.ninja2Genre info >>= nonEmptyField
-                                , metaLanguage    = NINJA2.ninja2Language info >>= nonEmptyField
-                                , metaDate        = NINJA2.ninja2Date info >>= nonEmptyField
-                                , metaWebsite     = NINJA2.ninja2Website info >>= nonEmptyField
-                                , metaDescription = NINJA2.ninja2Description info >>= nonEmptyField
-                                , metaRomType     = Just platformType
+                              in noMetadataRequested
+                                { requestedTitle       = NINJA2.ninja2Title       info >>= nonEmptyField
+                                , requestedAuthor      = NINJA2.ninja2Author      info >>= nonEmptyField
+                                , requestedVersion     = NINJA2.ninja2Version     info >>= nonEmptyField
+                                , requestedGenre       = NINJA2.ninja2Genre       info >>= nonEmptyField
+                                , requestedLanguage    = NINJA2.ninja2Language    info >>= nonEmptyField
+                                , requestedDate        = NINJA2.ninja2Date        info >>= nonEmptyField
+                                , requestedWebsite     = NINJA2.ninja2Website     info >>= nonEmptyField
+                                , requestedDescription = NINJA2.ninja2Description info >>= nonEmptyField
+                                , requestedRomType     = Just platformType
                                 }
       , patchContents  = Nothing
       }
@@ -566,8 +568,8 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
-          { metaRomType = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch)) }
+      , patchExtractedMeta  = noMetadataRequested
+          { requestedRomType = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch)) }
       , patchContents  = Just (emptyContents (map (\record -> Hunk (NINJA1.ninja1RecordOffset record) (NINJA1.ninja1RecordData record)) records))
           { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
           , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
@@ -592,7 +594,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length (BSDiff.bsdiffControls patch)) "control tuples"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Nothing
       }
 
@@ -611,7 +613,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length (GDIFF.gdiffCommands patch)) "commands"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Nothing
       }
 
@@ -637,7 +639,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length (XDelta1.xdelta1Instructions patch)) "instructions"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Nothing
       }
 
@@ -657,7 +659,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Just (emptyContents
           (map (\record -> Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)) records))
       }
@@ -682,7 +684,7 @@ parseSome patchContents = case detectFormat patchContents of
       , patchRecordSummary  = RecordSummary (length entries) "entries"
       , patchSourceNotes    = sourceNotes
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = defaultMeta
+      , patchExtractedMeta  = noMetadataRequested
       , patchContents  = Just (emptyContents contentRecords)
           { contentsDescription = encodeUtf8Field <$> PCHTXT.pchtxtNsobid patch
           , contentsPCHTXTBlocks = Just allBlocks
@@ -719,13 +721,13 @@ parseDPSBlock patchContents = case DPS.parseDPS patchContents of
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let nonEmpty fieldBytes = let decoded = trimNullSpace (decodeLocaleField fieldBytes)
                                                        in if null decoded then Nothing else Just decoded
-                              in defaultMeta
-                                { metaTitle    = nonEmpty (DPS.dpsName patch)
-                                , metaAuthor   = nonEmpty (DPS.dpsAuthor patch)
-                                , metaVersion  = nonEmpty (DPS.dpsVersion patch)
-                                , metaUnstable = case DPS.dpsStability patch of
-                                                   DPS.DPSUnstable -> Just True
-                                                   DPS.DPSStable   -> Nothing
+                              in noMetadataRequested
+                                { requestedTitle     = nonEmpty (DPS.dpsName    patch)
+                                , requestedAuthor    = nonEmpty (DPS.dpsAuthor  patch)
+                                , requestedVersion   = nonEmpty (DPS.dpsVersion patch)
+                                , requestedStability = case DPS.dpsStability patch of
+                                                         DPS.DPSUnstable -> Just UnstablePatch
+                                                         DPS.DPSStable   -> Nothing
                                 }
       }
 
@@ -761,7 +763,7 @@ parseAPSGBABlock patchContents = do
     , patchRecordSummary  = RecordSummary (length records) "blocks"
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  = defaultMeta
+    , patchExtractedMeta  = noMetadataRequested
     , patchContents  = Nothing
     }
 

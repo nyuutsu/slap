@@ -3,8 +3,11 @@ module Slap.Convert
   , DirectCreate(..)
   , DiffCreate(..)
   , CreateFormat(..)
-  , CreateMeta(..)
-  , defaultMeta
+  , RequestedPatchMetadata(..)
+  , UndoInclusion(..)
+  , ValidationInclusion(..)
+  , PatchStability(..)
+  , noMetadataRequested
   , FormatSpecification(..)
   , ConversionFailure(..)
   , emptyContents
@@ -15,7 +18,7 @@ module Slap.Convert
   , convertDirect
   , createFromMemory
   , createDefaultNotes
-  , mergeMeta
+  , mergeRequestedMetadata
   , trimNullSpace
   , formatExtension
   , formatName
@@ -125,67 +128,120 @@ data CreateFormat
   | CreateDiff DiffCreate
   deriving (Show, Eq)
 
-data CreateMeta = CreateMeta
-  { metaTitle       :: Maybe String
-  , metaAuthor      :: Maybe String
-  , metaDescription        :: Maybe String
-  , metaVersion     :: Maybe String
-  , metaUndo        :: Maybe Bool
-  , metaValidate    :: Maybe Bool
-  , metaUnstable    :: Maybe Bool
-  , metaRomType     :: Maybe PlatformType
+-- | User intent about what metadata should end up in an emitted patch.
+-- Built from CLI flags in 'app/Main.hs' (and from parsed source patches
+-- during conversion), then consumed by 'createFromMemory' /
+-- 'encodeDirect'.  Every 'Maybe' field's 'Nothing' means "the user
+-- didn't specify; let the format pick its default"; a 'Just' carries
+-- an explicit request.
+data RequestedPatchMetadata = RequestedPatchMetadata
+  { requestedTitle                :: Maybe String
+  , requestedAuthor               :: Maybe String
+  , requestedDescription          :: Maybe String
+  , requestedVersion              :: Maybe String
+  , requestedUndoInclusion        :: Maybe UndoInclusion
+  , requestedValidationInclusion  :: Maybe ValidationInclusion
+  , requestedStability            :: Maybe PatchStability
+  , requestedRomType              :: Maybe PlatformType
     -- ^ Shared platform type: NINJA1 and NINJA2 define different
     -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNinja1, platformToNinja2) handles lossy mappings.
-  , metaImageType   :: Maybe PPFImageType
-  , metaGenre       :: Maybe String
-  , metaLanguage    :: Maybe String
-  , metaDate        :: Maybe String
-  , metaWebsite     :: Maybe String
-  , metaPatchEncoding :: PatchEncoding
-  , metaBPSMetadata :: Maybe ByteString.ByteString
+  , requestedImageType            :: Maybe PPFImageType
+  , requestedGenre                :: Maybe String
+  , requestedLanguage             :: Maybe String
+  , requestedDate                 :: Maybe String
+  , requestedWebsite              :: Maybe String
+  , requestedPatchEncoding        :: PatchEncoding
+  , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
+    -- ^ Contents of the user's @--metadata FILE@ flag.  Today only BPS
+    -- consumes this; the name keeps the concept ("a raw blob to embed")
+    -- separate from the format that currently uses it.
   }
 
-defaultMeta :: CreateMeta
-defaultMeta = CreateMeta
-  { metaTitle       = Nothing
-  , metaAuthor      = Nothing
-  , metaDescription        = Nothing
-  , metaVersion     = Nothing
-  , metaUndo        = Nothing
-  , metaValidate    = Nothing
-  , metaUnstable    = Nothing
-  , metaRomType     = Nothing
-  , metaImageType   = Nothing
-  , metaGenre       = Nothing
-  , metaLanguage    = Nothing
-  , metaDate        = Nothing
-  , metaWebsite     = Nothing
-  , metaPatchEncoding = PatchEncodingUTF8
-  , metaBPSMetadata = Nothing
+-- | Whether the output patch should carry undo data, when the format supports it.
+--
+-- PPF3 is the primary consumer: its patch format has an optional trailing undo
+-- section that lets an applied patch be reversed without access to the original
+-- source. Other direct formats may gain undo support; this type stays agnostic.
+data UndoInclusion
+  = IncludeUndoData
+  | OmitUndoData
+  deriving (Show, Eq)
+
+-- | Whether the output patch should carry a validation block, when the format
+-- supports it.
+--
+-- PPF3 consumes this: its format has a 1024-byte optional validation region
+-- sampled from the source at a format-specific offset. Presence in the emitted
+-- patch lets an applier check "is this the ROM you're expecting?" before
+-- writing anything.
+data ValidationInclusion
+  = IncludeValidationBlock
+  | OmitValidationBlock
+  deriving (Show, Eq)
+
+-- | Stability flag for DPS patches.
+--
+-- DPS carries a single byte indicating whether the patch author considers the
+-- patch suitable for distribution. Slap does not interpret the flag beyond
+-- relaying the user's declaration to the emitted patch.
+data PatchStability
+  = StablePatch
+  | UnstablePatch
+  deriving (Show, Eq)
+
+undoIncluded :: UndoInclusion -> Bool
+undoIncluded IncludeUndoData = True
+undoIncluded OmitUndoData    = False
+
+validationIncluded :: ValidationInclusion -> Bool
+validationIncluded IncludeValidationBlock = True
+validationIncluded OmitValidationBlock    = False
+
+patchIsUnstable :: PatchStability -> Bool
+patchIsUnstable UnstablePatch = True
+patchIsUnstable StablePatch   = False
+
+noMetadataRequested :: RequestedPatchMetadata
+noMetadataRequested = RequestedPatchMetadata
+  { requestedTitle               = Nothing
+  , requestedAuthor              = Nothing
+  , requestedDescription         = Nothing
+  , requestedVersion             = Nothing
+  , requestedUndoInclusion       = Nothing
+  , requestedValidationInclusion = Nothing
+  , requestedStability           = Nothing
+  , requestedRomType             = Nothing
+  , requestedImageType           = Nothing
+  , requestedGenre               = Nothing
+  , requestedLanguage            = Nothing
+  , requestedDate                = Nothing
+  , requestedWebsite             = Nothing
+  , requestedPatchEncoding       = PatchEncodingUTF8
+  , requestedEmbeddedBlob        = Nothing
   }
 
 -- | Merge two metadata records: first (CLI) wins for each field, then
--- second (source patch).  For non-Maybe fields like 'metaPatchEncoding',
--- the first argument always wins.
-mergeMeta :: CreateMeta -> CreateMeta -> CreateMeta
-mergeMeta cli source = CreateMeta
-  { metaTitle         = metaTitle cli <|> metaTitle source
-  , metaAuthor        = metaAuthor cli <|> metaAuthor source
-  , metaDescription   = metaDescription cli <|> metaDescription source
-  , metaVersion       = metaVersion cli <|> metaVersion source
-  , metaUndo          = metaUndo cli <|> metaUndo source
-  , metaValidate      = metaValidate cli <|> metaValidate source
-  , metaUnstable      = metaUnstable cli <|> metaUnstable source
-  , metaRomType       = metaRomType cli <|> metaRomType source
-  , metaImageType     = metaImageType cli <|> metaImageType source
-  , metaGenre         = metaGenre cli <|> metaGenre source
-  , metaLanguage      = metaLanguage cli <|> metaLanguage source
-  , metaDate          = metaDate cli <|> metaDate source
-  , metaWebsite       = metaWebsite cli <|> metaWebsite source
-  , metaPatchEncoding = metaPatchEncoding cli
-  , metaBPSMetadata   = metaBPSMetadata cli <|> metaBPSMetadata source
+-- second (source patch).  For non-'Maybe' fields like
+-- 'requestedPatchEncoding', the first argument always wins.
+mergeRequestedMetadata :: RequestedPatchMetadata -> RequestedPatchMetadata -> RequestedPatchMetadata
+mergeRequestedMetadata cli source = RequestedPatchMetadata
+  { requestedTitle               = requestedTitle cli               <|> requestedTitle source
+  , requestedAuthor              = requestedAuthor cli              <|> requestedAuthor source
+  , requestedDescription         = requestedDescription cli         <|> requestedDescription source
+  , requestedVersion             = requestedVersion cli             <|> requestedVersion source
+  , requestedUndoInclusion       = requestedUndoInclusion cli       <|> requestedUndoInclusion source
+  , requestedValidationInclusion = requestedValidationInclusion cli <|> requestedValidationInclusion source
+  , requestedStability           = requestedStability cli           <|> requestedStability source
+  , requestedRomType             = requestedRomType cli             <|> requestedRomType source
+  , requestedImageType           = requestedImageType cli           <|> requestedImageType source
+  , requestedGenre               = requestedGenre cli               <|> requestedGenre source
+  , requestedLanguage            = requestedLanguage cli            <|> requestedLanguage source
+  , requestedDate                = requestedDate cli                <|> requestedDate source
+  , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
+  , requestedPatchEncoding       = requestedPatchEncoding cli
+  , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
   }
 
 ----------------------------------------------------------------------------
@@ -323,7 +379,7 @@ preservingDirectTargets field =
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> CreateMeta -> [SlapWarning]
+conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> RequestedPatchMetadata -> [SlapWarning]
 conversionNotes contents target spec meta =
   let have = provides contents
       kept = specificationRequired spec `Set.union` specificationAccepted spec
@@ -346,29 +402,29 @@ encodingGapNotes contents target = case contentsPatchEncoding contents of
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> CreateMeta -> Maybe PlatformType -> Maybe PPFImageType -> [SlapWarning]
+defaultAssumptionNotes :: DirectCreate -> RequestedPatchMetadata -> Maybe PlatformType -> Maybe PPFImageType -> [SlapWarning]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
   [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
-    , Nothing <- [metaRomType meta <|> sourceRomType] ]
+    , Nothing <- [requestedRomType meta <|> sourceRomType] ]
   , [ DefaultImageType LabelPPF3
     | target == CreatePPF3
-    , Nothing <- [metaImageType meta <|> sourceImageType] ]
+    , Nothing <- [requestedImageType meta <|> sourceImageType] ]
   ]
 
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available.
-createDefaultNotes :: CreateFormat -> CreateMeta -> [SlapWarning]
+createDefaultNotes :: CreateFormat -> RequestedPatchMetadata -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
 createDefaultNotes (CreateDiff _) _ = []
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
-undoValidateNotes :: DirectCreate -> CreateMeta -> [SlapWarning]
+undoValidateNotes :: DirectCreate -> RequestedPatchMetadata -> [SlapWarning]
 undoValidateNotes CreatePPF3 meta = concat
-  [ [ IncludingUndoByDefault | Nothing <- [metaUndo meta] ]
-  , [ IncludingValidationByDefault | Nothing <- [metaValidate meta] ]
+  [ [ IncludingUndoByDefault | Nothing <- [requestedUndoInclusion meta] ]
+  , [ IncludingValidationByDefault | Nothing <- [requestedValidationInclusion meta] ]
   ]
 undoValidateNotes _ _ = []
 
@@ -439,12 +495,12 @@ fieldNote contents field = case field of
 ----------------------------------------------------------------------------
 
 -- | Convert parsed patch contents to a target format without the source ROM.
-convertDirect :: PatchContents -> CreateFormat -> CreateMeta
+convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> Either SlapError CreateResult
 convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
 convertDirect contents (CreateDirect target) meta = do
-  let includeUndo = fromMaybe (isJust (contentsUndoData contents)) (metaUndo meta)
-      includeValidation = fromMaybe (isJust (contentsValidation contents)) (metaValidate meta)
+  let includeUndo = maybe (isJust (contentsUndoData contents)) undoIncluded (requestedUndoInclusion meta)
+      includeValidation = maybe (isJust (contentsValidation contents)) validationIncluded (requestedValidationInclusion meta)
       spec = formatSpecification target includeUndo includeValidation
   case canConvert contents spec of
     Left (RequirementsMissing missing) ->
@@ -474,7 +530,7 @@ encodingLimits _           = Nothing
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
-encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> CreateMeta
+encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> RequestedPatchMetadata
              -> Maybe EncodingLimits -> Either SlapError CreateResult
 encodeDirect contents source target meta limits = case target of
   CreateIPS -> do
@@ -573,9 +629,9 @@ encodeDirect contents source target meta limits = case target of
                   (ActualSize (FileSize (ByteString.length sourceBytes)))
                   (ExpectedSize truncatedTargetSize))
         Nothing -> Right ()
-    cliDescription   = metaDescription meta
-    cliTitle  = metaTitle meta
-    cliAuthor = metaAuthor meta
+    cliDescription   = requestedDescription meta
+    cliTitle  = requestedTitle meta
+    cliAuthor = requestedAuthor meta
     description   = resolveDescription DescriptionSources
       { descriptionSourceCLI      = cliDescription
       , descriptionSourceEBPMeta  = contentsEBPMeta contents
@@ -593,8 +649,8 @@ encodeDirect contents source target meta limits = case target of
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
     -- CLI flag > PatchContents > format default
-    (ninja1Type, platformWarnings) = maybe (NINJA1.RomRAW, []) platformToNinja1 (metaRomType meta <|> contentsRomType contents)
-    imageType   = fromMaybe BIN (metaImageType meta <|> contentsImageType contents)
+    (ninja1Type, platformWarnings) = maybe (NINJA1.RomRAW, []) platformToNinja1 (requestedRomType meta <|> contentsRomType contents)
+    imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
 
 ----------------------------------------------------------------------------
 -- Create
@@ -605,20 +661,20 @@ encodeDirect contents source target meta limits = case target of
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
 createFromMemory :: CreateFormat -> SourceFileContents -> TargetFileContents
-                 -> CreateMeta -> Maybe PatchContents -> Either SlapError CreateResult
+                 -> RequestedPatchMetadata -> Maybe PatchContents -> Either SlapError CreateResult
 createFromMemory (CreateDirect format) source target meta sourceContents =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format)
 createFromMemory (CreateDiff format) source target meta sourceContents = case format of
-  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (metaBPSMetadata meta))
+  CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
                     (DPS.DPSMetadata
-                      { DPS.dpsMetadataName    = fromMaybe "" (metaTitle meta <|> metaDescription meta)
-                      , DPS.dpsMetadataAuthor  = fromMaybe "" (metaAuthor meta)
-                      , DPS.dpsMetadataVersion = fromMaybe "" (metaVersion meta)
+                      { DPS.dpsMetadataName    = fromMaybe "" (requestedTitle meta <|> requestedDescription meta)
+                      , DPS.dpsMetadataAuthor  = fromMaybe "" (requestedAuthor meta)
+                      , DPS.dpsMetadataVersion = fromMaybe "" (requestedVersion meta)
                       })
-                    (if fromMaybe False (metaUnstable meta) then DPS.DPSUnstable else DPS.DPSStable)
+                    (if maybe False patchIsUnstable (requestedStability meta) then DPS.DPSUnstable else DPS.DPSStable)
   CreateNINJA2 -> do
     -- When source patch has opaque description bytes, detect encoding
     -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
@@ -627,18 +683,18 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
           Just patchEncoding -> patchEncoding
           Nothing  -> case sourceContents >>= contentsDescription of
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
-            _ -> metaPatchEncoding meta
+            _ -> requestedPatchEncoding meta
         ninja2Meta = NINJA2.NINJA2Metadata
-          { NINJA2.ninja2MetadataAuthor      = metaAuthor meta
-          , NINJA2.ninja2MetadataVersion     = metaVersion meta
-          , NINJA2.ninja2MetadataTitle       = metaTitle meta
-          , NINJA2.ninja2MetadataGenre       = metaGenre meta
-          , NINJA2.ninja2MetadataLanguage    = metaLanguage meta
-          , NINJA2.ninja2MetadataDate        = metaDate meta
-          , NINJA2.ninja2MetadataWebsite     = metaWebsite meta
-          , NINJA2.ninja2MetadataDescription = metaDescription meta
+          { NINJA2.ninja2MetadataAuthor      = requestedAuthor meta
+          , NINJA2.ninja2MetadataVersion     = requestedVersion meta
+          , NINJA2.ninja2MetadataTitle       = requestedTitle meta
+          , NINJA2.ninja2MetadataGenre       = requestedGenre meta
+          , NINJA2.ninja2MetadataLanguage    = requestedLanguage meta
+          , NINJA2.ninja2MetadataDate        = requestedDate meta
+          , NINJA2.ninja2MetadataWebsite     = requestedWebsite meta
+          , NINJA2.ninja2MetadataDescription = requestedDescription meta
           , NINJA2.ninja2MetadataEncoding    = detectedEncoding
-          , NINJA2.ninja2MetadataPlatform    = metaRomType meta
+          , NINJA2.ninja2MetadataPlatform    = requestedRomType meta
           }
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA -> APSGBA.createAPSGBA source target
@@ -649,7 +705,7 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) from the original
 -- patch for inheritance during @--with@ conversion.
 buildContents :: DirectCreate -> SourceFileContents -> TargetFileContents
-              -> CreateMeta -> Maybe PatchContents -> PatchContents
+              -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
 buildContents format (SourceFileContents source) (TargetFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
@@ -699,11 +755,11 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
     hashSource   = case format of
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       _          -> source
-    validationOffset = case metaImageType meta of
+    validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
-    includeUndo = fromMaybe False (metaUndo meta)
-    includeValidation = fromMaybe False (metaValidate meta)
+    includeUndo = maybe False undoIncluded (requestedUndoInclusion meta)
+    includeValidation = maybe False validationIncluded (requestedValidationInclusion meta)
     spec      = formatSpecification format includeUndo includeValidation
     allFields = specificationRequired spec `Set.union` specificationAccepted spec
     needs field = field `Set.member` allFields

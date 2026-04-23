@@ -8,7 +8,8 @@ import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
-import Slap.Convert (CreateFormat(..), CreateMeta(..), DirectCreate(..), defaultMeta)
+import Slap.Convert (CreateFormat(..), RequestedPatchMetadata(..), UndoInclusion(..),
+                     ValidationInclusion(..), DirectCreate(..), noMetadataRequested)
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString
@@ -55,12 +56,12 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
       let flags = words flagsString
           useWith = "--with" `elem` flags
           includeUndo
-            | "--undo" `elem` flags    = Just True
-            | "--no-undo" `elem` flags = Just False
+            | "--undo" `elem` flags    = Just IncludeUndoData
+            | "--no-undo" `elem` flags = Just OmitUndoData
             | otherwise                = Nothing
           includeValidate
-            | "--validate" `elem` flags    = Just True
-            | "--no-validate" `elem` flags = Just False
+            | "--validate" `elem` flags    = Just IncludeValidationBlock
+            | "--no-validate" `elem` flags = Just OmitValidationBlock
             | otherwise                    = Nothing
 
       maybeBase <- if useWith && not (null baseRel)
@@ -72,7 +73,10 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
                    else pure Nothing
                else pure Nothing
 
-      let meta = defaultMeta { metaUndo = includeUndo, metaValidate = includeValidate }
+      let meta = noMetadataRequested
+            { requestedUndoInclusion       = includeUndo
+            , requestedValidationInclusion = includeValidate
+            }
       convResult <- attemptConvert parsed targetCreateFormat maybeBase meta
 
       if "reject:" `isPrefixOf` result
@@ -148,7 +152,7 @@ makeTruncatingIPSPatch =
       targetBytes = ByteString.replicate 512 0xFF
   in case createFromMemory (CreateDirect CreateIPS)
          (SourceFileContents sourceBytes) (TargetFileContents targetBytes)
-         defaultMeta Nothing of
+         noMetadataRequested Nothing of
        Left slapError ->
          error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)
        Right createResult -> case parseSome (resultBytes createResult) of
@@ -165,7 +169,7 @@ makeTruncatingIPSPatch =
 assertRefusesTruncation :: DirectCreate -> String -> Assertion
 assertRefusesTruncation target targetName = do
   parsed <- makeTruncatingIPSPatch
-  result <- attemptConvert parsed (CreateDirect target) Nothing defaultMeta
+  result <- attemptConvert parsed (CreateDirect target) Nothing noMetadataRequested
   case result of
     Right _ -> assertFailure
       ("expected refusal converting truncating IPS to " ++ targetName

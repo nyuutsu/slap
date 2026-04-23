@@ -30,7 +30,7 @@
 -- 'encodeDirect' pipeline that builds a universal 'PatchContents'
 -- from source and target bytes and then encodes it into the target
 -- format. The per-format direct wrappers therefore assemble a
--- 'CreateMeta' (and, for 'createNINJA1', a seed 'PatchContents' to
+-- 'RequestedPatchMetadata' (and, for 'createNINJA1', a seed 'PatchContents' to
 -- carry the compression flag through the @--with@ inheritance slot)
 -- and call 'createFromMemory'. This asymmetry isn't an apology —
 -- it's a statement of what the types express: the direct family
@@ -92,11 +92,13 @@ import Slap.PlatformType (PlatformType)
 
 import Slap.Convert
   ( CreateFormat(..)
-  , CreateMeta(..)
+  , RequestedPatchMetadata(..)
+  , UndoInclusion(..)
+  , ValidationInclusion(..)
   , DirectCreate(..)
   , PatchContents(..)
   , createFromMemory
-  , defaultMeta
+  , noMetadataRequested
   , emptyContents
   )
 import Slap.Error (SlapError, CreateResult)
@@ -170,7 +172,7 @@ createNINJA2 = NINJA2.createNINJA2
 -- Direct-format porcelain
 --
 -- Every function in this section is a thin wrapper over
--- 'createFromMemory': 'CreateDirect' tag, a 'CreateMeta' carrying
+-- 'createFromMemory': 'CreateDirect' tag, a 'RequestedPatchMetadata' carrying
 -- the format's extras (if any), and an optional seed 'PatchContents'
 -- used only by 'createNINJA1' to thread the compression flag through
 -- 'buildContents''s inheritance slot. The uniformity is deliberate
@@ -185,7 +187,7 @@ createIPS
   -> TargetFileContents
   -> Either SlapError CreateResult
 createIPS source target =
-  createFromMemory (CreateDirect CreateIPS) source target defaultMeta Nothing
+  createFromMemory (CreateDirect CreateIPS) source target noMetadataRequested Nothing
 
 -- | Create an IPS32 patch (@"IPS32"@ magic, 32-bit offsets).
 createIPS32
@@ -193,14 +195,14 @@ createIPS32
   -> TargetFileContents
   -> Either SlapError CreateResult
 createIPS32 source target =
-  createFromMemory (CreateDirect CreateIPS32) source target defaultMeta Nothing
+  createFromMemory (CreateDirect CreateIPS32) source target noMetadataRequested Nothing
 
 -- | Create an EBP patch. 'EBPMetadataFields' carries the title,
 -- author, and description that 'buildEBPMetadataJSON' will emit as
 -- the trailing JSON blob; the porcelain threads the three fields
--- through the corresponding 'CreateMeta' slots so the shared
--- description-resolution logic in 'Slap.Convert.encodeDirect' picks
--- them up alongside the standard-IPS body.
+-- through the corresponding 'RequestedPatchMetadata' slots so the
+-- shared description-resolution logic in 'Slap.Convert.encodeDirect'
+-- picks them up alongside the standard-IPS body.
 createEBP
   :: SourceFileContents
   -> TargetFileContents
@@ -211,10 +213,10 @@ createEBP source target fields =
     (CreateDirect CreateEBP)
     source
     target
-    defaultMeta
-      { metaTitle       = Just (ebpMetadataTitle       fields)
-      , metaAuthor      = Just (ebpMetadataAuthor      fields)
-      , metaDescription = Just (ebpMetadataDescription fields)
+    noMetadataRequested
+      { requestedTitle       = Just (ebpMetadataTitle       fields)
+      , requestedAuthor      = Just (ebpMetadataAuthor      fields)
+      , requestedDescription = Just (ebpMetadataDescription fields)
       }
     Nothing
 
@@ -234,18 +236,18 @@ createPPF3 source target (PPFDescription descriptionString) options imageType =
     (CreateDirect CreatePPF3)
     source
     target
-    defaultMeta
-      { metaDescription = Just descriptionString
-      , metaUndo        = Just (includeUndoFlag (ppfOptionsUndo options))
-      , metaValidate    = Just (includeValidationFlag (ppfOptionsValidation options))
-      , metaImageType   = Just imageType
+    noMetadataRequested
+      { requestedDescription         = Just descriptionString
+      , requestedUndoInclusion       = Just (ppfToUndoInclusion       (ppfOptionsUndo options))
+      , requestedValidationInclusion = Just (ppfToValidationInclusion (ppfOptionsValidation options))
+      , requestedImageType           = Just imageType
       }
     Nothing
   where
-    includeUndoFlag PPFIncludeUndo = True
-    includeUndoFlag PPFOmitUndo    = False
-    includeValidationFlag PPFIncludeValidation = True
-    includeValidationFlag PPFOmitValidation    = False
+    ppfToUndoInclusion PPFIncludeUndo = IncludeUndoData
+    ppfToUndoInclusion PPFOmitUndo    = OmitUndoData
+    ppfToValidationInclusion PPFIncludeValidation = IncludeValidationBlock
+    ppfToValidationInclusion PPFOmitValidation    = OmitValidationBlock
 
 -- | Create a NINJA1 (@.rup@ binary) patch. 'NINJA1Options' names the
 -- platform (routed through 'PlatformType' so the lossy shared-to-NINJA1
@@ -264,7 +266,7 @@ createNINJA1 source target options =
     (CreateDirect CreateNINJA1)
     source
     target
-    defaultMeta { metaRomType = Just (ninja1OptionsPlatform options) }
+    noMetadataRequested { requestedRomType = Just (ninja1OptionsPlatform options) }
     (Just (emptyContents [])
       { contentsNINJA1Compressed = Just (compressionFlag (ninja1OptionsCompression options)) })
   where
@@ -278,7 +280,7 @@ createPMSR
   -> TargetFileContents
   -> Either SlapError CreateResult
 createPMSR source target =
-  createFromMemory (CreateDirect CreatePMSR) source target defaultMeta Nothing
+  createFromMemory (CreateDirect CreatePMSR) source target noMetadataRequested Nothing
 
 -- | Create a PCHTXT patch. The optional 'PCHTXTDescription' becomes
 -- either an @\@nsobid-...@ build-ID header (when it's a 32+-character
@@ -293,7 +295,7 @@ createPCHTXT source target maybeDescription =
     (CreateDirect CreatePCHTXT)
     source
     target
-    defaultMeta { metaDescription = fmap unPCHTXTDescription maybeDescription }
+    noMetadataRequested { requestedDescription = fmap unPCHTXTDescription maybeDescription }
     Nothing
 
 -- | Create an APS-N64 patch. 'APSN64Description' is the 50-byte
@@ -308,5 +310,5 @@ createAPSN64 source target (APSN64Description descriptionString) =
     (CreateDirect CreateAPSN64)
     source
     target
-    defaultMeta { metaDescription = Just descriptionString }
+    noMetadataRequested { requestedDescription = Just descriptionString }
     Nothing

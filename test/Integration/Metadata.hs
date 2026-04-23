@@ -7,7 +7,8 @@ import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
-import Slap.Convert (DirectCreate(..), CreateFormat(..), CreateMeta(..), defaultMeta)
+import Slap.Convert (DirectCreate(..), CreateFormat(..), RequestedPatchMetadata(..),
+                     UndoInclusion(..), ValidationInclusion(..), noMetadataRequested)
 import Slap.Create (createBPS)
 import Slap.BPS.Types (BPSMetadata(..))
 
@@ -55,8 +56,11 @@ makeFieldTest patchPath format fieldName = testCase fieldName $ do
     Right original -> do
       -- Self-convert: convert to same format
       let meta = case format of
-            CreateDirect CreatePPF3 -> defaultMeta { metaUndo = Just True, metaValidate = Just True }
-            _                       -> defaultMeta
+            CreateDirect CreatePPF3 -> noMetadataRequested
+              { requestedUndoInclusion       = Just IncludeUndoData
+              , requestedValidationInclusion = Just IncludeValidationBlock
+              }
+            _                       -> noMetadataRequested
       convResult <- attemptConvert original format Nothing meta
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)

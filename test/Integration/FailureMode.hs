@@ -9,7 +9,7 @@ import Integration.Helpers
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
-import Slap.Convert (CreateFormat, defaultMeta)
+import Slap.Convert (CreateFormat, noMetadataRequested)
 import Slap.Create (createFromMemory)
 
 import Data.Bits (xor)
@@ -336,7 +336,7 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
+      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
@@ -349,7 +349,7 @@ crossFormatRoundTripTests base bps =
                 Right (TargetFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) defaultMeta Nothing of
+                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
@@ -362,7 +362,7 @@ crossFormatRoundTripTests base bps =
                             Right (TargetFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) defaultMeta Nothing of
+                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome patchC of
@@ -423,7 +423,7 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) defaultMeta Nothing of
+      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome patchBytes of

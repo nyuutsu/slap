@@ -55,7 +55,7 @@ import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), CreateMeta(..), convertDirect)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect)
 import Slap.Create (createFromMemory)
 
 import Control.Exception (catch, IOException)
@@ -351,7 +351,7 @@ attemptConvert
   :: SomePatch
   -> CreateFormat
   -> Maybe ByteString    -- ^ base ROM (--with)
-  -> CreateMeta          -- ^ metadata
+  -> RequestedPatchMetadata          -- ^ metadata
   -> IO (Either String CreateResult)
 attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
