@@ -1,6 +1,7 @@
 module Slap.PatchField
   ( PatchField(..)
   , fieldName
+  , affectsApplyOutput
   ) where
 
 -- | Fields a patch format can provide or require.
@@ -38,3 +39,24 @@ fieldName FImageType      = "image type"
 fieldName FFileIdDiz      = "File_ID.diz"
 fieldName FPCHTXTBlocks   = "PCHTXT blocks"
 fieldName FMetadata       = "metadata"
+
+-- | Whether dropping a field changes the output bytes that the
+-- resulting patch produces on apply. Fields that affect apply
+-- output cannot be silently dropped on conversion; 'canConvert'
+-- refuses any conversion that would lose one present in the source.
+-- Other fields (metadata, capability carriers like undo data, etc.)
+-- are dropped with a warning via the usual 'conversionNotes'
+-- mechanism.
+--
+-- 'FTruncation' is the only field of this kind today: an IPS patch
+-- with a truncation marker produces a target file of the declared
+-- size on apply, while the same records without truncation produce
+-- @max(sourceSize, maxRecordEnd)@. The two apply operations yield
+-- different bytes, so the conversion machinery refuses the drop
+-- rather than papering over it with a warning. 'FUndoData' is
+-- deliberately not in this class: undo is a separate operation from
+-- apply, and dropping undo data only affects whether a later undo
+-- is possible.
+affectsApplyOutput :: PatchField -> Bool
+affectsApplyOutput FTruncation = True
+affectsApplyOutput _           = False

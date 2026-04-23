@@ -79,13 +79,27 @@ fullContents = PatchContents
   , contentsPatchEncoding = Nothing
   }
 
--- | canConvert succeeds for every direct format when all fields are present.
+-- | canConvert succeeds for every direct format when all fields it
+-- accepts are present.  Apply-output-affecting fields that the target
+-- doesn't accept (today only 'FTruncation' for targets other than IPS)
+-- are stripped before the check: their presence would correctly make
+-- 'canConvert' refuse with 'ApplyOutputFieldsDropped', so this test
+-- only covers formats' accepted-field surface.
 prop_canConvertFull :: Property
 prop_canConvertFull = conjoin
   [ counterexample (show format) $
-      canConvert fullContents (formatSpecification format True True) === Right ()
+      canConvert (limitToAccepted format) (formatSpecification format True True) === Right ()
   | format <- directFormats
   ]
+  where
+    limitToAccepted format =
+      let spec = formatSpecification format True True
+          kept = specificationRequired spec `Set.union` specificationAccepted spec
+      in fullContents
+        { contentsTruncation = if FTruncation `Set.member` kept
+                                then contentsTruncation fullContents
+                                else Nothing
+        }
 
 -- | No dropped-field notes when provides exactly matches required + accepted.
 prop_noSurplusNoNotes :: Property

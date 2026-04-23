@@ -93,12 +93,15 @@ import qualified Data.Text.Encoding as TextEncoding
 -- The @optionalTruncation@ argument is honoured only for the
 -- 'StandardIPS' variant. For 'IPS32', the truncation marker has
 -- no defined wire shape (no community implementation supports
--- it), so the encoder silently drops any truncation passed for
--- IPS32 — emitting one would produce bytes that 'Slap.IPS.Parse'
--- would then reject under the symmetric strictness pact. The
--- silent drop exists for the 'Slap.Convert' direct path, which
--- threads a 'PatchContents' truncation field without knowing the
--- wire format's appetite for it.
+-- it), so this encoder drops any truncation passed for IPS32.
+-- The contract layer in 'Slap.Convert.canConvert' refuses any
+-- conversion whose source patch carries a truncation marker and
+-- whose target is 'IPS32' or 'EBP' — so the drop branch is
+-- defensive, not operational: it will not fire under well-formed
+-- callers. 'Slap.Convert.buildContents' on the create path
+-- populates 'contentsTruncation' for IPS32/EBP only so
+-- 'rejectTruncation' can surface the shrinkage refusal to the
+-- user rather than silently produce a non-truncating patch.
 --
 -- This function does not validate the records and does not resolve
 -- sentinel collisions: it assumes each record's offset and length
@@ -141,7 +144,11 @@ encodeIPSPatch variant records optionalTruncation =
 -- only accepts EBP trailers that begin with the JSON opening byte
 -- @{@. Emitting a truncation marker before the JSON would produce
 -- bytes neither this parser nor any third-party EBP parser would
--- round-trip cleanly.
+-- round-trip cleanly. The contract layer in
+-- 'Slap.Convert.canConvert' refuses conversions that would land
+-- truncation here, so the absence of a truncation parameter is
+-- enforced upstream rather than silently dropped at this call
+-- site.
 encodeEBPPatch
   :: [EncodedHunk]
   -> EBPMetadata

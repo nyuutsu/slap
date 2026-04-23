@@ -320,6 +320,22 @@ data SlapError
 
   -- Convert
   | MissingRequiredField FormatLabel PatchField
+
+  -- | A refusal by the contract layer when the source patch carries
+  -- one or more 'PatchField' values that affect the output bytes of
+  -- the apply operation (see 'Slap.PatchField.affectsApplyOutput')
+  -- and that the target format has no wire representation for.
+  -- Silently dropping the fields would change what the resulting
+  -- patch produces on apply, so the conversion is refused outright
+  -- rather than papered over with a warning. The 'FormatLabel' names
+  -- the target format being refused; the inner list pairs each
+  -- offending field with the target formats that do preserve it
+  -- (possibly empty), so the renderer can point the user at a
+  -- target that would work. Only 'FTruncation' reaches this error
+  -- today; the list shape exists so future apply-output-affecting
+  -- fields drop into the same refusal path without new plumbing.
+  | ApplyOutputFieldsWouldBeDropped FormatLabel [(PatchField, [FormatLabel])]
+
   | DiffRequiresSource FormatLabel
 
   -- Container
@@ -355,9 +371,6 @@ data SlapWarning
   -- Encoding
   | FieldTruncated FormatLabel FieldName OriginalLength TruncatedLength
   | EncodingGap FormatLabel FormatLabel
-
-  -- Interop
-  | EBPTruncationMetaConflict
 
   -- Platform conversion
   | PlatformNotAvailable FormatLabel String  -- target format, platform name
@@ -571,6 +584,10 @@ renderSlapError (MissingRequiredField label field) =
   formatLabelName label ++ " requires " ++ fieldName field
   ++ " but source patch doesn't provide it"
 
+renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
+  "cannot convert to " ++ formatLabelName label ++ ": "
+  ++ renderApplyOutputDrops label drops
+
 renderSlapError (DiffRequiresSource label) =
   formatLabelName label
   ++ " requires source+target diff data\nuse --with SOURCE"
@@ -638,9 +655,6 @@ renderSlapWarning (EncodingGap fromLabel toLabel) =
   ++ formatLabelName toLabel
   ++ " has no encoding flag; writing bytes as-is"
 
-renderSlapWarning EBPTruncationMetaConflict =
-  "note: EBP output has both truncation and metadata; RomPatcher.js treats these as mutually exclusive and may misread this patch"
-
 renderSlapWarning (PlatformNotAvailable label name) =
   "note: platform " ++ name ++ " not available in " ++ formatLabelName label ++ "; using Raw"
 
@@ -686,6 +700,33 @@ renderUnencodeabilityReason UPSSourceTailNonZero =
 -- emitting raw control characters into the error stream.
 renderTrailerMarkerName :: ByteString -> String
 renderTrailerMarkerName = renderPrintableASCIIOrHex
+
+-- | Render the apply-output-field-drop refusal body. The single-drop
+-- case (today's only case, 'FTruncation') produces one clean sentence;
+-- the multi-drop case (trivially available if 'affectsApplyOutput'
+-- grows) bullets each field on its own line so nothing gets lost.
+renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> String
+renderApplyOutputDrops target [singleDrop] = renderOneDrop target singleDrop
+renderApplyOutputDrops target manyDrops =
+  concatMap (\drop_ -> "\n  - " ++ renderOneDrop target drop_) manyDrops
+
+renderOneDrop :: FormatLabel -> (PatchField, [FormatLabel]) -> String
+renderOneDrop target (field, preservers) =
+  "the source patch declares a " ++ fieldName field
+  ++ ", and " ++ formatLabelName target
+  ++ " has no representation for it. " ++ renderPreservers field preservers
+
+renderPreservers :: PatchField -> [FormatLabel] -> String
+renderPreservers field [] =
+  "No target format preserves " ++ fieldName field ++ "."
+renderPreservers field preservers =
+  "Targets that preserve " ++ fieldName field ++ ": "
+  ++ commaSeparated (map formatLabelName preservers) ++ "."
+
+commaSeparated :: [String] -> String
+commaSeparated []      = ""
+commaSeparated [x]     = x
+commaSeparated (x:xs)  = x ++ ", " ++ commaSeparated xs
 
 commaList :: [String] -> String
 commaList []     = ""

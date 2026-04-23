@@ -6,6 +6,7 @@ module Slap.Convert
   , CreateMeta(..)
   , defaultMeta
   , FormatSpecification(..)
+  , ConversionFailure(..)
   , emptyContents
   , provides
   , formatSpecification
@@ -57,7 +58,7 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.PatchField (PatchField(..))
+import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
@@ -236,8 +237,8 @@ provides contents = Set.fromList $ [FRecords]
 formatSpecification :: DirectCreate -> Bool -> Bool -> FormatSpecification
 formatSpecification target includeUndo includeValidation = case target of
   CreateIPS     -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
-  CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
-  CreateEBP     -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FTruncation, FEBPMeta])
+  CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [])
+  CreateEBP     -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FEBPMeta])
   CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData  | includeUndo]
                                  ++ [FValidation | includeValidation])
                              (acceptedFields [FDescription, FImageType, FFileIdDiz])
@@ -253,12 +254,70 @@ formatSpecification target includeUndo includeValidation = case target of
 -- Contract checking
 ----------------------------------------------------------------------------
 
-canConvert :: PatchContents -> FormatSpecification -> Either (Set.Set PatchField) ()
+-- | Why 'canConvert' refused to sign off on a conversion. Two
+-- mutually exclusive failure modes, distinguished because they
+-- point the caller at different corrective actions.
+data ConversionFailure
+  = -- | The target format lists fields as required that the source
+    -- patch doesn't provide. Corrective action: populate the
+    -- missing fields (e.g. hash a source ROM via @--with SOURCE@
+    -- for NINJA1) or choose a target that doesn't require them.
+    RequirementsMissing (Set.Set PatchField)
+
+    -- | The source patch carries one or more fields that affect the
+    -- output bytes of the apply operation (see
+    -- 'Slap.PatchField.affectsApplyOutput') and that the target
+    -- format has no wire representation for. Silently dropping
+    -- them would change what the resulting patch produces on
+    -- apply, so the conversion is refused at the contract layer
+    -- rather than papered over with a warning. Corrective action:
+    -- choose a target that preserves the field.
+  | ApplyOutputFieldsDropped (Set.Set PatchField)
+  deriving (Eq, Show)
+
+canConvert :: PatchContents -> FormatSpecification -> Either ConversionFailure ()
 canConvert contents spec =
   let have = provides contents
       need = specificationRequired spec
+      kept = need `Set.union` specificationAccepted spec
+      droppedApplyOutput = Set.filter affectsApplyOutput
+                             (have `Set.difference` kept)
       missing = need `Set.difference` have
-  in if Set.null missing then Right () else Left missing
+  in if not (Set.null droppedApplyOutput)
+       -- Apply-output violations are the sharper signal: the resulting
+       -- patch would apply to produce different bytes. Surface this
+       -- first even when requirements are also unmet.
+       then Left (ApplyOutputFieldsDropped droppedApplyOutput)
+     else if not (Set.null missing)
+       then Left (RequirementsMissing missing)
+     else Right ()
+
+-- | Every direct creation target, used to scan 'formatSpecification'
+-- for formats that preserve a given 'PatchField'. Written out rather
+-- than derived via @Enum@/@Bounded@ because 'DirectCreate' is small,
+-- stable, and adding a constructor already touches several files.
+allDirectTargets :: [DirectCreate]
+allDirectTargets =
+  [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3,
+   CreateNINJA1, CreatePMSR, CreatePCHTXT, CreateAPSN64]
+
+-- | Direct creation targets whose 'formatSpecification' accepts the
+-- given 'PatchField'. Used by 'convertDirect' to populate the
+-- @Targets that preserve ...@ clause of the
+-- 'ApplyOutputFieldsWouldBeDropped' refusal message; dynamic so
+-- future additions to the format table get picked up automatically.
+--
+-- 'includeUndo' and 'includeValidation' only influence PPF3's
+-- /required/ set, not its /accepted/ set, so we pass @True@ for both
+-- without affecting the answer.
+preservingDirectTargets :: PatchField -> [FormatLabel]
+preservingDirectTargets field =
+  [ directLabel target
+  | target <- allDirectTargets
+  , let spec = formatSpecification target True True
+        accepted = specificationRequired spec `Set.union` specificationAccepted spec
+  , field `Set.member` accepted
+  ]
 
 ----------------------------------------------------------------------------
 -- Conversion notes (dropped-field warnings)
@@ -270,11 +329,10 @@ conversionNotes contents target spec meta =
       kept = specificationRequired spec `Set.union` specificationAccepted spec
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
-      interopNotes = ebpTruncMetaNote contents target meta
       defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
       hashNotes = ninja1HashNotes contents target
       encodingNotes = encodingGapNotes contents target
-  in droppedNotes ++ interopNotes ++ defaultNotes ++ hashNotes ++ encodingNotes
+  in droppedNotes ++ defaultNotes ++ hashNotes ++ encodingNotes
 
 -- | Warn when converting from a format with known text encoding to one
 -- without an encoding flag.  The bytes are copied unchanged — but the
@@ -285,17 +343,6 @@ encodingGapNotes contents target = case contentsPatchEncoding contents of
          , target `elem` [CreatePPF3, CreateAPSN64]
          -> [EncodingGap LabelNINJA2 (directLabel target)]
   _ -> []
-
--- | Warn when EBP output has both truncation and metadata — RomPatcher.js
--- treats them as mutually exclusive.
-ebpTruncMetaNote :: PatchContents -> DirectCreate -> CreateMeta -> [SlapWarning]
-ebpTruncMetaNote contents CreateEBP meta
-  | isJust (contentsTruncation contents), hasMeta
-  = [EBPTruncationMetaConflict]
-  where
-    hasMeta = isJust (contentsEBPMeta contents) || isJust (contentsDescription contents)
-           || isJust (metaDescription meta) || isJust (metaTitle meta) || isJust (metaAuthor meta)
-ebpTruncMetaNote _ _ _ = []
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
@@ -400,7 +447,11 @@ convertDirect contents (CreateDirect target) meta = do
       includeValidation = fromMaybe (isJust (contentsValidation contents)) (metaValidate meta)
       spec = formatSpecification target includeUndo includeValidation
   case canConvert contents spec of
-    Left missing -> Left (MissingRequiredField (directLabel target) (Set.findMin missing))
+    Left (RequirementsMissing missing) ->
+      Left (MissingRequiredField (directLabel target) (Set.findMin missing))
+    Left (ApplyOutputFieldsDropped fields) ->
+      Left (ApplyOutputFieldsWouldBeDropped (directLabel target)
+              [(field, preservingDirectTargets field) | field <- Set.toList fields])
     Right () -> do
       -- Source-less path: 'encodeDirect' still runs 'resolveSentinelCollisions'
       -- but with an empty 'SourceFileContents', so any record sitting on the
@@ -614,7 +665,12 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   , contentsUndoData    = if needs FUndoData
                     then Just (computeUndo source patchHunks)
                     else Nothing
-  , contentsTruncation  = if needs FTruncation && ByteString.length target < ByteString.length source
+  -- Populated whenever the target is smaller than the source regardless
+  -- of whether the target format carries a truncation marker: formats
+  -- that can't express truncation (IPS32, EBP) rely on this field being
+  -- set so 'rejectTruncation' in 'encodeDirect' can refuse the encoding
+  -- rather than silently produce a non-truncating patch.
+  , contentsTruncation  = if ByteString.length target < ByteString.length source
                     then Just (FileSize (ByteString.length target))
                     else Nothing
   -- Structural inheritance: preserve format-specific data from the source patch

@@ -4,10 +4,11 @@ import Integration.Helpers
   (Tier, isHeavyPath, restrictToTier,
    repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    applyPatch, attemptConvert, matchPattern, trim, mmapRomFile)
+import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
-import Slap.SomePatch (parseSome)
-import Slap.Convert (CreateFormat, CreateMeta(..), defaultMeta)
+import Slap.SomePatch (SomePatch, parseSome)
+import Slap.Convert (CreateFormat(..), CreateMeta(..), DirectCreate(..), defaultMeta)
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString
@@ -15,7 +16,7 @@ import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
+import Test.Tasty.HUnit (Assertion, testCase, assertFailure, assertBool, assertEqual)
 
 convertTests :: Tier -> IO TestTree
 convertTests tier = do
@@ -23,7 +24,7 @@ convertTests tier = do
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
   tests <- mapM (makeConvertTest repo)
                 (restrictToTier tier (any isHeavyPath) allRows)
-  pure (testGroup "convert" (concat tests))
+  pure (testGroup "convert" (concat tests ++ applyOutputRefusalTests))
 
 makeConvertTest :: FilePath -> [String] -> IO [TestTree]
 makeConvertTest repo fields = case fields of
@@ -119,4 +120,62 @@ splitComma (',':rest) = "" : splitComma rest
 splitComma (char:rest) = case splitComma rest of
   (segment:segments) -> (char:segment) : segments
   []                 -> [[char]]
+
+----------------------------------------------------------------------------
+-- Apply-output field refusal tests
+----------------------------------------------------------------------------
+
+-- | The conversion contract layer refuses to drop fields that affect
+-- the output bytes of the apply operation (see
+-- 'Slap.PatchField.affectsApplyOutput'). Today 'FTruncation' is the
+-- only such field; these tests exercise the two targets that would
+-- silently lose it — IPS32 and EBP — and confirm the refusal fires
+-- with a message naming the field and the target format.
+applyOutputRefusalTests :: [TestTree]
+applyOutputRefusalTests =
+  [ testCase "truncation: IPS with marker refuses conversion to EBP" $
+      assertRefusesTruncation CreateEBP "EBP"
+  , testCase "truncation: IPS with marker refuses conversion to IPS32" $
+      assertRefusesTruncation CreateIPS32 "IPS32"
+  ]
+
+-- | Build a 'StandardIPS' patch whose Flips-style truncation marker
+-- declares a target smaller than the source. Shared by both refusal
+-- tests so the truncating-IPS construction lives in one place.
+makeTruncatingIPSPatch :: IO SomePatch
+makeTruncatingIPSPatch =
+  let sourceBytes = ByteString.replicate 1024 0x00
+      targetBytes = ByteString.replicate 512 0xFF
+  in case createFromMemory (CreateDirect CreateIPS)
+         (SourceFileContents sourceBytes) (TargetFileContents targetBytes)
+         defaultMeta Nothing of
+       Left slapError ->
+         error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)
+       Right createResult -> case parseSome (resultBytes createResult) of
+         Left slapError ->
+           error ("setup: parse truncating IPS failed: " ++ renderSlapError slapError)
+         Right parsed -> pure parsed
+
+-- | Assert that converting a truncating IPS patch to @target@ is
+-- refused, and that the rendered error names both the truncation
+-- field and the target format. The @cannot convert to@ phrase is
+-- unique to 'ApplyOutputFieldsWouldBeDropped' — it pins the refusal
+-- to the contract layer rather than a downstream encoder check that
+-- would emit different wording.
+assertRefusesTruncation :: DirectCreate -> String -> Assertion
+assertRefusesTruncation target targetName = do
+  parsed <- makeTruncatingIPSPatch
+  result <- attemptConvert parsed (CreateDirect target) Nothing defaultMeta
+  case result of
+    Right _ -> assertFailure
+      ("expected refusal converting truncating IPS to " ++ targetName
+       ++ " but conversion succeeded")
+    Left errorMessage -> do
+      assertBool ("expected contract-layer refusal phrase 'cannot convert to' in error: "
+                  ++ errorMessage)
+        (matchPattern "cannot convert to" errorMessage)
+      assertBool ("expected 'truncation' in error: " ++ errorMessage)
+        (matchPattern "truncation" errorMessage)
+      assertBool ("expected '" ++ targetName ++ "' in error: " ++ errorMessage)
+        (matchPattern targetName errorMessage)
 
