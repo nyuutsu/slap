@@ -353,6 +353,44 @@ data SlapWarning
   = EmptyPatch FormatLabel String
   | NoEOFMarker FormatLabel
 
+  -- | An IPS-family RLE record whose run-length field was zero was
+  -- accepted verbatim as a no-op. The spec does not speak to the
+  -- case, and slap's live encoder never emits it; the warning
+  -- signals a parsed oddity so the user can decide whether the
+  -- source patch is trustworthy. The 'ActionIndex' names the
+  -- offending record's position in the wire record stream.
+  | ZeroCountRLERecord FormatLabel ActionIndex
+
+  -- | Two IPS-family records write to overlapping regions of the
+  -- target. Overlap is permitted and well-defined (later writes
+  -- clobber earlier ones), but it's unusual enough that slap flags
+  -- each overlapping pair for the reader. The 'ActionIndex' pair
+  -- is @(earlierRecord, laterRecord)@ in wire order: the record
+  -- written first and then clobbered, followed by the record whose
+  -- writes do the clobbering.
+  | OverlappingRecords FormatLabel ActionIndex ActionIndex
+
+  -- | An IPS-family record carries a smaller offset than the
+  -- record that preceded it in the wire stream. slap applies
+  -- records strictly in wire order, so unsorted records still
+  -- produce correct output, but well-formed patches are sorted by
+  -- offset; an unsorted stream is worth flagging. Only the first
+  -- out-of-order pair is reported per parse — one warning is enough
+  -- to tell the reader the stream is unsorted. The 'ActionIndex'
+  -- names the later-in-wire-order record whose offset is lower than
+  -- the record before it.
+  | UnsortedRecords FormatLabel ActionIndex
+
+  -- | An 'IPS32' patch had trailing bytes past the @"EEOF"@ marker
+  -- that did not match any recognised post-trailer shape. slap drops
+  -- the trailing slice and proceeds. 'StandardIPS' has three
+  -- well-attested post-@"EOF"@ shapes (empty, Flips truncation
+  -- marker, EBP JSON blob) and keeps its strict rejection of
+  -- garbage trailers; 'IPS32' has none, and a lenient drop is the
+  -- useful choice in the absence of a shape to recognise. The
+  -- 'Length' is the byte count dropped.
+  | IPS32TrailingBytes FormatLabel Length
+
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped Int
@@ -606,6 +644,27 @@ renderSlapWarning (EmptyPatch _label unit) =
 
 renderSlapWarning (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
+
+renderSlapWarning (ZeroCountRLERecord label (ActionIndex idx)) =
+  "note: " ++ formatLabelName label
+  ++ ": zero-count RLE record at position " ++ show idx
+  ++ " (accepted as no-op)"
+
+renderSlapWarning (OverlappingRecords label (ActionIndex earlier) (ActionIndex later)) =
+  "note: " ++ formatLabelName label
+  ++ ": record at position " ++ show later
+  ++ " overlaps with record at position " ++ show earlier
+  ++ " (later record's writes clobber earlier; unusual)"
+
+renderSlapWarning (UnsortedRecords label (ActionIndex idx)) =
+  "note: " ++ formatLabelName label
+  ++ ": record at position " ++ show idx
+  ++ " has a lower offset than the record before it"
+  ++ " (unsorted records; applied in wire order)"
+
+renderSlapWarning (IPS32TrailingBytes label (Length n)) =
+  "note: " ++ formatLabelName label
+  ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
 
 renderSlapWarning (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue

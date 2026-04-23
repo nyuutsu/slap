@@ -147,6 +147,7 @@ test-suite props
                   , Props.Detection
                   , Props.Helpers
                   , Props.Identity
+                  , Props.ParseWarnings
                   , Props.RoundTrip
                   , Props.SpecConformance
                   , Props.TextEncoding

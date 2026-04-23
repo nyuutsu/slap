@@ -20,6 +20,9 @@
 --   * 'Props.Detection'          — DPS detection heuristic.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.
+--   * 'Props.ParseWarnings'      — IPS parse-time structural warnings:
+--                                  zero-count RLE, overlap, unsorted,
+--                                  IPS32 trailing bytes.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -28,6 +31,7 @@ import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
 import qualified Props.Identity as Identity
+import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
 import qualified Props.TextEncoding as TextEncoding
@@ -47,4 +51,5 @@ main = defaultMain $ testGroup "Properties"
   , TextEncoding.textEncodingTests
   , Detection.detectionTests
   , ClassifyTargetCopy.classifyTargetCopyTests
+  , ParseWarnings.parseWarningsTests
   ]
