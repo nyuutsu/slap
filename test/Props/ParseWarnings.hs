@@ -33,6 +33,8 @@ parseWarningsTests = testGroup "ParseWarnings"
       unsortedRecordsEmitOneWarning
   , testCase "IPS32 trailing bytes are dropped with warning"
       ips32TrailingBytesEmitWarning
+  , testCase "truncated IPS32 reports NoEOFMarker keyed to LabelIPS32"
+      truncatedIPS32NoEOFMarkerCarriesVariantLabel
   ]
 
 ----------------------------------------------------------------------------
@@ -64,6 +66,16 @@ word24BE value = ByteString.pack
   , fromIntegral (value                 `mod` 0x100)
   ]
 
+-- | Encode an 'Int' as a 32-bit big-endian offset, the 'IPS32'
+-- wire format's record-offset field.
+word32BE :: Int -> ByteString
+word32BE value = ByteString.pack
+  [ fromIntegral ((value `div` 0x1000000) `mod` 0x100)
+  , fromIntegral ((value `div` 0x10000)   `mod` 0x100)
+  , fromIntegral ((value `div` 0x100)     `mod` 0x100)
+  , fromIntegral (value                   `mod` 0x100)
+  ]
+
 -- | Encode an 'Int' as a 16-bit big-endian value, the IPS-family
 -- record-size field.
 word16BE :: Int -> ByteString
@@ -77,6 +89,15 @@ word16BE value = ByteString.pack
 copyRecord :: Int -> ByteString -> ByteString
 copyRecord recordOffset recordPayload =
      word24BE recordOffset
+  <> word16BE (ByteString.length recordPayload)
+  <> recordPayload
+
+-- | Build an 'IPS32' copy record: 32-bit offset, 16-bit size,
+-- payload of exactly that many bytes. Mirrors 'copyRecord', with
+-- the wider offset field the 'IPS32' variant requires.
+ips32CopyRecord :: Int -> ByteString -> ByteString
+ips32CopyRecord recordOffset recordPayload =
+     word32BE recordOffset
   <> word16BE (ByteString.length recordPayload)
   <> recordPayload
 
@@ -151,6 +172,22 @@ ips32TrailingBytesEmitWarning =
                      <> trailingGarbage
   in assertParseWarnings patchBytes
        [IPS32TrailingBytes LabelIPS32 (Length 5)]
+
+-- | A truncated 'IPS32' patch: magic plus one well-formed copy
+-- record and no @"EEOF"@ trailer at all. The parser surfaces the
+-- decoded record as 'IPSParseTruncated' and the warning channel
+-- must carry 'NoEOFMarker' keyed to 'LabelIPS32' — not 'LabelIPS',
+-- which would be a hardcoded-label bug rather than a correct
+-- variant-aware label. A single record triggers neither the overlap
+-- nor the unsorted detection pass, so the expected warning list
+-- has exactly one entry.
+truncatedIPS32NoEOFMarkerCarriesVariantLabel :: Assertion
+truncatedIPS32NoEOFMarkerCarriesVariantLabel =
+  let onlyRecordPayload = ByteString.replicate 4 0x66
+      patchBytes        = ips32Magic
+                       <> ips32CopyRecord 0x00000010 onlyRecordPayload
+  in assertParseWarnings patchBytes
+       [NoEOFMarker LabelIPS32]
 
 ----------------------------------------------------------------------------
 -- Shared assertion
