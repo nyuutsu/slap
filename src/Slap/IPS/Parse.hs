@@ -169,7 +169,7 @@ finaliseBodyShape variant bodyShape = case bodyShape of
         overlapWarnings = detectOverlappingRecords variantLabel recordVector
         unsortedWarnings = detectFirstUnsortedRecord variantLabel recordVector
     pure (Parsed (IPSParseTruncated variant recordVector)
-                 (NoEOFMarker LabelIPS
+                 (NoEOFMarker variantLabel
                   : walkerWarnings
                   ++ overlapWarnings
                   ++ unsortedWarnings))
