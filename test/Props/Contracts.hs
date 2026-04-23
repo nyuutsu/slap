@@ -14,6 +14,7 @@ module Props.Contracts (contractTests) where
 
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
+import Slap.IPS.Types (IPSParseResult(..))
 
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError, renderSlapWarning)
@@ -196,7 +197,9 @@ prop_ipsSentinelWithSource =
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-         Right (Parsed (Left ipsPatch) _parseWarnings) ->
+         Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
            IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-         Right (Parsed (Right _ebpPatch) _parseWarnings) ->
+         Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
            counterexample "test fixture unexpectedly EBP" $ property False
+         Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
+           counterexample "round-tripped IPS unexpectedly truncated" $ property False

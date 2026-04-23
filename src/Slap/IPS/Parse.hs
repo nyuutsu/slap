@@ -3,7 +3,6 @@
 -- decisions on truncation, EBP, and the variant ceiling check.
 module Slap.IPS.Parse
   ( parseIPS
-  , parseRecords
   ) where
 
 import Slap.IPS.Types
@@ -14,15 +13,19 @@ import Slap.IPS.Types
   , IPSPatch(..)
   , EBPMetadata(..)
   , EBPPatch(..)
+  , IPSParseResult(..)
   , ipsRecordOffset
   , recordPayloadLength
   , variantSpec
   , ipsVariantMaxRecordEnd
   , ipsMagicLength
+  , ipsRecordHeaderLength
+  , ipsRleCountFieldLength
+  , ipsRleFillByteLength
   , offsetWidthByteCount
   )
 import Slap.Binary (getWord24BE)
-import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
+import Slap.Error (SlapError(..), SlapWarning(..), FieldName(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get
@@ -65,18 +68,23 @@ import Data.Word (Word8)
 
 -- | Parse a patch from any IPS-family wire format.
 --
--- Outer 'Either' is the error channel; inner 'Either' distinguishes
--- plain IPS from EBP based on what followed the trailer. Both
--- success shapes are equally valid: the parser sees a common record
--- body and only branches on the post-trailer bytes that decide
--- whether the patch was authored as plain IPS or EBP-wrapped.
+-- The success payload is an 'IPSParseResult' — a three-way sum that
+-- names the shapes the parser actually produces. 'IPSParseCleanIPS'
+-- and 'IPSParseCleanEBP' cover the two EOF-terminated dispositions;
+-- 'IPSParseTruncated' covers the case where the input ran out before
+-- a matching EOF marker was found, and is accompanied in the
+-- 'Parsed' warnings channel by a 'NoEOFMarker' warning. The error
+-- channel is reserved for inputs that violate the wire format in
+-- ways no shape covers — bad magic, variant-ceiling overrun,
+-- zero-count RLE, unrecognised trailing bytes after a valid
+-- @"EOF"@\/@"EEOF"@ marker, and so on.
 --
 -- The variant ('StandardIPS' vs 'IPS32') is decided once, by reading
 -- the first 'ipsMagicLength' bytes against each variant's
 -- 'ipsVariantMagic'. Everything downstream — offset width, EOF
 -- marker bytes, ceiling — is a function of that single decision,
 -- looked up via 'variantSpec'.
-parseIPS :: PatchFileContents -> Either SlapError (Parsed (Either IPSPatch EBPPatch))
+parseIPS :: PatchFileContents -> Either SlapError (Parsed IPSParseResult)
 parseIPS (PatchFileContents inputBytes)
   | ByteString.length inputBytes < unLength ipsMagicLength =
       Left (InputTooShort LabelIPS
@@ -95,34 +103,73 @@ parseIPS (PatchFileContents inputBytes)
     runVariantParser variant =
       let bodyAfterMagic =
             ByteString.drop (unLength ipsMagicLength) inputBytes
-      in case runGet (parseRecordsAndCaptureTrailer variant) bodyAfterMagic of
+      in case runGet (parseIPSBody variant) bodyAfterMagic of
            Left getErrorMessage ->
              Left (ParseError LabelIPS getErrorMessage)
-           Right (recordList, trailingBytes) ->
-             case validateRecordList variant recordList of
-               Left validationFailure -> Left validationFailure
-               Right ()               ->
-                 fmap (\resultPayload -> Parsed resultPayload [])
-                      (buildResultPatch variant
-                                        (Vector.fromList recordList)
-                                        trailingBytes)
+           Right bodyShape ->
+             finaliseBodyShape variant bodyShape
 
 ----------------------------------------------------------------------------
--- parseRecords — Get-monad inner record loop
+-- Body-level shape — clean EOF vs truncated
+----------------------------------------------------------------------------
+
+-- | What the record-stream walk produced. 'IPSBodyClean' records
+-- were followed by a matching EOF marker for the active variant;
+-- 'IPSBodyTruncated' records were all the parser could decode
+-- before running out of input. This shape is strictly private:
+-- 'parseIPS' lifts it into the public 'IPSParseResult' after the
+-- shared validation pass.
+data IPSBodyShape
+  = IPSBodyClean     ![IPSRecord] !ByteString
+  | IPSBodyTruncated ![IPSRecord]
+
+-- | Apply the post-walk validation to the records and lift the
+-- body shape into the public 'IPSParseResult'. Validation runs
+-- uniformly on both body shapes: a truncated body whose partial
+-- records violate the variant ceiling or the RLE-zero rule is
+-- still a structural parse failure, not a warning.
+finaliseBodyShape :: IPSVariant
+                  -> IPSBodyShape
+                  -> Either SlapError (Parsed IPSParseResult)
+finaliseBodyShape variant bodyShape = case bodyShape of
+  IPSBodyClean recordList trailingBytes -> do
+    () <- validateRecordList variant recordList
+    resultPayload <-
+      assembleCleanResult variant (Vector.fromList recordList) trailingBytes
+    pure (Parsed resultPayload [])
+  IPSBodyTruncated recordList -> do
+    () <- validateRecordList variant recordList
+    pure (Parsed (IPSParseTruncated variant (Vector.fromList recordList))
+                 [NoEOFMarker LabelIPS])
+
+----------------------------------------------------------------------------
+-- parseIPSBody — Get-monad inner record loop
 ----------------------------------------------------------------------------
 
 -- | Walk the post-magic record stream record by record, peeking at
--- every iteration for the variant's EOF marker. On a marker match,
--- consume the marker and return the accumulated records (in wire
--- order). On no match, decode one record and recurse.
+-- every iteration for the variant's EOF marker.
+--
+-- Three things can happen on each iteration:
+--
+--   * The bytes at the cursor are the variant's EOF marker. We
+--     consume the marker, capture the rest of the input as the
+--     post-trailer slice, and return 'IPSBodyClean'. The trailer
+--     disambiguation (plain / truncated / EBP / reject) happens
+--     outside this loop in 'assembleCleanResult'.
+--
+--   * The bytes at the cursor are not the EOF marker and we have
+--     enough remaining input to read another complete record. We
+--     decode the record and recurse.
+--
+--   * The remaining input is too short to hold either an EOF
+--     marker or a complete next record. We return 'IPSBodyTruncated'
+--     with the records decoded so far; 'parseIPS' will surface this
+--     as an 'IPSParseTruncated' with a 'NoEOFMarker' warning.
 --
 -- The peek is genuinely non-destructive: 'lookAhead' from
 -- 'Slap.Get' runs the sub-parser and rewinds the cursor regardless
 -- of result, so the subsequent record-decode path consumes the same
--- bytes the peek inspected. The combinator exists for exactly this
--- pattern; doing the same with bare 'getPosition' / 'setPosition'
--- would reinvent it inline and is forbidden by the prep commit's
--- design.
+-- bytes the peek inspected.
 --
 -- Why peek at all: the IPS "EOF" sentinel is a famous footgun.
 -- The bytes @0x45 0x4F 0x46@ are simultaneously the ASCII "EOF"
@@ -138,75 +185,84 @@ parseIPS (PatchFileContents inputBytes)
 -- sort, dedupe, detect overlap, or otherwise normalise — overlap,
 -- sort-order, and duplicate-offset handling are Apply's problem,
 -- not Parse's.
-parseRecords :: IPSVariant -> Get [IPSRecord]
-parseRecords variant = recordLoop []
+--
+-- The 'remaining'-first guards on each step mean we never start a
+-- record we cannot finish: the truncation boundary always falls
+-- between whole records, so 'IPSBodyTruncated' carries complete
+-- decoded records and nothing half-read. A half-consumed header
+-- followed by a short payload reports as truncated before the
+-- first byte of that record is touched.
+parseIPSBody :: IPSVariant -> Get IPSBodyShape
+parseIPSBody variant = bodyLoop []
   where
     spec               = variantSpec variant
     eofMarkerBytes     = ipsVariantEOFMarker spec
     eofMarkerLength    = byteLength eofMarkerBytes
     offsetWidth        = ipsVariantOffsetWidth spec
+    recordHeaderLength = ipsRecordHeaderLength offsetWidth
+    rleTailLength      = ipsRleCountFieldLength <> ipsRleFillByteLength
 
-    -- | Decode one record's offset field. The width is variant-
-    -- dependent — 24-bit for 'StandardIPS', 32-bit for 'IPS32' —
-    -- and 'Slap.IPS.Types.offsetWidthByteCount' is the only place
-    -- in the codebase that knows the 3/4 mapping. We pattern-match
-    -- on the 'OffsetWidth' value, not on the byte count, so the raw
-    -- integers never appear in this loop.
     readRecordOffset :: Get Offset
     readRecordOffset = case offsetWidth of
       Offset24 -> Offset . fromIntegral <$> word24BE
       Offset32 -> Offset . fromIntegral <$> word32BE
 
-    -- | Read the 2-byte big-endian size field and dispatch on its
-    -- value. A non-zero size is the literal payload length that
-    -- follows; zero is the sentinel marking the record as RLE,
-    -- with the 2-byte run length and 1-byte fill that follow it.
-    decodeOneRecord :: Offset -> Get IPSRecord
-    decodeOneRecord recordOffset = do
-      rawSizeField <- word16BE
-      let sizeFieldValue = fromIntegral rawSizeField :: Int
-      if sizeFieldValue == 0
-        then do
+    truncatedFrom :: [IPSRecord] -> Get IPSBodyShape
+    truncatedFrom accumulatedReversed =
+      pure (IPSBodyTruncated (reverse accumulatedReversed))
+
+    bodyLoop :: [IPSRecord] -> Get IPSBodyShape
+    bodyLoop accumulatedReversed = do
+      bytesLeft <- remaining
+      if unLength bytesLeft < unLength eofMarkerLength
+        then truncatedFrom accumulatedReversed
+        else do
+          peekedBytes <- lookAhead (getBytes eofMarkerLength)
+          if peekedBytes == eofMarkerBytes
+            then do
+              skip eofMarkerLength
+              trailerLength <- remaining
+              trailingBytes <- getBytes trailerLength
+              pure (IPSBodyClean (reverse accumulatedReversed) trailingBytes)
+            else
+              if unLength bytesLeft < unLength recordHeaderLength
+                then truncatedFrom accumulatedReversed
+                else decodeOneRecordOrTruncate accumulatedReversed
+
+    decodeOneRecordOrTruncate :: [IPSRecord] -> Get IPSBodyShape
+    decodeOneRecordOrTruncate accumulatedReversed = do
+      recordOffset       <- readRecordOffset
+      rawSizeField       <- word16BE
+      let declaredPayload = Length (fromIntegral rawSizeField)
+      if unLength declaredPayload == 0
+        then decodeRLEBody  accumulatedReversed recordOffset
+        else decodeCopyBody accumulatedReversed recordOffset declaredPayload
+
+    decodeRLEBody :: [IPSRecord] -> Offset -> Get IPSBodyShape
+    decodeRLEBody accumulatedReversed recordOffset = do
+      tailSpace <- remaining
+      if unLength tailSpace < unLength rleTailLength
+        then truncatedFrom accumulatedReversed
+        else do
           rawRunLength <- word16BE
           fillByte     <- getByte
-          pure IPSRecordRLE
-            { ipsRleOffset = recordOffset
-            , ipsRleCount  = Length (fromIntegral rawRunLength)
-            , ipsRleFill   = fillByte
-            }
-        else do
-          payloadBytes <- getBytes (Length sizeFieldValue)
-          pure IPSRecordCopy
-            { ipsCopyOffset  = recordOffset
-            , ipsCopyPayload = payloadBytes
-            }
+          bodyLoop (IPSRecordRLE
+                     { ipsRleOffset = recordOffset
+                     , ipsRleCount  = Length (fromIntegral rawRunLength)
+                     , ipsRleFill   = fillByte
+                     } : accumulatedReversed)
 
-    recordLoop :: [IPSRecord] -> Get [IPSRecord]
-    recordLoop accumulatedReversed = do
-      peekedBytes <- lookAhead (getBytes eofMarkerLength)
-      if peekedBytes == eofMarkerBytes
-        then do
-          skip eofMarkerLength
-          pure (reverse accumulatedReversed)
+    decodeCopyBody :: [IPSRecord] -> Offset -> Length -> Get IPSBodyShape
+    decodeCopyBody accumulatedReversed recordOffset declaredPayload = do
+      payloadSpace <- remaining
+      if unLength payloadSpace < unLength declaredPayload
+        then truncatedFrom accumulatedReversed
         else do
-          recordOffset  <- readRecordOffset
-          decodedRecord <- decodeOneRecord recordOffset
-          recordLoop (decodedRecord : accumulatedReversed)
-
--- | Run 'parseRecords' for the given variant, then consume whatever
--- bytes remain after the EOF marker as the post-trailer slice. The
--- returned trailer is the raw bytes the trailer-disambiguation pass
--- will inspect to decide between plain IPS / truncation marker /
--- EBP metadata / SlapError. Captured as a 'ByteString' rather than
--- left in the 'Get' monad's residual buffer because the
--- disambiguation lives outside 'Get' (it produces structured
--- 'SlapError' values that 'Get' has no way to surface).
-parseRecordsAndCaptureTrailer :: IPSVariant -> Get ([IPSRecord], ByteString)
-parseRecordsAndCaptureTrailer variant = do
-  recordList      <- parseRecords variant
-  remainingLength <- remaining
-  trailingBytes   <- getBytes remainingLength
-  pure (recordList, trailingBytes)
+          payloadBytes <- getBytes declaredPayload
+          bodyLoop (IPSRecordCopy
+                     { ipsCopyOffset  = recordOffset
+                     , ipsCopyPayload = payloadBytes
+                     } : accumulatedReversed)
 
 ----------------------------------------------------------------------------
 -- Pure validation pass — variant ceiling and RLE-zero rejection
@@ -237,6 +293,12 @@ parseRecordsAndCaptureTrailer variant = do
 -- treating them as no-ops, on the principle that a malformed-field
 -- record is a parse error, not a runtime curiosity for 'Apply' to
 -- inherit.
+--
+-- Validation runs on both 'IPSBodyClean' and 'IPSBodyTruncated'
+-- record lists: a truncated body whose partial records already
+-- violate a structural rule is still a structural parse failure.
+-- Only the EOF-marker absence is softened to a warning; wire-level
+-- corruption inside the surviving records is not.
 --
 -- The walk uses a manual recursive helper rather than @do@-notation
 -- in 'Either' so the action index is forced (via the bang pattern)
@@ -303,24 +365,27 @@ ipsTruncationMarkerLength :: Length
 ipsTruncationMarkerLength =
   offsetWidthByteCount (ipsVariantOffsetWidth (variantSpec StandardIPS))
 
--- | Build the final 'IPSPatch' or 'EBPPatch' from the validated
--- record vector and the captured post-trailer bytes.
+-- | Build the final 'IPSParseResult' from the validated record
+-- vector and the captured post-trailer bytes. Only invoked for the
+-- 'IPSBodyClean' body shape — the truncated shape has no trailer
+-- bytes to disambiguate, and is mapped directly to
+-- 'IPSParseTruncated' by 'finaliseBodyShape'.
 --
 -- 'StandardIPS' post-@"EOF"@ has four accepted shapes (Q2
 -- resolution from @docs/ips/proposal.md@):
 --
---   1. empty trailer → plain 'IPSPatch' with no truncation. The
+--   1. empty trailer → 'IPSParseCleanIPS' with no truncation. The
 --      canonical case from the original SNESTool spec.
 --
---   2. exactly 'ipsTruncationMarkerLength' bytes → plain 'IPSPatch'
+--   2. exactly 'ipsTruncationMarkerLength' bytes → 'IPSParseCleanIPS'
 --      with a Flips-style truncation marker. Decoded as a 24-bit
 --      big-endian unsigned value and stored as
 --      'ipsTruncatedTargetSize'.
 --
 --   3. trailer beginning with 'ebpJSONOpeningByte' (@'{'@) →
---      EBP-wrapped IPS. The trailing bytes are captured verbatim as
---      'EBPMetadata' and the underlying 'IPSPatch' is wrapped in an
---      'EBPPatch'.
+--      'IPSParseCleanEBP'. The trailing bytes are captured verbatim
+--      as 'EBPMetadata' and the underlying 'IPSPatch' is wrapped in
+--      an 'EBPPatch'.
 --
 --   4. anything else (1- or 2-byte trailer, 4+-byte non-JSON
 --      trailer, etc.) → 'SlapError'. The strict thing to do with
@@ -334,13 +399,13 @@ ipsTruncationMarkerLength =
 -- original spec; 'IPS32' has none. There is no shape to recognise
 -- for 'IPS32' trailing bytes, so the strict thing is total
 -- rejection.
-buildResultPatch :: IPSVariant
-                 -> Vector.Vector IPSRecord
-                 -> ByteString
-                 -> Either SlapError (Either IPSPatch EBPPatch)
-buildResultPatch StandardIPS recordVector trailingBytes
+assembleCleanResult :: IPSVariant
+                    -> Vector.Vector IPSRecord
+                    -> ByteString
+                    -> Either SlapError IPSParseResult
+assembleCleanResult StandardIPS recordVector trailingBytes
   | ByteString.null trailingBytes =
-      Right (Left IPSPatch
+      Right (IPSParseCleanIPS IPSPatch
         { ipsVariant             = StandardIPS
         , ipsRecords             = recordVector
         , ipsTruncatedTargetSize = Nothing
@@ -348,7 +413,7 @@ buildResultPatch StandardIPS recordVector trailingBytes
   | ByteString.length trailingBytes == unLength ipsTruncationMarkerLength =
       let truncatedTargetSize =
             FileSize (fromIntegral (getWord24BE 0 trailingBytes))
-      in Right (Left IPSPatch
+      in Right (IPSParseCleanIPS IPSPatch
            { ipsVariant             = StandardIPS
            , ipsRecords             = recordVector
            , ipsTruncatedTargetSize = Just truncatedTargetSize
@@ -359,7 +424,7 @@ buildResultPatch StandardIPS recordVector trailingBytes
             , ipsRecords             = recordVector
             , ipsTruncatedTargetSize = Nothing
             }
-      in Right (Right EBPPatch
+      in Right (IPSParseCleanEBP EBPPatch
            { ebpBasePatch = basePatch
            , ebpMetadata  = EBPMetadata trailingBytes
            })
@@ -367,9 +432,9 @@ buildResultPatch StandardIPS recordVector trailingBytes
       Left (UnrecognizedTrailer LabelIPS
               (TrailerMarker (ipsVariantEOFMarker (variantSpec StandardIPS)))
               (ActualLength (Length (ByteString.length trailingBytes))))
-buildResultPatch IPS32 recordVector trailingBytes
+assembleCleanResult IPS32 recordVector trailingBytes
   | ByteString.null trailingBytes =
-      Right (Left IPSPatch
+      Right (IPSParseCleanIPS IPSPatch
         { ipsVariant             = IPS32
         , ipsRecords             = recordVector
         , ipsTruncatedTargetSize = Nothing

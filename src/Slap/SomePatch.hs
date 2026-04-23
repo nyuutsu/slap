@@ -271,37 +271,9 @@ parseSome patchContents = case detectFormat patchContents of
                                           , ipsRleFill = fillByte }) =
           Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte)
     in case IPS.parseIPS patchContents of
-      -- Get-monad failure: the body was too truncated to decode even
-      -- one record or EOF marker.  Return a 0-record patch with a
-      -- NoEOFMarker warning so recognised-but-truncated IPS files
-      -- still produce useful output from info/explain.
-      Left (ParseError LabelIPS _) ->
-        let truncatedFallback = IPS.IPSPatch
-              { IPS.ipsVariant             = IPS.StandardIPS
-              , IPS.ipsRecords             = Vector.empty
-              , IPS.ipsTruncatedTargetSize = Nothing
-              }
-        in Right SomePatch
-          { patchFormat         = LabelIPS
-          , patchExplain        = IPS.explainIPS truncatedFallback
-          , patchIsDifferential = False
-          , patchApply          = InMemory
-                { inMemoryApply = \source -> pure (IPS.applyIPS source truncatedFallback) }
-          , patchUndo           = Nothing
-          , patchVerification   = noVerification
-          , patchWarnings       = [NoEOFMarker LabelIPS, EmptyPatch LabelIPS "records"]
-          , patchRecordSummary  = RecordSummary 0 "records"
-          , patchSourceNotes    = []
-          , patchMetadata       = Nothing
-          , patchExtractedMeta  = defaultMeta
-          , patchContents       = Just (emptyContents [])
-              { contentsTruncation = Nothing
-              , contentsEBPMeta    = Nothing
-              }
-          }
-      Left otherError -> Left otherError
+      Left slapError -> Left slapError
       Right (Parsed parseResult parseWarnings) -> case parseResult of
-        Left ipsPatch ->
+        IPS.IPSParseCleanIPS ipsPatch ->
           let records = IPS.ipsRecords ipsPatch
               label = case IPS.ipsVariant ipsPatch of
                 IPS.StandardIPS -> LabelIPS
@@ -325,7 +297,7 @@ parseSome patchContents = case detectFormat patchContents of
                 , contentsEBPMeta    = Nothing
                 }
             }
-        Right ebpPatch ->
+        IPS.IPSParseCleanEBP ebpPatch ->
           let basePatch = IPS.ebpBasePatch ebpPatch
               records = IPS.ipsRecords basePatch
               ebpPairs = jsonPairs (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
@@ -352,6 +324,34 @@ parseSome patchContents = case detectFormat patchContents of
             , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
                 { contentsTruncation = IPS.ipsTruncatedTargetSize basePatch
                 , contentsEBPMeta    = Just (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+                }
+            }
+        IPS.IPSParseTruncated variant records ->
+          let truncatedPatch = IPS.IPSPatch
+                { IPS.ipsVariant             = variant
+                , IPS.ipsRecords             = records
+                , IPS.ipsTruncatedTargetSize = Nothing
+                }
+              label = case variant of
+                IPS.StandardIPS -> LabelIPS
+                IPS.IPS32       -> LabelIPS32
+          in Right SomePatch
+            { patchFormat         = label
+            , patchExplain        = IPS.explainIPS truncatedPatch
+            , patchIsDifferential = False
+            , patchApply          = InMemory
+                  { inMemoryApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
+            , patchUndo           = Nothing
+            , patchVerification   = noVerification
+            , patchWarnings       = parseWarnings
+                                    ++ [EmptyPatch label "records" | Vector.null records]
+            , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+            , patchSourceNotes    = []
+            , patchMetadata       = Nothing
+            , patchExtractedMeta  = defaultMeta
+            , patchContents  = Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+                { contentsTruncation = Nothing
+                , contentsEBPMeta    = Nothing
                 }
             }
 

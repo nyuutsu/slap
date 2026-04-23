@@ -10,6 +10,7 @@ module Slap.IPS.Types
   , EBPMetadata(..)
   , EBPMetadataFields(..)
   , EBPPatch(..)
+  , IPSParseResult(..)
     -- * Named constants
   , ipsMagicBytes
   , ips32MagicBytes
@@ -220,6 +221,51 @@ data EBPPatch = EBPPatch
   { ebpBasePatch :: !IPSPatch
   , ebpMetadata  :: !EBPMetadata
   } deriving (Show)
+
+-- | The three shapes an IPS-family parse can resolve to on the
+-- success side, distinguished at the type level rather than
+-- reconstructed downstream from error-channel pattern matches.
+--
+-- 'Slap.IPS.Parse' produces exactly one of these for any
+-- 'PatchFileContents' whose magic bytes identified it as an
+-- IPS-family patch and whose record stream passed the per-record
+-- validation pass. Parse is still free to return 'Left SlapError'
+-- for inputs that violate the wire format in ways this sum does
+-- not cover — bad magic, ceiling overrun, zero-count RLE,
+-- unrecognised trailing bytes after @"EOF"@/@"EEOF"@, and so on.
+data IPSParseResult
+  = IPSParseCleanIPS IPSPatch
+    -- ^ A 'StandardIPS' or 'IPS32' patch whose record stream was
+    -- closed by a well-formed EOF marker. The trailer after the
+    -- marker was either absent, or a Flips-style 3-byte truncation
+    -- marker (captured in 'ipsTruncatedTargetSize'). Covers every
+    -- plain-IPS success case; EBP is the sibling constructor.
+  | IPSParseCleanEBP EBPPatch
+    -- ^ A 'StandardIPS' patch whose record stream was closed by a
+    -- well-formed @"EOF"@ marker followed by bytes beginning with
+    -- @'{'@ — the shape-level signature of an EBPatcher-style JSON
+    -- metadata blob. The metadata is captured verbatim as opaque
+    -- bytes; no schema validation happens at parse time.
+  | IPSParseTruncated IPSVariant (Vector IPSRecord)
+    -- ^ The record stream ran out of input before a matching EOF
+    -- marker was found. The records that had been decoded up to
+    -- that point are preserved in wire order, validated against the
+    -- same ceiling and RLE-zero rules as the clean paths, and
+    -- surfaced here so @info@ / @explain@ can still report usefully
+    -- on partially-complete IPS files. 'Slap.IPS.Parse' pairs this
+    -- variant with a 'NoEOFMarker' warning via the 'Parsed' channel.
+    --
+    -- The 'IPSVariant' is whatever the magic bytes identified before
+    -- the record walk began — preserved here so callers that want
+    -- to label a truncated-IPS32 patch differently from a
+    -- truncated-IPS one have the information available.
+    --
+    -- A truncated parse never decides between plain IPS and EBP:
+    -- the discriminator lives in the post-@"EOF"@ trailer bytes
+    -- the truncation swallowed. The surviving records are therefore
+    -- treated as plain-IPS records by 'Slap.SomePatch'; anything
+    -- EBP-shaped lost to the truncation is unrecoverable.
+  deriving (Show)
 
 ----------------------------------------------------------------------------
 -- Named constants

@@ -15,7 +15,7 @@ import Slap.BPS.Types (BPSMetadata(..))
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
-import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..))
+import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSParseResult(..))
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PMSR.Parse as PMSR
@@ -156,10 +156,12 @@ prop_ips = forAll genPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed (Left ipsPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
+      Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
+        counterexample "round-tripped IPS unexpectedly truncated" $ property False
 
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
@@ -167,10 +169,12 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed (Left ipsPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
+      Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
+        counterexample "round-tripped IPS unexpectedly truncated" $ property False
 
 prop_resolveSentinelCollisions :: Property
 prop_resolveSentinelCollisions = once $
@@ -268,10 +272,12 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed (Left ipsPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
-      Right (Parsed (Right _ebpPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
+      Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
+        counterexample "round-tripped IPS32 unexpectedly truncated" $ property False
 
 prop_ebp :: Property
 prop_ebp = forAll genPairNoShrink $ \(source, target) ->
@@ -279,10 +285,12 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed (Right ebpPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanEBP ebpPatch) _parseWarnings) ->
         IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch) === Right (TargetFileContents target)
-      Right (Parsed (Left _ipsPatch) _parseWarnings) ->
+      Right (Parsed (IPSParseCleanIPS _ipsPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly plain IPS" $ property False
+      Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
+        counterexample "round-tripped EBP unexpectedly truncated" $ property False
 
 -- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
