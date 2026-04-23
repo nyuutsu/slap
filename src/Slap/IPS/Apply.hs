@@ -35,7 +35,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- would overrun the derived target (the way a Flips-style
 -- truncation marker declaring a target smaller than the record
 -- spread surfaces — per-record, at the offending 'ActionIndex',
--- as 'ApplyWritesPastTarget'). The caller is responsible for CRC
+-- as 'ApplyWritesPastTarget'). This coverage is uniform across
+-- every declared target size, zero included: the zero-target
+-- short-circuit below fires only for the no-op case of an empty
+-- record vector alongside a zero declared target, not as a
+-- catch-all that would swallow records when the declared size
+-- happens to be zero. The caller is responsible for CRC
 -- and file-size verification before calling; a 'Left' return here
 -- means the parsed patch is semantically malformed, not that the
 -- patch bytes were corrupted.
@@ -68,7 +73,7 @@ applyIPS :: SourceFileContents -> IPSPatch -> Either SlapError TargetFileContent
 applyIPS (SourceFileContents source) patch
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize patchLabel targetSize)
-  | unFileSize targetSize == 0 =
+  | unFileSize targetSize == 0 && Vector.null records =
       Right (TargetFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
