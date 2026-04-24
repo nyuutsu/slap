@@ -85,18 +85,22 @@ data ExplainVerbosity
 -- Mutually exclusive with @-o@\/positional @OUTPUT@ and with @--dry-run@.
 -- 'ApplyToExplicitFile' writes to an operator-chosen path.  @-o FILE@ and
 -- the positional @OUTPUT@ are two spellings of this same lane, so using
--- both in one command is a parse error.
+-- both in one command is a parse error.  Carries an 'OverwritePolicy' to
+-- opt into clobbering an existing destination via @--force@; the flag is
+-- a sub-flag of this lane (and 'ApplyToDerivedFile') because it is
+-- meaningless against an in-place write or a dry run.
 -- 'ApplyToDerivedFile' writes to a path derived from the source file name
--- (the default when no lane-distinguishing flag is given).
+-- (the default when no lane-distinguishing flag is given).  Also carries
+-- an 'OverwritePolicy' for the same reason as 'ApplyToExplicitFile'.
 -- 'ApplyDryRun' writes nothing; it only reports what would happen.  The
 -- report names the derived-default destination since dry runs do not
--- accept lane-modifying flags (no @--in-place@, no @-o@).  Users who want
--- to preview a specific destination should run without @--dry-run@
--- against a scratch file.
+-- accept lane-modifying flags (no @--in-place@, no @-o@, no @--force@).
+-- Users who want to preview a specific destination should run without
+-- @--dry-run@ against a scratch file.
 data ApplyOutput
   = ApplyInPlace BackupBehavior
-  | ApplyToExplicitFile FilePath
-  | ApplyToDerivedFile
+  | ApplyToExplicitFile FilePath OverwritePolicy
+  | ApplyToDerivedFile OverwritePolicy
   | ApplyDryRun
   deriving (Show, Eq)
 
@@ -175,8 +179,7 @@ data Verbosity
 
 data Command
   = CommandApply
-      { commandOverwritePolicy    :: OverwritePolicy
-      , commandVerificationPolicy :: VerificationPolicy
+      { commandVerificationPolicy :: VerificationPolicy
       , commandVerbosity          :: Verbosity
       , commandApplyOutput :: ApplyOutput
       , commandFileReading :: FileReadingOptions
@@ -253,7 +256,6 @@ explainParser = CommandExplain
 
 applyParser :: Parser Command
 applyParser = do
-    overwritePolicy    <- overwritePolicyParser
     verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
@@ -261,18 +263,13 @@ applyParser = do
     source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     applyOutput <- applyOutputParser
     pure CommandApply
-      { commandOverwritePolicy    = overwritePolicy
-      , commandVerificationPolicy = verificationPolicy
+      { commandVerificationPolicy = verificationPolicy
       , commandVerbosity          = verbosity
       , commandApplyOutput = applyOutput
       , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
       }
-
-overwritePolicyParser :: Parser OverwritePolicy
-overwritePolicyParser = flag RefuseOverwrite ForceOverwrite
-  (long "force" <> short 'f' <> help "Overwrite existing output files")
 
 verificationPolicyParser :: Parser VerificationPolicy
 verificationPolicyParser = flag EnforceVerification SkipVerification
@@ -282,18 +279,24 @@ verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose
   (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
--- | Parser for the four mutually exclusive output lanes.  'asum' tries each
--- lane in turn and commits to the first one whose distinguishing flag is
--- present.  Combinations that span multiple lanes are rejected at parse
--- time; no silent precedence resolution.  The fallthrough
--- ('pure ApplyToDerivedFile') succeeds unconditionally, so it must come
--- last.
+-- | Parser for the four mutually exclusive output lanes.  'asum' tries
+-- each lane in turn; combinations that span multiple lanes are rejected
+-- at parse time, with no silent precedence resolution.  The two writing
+-- lanes ('ApplyToExplicitFile' and 'ApplyToDerivedFile') share a single
+-- 'writingLane' parser so that @--force@ has exactly one home in the
+-- parser tree — otherwise a bare @--force@ would partially match the
+-- explicit-file lane (consuming the flag but missing the path) and
+-- optparse-applicative would prefer that partial match's error over the
+-- derived-file lane's success.  Within 'writingLane', whether the user
+-- supplied an explicit path decides which constructor 'mkWritingLane'
+-- returns, and @--force@ is consumed at that one site.  @--in-place@
+-- and @--dry-run@ commit to their own lanes, so combining them with
+-- @--force@ leaves @--force@ unconsumed and produces a parse error.
 applyOutputParser :: Parser ApplyOutput
 applyOutputParser = asum
   [ dryRunLane
   , inPlaceLane
-  , explicitFileLane
-  , pure ApplyToDerivedFile
+  , writingLane
   ]
   where
     dryRunLane :: Parser ApplyOutput
@@ -309,12 +312,26 @@ applyOutputParser = asum
         backupBehaviorFlag = flag WriteBackup NoBackup
           (long "no-backup" <> help "Don't create .bak backup with --in-place")
 
-    explicitFileLane :: Parser ApplyOutput
-    explicitFileLane = ApplyToExplicitFile <$>
-      (option str (long "output" <> short 'o' <> metavar "FILE"
-          <> help "Write patched output to FILE (alternative: positional OUTPUT)")
-       <|> argument str (metavar "OUTPUT"
-          <> help "Write patched output to this path (alternative: -o FILE)"))
+    writingLane :: Parser ApplyOutput
+    writingLane = mkWritingLane
+      <$> optional outputPathOption
+      <*> overwritePolicyFlag
+      where
+        outputPathOption :: Parser FilePath
+        outputPathOption =
+              option str (long "output" <> short 'o' <> metavar "FILE"
+                <> help "Write patched output to FILE (alternative: positional OUTPUT)")
+          <|> argument str (metavar "OUTPUT"
+                <> help "Write patched output to this path (alternative: -o FILE)")
+
+        overwritePolicyFlag :: Parser OverwritePolicy
+        overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+          (long "force" <> short 'f'
+            <> help "Overwrite existing output files")
+
+        mkWritingLane :: Maybe FilePath -> OverwritePolicy -> ApplyOutput
+        mkWritingLane Nothing     policy = ApplyToDerivedFile policy
+        mkWritingLane (Just path) policy = ApplyToExplicitFile path policy
 
 fileReadingOptionsParser :: Parser FileReadingOptions
 fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
@@ -636,13 +653,6 @@ doApply parsedCommand = do
   let verification = patchVerification parsed
       verificationPolicy = commandVerificationPolicy parsedCommand
 
-      refuseOverwrite outputPath = case commandOverwritePolicy parsedCommand of
-        ForceOverwrite  -> pure ()
-        RefuseOverwrite -> do
-          exists <- doesFileExist outputPath
-          when exists $
-            die (outputPath ++ " already exists (use --force to overwrite)")
-
       applyAndWriteTo outputPath = do
         sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
         let source = SourceFileContents sourceBytes
@@ -676,12 +686,12 @@ doApply parsedCommand = do
           hPutStrLn stderr ("slap: backup: " ++ backupPath)
         NoBackup -> pure ()
       applyAndWriteTo (commandSource parsedCommand)
-    ApplyToExplicitFile outputPath -> do
-      refuseOverwrite outputPath
+    ApplyToExplicitFile outputPath overwritePolicy -> do
+      refuseOverwrite overwritePolicy outputPath
       applyAndWriteTo outputPath
-    ApplyToDerivedFile -> do
+    ApplyToDerivedFile overwritePolicy -> do
       let outputPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
-      refuseOverwrite outputPath
+      refuseOverwrite overwritePolicy outputPath
       applyAndWriteTo outputPath
 
 ----------------------------------------------------------------------------
@@ -796,6 +806,16 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
   dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
+
+-- | Abort if the destination already exists and the user did not pass
+-- @--force@.  Used by the two apply lanes that write to a path other
+-- than the source ('ApplyToExplicitFile' and 'ApplyToDerivedFile').
+refuseOverwrite :: OverwritePolicy -> FilePath -> IO ()
+refuseOverwrite ForceOverwrite  _          = pure ()
+refuseOverwrite RefuseOverwrite outputPath = do
+  exists <- doesFileExist outputPath
+  when exists $
+    die (outputPath ++ " already exists (use --force to overwrite)")
 
 ----------------------------------------------------------------------------
 -- Verification helpers

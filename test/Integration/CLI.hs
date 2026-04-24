@@ -204,10 +204,10 @@ undoErrorTests slap base ips _bps =
 
 compoundTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
 compoundTests slap base ips bps =
-  [ testCase "compound/in-place+force+verbose+no-backup (IPS)" $
+  [ testCase "compound/in-place+verbose+no-backup (IPS)" $
       withTempFile "slap-work" $ \work -> do
         ByteString.readFile base >>= ByteString.writeFile work
-        expectOk slap ["apply", ips, work, "--in-place", "--force", "--verbose", "--no-backup"]
+        expectOk slap ["apply", ips, work, "--in-place", "--verbose", "--no-backup"]
           "compound/IPS" "applied"
 
   , testCase "compound/dry-run+verbose shows both" $
@@ -218,8 +218,16 @@ compoundTests slap base ips bps =
          assertBool "missing 'Write'" ("Write" `isInfixOf` combined)
 
   , testCase "compound/rejects --in-place with --dry-run" $
-      expectFail slap ["apply", bps, base, "--in-place", "--dry-run", "--force"]
+      expectFail slap ["apply", bps, base, "--in-place", "--dry-run"]
         "compound/rejects --in-place with --dry-run" "usage"
+
+  , testCase "compound/rejects --force with --in-place" $
+      expectFail slap ["apply", bps, base, "--in-place", "--force"]
+        "compound/rejects --force with --in-place" "usage"
+
+  , testCase "compound/rejects --force with --dry-run" $
+      expectFail slap ["apply", bps, base, "--dry-run", "--force"]
+        "compound/rejects --force with --dry-run" "usage"
 
   , testCase "compound/explicit -o creates file" $
       withTempFile "slap-out" $ \out -> do
@@ -383,7 +391,7 @@ ipsTruncateTests slap base =
         case exitCode of
           ExitSuccess -> do
             ByteString.writeFile result baseBytes
-            expectOk slap ["apply", patch, result, "--in-place", "--no-backup", "--force"]
+            expectOk slap ["apply", patch, result, "--in-place", "--no-backup"]
               "truncate/apply" "applied"
             smallSha  <- pure (sha1Hex smallBytes)
             resultSha <- sha1Hex <$> ByteString.readFile result
