@@ -75,29 +75,28 @@ data ExplainVerbosity
 
 -- | What to do with an applied patch's output bytes.
 --
+-- The four variants correspond to four mutually exclusive CLI lanes; the
+-- parser rejects any command line that mixes distinguishing flags from
+-- more than one lane (see 'applyOutputParser').
+--
 -- 'ApplyInPlace' overwrites the source file (the most invasive option;
 -- carries a 'BackupBehavior' to opt into a @.bak@ copy before writing).
--- 'ApplyToExplicitFile' writes to an operator-chosen path via @-o@ (or
--- the optional third positional @OUTPUT@).
+-- Mutually exclusive with @-o@\/positional @OUTPUT@ and with @--dry-run@.
+-- 'ApplyToExplicitFile' writes to an operator-chosen path.  @-o FILE@ and
+-- the positional @OUTPUT@ are two spellings of this same lane, so using
+-- both in one command is a parse error.
 -- 'ApplyToDerivedFile' writes to a path derived from the source file name
--- (the default when neither in-place nor @-o@ is given).
--- 'ApplyDryRun' writes nothing; it only reports what would happen, and
--- carries the hypothetical destination so the report can name that path.
+-- (the default when no lane-distinguishing flag is given).
+-- 'ApplyDryRun' writes nothing; it only reports what would happen.  The
+-- report names the derived-default destination since dry runs do not
+-- accept lane-modifying flags (no @--in-place@, no @-o@).  Users who want
+-- to preview a specific destination should run without @--dry-run@
+-- against a scratch file.
 data ApplyOutput
   = ApplyInPlace BackupBehavior
   | ApplyToExplicitFile FilePath
   | ApplyToDerivedFile
-  | ApplyDryRun ApplyDestinationIfNotDryRun
-  deriving (Show, Eq)
-
--- | For a dry run, which destination the apply would have written to if it
--- were not a dry run.  Mirrors the three non-dry-run variants of
--- 'ApplyOutput' but drops the 'BackupBehavior' field (dry runs never write,
--- so backup is irrelevant and shouldn't be representable).
-data ApplyDestinationIfNotDryRun
-  = DryRunInPlace
-  | DryRunToExplicitFile FilePath
-  | DryRunToDerivedFile
+  | ApplyDryRun
   deriving (Show, Eq)
 
 -- | Whether in-place apply should make a @.bak@ copy before writing.
@@ -260,41 +259,39 @@ noVerifyFlag = switch (long "no-verify" <> help "Skip checksum validation (misma
 verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
--- | Single parser that resolves @--in-place@, @--no-backup@, @--dry-run@,
--- and @-o@\/positional @OUTPUT@ into one 'ApplyOutput' value.
---
--- Precedence matches the pre-sum code in @doApply@: @--dry-run@ short-circuits
--- before anything is written, @--in-place@ wins over an explicit @-o@, and
--- @-o@ wins over the derived-filename default.  When @--dry-run@ is set, the
--- hypothetical destination is the destination the apply /would/ have used
--- had it not been a dry run, so the \"would apply \8594 X\" report can name
--- that path.
+-- | Parser for the four mutually exclusive output lanes.  'asum' tries each
+-- in turn and commits to the first one whose distinguishing flag is present;
+-- if the user types flags from multiple lanes, the combined parser rejects
+-- the command line (the unused lane's flag is left over and fails the top
+-- level).  The fallthrough ('pure ApplyToDerivedFile') succeeds
+-- unconditionally, so it must come last.
 applyOutputParser :: Parser ApplyOutput
-applyOutputParser = selectApplyOutput
-  <$> inPlaceFlag
-  <*> backupBehaviorFlag
-  <*> dryRunFlag
-  <*> explicitOutput
+applyOutputParser = asum
+  [ dryRunLane
+  , inPlaceLane
+  , explicitFileLane
+  , pure ApplyToDerivedFile
+  ]
   where
-    inPlaceFlag = switch (long "in-place" <> short 'i'
-                    <> help "Modify SOURCE directly (destructive; creates .bak by default)")
-    backupBehaviorFlag = flag WriteBackup NoBackup
-                             (long "no-backup" <> help "Don't create .bak backup with --in-place")
-    dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
-    explicitOutput = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
-                       <> help "Write patched output to FILE (default: derived from source name)"))
-                 <|> optional (argument str (metavar "OUTPUT"))
+    dryRunLane :: Parser ApplyOutput
+    dryRunLane = ApplyDryRun <$
+      flag' () (long "dry-run" <> help "Show what would happen without writing any files")
 
-    selectApplyOutput inPlace backup dryRun explicit
-      | dryRun              = ApplyDryRun (selectDryRunDestination inPlace explicit)
-      | inPlace             = ApplyInPlace backup
-      | Just path <- explicit = ApplyToExplicitFile path
-      | otherwise           = ApplyToDerivedFile
+    inPlaceLane :: Parser ApplyOutput
+    inPlaceLane = ApplyInPlace
+      <$> (flag' () (long "in-place" <> short 'i'
+              <> help "Modify SOURCE directly (destructive; creates .bak by default)")
+          *> backupBehaviorFlag)
+      where
+        backupBehaviorFlag = flag WriteBackup NoBackup
+          (long "no-backup" <> help "Don't create .bak backup with --in-place")
 
-    selectDryRunDestination inPlace explicit
-      | inPlace             = DryRunInPlace
-      | Just path <- explicit = DryRunToExplicitFile path
-      | otherwise           = DryRunToDerivedFile
+    explicitFileLane :: Parser ApplyOutput
+    explicitFileLane = ApplyToExplicitFile <$>
+      (option str (long "output" <> short 'o' <> metavar "FILE"
+          <> help "Write patched output to FILE (alternative: positional OUTPUT)")
+       <|> argument str (metavar "OUTPUT"
+          <> help "Write patched output to this path (alternative: -o FILE)"))
 
 fileReadingOptionsParser :: Parser FileReadingOptions
 fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
@@ -620,11 +617,8 @@ doApply parsedCommand = do
                         ++ " \8594 " ++ outputPath
 
       case commandApplyOutput parsedCommand of
-        ApplyDryRun hypotheticalDestination -> do
-          let reportedPath = case hypotheticalDestination of
-                DryRunInPlace                -> commandSource parsedCommand
-                DryRunToExplicitFile path    -> path
-                DryRunToDerivedFile          -> deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+        ApplyDryRun -> do
+          let reportedPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
               summary = patchRecordSummary parsed
           putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
                   ++ " \8594 " ++ reportedPath

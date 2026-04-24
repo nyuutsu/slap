@@ -95,29 +95,20 @@ corruptTests =
 dryrunTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 dryrunTests slap base bps =
   [ testCase "dryrun/reports action" $
-      withTempFile "slap-out" $ \out -> do
-        removeIfExists out
-        expectOk slap ["apply", bps, base, "-o", out, "--dry-run"]
-          "dryrun/reports action" "would apply"
-
-  , testCase "dryrun/no output file" $
-      withTempFile "slap-out" $ \out -> do
-        removeIfExists out
-        _ <- runSlap slap ["apply", bps, base, "-o", out, "--dry-run"]
-        exists <- doesFileExist out
-        assertBool "output file should not be created" (not exists)
+      expectOk slap ["apply", bps, base, "--dry-run"]
+        "dryrun/reports action" "would apply"
 
   , testCase "dryrun/shows CRC" $
       expectOk slap ["apply", bps, base, "--dry-run"]
         "dryrun/shows CRC" "source CRC"
 
-  , testCase "dryrun/in-place leaves source untouched" $
-      withTempFile "slap-work" $ \work -> do
-        ByteString.readFile base >>= ByteString.writeFile work
-        beforeSha <- sha1Hex <$> ByteString.readFile work
-        _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup", "--dry-run"]
-        afterSha <- sha1Hex <$> ByteString.readFile work
-        assertEqual "source modified" beforeSha afterSha
+  , testCase "dryrun/rejects conflicting --output" $
+      expectFail slap ["apply", bps, base, "-o", "/tmp/slap-unreachable", "--dry-run"]
+        "dryrun/rejects conflicting --output" "usage"
+
+  , testCase "dryrun/rejects conflicting --in-place" $
+      expectFail slap ["apply", bps, base, "--in-place", "--dry-run"]
+        "dryrun/rejects conflicting --in-place" "usage"
   ]
 
 forceTests :: FilePath -> FilePath -> FilePath -> [TestTree]
@@ -226,13 +217,9 @@ compoundTests slap base ips bps =
          assertBool "missing 'would apply'" ("would apply" `isInfixOf` combined)
          assertBool "missing 'Write'" ("Write" `isInfixOf` combined)
 
-  , testCase "compound/dry-run+force doesn't modify" $
-      withTempFile "slap-work" $ \work -> do
-        ByteString.readFile base >>= ByteString.writeFile work
-        beforeSha <- sha1Hex <$> ByteString.readFile work
-        _ <- runSlap slap ["apply", bps, work, "--in-place", "--dry-run", "--force"]
-        afterSha <- sha1Hex <$> ByteString.readFile work
-        assertEqual "source modified" beforeSha afterSha
+  , testCase "compound/rejects --in-place with --dry-run" $
+      expectFail slap ["apply", bps, base, "--in-place", "--dry-run", "--force"]
+        "compound/rejects --in-place with --dry-run" "usage"
 
   , testCase "compound/explicit -o creates file" $
       withTempFile "slap-out" $ \out -> do
