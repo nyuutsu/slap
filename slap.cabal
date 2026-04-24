@@ -68,6 +68,7 @@ library slap-internal
     , Slap.IPS.Parse
     , Slap.IPS.Types
     , Slap.Measure
+    , Slap.MetadataField
     , Slap.Convert
     , Slap.Create
     , Slap.Platform

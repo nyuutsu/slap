@@ -51,6 +51,7 @@ cliTests tier = do
             , customCodetableTests slap
             , if baseExists then ninja1VerifyTests tier slap dm4yBase dm4yIps else []
             , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
+            , if baseExists then metadataRejectionTests slap dm4yBase dm4yBps else []
             , explainModeTests slap dm4yIps
                 (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
             ]
@@ -545,6 +546,144 @@ descriptionTests slap base bps =
         patchString <- ByteString8.unpack <$> ByteString.readFile patch2
         assertBool "expected override comment" ("// override" `isInfixOf` patchString)
   ]
+
+-- | Slap rejects metadata flags that the target format won't carry.
+-- The check runs against the user's CLI-supplied metadata only:
+-- inherited-from-source metadata stays on the existing drop-with-warning
+-- path. Rendered errors name the offending flag and the target format,
+-- so the assertions look for both substrings.
+metadataRejectionTests :: FilePath -> FilePath -> FilePath -> [TestTree]
+metadataRejectionTests slap base bps =
+  [ testCase "metadata-reject/ips refuses --title" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "ips", base, target, patch, "--title", "x"]
+          ["--title", "IPS"]
+
+  , testCase "metadata-reject/ips refuses --rom-type" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "ips", base, target, patch, "--rom-type", "snes"]
+          ["--rom-type", "IPS"]
+
+  , testCase "metadata-reject/ips refuses --unstable" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "ips", base, target, patch, "--unstable"]
+          ["--unstable", "IPS"]
+
+  , testCase "metadata-reject/bps refuses --rom-type" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "bps", base, target, patch, "--rom-type", "snes"]
+          ["--rom-type", "BPS"]
+
+  , testCase "metadata-reject/dps refuses --rom-type" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "dps", base, target, patch, "--rom-type", "snes"]
+          ["--rom-type", "DPS"]
+
+  , testCase "metadata-reject/ninja2 refuses --image-type" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectFailContains slap
+          ["create", "--format", "ninja2", base, target, patch, "--image-type", "gi"]
+          ["--image-type", "NINJA2"]
+
+  , testCase "metadata-accept/dps takes --title --unstable" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectOk slap
+          ["create", "--format", "dps", base, target, patch,
+           "--title", "Test patch", "--unstable"]
+          "metadata-accept/dps" "wrote"
+
+  , testCase "metadata-accept/ninja2 takes title rom-type genre" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectOk slap
+          ["create", "--format", "ninja2", base, target, patch,
+           "--title", "T", "--rom-type", "gbc", "--genre", "RPG"]
+          "metadata-accept/ninja2" "wrote"
+
+  , testCase "metadata-accept/bps takes --metadata FILE" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch ->
+      withTempFile "slap-blob" $ \blob -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        ByteString.writeFile blob (ByteString8.pack "<blob/>")
+        expectOk slap
+          ["create", "--format", "bps", base, target, patch, "--metadata", blob]
+          "metadata-accept/bps" "wrote"
+
+  , testCase "metadata-accept/ppf3 takes --no-undo --no-validate -d" $
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-patch" $ \patch -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        expectOk slap
+          ["create", "--format", "ppf3", base, target, patch,
+           "-d", "x", "--no-undo", "--no-validate"]
+          "metadata-accept/ppf3" "wrote"
+
+  , testCase "metadata-accept/convert inherits source metadata silently" $
+      -- An EBP patch carries title/author/description in its trailing JSON.
+      -- The parser surfaces those into the patch's extracted metadata; the
+      -- convert path merges them into the metadata it hands to the encoder.
+      -- No --title on the convert CLI means the rejection check (which sees
+      -- only CLI-supplied metadata) doesn't fire, so the conversion to a
+      -- title-less target succeeds. This is the convert-time semantics the
+      -- prompt's framing emphasizes: source-inherited fields stay on the
+      -- existing drop path; only user-expressed flags can be rejected.
+      withTempFile "slap-target" $ \target ->
+      withTempFile "slap-ebp"    $ \ebp ->
+      withTempFile "slap-ips"    $ \ips -> do
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        _ <- runSlap slap ["create", "--format", "ebp", base, target, ebp,
+                           "--title", "Inherited", "--author", "n", "-d", "d"]
+        expectOk slap ["convert", ebp, "--to", "ips", "-o", ips]
+          "metadata-accept/inherit" "converted"
+  ]
+
+-- | Like 'expectFail', but checks for several substrings in one go.
+-- The error message produced by 'MetadataFieldRejected' names both the
+-- offending flag (e.g. @--title@) and the target format (e.g. @IPS@);
+-- callers assert both fragments without rewriting the loop each time.
+expectFailContains :: FilePath -> [String] -> [String] -> IO ()
+expectFailContains slap arguments needles = do
+  (exitCode, stdoutText, stderrText) <- runSlap slap arguments
+  let combined = stdoutText ++ stderrText
+  case exitCode of
+    ExitFailure _ ->
+      mapM_ (\needle ->
+        assertBool ("expected '" ++ needle ++ "' in: " ++ combined)
+          (needle `isInfixOf` combined)) needles
+    ExitSuccess ->
+      assertFailure ("expected failure but got success: " ++ combined)
 
 explainModeTests :: FilePath -> FilePath -> Maybe (FilePath, FilePath, FilePath) -> [TestTree]
 explainModeTests slap ips maybeSourceFiles =

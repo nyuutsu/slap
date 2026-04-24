@@ -11,7 +11,8 @@ import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      RequestedPatchMetadata(..), RequestedPatchMetadataInputs(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
-                     mergeRequestedMetadata, formatExtension, formatName)
+                     mergeRequestedMetadata, rejectIncompatibleMetadata,
+                     formatExtension, formatName)
 import Slap.Create (createFromMemory)
 import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
@@ -761,9 +762,10 @@ doUndo parsedCommand = do
 
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
+  createMeta    <- resolveRequestedPatchMetadata (createMetadata parsedCommand)
+  orDie (rejectIncompatibleMetadata (createFormat parsedCommand) createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
-  createMeta    <- resolveRequestedPatchMetadata (createMetadata parsedCommand)
   emitSlapWarnings (createDefaultNotes (createFormat parsedCommand) createMeta)
   result <- orDie (createFromMemory (createFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
   emitSlapWarnings (resultWarnings result)
@@ -776,9 +778,10 @@ doCreate parsedCommand = do
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
+  cliMeta <- resolveRequestedPatchMetadata (convertMetadata parsedCommand)
+  orDie (rejectIncompatibleMetadata (convertTo parsedCommand) cliMeta)
   parsed <- readAndParsePatch (convertPatch parsedCommand)
   emitWarnings parsed
-  cliMeta <- resolveRequestedPatchMetadata (convertMetadata parsedCommand)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
         ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)

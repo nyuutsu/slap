@@ -38,6 +38,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
+import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
 
 import Data.ByteString (ByteString)
@@ -338,6 +339,15 @@ data SlapError
 
   | DiffRequiresSource FormatLabel
 
+  -- | The user set a metadata field via a CLI flag that the target
+  -- format doesn't consume.  Surfaced before any IO so the user
+  -- learns what went wrong before their files are touched.  The
+  -- 'MetadataField' names which concept the user expressed; the
+  -- 'FormatLabel' names the target format that would silently drop
+  -- it.  Rendering names both the offending CLI flag and the target,
+  -- so the message points the user at the exact thing to fix.
+  | MetadataFieldRejected MetadataField FormatLabel
+
   -- Container
   | Yay0DecompressionFailed String
 
@@ -629,6 +639,11 @@ renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
 renderSlapError (DiffRequiresSource label) =
   formatLabelName label
   ++ " requires source+target diff data\nuse --with SOURCE"
+
+renderSlapError (MetadataFieldRejected field target) =
+  "--" ++ metadataFieldFlagName field ++ " is not accepted by "
+  ++ formatLabelName target
+  ++ " (the " ++ metadataFieldName field ++ " field is not part of this format)"
 
 renderSlapError (Yay0DecompressionFailed detail) =
   "Yay0 decompression failed: " ++ detail

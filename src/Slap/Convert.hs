@@ -24,6 +24,10 @@ module Slap.Convert
   , trimNullSpace
   , formatExtension
   , formatName
+  , createFormatLabel
+  , acceptedMetadataFields
+  , requestedMetadataFields
+  , rejectIncompatibleMetadata
   , PatchEncoding(..)
   ) where
 
@@ -63,6 +67,7 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
+import Slap.MetadataField (MetadataField(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
@@ -373,6 +378,78 @@ directConversionContract target undoChoice validationChoice = case target of
   where
     requiredFields extra = Set.fromList (FRecords : extra)
     acceptedFields = Set.fromList
+
+----------------------------------------------------------------------------
+-- Metadata-field acceptance (CLI rejection)
+----------------------------------------------------------------------------
+
+-- | The user-requestable metadata concepts a target format actually
+-- consumes during creation.  Used to reject incoherent flag/format
+-- combinations: a user setting @--rom-type@ with @--format ips@ is
+-- asking for something IPS can't represent, so creation fails before
+-- any IO.
+--
+-- Direct-format entries derive from the per-format reads inside
+-- 'buildContents' and 'encodeDirect'; diff-format entries derive from
+-- the per-format reads inside 'createFromMemory'.  An entry here means
+-- "the format-specific encoder reads this field"; absence means
+-- "setting this field on the CLI would do nothing observable for this
+-- format."
+acceptedMetadataFields :: CreateFormat -> Set.Set MetadataField
+acceptedMetadataFields (CreateDirect format) = case format of
+  CreateIPS    -> Set.empty
+  CreateIPS32  -> Set.empty
+  CreateEBP    -> Set.fromList [MTitle, MAuthor, MDescription]
+  CreatePPF3   -> Set.fromList [MDescription, MImageType, MUndoInclusion, MValidationInclusion]
+  CreateNINJA1 -> Set.fromList [MRomType]
+  CreatePMSR   -> Set.empty
+  CreatePCHTXT -> Set.fromList [MDescription]
+  CreateAPSN64 -> Set.fromList [MDescription]
+acceptedMetadataFields (CreateDiff format) = case format of
+  CreateBPS    -> Set.fromList [MEmbeddedBlob]
+  CreateUPS    -> Set.empty
+  CreateDPS    -> Set.fromList [MTitle, MDescription, MAuthor, MVersion, MStability]
+  CreateNINJA2 -> Set.fromList
+    [ MTitle, MAuthor, MVersion, MDescription, MGenre, MLanguage
+    , MDate, MWebsite, MRomType, MPatchEncoding ]
+  CreateAPSGBA -> Set.empty
+  CreateGDIFF  -> Set.empty
+
+-- | The 'MetadataField's the user explicitly set on a
+-- 'RequestedPatchMetadata'.  A 'Maybe' field counts as set when
+-- 'Just'; 'requestedPatchEncoding' (non-'Maybe', defaults to UTF-8)
+-- counts as set when the value differs from 'PatchEncodingUTF8'.
+requestedMetadataFields :: RequestedPatchMetadata -> Set.Set MetadataField
+requestedMetadataFields meta = Set.fromList $ concat
+  [ [MTitle               | isJust (requestedTitle               meta)]
+  , [MAuthor              | isJust (requestedAuthor              meta)]
+  , [MDescription         | isJust (requestedDescription         meta)]
+  , [MVersion             | isJust (requestedVersion             meta)]
+  , [MUndoInclusion       | isJust (requestedUndoInclusion       meta)]
+  , [MValidationInclusion | isJust (requestedValidationInclusion meta)]
+  , [MStability           | isJust (requestedStability           meta)]
+  , [MRomType             | isJust (requestedRomType             meta)]
+  , [MImageType           | isJust (requestedImageType           meta)]
+  , [MGenre               | isJust (requestedGenre               meta)]
+  , [MLanguage            | isJust (requestedLanguage            meta)]
+  , [MDate                | isJust (requestedDate                meta)]
+  , [MWebsite             | isJust (requestedWebsite             meta)]
+  , [MPatchEncoding       | requestedPatchEncoding meta /= PatchEncodingUTF8]
+  , [MEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
+  ]
+
+-- | Reject any metadata field set by the user that the target format
+-- doesn't consume.  Returns the first incompatible field; users
+-- running into multiple flag mistakes see them sequentially across
+-- runs.
+rejectIncompatibleMetadata
+  :: CreateFormat
+  -> RequestedPatchMetadata
+  -> Either SlapError ()
+rejectIncompatibleMetadata format meta =
+  case Set.toList (requestedMetadataFields meta `Set.difference` acceptedMetadataFields format) of
+    []        -> Right ()
+    (field:_) -> Left (MetadataFieldRejected field (createFormatLabel format))
 
 ----------------------------------------------------------------------------
 -- Contract checking
@@ -953,3 +1030,11 @@ diffLabel CreateDPS    = LabelDPS
 diffLabel CreateNINJA2    = LabelNINJA2
 diffLabel CreateAPSGBA = LabelAPSGBA
 diffLabel CreateGDIFF  = LabelGDIFF
+
+-- | Unified 'FormatLabel' for any 'CreateFormat'.  Fans out across the
+-- direct/diff split so callers needing one label per target (notably
+-- 'rejectIncompatibleMetadata' and its render path) don't have to
+-- pattern-match the wrapper themselves.
+createFormatLabel :: CreateFormat -> FormatLabel
+createFormatLabel (CreateDirect format) = directLabel format
+createFormatLabel (CreateDiff format)   = diffLabel format
