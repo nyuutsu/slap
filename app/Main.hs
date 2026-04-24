@@ -7,6 +7,7 @@ import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), Undo
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
+                     PatchContents,
                      RequestedPatchMetadata(..), RequestedPatchMetadataInputs(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
@@ -618,8 +619,7 @@ resolveRequestedPatchMetadata inputs = do
 
 doInfo :: Command -> IO ()
 doInfo parsedCommand = do
-  patchBytes <- readUnwrap (commandPatch parsedCommand)
-  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  parsed <- readAndParsePatch (commandPatch parsedCommand)
   let explain = patchExplain parsed
       summary = patchRecordSummary parsed
   putStrLn $ "format:      " ++ explainFormat explain
@@ -636,8 +636,7 @@ doInfo parsedCommand = do
 
 doExplain :: Command -> IO ()
 doExplain parsedCommand = do
-  patchBytes <- readUnwrap (commandPatch parsedCommand)
-  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  parsed <- readAndParsePatch (commandPatch parsedCommand)
   maybeSource <- case commandExplainSource parsedCommand of
     Nothing   -> pure Nothing
     Just path -> Just <$> readMaybeUnwrap (commandFileReading parsedCommand) path
@@ -653,8 +652,7 @@ doExplain parsedCommand = do
 
 doApply :: Command -> IO ()
 doApply parsedCommand = do
-  patchBytes <- readUnwrap (commandPatch parsedCommand)
-  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  parsed <- readAndParsePatch (commandPatch parsedCommand)
   emitWarnings parsed
   case commandVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
@@ -710,8 +708,7 @@ doApply parsedCommand = do
 
 doUndo :: Command -> IO ()
 doUndo parsedCommand = do
-  patchBytes <- readUnwrap (commandPatch parsedCommand)
-  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  parsed <- readAndParsePatch (commandPatch parsedCommand)
   emitWarnings parsed
   case commandVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
@@ -748,8 +745,7 @@ doCreate parsedCommand = do
 
 doConvert :: Command -> IO ()
 doConvert parsedCommand = do
-  patchBytes <- readUnwrap (commandConvertPatch parsedCommand)
-  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  parsed <- readAndParsePatch (commandConvertPatch parsedCommand)
   emitWarnings parsed
   cliMeta <- resolveRequestedPatchMetadata (commandConvertMetadata parsedCommand)
   let outputFile = case commandConvertOutput parsedCommand of
@@ -757,40 +753,27 @@ doConvert parsedCommand = do
         ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
                                                            (formatExtension (commandConvertTo parsedCommand))
       mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      metaWarnings = case patchMetadata parsed of
-        Nothing -> []
-        Just metaBytes ->
-          let metaSize = ByteString.length metaBytes
-          in if commandConvertTo parsedCommand == CreateDiff CreateBPS
-             then []
-             else [MetadataDropped metaSize]
-      metaCarryNote = case patchMetadata parsed of
-        Just metaBytes | commandConvertTo parsedCommand == CreateDiff CreateBPS
-                       , isNothing (requestedEmbeddedBlob mergedMeta) ->
-          Just ("note: source has " ++ show (ByteString.length metaBytes)
-                ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
-        _ -> Nothing
-  case commandConvertWithSource parsedCommand of
-    Just withSource -> do
-      -- --with provided: always use apply-and-recreate path
+      notes = computeBPSConversionNotes parsed (commandConvertTo parsedCommand) mergedMeta
+  case chooseConvertDispatch parsedCommand parsed of
+    ApplyAndRecreate withSource -> do
       sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (convertWithSourcePath withSource)
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orDie (createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
-      emitSlapWarnings (patchSourceNotes parsed ++ metaWarnings
+      emitSlapWarnings (patchSourceNotes parsed ++ bpsConversionWarnings notes
                         ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
-      forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
+      forM_ (bpsConversionCarryNote notes) $ \note -> hPutStrLn stderr ("slap: " ++ note)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
-    Nothing -> case patchContents parsed of
-      Nothing -> die (needSourceMessage parsed)
-      Just contents -> do
-        convertResult <- orDie (convertDirect contents (commandConvertTo parsedCommand) mergedMeta)
-        emitSlapWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
-        ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
-        putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+    SourceLessConvert contents -> do
+      convertResult <- orDie (convertDirect contents (commandConvertTo parsedCommand) mergedMeta)
+      emitSlapWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
+      ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
+      putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+    ConvertRequiresSource somePatch ->
+      die (needSourceMessage somePatch)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
@@ -806,6 +789,65 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
     reason
       | patchIsDifferential somePatch = "stores differential data, not raw bytes"
       | otherwise                  = "does not carry extractable records"
+
+-- | The three real convert cases, each with the inputs the branch needs.
+-- Built once from the parsed patch and the CLI command by
+-- 'chooseConvertDispatch'; pattern-matched once in 'doConvert'.
+data ConvertDispatch
+  = ApplyAndRecreate ConvertWithSource
+    -- ^ User supplied @--with SOURCE@; load the source, apply the patch,
+    -- re-encode the target bytes as the target format.
+  | SourceLessConvert PatchContents
+    -- ^ User didn't supply source, but the parsed patch carries enough
+    -- structure ('PatchContents') to re-encode without source bytes.
+  | ConvertRequiresSource SomePatch
+    -- ^ User didn't supply source, and the parsed patch doesn't carry
+    -- 'PatchContents' (diff formats without self-contained records).
+    -- Terminates via 'needSourceMessage'.
+
+-- | Flatten the two Maybe values that decide which convert path runs into
+-- the single sum they really express.  The user's @--with SOURCE@ flag
+-- commits to apply-and-recreate outright; without it, the parsed patch
+-- either carries 'PatchContents' (source-less conversion works) or it
+-- doesn't (the user has to supply source or give up).
+chooseConvertDispatch :: Command -> SomePatch -> ConvertDispatch
+chooseConvertDispatch parsedCommand parsed =
+  case commandConvertWithSource parsedCommand of
+    Just withSource -> ApplyAndRecreate withSource
+    Nothing -> case patchContents parsed of
+      Just contents -> SourceLessConvert contents
+      Nothing       -> ConvertRequiresSource parsed
+
+-- | BPS-specific conversion notes: a warning when a patch's metadata bytes
+-- are being dropped because the target format has no metadata channel, and
+-- an informational note when the target is BPS but the user didn't supply
+-- @--metadata FILE@ to carry the source's metadata forward.
+data BPSConversionNotes = BPSConversionNotes
+  { bpsConversionWarnings  :: [SlapWarning]
+  , bpsConversionCarryNote :: Maybe String
+  }
+
+computeBPSConversionNotes
+  :: SomePatch
+  -> CreateFormat
+  -> RequestedPatchMetadata
+  -> BPSConversionNotes
+computeBPSConversionNotes parsed targetFormat mergedMeta = BPSConversionNotes
+  { bpsConversionWarnings  = dropWarnings
+  , bpsConversionCarryNote = carryNote
+  }
+  where
+    targetIsBPS = targetFormat == CreateDiff CreateBPS
+    dropWarnings = case patchMetadata parsed of
+      Just metaBytes | not targetIsBPS -> [MetadataDropped (ByteString.length metaBytes)]
+      _                                -> []
+    carryNote = case patchMetadata parsed of
+      Just metaBytes
+        | targetIsBPS
+        , isNothing (requestedEmbeddedBlob mergedMeta) ->
+            Just ("note: source has " ++ show (ByteString.length metaBytes)
+                  ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
+      _ -> Nothing
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -976,3 +1018,13 @@ dieError = die . renderSlapError
 -- that appears in every do-function that calls into the library.
 orDie :: Either SlapError a -> IO a
 orDie = either dieError pure
+
+-- | Read a patch file, parse it, return the parsed 'SomePatch'.  Terminates
+-- with a rendered error if the file can't be read or the bytes don't parse.
+-- Caller is responsible for calling 'emitWarnings' on the result if parse-time
+-- warnings should be surfaced — 'doApply' and 'doUndo' interleave a verbosity
+-- check between parse and warning emission, so the helper stays parse-only.
+readAndParsePatch :: FilePath -> IO SomePatch
+readAndParsePatch path = do
+  patchBytes <- readUnwrap path
+  orDie (parseSome (PatchFileContents patchBytes))
