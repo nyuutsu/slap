@@ -150,10 +150,10 @@ data Command
       , commandDescription       :: Maybe String
       , commandTitle      :: Maybe String
       , commandAuthor     :: Maybe String
-      , commandUndo       :: Maybe Bool
-      , commandValidate   :: Maybe Bool
+      , commandUndo       :: Maybe UndoInclusion
+      , commandValidate   :: Maybe ValidationInclusion
       , commandVersion    :: Maybe String
-      , commandUnstable   :: Maybe Bool
+      , commandUnstable   :: Maybe PatchStability
       , commandRomType    :: Maybe PlatformType
       , commandImageType  :: Maybe PPFImageType
       , commandGenre      :: Maybe String
@@ -172,11 +172,11 @@ data Command
       , commandConvertDescription      :: Maybe String
       , commandConvertTitle     :: Maybe String
       , commandConvertAuthor    :: Maybe String
-      , commandConvertUndo      :: Maybe Bool
-      , commandConvertValidate  :: Maybe Bool
+      , commandConvertUndo      :: Maybe UndoInclusion
+      , commandConvertValidate  :: Maybe ValidationInclusion
       , commandNoVerify      :: Bool
       , commandConvertVersion   :: Maybe String
-      , commandConvertUnstable  :: Maybe Bool
+      , commandConvertUnstable  :: Maybe PatchStability
       , commandConvertRomType   :: Maybe PlatformType
       , commandConvertImageType :: Maybe PPFImageType
       , commandConvertGenre     :: Maybe String
@@ -260,11 +260,11 @@ verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
 -- | Parser for the four mutually exclusive output lanes.  'asum' tries each
--- in turn and commits to the first one whose distinguishing flag is present;
--- if the user types flags from multiple lanes, the combined parser rejects
--- the command line (the unused lane's flag is left over and fails the top
--- level).  The fallthrough ('pure ApplyToDerivedFile') succeeds
--- unconditionally, so it must come last.
+-- lane in turn and commits to the first one whose distinguishing flag is
+-- present.  Combinations that span multiple lanes are rejected at parse
+-- time; no silent precedence resolution.  The fallthrough
+-- ('pure ApplyToDerivedFile') succeeds unconditionally, so it must come
+-- last.
 applyOutputParser :: Parser ApplyOutput
 applyOutputParser = asum
   [ dryRunLane
@@ -338,11 +338,14 @@ createParser = do
         <> help "Patch title (EBP/NINJA2)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
         <> help "Patch author (EBP/DPS/NINJA2)"))
-    includeUndo <- optional (flag' True (long "undo" <> short 'u' <> help "Include undo data (PPF3 only)"))
-    includeValidation <- optional (flag' True (long "validate" <> short 'v' <> help "Include validation block (PPF3 only)"))
+    includeUndo <- optional (flag' IncludeUndoData (long "undo" <> short 'u'
+        <> help "Include undo data (PPF3 only)"))
+    includeValidation <- optional (flag' IncludeValidationBlock (long "validate" <> short 'v'
+        <> help "Include validation block (PPF3 only)"))
     version <- optional (option str (long "version" <> metavar "TEXT"
         <> help "Patch version (DPS/NINJA2)"))
-    unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
+    unstable <- optional (flag' UnstablePatch (long "unstable"
+        <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
         <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
@@ -398,14 +401,19 @@ convertParser = do
         <> help "Patch title (EBP/NINJA2)"))
     author <- optional (option str (long "author" <> metavar "TEXT"
         <> help "Patch author (EBP/DPS/NINJA2)"))
-    includeUndo <- optional (flag' True (long "undo" <> help "Include undo data (PPF3)")
-                         <|> flag' False (long "no-undo" <> help "Omit undo data (PPF3)"))
-    includeValidation <- optional (flag' True (long "validate" <> help "Include validation block (PPF3)")
-                               <|> flag' False (long "no-validate" <> help "Omit validation block (PPF3)"))
+    includeUndo <- optional (flag' IncludeUndoData (long "undo"
+                                <> help "Include undo data (PPF3)")
+                         <|> flag' OmitUndoData (long "no-undo"
+                                <> help "Omit undo data (PPF3)"))
+    includeValidation <- optional (flag' IncludeValidationBlock (long "validate"
+                                      <> help "Include validation block (PPF3)")
+                               <|> flag' OmitValidationBlock (long "no-validate"
+                                      <> help "Omit validation block (PPF3)"))
     noVerify <- noVerifyFlag
     version <- optional (option str (long "version" <> metavar "TEXT"
         <> help "Patch version (DPS/NINJA2)"))
-    unstable <- optional (flag' True (long "unstable" <> help "Mark patch unstable (DPS)"))
+    unstable <- optional (flag' UnstablePatch (long "unstable"
+        <> help "Mark patch unstable (DPS)"))
     romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
         <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
     imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
@@ -674,22 +682,6 @@ doUndo parsedCommand = do
 -- Create
 ----------------------------------------------------------------------------
 
--- Small boundary adapters: the CLI still models each of these flags as a
--- 'Maybe Bool' on 'Command'; 'RequestedPatchMetadata' has promoted each
--- to a named sum. These three helpers do the bridging at the construction
--- site; once the CLI layer grows its own typed request record, these go away.
-boolToUndoInclusion :: Bool -> UndoInclusion
-boolToUndoInclusion True  = IncludeUndoData
-boolToUndoInclusion False = OmitUndoData
-
-boolToValidationInclusion :: Bool -> ValidationInclusion
-boolToValidationInclusion True  = IncludeValidationBlock
-boolToValidationInclusion False = OmitValidationBlock
-
-boolToStability :: Bool -> PatchStability
-boolToStability True  = UnstablePatch
-boolToStability False = StablePatch
-
 doCreate :: Command -> IO ()
 doCreate parsedCommand = do
   originalBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandOriginal parsedCommand)
@@ -702,9 +694,9 @@ doCreate parsedCommand = do
         , requestedAuthor              = commandAuthor      parsedCommand
         , requestedDescription         = commandDescription parsedCommand
         , requestedVersion             = commandVersion     parsedCommand
-        , requestedUndoInclusion       = fmap boolToUndoInclusion       (commandUndo     parsedCommand)
-        , requestedValidationInclusion = fmap boolToValidationInclusion (commandValidate parsedCommand)
-        , requestedStability           = fmap boolToStability           (commandUnstable parsedCommand)
+        , requestedUndoInclusion       = commandUndo     parsedCommand
+        , requestedValidationInclusion = commandValidate parsedCommand
+        , requestedStability           = commandUnstable parsedCommand
         , requestedRomType             = commandRomType       parsedCommand
         , requestedImageType           = commandImageType     parsedCommand
         , requestedGenre               = commandGenre         parsedCommand
@@ -746,9 +738,9 @@ doConvert parsedCommand = do
             , requestedAuthor              = commandConvertAuthor      parsedCommand
             , requestedDescription         = commandConvertDescription parsedCommand
             , requestedVersion             = commandConvertVersion     parsedCommand
-            , requestedUndoInclusion       = fmap boolToUndoInclusion       (commandConvertUndo     parsedCommand)
-            , requestedValidationInclusion = fmap boolToValidationInclusion (commandConvertValidate parsedCommand)
-            , requestedStability           = fmap boolToStability           (commandConvertUnstable parsedCommand)
+            , requestedUndoInclusion       = commandConvertUndo     parsedCommand
+            , requestedValidationInclusion = commandConvertValidate parsedCommand
+            , requestedStability           = commandConvertUnstable parsedCommand
             , requestedRomType             = commandConvertRomType       parsedCommand
             , requestedImageType           = commandConvertImageType     parsedCommand
             , requestedGenre               = commandConvertGenre         parsedCommand
