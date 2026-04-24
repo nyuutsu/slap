@@ -363,14 +363,10 @@ requestedPatchMetadataInputsParser = do
                             <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
     version           <- optional (option str (long "version" <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
-    includeUndo       <- optional (flag' IncludeUndoData       (long "undo"
-                                              <> help "Include undo data (PPF3)")
-                               <|> flag' OmitUndoData          (long "no-undo"
-                                              <> help "Omit undo data (PPF3)"))
-    includeValidation <- optional (flag' IncludeValidationBlock (long "validate"
-                                              <> help "Include validation block (PPF3)")
-                               <|> flag' OmitValidationBlock    (long "no-validate"
-                                              <> help "Omit validation block (PPF3)"))
+    includeUndo       <- optional (flag' OmitUndoData       (long "no-undo"
+                            <> help "Omit undo data (default: included when the format supports it)"))
+    includeValidation <- optional (flag' OmitValidationBlock (long "no-validate"
+                            <> help "Omit validation block (default: included when the format supports it)"))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
@@ -713,12 +709,7 @@ doConvert parsedCommand = do
           let source = SourceFileContents sourceBytes
           verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
           target <- applyForConvert parsed source
-          -- For --with conversion, default undo/validate to "include" (preservation)
-          let withMeta = mergedMeta
-                { requestedUndoInclusion       = requestedUndoInclusion       mergedMeta <|> Just IncludeUndoData
-                , requestedValidationInclusion = requestedValidationInclusion mergedMeta <|> Just IncludeValidationBlock
-                }
-          case createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target withMeta (patchContents parsed) of
+          case createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) of
             Left slapError -> dieError slapError
             Right createResult -> do
               printWarnings (patchSourceNotes parsed ++ metaWarnings

@@ -231,21 +231,21 @@ compoundTests slap base ips bps =
 
 createFlagTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 createFlagTests slap base bps =
-  [ testCase "create/ppf3+undo+validate+desc" $
+  [ testCase "create/ppf3+desc" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
-        expectOk slap ["create", "--format", "ppf3", "--undo", "--validate",
+        expectOk slap ["create", "--format", "ppf3",
                         "-d", "test patch", base, target, patch]
           "create/ppf3" "wrote"
 
-  , testCase "create/ppf3 undo data present" $
+  , testCase "create/ppf3 undo data present by default" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "ppf3", "--undo", "--validate",
+        _ <- runSlap slap ["create", "--format", "ppf3",
                            "-d", "test patch", base, target, patch]
         expectOk slap ["info", patch] "create/ppf3 undo" "undo"
   ]

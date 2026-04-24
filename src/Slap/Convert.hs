@@ -814,8 +814,8 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
     validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
-    undoChoice       = fromMaybe OmitUndoData        (requestedUndoInclusion       meta)
-    validationChoice = fromMaybe OmitValidationBlock (requestedValidationInclusion meta)
+    undoChoice       = fromMaybe IncludeUndoData        (requestedUndoInclusion       meta)
+    validationChoice = fromMaybe IncludeValidationBlock (requestedValidationInclusion meta)
     spec             = formatSpecification format undoChoice validationChoice
     allFields = specificationRequired spec `Set.union` specificationAccepted spec
     needs field = field `Set.member` allFields

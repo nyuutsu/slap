@@ -11,6 +11,10 @@ import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Convert (CreateFormat(..), RequestedPatchMetadata(..), UndoInclusion(..),
                      ValidationInclusion(..), DirectCreate(..), noMetadataRequested)
 
+-- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
+-- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
+-- so the harness controls which flag strings are recognised.
+
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString
 import Data.List (isPrefixOf)
@@ -56,11 +60,9 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
       let flags = words flagsString
           useWith = "--with" `elem` flags
           includeUndo
-            | "--undo" `elem` flags    = Just IncludeUndoData
             | "--no-undo" `elem` flags = Just OmitUndoData
             | otherwise                = Nothing
           includeValidate
-            | "--validate" `elem` flags    = Just IncludeValidationBlock
             | "--no-validate" `elem` flags = Just OmitValidationBlock
             | otherwise                    = Nothing
 
