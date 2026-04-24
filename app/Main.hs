@@ -178,45 +178,76 @@ data Verbosity
   | Verbose
   deriving (Show, Eq)
 
+-- | The top-level CLI command.  Each constructor wraps a dedicated record
+-- type whose fields are total within that subcommand's scope; field
+-- selectors are therefore total too, and the @-Wpartial-fields@ warning
+-- (enabled in @slap.cabal@) fires on no field of any record below.  The
+-- per-record verb prefix (@apply*@, @undo*@, ...) isn't dodging cross-
+-- constructor field collisions — there are none — but it makes per-record
+-- field accesses self-describing at use sites.
 data Command
-  = CommandApply
-      { commandVerificationPolicy :: VerificationPolicy
-      , commandVerbosity          :: Verbosity
-      , commandApplyOutput :: ApplyOutput
-      , commandFileReading :: FileReadingOptions
-      , commandPatch   :: FilePath
-      , commandSource  :: FilePath
-      }
-  | CommandUndo
-      { commandVerbosity   :: Verbosity
-      , commandFileReading :: FileReadingOptions
-      , commandPatch   :: FilePath
-      , commandSource  :: FilePath
-      , commandUndoOutput :: UndoOutput
-      }
-  | CommandCreate
-      { commandCreateFormat   :: CreateFormat
-      , commandFileReading    :: FileReadingOptions
-      , commandOriginal       :: FilePath
-      , commandModified       :: FilePath
-      , commandCreateOutput   :: FilePath
-      , commandCreateMetadata :: RequestedPatchMetadataInputs
-      }
-  | CommandConvert
-      { commandConvertPatch       :: FilePath
-      , commandConvertTo          :: CreateFormat
-      , commandConvertOutput      :: ConvertOutput
-      , commandConvertWithSource  :: Maybe ConvertWithSource
-      , commandFileReading        :: FileReadingOptions
-      , commandConvertMetadata    :: RequestedPatchMetadataInputs
-      }
-  | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
-  | CommandExplain
-      { commandPatch            :: FilePath
-      , commandExplainVerbosity :: ExplainVerbosity
-      , commandExplainSource    :: Maybe FilePath
-      , commandFileReading      :: FileReadingOptions
-      }
+  = Apply   ApplyCommand
+  | Undo    UndoCommand
+  | Create  CreateCommand
+  | Convert ConvertCommand
+  | Info    InfoCommand
+  | Explain ExplainCommand
+
+data ApplyCommand = ApplyCommand
+  { applyVerificationPolicy :: VerificationPolicy
+  , applyVerbosity          :: Verbosity
+  , applyOutput             :: ApplyOutput
+  , applyFileReading        :: FileReadingOptions
+  , applyPatch              :: FilePath
+  , applySource             :: FilePath
+  }
+  deriving (Show)
+
+data UndoCommand = UndoCommand
+  { undoVerbosity   :: Verbosity
+  , undoFileReading :: FileReadingOptions
+  , undoPatch       :: FilePath
+  , undoSource      :: FilePath
+  , undoOutput      :: UndoOutput
+  }
+  deriving (Show)
+
+data CreateCommand = CreateCommand
+  { createFormat      :: CreateFormat
+  , createFileReading :: FileReadingOptions
+  , createOriginal    :: FilePath
+  , createModified    :: FilePath
+  , createOutput      :: FilePath
+  , createMetadata    :: RequestedPatchMetadataInputs
+  }
+  deriving (Show)
+
+-- | The 'convertWithSource' field reuses the type name 'ConvertWithSource'
+-- defined above; that's namespace coincidence, not collision — Haskell's
+-- term/type namespaces are separate.
+data ConvertCommand = ConvertCommand
+  { convertPatch       :: FilePath
+  , convertTo          :: CreateFormat
+  , convertOutput      :: ConvertOutput
+  , convertWithSource  :: Maybe ConvertWithSource
+  , convertFileReading :: FileReadingOptions
+  , convertMetadata    :: RequestedPatchMetadataInputs
+  }
+  deriving (Show)
+
+data InfoCommand = InfoCommand
+  { infoPatch           :: FilePath
+  , infoExtractMetadata :: Maybe FilePath
+  }
+  deriving (Show)
+
+data ExplainCommand = ExplainCommand
+  { explainPatch       :: FilePath
+  , explainVerbosity   :: ExplainVerbosity
+  , explainSource      :: Maybe FilePath
+  , explainFileReading :: FileReadingOptions
+  }
+  deriving (Show)
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -224,12 +255,12 @@ data Command
 
 main :: IO ()
 main = customExecParser (prefs showHelpOnEmpty) options >>= \case
-  parsedCommand@CommandApply{}   -> doApply parsedCommand
-  parsedCommand@CommandUndo{}    -> doUndo parsedCommand
-  parsedCommand@CommandCreate{}  -> doCreate parsedCommand
-  parsedCommand@CommandConvert{} -> doConvert parsedCommand
-  parsedCommand@CommandInfo{}    -> doInfo parsedCommand
-  parsedCommand@CommandExplain{} -> doExplain parsedCommand
+  Apply   parsedCommand -> doApply   parsedCommand
+  Undo    parsedCommand -> doUndo    parsedCommand
+  Create  parsedCommand -> doCreate  parsedCommand
+  Convert parsedCommand -> doConvert parsedCommand
+  Info    parsedCommand -> doInfo    parsedCommand
+  Explain parsedCommand -> doExplain parsedCommand
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
@@ -242,15 +273,15 @@ options = info (commandParser <**> helper)
 
 commandParser :: Parser Command
 commandParser = subparser
-  ( command "apply"   (info (applyParser   <**> helper) (progDesc "Apply a patch (safe by default; use -i for in-place)"))
- <> command "undo"    (info (undoParser    <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
- <> command "create"  (info (createParser  <**> helper) (progDesc "Create a patch from two files"))
- <> command "convert" (info (convertParser <**> helper) (progDesc "Convert a patch to a different format"))
- <> command "info"    (info (patchInfoParser <**> helper) (progDesc "Display patch information"))
- <> command "explain" (info (explainParser <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
+  ( command "apply"   (info (Apply   <$> applyParser     <**> helper) (progDesc "Apply a patch (safe by default; use -i for in-place)"))
+ <> command "undo"    (info (Undo    <$> undoParser      <**> helper) (progDesc "Undo a patch (PPF3 undo data, or UPS self-inverse)"))
+ <> command "create"  (info (Create  <$> createParser    <**> helper) (progDesc "Create a patch from two files"))
+ <> command "convert" (info (Convert <$> convertParser   <**> helper) (progDesc "Convert a patch to a different format"))
+ <> command "info"    (info (Info    <$> patchInfoParser <**> helper) (progDesc "Display patch information"))
+ <> command "explain" (info (Explain <$> explainParser   <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
   )
 
-explainParser :: Parser Command
+explainParser :: Parser ExplainCommand
 explainParser = do
     patchFile          <- argument str (metavar "PATCH" <> help "Patch file to explain")
     verbosity          <- flag Summary FullRecords
@@ -258,28 +289,28 @@ explainParser = do
     maybeWithPath      <- optional (option str (long "with" <> metavar "SOURCE"
                             <> help "Source file (resolves delta/copy operations in output)"))
     fileReadingOptions <- fileReadingOptionsParser
-    pure CommandExplain
-      { commandPatch            = patchFile
-      , commandExplainVerbosity = verbosity
-      , commandExplainSource    = maybeWithPath
-      , commandFileReading      = fileReadingOptions
+    pure ExplainCommand
+      { explainPatch       = patchFile
+      , explainVerbosity   = verbosity
+      , explainSource      = maybeWithPath
+      , explainFileReading = fileReadingOptions
       }
 
-applyParser :: Parser Command
+applyParser :: Parser ApplyCommand
 applyParser = do
     verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch  <- argument str (metavar "PATCH" <> help "Patch file")
-    source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
-    applyOutput <- applyOutputParser
-    pure CommandApply
-      { commandVerificationPolicy = verificationPolicy
-      , commandVerbosity          = verbosity
-      , commandApplyOutput = applyOutput
-      , commandFileReading = fileReadingOptions
-      , commandPatch = patch
-      , commandSource = source
+    patch              <- argument str (metavar "PATCH" <> help "Patch file")
+    source             <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
+    output             <- applyOutputParser
+    pure ApplyCommand
+      { applyVerificationPolicy = verificationPolicy
+      , applyVerbosity          = verbosity
+      , applyOutput             = output
+      , applyFileReading        = fileReadingOptions
+      , applyPatch              = patch
+      , applySource             = source
       }
 
 verificationPolicyParser :: Parser VerificationPolicy
@@ -350,19 +381,19 @@ fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
     archiveHandlingFromSwitch = flag AutoUnwrapSingleEntryArchives ReadBytesVerbatim
       (long "raw" <> help "Read input files as raw bytes; do not attempt to unwrap zip/7z archives")
 
-undoParser :: Parser Command
+undoParser :: Parser UndoCommand
 undoParser = do
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch  <- argument str (metavar "PATCH" <> help "Patch file")
-    source <- argument str (metavar "SOURCE" <> help "File to restore")
-    undoOutput <- undoOutputParser
-    pure CommandUndo
-      { commandVerbosity   = verbosity
-      , commandFileReading = fileReadingOptions
-      , commandPatch = patch
-      , commandSource = source
-      , commandUndoOutput = undoOutput
+    patch              <- argument str (metavar "PATCH" <> help "Patch file")
+    source             <- argument str (metavar "SOURCE" <> help "File to restore")
+    output             <- undoOutputParser
+    pure UndoCommand
+      { undoVerbosity   = verbosity
+      , undoFileReading = fileReadingOptions
+      , undoPatch       = patch
+      , undoSource      = source
+      , undoOutput      = output
       }
 
 undoOutputParser :: Parser UndoOutput
@@ -375,38 +406,38 @@ convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
   <$> optional (option str (long "output" <> short 'o' <> metavar "FILE"
       <> help "Output file (default: replace input extension with target format's)"))
 
-createParser :: Parser Command
+createParser :: Parser CreateCommand
 createParser = do
-    createFormat       <- createFormatParser
+    format             <- createFormatParser
     fileReadingOptions <- fileReadingOptionsParser
     original           <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
     modified           <- argument str (metavar "MODIFIED" <> help "Modified file")
     outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- requestedPatchMetadataInputsParser
-    pure CommandCreate
-      { commandCreateFormat   = createFormat
-      , commandFileReading    = fileReadingOptions
-      , commandOriginal       = original
-      , commandModified       = modified
-      , commandCreateOutput   = outputFile
-      , commandCreateMetadata = metadataInputs
+    pure CreateCommand
+      { createFormat      = format
+      , createFileReading = fileReadingOptions
+      , createOriginal    = original
+      , createModified    = modified
+      , createOutput      = outputFile
+      , createMetadata    = metadataInputs
       }
 
-convertParser :: Parser Command
+convertParser :: Parser ConvertCommand
 convertParser = do
     patchFile          <- argument str (metavar "PATCH" <> help "Patch file to convert")
     targetFormat       <- convertToParser
-    convertOutput      <- convertOutputParser
+    output             <- convertOutputParser
     withSource         <- optional convertWithSourceParser
     fileReadingOptions <- fileReadingOptionsParser
     metadataInputs     <- requestedPatchMetadataInputsParser
-    pure CommandConvert
-      { commandConvertPatch       = patchFile
-      , commandConvertTo          = targetFormat
-      , commandConvertOutput      = convertOutput
-      , commandConvertWithSource  = withSource
-      , commandFileReading        = fileReadingOptions
-      , commandConvertMetadata    = metadataInputs
+    pure ConvertCommand
+      { convertPatch       = patchFile
+      , convertTo          = targetFormat
+      , convertOutput      = output
+      , convertWithSource  = withSource
+      , convertFileReading = fileReadingOptions
+      , convertMetadata    = metadataInputs
       }
 
 -- | Parser for @--with SOURCE@ plus its sub-flag @--no-verify@.  The
@@ -552,14 +583,14 @@ parseImageType typeString = case map toLower typeString of
   "gi"  -> Right GI
   _ -> Left ("unknown image type: " ++ typeString ++ "\n  expected: bin, gi")
 
-patchInfoParser :: Parser Command
+patchInfoParser :: Parser InfoCommand
 patchInfoParser = do
     patchFile <- argument str (metavar "PATCH" <> help "Patch file to inspect")
     extractMetadataPath <- optional (option str (long "extract-metadata" <> metavar "FILE"
         <> help "Write embedded metadata to FILE (BPS)"))
-    pure CommandInfo
-      { commandPatch = patchFile
-      , commandExtractMetadata = extractMetadataPath
+    pure InfoCommand
+      { infoPatch           = patchFile
+      , infoExtractMetadata = extractMetadataPath
       }
 
 ----------------------------------------------------------------------------
@@ -581,8 +612,8 @@ readUnwrap path = do
           pure unwrappedBytes
 
 -- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
--- CommandInfo currently uses 'readUnwrap' unconditionally; if it ever grows a
--- '--raw' flag of its own, route it through here instead.
+-- 'InfoCommand' currently uses 'readUnwrap' unconditionally; if it ever grows
+-- a @--raw@ flag of its own, route it through here instead.
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
@@ -617,16 +648,16 @@ resolveRequestedPatchMetadata inputs = do
 -- Info & Explain
 ----------------------------------------------------------------------------
 
-doInfo :: Command -> IO ()
+doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
-  parsed <- readAndParsePatch (commandPatch parsedCommand)
+  parsed <- readAndParsePatch (infoPatch parsedCommand)
   let explain = patchExplain parsed
       summary = patchRecordSummary parsed
   putStrLn $ "format:      " ++ explainFormat explain
   mapM_ (putStrLn . renderField) (explainHeader explain)
   putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
   emitWarnings parsed
-  case commandExtractMetadata parsedCommand of
+  case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
     Just outPath -> case patchMetadata parsed of
       Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
@@ -634,13 +665,13 @@ doInfo parsedCommand = do
         ByteString.writeFile outPath metadataBytes
         putStrLn ("wrote metadata to " ++ outPath)
 
-doExplain :: Command -> IO ()
+doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
-  parsed <- readAndParsePatch (commandPatch parsedCommand)
-  maybeSource <- case commandExplainSource parsedCommand of
+  parsed <- readAndParsePatch (explainPatch parsedCommand)
+  maybeSource <- case explainSource parsedCommand of
     Nothing   -> pure Nothing
-    Just path -> Just <$> readMaybeUnwrap (commandFileReading parsedCommand) path
-  let renderFunction = case commandExplainVerbosity parsedCommand of
+    Just path -> Just <$> readMaybeUnwrap (explainFileReading parsedCommand) path
+  let renderFunction = case explainVerbosity parsedCommand of
         Summary     -> renderSummary
         FullRecords -> renderExplain
   putStr (renderFunction maybeSource (patchExplain parsed))
@@ -650,19 +681,19 @@ doExplain parsedCommand = do
 -- Apply
 ----------------------------------------------------------------------------
 
-doApply :: Command -> IO ()
+doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
-  parsed <- readAndParsePatch (commandPatch parsedCommand)
+  parsed <- readAndParsePatch (applyPatch parsedCommand)
   emitWarnings parsed
-  case commandVerbosity parsedCommand of
+  case applyVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
     Quiet   -> pure ()
 
   let verification = patchVerification parsed
-      verificationPolicy = commandVerificationPolicy parsedCommand
+      verificationPolicy = applyVerificationPolicy parsedCommand
 
       applyAndWriteTo outputPath = do
-        sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
+        sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
         let source = SourceFileContents sourceBytes
         verifySource verificationPolicy verification source
         target <- orDie =<< inMemoryApply (patchApply parsed) source
@@ -672,15 +703,15 @@ doApply parsedCommand = do
         putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
                 ++ " \8594 " ++ outputPath
 
-  case commandApplyOutput parsedCommand of
+  case applyOutput parsedCommand of
     ApplyDryRun -> do
-      let reportedPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+      let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
           summary = patchRecordSummary parsed
       putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
               ++ " \8594 " ++ reportedPath
       case verifySourceCRC32 verification of
         Just expected -> do
-          sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
+          sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
           let actual = rustyCRC32 sourceBytes
           putStrLn $ "source CRC: " ++ formatCRC actual
             ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
@@ -689,16 +720,16 @@ doApply parsedCommand = do
     ApplyInPlace backupBehavior -> do
       case backupBehavior of
         WriteBackup -> do
-          let backupPath = commandSource parsedCommand ++ ".bak"
-          copyFile (commandSource parsedCommand) backupPath
+          let backupPath = applySource parsedCommand ++ ".bak"
+          copyFile (applySource parsedCommand) backupPath
           hPutStrLn stderr ("slap: backup: " ++ backupPath)
         NoBackup -> pure ()
-      applyAndWriteTo (commandSource parsedCommand)
+      applyAndWriteTo (applySource parsedCommand)
     ApplyToExplicitFile outputPath overwritePolicy -> do
       refuseOverwrite overwritePolicy outputPath
       applyAndWriteTo outputPath
     ApplyToDerivedFile overwritePolicy -> do
-      let outputPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+      let outputPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
       refuseOverwrite overwritePolicy outputPath
       applyAndWriteTo outputPath
 
@@ -706,20 +737,20 @@ doApply parsedCommand = do
 -- Undo
 ----------------------------------------------------------------------------
 
-doUndo :: Command -> IO ()
+doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
-  parsed <- readAndParsePatch (commandPatch parsedCommand)
+  parsed <- readAndParsePatch (undoPatch parsedCommand)
   emitWarnings parsed
-  case commandVerbosity parsedCommand of
+  case undoVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
     Quiet   -> pure ()
   case patchUndo parsed of
     Nothing -> die "undo not supported for this format"
     Just (UndoInMemory revert) -> do
-      modified <- ByteString.readFile (commandSource parsedCommand)
+      modified <- ByteString.readFile (undoSource parsedCommand)
       SourceFileContents result <- orDie (revert (TargetFileContents modified))
-      let outputPath = case commandUndoOutput parsedCommand of
-            UndoInPlace                 -> commandSource parsedCommand
+      let outputPath = case undoOutput parsedCommand of
+            UndoInPlace                 -> undoSource parsedCommand
             UndoToExplicitFile explicit -> explicit
       ByteString.writeFile outputPath result
       putStrLn "reverted"
@@ -728,50 +759,50 @@ doUndo parsedCommand = do
 -- Create
 ----------------------------------------------------------------------------
 
-doCreate :: Command -> IO ()
+doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
-  originalBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandOriginal parsedCommand)
-  modifiedBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandModified parsedCommand)
-  createMeta    <- resolveRequestedPatchMetadata (commandCreateMetadata parsedCommand)
-  emitSlapWarnings (createDefaultNotes (commandCreateFormat parsedCommand) createMeta)
-  result <- orDie (createFromMemory (commandCreateFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
+  originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
+  modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
+  createMeta    <- resolveRequestedPatchMetadata (createMetadata parsedCommand)
+  emitSlapWarnings (createDefaultNotes (createFormat parsedCommand) createMeta)
+  result <- orDie (createFromMemory (createFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
   emitSlapWarnings (resultWarnings result)
-  ByteString.writeFile (commandCreateOutput parsedCommand) (unPatchFileContents (resultBytes result))
-  putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
+  ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
+  putStrLn ("wrote " ++ createOutput parsedCommand)
 
 ----------------------------------------------------------------------------
 -- Convert
 ----------------------------------------------------------------------------
 
-doConvert :: Command -> IO ()
+doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
-  parsed <- readAndParsePatch (commandConvertPatch parsedCommand)
+  parsed <- readAndParsePatch (convertPatch parsedCommand)
   emitWarnings parsed
-  cliMeta <- resolveRequestedPatchMetadata (commandConvertMetadata parsedCommand)
-  let outputFile = case commandConvertOutput parsedCommand of
+  cliMeta <- resolveRequestedPatchMetadata (convertMetadata parsedCommand)
+  let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
-        ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
-                                                           (formatExtension (commandConvertTo parsedCommand))
+        ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
+                                                           (formatExtension (convertTo parsedCommand))
       mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      notes = computeBPSConversionNotes parsed (commandConvertTo parsedCommand) mergedMeta
+      notes = computeBPSConversionNotes parsed (convertTo parsedCommand) mergedMeta
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
-      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (convertWithSourcePath withSource)
+      sourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orDie (createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
+      createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
       emitSlapWarnings (patchSourceNotes parsed ++ bpsConversionWarnings notes
-                        ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
+                        ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
       forM_ (bpsConversionCarryNote notes) $ \note -> hPutStrLn stderr ("slap: " ++ note)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
-      putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+      putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
-      convertResult <- orDie (convertDirect contents (commandConvertTo parsedCommand) mergedMeta)
+      convertResult <- orDie (convertDirect contents (convertTo parsedCommand) mergedMeta)
       emitSlapWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
-      putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+      putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     ConvertRequiresSource somePatch ->
       die (needSourceMessage somePatch)
 
@@ -810,9 +841,9 @@ data ConvertDispatch
 -- commits to apply-and-recreate outright; without it, the parsed patch
 -- either carries 'PatchContents' (source-less conversion works) or it
 -- doesn't (the user has to supply source or give up).
-chooseConvertDispatch :: Command -> SomePatch -> ConvertDispatch
+chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
 chooseConvertDispatch parsedCommand parsed =
-  case commandConvertWithSource parsedCommand of
+  case convertWithSource parsedCommand of
     Just withSource -> ApplyAndRecreate withSource
     Nothing -> case patchContents parsed of
       Just contents -> SourceLessConvert contents
