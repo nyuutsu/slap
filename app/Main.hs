@@ -125,6 +125,17 @@ data ConvertOutput
   | ConvertToDerivedFile
   deriving (Show, Eq)
 
+-- | Optional side-channel for @slap convert@ when the target format needs
+-- the original ROM or the user opts into apply-and-recreate.  Couples the
+-- source path with its verification policy because @--no-verify@ is only
+-- meaningful when there's a source to verify against; the convert parser
+-- rejects @--no-verify@ alone.
+data ConvertWithSource = ConvertWithSource
+  { convertWithSourcePath   :: FilePath
+  , convertWithVerification :: VerificationPolicy
+  }
+  deriving (Show, Eq)
+
 -- | Whether to refuse writing over an existing output file.
 --
 -- @RefuseOverwrite@ (default) checks 'doesFileExist' before writing and
@@ -191,9 +202,8 @@ data Command
       { commandConvertPatch       :: FilePath
       , commandConvertTo          :: CreateFormat
       , commandConvertOutput      :: ConvertOutput
-      , commandConvertSource      :: Maybe FilePath
+      , commandConvertWithSource  :: Maybe ConvertWithSource
       , commandFileReading        :: FileReadingOptions
-      , commandVerificationPolicy :: VerificationPolicy
       , commandConvertMetadata    :: RequestedPatchMetadataInputs
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
@@ -359,20 +369,31 @@ convertParser = do
     patchFile          <- argument str (metavar "PATCH" <> help "Patch file to convert")
     targetFormat       <- convertToParser
     convertOutput      <- convertOutputParser
-    conversionSource   <- optional (option str (long "with" <> metavar "SOURCE"
-                            <> help "Source ROM (required for differential formats)"))
+    withSource         <- optional convertWithSourceParser
     fileReadingOptions <- fileReadingOptionsParser
-    verificationPolicy <- verificationPolicyParser
     metadataInputs     <- requestedPatchMetadataInputsParser
     pure CommandConvert
       { commandConvertPatch       = patchFile
       , commandConvertTo          = targetFormat
       , commandConvertOutput      = convertOutput
-      , commandConvertSource      = conversionSource
+      , commandConvertWithSource  = withSource
       , commandFileReading        = fileReadingOptions
-      , commandVerificationPolicy = verificationPolicy
       , commandConvertMetadata    = metadataInputs
       }
+
+-- | Parser for @--with SOURCE@ plus its sub-flag @--no-verify@.  The
+-- @--with@ option is the distinguishing flag: if absent, the whole parser
+-- fails and the enclosing 'optional' falls back to 'Nothing', which leaves
+-- any stray @--no-verify@ for the top-level parser to reject.  That's how
+-- the coupling is enforced at parse time — @--no-verify@ is only accepted
+-- alongside @--with@.
+convertWithSourceParser :: Parser ConvertWithSource
+convertWithSourceParser = ConvertWithSource
+  <$> option str (long "with" <> metavar "SOURCE"
+        <> help "Source file: enables apply-and-recreate conversion and source hash verification")
+  <*> flag EnforceVerification SkipVerification
+        (long "no-verify"
+          <> help "Skip source hash verification (requires --with SOURCE; mismatches become warnings)")
 
 -- | The output-format flag accepted by @slap create@.  Defaults to BPS
 -- so the bare @slap create base mod out@ command works without needing
@@ -729,12 +750,12 @@ doConvert parsedCommand = do
           Just ("note: source has " ++ show (ByteString.length metaBytes)
                 ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
         _ -> Nothing
-  case commandConvertSource parsedCommand of
-    Just sourcePath -> do
+  case commandConvertWithSource parsedCommand of
+    Just withSource -> do
       -- --with provided: always use apply-and-recreate path
-      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) sourcePath
+      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (convertWithSourcePath withSource)
       let source = SourceFileContents sourceBytes
-      verifySource (commandVerificationPolicy parsedCommand) (patchVerification parsed) source
+      verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orDie (createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
       emitSlapWarnings (patchSourceNotes parsed ++ metaWarnings
