@@ -8,7 +8,7 @@
 --
 -- Slap.Create and "Slap.Convert" sit together in the coordination
 -- layer. Slap.Convert owns the conversion porcelain — the
--- 'PatchContents' pipeline, the 'FormatSpecification' contract
+-- 'PatchContents' pipeline, the 'DirectConversionContract' contract
 -- checker, and the 'convertDirect' engine. Slap.Create owns the
 -- creation porcelain — the per-format front doors that know which
 -- format they're targeting statically. Callers that arrive with a

@@ -10,11 +10,11 @@ module Slap.Convert
   , PatchStability(..)
   , noMetadataRequested
   , noMetadataInputs
-  , FormatSpecification(..)
+  , DirectConversionContract(..)
   , ConversionFailure(..)
   , emptyContents
   , provides
-  , formatSpecification
+  , directConversionContract
   , canConvert
   , conversionNotes
   , convertDirect
@@ -77,10 +77,17 @@ import qualified Data.Set as Set
 -- Types
 ----------------------------------------------------------------------------
 
--- | Declares what a target format requires and can accept.
-data FormatSpecification = FormatSpecification
-  { specificationRequired :: Set.Set PatchField
-  , specificationAccepted :: Set.Set PatchField
+-- | The direct-target conversion contract: which 'PatchField's a direct
+-- format requires the source patch to carry, and which additional fields
+-- it can accept.  'canConvert' consults this to decide whether a given
+-- 'PatchContents' can be source-lessly converted to the target format
+-- without dropping apply-output-affecting data.
+--
+-- Diff targets use a different conversion path (apply-and-recreate via
+-- @--with SOURCE@), so this contract only covers direct formats.
+data DirectConversionContract = DirectConversionContract
+  { contractRequiredFields :: Set.Set PatchField
+  , contractAcceptedFields :: Set.Set PatchField
   }
 
 -- | Universal representation of a direct patch's contents.
@@ -346,18 +353,23 @@ inferValidationInclusion contents = if isJust (contentsValidation contents)
 -- Format specs
 ----------------------------------------------------------------------------
 
-formatSpecification :: DirectCreate -> UndoInclusion -> ValidationInclusion -> FormatSpecification
-formatSpecification target undoChoice validationChoice = case target of
-  CreateIPS     -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
-  CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [])
-  CreateEBP     -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FEBPMeta])
-  CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData   | undoChoice       == IncludeUndoData]
+-- | Build the conversion contract for a given direct target.  The
+-- 'UndoInclusion' and 'ValidationInclusion' parameters shape PPF3's
+-- /required/ set: both fields are optional in the wire format, so
+-- whether the source patch must carry them depends on whether the
+-- user asked for undo or validation to be included in the output.
+directConversionContract :: DirectCreate -> UndoInclusion -> ValidationInclusion -> DirectConversionContract
+directConversionContract target undoChoice validationChoice = case target of
+  CreateIPS     -> DirectConversionContract (requiredFields []) (acceptedFields [FTruncation])
+  CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
+  CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FDescription, FEBPMeta])
+  CreatePPF3    -> DirectConversionContract (requiredFields $ [FUndoData   | undoChoice       == IncludeUndoData]
                                  ++ [FValidation | validationChoice == IncludeValidationBlock])
                              (acceptedFields [FDescription, FImageType, FFileIdDiz])
-  CreateNINJA1  -> FormatSpecification (requiredFields []) (acceptedFields [FSourceCRC32, FSourceMD5, FSourceSHA1, FRomType])
-  CreatePMSR    -> FormatSpecification (requiredFields []) (acceptedFields [])
-  CreatePCHTXT  -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
-  CreateAPSN64  -> FormatSpecification (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
+  CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FSourceCRC32, FSourceMD5, FSourceSHA1, FRomType])
+  CreatePMSR    -> DirectConversionContract (requiredFields []) (acceptedFields [])
+  CreatePCHTXT  -> DirectConversionContract (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
+  CreateAPSN64  -> DirectConversionContract (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
   where
     requiredFields extra = Set.fromList (FRecords : extra)
     acceptedFields = Set.fromList
@@ -387,11 +399,11 @@ data ConversionFailure
   | ApplyOutputFieldsDropped (Set.Set PatchField)
   deriving (Eq, Show)
 
-canConvert :: PatchContents -> FormatSpecification -> Either ConversionFailure ()
-canConvert contents spec =
+canConvert :: PatchContents -> DirectConversionContract -> Either ConversionFailure ()
+canConvert contents contract =
   let have = provides contents
-      need = specificationRequired spec
-      kept = need `Set.union` specificationAccepted spec
+      need = contractRequiredFields contract
+      kept = need `Set.union` contractAcceptedFields contract
       droppedApplyOutput = Set.filter affectsApplyOutput
                              (have `Set.difference` kept)
       missing = need `Set.difference` have
@@ -404,7 +416,7 @@ canConvert contents spec =
        then Left (RequirementsMissing missing)
      else Right ()
 
--- | Every direct creation target, used to scan 'formatSpecification'
+-- | Every direct creation target, used to scan 'directConversionContract'
 -- for formats that preserve a given 'PatchField'. Written out rather
 -- than derived via @Enum@/@Bounded@ because 'DirectCreate' is small,
 -- stable, and adding a constructor already touches several files.
@@ -413,7 +425,7 @@ allDirectTargets =
   [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3,
    CreateNINJA1, CreatePMSR, CreatePCHTXT, CreateAPSN64]
 
--- | Direct creation targets whose 'formatSpecification' accepts the
+-- | Direct creation targets whose 'directConversionContract' accepts the
 -- given 'PatchField'. Used by 'convertDirect' to populate the
 -- @Targets that preserve ...@ clause of the
 -- 'ApplyOutputFieldsWouldBeDropped' refusal message; dynamic so
@@ -426,8 +438,8 @@ preservingDirectTargets :: PatchField -> [FormatLabel]
 preservingDirectTargets field =
   [ directLabel target
   | target <- allDirectTargets
-  , let spec = formatSpecification target IncludeUndoData IncludeValidationBlock
-        accepted = specificationRequired spec `Set.union` specificationAccepted spec
+  , let contract = directConversionContract target IncludeUndoData IncludeValidationBlock
+        accepted = contractRequiredFields contract `Set.union` contractAcceptedFields contract
   , field `Set.member` accepted
   ]
 
@@ -435,10 +447,10 @@ preservingDirectTargets field =
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> DirectCreate -> FormatSpecification -> RequestedPatchMetadata -> [SlapWarning]
-conversionNotes contents target spec meta =
+conversionNotes :: PatchContents -> DirectCreate -> DirectConversionContract -> RequestedPatchMetadata -> [SlapWarning]
+conversionNotes contents target contract meta =
   let have = provides contents
-      kept = specificationRequired spec `Set.union` specificationAccepted spec
+      kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
       defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
@@ -557,8 +569,8 @@ convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel targ
 convertDirect contents (CreateDirect target) meta = do
   let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
       validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
-      spec             = formatSpecification target undoChoice validationChoice
-  case canConvert contents spec of
+      contract         = directConversionContract target undoChoice validationChoice
+  case canConvert contents contract of
     Left (RequirementsMissing missing) ->
       Left (MissingRequiredField (directLabel target) (Set.findMin missing))
     Left (ApplyOutputFieldsDropped fields) ->
@@ -569,7 +581,7 @@ convertDirect contents (CreateDirect target) meta = do
       -- but with an empty 'SourceFileContents', so any record sitting on the
       -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
       -- than silently passing through.
-      let notes = conversionNotes contents target spec meta
+      let notes = conversionNotes contents target contract meta
       encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target)
       Right CreateResult
         { resultBytes    = resultBytes encoded
@@ -816,8 +828,8 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
                          _       -> 0x9320
     undoChoice       = fromMaybe IncludeUndoData        (requestedUndoInclusion       meta)
     validationChoice = fromMaybe IncludeValidationBlock (requestedValidationInclusion meta)
-    spec             = formatSpecification format undoChoice validationChoice
-    allFields = specificationRequired spec `Set.union` specificationAccepted spec
+    contract         = directConversionContract format undoChoice validationChoice
+    allFields = contractRequiredFields contract `Set.union` contractAcceptedFields contract
     needs field = field `Set.member` allFields
 
 -- | Compute undo hunks from source bytes and diff records.

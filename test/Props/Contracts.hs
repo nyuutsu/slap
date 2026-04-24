@@ -1,7 +1,7 @@
 -- | Tests for the conversion contract system.
 --
 -- 'canConvert' decides whether a 'PatchContents' bundle carries
--- everything a target 'FormatSpecification' requires. 'conversionNotes'
+-- everything a target 'DirectConversionContract' requires. 'conversionNotes'
 -- reports fields that are present in the source but can't be carried
 -- through to the target. Together they enforce the principle that
 -- conversion either preserves information or tells you what it drops.
@@ -23,8 +23,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                      SentinelOffset(..))
 import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
-                      FormatSpecification(..), UndoInclusion(..), ValidationInclusion(..),
-                      noMetadataRequested, formatSpecification,
+                      DirectConversionContract(..), UndoInclusion(..), ValidationInclusion(..),
+                      noMetadataRequested, directConversionContract,
                       emptyContents, canConvert, convertDirect, conversionNotes)
 import Slap.Create (createFromMemory)
 import Slap.PatchField (PatchField(..))
@@ -89,13 +89,13 @@ fullContents = PatchContents
 prop_canConvertFull :: Property
 prop_canConvertFull = conjoin
   [ counterexample (show format) $
-      canConvert (limitToAccepted format) (formatSpecification format IncludeUndoData IncludeValidationBlock) === Right ()
+      canConvert (limitToAccepted format) (directConversionContract format IncludeUndoData IncludeValidationBlock) === Right ()
   | format <- directFormats
   ]
   where
     limitToAccepted format =
-      let spec = formatSpecification format IncludeUndoData IncludeValidationBlock
-          kept = specificationRequired spec `Set.union` specificationAccepted spec
+      let contract = directConversionContract format IncludeUndoData IncludeValidationBlock
+          kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
       in fullContents
         { contentsTruncation = if FTruncation `Set.member` kept
                                 then contentsTruncation fullContents
@@ -106,8 +106,8 @@ prop_canConvertFull = conjoin
 prop_noSurplusNoNotes :: Property
 prop_noSurplusNoNotes = conjoin
   [ counterexample (show format) $
-      let spec = formatSpecification format IncludeUndoData IncludeValidationBlock
-          kept = specificationRequired spec `Set.union` specificationAccepted spec
+      let contract = directConversionContract format IncludeUndoData IncludeValidationBlock
+          kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
           trimmed = fullContents
             { contentsDescription = if FDescription `Set.member` kept then contentsDescription fullContents else Nothing
             , contentsSourceCRC32 = if FSourceCRC32 `Set.member` kept then contentsSourceCRC32 fullContents else Nothing
@@ -121,7 +121,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsRomType     = if FRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
             , contentsImageType   = if FImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
-          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format spec noMetadataRequested))
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format contract noMetadataRequested))
       in droppedNotes === []
   | format <- directFormats
   ]
@@ -129,22 +129,22 @@ prop_noSurplusNoNotes = conjoin
 -- | NINJA1 no longer requires hashes (spec allows zero) -- empty contents must succeed.
 prop_ninja1AcceptsEmpty :: Property
 prop_ninja1AcceptsEmpty =
-  property $ isRight (canConvert (emptyContents []) (formatSpecification CreateNINJA1 OmitUndoData OmitValidationBlock))
+  property $ isRight (canConvert (emptyContents []) (directConversionContract CreateNINJA1 OmitUndoData OmitValidationBlock))
 
 -- | APS-N64 requires dest size -- empty contents must fail.
 prop_apsn64RejectsEmpty :: Property
 prop_apsn64RejectsEmpty =
-  property $ isLeft (canConvert (emptyContents []) (formatSpecification CreateAPSN64 OmitUndoData OmitValidationBlock))
+  property $ isLeft (canConvert (emptyContents []) (directConversionContract CreateAPSN64 OmitUndoData OmitValidationBlock))
 
 -- | PPF3 with undo requires undo data -- empty contents must fail.
 prop_ppf3UndoRejectsEmpty :: Property
 prop_ppf3UndoRejectsEmpty =
-  property $ isLeft (canConvert (emptyContents []) (formatSpecification CreatePPF3 IncludeUndoData OmitValidationBlock))
+  property $ isLeft (canConvert (emptyContents []) (directConversionContract CreatePPF3 IncludeUndoData OmitValidationBlock))
 
 -- | PPF3 with validation requires validation block -- empty contents must fail.
 prop_ppf3ValidateRejectsEmpty :: Property
 prop_ppf3ValidateRejectsEmpty =
-  property $ isLeft (canConvert (emptyContents []) (formatSpecification CreatePPF3 OmitUndoData IncludeValidationBlock))
+  property $ isLeft (canConvert (emptyContents []) (directConversionContract CreatePPF3 OmitUndoData IncludeValidationBlock))
 
 -- | Direct conversion to IPS must reject a record at the EOF sentinel offset.
 prop_ipsSentinelDirect :: Property
