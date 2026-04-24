@@ -191,17 +191,9 @@ data PatchStability
   | UnstablePatch
   deriving (Show, Eq)
 
-undoIncluded :: UndoInclusion -> Bool
-undoIncluded IncludeUndoData = True
-undoIncluded OmitUndoData    = False
-
-validationIncluded :: ValidationInclusion -> Bool
-validationIncluded IncludeValidationBlock = True
-validationIncluded OmitValidationBlock    = False
-
-patchIsUnstable :: PatchStability -> Bool
-patchIsUnstable UnstablePatch = True
-patchIsUnstable StablePatch   = False
+stabilityToDPS :: PatchStability -> DPS.DPSStability
+stabilityToDPS UnstablePatch = DPS.DPSUnstable
+stabilityToDPS StablePatch   = DPS.DPSStable
 
 noMetadataRequested :: RequestedPatchMetadata
 noMetadataRequested = RequestedPatchMetadata
@@ -286,17 +278,33 @@ provides contents = Set.fromList $ [FRecords]
   ++ [FPCHTXTBlocks | isJust (contentsPCHTXTBlocks contents)]
   ++ [FMetadata     | isJust (contentsMetadata contents)]
 
+-- | Which 'UndoInclusion' a 'PatchContents' carries today.  Used on the
+-- conversion path when the user didn't specify: if the source patch
+-- already had undo data, inherit the choice to include it.
+inferUndoInclusion :: PatchContents -> UndoInclusion
+inferUndoInclusion contents = if isJust (contentsUndoData contents)
+                                then IncludeUndoData
+                                else OmitUndoData
+
+-- | Which 'ValidationInclusion' a 'PatchContents' carries today.  Used
+-- on the conversion path when the user didn't specify: if the source
+-- patch already had a validation block, inherit the choice to include it.
+inferValidationInclusion :: PatchContents -> ValidationInclusion
+inferValidationInclusion contents = if isJust (contentsValidation contents)
+                                      then IncludeValidationBlock
+                                      else OmitValidationBlock
+
 ----------------------------------------------------------------------------
 -- Format specs
 ----------------------------------------------------------------------------
 
-formatSpecification :: DirectCreate -> Bool -> Bool -> FormatSpecification
-formatSpecification target includeUndo includeValidation = case target of
+formatSpecification :: DirectCreate -> UndoInclusion -> ValidationInclusion -> FormatSpecification
+formatSpecification target undoChoice validationChoice = case target of
   CreateIPS     -> FormatSpecification (requiredFields []) (acceptedFields [FTruncation])
   CreateIPS32   -> FormatSpecification (requiredFields []) (acceptedFields [])
   CreateEBP     -> FormatSpecification (requiredFields []) (acceptedFields [FDescription, FEBPMeta])
-  CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData  | includeUndo]
-                                 ++ [FValidation | includeValidation])
+  CreatePPF3    -> FormatSpecification (requiredFields $ [FUndoData   | undoChoice       == IncludeUndoData]
+                                 ++ [FValidation | validationChoice == IncludeValidationBlock])
                              (acceptedFields [FDescription, FImageType, FFileIdDiz])
   CreateNINJA1  -> FormatSpecification (requiredFields []) (acceptedFields [FSourceCRC32, FSourceMD5, FSourceSHA1, FRomType])
   CreatePMSR    -> FormatSpecification (requiredFields []) (acceptedFields [])
@@ -363,14 +371,14 @@ allDirectTargets =
 -- 'ApplyOutputFieldsWouldBeDropped' refusal message; dynamic so
 -- future additions to the format table get picked up automatically.
 --
--- 'includeUndo' and 'includeValidation' only influence PPF3's
--- /required/ set, not its /accepted/ set, so we pass @True@ for both
--- without affecting the answer.
+-- 'IncludeUndoData' and 'IncludeValidationBlock' only influence PPF3's
+-- /required/ set, not its /accepted/ set, so we pass the @Include@
+-- constructors for both without affecting the answer.
 preservingDirectTargets :: PatchField -> [FormatLabel]
 preservingDirectTargets field =
   [ directLabel target
   | target <- allDirectTargets
-  , let spec = formatSpecification target True True
+  , let spec = formatSpecification target IncludeUndoData IncludeValidationBlock
         accepted = specificationRequired spec `Set.union` specificationAccepted spec
   , field `Set.member` accepted
   ]
@@ -499,9 +507,9 @@ convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> Either SlapError CreateResult
 convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
 convertDirect contents (CreateDirect target) meta = do
-  let includeUndo = maybe (isJust (contentsUndoData contents)) undoIncluded (requestedUndoInclusion meta)
-      includeValidation = maybe (isJust (contentsValidation contents)) validationIncluded (requestedValidationInclusion meta)
-      spec = formatSpecification target includeUndo includeValidation
+  let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
+      validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
+      spec             = formatSpecification target undoChoice validationChoice
   case canConvert contents spec of
     Left (RequirementsMissing missing) ->
       Left (MissingRequiredField (directLabel target) (Set.findMin missing))
@@ -674,7 +682,7 @@ createFromMemory (CreateDiff format) source target meta sourceContents = case fo
                       , DPS.dpsMetadataAuthor  = fromMaybe "" (requestedAuthor meta)
                       , DPS.dpsMetadataVersion = fromMaybe "" (requestedVersion meta)
                       })
-                    (if maybe False patchIsUnstable (requestedStability meta) then DPS.DPSUnstable else DPS.DPSStable)
+                    (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
     -- When source patch has opaque description bytes, detect encoding
     -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
@@ -758,9 +766,9 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
     validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
-    includeUndo = maybe False undoIncluded (requestedUndoInclusion meta)
-    includeValidation = maybe False validationIncluded (requestedValidationInclusion meta)
-    spec      = formatSpecification format includeUndo includeValidation
+    undoChoice       = fromMaybe OmitUndoData        (requestedUndoInclusion       meta)
+    validationChoice = fromMaybe OmitValidationBlock (requestedValidationInclusion meta)
+    spec             = formatSpecification format undoChoice validationChoice
     allFields = specificationRequired spec `Set.union` specificationAccepted spec
     needs field = field `Set.member` allFields
 
