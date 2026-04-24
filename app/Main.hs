@@ -7,7 +7,7 @@ import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), Undo
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
-                     RequestedPatchMetadata(..),
+                     RequestedPatchMetadata(..), RequestedPatchMetadataInputs(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, formatExtension, formatName)
@@ -142,49 +142,21 @@ data Command
       , commandUndoOutput :: UndoOutput
       }
   | CommandCreate
-      { commandCreateFormat  :: CreateFormat
-      , commandFileReading :: FileReadingOptions
-      , commandOriginal   :: FilePath
-      , commandModified   :: FilePath
-      , commandCreateOutput  :: FilePath
-      , commandDescription       :: Maybe String
-      , commandTitle      :: Maybe String
-      , commandAuthor     :: Maybe String
-      , commandUndo       :: Maybe UndoInclusion
-      , commandValidate   :: Maybe ValidationInclusion
-      , commandVersion    :: Maybe String
-      , commandUnstable   :: Maybe PatchStability
-      , commandRomType    :: Maybe PlatformType
-      , commandImageType  :: Maybe PPFImageType
-      , commandGenre      :: Maybe String
-      , commandLanguage   :: Maybe String
-      , commandDate       :: Maybe String
-      , commandWebsite    :: Maybe String
-      , commandPatchEncoding :: PatchEncoding
-      , commandMetadata   :: Maybe FilePath
+      { commandCreateFormat   :: CreateFormat
+      , commandFileReading    :: FileReadingOptions
+      , commandOriginal       :: FilePath
+      , commandModified       :: FilePath
+      , commandCreateOutput   :: FilePath
+      , commandCreateMetadata :: RequestedPatchMetadataInputs
       }
   | CommandConvert
-      { commandConvertPatch     :: FilePath
-      , commandConvertTo        :: CreateFormat
-      , commandConvertOutputTarget :: ConvertOutput
-      , commandConvertSource      :: Maybe FilePath
-      , commandFileReading :: FileReadingOptions
-      , commandConvertDescription      :: Maybe String
-      , commandConvertTitle     :: Maybe String
-      , commandConvertAuthor    :: Maybe String
-      , commandConvertUndo      :: Maybe UndoInclusion
-      , commandConvertValidate  :: Maybe ValidationInclusion
-      , commandNoVerify      :: Bool
-      , commandConvertVersion   :: Maybe String
-      , commandConvertUnstable  :: Maybe PatchStability
-      , commandConvertRomType   :: Maybe PlatformType
-      , commandConvertImageType :: Maybe PPFImageType
-      , commandConvertGenre     :: Maybe String
-      , commandConvertLanguage  :: Maybe String
-      , commandConvertDate      :: Maybe String
-      , commandConvertWebsite   :: Maybe String
-      , commandConvertPatchEncoding :: PatchEncoding
-      , commandConvertMetadata  :: Maybe FilePath
+      { commandConvertPatch    :: FilePath
+      , commandConvertTo       :: CreateFormat
+      , commandConvertOutput   :: ConvertOutput
+      , commandConvertSource   :: Maybe FilePath
+      , commandFileReading     :: FileReadingOptions
+      , commandNoVerify        :: Bool
+      , commandConvertMetadata :: RequestedPatchMetadataInputs
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
   -- NOTE: CommandExplain is the lone positional-arg constructor in this sum;
@@ -326,133 +298,114 @@ convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
 
 createParser :: Parser Command
 createParser = do
-    createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
-        <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+    createFormat       <- createFormatParser
     fileReadingOptions <- fileReadingOptionsParser
-    original <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
-    modified <- argument str (metavar "MODIFIED" <> help "Modified file")
-    outputFile <- argument str (metavar "OUTPUT" <> help "Output patch file")
-    description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-        <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
-    title <- optional (option str (long "title" <> metavar "TEXT"
-        <> help "Patch title (EBP/NINJA2)"))
-    author <- optional (option str (long "author" <> metavar "TEXT"
-        <> help "Patch author (EBP/DPS/NINJA2)"))
-    includeUndo <- optional (flag' IncludeUndoData (long "undo" <> short 'u'
-        <> help "Include undo data (PPF3 only)"))
-    includeValidation <- optional (flag' IncludeValidationBlock (long "validate" <> short 'v'
-        <> help "Include validation block (PPF3 only)"))
-    version <- optional (option str (long "version" <> metavar "TEXT"
-        <> help "Patch version (DPS/NINJA2)"))
-    unstable <- optional (flag' UnstablePatch (long "unstable"
-        <> help "Mark patch unstable (DPS)"))
-    romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
-    imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
-        <> help "Image type (PPF3): bin, gi"))
-    genre <- optional (option str (long "genre" <> metavar "TEXT"
-        <> help "Genre (NINJA2)"))
-    language <- optional (option str (long "language" <> metavar "TEXT"
-        <> help "Language (NINJA2)"))
-    date <- optional (option str (long "date" <> metavar "YYYYMMDD"
-        <> help "Date (NINJA2)"))
-    website <- optional (option str (long "website" <> metavar "URL"
-        <> help "Website (NINJA2)"))
-    patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
-        <> value PatchEncodingUTF8
-        <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
-    metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
-        <> help "Metadata file to embed (BPS)"))
+    original           <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
+    modified           <- argument str (metavar "MODIFIED" <> help "Modified file")
+    outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
+    metadataInputs     <- requestedPatchMetadataInputsParser
     pure CommandCreate
-      { commandCreateFormat = createFormat
-      , commandFileReading = fileReadingOptions
-      , commandOriginal = original
-      , commandModified = modified
-      , commandCreateOutput = outputFile
-      , commandDescription = description
-      , commandTitle = title
-      , commandAuthor = author
-      , commandUndo = includeUndo
-      , commandValidate = includeValidation
-      , commandVersion = version
-      , commandUnstable = unstable
-      , commandRomType = romType
-      , commandImageType = imageType
-      , commandGenre = genre
-      , commandLanguage = language
-      , commandDate = date
-      , commandWebsite = website
-      , commandPatchEncoding = patchEncoding
-      , commandMetadata = metadataFile
+      { commandCreateFormat   = createFormat
+      , commandFileReading    = fileReadingOptions
+      , commandOriginal       = original
+      , commandModified       = modified
+      , commandCreateOutput   = outputFile
+      , commandCreateMetadata = metadataInputs
       }
 
 convertParser :: Parser Command
 convertParser = do
-    patchFile <- argument str (metavar "PATCH" <> help "Patch file to convert")
-    targetFormat <- option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
-        <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
-    convertOutput <- convertOutputParser
-    conversionSource <- optional (option str (long "with" <> metavar "SOURCE"
-        <> help "Source ROM (required for differential formats)"))
+    patchFile          <- argument str (metavar "PATCH" <> help "Patch file to convert")
+    targetFormat       <- convertToParser
+    convertOutput      <- convertOutputParser
+    conversionSource   <- optional (option str (long "with" <> metavar "SOURCE"
+                            <> help "Source ROM (required for differential formats)"))
     fileReadingOptions <- fileReadingOptionsParser
-    description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
-        <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
-    title <- optional (option str (long "title" <> metavar "TEXT"
-        <> help "Patch title (EBP/NINJA2)"))
-    author <- optional (option str (long "author" <> metavar "TEXT"
-        <> help "Patch author (EBP/DPS/NINJA2)"))
-    includeUndo <- optional (flag' IncludeUndoData (long "undo"
-                                <> help "Include undo data (PPF3)")
-                         <|> flag' OmitUndoData (long "no-undo"
-                                <> help "Omit undo data (PPF3)"))
-    includeValidation <- optional (flag' IncludeValidationBlock (long "validate"
-                                      <> help "Include validation block (PPF3)")
-                               <|> flag' OmitValidationBlock (long "no-validate"
-                                      <> help "Omit validation block (PPF3)"))
-    noVerify <- noVerifyFlag
-    version <- optional (option str (long "version" <> metavar "TEXT"
-        <> help "Patch version (DPS/NINJA2)"))
-    unstable <- optional (flag' UnstablePatch (long "unstable"
-        <> help "Mark patch unstable (DPS)"))
-    romType <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-        <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
-    imageType <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
-        <> help "Image type (PPF3): bin, gi"))
-    genre <- optional (option str (long "genre" <> metavar "TEXT"
-        <> help "Genre (NINJA2)"))
-    language <- optional (option str (long "language" <> metavar "TEXT"
-        <> help "Language (NINJA2)"))
-    date <- optional (option str (long "date" <> metavar "YYYYMMDD"
-        <> help "Date (NINJA2)"))
-    website <- optional (option str (long "website" <> metavar "URL"
-        <> help "Website (NINJA2)"))
-    patchEncoding <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
-        <> value PatchEncodingUTF8
-        <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
-    metadataFile <- optional (option str (long "metadata" <> metavar "FILE"
-        <> help "Metadata file to embed (BPS)"))
+    noVerify           <- noVerifyFlag
+    metadataInputs     <- requestedPatchMetadataInputsParser
     pure CommandConvert
-      { commandConvertPatch = patchFile
-      , commandConvertTo = targetFormat
-      , commandConvertOutputTarget = convertOutput
-      , commandConvertSource = conversionSource
-      , commandFileReading = fileReadingOptions
-      , commandConvertDescription = description
-      , commandConvertTitle = title
-      , commandConvertAuthor = author
-      , commandConvertUndo = includeUndo
-      , commandConvertValidate = includeValidation
-      , commandNoVerify = noVerify
-      , commandConvertVersion = version
-      , commandConvertUnstable = unstable
-      , commandConvertRomType = romType
-      , commandConvertImageType = imageType
-      , commandConvertGenre = genre
-      , commandConvertLanguage = language
-      , commandConvertDate = date
-      , commandConvertWebsite = website
-      , commandConvertPatchEncoding = patchEncoding
-      , commandConvertMetadata = metadataFile
+      { commandConvertPatch    = patchFile
+      , commandConvertTo       = targetFormat
+      , commandConvertOutput   = convertOutput
+      , commandConvertSource   = conversionSource
+      , commandFileReading     = fileReadingOptions
+      , commandNoVerify        = noVerify
+      , commandConvertMetadata = metadataInputs
+      }
+
+-- | The output-format flag accepted by @slap create@.  Defaults to BPS
+-- so the bare @slap create base mod out@ command works without needing
+-- the user to spell out a format.
+createFormatParser :: Parser CreateFormat
+createFormatParser = option (eitherReader parseCreateFormat)
+  (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
+    <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+
+-- | The target-format flag accepted by @slap convert@.  No default:
+-- conversion has to know what it is converting to.
+convertToParser :: Parser CreateFormat
+convertToParser = option (eitherReader parseCreateFormat)
+  (long "to" <> short 't' <> metavar "FMT"
+    <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+
+-- | Parser for the user-declared metadata that both @create@ and
+-- @convert@ accept.  The returned value is pre-IO: the blob path
+-- still points to a file that hasn't been read.  Call
+-- 'resolveRequestedPatchMetadata' to perform the IO and produce a
+-- 'RequestedPatchMetadata'.
+requestedPatchMetadataInputsParser :: Parser RequestedPatchMetadataInputs
+requestedPatchMetadataInputsParser = do
+    title             <- optional (option str (long "title" <> metavar "TEXT"
+                            <> help "Patch title (EBP/NINJA2)"))
+    author            <- optional (option str (long "author" <> metavar "TEXT"
+                            <> help "Patch author (EBP/DPS/NINJA2)"))
+    description       <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+                            <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
+    version           <- optional (option str (long "version" <> metavar "TEXT"
+                            <> help "Patch version (DPS/NINJA2)"))
+    includeUndo       <- optional (flag' IncludeUndoData       (long "undo"
+                                              <> help "Include undo data (PPF3)")
+                               <|> flag' OmitUndoData          (long "no-undo"
+                                              <> help "Omit undo data (PPF3)"))
+    includeValidation <- optional (flag' IncludeValidationBlock (long "validate"
+                                              <> help "Include validation block (PPF3)")
+                               <|> flag' OmitValidationBlock    (long "no-validate"
+                                              <> help "Omit validation block (PPF3)"))
+    unstable          <- optional (flag' UnstablePatch (long "unstable"
+                            <> help "Mark patch unstable (DPS)"))
+    romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
+                            <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
+    imageType         <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
+                            <> help "Image type (PPF3): bin, gi"))
+    genre             <- optional (option str (long "genre" <> metavar "TEXT"
+                            <> help "Genre (NINJA2)"))
+    language          <- optional (option str (long "language" <> metavar "TEXT"
+                            <> help "Language (NINJA2)"))
+    date              <- optional (option str (long "date" <> metavar "YYYYMMDD"
+                            <> help "Date (NINJA2)"))
+    website           <- optional (option str (long "website" <> metavar "URL"
+                            <> help "Website (NINJA2)"))
+    patchEncoding     <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
+                            <> value PatchEncodingUTF8
+                            <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
+    metadataFile      <- optional (option str (long "metadata" <> metavar "FILE"
+                            <> help "Metadata file to embed (BPS)"))
+    pure RequestedPatchMetadataInputs
+      { inputTitle               = title
+      , inputAuthor              = author
+      , inputDescription         = description
+      , inputVersion             = version
+      , inputUndoInclusion       = includeUndo
+      , inputValidationInclusion = includeValidation
+      , inputStability           = unstable
+      , inputRomType             = romType
+      , inputImageType           = imageType
+      , inputGenre               = genre
+      , inputLanguage            = language
+      , inputDate                = date
+      , inputWebsite             = website
+      , inputPatchEncoding       = patchEncoding
+      , inputEmbeddedBlobPath    = metadataFile
       }
 
 parseCreateFormat :: String -> Either String CreateFormat
@@ -548,6 +501,31 @@ readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> ByteString.readFile
+
+-- | Resolve the CLI's pre-IO 'RequestedPatchMetadataInputs' into the
+-- library's 'RequestedPatchMetadata'.  The only transition with IO is
+-- reading the @--metadata FILE@ contents; the other 14 fields carry
+-- through unchanged.
+resolveRequestedPatchMetadata :: RequestedPatchMetadataInputs -> IO RequestedPatchMetadata
+resolveRequestedPatchMetadata inputs = do
+  embeddedBlob <- traverse ByteString.readFile (inputEmbeddedBlobPath inputs)
+  pure RequestedPatchMetadata
+    { requestedTitle               = inputTitle               inputs
+    , requestedAuthor              = inputAuthor              inputs
+    , requestedDescription         = inputDescription         inputs
+    , requestedVersion             = inputVersion             inputs
+    , requestedUndoInclusion       = inputUndoInclusion       inputs
+    , requestedValidationInclusion = inputValidationInclusion inputs
+    , requestedStability           = inputStability           inputs
+    , requestedRomType             = inputRomType             inputs
+    , requestedImageType           = inputImageType           inputs
+    , requestedGenre               = inputGenre               inputs
+    , requestedLanguage            = inputLanguage            inputs
+    , requestedDate                = inputDate                inputs
+    , requestedWebsite             = inputWebsite             inputs
+    , requestedPatchEncoding       = inputPatchEncoding       inputs
+    , requestedEmbeddedBlob        = embeddedBlob
+    }
 
 ----------------------------------------------------------------------------
 -- Info & Explain
@@ -686,26 +664,7 @@ doCreate :: Command -> IO ()
 doCreate parsedCommand = do
   originalBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandModified parsedCommand)
-  maybeMeta <- case commandMetadata parsedCommand of
-    Nothing   -> pure Nothing
-    Just path -> Just <$> ByteString.readFile path
-  let createMeta = RequestedPatchMetadata
-        { requestedTitle               = commandTitle       parsedCommand
-        , requestedAuthor              = commandAuthor      parsedCommand
-        , requestedDescription         = commandDescription parsedCommand
-        , requestedVersion             = commandVersion     parsedCommand
-        , requestedUndoInclusion       = commandUndo     parsedCommand
-        , requestedValidationInclusion = commandValidate parsedCommand
-        , requestedStability           = commandUnstable parsedCommand
-        , requestedRomType             = commandRomType       parsedCommand
-        , requestedImageType           = commandImageType     parsedCommand
-        , requestedGenre               = commandGenre         parsedCommand
-        , requestedLanguage            = commandLanguage      parsedCommand
-        , requestedDate                = commandDate          parsedCommand
-        , requestedWebsite             = commandWebsite       parsedCommand
-        , requestedPatchEncoding       = commandPatchEncoding parsedCommand
-        , requestedEmbeddedBlob        = maybeMeta
-        }
+  createMeta    <- resolveRequestedPatchMetadata (commandCreateMetadata parsedCommand)
   let defaultWarnings = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
   forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
   case createFromMemory (commandCreateFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing of
@@ -726,32 +685,13 @@ doConvert parsedCommand = do
     Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
-      let outputFile = case commandConvertOutputTarget parsedCommand of
+      cliMeta <- resolveRequestedPatchMetadata (commandConvertMetadata parsedCommand)
+      let outputFile = case commandConvertOutput parsedCommand of
             ConvertToExplicitFile explicit -> explicit
             ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
                                                                (formatExtension (commandConvertTo parsedCommand))
-      maybeMetadata <- case commandConvertMetadata parsedCommand of
-        Nothing   -> pure Nothing
-        Just path -> Just <$> ByteString.readFile path
-      let cliMeta = RequestedPatchMetadata
-            { requestedTitle               = commandConvertTitle       parsedCommand
-            , requestedAuthor              = commandConvertAuthor      parsedCommand
-            , requestedDescription         = commandConvertDescription parsedCommand
-            , requestedVersion             = commandConvertVersion     parsedCommand
-            , requestedUndoInclusion       = commandConvertUndo     parsedCommand
-            , requestedValidationInclusion = commandConvertValidate parsedCommand
-            , requestedStability           = commandConvertUnstable parsedCommand
-            , requestedRomType             = commandConvertRomType       parsedCommand
-            , requestedImageType           = commandConvertImageType     parsedCommand
-            , requestedGenre               = commandConvertGenre         parsedCommand
-            , requestedLanguage            = commandConvertLanguage      parsedCommand
-            , requestedDate                = commandConvertDate          parsedCommand
-            , requestedWebsite             = commandConvertWebsite       parsedCommand
-            , requestedPatchEncoding       = commandConvertPatchEncoding parsedCommand
-            , requestedEmbeddedBlob        = maybeMetadata
-            }
           mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      let printWarnings warnings = forM_ warnings $ \warning ->
+          printWarnings warnings = forM_ warnings $ \warning ->
               hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
           metaWarnings = case patchMetadata parsed of
             Nothing -> []
