@@ -26,7 +26,7 @@ import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
 import Data.Char (toLower)
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (isNothing)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -73,25 +73,74 @@ data ExplainVerbosity
   | FullRecords
   deriving (Show, Eq)
 
+-- | What to do with an applied patch's output bytes.
+--
+-- 'ApplyInPlace' overwrites the source file (the most invasive option;
+-- carries a 'BackupBehavior' to opt into a @.bak@ copy before writing).
+-- 'ApplyToExplicitFile' writes to an operator-chosen path via @-o@ (or
+-- the optional third positional @OUTPUT@).
+-- 'ApplyToDerivedFile' writes to a path derived from the source file name
+-- (the default when neither in-place nor @-o@ is given).
+-- 'ApplyDryRun' writes nothing; it only reports what would happen, and
+-- carries the hypothetical destination so the report can name that path.
+data ApplyOutput
+  = ApplyInPlace BackupBehavior
+  | ApplyToExplicitFile FilePath
+  | ApplyToDerivedFile
+  | ApplyDryRun ApplyDestinationIfNotDryRun
+  deriving (Show, Eq)
+
+-- | For a dry run, which destination the apply would have written to if it
+-- were not a dry run.  Mirrors the three non-dry-run variants of
+-- 'ApplyOutput' but drops the 'BackupBehavior' field (dry runs never write,
+-- so backup is irrelevant and shouldn't be representable).
+data ApplyDestinationIfNotDryRun
+  = DryRunInPlace
+  | DryRunToExplicitFile FilePath
+  | DryRunToDerivedFile
+  deriving (Show, Eq)
+
+-- | Whether in-place apply should make a @.bak@ copy before writing.
+data BackupBehavior
+  = WriteBackup
+  | NoBackup
+  deriving (Show, Eq)
+
+-- | Where undo writes its restored source bytes.
+--
+-- 'UndoInPlace' overwrites the (modified) source file.
+-- 'UndoToExplicitFile' writes to an operator-chosen path via @-o@.
+data UndoOutput
+  = UndoInPlace
+  | UndoToExplicitFile FilePath
+  deriving (Show, Eq)
+
+-- | Where convert writes the produced patch bytes.
+--
+-- 'ConvertToExplicitFile' uses an operator-chosen path via @-o@.
+-- 'ConvertToDerivedFile' uses the source patch path with the target
+-- format's extension substituted in.
+data ConvertOutput
+  = ConvertToExplicitFile FilePath
+  | ConvertToDerivedFile
+  deriving (Show, Eq)
+
 data Command
   = CommandApply
       { commandForce    :: Bool
       , commandNoVerify :: Bool
       , commandVerbose  :: Bool
-      , commandInPlace :: Bool
-      , commandBackup  :: Bool
-      , commandDryRun  :: Bool
+      , commandApplyOutput :: ApplyOutput
       , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
-      , commandOutput  :: Maybe FilePath
       }
   | CommandUndo
       { commandVerbose :: Bool
       , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
-      , commandOutput  :: Maybe FilePath
+      , commandUndoOutput :: UndoOutput
       }
   | CommandCreate
       { commandCreateFormat  :: CreateFormat
@@ -118,7 +167,7 @@ data Command
   | CommandConvert
       { commandConvertPatch     :: FilePath
       , commandConvertTo        :: CreateFormat
-      , commandConvertOutput    :: Maybe FilePath
+      , commandConvertOutputTarget :: ConvertOutput
       , commandConvertSource      :: Maybe FilePath
       , commandFileReading :: FileReadingOptions
       , commandConvertDescription      :: Maybe String
@@ -188,29 +237,19 @@ applyParser = do
     force <- forceFlag
     noVerify <- noVerifyFlag
     verbose <- verboseFlag
-    inPlace <- inPlaceFlag
-    backup <- backupFlag
-    dryRun <- dryRunFlag
     fileReadingOptions <- fileReadingOptionsParser
     patch <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
-    output <- outputOption
+    applyOutput <- applyOutputParser
     pure CommandApply
       { commandForce = force
       , commandNoVerify = noVerify
       , commandVerbose = verbose
-      , commandInPlace = inPlace
-      , commandBackup = backup
-      , commandDryRun = dryRun
+      , commandApplyOutput = applyOutput
       , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
-      , commandOutput = output
       }
-  where
-    outputOption = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
-                  <> help "Write patched output to FILE"))
-            <|> optional (argument str (metavar "OUTPUT"))
 
 forceFlag :: Parser Bool
 forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output files")
@@ -221,15 +260,41 @@ noVerifyFlag = switch (long "no-verify" <> help "Skip checksum validation (misma
 verboseFlag :: Parser Bool
 verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
-inPlaceFlag :: Parser Bool
-inPlaceFlag = switch (long "in-place" <> short 'i'
-                <> help "Modify SOURCE directly (destructive; creates .bak by default)")
+-- | Single parser that resolves @--in-place@, @--no-backup@, @--dry-run@,
+-- and @-o@\/positional @OUTPUT@ into one 'ApplyOutput' value.
+--
+-- Precedence matches the pre-sum code in @doApply@: @--dry-run@ short-circuits
+-- before anything is written, @--in-place@ wins over an explicit @-o@, and
+-- @-o@ wins over the derived-filename default.  When @--dry-run@ is set, the
+-- hypothetical destination is the destination the apply /would/ have used
+-- had it not been a dry run, so the \"would apply \8594 X\" report can name
+-- that path.
+applyOutputParser :: Parser ApplyOutput
+applyOutputParser = selectApplyOutput
+  <$> inPlaceFlag
+  <*> backupBehaviorFlag
+  <*> dryRunFlag
+  <*> explicitOutput
+  where
+    inPlaceFlag = switch (long "in-place" <> short 'i'
+                    <> help "Modify SOURCE directly (destructive; creates .bak by default)")
+    backupBehaviorFlag = flag WriteBackup NoBackup
+                             (long "no-backup" <> help "Don't create .bak backup with --in-place")
+    dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
+    explicitOutput = (Just <$> option str (long "output" <> short 'o' <> metavar "FILE"
+                       <> help "Write patched output to FILE (default: derived from source name)"))
+                 <|> optional (argument str (metavar "OUTPUT"))
 
-backupFlag :: Parser Bool
-backupFlag = flag True False (long "no-backup" <> help "Don't create .bak backup with --in-place")
+    selectApplyOutput inPlace backup dryRun explicit
+      | dryRun              = ApplyDryRun (selectDryRunDestination inPlace explicit)
+      | inPlace             = ApplyInPlace backup
+      | Just path <- explicit = ApplyToExplicitFile path
+      | otherwise           = ApplyToDerivedFile
 
-dryRunFlag :: Parser Bool
-dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
+    selectDryRunDestination inPlace explicit
+      | inPlace             = DryRunInPlace
+      | Just path <- explicit = DryRunToExplicitFile path
+      | otherwise           = DryRunToDerivedFile
 
 fileReadingOptionsParser :: Parser FileReadingOptions
 fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
@@ -243,15 +308,24 @@ undoParser = do
     fileReadingOptions <- fileReadingOptionsParser
     patch <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "File to restore")
-    output <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
-        <> help "Write restored output to FILE instead of modifying SOURCE in place"))
+    undoOutput <- undoOutputParser
     pure CommandUndo
       { commandVerbose = verbose
       , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
-      , commandOutput = output
+      , commandUndoOutput = undoOutput
       }
+
+undoOutputParser :: Parser UndoOutput
+undoOutputParser = maybe UndoInPlace UndoToExplicitFile
+  <$> optional (option str (long "output" <> short 'o' <> metavar "FILE"
+      <> help "Write restored source to FILE (default: overwrite SOURCE)"))
+
+convertOutputParser :: Parser ConvertOutput
+convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
+  <$> optional (option str (long "output" <> short 'o' <> metavar "FILE"
+      <> help "Output file (default: replace input extension with target format's)"))
 
 createParser :: Parser Command
 createParser = do
@@ -317,8 +391,7 @@ convertParser = do
     patchFile <- argument str (metavar "PATCH" <> help "Patch file to convert")
     targetFormat <- option (eitherReader parseCreateFormat) (long "to" <> short 't' <> metavar "FMT"
         <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
-    outputFile <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
-        <> help "Output file (default: replace input extension)"))
+    convertOutput <- convertOutputParser
     conversionSource <- optional (option str (long "with" <> metavar "SOURCE"
         <> help "Source ROM (required for differential formats)"))
     fileReadingOptions <- fileReadingOptionsParser
@@ -356,7 +429,7 @@ convertParser = do
     pure CommandConvert
       { commandConvertPatch = patchFile
       , commandConvertTo = targetFormat
-      , commandConvertOutput = outputFile
+      , commandConvertOutputTarget = convertOutput
       , commandConvertSource = conversionSource
       , commandFileReading = fileReadingOptions
       , commandConvertDescription = description
@@ -524,52 +597,60 @@ doApply parsedCommand = do
       when (commandVerbose parsedCommand) $
         hPutStr stderr (renderExplain Nothing (patchExplain parsed))
 
-      let outputPath
-            | commandInPlace parsedCommand         = commandSource parsedCommand
-            | Just destination <- commandOutput parsedCommand = destination
-            | otherwise              = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
-          verification = patchVerification parsed
+      let verification = patchVerification parsed
           noVerify = commandNoVerify parsedCommand
 
-      -- Dry run: report and exit
-      when (commandDryRun parsedCommand) $ do
-        let summary = patchRecordSummary parsed
-        putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
-                ++ " \8594 " ++ outputPath
-        case verifySourceCRC32 verification of
-          Just expected -> do
+          refuseOverwrite outputPath = unless (commandForce parsedCommand) $ do
+            exists <- doesFileExist outputPath
+            when exists $
+              die (outputPath ++ " already exists (use --force to overwrite)")
+
+          applyAndWriteTo outputPath = do
             sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
-            let actual = rustyCRC32 sourceBytes
-            putStrLn $ "source CRC: " ++ formatCRC actual
-              ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
-          Nothing -> pure ()
-        exitSuccess
+            let source = SourceFileContents sourceBytes
+            verifySource noVerify verification source
+            result <- inMemoryApply (patchApply parsed) source
+            case result of
+              Left slapError -> dieError slapError
+              Right target -> do
+                verifyTarget noVerify verification target
+                ByteString.writeFile outputPath (unTargetFileContents target)
+                let appliedSummary = patchRecordSummary parsed
+                putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
+                        ++ " \8594 " ++ outputPath
 
-      -- Refuse to overwrite unless --force or --in-place
-      unless (commandInPlace parsedCommand || commandForce parsedCommand) $ do
-        exists <- doesFileExist outputPath
-        when exists $
-          die (outputPath ++ " already exists (use --force to overwrite)")
-
-      -- Backup for --in-place
-      when (commandInPlace parsedCommand && commandBackup parsedCommand) $ do
-        let backup = commandSource parsedCommand ++ ".bak"
-        copyFile (commandSource parsedCommand) backup
-        hPutStrLn stderr ("slap: backup: " ++ backup)
-
-      let apply = inMemoryApply (patchApply parsed)
-      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
-      let source = SourceFileContents sourceBytes
-      verifySource noVerify verification source
-      result <- apply source
-      case result of
-        Left slapError -> dieError slapError
-        Right target -> do
-          verifyTarget noVerify verification target
-          ByteString.writeFile outputPath (unTargetFileContents target)
-          let appliedSummary = patchRecordSummary parsed
-          putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
-                  ++ " \8594 " ++ outputPath
+      case commandApplyOutput parsedCommand of
+        ApplyDryRun hypotheticalDestination -> do
+          let reportedPath = case hypotheticalDestination of
+                DryRunInPlace                -> commandSource parsedCommand
+                DryRunToExplicitFile path    -> path
+                DryRunToDerivedFile          -> deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+              summary = patchRecordSummary parsed
+          putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
+                  ++ " \8594 " ++ reportedPath
+          case verifySourceCRC32 verification of
+            Just expected -> do
+              sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
+              let actual = rustyCRC32 sourceBytes
+              putStrLn $ "source CRC: " ++ formatCRC actual
+                ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
+            Nothing -> pure ()
+          exitSuccess
+        ApplyInPlace backupBehavior -> do
+          case backupBehavior of
+            WriteBackup -> do
+              let backupPath = commandSource parsedCommand ++ ".bak"
+              copyFile (commandSource parsedCommand) backupPath
+              hPutStrLn stderr ("slap: backup: " ++ backupPath)
+            NoBackup -> pure ()
+          applyAndWriteTo (commandSource parsedCommand)
+        ApplyToExplicitFile outputPath -> do
+          refuseOverwrite outputPath
+          applyAndWriteTo outputPath
+        ApplyToDerivedFile -> do
+          let outputPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+          refuseOverwrite outputPath
+          applyAndWriteTo outputPath
 
 ----------------------------------------------------------------------------
 -- Undo
@@ -589,9 +670,10 @@ doUndo parsedCommand = do
           case revert (TargetFileContents modified) of
             Left slapError -> dieError slapError
             Right (SourceFileContents result) -> do
-              ByteString.writeFile
-                (fromMaybe (commandSource parsedCommand) (commandOutput parsedCommand))
-                result
+              let outputPath = case commandUndoOutput parsedCommand of
+                    UndoInPlace                 -> commandSource parsedCommand
+                    UndoToExplicitFile explicit -> explicit
+              ByteString.writeFile outputPath result
               putStrLn "reverted"
 
 ----------------------------------------------------------------------------
@@ -658,7 +740,10 @@ doConvert parsedCommand = do
     Left slapError -> dieError slapError
     Right parsed -> do
       emitWarnings parsed
-      let outputFile = fromMaybe (replaceExtension (commandConvertPatch parsedCommand) (formatExtension (commandConvertTo parsedCommand))) (commandConvertOutput parsedCommand)
+      let outputFile = case commandConvertOutputTarget parsedCommand of
+            ConvertToExplicitFile explicit -> explicit
+            ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
+                                                               (formatExtension (commandConvertTo parsedCommand))
       maybeMetadata <- case commandConvertMetadata parsedCommand of
         Nothing   -> pure Nothing
         Just path -> Just <$> ByteString.readFile path
