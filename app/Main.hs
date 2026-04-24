@@ -62,6 +62,17 @@ data FileReadingOptions = FileReadingOptions
   }
   deriving (Show, Eq)
 
+-- | How much detail 'slap explain' should emit.
+--
+-- @Summary@ is the default: top-level structure, field-by-field metadata,
+-- aggregate record counts.  @FullRecords@ adds every parsed record to the
+-- output, which is what you want when investigating a specific byte range
+-- or comparing patches record-for-record.  Selected via @--records@.
+data ExplainVerbosity
+  = Summary
+  | FullRecords
+  deriving (Show, Eq)
+
 data Command
   = CommandApply
       { commandForce    :: Bool
@@ -128,7 +139,9 @@ data Command
       , commandConvertMetadata  :: Maybe FilePath
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
-  | CommandExplain FilePath Bool (Maybe FilePath) FileReadingOptions
+  -- NOTE: CommandExplain is the lone positional-arg constructor in this sum;
+  -- every sibling uses record syntax.  A later sweep can bring it in line.
+  | CommandExplain FilePath ExplainVerbosity (Maybe FilePath) FileReadingOptions
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -141,7 +154,7 @@ main = customExecParser (prefs showHelpOnEmpty) options >>= \case
   parsedCommand@CommandCreate{}  -> doCreate parsedCommand
   parsedCommand@CommandConvert{} -> doConvert parsedCommand
   parsedCommand@CommandInfo{}    -> doInfo parsedCommand
-  CommandExplain patchFile records maybeWithPath fileReadingOptions -> doExplain patchFile records maybeWithPath fileReadingOptions
+  CommandExplain patchFile verbosity maybeWithPath fileReadingOptions -> doExplain patchFile verbosity maybeWithPath fileReadingOptions
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
@@ -165,7 +178,7 @@ commandParser = subparser
 explainParser :: Parser Command
 explainParser = CommandExplain
   <$> argument str (metavar "PATCH" <> help "Patch file to explain")
-  <*> switch (long "records" <> help "Show full record-by-record dump instead of summary")
+  <*> flag Summary FullRecords (long "records" <> help "Show full record-by-record dump instead of summary")
   <*> optional (option str (long "with" <> metavar "SOURCE"
       <> help "Source file (resolves delta/copy operations in output)"))
   <*> fileReadingOptionsParser
@@ -482,8 +495,8 @@ doInfo parsedCommand = do
             ByteString.writeFile outPath metadataBytes
             putStrLn ("wrote metadata to " ++ outPath)
 
-doExplain :: FilePath -> Bool -> Maybe FilePath -> FileReadingOptions -> IO ()
-doExplain patchFile records maybeWithPath fileReadingOptions = do
+doExplain :: FilePath -> ExplainVerbosity -> Maybe FilePath -> FileReadingOptions -> IO ()
+doExplain patchFile verbosity maybeWithPath fileReadingOptions = do
   patchBytes <- readUnwrap patchFile
   case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
@@ -491,7 +504,9 @@ doExplain patchFile records maybeWithPath fileReadingOptions = do
       maybeSource <- case maybeWithPath of
         Nothing   -> pure Nothing
         Just path -> Just <$> readMaybeUnwrap fileReadingOptions path
-      let renderFunction = if records then renderExplain else renderSummary
+      let renderFunction = case verbosity of
+            Summary     -> renderSummary
+            FullRecords -> renderExplain
       putStr (renderFunction maybeSource (patchExplain parsed))
       emitWarnings parsed
 
