@@ -25,6 +25,7 @@ import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, unless, forM_)
+import Data.Foldable (traverse_)
 import Data.Char (toLower)
 import Data.Maybe (isNothing)
 import Options.Applicative
@@ -530,37 +531,33 @@ resolveRequestedPatchMetadata inputs = do
 doInfo :: Command -> IO ()
 doInfo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome (PatchFileContents patchBytes) of
-    Left slapError -> dieError slapError
-    Right parsed -> do
-      let explain = patchExplain parsed
-          summary = patchRecordSummary parsed
-      putStrLn $ "format:      " ++ explainFormat explain
-      mapM_ (putStrLn . renderField) (explainHeader explain)
-      putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
-      emitWarnings parsed
-      case commandExtractMetadata parsedCommand of
-        Nothing -> pure ()
-        Just outPath -> case patchMetadata parsed of
-          Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
-          Just metadataBytes -> do
-            ByteString.writeFile outPath metadataBytes
-            putStrLn ("wrote metadata to " ++ outPath)
+  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  let explain = patchExplain parsed
+      summary = patchRecordSummary parsed
+  putStrLn $ "format:      " ++ explainFormat explain
+  mapM_ (putStrLn . renderField) (explainHeader explain)
+  putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
+  emitWarnings parsed
+  case commandExtractMetadata parsedCommand of
+    Nothing -> pure ()
+    Just outPath -> case patchMetadata parsed of
+      Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
+      Just metadataBytes -> do
+        ByteString.writeFile outPath metadataBytes
+        putStrLn ("wrote metadata to " ++ outPath)
 
 doExplain :: FilePath -> ExplainVerbosity -> Maybe FilePath -> FileReadingOptions -> IO ()
 doExplain patchFile verbosity maybeWithPath fileReadingOptions = do
   patchBytes <- readUnwrap patchFile
-  case parseSome (PatchFileContents patchBytes) of
-    Left slapError -> dieError slapError
-    Right parsed -> do
-      maybeSource <- case maybeWithPath of
-        Nothing   -> pure Nothing
-        Just path -> Just <$> readMaybeUnwrap fileReadingOptions path
-      let renderFunction = case verbosity of
-            Summary     -> renderSummary
-            FullRecords -> renderExplain
-      putStr (renderFunction maybeSource (patchExplain parsed))
-      emitWarnings parsed
+  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  maybeSource <- case maybeWithPath of
+    Nothing   -> pure Nothing
+    Just path -> Just <$> readMaybeUnwrap fileReadingOptions path
+  let renderFunction = case verbosity of
+        Summary     -> renderSummary
+        FullRecords -> renderExplain
+  putStr (renderFunction maybeSource (patchExplain parsed))
+  emitWarnings parsed
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -569,64 +566,59 @@ doExplain patchFile verbosity maybeWithPath fileReadingOptions = do
 doApply :: Command -> IO ()
 doApply parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome (PatchFileContents patchBytes) of
-    Left slapError -> dieError slapError
-    Right parsed -> do
-      emitWarnings parsed
-      when (commandVerbose parsedCommand) $
-        hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  emitWarnings parsed
+  when (commandVerbose parsedCommand) $
+    hPutStr stderr (renderExplain Nothing (patchExplain parsed))
 
-      let verification = patchVerification parsed
-          noVerify = commandNoVerify parsedCommand
+  let verification = patchVerification parsed
+      noVerify = commandNoVerify parsedCommand
 
-          refuseOverwrite outputPath = unless (commandForce parsedCommand) $ do
-            exists <- doesFileExist outputPath
-            when exists $
-              die (outputPath ++ " already exists (use --force to overwrite)")
+      refuseOverwrite outputPath = unless (commandForce parsedCommand) $ do
+        exists <- doesFileExist outputPath
+        when exists $
+          die (outputPath ++ " already exists (use --force to overwrite)")
 
-          applyAndWriteTo outputPath = do
-            sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
-            let source = SourceFileContents sourceBytes
-            verifySource noVerify verification source
-            result <- inMemoryApply (patchApply parsed) source
-            case result of
-              Left slapError -> dieError slapError
-              Right target -> do
-                verifyTarget noVerify verification target
-                ByteString.writeFile outputPath (unTargetFileContents target)
-                let appliedSummary = patchRecordSummary parsed
-                putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
-                        ++ " \8594 " ++ outputPath
+      applyAndWriteTo outputPath = do
+        sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
+        let source = SourceFileContents sourceBytes
+        verifySource noVerify verification source
+        target <- orDie =<< inMemoryApply (patchApply parsed) source
+        verifyTarget noVerify verification target
+        ByteString.writeFile outputPath (unTargetFileContents target)
+        let appliedSummary = patchRecordSummary parsed
+        putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
+                ++ " \8594 " ++ outputPath
 
-      case commandApplyOutput parsedCommand of
-        ApplyDryRun -> do
-          let reportedPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
-              summary = patchRecordSummary parsed
-          putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
-                  ++ " \8594 " ++ reportedPath
-          case verifySourceCRC32 verification of
-            Just expected -> do
-              sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
-              let actual = rustyCRC32 sourceBytes
-              putStrLn $ "source CRC: " ++ formatCRC actual
-                ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
-            Nothing -> pure ()
-          exitSuccess
-        ApplyInPlace backupBehavior -> do
-          case backupBehavior of
-            WriteBackup -> do
-              let backupPath = commandSource parsedCommand ++ ".bak"
-              copyFile (commandSource parsedCommand) backupPath
-              hPutStrLn stderr ("slap: backup: " ++ backupPath)
-            NoBackup -> pure ()
-          applyAndWriteTo (commandSource parsedCommand)
-        ApplyToExplicitFile outputPath -> do
-          refuseOverwrite outputPath
-          applyAndWriteTo outputPath
-        ApplyToDerivedFile -> do
-          let outputPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
-          refuseOverwrite outputPath
-          applyAndWriteTo outputPath
+  case commandApplyOutput parsedCommand of
+    ApplyDryRun -> do
+      let reportedPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+          summary = patchRecordSummary parsed
+      putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
+              ++ " \8594 " ++ reportedPath
+      case verifySourceCRC32 verification of
+        Just expected -> do
+          sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
+          let actual = rustyCRC32 sourceBytes
+          putStrLn $ "source CRC: " ++ formatCRC actual
+            ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
+        Nothing -> pure ()
+      exitSuccess
+    ApplyInPlace backupBehavior -> do
+      case backupBehavior of
+        WriteBackup -> do
+          let backupPath = commandSource parsedCommand ++ ".bak"
+          copyFile (commandSource parsedCommand) backupPath
+          hPutStrLn stderr ("slap: backup: " ++ backupPath)
+        NoBackup -> pure ()
+      applyAndWriteTo (commandSource parsedCommand)
+    ApplyToExplicitFile outputPath -> do
+      refuseOverwrite outputPath
+      applyAndWriteTo outputPath
+    ApplyToDerivedFile -> do
+      let outputPath = deriveOutput (commandPatch parsedCommand) (commandSource parsedCommand)
+      refuseOverwrite outputPath
+      applyAndWriteTo outputPath
 
 ----------------------------------------------------------------------------
 -- Undo
@@ -635,22 +627,18 @@ doApply parsedCommand = do
 doUndo :: Command -> IO ()
 doUndo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
-  case parseSome (PatchFileContents patchBytes) of
-    Left slapError -> dieError slapError
-    Right parsed -> do
-      emitWarnings parsed
-      case patchUndo parsed of
-        Nothing -> die "undo not supported for this format"
-        Just (UndoInMemory revert) -> do
-          modified <- ByteString.readFile (commandSource parsedCommand)
-          case revert (TargetFileContents modified) of
-            Left slapError -> dieError slapError
-            Right (SourceFileContents result) -> do
-              let outputPath = case commandUndoOutput parsedCommand of
-                    UndoInPlace                 -> commandSource parsedCommand
-                    UndoToExplicitFile explicit -> explicit
-              ByteString.writeFile outputPath result
-              putStrLn "reverted"
+  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  emitWarnings parsed
+  case patchUndo parsed of
+    Nothing -> die "undo not supported for this format"
+    Just (UndoInMemory revert) -> do
+      modified <- ByteString.readFile (commandSource parsedCommand)
+      SourceFileContents result <- orDie (revert (TargetFileContents modified))
+      let outputPath = case commandUndoOutput parsedCommand of
+            UndoInPlace                 -> commandSource parsedCommand
+            UndoToExplicitFile explicit -> explicit
+      ByteString.writeFile outputPath result
+      putStrLn "reverted"
 
 ----------------------------------------------------------------------------
 -- Create
@@ -661,14 +649,11 @@ doCreate parsedCommand = do
   originalBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandModified parsedCommand)
   createMeta    <- resolveRequestedPatchMetadata (commandCreateMetadata parsedCommand)
-  let defaultWarnings = createDefaultNotes (commandCreateFormat parsedCommand) createMeta
-  forM_ defaultWarnings $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-  case createFromMemory (commandCreateFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing of
-    Left slapError -> dieError slapError
-    Right result -> do
-      forM_ (resultWarnings result) $ \warning -> hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-      ByteString.writeFile (commandCreateOutput parsedCommand) (unPatchFileContents (resultBytes result))
-      putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
+  emitSlapWarnings (createDefaultNotes (commandCreateFormat parsedCommand) createMeta)
+  result <- orDie (createFromMemory (commandCreateFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
+  emitSlapWarnings (resultWarnings result)
+  ByteString.writeFile (commandCreateOutput parsedCommand) (unPatchFileContents (resultBytes result))
+  putStrLn ("wrote " ++ commandCreateOutput parsedCommand)
 
 ----------------------------------------------------------------------------
 -- Convert
@@ -677,63 +662,53 @@ doCreate parsedCommand = do
 doConvert :: Command -> IO ()
 doConvert parsedCommand = do
   patchBytes <- readUnwrap (commandConvertPatch parsedCommand)
-  case parseSome (PatchFileContents patchBytes) of
-    Left slapError -> dieError slapError
-    Right parsed -> do
-      emitWarnings parsed
-      cliMeta <- resolveRequestedPatchMetadata (commandConvertMetadata parsedCommand)
-      let outputFile = case commandConvertOutput parsedCommand of
-            ConvertToExplicitFile explicit -> explicit
-            ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
-                                                               (formatExtension (commandConvertTo parsedCommand))
-          mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-          printWarnings warnings = forM_ warnings $ \warning ->
-              hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
-          metaWarnings = case patchMetadata parsed of
-            Nothing -> []
-            Just metaBytes ->
-              let metaSize = ByteString.length metaBytes
-              in if commandConvertTo parsedCommand == CreateDiff CreateBPS
-                 then []
-                 else [MetadataDropped metaSize]
-          metaCarryNote = case patchMetadata parsed of
-            Just metaBytes | commandConvertTo parsedCommand == CreateDiff CreateBPS
-                           , isNothing (requestedEmbeddedBlob mergedMeta) ->
-              Just ("note: source has " ++ show (ByteString.length metaBytes)
-                    ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
-            _ -> Nothing
-      case commandConvertSource parsedCommand of
-        Just sourcePath -> do
-          -- --with provided: always use apply-and-recreate path
-          sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) sourcePath
-          let source = SourceFileContents sourceBytes
-          verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
-          target <- applyForConvert parsed source
-          case createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) of
-            Left slapError -> dieError slapError
-            Right createResult -> do
-              printWarnings (patchSourceNotes parsed ++ metaWarnings
-                            ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
-                            ++ resultWarnings createResult)
-              forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
-              ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
-              putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
-        Nothing -> case patchContents parsed of
-          Nothing -> die (needSourceMessage parsed)
-          Just contents -> case convertDirect contents (commandConvertTo parsedCommand) mergedMeta of
-            Left slapError -> dieError slapError
-            Right convertResult -> do
-              printWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
-              ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
-              putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+  parsed <- orDie (parseSome (PatchFileContents patchBytes))
+  emitWarnings parsed
+  cliMeta <- resolveRequestedPatchMetadata (commandConvertMetadata parsedCommand)
+  let outputFile = case commandConvertOutput parsedCommand of
+        ConvertToExplicitFile explicit -> explicit
+        ConvertToDerivedFile           -> replaceExtension (commandConvertPatch parsedCommand)
+                                                           (formatExtension (commandConvertTo parsedCommand))
+      mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
+      metaWarnings = case patchMetadata parsed of
+        Nothing -> []
+        Just metaBytes ->
+          let metaSize = ByteString.length metaBytes
+          in if commandConvertTo parsedCommand == CreateDiff CreateBPS
+             then []
+             else [MetadataDropped metaSize]
+      metaCarryNote = case patchMetadata parsed of
+        Just metaBytes | commandConvertTo parsedCommand == CreateDiff CreateBPS
+                       , isNothing (requestedEmbeddedBlob mergedMeta) ->
+          Just ("note: source has " ++ show (ByteString.length metaBytes)
+                ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
+        _ -> Nothing
+  case commandConvertSource parsedCommand of
+    Just sourcePath -> do
+      -- --with provided: always use apply-and-recreate path
+      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) sourcePath
+      let source = SourceFileContents sourceBytes
+      verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
+      target <- applyForConvert parsed source
+      createResult <- orDie (createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
+      emitSlapWarnings (patchSourceNotes parsed ++ metaWarnings
+                        ++ createDefaultNotes (commandConvertTo parsedCommand) mergedMeta
+                        ++ resultWarnings createResult)
+      forM_ metaCarryNote $ \note -> hPutStrLn stderr ("slap: " ++ note)
+      ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
+      putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
+    Nothing -> case patchContents parsed of
+      Nothing -> die (needSourceMessage parsed)
+      Just contents -> do
+        convertResult <- orDie (convertDirect contents (commandConvertTo parsedCommand) mergedMeta)
+        emitSlapWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
+        ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
+        putStrLn ("converted to " ++ formatName (commandConvertTo parsedCommand) ++ ": " ++ outputFile)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
-applyForConvert somePatch source = do
-  result <- inMemoryApply (patchApply somePatch) source
-  case result of
-    Left slapError -> dieError slapError
-    Right target      -> pure target
+applyForConvert somePatch source =
+  orDie =<< inMemoryApply (patchApply somePatch) source
 
 -- | Error message when --with is required but not provided.
 needSourceMessage :: SomePatch -> String
@@ -875,6 +850,13 @@ emitWarnings :: SomePatch -> IO ()
 emitWarnings somePatch = forM_ (patchWarnings somePatch) $ \warning ->
   hPutStrLn stderr ("slap: warning: " ++ renderSlapWarning warning)
 
+-- | Emit a list of 'SlapWarning's to stderr, each prefixed with "slap: ".
+-- Replaces the inline 'forM_ warnings $ \\w -> hPutStrLn stderr ...' pattern
+-- that CLI callers reach for when surfacing library-level warnings.
+emitSlapWarnings :: [SlapWarning] -> IO ()
+emitSlapWarnings = traverse_ $ \warning ->
+  hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
+
 warn :: String -> IO ()
 warn message = hPutStrLn stderr ("slap: warning: " ++ message)
 
@@ -883,3 +865,9 @@ die message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
 
 dieError :: SlapError -> IO a
 dieError = die . renderSlapError
+
+-- | Unwrap an 'Either SlapError' or terminate with a rendered error.
+-- Replaces the 'case ... of Left err -> dieError err; Right v -> ...' pattern
+-- that appears in every do-function that calls into the library.
+orDie :: Either SlapError a -> IO a
+orDie = either dieError pure
