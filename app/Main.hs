@@ -24,7 +24,7 @@ import Slap.FormatLabel (formatLabelName)
 import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
 
 import qualified Data.ByteString as ByteString
-import Control.Monad (when, unless, forM_)
+import Control.Monad (when, forM_)
 import Data.Foldable (traverse_)
 import Data.Char (toLower)
 import Data.Maybe (isNothing)
@@ -125,18 +125,55 @@ data ConvertOutput
   | ConvertToDerivedFile
   deriving (Show, Eq)
 
+-- | Whether to refuse writing over an existing output file.
+--
+-- @RefuseOverwrite@ (default) checks 'doesFileExist' before writing and
+-- aborts if the target is present; the user gets a clear error and can
+-- decide whether to delete the existing file.  @ForceOverwrite@ (set by
+-- @--force@) skips the check; the output path is overwritten
+-- unconditionally.  Does not apply to the @--in-place@ lane, which
+-- writes to the source by definition.
+data OverwritePolicy
+  = RefuseOverwrite
+  | ForceOverwrite
+  deriving (Show, Eq)
+
+-- | Whether apply and convert should verify the source file's hash
+-- against the patch's declared source checksum before applying.
+--
+-- @EnforceVerification@ (default) fails with a readable error on hash
+-- mismatch; @SkipVerification@ (set by @--no-verify@) downgrades
+-- mismatches to warnings and proceeds.  Formats without source
+-- checksums are unaffected either way.
+data VerificationPolicy
+  = EnforceVerification
+  | SkipVerification
+  deriving (Show, Eq)
+
+-- | How much progress output apply and undo emit to stderr during
+-- operation.  Distinct from 'ExplainVerbosity', which controls the
+-- detail of @slap explain@'s structural dump.
+--
+-- @Quiet@ (default) prints only the final \"applied N records \8594 PATH\"
+-- summary.  @Verbose@ (set by @-V@\/@--verbose@) also prints each
+-- record as it's applied, via 'renderExplain'.
+data Verbosity
+  = Quiet
+  | Verbose
+  deriving (Show, Eq)
+
 data Command
   = CommandApply
-      { commandForce    :: Bool
-      , commandNoVerify :: Bool
-      , commandVerbose  :: Bool
+      { commandOverwritePolicy    :: OverwritePolicy
+      , commandVerificationPolicy :: VerificationPolicy
+      , commandVerbosity          :: Verbosity
       , commandApplyOutput :: ApplyOutput
       , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
       }
   | CommandUndo
-      { commandVerbose :: Bool
+      { commandVerbosity   :: Verbosity
       , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
@@ -151,13 +188,13 @@ data Command
       , commandCreateMetadata :: RequestedPatchMetadataInputs
       }
   | CommandConvert
-      { commandConvertPatch    :: FilePath
-      , commandConvertTo       :: CreateFormat
-      , commandConvertOutput   :: ConvertOutput
-      , commandConvertSource   :: Maybe FilePath
-      , commandFileReading     :: FileReadingOptions
-      , commandNoVerify        :: Bool
-      , commandConvertMetadata :: RequestedPatchMetadataInputs
+      { commandConvertPatch       :: FilePath
+      , commandConvertTo          :: CreateFormat
+      , commandConvertOutput      :: ConvertOutput
+      , commandConvertSource      :: Maybe FilePath
+      , commandFileReading        :: FileReadingOptions
+      , commandVerificationPolicy :: VerificationPolicy
+      , commandConvertMetadata    :: RequestedPatchMetadataInputs
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
   -- NOTE: CommandExplain is the lone positional-arg constructor in this sum;
@@ -206,31 +243,34 @@ explainParser = CommandExplain
 
 applyParser :: Parser Command
 applyParser = do
-    force <- forceFlag
-    noVerify <- noVerifyFlag
-    verbose <- verboseFlag
+    overwritePolicy    <- overwritePolicyParser
+    verificationPolicy <- verificationPolicyParser
+    verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch <- argument str (metavar "PATCH" <> help "Patch file")
+    patch  <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     applyOutput <- applyOutputParser
     pure CommandApply
-      { commandForce = force
-      , commandNoVerify = noVerify
-      , commandVerbose = verbose
+      { commandOverwritePolicy    = overwritePolicy
+      , commandVerificationPolicy = verificationPolicy
+      , commandVerbosity          = verbosity
       , commandApplyOutput = applyOutput
       , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
       }
 
-forceFlag :: Parser Bool
-forceFlag = switch (long "force" <> short 'f' <> help "Overwrite existing output files")
+overwritePolicyParser :: Parser OverwritePolicy
+overwritePolicyParser = flag RefuseOverwrite ForceOverwrite
+  (long "force" <> short 'f' <> help "Overwrite existing output files")
 
-noVerifyFlag :: Parser Bool
-noVerifyFlag = switch (long "no-verify" <> help "Skip checksum validation (mismatches become warnings)")
+verificationPolicyParser :: Parser VerificationPolicy
+verificationPolicyParser = flag EnforceVerification SkipVerification
+  (long "no-verify" <> help "Skip checksum validation (mismatches become warnings)")
 
-verboseFlag :: Parser Bool
-verboseFlag = switch (long "verbose" <> short 'V' <> help "Print each record as it's applied")
+verbosityParser :: Parser Verbosity
+verbosityParser = flag Quiet Verbose
+  (long "verbose" <> short 'V' <> help "Print each record as it's applied")
 
 -- | Parser for the four mutually exclusive output lanes.  'asum' tries each
 -- lane in turn and commits to the first one whose distinguishing flag is
@@ -274,13 +314,13 @@ fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
 
 undoParser :: Parser Command
 undoParser = do
-    verbose <- verboseFlag
+    verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch <- argument str (metavar "PATCH" <> help "Patch file")
+    patch  <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "File to restore")
     undoOutput <- undoOutputParser
     pure CommandUndo
-      { commandVerbose = verbose
+      { commandVerbosity   = verbosity
       , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
@@ -322,16 +362,16 @@ convertParser = do
     conversionSource   <- optional (option str (long "with" <> metavar "SOURCE"
                             <> help "Source ROM (required for differential formats)"))
     fileReadingOptions <- fileReadingOptionsParser
-    noVerify           <- noVerifyFlag
+    verificationPolicy <- verificationPolicyParser
     metadataInputs     <- requestedPatchMetadataInputsParser
     pure CommandConvert
-      { commandConvertPatch    = patchFile
-      , commandConvertTo       = targetFormat
-      , commandConvertOutput   = convertOutput
-      , commandConvertSource   = conversionSource
-      , commandFileReading     = fileReadingOptions
-      , commandNoVerify        = noVerify
-      , commandConvertMetadata = metadataInputs
+      { commandConvertPatch       = patchFile
+      , commandConvertTo          = targetFormat
+      , commandConvertOutput      = convertOutput
+      , commandConvertSource      = conversionSource
+      , commandFileReading        = fileReadingOptions
+      , commandVerificationPolicy = verificationPolicy
+      , commandConvertMetadata    = metadataInputs
       }
 
 -- | The output-format flag accepted by @slap create@.  Defaults to BPS
@@ -568,23 +608,26 @@ doApply parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
   parsed <- orDie (parseSome (PatchFileContents patchBytes))
   emitWarnings parsed
-  when (commandVerbose parsedCommand) $
-    hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+  case commandVerbosity parsedCommand of
+    Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+    Quiet   -> pure ()
 
   let verification = patchVerification parsed
-      noVerify = commandNoVerify parsedCommand
+      verificationPolicy = commandVerificationPolicy parsedCommand
 
-      refuseOverwrite outputPath = unless (commandForce parsedCommand) $ do
-        exists <- doesFileExist outputPath
-        when exists $
-          die (outputPath ++ " already exists (use --force to overwrite)")
+      refuseOverwrite outputPath = case commandOverwritePolicy parsedCommand of
+        ForceOverwrite  -> pure ()
+        RefuseOverwrite -> do
+          exists <- doesFileExist outputPath
+          when exists $
+            die (outputPath ++ " already exists (use --force to overwrite)")
 
       applyAndWriteTo outputPath = do
         sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
         let source = SourceFileContents sourceBytes
-        verifySource noVerify verification source
+        verifySource verificationPolicy verification source
         target <- orDie =<< inMemoryApply (patchApply parsed) source
-        verifyTarget noVerify verification target
+        verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unTargetFileContents target)
         let appliedSummary = patchRecordSummary parsed
         putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
@@ -629,6 +672,9 @@ doUndo parsedCommand = do
   patchBytes <- readUnwrap (commandPatch parsedCommand)
   parsed <- orDie (parseSome (PatchFileContents patchBytes))
   emitWarnings parsed
+  case commandVerbosity parsedCommand of
+    Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+    Quiet   -> pure ()
   case patchUndo parsed of
     Nothing -> die "undo not supported for this format"
     Just (UndoInMemory revert) -> do
@@ -688,7 +734,7 @@ doConvert parsedCommand = do
       -- --with provided: always use apply-and-recreate path
       sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) sourcePath
       let source = SourceFileContents sourceBytes
-      verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
+      verifySource (commandVerificationPolicy parsedCommand) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orDie (createFromMemory (commandConvertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
       emitSlapWarnings (patchSourceNotes parsed ++ metaWarnings
@@ -734,39 +780,43 @@ deriveOutput patchPath sourcePath =
 -- Verification helpers
 ----------------------------------------------------------------------------
 
-verifySource :: Bool -> Verification -> SourceFileContents -> IO ()
-verifySource noVerify verification (SourceFileContents sourceBytes) = do
+verifySource :: VerificationPolicy -> Verification -> SourceFileContents -> IO ()
+verifySource verificationPolicy verification (SourceFileContents sourceBytes) = do
   let preprocessed = verifySourcePreHash verification sourceBytes
   forM_ (verifySourceCRC32 verification) $ \expected ->
-    checkCRC noVerify SourceSide expected (rustyCRC32 preprocessed)
+    checkCRC verificationPolicy SourceSide expected (rustyCRC32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
-    checkHash noVerify SourceSide MD5 (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
+    checkHash verificationPolicy SourceSide MD5 (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
   forM_ (verifySourceSHA1 verification) $ \expected ->
-    checkHash noVerify SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
+    checkHash verificationPolicy SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
   -- Per-block CRC16 and PPF validation are advisory (warning-only)
-  unless noVerify $ do
-    forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-      warnBlock "source" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes)))
-    forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
-      warnPPFBlock blockOffset expectedData sourceBytes
-    forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
-      warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
-      warnSourceBytes checkLabel checkOffset expectedData sourceBytes
+  case verificationPolicy of
+    SkipVerification    -> pure ()
+    EnforceVerification -> do
+      forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+        warnBlock "source" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes)))
+      forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
+        warnPPFBlock blockOffset expectedData sourceBytes
+      forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
+        warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+      forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
+        warnSourceBytes checkLabel checkOffset expectedData sourceBytes
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
-    checkFileSize noVerify SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+    checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
 
-verifyTarget :: Bool -> Verification -> TargetFileContents -> IO ()
-verifyTarget noVerify verification (TargetFileContents targetBytes) = do
+verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
+verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
   forM_ (verifyTargetCRC32 verification) $ \expected ->
-    checkCRC noVerify TargetSide expected (rustyCRC32 targetBytes)
+    checkCRC verificationPolicy TargetSide expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
-    checkHash noVerify TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
-  unless noVerify $
-    forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-      warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))
+    checkHash verificationPolicy TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
+  case verificationPolicy of
+    SkipVerification    -> pure ()
+    EnforceVerification ->
+      forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+        warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
-    checkAdler noVerify windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
+    checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
 data VerificationSide = SourceSide | TargetSide
   deriving (Show, Eq)
@@ -782,28 +832,31 @@ hashAlgorithmLabel :: HashAlgorithm -> String
 hashAlgorithmLabel MD5  = "MD5"
 hashAlgorithmLabel SHA1 = "SHA1"
 
-checkCRC :: Bool -> VerificationSide -> CRC32 -> CRC32 -> IO ()
-checkCRC noVerify side expected actual
+checkCRC :: VerificationPolicy -> VerificationSide -> CRC32 -> CRC32 -> IO ()
+checkCRC verificationPolicy side expected actual
   | expected == actual = pure ()
-  | noVerify = warn (label ++ " CRC mismatch (expected "
-               ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")")
-  | otherwise = die (label ++ " CRC mismatch (expected "
-                     ++ formatCRC expected ++ ", got " ++ formatCRC actual
-                     ++ ")\n  use --no-verify to apply anyway")
-  where label = verificationSideLabel side
+  | otherwise = case verificationPolicy of
+      SkipVerification    -> warn (mismatchMessage)
+      EnforceVerification -> die (mismatchMessage ++ "\n  use --no-verify to apply anyway")
+  where
+    label = verificationSideLabel side
+    mismatchMessage = label ++ " CRC mismatch (expected "
+                   ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")"
 
-checkHash :: Bool -> VerificationSide -> HashAlgorithm -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-checkHash noVerify side algorithm expected actual
+checkHash :: VerificationPolicy -> VerificationSide -> HashAlgorithm -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+checkHash verificationPolicy side algorithm expected actual
   | expected == actual = pure ()
-  | noVerify = warn (label ++ " mismatch")
-  | otherwise = die (label ++ " mismatch\n  use --no-verify to apply anyway")
+  | otherwise = case verificationPolicy of
+      SkipVerification    -> warn (label ++ " mismatch")
+      EnforceVerification -> die (label ++ " mismatch\n  use --no-verify to apply anyway")
   where label = verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm
 
-checkAdler :: Bool -> Offset -> Adler32 -> Adler32 -> IO ()
-checkAdler noVerify windowOffset expected actual
+checkAdler :: VerificationPolicy -> Offset -> Adler32 -> Adler32 -> IO ()
+checkAdler verificationPolicy windowOffset expected actual
   | expected == actual = pure ()
-  | noVerify = warn message
-  | otherwise = die (message ++ "\n  use --no-verify to apply anyway")
+  | otherwise = case verificationPolicy of
+      SkipVerification    -> warn message
+      EnforceVerification -> die (message ++ "\n  use --no-verify to apply anyway")
   where message = "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
             ++ " (expected 0x" ++ showAdler32 expected
             ++ ", got 0x" ++ showAdler32 actual ++ ")"
@@ -824,15 +877,16 @@ warnFileSize (FileSize expectedSize) (FileSize actualSize) =
   when (expectedSize /= actualSize) $
     warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
 
-checkFileSize :: Bool -> VerificationSide -> FileSize -> FileSize -> IO ()
-checkFileSize noVerify side (FileSize expectedSize) (FileSize actualSize)
+checkFileSize :: VerificationPolicy -> VerificationSide -> FileSize -> FileSize -> IO ()
+checkFileSize verificationPolicy side (FileSize expectedSize) (FileSize actualSize)
   | expectedSize == actualSize = pure ()
-  | noVerify = warn (label ++ " file size mismatch (expected "
-               ++ show expectedSize ++ " bytes, got " ++ show actualSize ++ " bytes)")
-  | otherwise = die (label ++ " file size mismatch (expected "
-                     ++ show expectedSize ++ " bytes, got " ++ show actualSize
-                     ++ " bytes)\n  use --no-verify to apply anyway")
-  where label = verificationSideLabel side
+  | otherwise = case verificationPolicy of
+      SkipVerification    -> warn mismatchMessage
+      EnforceVerification -> die (mismatchMessage ++ "\n  use --no-verify to apply anyway")
+  where
+    label = verificationSideLabel side
+    mismatchMessage = label ++ " file size mismatch (expected "
+                   ++ show expectedSize ++ " bytes, got " ++ show actualSize ++ " bytes)"
 
 warnSourceBytes :: String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 warnSourceBytes label checkOffset expectedData sourceBytes =
