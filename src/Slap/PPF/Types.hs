@@ -3,6 +3,7 @@ module Slap.PPF.Types
     , PPFImageType(..)
     , fromImageType
     , PPFValidation(..)
+    , ValidationBlockBytes(..)
     , PPFRecordCommand(..)
     , PPFRecord(..)
     , PPFFileId(..)
@@ -42,10 +43,17 @@ fromImageType :: PPFImageType -> Word8
 fromImageType BIN = 0x00
 fromImageType GI  = 0x01
 
+-- | 1024 bytes of source-ROM data sampled at a format-specific offset,
+-- stored alongside a PPF3 patch for apply-time sanity checking.  Treated
+-- as an opaque blob; the newtype's job is to distinguish "validation
+-- bytes" from other ByteString roles in the patch pipeline.
+newtype ValidationBlockBytes = ValidationBlockBytes { unValidationBlockBytes :: ByteString }
+  deriving (Show, Eq)
+
 -- | Validation data embedded in PPF2/PPF3 headers.
 data PPFValidation = PPFValidation
   { validationImageType :: !PPFImageType
-  , validationBlock     :: !ByteString  -- ^ 1024 bytes stored in the patch (copied from the target image at creation time)
+  , validationBlock     :: !ValidationBlockBytes  -- ^ 1024 bytes stored in the patch (copied from the target image at creation time)
   } deriving (Show)
 
 -- | Record command type.  Replace is standard for PPF1/2/3; Append exists

@@ -28,7 +28,7 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF.Create as PPF
-import Slap.PPF.Types (PPFImageType(..))
+import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
@@ -98,7 +98,7 @@ data PatchContents = PatchContents
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
   , contentsDestinationSize    :: Maybe FileSize
-  , contentsValidation  :: Maybe ByteString.ByteString
+  , contentsValidation  :: Maybe ValidationBlockBytes
   , contentsUndoData    :: Maybe [UndoHunk]
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
@@ -657,8 +657,8 @@ encodeDirect contents source target meta limits = case target of
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
-        md5Hash  = unMD5Hash (fromMaybe (MD5Hash (ByteString.replicate 16 0)) (contentsSourceMD5 contents))
-        sha1Hash = unSHA1Hash (fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents))
+        md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
+        sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
              (fromMaybe False (contentsNINJA1Compressed contents))) platformWarnings)
   CreatePMSR -> do
@@ -784,7 +784,7 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
                     then Just (FileSize (ByteString.length target))
                     else Nothing
   , contentsValidation  = if needs FValidation && ByteString.length source > validationOffset + 1024
-                    then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
+                    then Just (ValidationBlockBytes (ByteString.take 1024 (ByteString.drop validationOffset source)))
                     else Nothing
   , contentsUndoData    = if needs FUndoData
                     then Just (computeUndo source patchHunks)

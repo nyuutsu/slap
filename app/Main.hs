@@ -13,11 +13,11 @@ import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, formatExtension, formatName)
 import Slap.Create (createFromMemory)
-import Slap.PPF.Types (PPFImageType(..))
+import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
-import Slap.Checksum (CRC32(..), CRC16(..), Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
+import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.Format (MetaField(..), padHex, renderField)
@@ -887,7 +887,7 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
     SkipVerification    -> pure ()
     EnforceVerification -> do
       forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-        warnBlock "source" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes)))
+        warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
       forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
         warnPPFBlock blockOffset expectedData sourceBytes
       forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
@@ -907,7 +907,7 @@ verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = 
     SkipVerification    -> pure ()
     EnforceVerification ->
       forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-        warnBlock "target" blockOffset expectedCRC (CRC16 (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes)))
+        warnBlock "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
@@ -959,8 +959,8 @@ warnBlock label blockOffset expected actual
   | expected == actual = pure ()
   | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
 
-warnPPFBlock :: Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-warnPPFBlock blockOffset expectedData sourceBytes =
+warnPPFBlock :: Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
+warnPPFBlock blockOffset (ValidationBlockBytes expectedData) sourceBytes =
   let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
   in when (actual /= expectedData) $
        warn ("validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset))

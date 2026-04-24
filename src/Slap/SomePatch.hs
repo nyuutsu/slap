@@ -139,7 +139,7 @@ data BlockCheck = BlockCheck
 -- | Validation block comparison (PPF).
 data ValidationBlock = ValidationBlock
   { validationBlockOffset :: !Offset
-  , validationBlockData   :: !ByteString.ByteString
+  , validationBlockData   :: !PPF.ValidationBlockBytes
   } deriving (Show)
 
 -- | Per-window Adler32 check (VCDIFF).

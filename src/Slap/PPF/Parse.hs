@@ -10,7 +10,9 @@ module Slap.PPF.Parse (parsePatch) where
 -- Secondary: RomPatcher.js modules/RomPatcher.format.ppf.js
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
-                        PPFVersion(..), PPFValidation(..), PPFFileId(..), PPFImageType(..),
+                        PPFVersion(..), PPFValidation(..),
+                        ValidationBlockBytes(..),
+                        PPFFileId(..), PPFImageType(..),
                         ppfPreambleLength, ppfDescriptionLength,
                         ppf2HeaderLength, ppf3MinHeaderLength,
                         ppf4PostDescriptionLength, validationSize,
@@ -112,12 +114,12 @@ parsePPF2 input = do
     , ppfFileId      = fileId
     }
   where
-    parsePPF2Header :: Get (ByteString, FileSize, ByteString)
+    parsePPF2Header :: Get (ByteString, FileSize, ValidationBlockBytes)
     parsePPF2Header = do
       skip ppfPreambleLength
       description <- getBytes ppfDescriptionLength
       fileSize <- FileSize . fromIntegral <$> word32LE
-      validationBlock <- getBytes validationSize
+      validationBlock <- ValidationBlockBytes <$> getBytes validationSize
       pure (description, fileSize, validationBlock)
 
 -- | Intermediate result of parsing the PPF3 fixed header fields.
@@ -126,7 +128,7 @@ data PPF3ParsedHeader = PPF3ParsedHeader
   , ppf3ImageTypeByte   :: !Word8
   , ppf3HasBlockCheck   :: !Bool
   , ppf3HasUndo         :: !Bool
-  , ppf3ValidationBlock :: !(Maybe ByteString)
+  , ppf3ValidationBlock :: !(Maybe ValidationBlockBytes)
   }
 
 -- PPF3: 60 or 1084-byte header, then records with 8-byte offsets, optional undo.
@@ -162,7 +164,7 @@ parsePPF3 input = do
       hasUndoByte <- getByte
       skip (Length 1)
       validationBlock <- if hasBlockByte /= 0
-        then Just <$> getBytes validationSize
+        then Just . ValidationBlockBytes <$> getBytes validationSize
         else pure Nothing
       pure PPF3ParsedHeader
         { ppf3Description     = description

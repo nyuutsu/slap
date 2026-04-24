@@ -8,6 +8,7 @@ module Slap.APSGBA.Create
 import Slap.APSGBA.Apply (safeSlice)
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE)
+import Slap.Checksum (CRC16(..))
 import Slap.Error (SlapError, CreateResult(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -45,8 +46,8 @@ createAPSGBA (SourceFileContents original) (TargetFileContents modified) =
 encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
 encodeGBABlock original modified blockIndex =
     putWord32LE (fromIntegral offset :: Word32)
-    <> putWord16LE (crc16 sourceBlock)
-    <> putWord16LE (crc16 targetBlock)
+    <> putWord16LE (unCRC16 (crc16 sourceBlock))
+    <> putWord16LE (unCRC16 (crc16 targetBlock))
     <> byteString xorPayload
   where
     offset = blockIndex * apsGbaBlockSize

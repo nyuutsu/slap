@@ -26,6 +26,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       DirectConversionContract(..), UndoInclusion(..), ValidationInclusion(..),
                       noMetadataRequested, directConversionContract,
                       emptyContents, canConvert, convertDirect, conversionNotes)
+import Slap.PPF.Types (ValidationBlockBytes(..))
 import Slap.Create (createFromMemory)
 import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
@@ -67,7 +68,7 @@ fullContents = PatchContents
   , contentsSourceMD5   = Just (MD5Hash (ByteString.replicate 16 0xAA))
   , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))
   , contentsDestinationSize    = Just (FileSize 1024)
-  , contentsValidation  = Just (ByteString.replicate 1024 0)
+  , contentsValidation  = Just (ValidationBlockBytes (ByteString.replicate 1024 0))
   , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
   , contentsTruncation  = Just (FileSize 512)
   , contentsEBPMeta     = Just (ByteString.pack [0x7B, 0x7D])

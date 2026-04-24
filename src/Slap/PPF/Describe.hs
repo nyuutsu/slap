@@ -1,7 +1,8 @@
 module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
-                        PPFVersion(..), PPFValidation(..), PPFFileId(..),
+                        PPFVersion(..), PPFValidation(..),
+                        ValidationBlockBytes(..), PPFFileId(..),
                         validationOffset)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 import Slap.Format (MetaField(..), renderField)
@@ -45,7 +46,7 @@ ppfMeta patch = concat
     validationString (Just validation) =
       show (validationImageType validation)
       ++ " block at 0x" ++ showHex (fromIntegral (unOffset (validationOffset (validationImageType validation))) :: Word64) ""
-      ++ " (" ++ show (ByteString.length (validationBlock validation)) ++ " bytes)"
+      ++ " (" ++ show (ByteString.length (unValidationBlockBytes (validationBlock validation))) ++ " bytes)"
 
 -- | Format a human-readable summary of a parsed PPF patch.
 ppfInfo :: PPFPatch -> String

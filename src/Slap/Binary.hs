@@ -50,7 +50,7 @@ import Foreign.Marshal.Utils (copyBytes, moveBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
-import Slap.Checksum (Adler32, MD5Hash(..), SHA1Hash(..))
+import Slap.Checksum (Adler32, CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyAdler32)
 import Slap.Measure (Offset(..), Length(..), Hunk(..))
 
@@ -233,8 +233,8 @@ copyInPlace buffer sourceOffset destinationOffset regionLength =
 -- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)
 ----------------------------------------------------------------------------
 
-crc16 :: ByteString -> Word16
-crc16 = ByteString.foldl' updateChecksum 0
+crc16 :: ByteString -> CRC16
+crc16 = CRC16 . ByteString.foldl' updateChecksum 0
   where
     updateChecksum :: Word16 -> Word8 -> Word16
     updateChecksum checksum byte =

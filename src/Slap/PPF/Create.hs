@@ -2,7 +2,8 @@
 
 module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
-import Slap.PPF.Types (PPFImageType(..), fromImageType, ppfDescriptionLength)
+import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..),
+                       fromImageType, ppfDescriptionLength)
 import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
@@ -15,7 +16,7 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 
 padDescription :: String -> (ByteString, [SlapWarning])
 padDescription text =
@@ -50,14 +51,14 @@ encodeUndoRecord hasUndo (UndoHunk hunkOffset hunkPayload hunkOriginal) =
 encodePPF3 :: [Hunk]
            -> String
            -> Maybe [UndoHunk]
-           -> Maybe ByteString
+           -> Maybe ValidationBlockBytes
            -> PPFImageType
            -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
   let (descriptionBytes, descriptionWarnings) = padDescription description
       hasValidate = isJust validationBlock
       hasUndo     = isJust undoHunks
-      validationBytes = fromMaybe ByteString.empty validationBlock
+      validationBytes = maybe ByteString.empty unValidationBlockBytes validationBlock
       header      = buildHeader descriptionBytes hasValidate hasUndo
                       validationBytes imageType
       body = case undoHunks of
