@@ -210,9 +210,12 @@ data Command
       , commandConvertMetadata    :: RequestedPatchMetadataInputs
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
-  -- NOTE: CommandExplain is the lone positional-arg constructor in this sum;
-  -- every sibling uses record syntax.  A later sweep can bring it in line.
-  | CommandExplain FilePath ExplainVerbosity (Maybe FilePath) FileReadingOptions
+  | CommandExplain
+      { commandPatch            :: FilePath
+      , commandExplainVerbosity :: ExplainVerbosity
+      , commandExplainSource    :: Maybe FilePath
+      , commandFileReading      :: FileReadingOptions
+      }
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -225,7 +228,7 @@ main = customExecParser (prefs showHelpOnEmpty) options >>= \case
   parsedCommand@CommandCreate{}  -> doCreate parsedCommand
   parsedCommand@CommandConvert{} -> doConvert parsedCommand
   parsedCommand@CommandInfo{}    -> doInfo parsedCommand
-  CommandExplain patchFile verbosity maybeWithPath fileReadingOptions -> doExplain patchFile verbosity maybeWithPath fileReadingOptions
+  parsedCommand@CommandExplain{} -> doExplain parsedCommand
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
@@ -247,12 +250,19 @@ commandParser = subparser
   )
 
 explainParser :: Parser Command
-explainParser = CommandExplain
-  <$> argument str (metavar "PATCH" <> help "Patch file to explain")
-  <*> flag Summary FullRecords (long "records" <> help "Show full record-by-record dump instead of summary")
-  <*> optional (option str (long "with" <> metavar "SOURCE"
-      <> help "Source file (resolves delta/copy operations in output)"))
-  <*> fileReadingOptionsParser
+explainParser = do
+    patchFile          <- argument str (metavar "PATCH" <> help "Patch file to explain")
+    verbosity          <- flag Summary FullRecords
+                            (long "records" <> help "Show full record-by-record dump instead of summary")
+    maybeWithPath      <- optional (option str (long "with" <> metavar "SOURCE"
+                            <> help "Source file (resolves delta/copy operations in output)"))
+    fileReadingOptions <- fileReadingOptionsParser
+    pure CommandExplain
+      { commandPatch            = patchFile
+      , commandExplainVerbosity = verbosity
+      , commandExplainSource    = maybeWithPath
+      , commandFileReading      = fileReadingOptions
+      }
 
 applyParser :: Parser Command
 applyParser = do
@@ -624,14 +634,14 @@ doInfo parsedCommand = do
         ByteString.writeFile outPath metadataBytes
         putStrLn ("wrote metadata to " ++ outPath)
 
-doExplain :: FilePath -> ExplainVerbosity -> Maybe FilePath -> FileReadingOptions -> IO ()
-doExplain patchFile verbosity maybeWithPath fileReadingOptions = do
-  patchBytes <- readUnwrap patchFile
+doExplain :: Command -> IO ()
+doExplain parsedCommand = do
+  patchBytes <- readUnwrap (commandPatch parsedCommand)
   parsed <- orDie (parseSome (PatchFileContents patchBytes))
-  maybeSource <- case maybeWithPath of
+  maybeSource <- case commandExplainSource parsedCommand of
     Nothing   -> pure Nothing
-    Just path -> Just <$> readMaybeUnwrap fileReadingOptions path
-  let renderFunction = case verbosity of
+    Just path -> Just <$> readMaybeUnwrap (commandFileReading parsedCommand) path
+  let renderFunction = case commandExplainVerbosity parsedCommand of
         Summary     -> renderSummary
         FullRecords -> renderExplain
   putStr (renderFunction maybeSource (patchExplain parsed))
