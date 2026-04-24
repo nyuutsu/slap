@@ -38,6 +38,30 @@ import System.IO (hPutStr, hPutStrLn, stderr)
 -- Types
 ----------------------------------------------------------------------------
 
+-- | How slap should interpret input files whose first bytes look like an
+-- archive signature.
+--
+-- Slap can open single-entry zip and 7z archives transparently, so a user
+-- with @rom.zip@ containing one @rom.gbc@ can pass either the archive or
+-- the unwrapped ROM.  The @--raw@ flag exists to disable that: some files
+-- share a magic-byte prefix with an archive format without actually being
+-- one, and unwrapping them would fail or silently return the wrong bytes.
+data ArchiveHandling
+  = AutoUnwrapSingleEntryArchives
+  | ReadBytesVerbatim
+  deriving (Show, Eq)
+
+-- | Per-operation options for how slap reads its input files.  One field
+-- today; more can land here as new file-reading concerns appear (e.g. a
+-- future @--allow-missing@ for tolerating absent optional inputs).
+--
+-- The @--raw@ switch that populates 'fileReadingArchiveHandling' is
+-- defined in 'fileReadingOptionsParser' below.
+data FileReadingOptions = FileReadingOptions
+  { fileReadingArchiveHandling :: ArchiveHandling
+  }
+  deriving (Show, Eq)
+
 data Command
   = CommandApply
       { commandForce    :: Bool
@@ -46,21 +70,21 @@ data Command
       , commandInPlace :: Bool
       , commandBackup  :: Bool
       , commandDryRun  :: Bool
-      , commandRaw     :: Bool
+      , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
       , commandOutput  :: Maybe FilePath
       }
   | CommandUndo
       { commandVerbose :: Bool
-      , commandRaw     :: Bool
+      , commandFileReading :: FileReadingOptions
       , commandPatch   :: FilePath
       , commandSource  :: FilePath
       , commandOutput  :: Maybe FilePath
       }
   | CommandCreate
       { commandCreateFormat  :: CreateFormat
-      , commandRaw        :: Bool
+      , commandFileReading :: FileReadingOptions
       , commandOriginal   :: FilePath
       , commandModified   :: FilePath
       , commandCreateOutput  :: FilePath
@@ -85,7 +109,7 @@ data Command
       , commandConvertTo        :: CreateFormat
       , commandConvertOutput    :: Maybe FilePath
       , commandConvertSource      :: Maybe FilePath
-      , commandRaw           :: Bool
+      , commandFileReading :: FileReadingOptions
       , commandConvertDescription      :: Maybe String
       , commandConvertTitle     :: Maybe String
       , commandConvertAuthor    :: Maybe String
@@ -104,7 +128,7 @@ data Command
       , commandConvertMetadata  :: Maybe FilePath
       }
   | CommandInfo    { commandPatch :: FilePath, commandExtractMetadata :: Maybe FilePath }
-  | CommandExplain FilePath Bool (Maybe FilePath) Bool
+  | CommandExplain FilePath Bool (Maybe FilePath) FileReadingOptions
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -117,7 +141,7 @@ main = customExecParser (prefs showHelpOnEmpty) options >>= \case
   parsedCommand@CommandCreate{}  -> doCreate parsedCommand
   parsedCommand@CommandConvert{} -> doConvert parsedCommand
   parsedCommand@CommandInfo{}    -> doInfo parsedCommand
-  CommandExplain patchFile records maybeWithPath raw -> doExplain patchFile records maybeWithPath raw
+  CommandExplain patchFile records maybeWithPath fileReadingOptions -> doExplain patchFile records maybeWithPath fileReadingOptions
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
@@ -144,7 +168,7 @@ explainParser = CommandExplain
   <*> switch (long "records" <> help "Show full record-by-record dump instead of summary")
   <*> optional (option str (long "with" <> metavar "SOURCE"
       <> help "Source file (resolves delta/copy operations in output)"))
-  <*> rawFlag
+  <*> fileReadingOptionsParser
 
 applyParser :: Parser Command
 applyParser = do
@@ -154,7 +178,7 @@ applyParser = do
     inPlace <- inPlaceFlag
     backup <- backupFlag
     dryRun <- dryRunFlag
-    raw <- rawFlag
+    fileReadingOptions <- fileReadingOptionsParser
     patch <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     output <- outputOption
@@ -165,7 +189,7 @@ applyParser = do
       , commandInPlace = inPlace
       , commandBackup = backup
       , commandDryRun = dryRun
-      , commandRaw = raw
+      , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
       , commandOutput = output
@@ -194,20 +218,23 @@ backupFlag = flag True False (long "no-backup" <> help "Don't create .bak backup
 dryRunFlag :: Parser Bool
 dryRunFlag = switch (long "dry-run" <> help "Show what would happen without writing any files")
 
-rawFlag :: Parser Bool
-rawFlag = switch (long "raw" <> help "Treat files as raw bytes (skip archive unwrapping)")
+fileReadingOptionsParser :: Parser FileReadingOptions
+fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
+  where
+    archiveHandlingFromSwitch = flag AutoUnwrapSingleEntryArchives ReadBytesVerbatim
+      (long "raw" <> help "Read input files as raw bytes; do not attempt to unwrap zip/7z archives")
 
 undoParser :: Parser Command
 undoParser = do
     verbose <- verboseFlag
-    raw <- rawFlag
+    fileReadingOptions <- fileReadingOptionsParser
     patch <- argument str (metavar "PATCH" <> help "Patch file")
     source <- argument str (metavar "SOURCE" <> help "File to restore")
     output <- optional (option str (long "output" <> short 'o' <> metavar "FILE"
         <> help "Write restored output to FILE instead of modifying SOURCE in place"))
     pure CommandUndo
       { commandVerbose = verbose
-      , commandRaw = raw
+      , commandFileReading = fileReadingOptions
       , commandPatch = patch
       , commandSource = source
       , commandOutput = output
@@ -217,7 +244,7 @@ createParser :: Parser Command
 createParser = do
     createFormat <- option (eitherReader parseCreateFormat) (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
         <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
-    raw <- rawFlag
+    fileReadingOptions <- fileReadingOptionsParser
     original <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
     modified <- argument str (metavar "MODIFIED" <> help "Modified file")
     outputFile <- argument str (metavar "OUTPUT" <> help "Output patch file")
@@ -251,7 +278,7 @@ createParser = do
         <> help "Metadata file to embed (BPS)"))
     pure CommandCreate
       { commandCreateFormat = createFormat
-      , commandRaw = raw
+      , commandFileReading = fileReadingOptions
       , commandOriginal = original
       , commandModified = modified
       , commandCreateOutput = outputFile
@@ -281,7 +308,7 @@ convertParser = do
         <> help "Output file (default: replace input extension)"))
     conversionSource <- optional (option str (long "with" <> metavar "SOURCE"
         <> help "Source ROM (required for differential formats)"))
-    raw <- rawFlag
+    fileReadingOptions <- fileReadingOptionsParser
     description <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
         <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
     title <- optional (option str (long "title" <> metavar "TEXT"
@@ -318,7 +345,7 @@ convertParser = do
       , commandConvertTo = targetFormat
       , commandConvertOutput = outputFile
       , commandConvertSource = conversionSource
-      , commandRaw = raw
+      , commandFileReading = fileReadingOptions
       , commandConvertDescription = description
       , commandConvertTitle = title
       , commandConvertAuthor = author
@@ -423,10 +450,13 @@ readUnwrap path = do
           hPutStrLn stderr ("slap: unwrapped " ++ path ++ " \8594 " ++ entryName)
           pure unwrappedBytes
 
--- | Read a file, skipping unwrap if raw=True.
-readMaybeUnwrap :: Bool -> FilePath -> IO ByteString.ByteString
-readMaybeUnwrap True  = ByteString.readFile
-readMaybeUnwrap False = readUnwrap
+-- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
+-- CommandInfo currently uses 'readUnwrap' unconditionally; if it ever grows a
+-- '--raw' flag of its own, route it through here instead.
+readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
+readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
+  AutoUnwrapSingleEntryArchives -> readUnwrap
+  ReadBytesVerbatim             -> ByteString.readFile
 
 ----------------------------------------------------------------------------
 -- Info & Explain
@@ -452,15 +482,15 @@ doInfo parsedCommand = do
             ByteString.writeFile outPath metadataBytes
             putStrLn ("wrote metadata to " ++ outPath)
 
-doExplain :: FilePath -> Bool -> Maybe FilePath -> Bool -> IO ()
-doExplain patchFile records maybeWithPath raw = do
+doExplain :: FilePath -> Bool -> Maybe FilePath -> FileReadingOptions -> IO ()
+doExplain patchFile records maybeWithPath fileReadingOptions = do
   patchBytes <- readUnwrap patchFile
   case parseSome (PatchFileContents patchBytes) of
     Left slapError -> dieError slapError
     Right parsed -> do
       maybeSource <- case maybeWithPath of
         Nothing   -> pure Nothing
-        Just path -> Just <$> readMaybeUnwrap raw path
+        Just path -> Just <$> readMaybeUnwrap fileReadingOptions path
       let renderFunction = if records then renderExplain else renderSummary
       putStr (renderFunction maybeSource (patchExplain parsed))
       emitWarnings parsed
@@ -493,7 +523,7 @@ doApply parsedCommand = do
                 ++ " \8594 " ++ outputPath
         case verifySourceCRC32 verification of
           Just expected -> do
-            sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
+            sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
             let actual = rustyCRC32 sourceBytes
             putStrLn $ "source CRC: " ++ formatCRC actual
               ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
@@ -513,7 +543,7 @@ doApply parsedCommand = do
         hPutStrLn stderr ("slap: backup: " ++ backup)
 
       let apply = inMemoryApply (patchApply parsed)
-      sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandSource parsedCommand)
+      sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandSource parsedCommand)
       let source = SourceFileContents sourceBytes
       verifySource noVerify verification source
       result <- apply source
@@ -571,8 +601,8 @@ boolToStability False = StablePatch
 
 doCreate :: Command -> IO ()
 doCreate parsedCommand = do
-  originalBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandOriginal parsedCommand)
-  modifiedBytes <- readMaybeUnwrap (commandRaw parsedCommand) (commandModified parsedCommand)
+  originalBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandOriginal parsedCommand)
+  modifiedBytes <- readMaybeUnwrap (commandFileReading parsedCommand) (commandModified parsedCommand)
   maybeMeta <- case commandMetadata parsedCommand of
     Nothing   -> pure Nothing
     Just path -> Just <$> ByteString.readFile path
@@ -653,7 +683,7 @@ doConvert parsedCommand = do
       case commandConvertSource parsedCommand of
         Just sourcePath -> do
           -- --with provided: always use apply-and-recreate path
-          sourceBytes <- readMaybeUnwrap (commandRaw parsedCommand) sourcePath
+          sourceBytes <- readMaybeUnwrap (commandFileReading parsedCommand) sourcePath
           let source = SourceFileContents sourceBytes
           verifySource (commandNoVerify parsedCommand) (patchVerification parsed) source
           target <- applyForConvert parsed source
