@@ -124,7 +124,7 @@ data PatchContents = PatchContents
 data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF3
   | CreateNINJA1 | CreatePMSR | CreatePCHTXT | CreateAPSN64
-  deriving (Show, Eq)
+  deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
 -- create (VCDIFF, BSDiff, XDelta1) belong to DiffFormat (the format
@@ -446,13 +446,11 @@ canConvert contents contract =
      else Right ()
 
 -- | Every direct creation target, used to scan 'directConversionContract'
--- for formats that preserve a given 'PatchField'. Written out rather
--- than derived via @Enum@/@Bounded@ because 'DirectCreate' is small,
--- stable, and adding a constructor already touches several files.
+-- for formats that preserve a given 'PatchField'. Derived from the
+-- constructors of 'DirectCreate' via @Enum@\/@Bounded@, so adding a
+-- constructor extends this list automatically.
 allDirectTargets :: [DirectCreate]
-allDirectTargets =
-  [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3,
-   CreateNINJA1, CreatePMSR, CreatePCHTXT, CreateAPSN64]
+allDirectTargets = [minBound..maxBound]
 
 -- | Direct creation targets whose 'directConversionContract' accepts the
 -- given 'PatchField'. Used by 'convertDirect' to populate the

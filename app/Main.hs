@@ -3,7 +3,18 @@
 
 module Main (main) where
 
-import Slap.SomePatch (SomePatch(..), RecordSummary(..), ApplyStrategy(..), UndoStrategy(..), Verification(..), BlockCheck(..), ValidationBlock(..), WindowCheck(..), ByteCheck(..), parseSome)
+import Slap.SomePatch
+  ( SomePatch(..)
+  , RecordSummary(..)
+  , ApplyStrategy(..)
+  , UndoStrategy(..)
+  , Verification(..)
+  , BlockCheck(..)
+  , ValidationBlock(..)
+  , WindowCheck(..)
+  , ByteCheck(..)
+  , parseSome
+  )
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
@@ -893,6 +904,34 @@ doCreate parsedCommand = do
 -- Convert
 ----------------------------------------------------------------------------
 
+-- | The three real convert cases, each with the inputs the branch needs.
+-- Built once from the parsed patch and the CLI command by
+-- 'chooseConvertDispatch'; pattern-matched once in 'doConvert'.
+data ConvertDispatch
+  = ApplyAndRecreate ConvertWithSource
+    -- ^ User supplied @--with SOURCE@; load the source, apply the patch,
+    -- re-encode the target bytes as the target format.
+  | SourceLessConvert PatchContents
+    -- ^ User didn't supply source, but the parsed patch carries enough
+    -- structure ('PatchContents') to re-encode without source bytes.
+  | ConvertRequiresSource SomePatch
+    -- ^ User didn't supply source, and the parsed patch doesn't carry
+    -- 'PatchContents' (diff formats without self-contained records).
+    -- Terminates via 'needSourceMessage'.
+
+-- | Flatten the two Maybe values that decide which convert path runs into
+-- the single sum they really express.  The user's @--with SOURCE@ flag
+-- commits to apply-and-recreate outright; without it, the parsed patch
+-- either carries 'PatchContents' (source-less conversion works) or it
+-- doesn't (the user has to supply source or give up).
+chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
+chooseConvertDispatch parsedCommand parsed =
+  case convertWithSource parsedCommand of
+    Just withSource -> ApplyAndRecreate withSource
+    Nothing -> case patchContents parsed of
+      Just contents -> SourceLessConvert contents
+      Nothing       -> ConvertRequiresSource parsed
+
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
@@ -950,34 +989,6 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
       | patchIsDifferential somePatch = "stores differential data, not raw bytes"
       | otherwise                  = "does not carry extractable records"
 
--- | The three real convert cases, each with the inputs the branch needs.
--- Built once from the parsed patch and the CLI command by
--- 'chooseConvertDispatch'; pattern-matched once in 'doConvert'.
-data ConvertDispatch
-  = ApplyAndRecreate ConvertWithSource
-    -- ^ User supplied @--with SOURCE@; load the source, apply the patch,
-    -- re-encode the target bytes as the target format.
-  | SourceLessConvert PatchContents
-    -- ^ User didn't supply source, but the parsed patch carries enough
-    -- structure ('PatchContents') to re-encode without source bytes.
-  | ConvertRequiresSource SomePatch
-    -- ^ User didn't supply source, and the parsed patch doesn't carry
-    -- 'PatchContents' (diff formats without self-contained records).
-    -- Terminates via 'needSourceMessage'.
-
--- | Flatten the two Maybe values that decide which convert path runs into
--- the single sum they really express.  The user's @--with SOURCE@ flag
--- commits to apply-and-recreate outright; without it, the parsed patch
--- either carries 'PatchContents' (source-less conversion works) or it
--- doesn't (the user has to supply source or give up).
-chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
-chooseConvertDispatch parsedCommand parsed =
-  case convertWithSource parsedCommand of
-    Just withSource -> ApplyAndRecreate withSource
-    Nothing -> case patchContents parsed of
-      Just contents -> SourceLessConvert contents
-      Nothing       -> ConvertRequiresSource parsed
-
 -- | Warn when the source patch carries embedded BPS metadata bytes and
 -- the target format has no metadata channel to put them in — i.e.,
 -- when conversion silently drops the bytes.  Returns @[]@ for
@@ -1022,20 +1033,19 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
     checkHash verificationPolicy SourceSide MD5 (unMD5Hash expected) (unMD5Hash (md5 preprocessed))
   forM_ (verifySourceSHA1 verification) $ \expected ->
     checkHash verificationPolicy SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
-  -- Per-block CRC16 and PPF validation are advisory (warning-only)
-  case verificationPolicy of
-    SkipVerification    -> pure ()
-    EnforceVerification -> do
-      forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-        warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
-      forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
-        warnPPFBlock blockOffset expectedData sourceBytes
-      forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
-        warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-      forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
-        warnSourceBytes checkLabel checkOffset expectedData sourceBytes
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+  -- Per-block CRC16, PPF validation block, advisory file size, and source
+  -- byte checks are warning-only; skip them entirely under --no-verify.
+  when (verificationPolicy == EnforceVerification) $ do
+    forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+      warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+    forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
+      warnPPFBlock blockOffset expectedData sourceBytes
+    forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
+      warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
+      warnSourceBytes checkLabel checkOffset expectedData sourceBytes
 
 verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
 verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
