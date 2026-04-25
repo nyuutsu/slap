@@ -23,12 +23,11 @@ cabal: rusty-slap
 	cabal build
 
 # Run every test: props (QuickCheck + spec conformance) and the full
-# integration suite. Identical to `cabal test` modulo the rusty-stamp
-# handling that forces a relink when the Rust static library changes.
-test: rusty-slap
-	@if [ ! -f .rusty-stamp ] || [ $(RUSTY_A) -nt .rusty-stamp ]; then \
-	  cabal clean 2>/dev/null; touch .rusty-stamp; \
-	fi
+# integration suite.  Depends on `cabal` (not just `rusty-slap`) so the
+# `slap` executable is built before the integration suite spawns it via
+# `cabal list-bin slap`.  The rusty-stamp / relink dance lives in the
+# `cabal` target and runs once for both build and test.
+test: cabal
 	cabal test
 
 clean:
