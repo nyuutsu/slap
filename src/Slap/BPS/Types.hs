@@ -38,7 +38,7 @@ data BPSBody = BPSBody
 data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize
   , bpsTargetSize :: !FileSize
-  , bpsMetadata   :: !ByteString
+  , bpsMetadata   :: !BPSMetadata
   -- | Action stream as a boxed 'Vector'. Boxed (not unboxed/storable)
   -- because 'BPSAction' is a sum type containing a 'ByteString'. Stored
   -- as a 'Vector' rather than a list so the entire action stream lives

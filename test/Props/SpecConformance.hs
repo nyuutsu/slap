@@ -16,7 +16,7 @@ module Props.SpecConformance (specConformanceTests) where
 import Slap.Binary (putByuuVarint, putWord32LE, getByuuVarint, VarintResult(..))
 import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
-import Slap.BPS.Types (BPSPatch(..))
+import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..), Parsed(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
@@ -486,7 +486,7 @@ bpsMetadataPreserved =
   in case parseBPS patch of
     Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> do
-      assertEqual "metadata" metadata (bpsMetadata parsed)
+      assertEqual "metadata" metadata (unBPSMetadata (bpsMetadata parsed))
       assertEqual "source size" (FileSize 1) (bpsSourceSize parsed)
       assertEqual "target size" (FileSize 1) (bpsTargetSize parsed)
 

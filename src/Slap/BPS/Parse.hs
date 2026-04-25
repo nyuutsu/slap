@@ -62,7 +62,7 @@ parseBPS (PatchFileContents input)
                 BPSPatch
                   { bpsSourceSize = bpsBodySourceSize body
                   , bpsTargetSize = bpsBodyTargetSize body
-                  , bpsMetadata   = unBPSMetadata (bpsBodyMetadata body)
+                  , bpsMetadata   = bpsBodyMetadata body
                   -- The parser builds the action stream as a list (cheap
                   -- cons during 'parseActions'); we materialise it into
                   -- one contiguous 'Vector' here at the boundary so the

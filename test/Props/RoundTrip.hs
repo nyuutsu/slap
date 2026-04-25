@@ -136,7 +136,7 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
         Left slapError -> counterexample (renderSlapError slapError) $ property False
-        Right (Parsed parsed _parseWarnings) -> BPS.bpsMetadata parsed === meta
+        Right (Parsed parsed _parseWarnings) -> BPS.unBPSMetadata (BPS.bpsMetadata parsed) === meta
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->

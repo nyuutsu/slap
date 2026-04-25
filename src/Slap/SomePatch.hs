@@ -370,8 +370,9 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDiff FormatBPS) -> do
     Parsed patch parseWarnings <- BPS.parseBPS patchContents
     let actions = BPS.bpsActions patch
-        bpsMetaBlob = if ByteString.null (BPS.bpsMetadata patch) then Nothing
-                      else Just (BPS.bpsMetadata patch)
+        metadataBytes = BPS.unBPSMetadata (BPS.bpsMetadata patch)
+        bpsMetaBlob = if ByteString.null metadataBytes then Nothing
+                      else Just metadataBytes
     Right SomePatch
       { patchFormat         = LabelBPS
       , patchExplain        = BPS.explainBPS patch

@@ -7,7 +7,7 @@ module Slap.BPS.Describe
   , makeBPSRegion
   ) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
+import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
@@ -35,7 +35,7 @@ bpsMeta patch = concat
   , [MetaField "patch CRC" (showCRC32 (bpsPatchCRC patch))]
   ]
   where
-    metadata = bpsMetadata patch
+    metadata = unBPSMetadata (bpsMetadata patch)
     metadataDisplay
       | ByteString.null metadata = "(none)"
       | otherwise        = show (ByteString.length metadata) ++ " bytes: "
