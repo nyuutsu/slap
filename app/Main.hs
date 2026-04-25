@@ -13,6 +13,7 @@ import Slap.SomePatch
   , ValidationBlock(..)
   , WindowCheck(..)
   , ByteCheck(..)
+  , AdvisoryExpectedBytes(..)
   , parseSome
   )
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -1044,7 +1045,7 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
       warnPPFBlock blockOffset expectedData sourceBytes
     forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
       warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset expectedData checkLabel) ->
+    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
       warnSourceBytes checkLabel checkOffset expectedData sourceBytes
 
 verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
