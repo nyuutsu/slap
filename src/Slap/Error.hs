@@ -19,10 +19,10 @@ module Slap.Error
 
 import Numeric (showHex)
 import Slap.FileContents (PatchFileContents)
-import Slap.FormatLabel (FormatLabel, formatLabelName)
+import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
                       ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Format (hexByteString, renderPrintableASCIIOrHex)
+import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
                      ReadOffset(..), WritePosition(..),
@@ -42,6 +42,7 @@ import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldNa
 import Slap.PatchField (PatchField, fieldName)
 
 import Data.ByteString (ByteString)
+import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
 -- FieldName
@@ -401,6 +402,13 @@ data SlapWarning
   -- 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
+  -- | An APS-N64 type-1 patch declares a country code byte that is
+  -- not one of the documented N64 cartridge ROM region codes. The
+  -- byte is preserved verbatim for round-tripping; slap proceeds
+  -- normally because the country byte is informational and gates no
+  -- decoding decision. The 'Word8' is the unrecognised byte.
+  | APSN64UnrecognisedCountry !Word8
+
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped Int
@@ -680,6 +688,11 @@ renderSlapWarning (UnsortedRecords label (ActionIndex idx)) =
 renderSlapWarning (IPS32TrailingBytes label (Length n)) =
   "note: " ++ formatLabelName label
   ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
+
+renderSlapWarning (APSN64UnrecognisedCountry byte) =
+  "note: " ++ formatLabelName LabelAPSN64
+  ++ ": country code 0x" ++ padHex 2 byte
+  ++ " is not a recognised N64 region code; preserving the byte verbatim"
 
 renderSlapWarning (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue

@@ -11,9 +11,11 @@ module Slap.APSN64.Parse
 
 import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            APSPatchType(..), N64CartId(..), N64ChecksumPair(..),
+                           APSN64Country(..),
                            toAPSPatchType, toAPSImageFormat,
-                           toAPSRecordEncoding, apsN64MagicBytes, apsN64DescriptionWidth)
-import Slap.Error (SlapError(..), Parsed(..))
+                           toAPSRecordEncoding, toAPSN64Country,
+                           apsN64MagicBytes, apsN64DescriptionWidth)
+import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
@@ -21,6 +23,17 @@ import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import qualified Data.ByteString as ByteString
+
+-- | What 'parseN64' produces from the inner Get walk: the decoded
+-- patch plus walker-time warnings accumulated during the walk, in
+-- wire order. Today only 'APSN64UnrecognisedCountry' is emitted
+-- here; future parse-time observations (unrecognised image format,
+-- unrecognised record encoding, record-level oddities) accumulate
+-- through the same channel as APSN64's polish pass lands them.
+data APSN64ParseWalk = APSN64ParseWalk
+  { apsN64ParseWalkPatch    :: !APSN64Patch
+  , apsN64ParseWalkWarnings :: ![SlapWarning]
+  }
 
 parseAPSN64 :: PatchFileContents -> Either SlapError (Parsed APSN64Patch)
 parseAPSN64 (PatchFileContents input)
@@ -31,9 +44,10 @@ parseAPSN64 (PatchFileContents input)
   | otherwise =
       case runGet parseN64 input of
         Left errorMessage -> Left (ParseError LabelAPSN64 errorMessage)
-        Right patch -> Right (Parsed patch [])
+        Right walk ->
+          Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
 
-parseN64 :: Get APSN64Patch
+parseN64 :: Get APSN64ParseWalk
 parseN64 = do
   skip (Length 5)  -- "APS10"
   patchTypeByte <- getByte
@@ -46,28 +60,40 @@ parseN64 = do
         APSSimple -> do
           destinationSize <- FileSize . fromIntegral <$> word32LE
           records <- parseN64Records
-          pure $ APSN64Patch
-            APSN64Header
-              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
-              , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
-              , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
-              }
-            records
+          let patch = APSN64Patch
+                APSN64Header
+                  { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
+                  , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
+                  , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
+                  }
+                records
+          pure APSN64ParseWalk
+            { apsN64ParseWalkPatch    = patch
+            , apsN64ParseWalkWarnings = []
+            }
         APSN64Specific -> do
           imageFormat  <- toAPSImageFormat <$> getByte
           cartId  <- N64CartId <$> getBytes (Length 2)
-          country <- getByte
+          countryByte <- getByte
+          let parsedCountry   = toAPSN64Country countryByte
+              countryWarnings = case parsedCountry of
+                APSN64CountryUnrecognised byte -> [APSN64UnrecognisedCountry byte]
+                _                              -> []
           crcBytes  <- N64ChecksumPair <$> getBytes (Length 8)
           skip (Length 5)  -- padding (bytes 69-73)
           destinationSize <- FileSize . fromIntegral <$> word32LE
           records <- parseN64Records
-          pure $ APSN64Patch
-            APSN64Header
-              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
-              , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
-              , apsN64Country = Just country, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
-              }
-            records
+          let patch = APSN64Patch
+                APSN64Header
+                  { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
+                  , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
+                  , apsN64Country = Just parsedCountry, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
+                  }
+                records
+          pure APSN64ParseWalk
+            { apsN64ParseWalkPatch    = patch
+            , apsN64ParseWalkWarnings = countryWarnings
+            }
 
 parseN64Records :: Get [APSN64Record]
 parseN64Records = do

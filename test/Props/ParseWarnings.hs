@@ -10,6 +10,8 @@
 -- from elsewhere.
 module Props.ParseWarnings (parseWarningsTests) where
 
+import qualified Slap.APSN64.Parse as APSN64
+import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.IPS.Parse as IPS
 import Slap.Error (Parsed(..), SlapWarning(..), renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
@@ -35,6 +37,12 @@ parseWarningsTests = testGroup "ParseWarnings"
       ips32TrailingBytesEmitWarning
   , testCase "truncated IPS32 reports NoEOFMarker keyed to LabelIPS32"
       truncatedIPS32NoEOFMarkerCarriesVariantLabel
+  , testCase "APS-N64 type-1 with recognised country byte parses cleanly"
+      apsN64RecognisedCountryEmitsNoWarning
+  , testCase "APS-N64 type-1 with unrecognised country byte warns and preserves the byte"
+      apsN64UnrecognisedCountryEmitsWarning
+  , testCase "APS-N64 type-0 (Simple) carries no country field and no country warning"
+      apsN64SimplePatchHasNoCountryWarning
   ]
 
 ----------------------------------------------------------------------------
@@ -206,3 +214,82 @@ assertParseWarnings patchBytes expectedWarnings =
       assertFailure ("parse failed: " ++ renderSlapError slapError)
     Right (Parsed _parseResult actualWarnings) ->
       assertEqual "surfaced warnings" expectedWarnings actualWarnings
+
+----------------------------------------------------------------------------
+-- APS-N64 country byte
+----------------------------------------------------------------------------
+
+-- | APS-N64 magic: the literal ASCII bytes @"APS10"@.
+apsN64Magic :: ByteString
+apsN64Magic = ByteString.pack [0x41, 0x50, 0x53, 0x31, 0x30]
+
+-- | The APS-N64 description field is exactly 50 bytes wide; tests
+-- that don't care about its contents pad with NULs.
+apsN64NullDescription :: ByteString
+apsN64NullDescription = ByteString.replicate 50 0x00
+
+-- | Encode an 'Int' as a 32-bit little-endian value, the APS-N64
+-- destination-size field's wire shape.
+word32LE :: Int -> ByteString
+word32LE value = ByteString.pack
+  [ fromIntegral ( value                  `mod` 0x100)
+  , fromIntegral ((value `div` 0x100)     `mod` 0x100)
+  , fromIntegral ((value `div` 0x10000)   `mod` 0x100)
+  , fromIntegral ((value `div` 0x1000000) `mod` 0x100)
+  ]
+
+-- | Build a record-free APS-N64 type-1 (N64-specific) patch carrying
+-- a chosen country byte. The other type-1 fields are filled with
+-- placeholder bytes whose values don't matter for the country test.
+apsN64Type1Patch :: Word8 -> ByteString
+apsN64Type1Patch countryByte =
+     apsN64Magic
+  <> ByteString.singleton 0x01                    -- patch type 1 (N64-specific)
+  <> ByteString.singleton 0x00                    -- encoding method (default)
+  <> apsN64NullDescription                        -- description
+  <> ByteString.singleton 0x01                    -- image format (Z64)
+  <> ByteString.pack [0x53, 0x4D]                 -- cart ID
+  <> ByteString.singleton countryByte             -- country byte (under test)
+  <> ByteString.replicate 8 0x00                  -- CIC checksum pair
+  <> ByteString.replicate 5 0x00                  -- header padding (bytes 69-73)
+  <> word32LE 0                                   -- destination size
+
+-- | Build a record-free APS-N64 type-0 (Simple) patch. Type-0 has
+-- no country byte at all, which is the structural property under
+-- test.
+apsN64Type0Patch :: ByteString
+apsN64Type0Patch =
+     apsN64Magic
+  <> ByteString.singleton 0x00                    -- patch type 0 (Simple)
+  <> ByteString.singleton 0x00                    -- encoding method (default)
+  <> apsN64NullDescription                        -- description
+  <> word32LE 0                                   -- destination size
+
+-- | Run 'APSN64.parseAPSN64' on the given bytes, assert the parse
+-- succeeds, and yield the parsed header plus its surfaced warnings
+-- to the caller for further structural assertions.
+withParsedAPSN64 :: ByteString -> (APSN64.APSN64Header -> [SlapWarning] -> Assertion) -> Assertion
+withParsedAPSN64 patchBytes inspect =
+  case APSN64.parseAPSN64 (PatchFileContents patchBytes) of
+    Left slapError ->
+      assertFailure ("parse failed: " ++ renderSlapError slapError)
+    Right (Parsed (APSN64.APSN64Patch header _records) actualWarnings) ->
+      inspect header actualWarnings
+
+apsN64RecognisedCountryEmitsNoWarning :: Assertion
+apsN64RecognisedCountryEmitsNoWarning =
+  withParsedAPSN64 (apsN64Type1Patch 0x4A) $ \header actualWarnings -> do
+    assertEqual "country field" (Just APSN64.APSN64CountryJapan) (APSN64.apsN64Country header)
+    assertEqual "surfaced warnings" [] actualWarnings
+
+apsN64UnrecognisedCountryEmitsWarning :: Assertion
+apsN64UnrecognisedCountryEmitsWarning =
+  withParsedAPSN64 (apsN64Type1Patch 0x00) $ \header actualWarnings -> do
+    assertEqual "country field" (Just (APSN64.APSN64CountryUnrecognised 0x00)) (APSN64.apsN64Country header)
+    assertEqual "surfaced warnings" [APSN64UnrecognisedCountry 0x00] actualWarnings
+
+apsN64SimplePatchHasNoCountryWarning :: Assertion
+apsN64SimplePatchHasNoCountryWarning =
+  withParsedAPSN64 apsN64Type0Patch $ \header actualWarnings -> do
+    assertEqual "country field" Nothing (APSN64.apsN64Country header)
+    assertEqual "surfaced warnings" [] actualWarnings

@@ -38,7 +38,29 @@ apsN64Meta (APSN64Patch header _) = concat
     cartField Nothing                   = []
     cartField (Just (N64CartId cartId)) = [MetaField "cart ID" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack cartId))]
     countryField Nothing        = []
-    countryField (Just country) = [MetaField "country" ("0x" ++ padHex 2 country)]
+    countryField (Just country) = [MetaField "country" (renderAPSN64Country country)]
+    renderAPSN64Country APSN64CountryBeta            = "Beta"
+    renderAPSN64Country APSN64CountryAsian           = "Asian (NTSC)"
+    renderAPSN64Country APSN64CountryBrazil          = "Brazil"
+    renderAPSN64Country APSN64CountryChina           = "China"
+    renderAPSN64Country APSN64CountryGermany         = "Germany"
+    renderAPSN64Country APSN64CountryUSA             = "USA"
+    renderAPSN64Country APSN64CountryFrance          = "France"
+    renderAPSN64Country APSN64CountryGateway64NTSC   = "Gateway 64 (NTSC)"
+    renderAPSN64Country APSN64CountryNetherlands     = "Netherlands"
+    renderAPSN64Country APSN64CountryItaly           = "Italy"
+    renderAPSN64Country APSN64CountryJapan           = "Japan"
+    renderAPSN64Country APSN64CountryKorea           = "Korea"
+    renderAPSN64Country APSN64CountryGateway64PAL    = "Gateway 64 (PAL)"
+    renderAPSN64Country APSN64CountryCanada          = "Canada"
+    renderAPSN64Country APSN64CountryPAL             = "PAL"
+    renderAPSN64Country APSN64CountrySpain           = "Spain"
+    renderAPSN64Country APSN64CountryAustralia       = "Australia"
+    renderAPSN64Country APSN64CountryScandinavia     = "Scandinavia"
+    renderAPSN64Country APSN64CountryEuropeX         = "Europe (X)"
+    renderAPSN64Country APSN64CountryEuropeY         = "Europe (Y)"
+    renderAPSN64Country (APSN64CountryUnrecognised byte) =
+      "unrecognised (0x" ++ padHex 2 byte ++ ")"
 
 apsN64Info :: APSN64Patch -> String
 apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $
