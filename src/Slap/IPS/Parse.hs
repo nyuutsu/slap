@@ -155,7 +155,8 @@ finaliseBodyShape variant bodyShape = case bodyShape of
         variantLabel    = labelForIPSVariant variant
         overlapWarnings = detectOverlappingRecords variantLabel recordVector
         unsortedWarnings = detectFirstUnsortedRecord variantLabel recordVector
-    (resultPayload, trailerWarnings) <-
+    IPSCleanResult { ipsCleanResult   = resultPayload
+                   , ipsCleanWarnings = trailerWarnings } <-
       assembleCleanResult variant recordVector trailingBytes
     pure (Parsed resultPayload
                  (walkerWarnings
@@ -495,6 +496,16 @@ ipsTruncationMarkerLength :: Length
 ipsTruncationMarkerLength =
   offsetWidthByteCount (ipsVariantOffsetWidth (variantSpec StandardIPS))
 
+-- | What 'assembleCleanResult' produces from the post-walk trailer
+-- disambiguation: the public parse result plus any trailer-level
+-- warnings emitted during disambiguation. Currently only IPS32's
+-- 'IPS32TrailingBytes' warning emits here; the field exists so the
+-- pattern is named and uniform across slap's parse layer.
+data IPSCleanResult = IPSCleanResult
+  { ipsCleanResult   :: !IPSParseResult
+  , ipsCleanWarnings :: ![SlapWarning]
+  }
+
 -- | Build the final 'IPSParseResult' from the validated record
 -- vector and the captured post-trailer bytes, along with any
 -- trailer-disambiguation warnings the assembly emitted. Only
@@ -535,35 +546,41 @@ ipsTruncationMarkerLength =
 assembleCleanResult :: IPSVariant
                     -> Vector.Vector IPSRecord
                     -> ByteString
-                    -> Either SlapError (IPSParseResult, [SlapWarning])
+                    -> Either SlapError IPSCleanResult
 assembleCleanResult StandardIPS recordVector trailingBytes
   | ByteString.null trailingBytes =
-      Right (IPSParseCleanIPS IPSPatch
-               { ipsVariant             = StandardIPS
-               , ipsRecords             = recordVector
-               , ipsTruncatedTargetSize = Nothing
-               }
-            , [])
+      Right IPSCleanResult
+        { ipsCleanResult   = IPSParseCleanIPS IPSPatch
+                               { ipsVariant             = StandardIPS
+                               , ipsRecords             = recordVector
+                               , ipsTruncatedTargetSize = Nothing
+                               }
+        , ipsCleanWarnings = []
+        }
   | ByteString.length trailingBytes == unLength ipsTruncationMarkerLength =
       let truncatedTargetSize =
             FileSize (fromIntegral (getWord24BE 0 trailingBytes))
-      in Right (IPSParseCleanIPS IPSPatch
-                  { ipsVariant             = StandardIPS
-                  , ipsRecords             = recordVector
-                  , ipsTruncatedTargetSize = Just truncatedTargetSize
-                  }
-               , [])
+      in Right IPSCleanResult
+           { ipsCleanResult   = IPSParseCleanIPS IPSPatch
+                                  { ipsVariant             = StandardIPS
+                                  , ipsRecords             = recordVector
+                                  , ipsTruncatedTargetSize = Just truncatedTargetSize
+                                  }
+           , ipsCleanWarnings = []
+           }
   | ByteString.head trailingBytes == ebpJSONOpeningByte =
       let basePatch = IPSPatch
             { ipsVariant             = StandardIPS
             , ipsRecords             = recordVector
             , ipsTruncatedTargetSize = Nothing
             }
-      in Right (IPSParseCleanEBP EBPPatch
-                  { ebpBasePatch = basePatch
-                  , ebpMetadata  = EBPMetadata trailingBytes
-                  }
-               , [])
+      in Right IPSCleanResult
+           { ipsCleanResult   = IPSParseCleanEBP EBPPatch
+                                  { ebpBasePatch = basePatch
+                                  , ebpMetadata  = EBPMetadata trailingBytes
+                                  }
+           , ipsCleanWarnings = []
+           }
   | otherwise =
       Left (UnrecognizedTrailer LabelIPS
               (TrailerMarker (ipsVariantEOFMarker (variantSpec StandardIPS)))
@@ -579,4 +596,7 @@ assembleCleanResult IPS32 recordVector trailingBytes =
         | trailerLength == 0 = []
         | otherwise          =
             [IPS32TrailingBytes LabelIPS32 (Length trailerLength)]
-  in Right (ips32Patch, trailingWarnings)
+  in Right IPSCleanResult
+       { ipsCleanResult   = ips32Patch
+       , ipsCleanWarnings = trailingWarnings
+       }
