@@ -6,6 +6,7 @@ module Slap.NINJA2.Describe
   ) where
 
 import Slap.NINJA2.Types
+import Slap.Checksum (MD5Hash(..))
 import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
@@ -49,7 +50,7 @@ ninja2Meta patch = concat
                      , MetaField "target size" (show (unFileSize (ninja2TargetSize patch))) ]
 
     md5Field _ Nothing = []
-    md5Field label (Just hash) =
+    md5Field label (Just (MD5Hash hash)) =
       [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
 
     overflowField = case (ninja2OverflowType patch, ninja2Overflow patch) of

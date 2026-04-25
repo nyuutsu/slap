@@ -9,6 +9,7 @@ module Slap.NINJA2.Parse
   ) where
 
 import Slap.NINJA2.Types
+import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -93,8 +94,8 @@ parseFileCommand patch = do
   romTypeByte <- getByte  -- ROM type byte
   sourceSize <- FileSize . fromIntegral <$> parsePackedInteger
   targetSize <- FileSize . fromIntegral <$> parsePackedInteger
-  sourceMD5 <- getBytes (Length 16)
-  targetMD5 <- getBytes (Length 16)
+  sourceMD5 <- MD5Hash <$> getBytes (Length 16)
+  targetMD5 <- MD5Hash <$> getBytes (Length 16)
   (overflowType, overflowData) <- if sourceSize /= targetSize
     then do
       typeByte <- getByte

@@ -45,6 +45,7 @@ module Slap.NINJA2.Types
 -- see docs/specs/ninja2-cliusage.txt.  Cross-format conversion goes
 -- through 'Slap.PlatformType.PlatformType'.
 
+import Slap.Checksum (MD5Hash)
 import Slap.Get (Get, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Format (padHex)
@@ -177,8 +178,8 @@ data NINJA2Patch = NINJA2Patch
   , ninja2Records        :: [NINJA2Record]
   , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , ninja2OverflowType   :: Maybe OverflowMode
-  , ninja2SourceMD5      :: Maybe ByteString  -- 16 bytes
-  , ninja2TargetMD5      :: Maybe ByteString  -- 16 bytes
+  , ninja2SourceMD5      :: Maybe MD5Hash     -- 16 bytes
+  , ninja2TargetMD5      :: Maybe MD5Hash     -- 16 bytes
   , ninja2SourceSize     :: !FileSize
   , ninja2TargetSize     :: !FileSize
   , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)

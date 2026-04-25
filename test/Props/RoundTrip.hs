@@ -42,7 +42,6 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
-import Slap.Checksum (MD5Hash(..))
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..), SentinelOffset(..))
@@ -361,8 +360,8 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.ninja2SourceMD5 parsed === Just (unMD5Hash (md5 source)) .&&.
-        NINJA2.ninja2TargetMD5 parsed === Just (unMD5Hash (md5 target))
+        NINJA2.ninja2SourceMD5 parsed === Just (md5 source) .&&.
+        NINJA2.ninja2TargetMD5 parsed === Just (md5 target)
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property

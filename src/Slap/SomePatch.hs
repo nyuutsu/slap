@@ -500,8 +500,10 @@ parseSome patchContents = case detectFormat patchContents of
 
   Just (PatchDiff FormatNINJA2) -> do
     Parsed patch parseWarnings <- NINJA2.parseNINJA2 patchContents
-    let filterZeroMD5 (Just hashValue) | ByteString.all (== 0) hashValue = Nothing
-        filterZeroMD5 other = fmap MD5Hash other
+    let filterZeroMD5 (Just hash@(MD5Hash bytes))
+          | ByteString.all (== 0) bytes = Nothing
+          | otherwise                   = Just hash
+        filterZeroMD5 Nothing = Nothing
         (platformType, platformWarnings) = ninja2ToPlatform (NINJA2.ninja2RomType patch)
     Right SomePatch
       { patchFormat         = LabelNINJA2
