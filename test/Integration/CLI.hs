@@ -52,6 +52,7 @@ cliTests tier = do
             , if baseExists then ninja1VerifyTests tier slap dm4yBase dm4yIps else []
             , if baseExists then descriptionTests slap dm4yBase dm4yBps else []
             , if baseExists then metadataRejectionTests slap dm4yBase dm4yBps else []
+            , if baseExists then bpsConvertMetadataTests slap dm4yBase dm4yBps else []
             , explainModeTests slap dm4yIps
                 (if baseExists then Just (dm4yBase, dm4yUps, dm4yBps) else Nothing)
             ]
@@ -668,6 +669,106 @@ metadataRejectionTests slap base bps =
         expectOk slap ["convert", ebp, "--to", "ips", "-o", ips]
           "metadata-accept/inherit" "converted"
   ]
+
+-- | BPS\8594BPS convert preserves embedded metadata by default
+-- ('CarryIfPresent'), lets the user replace it (@--metadata FILE@), or
+-- discard it (@--drop-metadata@).  The three intents are mutually
+-- exclusive — combining the two override flags is a parse error.
+-- These tests build a BPS that carries a known blob, run convert, and
+-- inspect the produced patch's metadata via @slap info
+-- --extract-metadata@.
+bpsConvertMetadataTests :: FilePath -> FilePath -> FilePath -> [TestTree]
+bpsConvertMetadataTests slap base bps =
+  [ testCase "bps-convert/inherits source metadata by default" $
+      withSourceBps $ \sourceBps blobBytes ->
+      withTempFile "slap-out" $ \out -> do
+        -- BPS\8594BPS has to round-trip through the source ROM, so
+        -- @--with@ is required regardless of metadata intent.
+        expectOk slap ["convert", sourceBps, "--to", "bps",
+                       "--with", base, "-o", out]
+          "bps-convert/inherit" "converted"
+        extracted <- extractEmbeddedMetadata out
+        assertEqual "expected source blob to carry through"
+          (Just blobBytes) extracted
+
+  , testCase "bps-convert/--metadata FILE overrides inherited blob" $
+      withSourceBps $ \sourceBps _ ->
+      withTempFile "slap-out" $ \out ->
+      withTempFile "slap-newblob" $ \newBlob -> do
+        let replacement = ByteString8.pack "<replacement-blob/>"
+        ByteString.writeFile newBlob replacement
+        expectOk slap ["convert", sourceBps, "--to", "bps",
+                       "--with", base, "--metadata", newBlob, "-o", out]
+          "bps-convert/override" "converted"
+        extracted <- extractEmbeddedMetadata out
+        assertEqual "expected CLI blob to win over source blob"
+          (Just replacement) extracted
+
+  , testCase "bps-convert/--drop-metadata discards inherited blob" $
+      withSourceBps $ \sourceBps _ ->
+      withTempFile "slap-out" $ \out -> do
+        expectOk slap ["convert", sourceBps, "--to", "bps",
+                       "--with", base, "--drop-metadata", "-o", out]
+          "bps-convert/drop" "converted"
+        extracted <- extractEmbeddedMetadata out
+        assertEqual "expected output to carry no metadata"
+          Nothing extracted
+
+  , testCase "bps-convert/--metadata and --drop-metadata are mutually exclusive" $
+      withSourceBps $ \sourceBps _ ->
+      withTempFile "slap-out" $ \out ->
+      withTempFile "slap-newblob" $ \newBlob -> do
+        ByteString.writeFile newBlob (ByteString8.pack "x")
+        expectFail slap
+          ["convert", sourceBps, "--to", "bps",
+           "--metadata", newBlob, "--drop-metadata", "-o", out]
+          "bps-convert/mutex" "invalid"
+
+  , testCase "bps-convert/--drop-metadata is accepted when target is not BPS" $
+      -- Discarding metadata is a coherent request regardless of the
+      -- target format.  The drop intent suppresses any source-metadata
+      -- carry; the existing metadata-dropped warning still fires
+      -- because BPS\8594IPS has no metadata channel either way.
+      withSourceBps $ \sourceBps _ ->
+      withTempFile "slap-out" $ \out ->
+        expectOk slap ["convert", sourceBps, "--to", "ips",
+                       "--with", base, "--drop-metadata", "-o", out]
+          "bps-convert/drop-cross-format" "converted"
+  ]
+  where
+    -- Build a BPS that carries a known metadata blob, by patching a
+    -- copy of the dm4y base with the dm4y BPS and then re-creating the
+    -- patch with @--metadata@ pointing at the blob.  Yields the path to
+    -- the newly-built BPS and the blob bytes the caller should expect
+    -- to find inside it.
+    withSourceBps :: (FilePath -> ByteString.ByteString -> IO a) -> IO a
+    withSourceBps action =
+      withTempFile "slap-target"   $ \target ->
+      withTempFile "slap-srcbps"   $ \sourceBps ->
+      withTempFile "slap-srcblob"  $ \blob -> do
+        let blobBytes = ByteString8.pack "<source-metadata/>"
+        ByteString.readFile base >>= ByteString.writeFile target
+        _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
+        ByteString.writeFile blob blobBytes
+        _ <- runSlap slap ["create", "--format", "bps",
+                           base, target, sourceBps, "--metadata", blob]
+        action sourceBps blobBytes
+
+    -- Read back the embedded metadata of a BPS by asking @slap info@
+    -- to extract it.  Returns 'Nothing' when the patch carries no
+    -- metadata (info reports \"no metadata in this patch\" on stderr
+    -- rather than writing the file), 'Just bytes' otherwise.
+    extractEmbeddedMetadata :: FilePath -> IO (Maybe ByteString.ByteString)
+    extractEmbeddedMetadata patchPath =
+      withTempFile "slap-meta" $ \metaPath -> do
+        (exitCode, stdoutText, stderrText) <- runSlap slap
+          ["info", patchPath, "--extract-metadata", metaPath]
+        case exitCode of
+          ExitFailure _ -> assertFailure
+            ("info --extract-metadata failed: " ++ stdoutText ++ stderrText)
+          ExitSuccess
+            | "no metadata in this patch" `isInfixOf` stderrText -> pure Nothing
+            | otherwise -> Just <$> ByteString.readFile metaPath
 
 -- | Like 'expectFail', but checks for several substrings in one go.
 -- The error message produced by 'MetadataFieldRejected' names both the

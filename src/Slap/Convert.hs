@@ -4,12 +4,10 @@ module Slap.Convert
   , DiffCreate(..)
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
-  , RequestedPatchMetadataInputs(..)
   , UndoInclusion(..)
   , ValidationInclusion(..)
   , PatchStability(..)
   , noMetadataRequested
-  , noMetadataInputs
   , DirectConversionContract(..)
   , ConversionFailure(..)
   , emptyContents
@@ -226,52 +224,6 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedWebsite             = Nothing
   , requestedPatchEncoding       = PatchEncodingUTF8
   , requestedEmbeddedBlob        = Nothing
-  }
-
--- | The CLI-parseable shape of 'RequestedPatchMetadata'.  Distinct from
--- that type because one of the user-facing inputs (@--metadata FILE@) is
--- a file path whose contents are loaded via IO; pure parsing can't
--- produce 'requestedEmbeddedBlob' directly.  @resolveRequestedPatchMetadata@
--- (in "Main") is the IO bridge between the two records.
-data RequestedPatchMetadataInputs = RequestedPatchMetadataInputs
-  { inputTitle                :: Maybe String
-  , inputAuthor               :: Maybe String
-  , inputDescription          :: Maybe String
-  , inputVersion              :: Maybe String
-  , inputUndoInclusion        :: Maybe UndoInclusion
-  , inputValidationInclusion  :: Maybe ValidationInclusion
-  , inputStability            :: Maybe PatchStability
-  , inputRomType              :: Maybe PlatformType
-  , inputImageType            :: Maybe PPFImageType
-  , inputGenre                :: Maybe String
-  , inputLanguage             :: Maybe String
-  , inputDate                 :: Maybe String
-  , inputWebsite              :: Maybe String
-  , inputPatchEncoding        :: PatchEncoding
-  , inputEmbeddedBlobPath     :: Maybe FilePath
-  }
-  deriving (Show, Eq)
-
--- | 'noMetadataRequested' equivalent for the inputs record.  Used by
--- callers who want to construct an empty-inputs value without going
--- through the parser.
-noMetadataInputs :: RequestedPatchMetadataInputs
-noMetadataInputs = RequestedPatchMetadataInputs
-  { inputTitle               = Nothing
-  , inputAuthor              = Nothing
-  , inputDescription         = Nothing
-  , inputVersion             = Nothing
-  , inputUndoInclusion       = Nothing
-  , inputValidationInclusion = Nothing
-  , inputStability           = Nothing
-  , inputRomType             = Nothing
-  , inputImageType           = Nothing
-  , inputGenre               = Nothing
-  , inputLanguage            = Nothing
-  , inputDate                = Nothing
-  , inputWebsite             = Nothing
-  , inputPatchEncoding       = PatchEncodingUTF8
-  , inputEmbeddedBlobPath    = Nothing
   }
 
 -- | Merge two metadata records: first (CLI) wins for each field, then

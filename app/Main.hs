@@ -8,7 +8,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchF
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      PatchContents,
-                     RequestedPatchMetadata(..), RequestedPatchMetadataInputs(..),
+                     RequestedPatchMetadata(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
@@ -29,7 +29,6 @@ import qualified Data.ByteString as ByteString
 import Control.Monad (when, forM_)
 import Data.Foldable (traverse_)
 import Data.Char (toLower)
-import Data.Maybe (isNothing)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -142,6 +141,71 @@ data ConvertWithSource = ConvertWithSource
   }
   deriving (Show, Eq)
 
+-- | What the user wants done with the BPS embedded-metadata blob during
+-- a convert.  'CarryIfPresent' is the default and matches the behavior
+-- of every other metadata field: inherit from the source patch unless
+-- the user overrides.  'EmbedFromFile' overrides with user-supplied
+-- bytes.  'DropEmbeddedBlob' discards the source's blob without
+-- substituting anything — the only way to produce a metadata-less BPS
+-- from a source BPS that carried metadata.  The three intents are
+-- mutually exclusive at the CLI: 'embeddedBlobIntentParser' commits to
+-- exactly one based on which (if any) of @--metadata FILE@ and
+-- @--drop-metadata@ the user typed.
+data EmbeddedBlobIntent
+  = CarryIfPresent
+  | EmbedFromFile FilePath
+  | DropEmbeddedBlob
+  deriving (Show, Eq)
+
+-- | The fourteen metadata fields the user can declare on either
+-- @create@ or @convert@.  Distinct from 'RequestedPatchMetadata'
+-- (the library-facing record) because the embedded-blob concern
+-- diverges between the two commands: 'create' asks for an optional
+-- file path; 'convert' asks for an 'EmbeddedBlobIntent'.  Those two
+-- live in 'CreateMetadataInputs' and 'ConvertMetadataInputs', each
+-- of which embeds a 'RequestedMetadataCore' alongside its own
+-- blob-shaped field.
+data RequestedMetadataCore = RequestedMetadataCore
+  { coreTitle                :: Maybe String
+  , coreAuthor               :: Maybe String
+  , coreDescription          :: Maybe String
+  , coreVersion              :: Maybe String
+  , coreUndoInclusion        :: Maybe UndoInclusion
+  , coreValidationInclusion  :: Maybe ValidationInclusion
+  , coreStability            :: Maybe PatchStability
+  , coreRomType              :: Maybe PlatformType
+  , coreImageType            :: Maybe PPFImageType
+  , coreGenre                :: Maybe String
+  , coreLanguage             :: Maybe String
+  , coreDate                 :: Maybe String
+  , coreWebsite              :: Maybe String
+  , corePatchEncoding        :: PatchEncoding
+  }
+  deriving (Show, Eq)
+
+-- | What @slap create@ accepts on the metadata side: the shared core
+-- plus an optional path whose bytes get embedded as the patch's
+-- metadata blob.  Only BPS consumes the blob today; on other targets
+-- the path triggers the same metadata-rejection check as any other
+-- format-incompatible field.
+data CreateMetadataInputs = CreateMetadataInputs
+  { createMetadataCore     :: RequestedMetadataCore
+  , createEmbeddedBlobPath :: Maybe FilePath
+  }
+  deriving (Show, Eq)
+
+-- | What @slap convert@ accepts on the metadata side: the shared core
+-- plus an 'EmbeddedBlobIntent' instead of a raw path.  The intent
+-- distinguishes \"override with these bytes\", \"drop the source's
+-- blob\", and the unspecified case (\"inherit if present\") — the
+-- last of which is the convert-default and what every other field
+-- on the inputs record does implicitly.
+data ConvertMetadataInputs = ConvertMetadataInputs
+  { convertMetadataCore       :: RequestedMetadataCore
+  , convertEmbeddedBlobIntent :: EmbeddedBlobIntent
+  }
+  deriving (Show, Eq)
+
 -- | Whether to refuse writing over an existing output file.
 --
 -- @RefuseOverwrite@ (default) checks 'doesFileExist' before writing and
@@ -219,7 +283,7 @@ data CreateCommand = CreateCommand
   , createOriginal    :: FilePath
   , createModified    :: FilePath
   , createOutput      :: FilePath
-  , createMetadata    :: RequestedPatchMetadataInputs
+  , createMetadata    :: CreateMetadataInputs
   }
   deriving (Show)
 
@@ -232,7 +296,7 @@ data ConvertCommand = ConvertCommand
   , convertOutput      :: ConvertOutput
   , convertWithSource  :: Maybe ConvertWithSource
   , convertFileReading :: FileReadingOptions
-  , convertMetadata    :: RequestedPatchMetadataInputs
+  , convertMetadata    :: ConvertMetadataInputs
   }
   deriving (Show)
 
@@ -414,7 +478,7 @@ createParser = do
     original           <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
     modified           <- argument str (metavar "MODIFIED" <> help "Modified file")
     outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
-    metadataInputs     <- requestedPatchMetadataInputsParser
+    metadataInputs     <- createMetadataInputsParser
     pure CreateCommand
       { createFormat      = format
       , createFileReading = fileReadingOptions
@@ -431,7 +495,7 @@ convertParser = do
     output             <- convertOutputParser
     withSource         <- optional convertWithSourceParser
     fileReadingOptions <- fileReadingOptionsParser
-    metadataInputs     <- requestedPatchMetadataInputsParser
+    metadataInputs     <- convertMetadataInputsParser
     pure ConvertCommand
       { convertPatch       = patchFile
       , convertTo          = targetFormat
@@ -470,13 +534,12 @@ convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
     <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
 
--- | Parser for the user-declared metadata that both @create@ and
--- @convert@ accept.  The returned value is pre-IO: the blob path
--- still points to a file that hasn't been read.  Call
--- 'resolveRequestedPatchMetadata' to perform the IO and produce a
--- 'RequestedPatchMetadata'.
-requestedPatchMetadataInputsParser :: Parser RequestedPatchMetadataInputs
-requestedPatchMetadataInputsParser = do
+-- | Parser for the fourteen metadata fields shared between @create@
+-- and @convert@.  The embedded-blob concern lives elsewhere because
+-- it diverges between the two commands; see 'createMetadataInputsParser'
+-- and 'convertMetadataInputsParser'.
+requestedMetadataCoreParser :: Parser RequestedMetadataCore
+requestedMetadataCoreParser = do
     title             <- optional (option str (long "title" <> metavar "TEXT"
                             <> help "Patch title (EBP/NINJA2)"))
     author            <- optional (option str (long "author" <> metavar "TEXT"
@@ -506,25 +569,56 @@ requestedPatchMetadataInputsParser = do
     patchEncoding     <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
                             <> value PatchEncodingUTF8
                             <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
-    metadataFile      <- optional (option str (long "metadata" <> metavar "FILE"
-                            <> help "Metadata file to embed (BPS)"))
-    pure RequestedPatchMetadataInputs
-      { inputTitle               = title
-      , inputAuthor              = author
-      , inputDescription         = description
-      , inputVersion             = version
-      , inputUndoInclusion       = includeUndo
-      , inputValidationInclusion = includeValidation
-      , inputStability           = unstable
-      , inputRomType             = romType
-      , inputImageType           = imageType
-      , inputGenre               = genre
-      , inputLanguage            = language
-      , inputDate                = date
-      , inputWebsite             = website
-      , inputPatchEncoding       = patchEncoding
-      , inputEmbeddedBlobPath    = metadataFile
+    pure RequestedMetadataCore
+      { coreTitle               = title
+      , coreAuthor              = author
+      , coreDescription         = description
+      , coreVersion             = version
+      , coreUndoInclusion       = includeUndo
+      , coreValidationInclusion = includeValidation
+      , coreStability           = unstable
+      , coreRomType             = romType
+      , coreImageType           = imageType
+      , coreGenre               = genre
+      , coreLanguage            = language
+      , coreDate                = date
+      , coreWebsite             = website
+      , corePatchEncoding       = patchEncoding
       }
+
+-- | Create-side metadata: shared core plus an optional file path
+-- whose bytes get embedded as the patch's metadata blob (BPS only;
+-- the rejection check refuses the flag against any other target).
+createMetadataInputsParser :: Parser CreateMetadataInputs
+createMetadataInputsParser = CreateMetadataInputs
+  <$> requestedMetadataCoreParser
+  <*> optional (option str (long "metadata" <> metavar "FILE"
+        <> help "Embed bytes from FILE as the output patch's metadata (BPS only)"))
+
+-- | Convert-side metadata: shared core plus an 'EmbeddedBlobIntent'.
+-- The intent parser admits one of @--metadata FILE@, @--drop-metadata@,
+-- or neither — combining the two is rejected at parse time because
+-- @--drop-metadata@'s alternative consumes only itself.
+convertMetadataInputsParser :: Parser ConvertMetadataInputs
+convertMetadataInputsParser = ConvertMetadataInputs
+  <$> requestedMetadataCoreParser
+  <*> embeddedBlobIntentParser
+
+-- | Parse the BPS embedded-blob intent for @slap convert@.  The three
+-- alternatives are mutually exclusive: @--metadata FILE@ commits to
+-- 'EmbedFromFile' and consumes the path; @--drop-metadata@ commits
+-- to 'DropEmbeddedBlob' and consumes nothing else; absent both, the
+-- 'pure' fallback selects 'CarryIfPresent'.  Passing both flags
+-- leaves one unconsumed and the top-level parser rejects the
+-- command — the same lane discipline used elsewhere in this file.
+embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
+embeddedBlobIntentParser = asum
+  [ EmbedFromFile <$> option str (long "metadata" <> metavar "FILE"
+      <> help "Override embedded metadata with bytes from FILE (BPS target only)")
+  , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
+      <> help "Discard the source patch's embedded metadata (BPS\8594BPS; default is to inherit)")
+  , pure CarryIfPresent
+  ]
 
 parseCreateFormat :: String -> Either String CreateFormat
 parseCreateFormat formatString = case map toLower formatString of
@@ -620,30 +714,53 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> ByteString.readFile
 
--- | Resolve the CLI's pre-IO 'RequestedPatchMetadataInputs' into the
--- library's 'RequestedPatchMetadata'.  The only transition with IO is
--- reading the @--metadata FILE@ contents; the other 14 fields carry
--- through unchanged.
-resolveRequestedPatchMetadata :: RequestedPatchMetadataInputs -> IO RequestedPatchMetadata
-resolveRequestedPatchMetadata inputs = do
-  embeddedBlob <- traverse ByteString.readFile (inputEmbeddedBlobPath inputs)
-  pure RequestedPatchMetadata
-    { requestedTitle               = inputTitle               inputs
-    , requestedAuthor              = inputAuthor              inputs
-    , requestedDescription         = inputDescription         inputs
-    , requestedVersion             = inputVersion             inputs
-    , requestedUndoInclusion       = inputUndoInclusion       inputs
-    , requestedValidationInclusion = inputValidationInclusion inputs
-    , requestedStability           = inputStability           inputs
-    , requestedRomType             = inputRomType             inputs
-    , requestedImageType           = inputImageType           inputs
-    , requestedGenre               = inputGenre               inputs
-    , requestedLanguage            = inputLanguage            inputs
-    , requestedDate                = inputDate                inputs
-    , requestedWebsite             = inputWebsite             inputs
-    , requestedPatchEncoding       = inputPatchEncoding       inputs
-    , requestedEmbeddedBlob        = embeddedBlob
-    }
+-- | Lift a 'RequestedMetadataCore' into the library's
+-- 'RequestedPatchMetadata' record.  Every core field maps to its
+-- 'requested*' counterpart unchanged; 'requestedEmbeddedBlob' is left
+-- 'Nothing' so each command's resolver can populate it from its own
+-- blob-shaped input.
+coreToRequestedPatchMetadata :: RequestedMetadataCore -> RequestedPatchMetadata
+coreToRequestedPatchMetadata core = RequestedPatchMetadata
+  { requestedTitle               = coreTitle               core
+  , requestedAuthor              = coreAuthor              core
+  , requestedDescription         = coreDescription         core
+  , requestedVersion             = coreVersion             core
+  , requestedUndoInclusion       = coreUndoInclusion       core
+  , requestedValidationInclusion = coreValidationInclusion core
+  , requestedStability           = coreStability           core
+  , requestedRomType             = coreRomType             core
+  , requestedImageType           = coreImageType           core
+  , requestedGenre               = coreGenre               core
+  , requestedLanguage            = coreLanguage            core
+  , requestedDate                = coreDate                core
+  , requestedWebsite             = coreWebsite             core
+  , requestedPatchEncoding       = corePatchEncoding       core
+  , requestedEmbeddedBlob        = Nothing
+  }
+
+-- | Resolve @slap create@'s metadata inputs.  @--metadata FILE@'s
+-- contents (when supplied) become the embedded blob; otherwise the
+-- blob field stays 'Nothing'.
+resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
+resolveCreateMetadata inputs = do
+  embeddedBlob <- traverse ByteString.readFile (createEmbeddedBlobPath inputs)
+  pure (coreToRequestedPatchMetadata (createMetadataCore inputs))
+        { requestedEmbeddedBlob = embeddedBlob }
+
+-- | Resolve @slap convert@'s metadata inputs.  Only 'EmbedFromFile'
+-- triggers IO and produces a 'Just'; 'CarryIfPresent' and
+-- 'DropEmbeddedBlob' both leave the field 'Nothing'.  Distinguishing
+-- the latter two happens in 'doConvert' after the source-patch
+-- merge: the merge would re-introduce the source's blob for both,
+-- but a 'DropEmbeddedBlob' intent overrides it back to 'Nothing'.
+resolveConvertMetadata :: ConvertMetadataInputs -> IO RequestedPatchMetadata
+resolveConvertMetadata inputs = do
+  embeddedBlob <- case convertEmbeddedBlobIntent inputs of
+    EmbedFromFile path -> Just <$> ByteString.readFile path
+    DropEmbeddedBlob   -> pure Nothing
+    CarryIfPresent     -> pure Nothing
+  pure (coreToRequestedPatchMetadata (convertMetadataCore inputs))
+        { requestedEmbeddedBlob = embeddedBlob }
 
 ----------------------------------------------------------------------------
 -- Info & Explain
@@ -762,7 +879,7 @@ doUndo parsedCommand = do
 
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
-  createMeta    <- resolveRequestedPatchMetadata (createMetadata parsedCommand)
+  createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
   orDie (rejectIncompatibleMetadata (createFormat parsedCommand) createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
@@ -778,7 +895,7 @@ doCreate parsedCommand = do
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
-  cliMeta <- resolveRequestedPatchMetadata (convertMetadata parsedCommand)
+  cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
   orDie (rejectIncompatibleMetadata (convertTo parsedCommand) cliMeta)
   parsed <- readAndParsePatch (convertPatch parsedCommand)
   emitWarnings parsed
@@ -786,8 +903,18 @@ doConvert parsedCommand = do
         ConvertToExplicitFile explicit -> explicit
         ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
                                                            (formatExtension (convertTo parsedCommand))
-      mergedMeta = mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      notes = computeBPSConversionNotes parsed (convertTo parsedCommand) mergedMeta
+      blobIntent = convertEmbeddedBlobIntent (convertMetadata parsedCommand)
+      -- The merge inherits the source patch's embedded blob whenever
+      -- the CLI didn't supply one — desirable for 'CarryIfPresent',
+      -- but for 'DropEmbeddedBlob' it would re-introduce the very
+      -- bytes the user asked to discard.  Override the field back to
+      -- 'Nothing' for that one intent.
+      mergedMeta = case blobIntent of
+        DropEmbeddedBlob ->
+          (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
+            { requestedEmbeddedBlob = Nothing }
+        _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
+      bpsDropWarnings = computeBPSDropWarnings parsed (convertTo parsedCommand)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
       sourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
@@ -795,10 +922,9 @@ doConvert parsedCommand = do
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
-      emitSlapWarnings (patchSourceNotes parsed ++ bpsConversionWarnings notes
+      emitSlapWarnings (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
-      forM_ (bpsConversionCarryNote notes) $ \note -> hPutStrLn stderr ("slap: " ++ note)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
@@ -852,36 +978,16 @@ chooseConvertDispatch parsedCommand parsed =
       Just contents -> SourceLessConvert contents
       Nothing       -> ConvertRequiresSource parsed
 
--- | BPS-specific conversion notes: a warning when a patch's metadata bytes
--- are being dropped because the target format has no metadata channel, and
--- an informational note when the target is BPS but the user didn't supply
--- @--metadata FILE@ to carry the source's metadata forward.
-data BPSConversionNotes = BPSConversionNotes
-  { bpsConversionWarnings  :: [SlapWarning]
-  , bpsConversionCarryNote :: Maybe String
-  }
-
-computeBPSConversionNotes
-  :: SomePatch
-  -> CreateFormat
-  -> RequestedPatchMetadata
-  -> BPSConversionNotes
-computeBPSConversionNotes parsed targetFormat mergedMeta = BPSConversionNotes
-  { bpsConversionWarnings  = dropWarnings
-  , bpsConversionCarryNote = carryNote
-  }
-  where
-    targetIsBPS = targetFormat == CreateDiff CreateBPS
-    dropWarnings = case patchMetadata parsed of
-      Just metaBytes | not targetIsBPS -> [MetadataDropped (ByteString.length metaBytes)]
-      _                                -> []
-    carryNote = case patchMetadata parsed of
-      Just metaBytes
-        | targetIsBPS
-        , isNothing (requestedEmbeddedBlob mergedMeta) ->
-            Just ("note: source has " ++ show (ByteString.length metaBytes)
-                  ++ " bytes of BPS metadata; use --metadata FILE to carry it forward")
-      _ -> Nothing
+-- | Warn when the source patch carries embedded BPS metadata bytes and
+-- the target format has no metadata channel to put them in — i.e.,
+-- when conversion silently drops the bytes.  Returns @[]@ for
+-- BPS\8594BPS (the merge carries the bytes through) and for any source
+-- patch that didn't have metadata to begin with.
+computeBPSDropWarnings :: SomePatch -> CreateFormat -> [SlapWarning]
+computeBPSDropWarnings parsed targetFormat = case patchMetadata parsed of
+  Just metaBytes | targetFormat /= CreateDiff CreateBPS ->
+    [MetadataDropped (ByteString.length metaBytes)]
+  _ -> []
 
 ----------------------------------------------------------------------------
 -- Helpers
