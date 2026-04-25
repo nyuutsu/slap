@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.APSGBA.Apply
-  ( applyAPSGBA
-  , applyGBARecords
-  , applyAPSGBAMemory
+  ( applyAPSGBAMemory
   , safeSlice
   ) where
 
@@ -22,32 +20,6 @@ import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
-
-applyAPSGBA :: APSGBAPatch -> FilePath -> IO Int
-applyAPSGBA (APSGBAPatch header records) target = do
-  source <- ByteString.readFile target
-  let targetSize = unFileSize (apsGbaTargetSize header)
-      padded = if ByteString.length source < targetSize
-               then source <> ByteString.replicate (targetSize - ByteString.length source) 0
-               else source
-  result <- applyGBARecords padded records
-  ByteString.writeFile target (ByteString.take targetSize result)
-  pure (length records)
-
-applyGBARecords :: ByteString -> [APSGBARecord] -> IO ByteString
-applyGBARecords source [] = pure source
-applyGBARecords source (APSGBARecord recordOffset _ _ xorPayload : rest) = do
-  let blockOffset = unOffset recordOffset
-      blockSize = apsGbaBlockSize
-      before = ByteString.take blockOffset source
-      sourceBlock = ByteString.take blockSize (ByteString.drop blockOffset source)
-      paddedBlock = if ByteString.length sourceBlock < blockSize
-                    then sourceBlock <> ByteString.replicate (blockSize - ByteString.length sourceBlock) 0
-                    else sourceBlock
-      patchedBlock = ByteString.packZipWith xor paddedBlock xorPayload
-      after = ByteString.drop (blockOffset + blockSize) source
-      result = before <> patchedBlock <> after
-  applyGBARecords result rest
 
 applyAPSGBAMemory :: APSGBAPatch -> SourceFileContents -> TargetFileContents
 applyAPSGBAMemory (APSGBAPatch header records) (SourceFileContents source) = TargetFileContents $ unsafeCreate targetSize $ \targetPointer -> do

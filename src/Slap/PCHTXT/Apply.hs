@@ -1,11 +1,10 @@
 module Slap.PCHTXT.Apply
-  ( applyPCHTXT
-  , applyPCHTXTMemory
+  ( applyPCHTXTMemory
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Measure (seekTo, offsetToInt)
+import Slap.Measure (offsetToInt)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -15,16 +14,6 @@ import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
-import System.IO
-
-applyPCHTXT :: PCHTXTPatch -> FilePath -> IO Int
-applyPCHTXT patch target = withBinaryFile target ReadWriteMode $ \handle -> do
-  let entries = concatMap pchtxtBlockEntries
-                  (filter pchtxtBlockEnabled (pchtxtBlocks patch))
-  mapM_ (\entry -> do
-    seekTo handle (pchtxtOffset entry)
-    ByteString.hPut handle (pchtxtData entry)) entries
-  pure (length entries)
 
 -- | Apply a PCHTXT patch in memory: copy source, then overwrite at offsets.
 applyPCHTXTMemory :: PCHTXTPatch -> SourceFileContents -> TargetFileContents

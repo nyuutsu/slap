@@ -1,11 +1,10 @@
 module Slap.PMSR.Apply
-  ( applyPMSR
-  , applyPMSRMemory
+  ( applyPMSRMemory
   ) where
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Measure (seekTo, offsetToInt)
+import Slap.Measure (offsetToInt)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -15,16 +14,6 @@ import Data.Word (Word8)
 import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
-import System.IO
-
-applyPMSR :: PMSRPatch -> FilePath -> IO Int
-applyPMSR patch target = withBinaryFile target ReadWriteMode $ \handle -> do
-  mapM_ (applyRecord handle) (pmsrRecords patch)
-  pure (length (pmsrRecords patch))
-  where
-    applyRecord handle record = do
-      seekTo handle (pmsrOffset record)
-      ByteString.hPut handle (pmsrData record)
 
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
 applyPMSRMemory :: PMSRPatch -> SourceFileContents -> TargetFileContents

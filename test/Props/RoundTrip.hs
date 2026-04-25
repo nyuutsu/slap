@@ -257,9 +257,8 @@ prop_apsGba = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-        result <- applyViaFile APSGBA.applyAPSGBA parsed source
-        pure $ result === target
+      Right (Parsed parsed _parseWarnings) ->
+        APSGBA.applyAPSGBAMemory parsed (SourceFileContents source) === TargetFileContents target
 
 ----------------------------------------------------------------------------
 -- IPS32 / EBP: no truncation marker, target must be >= source
@@ -306,9 +305,8 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-         result <- applyViaFile PMSR.applyPMSR parsed source
-         pure $ result === target
+       Right (Parsed parsed _parseWarnings) ->
+         PMSR.applyPMSRMemory parsed (SourceFileContents source) === TargetFileContents target
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
@@ -316,9 +314,8 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-         result <- applyViaFile NINJA1.applyNINJA1 parsed source
-         pure $ result === target
+       Right (Parsed parsed _parseWarnings) ->
+         NINJA1.applyNINJA1Memory parsed (SourceFileContents source) === TargetFileContents target
 
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
@@ -349,9 +346,8 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-        result <- applyViaFile NINJA2.applyNINJA2 parsed source
-        pure $ result === target
+      Right (Parsed parsed _parseWarnings) ->
+        NINJA2.applyNINJA2Memory parsed (SourceFileContents source) === TargetFileContents target
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
@@ -370,9 +366,8 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-         result <- applyViaFile PCHTXT.applyPCHTXT parsed source
-         pure $ result === target
+       Right (Parsed parsed _parseWarnings) ->
+         PCHTXT.applyPCHTXTMemory parsed (SourceFileContents source) === TargetFileContents target
 
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
@@ -381,9 +376,8 @@ prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> ioProperty $ do
-         result <- applyViaFile APSN64.applyAPSN64 parsed source
-         pure $ result === target
+       Right (Parsed parsed _parseWarnings) ->
+         APSN64.applyAPSN64Memory parsed (SourceFileContents source) === TargetFileContents target
 
 ----------------------------------------------------------------------------
 -- BPS efficiency properties

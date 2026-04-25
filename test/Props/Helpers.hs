@@ -6,7 +6,6 @@ module Props.Helpers
   , genSameSizePair
   , genEofPair
     -- * Apply helpers
-  , applyViaFile
   , applySomePatch
     -- * Truncation
   , truncated
@@ -32,8 +31,6 @@ import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import System.Directory (getTemporaryDirectory, removeFile)
-import System.IO (hClose, openBinaryTempFile)
 import Test.Tasty.QuickCheck
 
 ----------------------------------------------------------------------------
@@ -83,18 +80,6 @@ genEofPair = do
 ----------------------------------------------------------------------------
 -- Apply helpers
 ----------------------------------------------------------------------------
-
--- | Apply a patch via temp file, return result bytes.
-applyViaFile :: (patch -> FilePath -> IO result) -> patch -> ByteString -> IO ByteString
-applyViaFile applyFunction parsed source = do
-  directory <- getTemporaryDirectory
-  (temporary, handle) <- openBinaryTempFile directory "slap-prop"
-  ByteString.hPut handle source
-  hClose handle
-  _ <- applyFunction parsed temporary
-  output <- ByteString.readFile temporary
-  removeFile temporary
-  pure output
 
 -- | Apply through the SomePatch closure.
 applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
