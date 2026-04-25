@@ -6,6 +6,8 @@ module Slap.APSN64.Types
   , APSN64Record(..)
   , APSN64Header(..)
   , APSN64Description(..)
+  , N64CartId(..)
+  , N64ChecksumPair(..)
   , APSPatchType(..)
   , APSImageFormat(..)
   , APSRecordEncoding(..)
@@ -29,6 +31,24 @@ import Slap.Measure (FileSize, Offset(..))
 -- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
 -- 'FieldTruncated' warning emitted on overflow.
 newtype APSN64Description = APSN64Description { unAPSN64Description :: String }
+  deriving (Show, Eq)
+
+-- | The 2-byte cart ID copied from the N64 ROM header at offset 0x3C
+-- (the "game code" portion of the cartridge ID, e.g. @"SM"@ for
+-- Super Mario 64). Carried by APS-N64 patches in the N64-specific
+-- header variant and used to warn when the source ROM's cart ID
+-- doesn't match. The newtype names the role at the wire boundary;
+-- unwrapping happens at the advisory 'ByteCheck' construction site.
+newtype N64CartId = N64CartId { unN64CartId :: ByteString }
+  deriving (Show, Eq)
+
+-- | The 8-byte checksum pair at N64 ROM header offset 0x10 (CRC1 +
+-- CRC2, together sometimes called the "CIC checksum"). Carried by
+-- APS-N64 patches in the N64-specific header variant as an advisory
+-- identity gate on the source ROM. The newtype names the role at the
+-- wire boundary; unwrapping happens at the advisory 'ByteCheck'
+-- construction site.
+newtype N64ChecksumPair = N64ChecksumPair { unN64ChecksumPair :: ByteString }
   deriving (Show, Eq)
 
 data APSPatchType = APSSimple | APSN64Specific
@@ -77,9 +97,9 @@ data APSN64Header = APSN64Header
   , apsN64Encoding    :: APSRecordEncoding
   , apsN64Description :: ByteString   -- 50 bytes
   , apsN64ImageFormat :: Maybe APSImageFormat
-  , apsN64CartId      :: Maybe ByteString  -- 2 bytes
+  , apsN64CartId      :: Maybe N64CartId
   , apsN64Country     :: Maybe Word8
-  , apsN64Crc         :: Maybe ByteString  -- 8 bytes
+  , apsN64Crc         :: Maybe N64ChecksumPair
   , apsN64DestinationSize    :: FileSize
   } deriving (Show)
 

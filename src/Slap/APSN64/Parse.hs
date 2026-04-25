@@ -10,7 +10,8 @@ module Slap.APSN64.Parse
 -- Secondary: RomPatcher.js modules/RomPatcher.format.aps_n64.js
 
 import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
-                           APSPatchType(..), toAPSPatchType, toAPSImageFormat,
+                           APSPatchType(..), N64CartId(..), N64ChecksumPair(..),
+                           toAPSPatchType, toAPSImageFormat,
                            toAPSRecordEncoding, apsN64MagicBytes, apsN64DescriptionWidth)
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -54,9 +55,9 @@ parseN64 = do
             records
         APSN64Specific -> do
           imageFormat  <- toAPSImageFormat <$> getByte
-          cartId  <- getBytes (Length 2)
+          cartId  <- N64CartId <$> getBytes (Length 2)
           country <- getByte
-          crcBytes  <- getBytes (Length 8)
+          crcBytes  <- N64ChecksumPair <$> getBytes (Length 8)
           skip (Length 5)  -- padding (bytes 69-73)
           destinationSize <- FileSize . fromIntegral <$> word32LE
           records <- parseN64Records
