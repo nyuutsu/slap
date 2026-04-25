@@ -12,6 +12,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
+import qualified Data.Foldable as Foldable
 import Data.Word (Word8)
 import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
@@ -21,7 +22,7 @@ import System.IO
 applyAPSN64 :: APSN64Patch -> FilePath -> IO Int
 applyAPSN64 (APSN64Patch _ records) target = withBinaryFile target ReadWriteMode $ \handle -> do
   mapM_ (applyN64Record handle) records
-  pure (length records)
+  pure (Foldable.length records)
 
 applyN64Record :: Handle -> APSN64Record -> IO ()
 applyN64Record handle (APSN64Normal writeOffset writePayload) = do
@@ -45,5 +46,5 @@ applyAPSN64Memory (APSN64Patch _ records) (SourceFileContents source) = TargetFi
     sourceLength = ByteString.length source
     recordEnd (APSN64Normal recordOffset recordPayload) = offsetToInt recordOffset + ByteString.length recordPayload
     recordEnd (APSN64RLE recordOffset _ recordCount) = offsetToInt recordOffset + fromIntegral recordCount
-    outputLength = foldl' max sourceLength (map recordEnd records)
+    outputLength = Foldable.foldl' max sourceLength (fmap recordEnd records)
 

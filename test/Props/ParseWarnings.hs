@@ -1,13 +1,13 @@
--- | Per-warning coverage for the IPS parser's structural-warning
--- channel. Each test constructs a minimal IPS-family patch that
--- triggers exactly one of the four parse-time warnings and asserts
--- both that parsing succeeds and that the returned warning list
--- contains only the expected warning with the expected field
--- values. Patches are hand-assembled as 'ByteString' literals
+-- | Per-warning coverage for parse-time structural-warning channels
+-- across the IPS family and APSN64. Each test constructs a minimal
+-- format-specific patch that triggers exactly one parse-time warning
+-- and asserts both that parsing succeeds and that the returned
+-- warning list contains only the expected warning with the expected
+-- field values. Patches are hand-assembled as 'ByteString' literals
 -- rather than going through slap's create path, because slap's
 -- encoder would never produce any of these structures — the whole
--- point of the warnings is to flag input patches that arrived
--- from elsewhere.
+-- point of the warnings is to flag input patches that arrived from
+-- elsewhere.
 module Props.ParseWarnings (parseWarningsTests) where
 
 import qualified Slap.APSN64.Parse as APSN64

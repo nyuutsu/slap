@@ -27,6 +27,7 @@ module Slap.APSN64.Types
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Vector (Vector)
 import Data.Word (Word8)
 import Slap.Measure (FileSize, Offset(..))
 
@@ -179,7 +180,7 @@ fromAPSN64Country APSN64CountryEuropeX          = 0x58
 fromAPSN64Country APSN64CountryEuropeY          = 0x59
 fromAPSN64Country (APSN64CountryUnrecognised b) = b
 
-data APSN64Patch = APSN64Patch APSN64Header [APSN64Record]
+data APSN64Patch = APSN64Patch APSN64Header !(Vector APSN64Record)
   deriving (Show)
 
 data APSN64Header = APSN64Header

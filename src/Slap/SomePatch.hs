@@ -494,14 +494,14 @@ parseSome patchContents = case detectFormat patchContents of
                 ]
             }
       , patchWarnings       = parseWarnings
-                              ++ [EmptyPatch LabelAPSN64 "records" | null records]
-      , patchRecordSummary  = RecordSummary (length records) "records"
+                              ++ [EmptyPatch LabelAPSN64 "records" | Vector.null records]
+      , patchRecordSummary  = RecordSummary (Vector.length records) "records"
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
                               in noMetadataRequested
                                 { requestedDescription = if null description then Nothing else Just description }
-      , patchContents  = Just (emptyContents (map expandN64 records))
+      , patchContents  = Just (emptyContents (Vector.toList (Vector.map expandN64 records)))
             { contentsDescription = Just (APSN64.apsN64Description header)
             , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
             }

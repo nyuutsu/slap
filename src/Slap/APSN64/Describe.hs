@@ -13,6 +13,7 @@ import Slap.Format (MetaField(..), padHex, renderField)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 
 apsN64Meta :: APSN64Patch -> [MetaField]
 apsN64Meta (APSN64Patch header _) = concat
@@ -72,7 +73,7 @@ explainAPSN64 :: APSN64Patch -> ExplainData
 explainAPSN64 patch@(APSN64Patch _header records) = ExplainData
   { explainFormat   = "APS (N64)"
   , explainHeader   = apsN64Meta patch
-  , explainSections = [SectionRegions (map makeN64Region records)]
+  , explainSections = [SectionRegions (Vector.toList (Vector.map makeN64Region records))]
   , explainSummary  = Summary (SummaryInfo (length records) "records" Nothing)
   , explainNotes    = []
   }

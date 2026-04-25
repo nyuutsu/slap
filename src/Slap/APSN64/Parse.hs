@@ -23,6 +23,7 @@ import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 
 -- | What 'parseN64' produces from the inner Get walk: the decoded
 -- patch plus walker-time warnings accumulated during the walk, in
@@ -66,7 +67,7 @@ parseN64 = do
                   , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
                   , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
                   }
-                records
+                (Vector.fromList records)
           pure APSN64ParseWalk
             { apsN64ParseWalkPatch    = patch
             , apsN64ParseWalkWarnings = []
@@ -89,29 +90,32 @@ parseN64 = do
                   , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
                   , apsN64Country = Just parsedCountry, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
                   }
-                records
+                (Vector.fromList records)
           pure APSN64ParseWalk
             { apsN64ParseWalkPatch    = patch
             , apsN64ParseWalkWarnings = countryWarnings
             }
 
 parseN64Records :: Get [APSN64Record]
-parseN64Records = do
-  done <- atEnd
-  if done then pure []
-  else do
-    remainingLength <- remaining
-    if unLength remainingLength < 5 then pure []
-    else do
-      offset <- Offset . fromIntegral <$> word32LE
-      dataLength <- getByte
-      if dataLength == 0
-        then do  -- RLE record
-          value <- getByte
-          count <- getByte
-          rest <- parseN64Records
-          pure (APSN64RLE offset value count : rest)
-        else do  -- Normal record
-          payload <- getBytes (Length (fromIntegral dataLength))
-          rest <- parseN64Records
-          pure (APSN64Normal offset payload : rest)
+parseN64Records = walkRecords []
+  where
+    walkRecords :: [APSN64Record] -> Get [APSN64Record]
+    walkRecords accumulatedReversed = do
+      done <- atEnd
+      if done then pure (reverse accumulatedReversed)
+      else do
+        remainingLength <- remaining
+        if unLength remainingLength < 5
+          then pure (reverse accumulatedReversed)
+          else do
+            recordOffset <- Offset . fromIntegral <$> word32LE
+            dataLength   <- getByte
+            decodedRecord <- if dataLength == 0
+              then do  -- RLE record
+                fillValue <- getByte
+                fillCount <- getByte
+                pure (APSN64RLE recordOffset fillValue fillCount)
+              else do  -- Normal record
+                recordPayload <- getBytes (Length (fromIntegral dataLength))
+                pure (APSN64Normal recordOffset recordPayload)
+            walkRecords (decodedRecord : accumulatedReversed)
