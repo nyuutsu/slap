@@ -57,15 +57,16 @@ parseNINJA2 (PatchFileContents input)
   | ByteString.length input < 7 = Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
   | ByteString.take 6 input /= ninja2MagicBytes = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | ByteString.length input < headerSize = Left (InputTooShort LabelNINJA2 (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
-  | otherwise = case runGet parseNINJA2Body input of
-      Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)
-      Right patch -> Right (Parsed patch [])
+  | otherwise = case toPatchEncoding (ByteString.index input 6) of
+      Left unrecognisedByte -> Left (NINJA2UnrecognisedPatchEncoding unrecognisedByte)
+      Right encoding -> case runGet (parseNINJA2Body encoding) input of
+        Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)
+        Right patch -> Right (Parsed patch [])
   where
-    parseNINJA2Body :: Get NINJA2Patch
-    parseNINJA2Body = do
+    parseNINJA2Body :: PatchEncoding -> Get NINJA2Patch
+    parseNINJA2Body encoding = do
       headerBytes <- getBytes (Length headerSize)
       let meta = parseFixedHeader headerBytes
-          encoding = toPatchEncoding (ByteString.index headerBytes 6)
       patch <- parseCommands (emptyPatch meta encoding)
       pure patch { ninja2Records = reverse (ninja2Records patch) }
 

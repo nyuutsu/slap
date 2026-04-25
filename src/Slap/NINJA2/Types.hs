@@ -83,27 +83,30 @@ fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
 -- | PATCH_ENC: how text fields in the fixed header are encoded.
 -- 0 = system codepage (platform-dependent), 1 = UTF-8 (portable).
--- Unknown values are preserved for round-tripping but treated as system.
+-- The NINJA2 spec defines no other values; an unrecognised byte is
+-- rejected at parse time rather than represented in this type, so
+-- every 'PatchEncoding' value we ever hold has a well-defined meaning
+-- for downstream text decoding.
 data PatchEncoding
   = PatchEncodingUTF8
   | PatchEncodingSystem
-  | PatchEncodingUnknown !Word8
   deriving (Show, Eq)
 
-toPatchEncoding :: Word8 -> PatchEncoding
-toPatchEncoding 1 = PatchEncodingUTF8
-toPatchEncoding 0 = PatchEncodingSystem
-toPatchEncoding byte = PatchEncodingUnknown byte
+-- | Resolve a raw PATCH_ENC byte. 'Left' carries the unrecognised byte
+-- so the parse site can construct a structured rejection from it;
+-- 'Right' carries the resolved encoding for the rest of the parse.
+toPatchEncoding :: Word8 -> Either Word8 PatchEncoding
+toPatchEncoding 0    = Right PatchEncodingSystem
+toPatchEncoding 1    = Right PatchEncodingUTF8
+toPatchEncoding byte = Left byte
 
 fromPatchEncoding :: PatchEncoding -> Word8
-fromPatchEncoding PatchEncodingUTF8          = 1
-fromPatchEncoding PatchEncodingSystem        = 0
-fromPatchEncoding (PatchEncodingUnknown byte) = byte
+fromPatchEncoding PatchEncodingUTF8   = 1
+fromPatchEncoding PatchEncodingSystem = 0
 
 patchEncodingName :: PatchEncoding -> String
-patchEncodingName PatchEncodingUTF8          = "UTF-8"
-patchEncodingName PatchEncodingSystem        = "system"
-patchEncodingName (PatchEncodingUnknown byte) = "unknown (" ++ show byte ++ ")"
+patchEncodingName PatchEncodingUTF8   = "UTF-8"
+patchEncodingName PatchEncodingSystem = "system"
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
 -- documented; Ninja2UnknownRomType preserves any future/unknown value.
@@ -163,15 +166,14 @@ ninja2RomTypeName (Ninja2UnknownRomType value) = "unknown (" ++ show value ++ ")
 
 -- | Encode a String as bytes using the given patch encoding.
 encodeNINJA2String :: PatchEncoding -> String -> ByteString
-encodeNINJA2String PatchEncodingUTF8 = encodeUtf8Field
-encodeNINJA2String _                 = encodeLocaleField
+encodeNINJA2String PatchEncodingUTF8   = encodeUtf8Field
+encodeNINJA2String PatchEncodingSystem = encodeLocaleField
 
 -- | Decode a raw field ByteString to String based on the patch encoding.
 -- UTF-8 decodes leniently (invalid bytes become U+FFFD).
--- System and unknown encodings use the system locale.
 decodeNINJA2Field :: PatchEncoding -> ByteString -> String
-decodeNINJA2Field PatchEncodingUTF8 = decodeUtf8Field
-decodeNINJA2Field _                 = decodeLocaleField
+decodeNINJA2Field PatchEncodingUTF8   = decodeUtf8Field
+decodeNINJA2Field PatchEncodingSystem = decodeLocaleField
 
 data NINJA2Patch = NINJA2Patch
   { ninja2Header         :: NINJA2Info

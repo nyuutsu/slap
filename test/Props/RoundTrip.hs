@@ -54,7 +54,7 @@ import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
-import Test.Tasty.HUnit (testCase, assertEqual)
+import Test.Tasty.HUnit (testCase, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
 
 import Props.Helpers
@@ -100,6 +100,8 @@ roundTripTests = testGroup "RoundTrip"
   , testGroup "NINJA2"
       [ testProperty "round-trip" prop_ninja2
       , testProperty "hashes" prop_ninja2Hashes
+      , testCase "encoding-utf8-round-trips"   (ninja2EncodingRoundTrips NINJA2.PatchEncodingUTF8)
+      , testCase "encoding-system-round-trips" (ninja2EncodingRoundTrips NINJA2.PatchEncodingSystem)
       ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -358,6 +360,23 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
       Right (Parsed parsed _parseWarnings) ->
         NINJA2.ninja2SourceMD5 parsed === Just (md5 source) .&&.
         NINJA2.ninja2TargetMD5 parsed === Just (md5 target)
+
+-- | Both PATCH_ENC values the NINJA2 spec defines must survive a
+-- create-then-parse trip intact: the byte the encoder writes at offset
+-- 6 must round-trip through the parser back into the same
+-- 'PatchEncoding' constructor it was created with. Empty source and
+-- target keep the test focused on the header byte the property is
+-- about; the round-trip body is exercised exhaustively by 'prop_ninja2'.
+ninja2EncodingRoundTrips :: NINJA2.PatchEncoding -> Assertion
+ninja2EncodingRoundTrips encoding =
+  let metadata    = emptyNINJA2Metadata { NINJA2.ninja2MetadataEncoding = encoding }
+      emptyBytes  = ByteString.empty
+  in case createNINJA2 (SourceFileContents emptyBytes) (TargetFileContents emptyBytes) metadata of
+       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) ->
+           assertEqual "PATCH_ENC round-trip" encoding (NINJA2.ninja2PatchEncoding parsed)
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property

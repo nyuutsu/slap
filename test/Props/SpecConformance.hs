@@ -25,6 +25,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..))
 import Slap.Measure (FileSize(..), Offset(..))
+import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
@@ -147,6 +148,11 @@ specConformanceTests = testGroup "SpecConformance"
           ]
       , testGroup "apply-errors"
           [ testCase "block-writes-past-target" upsApplyBlockPastTarget
+          ]
+      ]
+  , testGroup "NINJA2"
+      [ testGroup "spec-reject"
+          [ testCase "unrecognised-PATCH_ENC-byte" ninja2RejectsUnrecognisedPatchEncoding
           ]
       ]
   ]
@@ -1215,3 +1221,30 @@ buildUPSWithCRCs bodyContent sourceCRC targetCRC =
       patchCRC = rustyCRC32 withoutPatchCRC
       complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
   in PatchFileContents complete
+
+----------------------------------------------------------------------------
+-- NINJA2 spec-conformance: rejection
+----------------------------------------------------------------------------
+
+-- | A NINJA2 patch whose PATCH_ENC byte (offset 6 of the fixed header)
+-- is neither 0 (system) nor 1 (UTF-8) must be rejected at parse time
+-- with the structured 'NINJA2UnrecognisedPatchEncoding' error carrying
+-- the offending byte verbatim. The rest of the header is filled with
+-- NULs and the command stream is empty: the encoding rejection fires
+-- before any of that is consulted, so its contents are immaterial to
+-- the test's invariant.
+ninja2RejectsUnrecognisedPatchEncoding :: Assertion
+ninja2RejectsUnrecognisedPatchEncoding =
+  let unrecognisedByte = 0x42 :: Word8
+      headerWithBadEncoding =
+        ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, unrecognisedByte]
+        <> ByteString.replicate (2048 - 7) 0x00
+      patchBytes = PatchFileContents headerWithBadEncoding
+  in case NINJA2.parseNINJA2 patchBytes of
+       Left (NINJA2UnrecognisedPatchEncoding actualByte) ->
+         assertEqual "preserved byte" unrecognisedByte actualByte
+       Left otherError ->
+         assertFailure ("expected NINJA2UnrecognisedPatchEncoding, got: "
+                        ++ renderSlapError otherError)
+       Right _ ->
+         assertFailure "expected parse to reject unrecognised PATCH_ENC, but it succeeded"
