@@ -2,7 +2,6 @@
 
 module Slap.NINJA2.Create
   ( createNINJA2
-  , encodeFixedHeader
   , encodeXorRecord
   ) where
 
