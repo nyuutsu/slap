@@ -786,7 +786,7 @@ doInfo parsedCommand = do
   putStrLn $ "format:      " ++ explainFormat explain
   mapM_ (putStrLn . renderField) (explainHeader explain)
   putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
-  emitWarnings parsed
+  emitWarnings WarningProper (patchWarnings parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
     Just outPath -> case patchMetadata parsed of
@@ -805,7 +805,7 @@ doExplain parsedCommand = do
         Summary     -> renderSummary
         FullRecords -> renderExplain
   putStr (renderFunction maybeSource (patchExplain parsed))
-  emitWarnings parsed
+  emitWarnings WarningProper (patchWarnings parsed)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -814,7 +814,7 @@ doExplain parsedCommand = do
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
   parsed <- readAndParsePatch (applyPatch parsedCommand)
-  emitWarnings parsed
+  emitWarnings WarningProper (patchWarnings parsed)
   case applyVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
     Quiet   -> pure ()
@@ -870,7 +870,7 @@ doApply parsedCommand = do
 doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
   parsed <- readAndParsePatch (undoPatch parsedCommand)
-  emitWarnings parsed
+  emitWarnings WarningProper (patchWarnings parsed)
   case undoVerbosity parsedCommand of
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
     Quiet   -> pure ()
@@ -895,9 +895,9 @@ doCreate parsedCommand = do
   orDie (rejectIncompatibleMetadata (createFormat parsedCommand) createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
-  emitSlapWarnings (createDefaultNotes (createFormat parsedCommand) createMeta)
+  emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
   result <- orDie (createFromMemory (createFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
-  emitSlapWarnings (resultWarnings result)
+  emitWarnings InformationalNote (resultWarnings result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   putStrLn ("wrote " ++ createOutput parsedCommand)
 
@@ -938,7 +938,7 @@ doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
   orDie (rejectIncompatibleMetadata (convertTo parsedCommand) cliMeta)
   parsed <- readAndParsePatch (convertPatch parsedCommand)
-  emitWarnings parsed
+  emitWarnings WarningProper (patchWarnings parsed)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
         ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
@@ -962,14 +962,14 @@ doConvert parsedCommand = do
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
-      emitSlapWarnings (patchSourceNotes parsed ++ bpsDropWarnings
+      emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
       convertResult <- orDie (convertDirect contents (convertTo parsedCommand) mergedMeta)
-      emitSlapWarnings (patchSourceNotes parsed ++ resultWarnings convertResult)
+      emitWarnings InformationalNote (patchSourceNotes parsed ++ resultWarnings convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     ConvertRequiresSource somePatch ->
@@ -1144,16 +1144,17 @@ safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.dro
 formatCRC :: CRC32 -> String
 formatCRC crcValue = "0x" ++ showCRC32 crcValue
 
-emitWarnings :: SomePatch -> IO ()
-emitWarnings somePatch = forM_ (patchWarnings somePatch) $ \warning ->
-  hPutStrLn stderr ("slap: warning: " ++ renderSlapWarning warning)
+-- | The two stderr-prefix categories slap uses; see 'severityPrefix'.
+data WarningSeverity = WarningProper | InformationalNote
+  deriving (Eq, Show)
 
--- | Emit a list of 'SlapWarning's to stderr, each prefixed with "slap: ".
--- Replaces the inline 'forM_ warnings $ \\w -> hPutStrLn stderr ...' pattern
--- that CLI callers reach for when surfacing library-level warnings.
-emitSlapWarnings :: [SlapWarning] -> IO ()
-emitSlapWarnings = traverse_ $ \warning ->
-  hPutStrLn stderr ("slap: " ++ renderSlapWarning warning)
+severityPrefix :: WarningSeverity -> String
+severityPrefix WarningProper     = "slap: warning: "
+severityPrefix InformationalNote = "slap: "
+
+emitWarnings :: WarningSeverity -> [SlapWarning] -> IO ()
+emitWarnings severity = traverse_ $ \warning ->
+  hPutStrLn stderr (severityPrefix severity ++ renderSlapWarning warning)
 
 warn :: String -> IO ()
 warn message = hPutStrLn stderr ("slap: warning: " ++ message)
