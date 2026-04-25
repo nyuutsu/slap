@@ -2,7 +2,7 @@
 
 module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
 
-import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..),
+import Slap.PPF.Types (PPFImageType(..), PPFFileId(..), ValidationBlockBytes(..),
                        fromImageType, ppfDescriptionLength)
 import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
                      OriginalLength(..), TruncatedLength(..))
@@ -74,8 +74,8 @@ encodeWriteRecord (Hunk hunkOffset hunkPayload) =
   <> byteString hunkPayload
 
 -- | Encode a File_ID.diz trailer in PPF3 format (2-byte LE length).
-encodeFileIdDiz :: ByteString -> ByteString
-encodeFileIdDiz content = LazyByteString.toStrict $ toLazyByteString $
+encodeFileIdDiz :: PPFFileId -> ByteString
+encodeFileIdDiz (PPFFileId content) = LazyByteString.toStrict $ toLazyByteString $
   byteString "@BEGIN_FILE_ID.DIZ"
   <> byteString content
   <> byteString "@END_FILE_ID.DIZ"

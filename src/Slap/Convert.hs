@@ -30,7 +30,7 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF.Create as PPF
-import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
+import Slap.PPF.Types (PPFImageType(..), PPFFileId(..), ValidationBlockBytes(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
@@ -680,7 +680,7 @@ encodeDirect contents source target meta limits = case target of
     in Right $ case contentsFileIdDiz contents of
          Nothing  -> ppfResult
          Just diz -> ppfResult { resultBytes = PatchFileContents
-                       (unPatchFileContents (resultBytes ppfResult) <> PPF.encodeFileIdDiz diz) }
+                       (unPatchFileContents (resultBytes ppfResult) <> PPF.encodeFileIdDiz (PPFFileId diz)) }
   CreateNINJA1 -> do
     records <- narrow (contentsRecords contents)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
