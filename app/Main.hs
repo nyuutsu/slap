@@ -255,6 +255,10 @@ data Verbosity
   | Verbose
   deriving (Show, Eq)
 
+-- | The two stderr-prefix categories slap uses; see 'severityPrefix'.
+data WarningSeverity = WarningProper | InformationalNote
+  deriving (Eq, Show)
+
 -- | The top-level CLI command.  Each constructor wraps a dedicated record
 -- type whose fields are total within that subcommand's scope; field
 -- selectors are therefore total too, and the @-Wpartial-fields@ warning
@@ -1143,10 +1147,6 @@ safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.dro
 
 formatCRC :: CRC32 -> String
 formatCRC crcValue = "0x" ++ showCRC32 crcValue
-
--- | The two stderr-prefix categories slap uses; see 'severityPrefix'.
-data WarningSeverity = WarningProper | InformationalNote
-  deriving (Eq, Show)
 
 severityPrefix :: WarningSeverity -> String
 severityPrefix WarningProper     = "slap: warning: "
