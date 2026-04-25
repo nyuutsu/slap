@@ -6,7 +6,8 @@ module Slap.BPS.Parse
   , parseActions
   ) where
 
-import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), decodeSignedVarint,
+import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..),
+                       decodeSignedVarint,
                        bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
@@ -61,7 +62,7 @@ parseBPS (PatchFileContents input)
                 BPSPatch
                   { bpsSourceSize = bpsBodySourceSize body
                   , bpsTargetSize = bpsBodyTargetSize body
-                  , bpsMetadata   = bpsBodyMetadata body
+                  , bpsMetadata   = unBPSMetadata (bpsBodyMetadata body)
                   -- The parser builds the action stream as a list (cheap
                   -- cons during 'parseActions'); we materialise it into
                   -- one contiguous 'Vector' here at the boundary so the
@@ -81,7 +82,7 @@ parseBPSBody = do
   let sourceSize = FileSize (fromIntegral rawSourceSize)
       targetSize = FileSize (fromIntegral rawTargetSize)
   metadataLength <- fromIntegral <$> byuuVarint
-  metadata       <- getBytes (Length metadataLength)
+  metadata       <- BPSMetadata <$> getBytes (Length metadataLength)
   actions <- parseActions
   pure BPSBody
     { bpsBodySourceSize = sourceSize

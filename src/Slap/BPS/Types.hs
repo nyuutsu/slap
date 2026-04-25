@@ -31,7 +31,7 @@ data BPSAction
 data BPSBody = BPSBody
   { bpsBodySourceSize :: !FileSize
   , bpsBodyTargetSize :: !FileSize
-  , bpsBodyMetadata   :: !ByteString
+  , bpsBodyMetadata   :: !BPSMetadata
   , bpsBodyActions    :: ![BPSAction]
   } deriving (Show)
 
