@@ -16,7 +16,8 @@ module Slap.Explain
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField)
+import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField,
+                    spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), advance)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
@@ -330,7 +331,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
       Just range -> ["range:       0x" ++ padHex 6 (unOffset (rangeStart range))
-                     ++ " \8211 0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)]
+                     ++ spacePaddedEnDash ++ "0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)]
 
     -- Size change from header
     sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
@@ -415,7 +416,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
                     percentage = if totalModified > 0
                           then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
                           else 0
-                in "  0x" ++ padHex 6 startOffset ++ " \8211 0x" ++ padHex 6 endOffset
+                in "  0x" ++ padHex 6 startOffset ++ spacePaddedEnDash ++ "0x" ++ padHex 6 endOffset
                    ++ "   " ++ padRight 5 (show recordsInRun) ++ " records"
                    ++ "   " ++ padRight 10 (commaNum bytesInRun ++ " B")
                    ++ "   " ++ showPercent percentage
@@ -440,7 +441,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
           let largest = last sizes
               medianSize = sizes !! (length sizes `div` 2)
               meanSize   = totalModified `div` totalRecords
-          in ["record sizes: " ++ commaNum smallest ++ " \8211 "
+          in ["record sizes: " ++ commaNum smallest ++ spacePaddedEnDash
               ++ commaNum largest ++ " B"
               ++ " (median " ++ commaNum medianSize
               ++ ", mean " ++ commaNum meanSize ++ ")"]

@@ -33,7 +33,9 @@ import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), renderSlapError, renderSlapWarning)
-import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.Format (MetaField(..), padHex, renderField,
+                    rightwardsArrow, checkMark, ballotX, emDash,
+                    spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
 import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
 
@@ -247,7 +249,7 @@ data VerificationPolicy
 -- operation.  Distinct from 'ExplainVerbosity', which controls the
 -- detail of @slap explain@'s structural dump.
 --
--- @Quiet@ (default) prints only the final \"applied N records \8594 PATH\"
+-- @Quiet@ (default) prints only the final \"applied N records → PATH\"
 -- summary.  @Verbose@ (set by @-V@\/@--verbose@) also prints each
 -- record as it's applied, via 'renderExplain'.
 data Verbosity
@@ -632,7 +634,8 @@ embeddedBlobIntentParser = asum
   [ EmbedFromFile <$> option str (long "metadata" <> metavar "FILE"
       <> help "Override embedded metadata with bytes from FILE (BPS target only)")
   , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
-      <> help "Discard the source patch's embedded metadata (BPS\8594BPS; default is to inherit)")
+      <> help ("Discard the source patch's embedded metadata (BPS"
+               ++ [rightwardsArrow] ++ "BPS; default is to inherit)"))
   , pure CarryIfPresent
   ]
 
@@ -719,7 +722,7 @@ readUnwrap path = do
       case result of
         Left errorMessage -> die errorMessage
         Right (unwrappedBytes, entryName) -> do
-          hPutStrLn stderr ("slap: unwrapped " ++ path ++ " \8594 " ++ entryName)
+          hPutStrLn stderr ("slap: unwrapped " ++ path ++ spacePaddedRightwardsArrow ++ entryName)
           pure unwrappedBytes
 
 -- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
@@ -835,20 +838,22 @@ doApply parsedCommand = do
         ByteString.writeFile outputPath (unTargetFileContents target)
         let appliedSummary = patchRecordSummary parsed
         putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
-                ++ " \8594 " ++ outputPath
+                ++ spacePaddedRightwardsArrow ++ outputPath
 
   case applyOutput parsedCommand of
     ApplyDryRun -> do
       let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
           summary = patchRecordSummary parsed
       putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
-              ++ " \8594 " ++ reportedPath
+              ++ spacePaddedRightwardsArrow ++ reportedPath
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
           let actual = rustyCRC32 sourceBytes
           putStrLn $ "source CRC: " ++ formatCRC actual
-            ++ if actual == expected then " \10003" else " \10007 (expected " ++ formatCRC expected ++ ")"
+            ++ if actual == expected
+                 then [' ', checkMark]
+                 else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
         Nothing -> pure ()
       exitSuccess
     ApplyInPlace backupBehavior -> do
@@ -987,7 +992,7 @@ applyForConvert somePatch source =
 -- | Error message when --with is required but not provided.
 needSourceMessage :: SomePatch -> String
 needSourceMessage somePatch = "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
-  ++ name ++ " " ++ reason ++ " \8212 the original ROM is needed\nto reconstruct the target file for re-encoding."
+  ++ name ++ " " ++ reason ++ " " ++ [emDash] ++ " the original ROM is needed\nto reconstruct the target file for re-encoding."
   where
     name = formatLabelName (patchFormat somePatch)
     reason
@@ -997,7 +1002,7 @@ needSourceMessage somePatch = "converting from " ++ name ++ " requires the origi
 -- | Warn when the source patch carries embedded BPS metadata bytes and
 -- the target format has no metadata channel to put them in — i.e.,
 -- when conversion silently drops the bytes.  Returns @[]@ for
--- BPS\8594BPS (the merge carries the bytes through) and for any source
+-- BPS→BPS (the merge carries the bytes through) and for any source
 -- patch that didn't have metadata to begin with.
 computeBPSDropWarnings :: SomePatch -> CreateFormat -> [SlapWarning]
 computeBPSDropWarnings parsed targetFormat = case patchMetadata parsed of
