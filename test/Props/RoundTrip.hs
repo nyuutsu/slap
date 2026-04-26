@@ -99,6 +99,7 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "NINJA2"
       [ testProperty "round-trip" prop_ninja2
+      , testProperty "truncate-round-trip" prop_ninja2Truncate
       , testProperty "hashes" prop_ninja2Hashes
       , testCase "encoding-utf8-round-trips"   (ninja2EncodingRoundTrips NINJA2.PatchEncodingUTF8)
       , testCase "encoding-system-round-trips" (ninja2EncodingRoundTrips NINJA2.PatchEncodingSystem)
@@ -344,6 +345,21 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
+  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right (Parsed parsed _parseWarnings) ->
+        NINJA2.applyNINJA2Memory parsed (SourceFileContents source) === TargetFileContents target
+
+-- | Round-trip restricted to the @len(source) > len(target)@ regime,
+-- where the NINJA2 wire carries the discarded source tail as a
+-- truncate-mode overflow.  The general 'prop_ninja2' covers this
+-- regime probabilistically; this property guarantees every test
+-- case lands on it, so a regression that overruns the output buffer
+-- by re-applying the truncate overflow gets caught immediately.
+prop_ninja2Truncate :: Property
+prop_ninja2Truncate = forAll genShrinkingPair $ \(source, target) ->
   case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of

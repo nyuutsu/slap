@@ -32,15 +32,18 @@ applyNINJA2Memory patch (SourceFileContents source) = TargetFileContents $ unsaf
         let bytePosition = writePosition + position
         original <- peekByteOff outputPointer bytePosition :: IO Word8
         pokeByteOff outputPointer bytePosition (original `xor` ByteString.index xorPayload position)
-    -- Overflow: decoded data (XOR'd with 0xFF on disk) written at source end
-    case ninja2Overflow patch of
-      Nothing -> pure ()
-      Just overflow -> do
+    -- Overflow: append-mode payload is the new tail bytes (XOR'd with 0xFF
+    -- on disk) and is written at sourceSize; truncate-mode payload is the
+    -- discarded tail bytes preserved for round-trip and is *not* applied —
+    -- the smaller output buffer already encodes the truncation.
+    case (ninja2OverflowType patch, ninja2Overflow patch) of
+      (Just OverflowAppend, Just overflow) -> do
         let appendPosition = case ninja2OpenNewFile patch of
               Just openNewFile -> unFileSize (openNewFileSourceSize openNewFile)
               Nothing          -> sourceLength
             decoded = ByteString.map (xor 0xFF) overflow
         copyByteStringRange outputPointer appendPosition decoded 0 (ByteString.length decoded)
+      _ -> pure ()
   where
     sourceLength = ByteString.length source
     outputLength = case ninja2OpenNewFile patch of

@@ -3,6 +3,7 @@ module Props.Helpers
     genByteString
   , genPair
   , genPairNoShrink
+  , genShrinkingPair
   , genSameSizePair
   , genEofPair
     -- * Apply helpers
@@ -58,6 +59,18 @@ genPairNoShrink = do
   shorter <- genByteString
   longer <- genByteString
   pure $ if ByteString.length shorter <= ByteString.length longer then (shorter, longer) else (longer, shorter)
+
+-- | (source, target) where len(source) > len(target).  Specifically
+-- exercises the truncating-apply path: the NINJA2 truncate overflow
+-- carries the discarded source tail on the wire, so an apply that
+-- mistakes "carry on the wire" for "write into the output buffer"
+-- writes past the end of a buffer sized for the (smaller) target.
+genShrinkingPair :: Gen (ByteString, ByteString)
+genShrinkingPair = do
+  source <- ByteString.cons <$> arbitrary <*> genByteString
+  targetLength <- choose (0, ByteString.length source - 1)
+  target <- ByteString.pack <$> vectorOf targetLength arbitrary
+  pure (source, target)
 
 -- | (source, target) of equal length.  UPS undo is only lossless when
 -- source and target sizes match (the normal ROM patching case).
