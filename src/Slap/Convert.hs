@@ -146,6 +146,30 @@ data CreateFormat
 -- 'encodeDirect'.  Every 'Maybe' field's 'Nothing' means "the user
 -- didn't specify; let the format pick its default"; a 'Just' carries
 -- an explicit request.
+--
+-- Direct-format consumption: 'CreateIPS' and 'CreateIPS32' consume
+-- nothing from this record — they have no metadata channel.
+-- 'CreateEBP' consumes 'requestedTitle', 'requestedAuthor', and
+-- 'requestedDescription' (woven into the trailing JSON blob via
+-- 'IPS.buildEBPMetadataJSON').  'CreatePPF3' consumes
+-- 'requestedDescription' (the 50-byte header field),
+-- 'requestedUndoInclusion', 'requestedValidationInclusion', and
+-- 'requestedImageType' (selects the validation offset).
+-- 'CreateNINJA1' consumes 'requestedRomType' (mapped through
+-- 'Slap.Platform.platformToNinja1'); the compression flag rides in
+-- 'PatchContents' rather than this record.  'CreatePMSR' consumes
+-- nothing.  'CreatePCHTXT' consumes 'requestedDescription'.
+-- 'CreateAPSN64' consumes 'requestedDescription' (50-byte header
+-- field).
+--
+-- Diff-format consumption is read directly out of 'createFromMemory'\'s
+-- diff arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
+-- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
+-- consumes 'requestedTitle'\/'requestedDescription' (name),
+-- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
+-- 'CreateNINJA2' consumes the full title\/author\/version\/description
+-- block plus 'requestedGenre', 'requestedLanguage', 'requestedDate',
+-- 'requestedWebsite', 'requestedRomType', and 'requestedPatchEncoding'.
 data RequestedPatchMetadata = RequestedPatchMetadata
   { requestedTitle                :: Maybe String
   , requestedAuthor               :: Maybe String

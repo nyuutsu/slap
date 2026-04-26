@@ -16,14 +16,14 @@
 -- standard-IPS body and appends the JSON metadata trailer.
 --
 -- There is no @createIPS@ / @createIPS32@ / @createEBP@ porcelain
--- here. End-to-end creation for direct formats is a coordination-layer
--- concern — the 'Slap.Convert.createFromMemory' pipeline threads
--- a 'PatchContents' through 'buildContents' and 'encodeDirect',
--- which is where the IPS family's live creation path runs today.
--- A future @Slap.Create@ coordination module is planned to host
--- per-format creation porcelain for the IPS family and every
--- other format, so that callers looking for "the thing that makes
--- a patch" find a single named place.
+-- — neither here nor in "Slap.Create". End-to-end creation for the
+-- IPS family is a coordination-layer concern: the
+-- 'Slap.Convert.createFromMemory' pipeline threads a 'PatchContents'
+-- through 'Slap.Convert.buildContents' and 'Slap.Convert.encodeDirect',
+-- which is where the live creation path runs. The direct family
+-- shares that pipeline, so a per-format typed front door would have
+-- nothing format-level to wrap; "Slap.Create" reserves its porcelain
+-- for the differential family, which has no shared pipeline.
 module Slap.IPS.Create
   ( -- * Wire encoder (used by 'Slap.Convert')
     encodeIPSPatch

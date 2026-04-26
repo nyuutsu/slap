@@ -8,9 +8,6 @@ module Slap.PPF.Types
     , PPFRecord(..)
     , PPFFileId(..)
     , PPFPatch(..)
-    , PPFDescription(..)
-    , PPFUndoInclusion(..)
-    , PPFValidationInclusion(..)
     , validationOffset
     , validationSize
       -- * Named constants
@@ -84,25 +81,6 @@ data PPFPatch = PPFPatch
   , ppfRecords     :: ![PPFRecord]
   , ppfFileId      :: !(Maybe PPFFileId)
   } deriving (Show)
-
--- | The description field of a PPF3 patch header. Locale-encoded and
--- truncated to 'ppfDescriptionLength' bytes on create, with a
--- 'FieldTruncated' warning emitted on overflow. Introduced so the
--- porcelain surface distinguishes "the 50-byte description" from
--- every other 'String' that flows through 'Slap.PPF.Create.encodePPF3'.
-newtype PPFDescription = PPFDescription { unPPFDescription :: String }
-  deriving (Eq, Show)
-
--- | Whether a PPF3 patch should carry an undo block. A two-constructor
--- sum rather than a 'Bool' so call sites and error renderings name
--- the states rather than spell "True" or "False".
-data PPFUndoInclusion = PPFIncludeUndo | PPFOmitUndo
-  deriving (Eq, Show)
-
--- | Whether a PPF3 patch should carry a 1024-byte validation block
--- sampled from the source image. Twin of 'PPFUndoInclusion'.
-data PPFValidationInclusion = PPFIncludeValidation | PPFOmitValidation
-  deriving (Eq, Show)
 
 -- | Offset in target file where validation block is read from.
 validationOffset :: PPFImageType -> Offset
