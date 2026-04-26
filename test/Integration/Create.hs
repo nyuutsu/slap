@@ -4,7 +4,7 @@ import Integration.Helpers
   (Tier, isHeavyPath, restrictToTier,
    repoDir, parseSpecFile, parseCreateFormat, sha1Hex, applyPatch,
    BootstrapTargets, lookupBootstrapTarget, mmapRomFile)
-import Slap.Convert (CreateFormat, noMetadataRequested)
+import Slap.Convert (CreateFormat, noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -50,7 +50,7 @@ makeCreateTest bootstrapTargets repo fields = case fields of
 -- | Create a patch, parse it back, apply to base, verify SHA1.
 roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha = do
-  case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
+  case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
     Right (CreateResult patchBytes _) -> case parseSome patchBytes of
       Left slapError -> assertFailure ("re-parse failed: " ++ renderSlapError slapError)

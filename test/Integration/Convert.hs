@@ -9,7 +9,8 @@ import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Convert (CreateFormat(..), RequestedPatchMetadata(..), UndoInclusion(..),
-                     ValidationInclusion(..), DirectCreate(..), noMetadataRequested)
+                     ValidationInclusion(..), DirectCreate(..), noMetadataRequested,
+                     noConstraintsRequested)
 
 -- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
 -- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
@@ -154,7 +155,7 @@ makeTruncatingIPSPatch =
       targetBytes = ByteString.replicate 512 0xFF
   in case createFromMemory (CreateDirect CreateIPS)
          (SourceFileContents sourceBytes) (TargetFileContents targetBytes)
-         noMetadataRequested Nothing of
+         noMetadataRequested Nothing noConstraintsRequested of
        Left slapError ->
          error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)
        Right createResult -> case parseSome (resultBytes createResult) of

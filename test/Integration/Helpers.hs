@@ -55,7 +55,7 @@ import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 
 import Control.Exception (catch, IOException)
@@ -359,12 +359,12 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right target ->
-        case createFromMemory targetFormat (SourceFileContents baseBytes) target meta (patchContents somePatch) of
+        case createFromMemory targetFormat (SourceFileContents baseBytes) target meta (patchContents somePatch) noConstraintsRequested of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
   Nothing -> case patchContents somePatch of
     Nothing -> pure (Left (needWithMsg somePatch))
-    Just patchContent -> pure $ case convertDirect patchContent targetFormat meta of
+    Just patchContent -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested of
       Left slapErr -> Left (renderSlapError slapErr)
       Right result -> Right result
   where

@@ -6,10 +6,17 @@ import Integration.Helpers
    withTempFile, BootstrapTargets, lookupBootstrapTarget, mmapRomFile,
    parseCreateFormat,
    expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
 import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
-import Slap.SomePatch (parseSome)
-import Slap.Convert (CreateFormat, noMetadataRequested)
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.SomePatch (parseSome, patchContents)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
+                     RequestedConstraints(..),
+                     noMetadataRequested, noConstraintsRequested,
+                     rejectIncompatibleConstraints,
+                     convertDirect)
+import Slap.Constraint (Constraint(..))
+import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createFromMemory)
 
 import Data.Bits (xor)
@@ -39,9 +46,8 @@ failureModeTests tier bootstrapTargets = do
   stadium2Exists <- doesFileExist stadium2Base
   -- Quick: pure parser-level CRC corruption checks. No subprocesses, no
   -- multi-megabyte garbage files, no bootstrap targets.
-  let quickTests
-        | dm4yExists = corruptPatchCRCTests dm4yBps dm4yUps
-        | otherwise  = []
+  let quickTests = smcShapeConstraintTests ++
+        if dm4yExists then corruptPatchCRCTests dm4yBps dm4yUps else []
   -- Full adds the heavy subprocess matrix and the in-process round-trip
   -- groups (one of which exercises stadium2).
   let heavySubprocessTests = case maybeSlap of
@@ -336,7 +342,7 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
+      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
@@ -349,7 +355,7 @@ crossFormatRoundTripTests base bps =
                 Right (TargetFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing of
+                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
@@ -362,7 +368,7 @@ crossFormatRoundTripTests base bps =
                             Right (TargetFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing of
+                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome patchC of
@@ -423,7 +429,7 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
+      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome patchBytes of
@@ -434,3 +440,129 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
                 Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
                 Right (TargetFileContents output) ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
+
+----------------------------------------------------------------------------
+-- 6. --require-smc-shaped-target-size constraint
+----------------------------------------------------------------------------
+
+-- | The SMC-shape constraint refuses to emit an IPS truncation marker
+-- whose declared target size doesn't satisfy SNESTool's
+-- @(size & 0xFFF) == 0x200@ shape filter. These cases exercise the
+-- create-time and convert-time gates without subprocesses or
+-- bootstrap fixtures: synthetic source\/target pairs of a few KiB
+-- each suffice.
+smcShapeConstraintTests :: [TestTree]
+smcShapeConstraintTests =
+  [ testCase "smc-shape/IPS smc-sized target succeeds with flag" $ do
+      -- 0x1200 bytes target satisfies (size & 0xFFF) == 0x200.
+      let source = ByteString.replicate 0x2000 0x00
+          target = ByteString.replicate 0x1200 0xFF
+      case createWithSMC source target of
+        Left slapError -> assertFailure
+          ("expected success, got: " ++ renderSlapError slapError)
+        Right (CreateResult patchBytes _) ->
+          case parseSome patchBytes of
+            Left slapError -> assertFailure
+              ("re-parse: " ++ renderSlapError slapError)
+            Right _ -> pure ()
+
+  , testCase "smc-shape/IPS non-smc-sized target rejected with flag" $ do
+      -- 4000 bytes (0xFA0) is not SMC-shaped: 4000 .&. 0xFFF == 0xFA0.
+      let source = ByteString.replicate 0x2000 0x00
+          target = ByteString.replicate 4000 0xFF
+      case createWithSMC source target of
+        Left (TruncationViolatesSMCShape _) -> pure ()
+        Left other -> assertFailure
+          ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
+        Right _ -> assertFailure
+          "expected refusal, got successful create"
+
+  , testCase "smc-shape/IPS target>=source: gate vacuous, succeeds" $ do
+      -- No truncation marker would be emitted, so the SMC filter doesn't apply.
+      let source = ByteString.replicate 0x1000 0x00
+          target = ByteString.replicate 0x2000 0xFF
+      case createWithSMC source target of
+        Left slapError -> assertFailure
+          ("expected success (no truncation), got: " ++ renderSlapError slapError)
+        Right _ -> pure ()
+
+  , testCase "smc-shape/BPS rejected at constraint-acceptance layer" $
+      -- The create entry point ('doCreate' in @app/Main.hs@) runs
+      -- 'rejectIncompatibleConstraints' before invoking
+      -- 'createFromMemory'; the constraint never reaches the
+      -- per-format encoder. Exercise that check directly.
+      case rejectIncompatibleConstraints (CreateDiff CreateBPS) smcConstraints of
+        Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
+        Left other -> assertFailure
+          ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
+        Right () -> assertFailure
+          "expected refusal at create entry"
+
+  , testCase "smc-shape/IPS non-smc-sized succeeds without flag" $ do
+      -- Regression: without the flag, slap continues to emit the
+      -- wire-valid truncation marker it always has.
+      let source = ByteString.replicate 0x2000 0x00
+          target = ByteString.replicate 4000 0xFF
+      case createFromMemory (CreateDirect CreateIPS)
+             (SourceFileContents source) (TargetFileContents target)
+             noMetadataRequested Nothing noConstraintsRequested of
+        Left slapError -> assertFailure
+          ("expected success (no flag), got: " ++ renderSlapError slapError)
+        Right _ -> pure ()
+
+  , testCase "smc-shape/convert --to bps rejected at constraint layer" $
+      -- The convert entry point ('doConvert' in @app/Main.hs@) runs
+      -- 'rejectIncompatibleConstraints' before dispatching, so the
+      -- user-facing rejection lands here long before any encoder
+      -- runs. Exercise that check directly.
+      case rejectIncompatibleConstraints (CreateDiff CreateBPS) smcConstraints of
+        Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
+        Left other -> assertFailure
+          ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
+        Right () -> assertFailure
+          "expected refusal at convert entry"
+
+  , testCase "smc-shape/source-less convert IPS->IPS refuses bad marker" $ do
+      ipsPatch <- buildNonSMCShapedIPS
+      case patchContents ipsPatch of
+        Nothing -> assertFailure "test fixture should expose PatchContents"
+        Just contents ->
+          case convertDirect contents (CreateDirect CreateIPS)
+                 noMetadataRequested smcConstraints of
+            Left (TruncationViolatesSMCShape _) -> pure ()
+            Left other -> assertFailure
+              ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
+            Right _ -> assertFailure
+              "expected refusal at encode gate"
+  ]
+  where
+    smcConstraints = noConstraintsRequested
+      { requestedSMCShape = RequireSMCShapedTruncation }
+
+    createWithSMC source target =
+      createFromMemory (CreateDirect CreateIPS)
+        (SourceFileContents source) (TargetFileContents target)
+        noMetadataRequested Nothing smcConstraints
+
+    -- Build a parsed IPS patch whose Flips-style truncation marker
+    -- declares a non-SMC-shaped target size. Constructed via the
+    -- create path with constraints disabled so the produced patch
+    -- carries the marker; then re-parsed so 'patchContents' is
+    -- populated for the source-less convert path.
+    buildNonSMCShapedIPS = do
+      let source = ByteString.replicate 0x2000 0x00
+          target = ByteString.replicate 4000 0xFF
+      case createFromMemory (CreateDirect CreateIPS)
+             (SourceFileContents source) (TargetFileContents target)
+             noMetadataRequested Nothing noConstraintsRequested of
+        Left slapError -> assertFailure
+          ("setup: create failed: " ++ renderSlapError slapError)
+          >> error "unreachable"
+        Right (CreateResult patchBytes _) ->
+          case parseSome patchBytes of
+            Left slapError -> assertFailure
+              ("setup: parse failed: " ++ renderSlapError slapError)
+              >> error "unreachable"
+            Right parsed -> pure parsed
+
+

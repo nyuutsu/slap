@@ -23,7 +23,7 @@ import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
-import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..))
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
 import Slap.Measure (FileSize(..), Offset(..))
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
@@ -122,6 +122,15 @@ specConformanceTests = testGroup "SpecConformance"
       [ testGroup "apply-errors"
           [ testCase "zero-target-with-records-rejected"
               ipsApplyZeroTargetWithRecordsRejected
+          ]
+      , testGroup "isSMCShapedSize"
+          [ testCase "0x000-rejected"  (isSMCShapedSize (FileSize 0x000)    @?= False)
+          , testCase "0x200-accepted"  (isSMCShapedSize (FileSize 0x200)    @?= True)
+          , testCase "0x400-rejected"  (isSMCShapedSize (FileSize 0x400)    @?= False)
+          , testCase "0x1000-rejected" (isSMCShapedSize (FileSize 0x1000)   @?= False)
+          , testCase "0x1200-accepted" (isSMCShapedSize (FileSize 0x1200)   @?= True)
+          , testCase "0x1234-rejected" (isSMCShapedSize (FileSize 0x1234)   @?= False)
+          , testCase "0x100200-accepted" (isSMCShapedSize (FileSize 0x100200) @?= True)
           ]
       ]
   , testGroup "UPS"

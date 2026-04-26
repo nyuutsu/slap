@@ -8,6 +8,11 @@ module Slap.Convert
   , ValidationInclusion(..)
   , PatchStability(..)
   , noMetadataRequested
+  , RequestedConstraints(..)
+  , noConstraintsRequested
+  , requestedConstraints
+  , acceptedConstraints
+  , rejectIncompatibleConstraints
   , DirectConversionContract(..)
   , ConversionFailure(..)
   , emptyContents
@@ -34,6 +39,7 @@ import Slap.PPF.Types (PPFImageType(..), PPFFileId, ValidationBlockBytes(..))
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
+                       SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
@@ -63,6 +69,7 @@ import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..
                       SentinelOffset(..),
                       advance, narrowHunks, narrowHunksUnbounded, splitHunks,
                       ipsLimits, ips32Limits, ebpLimits)
+import Slap.Constraint (Constraint(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
@@ -428,6 +435,86 @@ rejectIncompatibleMetadata format meta =
     (field:_) -> Left (MetadataFieldRejected field (createFormatLabel format))
 
 ----------------------------------------------------------------------------
+-- Constraints (CLI rejection / encoder gates)
+----------------------------------------------------------------------------
+
+-- | The constraint bag the user assembled from CLI flags, parallel
+-- to 'RequestedPatchMetadata' but for refuse-gates rather than
+-- embedded properties. 'requestedSMCShape' is the only field today;
+-- future constraints land here.
+--
+-- Unlike 'RequestedPatchMetadata', constraints carry no source-patch
+-- inheritance step — they're an entirely CLI-set concept and are
+-- not read from a parsed source patch during convert. A source
+-- patch's encoder couldn't have known about the user's downstream
+-- requirements when it was created, so there's nothing meaningful
+-- to inherit.
+data RequestedConstraints = RequestedConstraints
+  { requestedSMCShape :: SMCShapeRequirement
+  }
+  deriving (Show, Eq)
+
+noConstraintsRequested :: RequestedConstraints
+noConstraintsRequested = RequestedConstraints
+  { requestedSMCShape = AllowAnyTruncationShape
+  }
+
+-- | The 'Constraint's the user explicitly opted into.
+-- 'AllowAnyTruncationShape' is the not-specified state, mirroring how
+-- 'requestedPatchEncoding' treats 'PatchEncodingUTF8'.
+requestedConstraints :: RequestedConstraints -> Set.Set Constraint
+requestedConstraints constraints = Set.fromList $ concat
+  [ [SMCShapeConstraint | requestedSMCShape constraints == RequireSMCShapedTruncation]
+  ]
+
+-- | The 'Constraint's a target format can honor. Pattern-matched
+-- exhaustively across both 'CreateDirect' and 'CreateDiff' so that
+-- adding a constructor anywhere — a new format, or a new constraint
+-- — fires '-Wincomplete-patterns' on every case that needs a
+-- decision. This is non-cosmetic: a wildcard would silently reject
+-- a half-wired constraint against every format and slap would
+-- volunteer no signal.
+acceptedConstraints :: CreateFormat -> Set.Set Constraint
+acceptedConstraints (CreateDirect format) = case format of
+  CreateIPS    -> Set.singleton SMCShapeConstraint
+  CreateIPS32  -> Set.empty
+  CreateEBP    -> Set.empty
+  CreatePPF3   -> Set.empty
+  CreateNINJA1 -> Set.empty
+  CreatePMSR   -> Set.empty
+  CreatePCHTXT -> Set.empty
+  CreateAPSN64 -> Set.empty
+acceptedConstraints (CreateDiff format) = case format of
+  CreateBPS    -> Set.empty
+  CreateUPS    -> Set.empty
+  CreateDPS    -> Set.empty
+  CreateNINJA2 -> Set.empty
+  CreateAPSGBA -> Set.empty
+  CreateGDIFF  -> Set.empty
+
+-- | Reject any constraint the user opted into that the target format
+-- doesn't honor. Same shape as 'rejectIncompatibleMetadata'.
+rejectIncompatibleConstraints
+  :: CreateFormat -> RequestedConstraints -> Either SlapError ()
+rejectIncompatibleConstraints format constraints =
+  case Set.toList (requestedConstraints constraints `Set.difference` acceptedConstraints format) of
+    []      -> Right ()
+    (c : _) -> Left (ConstraintNotSupported c (createFormatLabel format))
+
+-- | Refuse to emit an IPS truncation marker whose declared size
+-- doesn't satisfy SNESTool's shape filter, when the user has opted
+-- in. Parallel to 'rejectTruncation'. A no-op when constraints don't
+-- request the gate or when 'contentsTruncation' is 'Nothing'.
+rejectNonSMCShapedTruncation
+  :: RequestedConstraints -> PatchContents -> Either SlapError ()
+rejectNonSMCShapedTruncation constraints contents
+  | requestedSMCShape constraints /= RequireSMCShapedTruncation = Right ()
+  | otherwise = case contentsTruncation contents of
+      Nothing                          -> Right ()
+      Just size | isSMCShapedSize size -> Right ()
+                | otherwise            -> Left (TruncationViolatesSMCShape size)
+
+----------------------------------------------------------------------------
 -- Contract checking
 ----------------------------------------------------------------------------
 
@@ -615,9 +702,10 @@ fieldNote contents field = case field of
 
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
+              -> RequestedConstraints
               -> Either SlapError CreateResult
-convertDirect _ (CreateDiff target) _ = Left (DiffRequiresSource (diffLabel target))
-convertDirect contents (CreateDirect target) meta = do
+convertDirect _ (CreateDiff target) _ _ = Left (DiffRequiresSource (diffLabel target))
+convertDirect contents (CreateDirect target) meta constraints = do
   let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
       validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
       contract         = directConversionContract target undoChoice validationChoice
@@ -633,7 +721,7 @@ convertDirect contents (CreateDirect target) meta = do
       -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
       -- than silently passing through.
       let notes = conversionNotes contents target contract meta
-      encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target)
+      encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target) constraints
       Right CreateResult
         { resultBytes    = resultBytes encoded
         , resultWarnings = notes ++ resultWarnings encoded
@@ -650,11 +738,12 @@ encodingLimits _           = Nothing
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> RequestedPatchMetadata
-             -> Maybe EncodingLimits -> Either SlapError CreateResult
-encodeDirect contents source target meta limits = case target of
+             -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
+encodeDirect contents source target meta limits constraints = case target of
   CreateIPS -> do
     narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
     records <- resolveIPSSentinel LabelIPS StandardIPS narrowed
+    rejectNonSMCShapedTruncation constraints contents
     Right (CreateResult
             (IPS.encodeIPSPatch StandardIPS records (contentsTruncation contents))
             [])
@@ -780,11 +869,13 @@ encodeDirect contents source target meta limits = case target of
 -- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
 -- inheritance in the @--with@ conversion path.
 createFromMemory :: CreateFormat -> SourceFileContents -> TargetFileContents
-                 -> RequestedPatchMetadata -> Maybe PatchContents -> Either SlapError CreateResult
-createFromMemory (CreateDirect format) source target meta sourceContents =
+                 -> RequestedPatchMetadata -> Maybe PatchContents
+                 -> RequestedConstraints
+                 -> Either SlapError CreateResult
+createFromMemory (CreateDirect format) source target meta sourceContents constraints =
   let contents = buildContents format source target meta sourceContents
-  in encodeDirect contents source format meta (encodingLimits format)
-createFromMemory (CreateDiff format) source target meta sourceContents = case format of
+  in encodeDirect contents source format meta (encodingLimits format) constraints
+createFromMemory (CreateDiff format) source target meta sourceContents _constraints = case format of
   CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target

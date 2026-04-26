@@ -38,6 +38,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
+import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
 
@@ -356,6 +357,18 @@ data SlapError
   -- it.  Rendering names both the offending CLI flag and the target,
   -- so the message points the user at the exact thing to fix.
   | MetadataFieldRejected MetadataField FormatLabel
+
+  -- | The user opted into a 'Constraint' the target format cannot
+  -- honor. Surfaced by 'Slap.Convert.rejectIncompatibleConstraints'
+  -- before any encoding work begins.
+  | ConstraintNotSupported Constraint FormatLabel
+
+  -- | The IPS create gate refused a truncation marker whose declared
+  -- target size doesn't satisfy SNESTool's
+  -- @(size & 0xFFF) == 0x200@ shape filter. Surfaced by
+  -- 'Slap.Convert.rejectNonSMCShapedTruncation'; only fires when the
+  -- user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
+  | TruncationViolatesSMCShape !FileSize
 
   -- Container
   | Yay0DecompressionFailed String
@@ -676,6 +689,17 @@ renderSlapError (MetadataFieldRejected field target) =
   "--" ++ metadataFieldFlagName field ++ " is not accepted by "
   ++ formatLabelName target
   ++ " (the " ++ metadataFieldName field ++ " field is not part of this format)"
+
+renderSlapError (ConstraintNotSupported constraint target) =
+  "the " ++ formatLabelName target
+  ++ " format does not support --" ++ constraintFlagName constraint
+  ++ " (" ++ constraintName constraint ++ ")"
+
+renderSlapError (TruncationViolatesSMCShape size) =
+  "--" ++ constraintFlagName SMCShapeConstraint
+  ++ ": target size " ++ show (unFileSize size)
+  ++ " bytes does not satisfy (size & 0xFFF) == 0x200; "
+  ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
 renderSlapError (Yay0DecompressionFailed detail) =
   "Yay0 decompression failed: " ++ detail

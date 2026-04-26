@@ -21,10 +21,14 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      PatchContents,
                      RequestedPatchMetadata(..),
+                     RequestedConstraints(..),
+                     rejectIncompatibleConstraints,
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      formatExtension, formatName)
+import Slap.Constraint (Constraint(..), constraintFlagName)
+import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createFromMemory)
 import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
@@ -302,6 +306,7 @@ data CreateCommand = CreateCommand
   , createModified    :: FilePath
   , createOutput      :: FilePath
   , createMetadata    :: CreateMetadataInputs
+  , createConstraints :: RequestedConstraints
   }
   deriving (Show)
 
@@ -315,6 +320,7 @@ data ConvertCommand = ConvertCommand
   , convertWithSource  :: Maybe ConvertWithSource
   , convertFileReading :: FileReadingOptions
   , convertMetadata    :: ConvertMetadataInputs
+  , convertConstraints :: RequestedConstraints
   }
   deriving (Show)
 
@@ -497,6 +503,7 @@ createParser = do
     modified           <- argument str (metavar "MODIFIED" <> help "Modified file")
     outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- createMetadataInputsParser
+    constraints        <- constraintsParser
     pure CreateCommand
       { createFormat      = format
       , createFileReading = fileReadingOptions
@@ -504,6 +511,7 @@ createParser = do
       , createModified    = modified
       , createOutput      = outputFile
       , createMetadata    = metadataInputs
+      , createConstraints = constraints
       }
 
 convertParser :: Parser ConvertCommand
@@ -514,6 +522,7 @@ convertParser = do
     withSource         <- optional convertWithSourceParser
     fileReadingOptions <- fileReadingOptionsParser
     metadataInputs     <- convertMetadataInputsParser
+    constraints        <- constraintsParser
     pure ConvertCommand
       { convertPatch       = patchFile
       , convertTo          = targetFormat
@@ -521,7 +530,23 @@ convertParser = do
       , convertWithSource  = withSource
       , convertFileReading = fileReadingOptions
       , convertMetadata    = metadataInputs
+      , convertConstraints = constraints
       }
+
+-- | Parser for the 'RequestedConstraints' bag, shared between
+-- @slap create@ and @slap convert@. Each constraint contributes one
+-- flag; 'constraintFlagName' is the single source of truth for the
+-- spelling.
+constraintsParser :: Parser RequestedConstraints
+constraintsParser = do
+  smcShape <- flag AllowAnyTruncationShape RequireSMCShapedTruncation
+    ( long (constraintFlagName SMCShapeConstraint)
+   <> help ("Refuse to emit an IPS truncation marker whose declared size"
+         ++ " doesn't satisfy SNESTool's (size & 0xFFF) == 0x200 shape filter")
+    )
+  pure RequestedConstraints
+    { requestedSMCShape = smcShape
+    }
 
 -- | Parser for @--with SOURCE@ plus its sub-flag @--no-verify@.  The
 -- @--with@ option is the distinguishing flag: if absent, the whole parser
@@ -901,11 +926,18 @@ doUndo parsedCommand = do
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
-  orDie (rejectIncompatibleMetadata (createFormat parsedCommand) createMeta)
+  orDie (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
+  orDie (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
-  result <- orDie (createFromMemory (createFormat parsedCommand) (SourceFileContents originalBytes) (TargetFileContents modifiedBytes) createMeta Nothing)
+  result <- orDie (createFromMemory
+                     (createFormat parsedCommand)
+                     (SourceFileContents originalBytes)
+                     (TargetFileContents modifiedBytes)
+                     createMeta
+                     Nothing
+                     (createConstraints parsedCommand))
   emitWarnings InformationalNote (resultWarnings result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   putStrLn ("wrote " ++ createOutput parsedCommand)
@@ -945,7 +977,8 @@ chooseConvertDispatch parsedCommand parsed =
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
-  orDie (rejectIncompatibleMetadata (convertTo parsedCommand) cliMeta)
+  orDie (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
+  orDie (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   let outputFile = case convertOutput parsedCommand of
@@ -970,14 +1003,14 @@ doConvert parsedCommand = do
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed))
+      createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
-      convertResult <- orDie (convertDirect contents (convertTo parsedCommand) mergedMeta)
+      convertResult <- orDie (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ resultWarnings convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)

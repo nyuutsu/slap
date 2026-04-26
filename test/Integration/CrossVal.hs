@@ -5,7 +5,7 @@ import Integration.Helpers
    repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
    withTempFile, withTempDir, BootstrapTargets, lookupBootstrapTarget,
    mmapRomFile)
-import Slap.Convert (CreateFormat(..), noMetadataRequested)
+import Slap.Convert (CreateFormat(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -49,7 +49,7 @@ mkCrossValTest bootstrapTargets repo fields = case fields of
                 baseBytes <- mmapRomFile basePath
                 let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
                 -- Create patch with slap
-                case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing of
+                case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
                   Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
                   Right (CreateResult patchBytes _) ->
                     -- Apply with external tool, verify SHA1

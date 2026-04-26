@@ -11,6 +11,8 @@ module Slap.IPS.Types
   , EBPMetadataFields(..)
   , EBPPatch(..)
   , IPSParseResult(..)
+  , SMCShapeRequirement(..)
+  , isSMCShapedSize
     -- * Named constants
   , ipsMagicBytes
   , ips32MagicBytes
@@ -31,6 +33,7 @@ module Slap.IPS.Types
   , ipsVariantMaxRecordEnd
   ) where
 
+import Data.Bits ((.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Vector (Vector)
@@ -38,7 +41,7 @@ import Data.Word (Word8)
 import Slap.Measure
   ( Offset(..)
   , Length(..)
-  , FileSize
+  , FileSize(..)
   , Cursor(..)
   , byteLength
   , ipsSentinel
@@ -391,3 +394,47 @@ ipsVariantMaxRecordEnd :: IPSVariant -> Offset
 ipsVariantMaxRecordEnd variant =
   advance (ipsVariantMaxAddressableOffset (variantSpec variant))
           ipsMaxRecordPayload
+
+----------------------------------------------------------------------------
+-- SNESTool truncation-shape filter
+----------------------------------------------------------------------------
+
+-- | Whether IPS create should refuse to emit a truncation marker
+-- whose declared target size doesn't satisfy SNESTool's
+-- @(size & 0xFFF) == 0x200@ shape filter. SNESTool — MCA\/Elite,
+-- DOS, 1996 — was the format's earliest applier; its IPS apply
+-- loop rejects markers that don't match the bit pattern an
+-- SMC-headered SNES ROM exhibits by construction. The IPS spec
+-- itself imposes no such constraint, and every modern applier
+-- (Flips, RomPatcher.js) accepts any wire-valid marker. Only
+-- SNESTool filters.
+--
+-- Users who specifically target SNESTool can opt into the refusal
+-- at create time by setting 'RequireSMCShapedTruncation'. The
+-- default 'AllowAnyTruncationShape' produces the patch slap has
+-- always produced. Evidence trail: @docs\/ips\/ips2-snestool-report.md@.
+data SMCShapeRequirement
+  = AllowAnyTruncationShape
+  | RequireSMCShapedTruncation
+  deriving (Show, Eq)
+
+-- | Predicate matching SNESTool's truncation-marker size filter,
+-- transcribed from SNESTL12.EXE at image offset 0xB6F-0xB77:
+--
+-- @
+--   AND CX, 0x0FFF
+--   CMP CX, 0x0200
+--   JZ  ok
+-- @
+--
+-- That is, @size .&. 0xFFF == 0x200@ — equivalently
+-- @size \`mod\` 4096 == 512@. The motivating case is the canonical
+-- SMC-headered SNES ROM: a commercial header-stripped ROM payload
+-- is a multiple of 4 KiB, and the 512-byte SMC copier header tacks
+-- an extra 0x200 onto the size, so a real headered SMC ROM passes
+-- by construction. The check is necessary but not sufficient for
+-- SMC-ness — a hypothetical 0x1200-byte file also passes — but
+-- that looseness is in MCA's binary; slap reproduces the binary's
+-- predicate verbatim.
+isSMCShapedSize :: FileSize -> Bool
+isSMCShapedSize (FileSize n) = n .&. 0xFFF == 0x200
