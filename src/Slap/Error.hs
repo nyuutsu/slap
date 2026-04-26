@@ -380,6 +380,17 @@ data SlapWarning
   -- offending record's position in the wire record stream.
   | ZeroCountRLERecord FormatLabel ActionIndex
 
+  -- | A BPS patch carries the non-canonical @0x81@ encoding of zero
+  -- in a 'SourceCopy' or 'TargetCopy' signed-delta varint. Both
+  -- @0x80@ and @0x81@ decode to a delta of zero — the sign-magnitude
+  -- scheme treats @0x81@ as "negative zero" — but only @0x80@ is the
+  -- canonical form, and slap's encoder never emits @0x81@. The
+  -- warning fires once per patch (no payload) and signals either a
+  -- non-canonical producer or transit corruption; the parse itself
+  -- proceeds normally. See @docs/bps/questions.md@ → "two encodings
+  -- for zero-delta".
+  | NegativeZeroInBPS
+
   -- | Two IPS-family records write to overlapping regions of the
   -- target. Overlap is permitted and well-defined (later writes
   -- clobber earlier ones), but it's unusual enough that slap flags
@@ -685,6 +696,11 @@ renderSlapWarning (ZeroCountRLERecord label (ActionIndex idx)) =
   "note: " ++ formatLabelName label
   ++ ": zero-count RLE record at position " ++ show idx
   ++ " (accepted as no-op)"
+
+renderSlapWarning NegativeZeroInBPS =
+  "note: " ++ formatLabelName LabelBPS
+  ++ ": signed-delta varint encoded zero as 0x81 (non-canonical;"
+  ++ " 0x80 is the canonical form)"
 
 renderSlapWarning (OverlappingRecords label (ActionIndex earlier) (ActionIndex later)) =
   "note: " ++ formatLabelName label

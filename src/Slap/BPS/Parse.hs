@@ -7,11 +7,11 @@ module Slap.BPS.Parse
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..),
-                       decodeSignedVarint,
+                       decodeSignedVarint, isNegativeZeroSignedVarint,
                        bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
+import Slap.Error (SlapError(..), SlapWarning(..), FieldName(..), Parsed(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -73,7 +73,7 @@ parseBPS (PatchFileContents input)
                   , bpsTargetCRC  = targetCRC
                   , bpsPatchCRC   = storedPatchCRC
                   }
-                [])
+                (bpsBodyWarnings body))
 
 parseBPSBody :: Get BPSBody
 parseBPSBody = do
@@ -83,26 +83,114 @@ parseBPSBody = do
       targetSize = FileSize (fromIntegral rawTargetSize)
   metadataLength <- fromIntegral <$> byuuVarint
   metadata       <- BPSMetadata <$> getBytes (Length metadataLength)
-  actions <- parseActions
+  parsedStream   <- parseActions
   pure BPSBody
     { bpsBodySourceSize = sourceSize
     , bpsBodyTargetSize = targetSize
     , bpsBodyMetadata   = metadata
-    , bpsBodyActions    = actions
+    , bpsBodyActions    = parsedActionList parsedStream
+    , bpsBodyWarnings   = parsedActionWarnings parsedStream
     }
 
-parseActions :: Get [BPSAction]
-parseActions = do
-  done <- atEnd
-  if done then pure []
-  else do
-    encoded <- byuuVarint
-    let commandCode = encoded .&. 3
-        dataLength = fromIntegral (shiftR encoded 2) + 1
-    action <- case commandCode of
-      0 -> pure (SourceRead (Length dataLength))
-      1 -> TargetRead <$> getBytes (Length dataLength)
-      2 -> SourceCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
-      _ -> TargetCopy (Length dataLength) . Delta . fromIntegral . decodeSignedVarint <$> byuuVarint
-    remaining <- parseActions
-    pure (action : remaining)
+----------------------------------------------------------------------------
+-- Action stream walker
+----------------------------------------------------------------------------
+
+-- | The result of walking the BPS action stream: the decoded actions
+-- in wire order, paired with any per-action warnings the walk
+-- accumulated. Today the only warning emitted here is
+-- 'NegativeZeroInBPS' (the non-canonical @0x81@ encoding of zero in
+-- a copy action's signed-delta varint); the channel exists so future
+-- per-action observations can be surfaced without reshaping the
+-- walker. Strictly private to 'Slap.BPS.Parse' — the public surface
+-- of 'BPSBody' carries the same two pieces of information through
+-- 'bpsBodyActions' and 'bpsBodyWarnings'.
+data BPSParsedActionStream = BPSParsedActionStream
+  { parsedActionList     :: ![BPSAction]
+  , parsedActionWarnings :: ![SlapWarning]
+  }
+
+-- | One decoded action plus the warnings its decoding emitted.
+-- 'decodeOneAction' returns this so the per-arm logic for the four
+-- BPS command codes — including the @0x81@ negative-zero detection
+-- on 'SourceCopy' / 'TargetCopy' offset varints — lives in one
+-- helper, leaving 'parseActions' as a thin tail-recursive walker
+-- that just stitches results into its two reversed accumulators.
+data BPSDecodedAction = BPSDecodedAction
+  { bpsDecodedActionValue    :: !BPSAction
+  , bpsDecodedActionWarnings :: ![SlapWarning]
+  }
+
+-- | Which kind of copy action 'decodeCopyAction' is decoding. The
+-- two BPS copy commands have identical wire shapes (signed-delta
+-- varint following the packed header) and differ only in which
+-- buffer their copy reads from.
+data BPSCopyKind = CopyFromSource | CopyFromTarget
+
+-- | Walk the BPS action stream until 'atEnd', returning every
+-- successfully decoded action in wire order along with any warnings
+-- the walk emitted.
+--
+-- The walker is tail-recursive with two reversed accumulators
+-- (actions and warnings), reversed once at the 'atEnd' boundary. The
+-- per-action decoding is delegated to 'decodeOneAction' so the
+-- four-arm command-code dispatch — and the @0x81@ negative-zero
+-- detection it carries on the two copy arms — has one home.
+parseActions :: Get BPSParsedActionStream
+parseActions = walkActions [] []
+  where
+    walkActions :: [BPSAction] -> [SlapWarning] -> Get BPSParsedActionStream
+    walkActions accumulatedActionsReversed accumulatedWarningsReversed = do
+      done <- atEnd
+      if done
+        then pure BPSParsedActionStream
+               { parsedActionList     = reverse accumulatedActionsReversed
+               , parsedActionWarnings = reverse accumulatedWarningsReversed
+               }
+        else do
+          decodedAction <- decodeOneAction
+          walkActions (bpsDecodedActionValue    decodedAction : accumulatedActionsReversed)
+                      (bpsDecodedActionWarnings decodedAction ++ accumulatedWarningsReversed)
+
+-- | Decode a single BPS action: read the packed command-and-length
+-- varint, dispatch on the two-bit command code, and consume each
+-- variant's body. Wire values for the two-bit command code:
+-- 0 = SourceRead, 1 = TargetRead, 2 = SourceCopy, 3 = TargetCopy.
+-- The two copy variants additionally inspect the offset varint for
+-- the non-canonical @0x81@ encoding of zero and emit
+-- 'NegativeZeroInBPS' when seen.
+decodeOneAction :: Get BPSDecodedAction
+decodeOneAction = do
+  encoded <- byuuVarint
+  let dataLength = Length (fromIntegral (shiftR encoded 2) + 1)
+  case encoded .&. 3 of
+    0 -> pure BPSDecodedAction  -- SourceRead
+           { bpsDecodedActionValue    = SourceRead dataLength
+           , bpsDecodedActionWarnings = []
+           }
+    1 -> do  -- TargetRead
+      payload <- getBytes dataLength
+      pure BPSDecodedAction
+        { bpsDecodedActionValue    = TargetRead payload
+        , bpsDecodedActionWarnings = []
+        }
+    2 -> decodeCopyAction CopyFromSource dataLength  -- SourceCopy
+    _ -> decodeCopyAction CopyFromTarget dataLength  -- TargetCopy
+
+-- | Shared decoder for 'SourceCopy' and 'TargetCopy', whose wire
+-- shapes differ only in their constructor: each consumes a
+-- signed-delta varint following the packed command-and-length
+-- header. The encoded varint is captured before decoding so the
+-- @0x81@ negative-zero shape can be detected and surfaced as a
+-- 'NegativeZeroInBPS' warning without re-reading the wire.
+decodeCopyAction :: BPSCopyKind -> Length -> Get BPSDecodedAction
+decodeCopyAction copyKind dataLength = do
+  offsetEncoded <- byuuVarint
+  let delta = Delta (fromIntegral (decodeSignedVarint offsetEncoded))
+      action = case copyKind of
+        CopyFromSource -> SourceCopy dataLength delta
+        CopyFromTarget -> TargetCopy dataLength delta
+  pure BPSDecodedAction
+    { bpsDecodedActionValue    = action
+    , bpsDecodedActionWarnings = [NegativeZeroInBPS | isNegativeZeroSignedVarint offsetEncoded]
+    }

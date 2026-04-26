@@ -18,7 +18,7 @@ import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..), Parsed(..), renderSlapError)
+import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -95,6 +95,8 @@ specConformanceTests = testGroup "SpecConformance"
               bpsApplyDefersSourceSizeCheckToVerificationLayer
           , testCase "parseSome-populates-verifyFileSizeAdvisory"
               bpsVerificationCarriesDeclaredSize
+          , testCase "negative-zero-signed-varint-warns"
+              bpsNegativeZeroSignedVarintWarns
           ]
       , testGroup "spec-reject"
           [ testCase "wrong-magic" bpsWrongMagic
@@ -1017,6 +1019,36 @@ bpsApplyDefersSourceSizeCheckToVerificationLayer =
       body = bpsBody 100 1 ByteString.empty actions
       patch = buildBPS body actualSource target
   in assertParseApply parseAndApplyBPS patch actualSource target
+
+-- | A BPS patch whose 'SourceCopy' offset varint encodes the
+-- non-canonical @0x81@ form of zero — sign-magnitude "negative
+-- zero". Both @0x80@ and @0x81@ decode to delta zero, so apply
+-- still produces the right bytes; the parser must surface the
+-- non-canonical encoding through 'NegativeZeroInBPS' so the user
+-- learns the patch came from a non-canonical producer or transit
+-- corruption. See @docs/bps/questions.md@ → "two encodings for
+-- zero-delta".
+--
+-- The action chosen is the smallest possible: @SourceCopy length=1@
+-- with the offset varint emitted directly as the byte @0x81@ (which
+-- byuu-varint decodes to unsigned 1, the sign-magnitude shape for
+-- "negative zero"). The encoder helper 'bpsSignedDelta' would emit
+-- @0x80@ for delta zero — exactly the canonical shape we are not
+-- testing — so the offset byte is laid down by hand.
+bpsNegativeZeroSignedVarintWarns :: Assertion
+bpsNegativeZeroSignedVarintWarns =
+  let source = ByteString.pack [0xAB]
+      target = source
+      actions = bpsActionVarint bpsSourceCopyCode 1
+                <> word8 0x81
+      body  = bpsBody 1 1 ByteString.empty actions
+      patch = buildBPS body source target
+  in case parseBPS patch of
+       Left slapError ->
+         assertFailure ("expected parse to succeed: " ++ renderSlapError slapError)
+       Right (Parsed _parsed parseWarnings) ->
+         assertBool ("expected NegativeZeroInBPS in: " ++ show parseWarnings)
+                    (NegativeZeroInBPS `elem` parseWarnings)
 
 -- | 'parseSome' must populate 'verifyFileSizeAdvisory' with the declared
 -- source size so the Verification layer can diagnose mismatches.
