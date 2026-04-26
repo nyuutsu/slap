@@ -72,8 +72,8 @@ parseNINJA2 (PatchFileContents input)
 
     emptyPatch meta encoding = NINJA2Patch
       { ninja2Header = meta, ninja2Records = [], ninja2Overflow = Nothing
-      , ninja2OverflowType = Nothing, ninja2SourceMD5 = Nothing, ninja2TargetMD5 = Nothing
-      , ninja2SourceSize = FileSize 0, ninja2TargetSize = FileSize 0, ninja2PatchEncoding = encoding, ninja2RomType = Ninja2Raw
+      , ninja2OverflowType = Nothing, ninja2OpenNewFile = Nothing
+      , ninja2PatchEncoding = encoding
       }
 
 parseCommands :: NINJA2Patch -> Get NINJA2Patch
@@ -106,13 +106,15 @@ parseFileCommand patch = do
           payload <- parsePackedByteString
           pure (Just mode, Just payload)
     else pure (Nothing, Nothing)
-  pure patch { ninja2SourceMD5    = Just sourceMD5
-             , ninja2TargetMD5    = Just targetMD5
-             , ninja2SourceSize   = sourceSize
-             , ninja2TargetSize   = targetSize
+  pure patch { ninja2OpenNewFile  = Just NINJA2OpenNewFile
+                 { openNewFileSourceMD5  = sourceMD5
+                 , openNewFileTargetMD5  = targetMD5
+                 , openNewFileSourceSize = sourceSize
+                 , openNewFileTargetSize = targetSize
+                 , openNewFileRomType    = toNINJA2RomType romTypeByte
+                 }
              , ninja2Overflow     = overflowData
              , ninja2OverflowType = overflowType
-             , ninja2RomType      = toNINJA2RomType romTypeByte
              }
 
 -- | Command 0x02: XOR record

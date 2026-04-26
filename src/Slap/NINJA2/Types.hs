@@ -6,6 +6,7 @@ module Slap.NINJA2.Types
   , NINJA2Record(..)
   , NINJA2Info(..)
   , NINJA2Metadata(..)
+  , NINJA2OpenNewFile(..)
   , XorRecord(..)
   , OverflowMode(..)
   , toOverflowMode
@@ -180,12 +181,24 @@ data NINJA2Patch = NINJA2Patch
   , ninja2Records        :: [NINJA2Record]
   , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , ninja2OverflowType   :: Maybe OverflowMode
-  , ninja2SourceMD5      :: Maybe MD5Hash     -- 16 bytes
-  , ninja2TargetMD5      :: Maybe MD5Hash     -- 16 bytes
-  , ninja2SourceSize     :: !FileSize
-  , ninja2TargetSize     :: !FileSize
+  , ninja2OpenNewFile    :: Maybe NINJA2OpenNewFile
   , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
-  , ninja2RomType        :: NINJA2RomType     -- ROM type from OPEN_NEW_FILE command
+  } deriving (Show)
+
+-- | Fields populated by NINJA2's @OPEN_NEW_FILE@ command. The patch
+-- format permits a body that never declares this command (e.g.,
+-- record-only patches that don't change file size or identity); when
+-- @OPEN_NEW_FILE@ is absent, none of these fields have meaningful
+-- values, and the apply path falls back to source-derived defaults.
+-- Grouping them in a single 'Maybe'-wrapped record means presence
+-- and absence are answered by one type-level question rather than
+-- by inspecting any individual field.
+data NINJA2OpenNewFile = NINJA2OpenNewFile
+  { openNewFileSourceMD5  :: !MD5Hash
+  , openNewFileTargetMD5  :: !MD5Hash
+  , openNewFileSourceSize :: !FileSize
+  , openNewFileTargetSize :: !FileSize
+  , openNewFileRomType    :: !NINJA2RomType
   } deriving (Show)
 
 -- | The parsed fixed-header fields from a NINJA2 patch, as raw

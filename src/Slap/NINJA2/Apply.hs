@@ -36,16 +36,11 @@ applyNINJA2Memory patch (SourceFileContents source) = TargetFileContents $ unsaf
     case ninja2Overflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPosition = unFileSize (ninja2SourceSize patch)
+        let appendPosition = maybe sourceLength (unFileSize . openNewFileSourceSize) (ninja2OpenNewFile patch)
             decoded = ByteString.map (xor 0xFF) overflow
         copyByteStringRange outputPointer appendPosition decoded 0 (ByteString.length decoded)
   where
     sourceLength = ByteString.length source
-    -- 'ninja2SourceMD5' is 'Just' iff the patch contained an OPEN_NEW_FILE
-    -- command, which is the only place 'ninja2TargetSize' gets a real value.
-    -- Without the header we have no declared target size, so fall back to the
-    -- source length; with it, trust the declared size — including zero, which
-    -- a target-less-than-source patch will legitimately produce.
-    outputLength = case ninja2SourceMD5 patch of
-      Just _  -> unFileSize (ninja2TargetSize patch)
-      Nothing -> sourceLength
+    outputLength = case ninja2OpenNewFile patch of
+      Just openNewFile -> unFileSize (openNewFileTargetSize openNewFile)
+      Nothing          -> sourceLength

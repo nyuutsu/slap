@@ -515,7 +515,9 @@ parseSome patchContents = case detectFormat patchContents of
           | ByteString.all (== 0) bytes = Nothing
           | otherwise                   = Just hash
         filterZeroMD5 Nothing = Nothing
-        (platformType, platformWarnings) = ninja2ToPlatform (NINJA2.ninja2RomType patch)
+        openNewFile = NINJA2.ninja2OpenNewFile patch
+        (platformType, platformWarnings) =
+          ninja2ToPlatform (maybe NINJA2.Ninja2Raw NINJA2.openNewFileRomType openNewFile)
     Right SomePatch
       { patchFormat         = LabelNINJA2
       , patchExplain        = NINJA2.explainNINJA2 patch
@@ -524,8 +526,8 @@ parseSome patchContents = case detectFormat patchContents of
             { inMemoryApply = \source -> pure (Right (NINJA2.applyNINJA2Memory patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-          { verifySourceMD5 = filterZeroMD5 (NINJA2.ninja2SourceMD5 patch)
-          , verifyTargetMD5 = filterZeroMD5 (NINJA2.ninja2TargetMD5 patch)
+          { verifySourceMD5 = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
+          , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
           }
       , patchWarnings       = parseWarnings
                                ++ [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]

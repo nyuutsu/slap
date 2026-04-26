@@ -29,10 +29,7 @@ ninja2Meta patch = concat
   , optionalField "language"    (ninja2Language (ninja2Header patch))
   , optionalField "website"     (ninja2Website (ninja2Header patch))
   , optionalField "description" (ninja2Description (ninja2Header patch))
-  , romTypeField
-  , sizeFields
-  , md5Field "source MD5" (ninja2SourceMD5 patch)
-  , md5Field "target MD5" (ninja2TargetMD5 patch)
+  , openNewFileFields
   , overflowField
   ]
   where
@@ -40,17 +37,20 @@ ninja2Meta patch = concat
     optionalField _ Nothing = []
     optionalField label (Just value) = [MetaField label (decodeNINJA2Field encoding value)]
 
-    romTypeField = case ninja2RomType patch of
-      Ninja2Raw -> []
-      romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
+    openNewFileFields = case ninja2OpenNewFile patch of
+      Nothing -> []
+      Just openNewFile -> concat
+        [ case openNewFileRomType openNewFile of
+            Ninja2Raw -> []
+            romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
+        , [ MetaField "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))
+          , MetaField "target size" (show (unFileSize (openNewFileTargetSize openNewFile)))
+          ]
+        , md5Field "source MD5" (openNewFileSourceMD5 openNewFile)
+        , md5Field "target MD5" (openNewFileTargetMD5 openNewFile)
+        ]
 
-    sizeFields
-      | unFileSize (ninja2SourceSize patch) == 0 && unFileSize (ninja2TargetSize patch) == 0 = []
-      | otherwise = [ MetaField "source size" (show (unFileSize (ninja2SourceSize patch)))
-                     , MetaField "target size" (show (unFileSize (ninja2TargetSize patch))) ]
-
-    md5Field _ Nothing = []
-    md5Field label (Just (MD5Hash hash)) =
+    md5Field label (MD5Hash hash) =
       [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
 
     overflowField = case (ninja2OverflowType patch, ninja2Overflow patch) of

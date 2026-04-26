@@ -358,8 +358,8 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.ninja2SourceMD5 parsed === Just (md5 source) .&&.
-        NINJA2.ninja2TargetMD5 parsed === Just (md5 target)
+        fmap NINJA2.openNewFileSourceMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 source) .&&.
+        fmap NINJA2.openNewFileTargetMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 target)
 
 -- | Both PATCH_ENC values the NINJA2 spec defines must survive a
 -- create-then-parse trip intact: the byte the encoder writes at offset
