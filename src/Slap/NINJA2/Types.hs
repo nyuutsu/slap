@@ -178,11 +178,11 @@ decodeNINJA2Field PatchEncodingSystem = decodeLocaleField
 
 data NINJA2Patch = NINJA2Patch
   { ninja2Header         :: NINJA2Info
+  , ninja2OpenNewFile    :: Maybe NINJA2OpenNewFile
+  , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
   , ninja2Records        :: [NINJA2Record]
   , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , ninja2OverflowType   :: Maybe OverflowMode
-  , ninja2OpenNewFile    :: Maybe NINJA2OpenNewFile
-  , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
   } deriving (Show)
 
 -- | Fields populated by NINJA2's @OPEN_NEW_FILE@ command. The patch

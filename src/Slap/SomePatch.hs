@@ -516,8 +516,10 @@ parseSome patchContents = case detectFormat patchContents of
           | otherwise                   = Just hash
         filterZeroMD5 Nothing = Nothing
         openNewFile = NINJA2.ninja2OpenNewFile patch
-        (platformType, platformWarnings) =
-          ninja2ToPlatform (maybe NINJA2.Ninja2Raw NINJA2.openNewFileRomType openNewFile)
+        romTypeForPlatformConversion = case openNewFile of
+          Just open -> NINJA2.openNewFileRomType open
+          Nothing   -> NINJA2.Ninja2Raw
+        (platformType, platformWarnings) = ninja2ToPlatform romTypeForPlatformConversion
     Right SomePatch
       { patchFormat         = LabelNINJA2
       , patchExplain        = NINJA2.explainNINJA2 patch

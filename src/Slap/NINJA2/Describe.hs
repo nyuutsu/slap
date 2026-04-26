@@ -39,16 +39,17 @@ ninja2Meta patch = concat
 
     openNewFileFields = case ninja2OpenNewFile patch of
       Nothing -> []
-      Just openNewFile -> concat
-        [ case openNewFileRomType openNewFile of
-            Ninja2Raw -> []
-            romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
-        , [ MetaField "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))
-          , MetaField "target size" (show (unFileSize (openNewFileTargetSize openNewFile)))
-          ]
-        , md5Field "source MD5" (openNewFileSourceMD5 openNewFile)
-        , md5Field "target MD5" (openNewFileTargetMD5 openNewFile)
-        ]
+      Just openNewFile ->
+        let romTypeField = case openNewFileRomType openNewFile of
+              Ninja2Raw -> []
+              romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
+            sizeFields =
+              [ MetaField "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))
+              , MetaField "target size" (show (unFileSize (openNewFileTargetSize openNewFile)))
+              ]
+            sourceMD5Field = md5Field "source MD5" (openNewFileSourceMD5 openNewFile)
+            targetMD5Field = md5Field "target MD5" (openNewFileTargetMD5 openNewFile)
+        in concat [romTypeField, sizeFields, sourceMD5Field, targetMD5Field]
 
     md5Field label (MD5Hash hash) =
       [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]

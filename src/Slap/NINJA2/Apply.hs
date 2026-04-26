@@ -36,7 +36,9 @@ applyNINJA2Memory patch (SourceFileContents source) = TargetFileContents $ unsaf
     case ninja2Overflow patch of
       Nothing -> pure ()
       Just overflow -> do
-        let appendPosition = maybe sourceLength (unFileSize . openNewFileSourceSize) (ninja2OpenNewFile patch)
+        let appendPosition = case ninja2OpenNewFile patch of
+              Just openNewFile -> unFileSize (openNewFileSourceSize openNewFile)
+              Nothing          -> sourceLength
             decoded = ByteString.map (xor 0xFF) overflow
         copyByteStringRange outputPointer appendPosition decoded 0 (ByteString.length decoded)
   where
