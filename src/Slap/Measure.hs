@@ -9,6 +9,7 @@ module Slap.Measure
   , Position(..)
   , SignedOffset(..)
   , ActionIndex(..)
+  , OverlapCount(..)
   , ReadOffset(..)
   , WritePosition(..)
   , RequestedLength(..)
@@ -101,6 +102,17 @@ newtype SignedOffset = SignedOffset { unSignedOffset :: Int }
   deriving (Eq, Ord, Show)
 
 newtype ActionIndex = ActionIndex { unActionIndex :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | The number of overlapping record pairs detected during an
+-- IPS-family parse. Carried by the 'OverlappingRecords' warning so
+-- the reader sees that the patch contains overlapping writes and
+-- how many such intersections were found, without enumerating every
+-- pair (a pathological mutually-overlapping cluster of @k@ records
+-- would otherwise produce @k*(k-1)/2@ near-duplicate warning lines).
+-- A value of zero is structurally impossible: the warning is only
+-- emitted when at least one pair was found.
+newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------

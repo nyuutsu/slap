@@ -25,6 +25,7 @@ import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
 import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
+                     OverlapCount(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
@@ -404,14 +405,18 @@ data SlapWarning
   -- for zero-delta".
   | NegativeZeroInBPS
 
-  -- | Two IPS-family records write to overlapping regions of the
-  -- target. Overlap is permitted and well-defined (later writes
-  -- clobber earlier ones), but it's unusual enough that slap flags
-  -- each overlapping pair for the reader. The 'ActionIndex' pair
-  -- is @(earlierRecord, laterRecord)@ in wire order: the record
-  -- written first and then clobbered, followed by the record whose
-  -- writes do the clobbering.
-  | OverlappingRecords FormatLabel ActionIndex ActionIndex
+  -- | At least one pair of records in an IPS-family patch writes
+  -- to overlapping regions of the target. Overlap is permitted and
+  -- well-defined (later writes clobber earlier ones), but it's
+  -- unusual enough that slap flags it. The 'OverlapCount' carries
+  -- the total number of intersecting pairs found during the parse;
+  -- the warning is only emitted when that count is at least one.
+  -- Per-pair detail is intentionally omitted: a pathological
+  -- mutually-overlapping cluster of @k@ records would otherwise
+  -- produce @k*(k-1)/2@ near-identical warning lines that drown
+  -- everything else, and the reader's question is "does this patch
+  -- have overlapping writes" not "exactly which pairs".
+  | OverlappingRecords FormatLabel OverlapCount
 
   -- | An IPS-family record carries a smaller offset than the
   -- record that preceded it in the wire stream. slap applies
@@ -726,11 +731,12 @@ renderSlapWarning NegativeZeroInBPS =
   ++ ": signed-delta varint encoded zero as 0x81 (non-canonical;"
   ++ " 0x80 is the canonical form)"
 
-renderSlapWarning (OverlappingRecords label (ActionIndex earlier) (ActionIndex later)) =
+renderSlapWarning (OverlappingRecords label (OverlapCount pairCount)) =
   "note: " ++ formatLabelName label
-  ++ ": record at position " ++ show later
-  ++ " overlaps with record at position " ++ show earlier
-  ++ " (later record's writes clobber earlier; unusual)"
+  ++ ": " ++ show pairCount
+  ++ (if pairCount == 1 then " overlapping record pair"
+                        else " overlapping record pairs")
+  ++ " (later writes clobber earlier; unusual)"
 
 renderSlapWarning (UnsortedRecords label (ActionIndex idx)) =
   "note: " ++ formatLabelName label

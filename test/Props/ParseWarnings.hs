@@ -16,7 +16,7 @@ import qualified Slap.IPS.Parse as IPS
 import Slap.Error (Parsed(..), SlapWarning(..), renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (ActionIndex(..), Length(..))
+import Slap.Measure (ActionIndex(..), Length(..), OverlapCount(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -136,8 +136,8 @@ zeroCountRLEEmitsWarning =
 
 -- | Two copy records whose write regions intersect: record 0 writes
 -- 10 bytes at offset 0; record 1 writes 10 bytes at offset 5. The
--- pair triggers a single 'OverlappingRecords' warning with the
--- @(earlier, later)@ tuple @(0, 1)@; no other warning applies (the
+-- pair triggers a single 'OverlappingRecords' warning carrying the
+-- count of intersecting pairs (one); no other warning applies (the
 -- offsets are in ascending wire order, and neither record is an RLE
 -- run).
 overlappingRecordsEmitWarning :: Assertion
@@ -149,7 +149,7 @@ overlappingRecordsEmitWarning =
                    <> copyRecord 5 secondPayload
                    <> standardIPSTrailer
   in assertParseWarnings patchBytes
-       [OverlappingRecords LabelIPS (ActionIndex 0) (ActionIndex 1)]
+       [OverlappingRecords LabelIPS (OverlapCount 1)]
 
 -- | Two copy records whose offsets run in descending wire order:
 -- record 0 at offset 20, record 1 at offset 10. Their 5-byte

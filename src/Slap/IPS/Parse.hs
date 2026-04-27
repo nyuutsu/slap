@@ -45,6 +45,7 @@ import Slap.Measure
   , Length(..)
   , FileSize(..)
   , ActionIndex(..)
+  , OverlapCount(..)
   , Cursor(..)
   , byteLength
   , firstAction
@@ -59,6 +60,7 @@ import Slap.Measure
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.List (sort)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 
@@ -137,7 +139,8 @@ data IPSBodyShape
 -- a fixed order so downstream callers and tests can rely on it:
 --
 --   1. Walker-time warnings (zero-count RLE), in wire order.
---   2. Pair-wise overlap warnings from 'detectOverlappingRecords'.
+--   2. At most one count-bearing overlap warning from
+--      'detectOverlappingRecords' (omitted when no records overlap).
 --   3. The first unsorted-record warning from 'detectFirstUnsorted'.
 --   4. For 'IPSBodyClean' 'IPS32' bodies only, a trailing-bytes
 --      warning emitted by 'assembleCleanResult'.
@@ -404,45 +407,161 @@ validateRecordList variant = walkAt firstAction
 -- Post-validation structural warnings — overlap and unsorted records
 ----------------------------------------------------------------------------
 
--- | Emit one 'OverlappingRecords' warning for every pair of records
--- whose write regions intersect. The comparison runs over the
--- wire-order finalized record vector, so the 'ActionIndex' values
--- name wire positions verbatim.
+-- | Emit a single 'OverlappingRecords' warning, carrying the count
+-- of intersecting record pairs, when any records in the patch write
+-- to overlapping regions. Returns @[]@ when no overlaps exist.
+-- Overlap is permitted and well-defined in the IPS family (later
+-- writes clobber earlier ones; see @docs/ips/questions.md@); the
+-- warning flags the unusual structural property without enumerating
+-- every pair. Pathological patches with mutually-overlapping
+-- clusters of @k@ records would otherwise produce @k*(k-1)/2@
+-- near-identical lines that would drown every other warning.
 --
--- The algorithm is the naive @O(n^2)@ pairwise scan: for each
--- later-in-wire-order record, check every earlier record for
--- interval overlap. The pair order is @(earlier, later)@, matching
--- the semantics of the 'OverlappingRecords' warning: the later
--- record's writes clobber the earlier's. Overlap permissiveness is
--- by design in the IPS family (see @docs/ips/questions.md@); the
--- warning exists to flag the unusual structural property, not to
--- reject it.
+-- The algorithm is a sweep line over interval endpoints: each
+-- record contributes an open event at its start offset and a close
+-- event at its end offset, the events are sorted by file position
+-- (close before open at ties, so touching intervals do not register
+-- as overlapping), and a left-to-right fold tracks how many
+-- intervals are currently open at each point in the sweep. When an
+-- open event arrives while @k@ intervals are already open, the new
+-- interval intersects each of those @k@ predecessors, so the pair
+-- counter advances by @k@. Total work is @O(n log n)@ — a single
+-- auxiliary sort over the events; the records vector itself is
+-- never reordered, so wire order downstream is preserved.
 --
--- @O(n^2)@ is accepted because IPS patches are small by construction
--- — the wire-level record count is capped well below the scale
--- where asymptotic concerns would bite, and any patch that did
--- somehow contain millions of records with mutual overlap is a
--- structural pathology the warning should be verbose about.
+-- The function is shared across every IPS-family parse path,
+-- including 'IPS32' whose 32-bit offset space lets record counts
+-- grow into the hundred-thousand range. The earlier @O(n^2)@
+-- pairwise scan answered the same question correctly but became a
+-- minutes-of-wall-clock cost on stadium2-scale 'IPS32' patches,
+-- which the sweep eliminates.
 detectOverlappingRecords :: FormatLabel
                          -> Vector.Vector IPSRecord
                          -> [SlapWarning]
-detectOverlappingRecords label recordVector =
-  [ OverlappingRecords label (ActionIndex earlierIndex) (ActionIndex laterIndex)
-  | laterIndex    <- [0 .. recordCount - 1]
-  , earlierIndex  <- [0 .. laterIndex - 1]
-  , writeRegionsOverlap (recordVector Vector.! earlierIndex)
-                        (recordVector Vector.! laterIndex)
-  ]
+detectOverlappingRecords label records
+  | overlapPairCount == 0 = []
+  | otherwise             =
+      [OverlappingRecords label (OverlapCount overlapPairCount)]
   where
-    recordCount = Vector.length recordVector
+    -- Zero-length records (zero-count RLE) contribute no events: an
+    -- empty extent writes no bytes, so it cannot clobber or be
+    -- clobbered. Surfacing the zero-count record itself is the
+    -- 'ZeroCountRLERecord' warning's job, on a separate channel.
+    -- Skipping these here also avoids a tie-break degeneracy: a
+    -- record's own close and open at the same offset would otherwise
+    -- collide under the close-before-open ordering.
+    recordSweepEvents :: IPSRecord -> [SweepEvent]
+    recordSweepEvents record =
+      let extent = recordExtent record
+      in if extentStart extent == extentEnd extent
+           then []
+           else [ IntervalOpens  (extentStart extent)
+                , IntervalCloses (extentEnd   extent)
+                ]
 
-    writeRegionsOverlap :: IPSRecord -> IPSRecord -> Bool
-    writeRegionsOverlap leftRecord rightRecord =
-      let leftStart  = unOffset (ipsRecordOffset leftRecord)
-          leftEnd    = leftStart  + unLength (recordPayloadLength leftRecord)
-          rightStart = unOffset (ipsRecordOffset rightRecord)
-          rightEnd   = rightStart + unLength (recordPayloadLength rightRecord)
-      in leftStart < rightEnd && rightStart < leftEnd
+    sweepEvents :: [SweepEvent]
+    sweepEvents = concatMap recordSweepEvents (Vector.toList records)
+
+    finalState :: SweepState
+    finalState = foldl' stepSweep initialSweepState (sort sweepEvents)
+
+    OverlapCount overlapPairCount = sweepOverlapPairs finalState
+
+----------------------------------------------------------------------------
+-- Sweep-line primitives — used by 'detectOverlappingRecords'
+----------------------------------------------------------------------------
+
+-- | Half-open extent of a single record: where it starts, where it
+-- ends. 'extentEnd' is computed once at construction so the sweep's
+-- comparisons read fields directly instead of re-deriving the end
+-- from offset and payload length on every comparison.
+data RecordExtent = RecordExtent
+  { extentStart :: !Offset
+  , extentEnd   :: !Offset
+  } deriving (Eq, Show)
+
+recordExtent :: IPSRecord -> RecordExtent
+recordExtent record = RecordExtent
+  { extentStart = ipsRecordOffset record
+  , extentEnd   = ipsRecordOffset record `advance` recordPayloadLength record
+  }
+
+-- | A point where the set of currently-open intervals changes during
+-- the sweep. 'IntervalOpens' raises the open count by one;
+-- 'IntervalCloses' lowers it. The carried 'Offset' is the file
+-- position at which the change takes effect.
+data SweepEvent
+  = IntervalOpens  !Offset
+  | IntervalCloses !Offset
+  deriving (Eq, Show)
+
+eventPosition :: SweepEvent -> Offset
+eventPosition (IntervalOpens  position) = position
+eventPosition (IntervalCloses position) = position
+
+-- | Order events by file position. Ties are broken by closing
+-- first: when one interval ends at offset @X@ and another begins at
+-- offset @X@, they touch but do not overlap (the earlier write
+-- region is @[start, X)@, the later is @[X, end)@; @X@ itself is
+-- only in the later region). Processing the close before the open
+-- keeps the open count from spuriously reaching two at the
+-- shared-boundary offset.
+instance Ord SweepEvent where
+  compare leftEvent rightEvent =
+    case compare (eventPosition leftEvent) (eventPosition rightEvent) of
+      EQ       -> compareTieBreaker leftEvent rightEvent
+      ordering -> ordering
+    where
+      compareTieBreaker (IntervalCloses _) (IntervalOpens  _) = LT
+      compareTieBreaker (IntervalOpens  _) (IntervalCloses _) = GT
+      compareTieBreaker _                  _                  = EQ
+
+-- | Number of intervals currently spanning the sweep position.
+newtype OpenIntervalCount = OpenIntervalCount { unOpenIntervalCount :: Int }
+  deriving (Eq, Ord, Show)
+
+noneOpen :: OpenIntervalCount
+noneOpen = OpenIntervalCount 0
+
+incrementOpenCount :: OpenIntervalCount -> OpenIntervalCount
+incrementOpenCount (OpenIntervalCount openCount) =
+  OpenIntervalCount (openCount + 1)
+
+decrementOpenCount :: OpenIntervalCount -> OpenIntervalCount
+decrementOpenCount (OpenIntervalCount openCount) =
+  OpenIntervalCount (openCount - 1)
+
+-- | Running sweep state: how many intervals are currently open, and
+-- how many overlapping pairs have been observed so far. Both fields
+-- are strict so the fold accumulates eagerly rather than building a
+-- chain of unevaluated arithmetic thunks across the (potentially
+-- 200k-event) sweep.
+data SweepState = SweepState
+  { sweepOpenIntervals :: !OpenIntervalCount
+  , sweepOverlapPairs  :: !OverlapCount
+  } deriving (Eq, Show)
+
+initialSweepState :: SweepState
+initialSweepState = SweepState noneOpen (OverlapCount 0)
+
+-- | Single-step transition for the sweep fold. An 'IntervalOpens'
+-- event whose arrival finds @k@ intervals already open contributes
+-- exactly @k@ new overlapping pairs — the new interval intersects
+-- each of its open predecessors — so the pair counter advances by
+-- @k@ before the open count itself is incremented. An
+-- 'IntervalCloses' event simply drops the open count by one; close
+-- events never introduce new overlaps.
+stepSweep :: SweepState -> SweepEvent -> SweepState
+stepSweep currentState (IntervalOpens _) =
+  let openBefore                  = sweepOpenIntervals currentState
+      OverlapCount existingPairs  = sweepOverlapPairs  currentState
+      newPairsContributed         = unOpenIntervalCount openBefore
+  in SweepState
+       { sweepOpenIntervals = incrementOpenCount openBefore
+       , sweepOverlapPairs  = OverlapCount (existingPairs + newPairsContributed)
+       }
+stepSweep currentState (IntervalCloses _) = currentState
+  { sweepOpenIntervals = decrementOpenCount (sweepOpenIntervals currentState) }
 
 -- | Emit a single 'UnsortedRecords' warning naming the first
 -- wire-order record whose offset is lower than the record that
