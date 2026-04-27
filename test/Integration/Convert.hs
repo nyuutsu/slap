@@ -1,16 +1,39 @@
 module Integration.Convert (convertTests) where
 
 import Integration.Helpers
-  (Tier, isHeavyPath, restrictToTier,
-   repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
-   applyPatch, attemptConvert, matchPattern, trim, mmapRomFile)
+  ( Tier
+  , isHeavyPath
+  , restrictToTier
+  , repoDir
+  , parseSpecFile
+  , parseCreateFormat
+  , sha1Hex
+  , applyPatch
+  , attemptConvert
+  , matchPattern
+  , trim
+  , mmapRomFile
+  )
+import Integration.Skip
+  ( GroupPlan
+  , MaybeTest(..)
+  , namedGroup
+  , requireFixture
+  )
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents
+  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
-import Slap.Convert (CreateFormat(..), RequestedPatchMetadata(..), UndoInclusion(..),
-                     ValidationInclusion(..), DirectCreate(..), noMetadataRequested,
-                     noConstraintsRequested)
+import Slap.Convert
+  ( CreateFormat(..)
+  , RequestedPatchMetadata(..)
+  , UndoInclusion(..)
+  , ValidationInclusion(..)
+  , DirectCreate(..)
+  , noMetadataRequested
+  , noConstraintsRequested
+  )
 
 -- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
 -- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
@@ -21,39 +44,61 @@ import qualified Data.ByteString as ByteString
 import Data.List (isPrefixOf)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (Assertion, testCase, assertFailure, assertBool, assertEqual)
 
-convertTests :: Tier -> IO TestTree
+-- | The convert group walks @test/specs/convert.txt@ and registers
+-- one test per row. Rows whose @result@ field starts with @skip:@ are
+-- intentional spec-side omissions (not fixture-driven skips), so they
+-- contribute nothing to either the runnable trees or the skip
+-- summary; rows whose patch file is absent contribute one
+-- 'MissingFixture' skip.
+convertTests :: Tier -> IO GroupPlan
 convertTests tier = do
   repo <- repoDir
   allRows <- parseSpecFile (repo </> "test" </> "specs" </> "convert.txt")
-  tests <- mapM (makeConvertTest repo)
-                (restrictToTier tier (any isHeavyPath) allRows)
-  pure (testGroup "convert" (concat tests ++ applyOutputRefusalTests))
+  let inTierRows = restrictToTier tier (any isHeavyPath) allRows
+  rowMaybes <- concat <$> mapM (planConvertRow repo) inTierRows
+  let refusalMaybes = map WillRun applyOutputRefusalTests
+  pure (namedGroup "convert" (rowMaybes ++ refusalMaybes))
 
-makeConvertTest :: FilePath -> [String] -> IO [TestTree]
-makeConvertTest repo fields = case fields of
-  (sourceFormat : targetFormat : patchRel : baseRel : targetSha : result : rest)
-    | "skip:" `isPrefixOf` result -> pure []
-    | otherwise -> do
-        let warningsString = case rest of (warning:_) -> warning; _ -> ""
-            flagsString    = case rest of (_:flagField:_) -> flagField; _ -> ""
-            patchPath = repo </> patchRel
-        patchExists <- doesFileExist patchPath
-        if not patchExists then pure [] else
-          case parseCreateFormat targetFormat of
-            Nothing -> pure []
-            Just targetCreateFormat -> do
-              let label = sourceFormat ++ " -> " ++ targetFormat ++ " (" ++ patchRel ++ ")"
-              pure [testCase label $
-                runConvertTest repo patchPath baseRel targetSha result
-                  warningsString flagsString targetCreateFormat]
-  _ -> pure []
+planConvertRow :: FilePath -> [String] -> IO [MaybeTest]
+planConvertRow repo fields = case fields of
+  (sourceFormat : targetFormat : patchRel : baseRel : targetSha : verdict : rest)
+    | "skip:" `isPrefixOf` verdict -> pure []  -- spec-side intentional omission
+    | Just targetCreateFormat <- parseCreateFormat targetFormat ->
+        let warningsString = case rest of (warning:_)        -> warning; _ -> ""
+            flagsString    = case rest of (_:flagField:_)    -> flagField; _ -> ""
+            patchPath      = repo </> patchRel
+            label          = sourceFormat ++ " -> " ++ targetFormat
+                          ++ " (" ++ patchRel ++ ")"
+        in requireFixture patchPath $ \_ ->
+             pure [WillRun (mkConvertTest repo patchPath baseRel targetSha verdict
+                              warningsString flagsString targetCreateFormat label)]
+    | otherwise -> pure []  -- unknown @--to FORMAT@ in the spec row
+  _ -> pure []              -- malformed spec row
 
-runConvertTest :: FilePath -> FilePath -> String -> String -> String
-               -> String -> String -> CreateFormat -> IO ()
-runConvertTest repo patchPath baseRel targetSha result warningsString flagsString targetCreateFormat = do
+mkConvertTest
+  :: FilePath        -- ^ repo root
+  -> FilePath        -- ^ patch path
+  -> FilePath        -- ^ relative base ROM path (used only when --with is asked)
+  -> String          -- ^ expected target SHA1
+  -> String          -- ^ verdict: empty/non-prefixed for accept, "reject:PATTERN" for refuse
+  -> String          -- ^ comma-separated expected warning patterns
+  -> String          -- ^ space-separated extra flags from the spec row
+  -> CreateFormat    -- ^ target format
+  -> String          -- ^ test label
+  -> TestTree
+mkConvertTest repo patchPath baseRel targetSha verdict
+              warningsString flagsString targetCreateFormat label =
+  testCase label $
+    runConvertTest repo patchPath baseRel targetSha verdict
+                   warningsString flagsString targetCreateFormat
+
+runConvertTest
+  :: FilePath -> FilePath -> String -> String -> String
+  -> String -> String -> CreateFormat -> IO ()
+runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
   case parseSome (PatchFileContents patchBytes) of
     Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
@@ -82,15 +127,15 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
             }
       convResult <- attemptConvert parsed targetCreateFormat maybeBase meta
 
-      if "reject:" `isPrefixOf` result
+      if "reject:" `isPrefixOf` verdict
         then do
-          let expectedPattern = drop 7 result
+          let expectedPattern = drop 7 verdict
           case convResult of
             Right _ -> assertFailure "expected rejection but conversion succeeded"
             Left errorMessage -> assertBool
               ("expected '" ++ expectedPattern ++ "' in error: " ++ errorMessage)
               (matchPattern expectedPattern errorMessage)
-        else do
+        else
           case convResult of
             Left errorMessage -> assertFailure ("conversion failed: " ++ errorMessage)
             Right (CreateResult convertedBytes warnings) -> do
@@ -101,11 +146,13 @@ runConvertTest repo patchPath baseRel targetSha result warningsString flagsStrin
                 when baseExists $ do
                   baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
                   case parseSome convertedBytes of
-                    Left slapError -> assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
+                    Left slapError ->
+                      assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
                       applied <- applyPatch convertedParsed (SourceFileContents baseBytes)
                       case applied of
-                        Left slapError -> assertFailure ("apply converted failed: " ++ renderSlapError slapError)
+                        Left slapError ->
+                          assertFailure ("apply converted failed: " ++ renderSlapError slapError)
                         Right (TargetFileContents output) ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
@@ -185,4 +232,3 @@ assertRefusesTruncation target targetName = do
         (matchPattern "truncation" errorMessage)
       assertBool ("expected '" ++ targetName ++ "' in error: " ++ errorMessage)
         (matchPattern targetName errorMessage)
-

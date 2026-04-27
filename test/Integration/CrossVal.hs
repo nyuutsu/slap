@@ -1,131 +1,168 @@
 module Integration.CrossVal (crossValTests) where
 
+import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
+import Integration.External
+  ( ExternalTool(..)
+  , ExternalRun(..)
+  , externalToolName
+  , parseExternalToolName
+  , runExternal
+  )
 import Integration.Helpers
-  (Tier(..),
-   repoDir, parseSpecFile, parseCreateFormat, sha1Hex,
-   withTempFile, withTempDir, BootstrapTargets, lookupBootstrapTarget,
-   mmapRomFile)
-import Slap.Convert (CreateFormat(..), noMetadataRequested, noConstraintsRequested)
+  ( Tier(..)
+  , repoDir
+  , parseSpecFile
+  , parseCreateFormat
+  , sha1Hex
+  , withTempFile
+  , withTempDir
+  , mmapRomFile
+  )
+import Integration.Skip
+  ( GroupPlan
+  , MaybeTest(..)
+  , namedGroup
+  , requireExternalTool
+  , requireFixture
+  )
+import Slap.Convert
+  (CreateFormat(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents
+  (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import System.Directory (doesFileExist, listDirectory, copyFile, makeAbsolute)
-import System.Environment (lookupEnv)
+import System.Directory (copyFile, listDirectory)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>), takeExtension)
-import System.Process (readProcessWithExitCode, proc, cwd, readCreateProcessWithExitCode)
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
 -- | The crossval group depends on third-party tools (Flips,
 -- RomPatcher.js, bspatch, xdelta3) and ROM bytes flowing across a
--- subprocess boundary.
-crossValTests :: Tier -> BootstrapTargets -> IO TestTree
-crossValTests AllTests bootstrapTargets = do
+-- subprocess boundary. Each row resolves to a runnable test only if
+-- both fixtures are present and the row's tool resolves; otherwise
+-- the row contributes a typed 'WillSkip' to the group plan.
+crossValTests :: Tier -> IO BootstrapTargets -> IO GroupPlan
+crossValTests AllTests getTargets = do
   repo <- repoDir
   rows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
-  tests <- mapM (mkCrossValTest bootstrapTargets repo) rows
-  pure (testGroup "crossval" (concat tests))
+  rowMaybes <- concat <$> mapM (planCrossValRow getTargets repo) rows
+  pure (namedGroup "crossval" rowMaybes)
 
-mkCrossValTest :: BootstrapTargets -> FilePath -> [String] -> IO [TestTree]
-mkCrossValTest bootstrapTargets repo fields = case fields of
-  (formatString : scenario : baseRelative : bootRelative : targetSha : toolName : _) -> do
-    case parseCreateFormat formatString of
-      Nothing -> pure []
-      Just format -> do
+-- | Map a single crossval-spec row to its planned outcome: a runnable
+-- test, or a typed skip. Malformed rows and rows whose @format@ field
+-- doesn't parse contribute nothing — those are spec-file authoring
+-- mistakes, not silent skips.
+planCrossValRow :: IO BootstrapTargets -> FilePath -> [String] -> IO [MaybeTest]
+planCrossValRow getTargets repo fields = case fields of
+  (formatString : scenario : baseRelative : bootRelative : targetSha : toolName : _)
+    | Just format <- parseCreateFormat formatString
+    , Just tool   <- parseExternalToolName toolName ->
         let basePath = repo </> baseRelative
             bootPath = repo </> bootRelative
-        baseExists <- doesFileExist basePath
-        bootExists <- doesFileExist bootPath
-        if not (baseExists && bootExists)
-          then pure []
-          else do
-            toolPath <- findTool toolName
-            case toolPath of
-              Nothing -> pure []
-              Just tool -> pure [testCase (formatString ++ "/" ++ scenario) $ do
-                baseBytes <- mmapRomFile basePath
-                let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
-                -- Create patch with slap
-                case createFromMemory format (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
-                  Left slapError -> assertFailure ("create failed: " ++ renderSlapError slapError)
-                  Right (CreateResult patchBytes _) ->
-                    -- Apply with external tool, verify SHA1
-                    withTempFile "slap-xv-patch" $ \patchFile ->
-                    withTempFile "slap-xv-base" $ \baseFile ->
-                    withTempFile "slap-xv-out" $ \outFile -> do
-                      ByteString.writeFile patchFile (unPatchFileContents patchBytes)
-                      ByteString.writeFile baseFile baseBytes
-                      applyExternal tool toolName format baseFile patchFile outFile
-                      resultBytes <- ByteString.readFile outFile
-                      assertEqual "SHA1 mismatch" targetSha (sha1Hex resultBytes)
-                ]
-  _ -> pure []
+            label    = formatString ++ "/" ++ scenario
+        in requireFixture basePath $ \_ ->
+           requireFixture bootPath $ \_ ->
+             requireExternalTool tool $ \_ ->
+               pure [WillRun (mkCrossValTest getTargets label format tool basePath bootPath targetSha)]
+    | otherwise -> pure []  -- spec row references unknown format/tool wire name
+  _ -> pure []              -- malformed spec row
 
-findTool :: String -> IO (Maybe FilePath)
-findTool name = do
-  repo <- repoDir
-  let tools = repo </> "tools"
-  case name of
-    "flips"      -> lookupTool "FLIPS"      [tools </> "flips/flips"]
-    "rompatcher" -> lookupTool "ROMPATCHER" [tools </> "rompatcher-js/index.js"]
-    "bspatch"    -> lookupTool "BSPATCH"    ["/usr/bin/bspatch"]
-    "xdelta3"    -> lookupTool "XDELTA3"    ["/usr/bin/xdelta3"]
-    _            -> pure Nothing
-  where
-    lookupTool environmentVariable fallbacks = do
-      maybeEnvironment <- lookupEnv environmentVariable
-      case maybeEnvironment of
-        Just executablePath -> do
-          exists <- doesFileExist executablePath
-          pure (if exists then Just executablePath else Nothing)
-        Nothing -> findFirst fallbacks
-    findFirst [] = pure Nothing
-    findFirst (candidate:candidates) = do
-      exists <- doesFileExist candidate
-      if exists then Just <$> makeAbsolute candidate else findFirst candidates
+mkCrossValTest
+  :: IO BootstrapTargets
+  -> String        -- ^ test label
+  -> CreateFormat
+  -> ExternalTool
+  -> FilePath      -- ^ base ROM path
+  -> FilePath      -- ^ bootstrap-patch path (key into the bootstrap map)
+  -> String        -- ^ expected SHA1 of the target produced by the external tool
+  -> TestTree
+mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha =
+  testCase label $ do
+    bootstrapTargets <- getTargets
+    baseBytes        <- mmapRomFile basePath
+    let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
+    case createFromMemory format
+           (SourceFileContents baseBytes)
+           (TargetFileContents targetBytes)
+           noMetadataRequested Nothing noConstraintsRequested of
+      Left slapError ->
+        assertFailure ("create failed: " ++ renderSlapError slapError)
+      Right (CreateResult patchBytes _) ->
+        withTempFile "slap-xv-patch" $ \patchFile ->
+        withTempFile "slap-xv-base"  $ \baseFile ->
+        withTempFile "slap-xv-out"   $ \outFile -> do
+          ByteString.writeFile patchFile (unPatchFileContents patchBytes)
+          ByteString.writeFile baseFile  baseBytes
+          applyExternal tool baseFile patchFile outFile
+          resultBytes <- ByteString.readFile outFile
+          assertEqual "SHA1 mismatch" expectedTargetSha (sha1Hex resultBytes)
 
-applyExternal :: FilePath -> String -> CreateFormat -> FilePath -> FilePath -> FilePath -> IO ()
-applyExternal tool toolName _format baseFile patchFile outFile = case toolName of
-  "flips" -> do
-    (exitCode, _, errorMessage) <- readProcessWithExitCode tool ["--apply", patchFile, baseFile, outFile] ""
-    case exitCode of
-      ExitSuccess -> pure ()
-      _           -> assertFailure ("flips failed: " ++ errorMessage)
+-- | Apply a slap-produced patch with the external tool indicated by
+-- the spec row, leaving the result at @outFile@. Each tool has its
+-- own argument shape; the dispatch lives here, the subprocess launch
+-- is funneled through 'runExternal'.
+applyExternal
+  :: ExternalTool
+  -> FilePath  -- ^ base ROM file
+  -> FilePath  -- ^ patch file
+  -> FilePath  -- ^ output target file
+  -> IO ()
+applyExternal tool baseFile patchFile outFile = case tool of
+  Flips -> do
+    run <- runExternal Flips ["--apply", patchFile, baseFile, outFile] Nothing ""
+    expectExternalSuccess "flips" run
 
-  "rompatcher" -> withTempDir "slap-rp" $ \temporaryDirectory -> do
+  RomPatcher -> withTempDir "slap-rp" $ \workingDirectory -> do
+    -- RomPatcher.js writes its output in CWD, named after the input ROM
+    -- with a "(patched)" suffix; the in-test bookkeeping copies the ROM
+    -- into a workspace, runs the script there, then copies the output
+    -- bytes to the file the harness expects.
     let extension = case takeExtension baseFile of
-                "" -> ".bin"  -- RomPatcher.js needs an extension to name the output
-                fileExtension -> fileExtension
-        stem = "rom"
-        romCopy = temporaryDirectory </> (stem ++ extension)
-    copyFile baseFile romCopy
-    -- RomPatcher.js outputs relative to CWD
-    let processSpec = (proc "node" [tool, "patch", romCopy, patchFile]) { cwd = Just temporaryDirectory }
-    (exitCode, stdoutText, stderrText) <- readCreateProcessWithExitCode processSpec ""
-    case exitCode of
+                      ""            -> ".bin"
+                      fileExtension -> fileExtension
+        baseStem  = "rom"
+        baseCopy  = workingDirectory </> (baseStem ++ extension)
+    copyFile baseFile baseCopy
+    run <- runExternal RomPatcher
+            ["patch", baseCopy, patchFile]
+            (Just workingDirectory) ""
+    case externalRunExitCode run of
+      ExitFailure _ ->
+        assertFailure ("RomPatcher.js failed: "
+                       ++ externalRunStderr run ++ externalRunStdout run)
       ExitSuccess -> do
-        files <- listDirectory temporaryDirectory
-        let expected = stem ++ " (patched)" ++ extension
-        case filter (== expected) files of
+        producedFiles <- listDirectory workingDirectory
+        let expectedOutputName = baseStem ++ " (patched)" ++ extension
+        case filter (== expectedOutputName) producedFiles of
           (outputFile:_) -> do
-            resultBytes <- ByteString.readFile (temporaryDirectory </> outputFile)
-            ByteString.writeFile outFile resultBytes
-          [] -> assertFailure ("RomPatcher.js output not found in " ++ show files)
-      _ -> assertFailure ("RomPatcher.js failed: " ++ stderrText ++ stdoutText)
+            outputBytes <- ByteString.readFile (workingDirectory </> outputFile)
+            ByteString.writeFile outFile outputBytes
+          [] ->
+            assertFailure ("RomPatcher.js output not found in "
+                           ++ show producedFiles)
 
-  "bspatch" -> do
-    (exitCode, _, errorMessage) <- readProcessWithExitCode tool [baseFile, outFile, patchFile] ""
-    case exitCode of
-      ExitSuccess -> pure ()
-      _           -> assertFailure ("bspatch failed: " ++ errorMessage)
+  BsPatch -> do
+    run <- runExternal BsPatch [baseFile, outFile, patchFile] Nothing ""
+    expectExternalSuccess "bspatch" run
 
-  "xdelta3" -> do
-    (exitCode, _, errorMessage) <- readProcessWithExitCode tool ["-d", "-s", baseFile, patchFile, outFile] ""
-    case exitCode of
-      ExitSuccess -> pure ()
-      _           -> assertFailure ("xdelta3 failed: " ++ errorMessage)
+  Xdelta3 -> do
+    run <- runExternal Xdelta3 ["-d", "-s", baseFile, patchFile, outFile] Nothing ""
+    expectExternalSuccess "xdelta3" run
 
-  _ -> assertFailure ("unknown tool: " ++ toolName)
+  -- The crossval spec only references the four tools above; any other
+  -- variant slipping through 'parseExternalToolName' is an authoring
+  -- error, surfaced loudly rather than silently skipped.
+  unsupported ->
+    assertFailure ("crossval row references unsupported tool: "
+                   ++ externalToolName unsupported)
+
+-- | Surface the tool's own stderr when it exits non-zero; the message
+-- shape matches the pre-refactor failure assertions so test output
+-- diff stays minimal during this restructure.
+expectExternalSuccess :: String -> ExternalRun -> IO ()
+expectExternalSuccess toolLabel run = case externalRunExitCode run of
+  ExitSuccess   -> pure ()
+  ExitFailure _ -> assertFailure (toolLabel ++ " failed: " ++ externalRunStderr run)

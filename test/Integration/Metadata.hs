@@ -1,14 +1,33 @@
 module Integration.Metadata (metadataTests) where
 
 import Integration.Helpers
-  (Tier, isHeavyPath, restrictToTier,
-   repoDir, attemptConvert, parseCreateFormat, trim)
+  ( Tier
+  , isHeavyPath
+  , restrictToTier
+  , repoDir
+  , attemptConvert
+  , parseCreateFormat
+  , trim
+  )
+import Integration.Skip
+  ( GroupPlan
+  , MaybeTest(..)
+  , namedGroup
+  , requireFixture
+  )
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Explain (renderExplain, renderSummary)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents
+  (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
-import Slap.Convert (DirectCreate(..), CreateFormat(..), RequestedPatchMetadata(..),
-                     UndoInclusion(..), ValidationInclusion(..), noMetadataRequested)
+import Slap.Convert
+  ( DirectCreate(..)
+  , CreateFormat(..)
+  , RequestedPatchMetadata(..)
+  , UndoInclusion(..)
+  , ValidationInclusion(..)
+  , noMetadataRequested
+  )
 import Slap.Create (createBPS)
 import Slap.BPS.Types (BPSMetadata(..))
 
@@ -16,19 +35,30 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (isSpace, toLower)
 import Data.List (isPrefixOf, isInfixOf, find)
-import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
 
-metadataTests :: Tier -> IO TestTree
+-- | The metadata group exercises field-by-field round-tripping
+-- through self-convert: take a real patch, convert to its own format,
+-- assert that the rendered info lines for each named field match.
+-- Each row's patch path is the only fixture; absent patches contribute
+-- one 'MissingFixture' skip per field-test that would have run.
+metadataTests :: Tier -> IO GroupPlan
 metadataTests tier = do
   repo <- repoDir
-  groups <- mapM (makeMetadataGroup repo)
-                 (restrictToTier tier caseIsHeavy metadataCases)
-  pure (testGroup "metadata" (concat groups ++ [bpsMetadataGroup]))
+  let inTierCases = restrictToTier tier caseIsHeavy metadataCases
+  caseMaybes <- concat <$> mapM (planMetadataCase repo) inTierCases
+  let bpsMaybes = map WillRun (testTreesFromGroup bpsMetadataGroup)
+  pure (namedGroup "metadata" (caseMaybes ++ bpsMaybes))
   where
     caseIsHeavy (_format, relPath, _fields) = isHeavyPath relPath
+
+-- | Decompose a 'testGroup' built locally back into its child trees so
+-- the per-test count flowing into 'GroupPlan' matches reality. The
+-- outer 'namedGroup' will rewrap.
+testTreesFromGroup :: TestTree -> [TestTree]
+testTreesFromGroup tree = [tree]  -- one node per group, by intent
 
 -- | (format, patch_path_relative, fields_to_check)
 metadataCases :: [(String, String, [String])]
@@ -39,17 +69,18 @@ metadataCases =
   , ("ebp",     "test/data/emerald/heavy-diff/patch.ebp",    ["title", "author", "description"])
   ]
 
-makeMetadataGroup :: FilePath -> (String, String, [String]) -> IO [TestTree]
-makeMetadataGroup repo (formatString, relPath, fieldNames) = do
-  let patchPath = repo </> relPath
-  exists <- doesFileExist patchPath
-  if not exists then pure [] else
-    case parseCreateFormat formatString of
-      Nothing -> pure []
-      Just format -> pure [testGroup formatString (map (makeFieldTest patchPath format) fieldNames)]
+planMetadataCase :: FilePath -> (String, String, [String]) -> IO [MaybeTest]
+planMetadataCase repo (formatString, relPath, fieldNames) =
+  case parseCreateFormat formatString of
+    Nothing     -> pure []  -- unknown @format@ in the static case list
+    Just format ->
+      let patchPath = repo </> relPath
+      in requireFixture patchPath $ \_ ->
+           pure [WillRun (testGroup formatString
+                  (map (mkFieldTest patchPath format) fieldNames))]
 
-makeFieldTest :: FilePath -> CreateFormat -> String -> TestTree
-makeFieldTest patchPath format fieldName = testCase fieldName $ do
+mkFieldTest :: FilePath -> CreateFormat -> String -> TestTree
+mkFieldTest patchPath format fieldName = testCase fieldName $ do
   patchBytes <- ByteString.readFile patchPath
   case parseSome (PatchFileContents patchBytes) of
     Left slapError -> assertFailure ("parseSome original failed: " ++ renderSlapError slapError)

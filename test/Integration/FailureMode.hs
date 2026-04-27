@@ -1,20 +1,44 @@
 module Integration.FailureMode (failureModeTests) where
 
+import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
+import Integration.External (ExternalRun(..), ExternalTool(..), runExternal)
 import Integration.Helpers
-  (Tier, onlyAtFull,
-   repoDir, findSlapBinary, runSlap, sha1Hex, applyPatch,
-   withTempFile, BootstrapTargets, lookupBootstrapTarget, mmapRomFile,
-   parseCreateFormat,
-   expectFail, expectOkWithWarning, writeGarbage, ciContains, removeIfExists)
+  ( Tier
+  , onlyAtFull
+  , repoDir
+  , sha1Hex
+  , applyPatch
+  , withTempFile
+  , mmapRomFile
+  , parseCreateFormat
+  , expectFail
+  , expectOkWithWarning
+  , writeGarbage
+  , ciContains
+  , removeIfExists
+  )
+import Integration.Skip
+  ( GroupPlan
+  , MaybeTest(..)
+  , namedGroup
+  , requireFixture
+  , requireSlapBinary
+  )
 import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents
+  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch (parseSome, patchContents)
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
-                     RequestedConstraints(..),
-                     noMetadataRequested, noConstraintsRequested,
-                     rejectIncompatibleConstraints,
-                     convertDirect)
+import Slap.Convert
+  ( DirectCreate(..)
+  , DiffCreate(..)
+  , CreateFormat(..)
+  , RequestedConstraints(..)
+  , noMetadataRequested
+  , noConstraintsRequested
+  , rejectIncompatibleConstraints
+  , convertDirect
+  )
 import Slap.Constraint (Constraint(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createFromMemory)
@@ -22,53 +46,62 @@ import Slap.Create (createFromMemory)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import System.Directory (doesFileExist)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
-import Test.Tasty (TestTree, testGroup)
+import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (testCase, assertFailure, assertBool, assertEqual)
 
-failureModeTests :: Tier -> BootstrapTargets -> IO TestTree
-failureModeTests tier bootstrapTargets = do
+-- | Failure-mode tests come in three flavours: in-process parser
+-- checks (no fixtures, no subprocesses), subprocess matrix tests
+-- against the real slap binary, and in-process round-trip tests over
+-- bootstrap targets. Each strand has its own gating shape, all
+-- routed through 'requireFixture' / 'requireSlapBinary'.
+failureModeTests :: Tier -> IO BootstrapTargets -> IO GroupPlan
+failureModeTests tier getTargets = do
   repo <- repoDir
-  maybeSlap <- findSlapBinary
-  let dm4yBase  = repo </> "test/data/dm4y/base.gbc"
-      dm4yBps   = repo </> "test/data/dm4y/patch.bps"
-      dm4yUps   = repo </> "test/data/dm4y/patch.ups"
-      dm4yRup   = repo </> "test/data/dm4y/patch.rup"
-      dm4yXdelta1   = repo </> "test/data/dm4y/patch.xdelta1"
-      dm4yVcdiff = repo </> "test/data/dm4y/patch.vcdiff"
-      fftaBase  = repo </> "test/data/ffta/base.gba"
-      fftaAps   = repo </> "test/data/ffta/ffta-x.aps"
+  let dm4yBase     = repo </> "test/data/dm4y/base.gbc"
+      dm4yBps      = repo </> "test/data/dm4y/patch.bps"
+      dm4yUps      = repo </> "test/data/dm4y/patch.ups"
+      dm4yRup      = repo </> "test/data/dm4y/patch.rup"
+      dm4yXdelta1  = repo </> "test/data/dm4y/patch.xdelta1"
+      dm4yVcdiff   = repo </> "test/data/dm4y/patch.vcdiff"
+      fftaBase     = repo </> "test/data/ffta/base.gba"
+      fftaAps      = repo </> "test/data/ffta/ffta-x.aps"
       stadium2Base = repo </> "test/data/stadium2/base.z64"
-  dm4yExists   <- doesFileExist dm4yBase
-  fftaExists   <- doesFileExist fftaBase
-  stadium2Exists <- doesFileExist stadium2Base
-  -- Quick: pure parser-level CRC corruption checks. No subprocesses, no
-  -- multi-megabyte garbage files, no bootstrap targets.
-  let quickTests = smcShapeConstraintTests ++
-        if dm4yExists then corruptPatchCRCTests dm4yBps dm4yUps else []
-  -- Full adds the heavy subprocess matrix and the in-process round-trip
-  -- groups (one of which exercises stadium2).
-  let heavySubprocessTests = case maybeSlap of
-        Nothing   -> []
-        Just slap -> concat
-          [ if dm4yExists then wrongSourceTests slap dm4yBase
-              dm4yBps dm4yUps dm4yRup dm4yXdelta1 dm4yVcdiff else []
-          , if dm4yExists && fftaExists
-              then wrongSourceApsGbaTests slap fftaBase fftaAps else []
-          , if dm4yExists then wrongSizeSourceTests slap dm4yBase dm4yBps else []
-          ]
-      heavyInProcessTests = concat
-        [ if dm4yExists then crossFormatRoundTripTests dm4yBase dm4yBps else []
-        , if dm4yExists && stadium2Exists
-          then createRoundTripTests bootstrapTargets
-                 dm4yBase dm4yBps
-                 stadium2Base (repo </> "test/data/stadium2/heavy-diff/patch.bps")
-          else []
-        ]
-      heavyTests = heavySubprocessTests ++ heavyInProcessTests
-  pure (testGroup "failure-mode" (quickTests ++ onlyAtFull tier heavyTests))
+      stadium2Bps  = repo </> "test/data/stadium2/heavy-diff/patch.bps"
+
+  let smcMaybes = map WillRun smcShapeConstraintTests
+
+  corruptCrcMaybes <- requireFixture dm4yBps $ \_ ->
+                      requireFixture dm4yUps $ \_ ->
+                        pure (map WillRun (corruptPatchCRCTests dm4yBps dm4yUps))
+
+  -- The heavy strand needs the slap binary AND various ROM/patch
+  -- fixtures. Each sub-group gates independently so a missing
+  -- fixture only suppresses its own tests.
+  heavyMaybes <- fmap (onlyAtFull tier . concat) $ sequence
+    [ requireSlapBinary $ \_ ->
+        requireFixture dm4yBase $ \_ ->
+          pure (map WillRun
+                  (wrongSourceTests dm4yBase dm4yBps dm4yUps
+                                    dm4yRup dm4yXdelta1 dm4yVcdiff))
+    , requireSlapBinary $ \_ ->
+        requireFixture dm4yBase $ \_ ->
+          requireFixture fftaBase $ \_ ->
+            pure (map WillRun (wrongSourceApsGbaTests fftaBase fftaAps))
+    , requireSlapBinary $ \_ ->
+        requireFixture dm4yBase $ \_ ->
+          pure (map WillRun (wrongSizeSourceTests dm4yBase dm4yBps))
+    , requireFixture dm4yBase $ \_ ->
+        pure (map WillRun (crossFormatRoundTripTests dm4yBase dm4yBps))
+    , requireFixture dm4yBase $ \_ ->
+        requireFixture stadium2Base $ \_ ->
+          pure (map WillRun
+                  (createRoundTripTests getTargets dm4yBase dm4yBps
+                                        stadium2Base stadium2Bps))
+    ]
+
+  pure (namedGroup "failure-mode" (smcMaybes ++ corruptCrcMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -78,16 +111,16 @@ failureModeTests tier bootstrapTargets = do
 -- Without --no-verify: fails with verification error.
 -- With --no-verify: succeeds with a warning (test checks exit code,
 -- output pattern, and that "warning" appears in the output).
-wrongSourceTests :: FilePath -> FilePath -> FilePath -> FilePath
+wrongSourceTests :: FilePath -> FilePath -> FilePath
                  -> FilePath -> FilePath -> FilePath -> [TestTree]
-wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
+wrongSourceTests base bps ups rup xdelta1 vcdiff =
   -- BPS: CRC32 source verification
   [ testCase "wrong-source/BPS rejects" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)  -- same size as dm4y
         removeIfExists out
-        expectFail slap ["apply", bps, wrong, "-o", out]
+        expectFail ["apply", bps, wrong, "-o", out]
           "wrong-source/BPS" "mismatch"
 
   , testCase "wrong-source/BPS --no-verify proceeds" $
@@ -95,7 +128,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOkWithWarning slap ["apply", bps, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning ["apply", bps, wrong, "-o", out, "--no-verify"]
           "wrong-source/BPS --no-verify" "applied"
 
   -- UPS: CRC32 source verification
@@ -104,7 +137,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", ups, wrong, "-o", out]
+        expectFail ["apply", ups, wrong, "-o", out]
           "wrong-source/UPS" "mismatch"
 
   , testCase "wrong-source/UPS --no-verify proceeds" $
@@ -112,7 +145,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOkWithWarning slap ["apply", ups, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning ["apply", ups, wrong, "-o", out, "--no-verify"]
           "wrong-source/UPS --no-verify" "applied"
 
   -- NINJA2: MD5 source verification
@@ -121,7 +154,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", rup, wrong, "-o", out]
+        expectFail ["apply", rup, wrong, "-o", out]
           "wrong-source/NINJA2" "mismatch"
 
   , testCase "wrong-source/NINJA2 --no-verify proceeds" $
@@ -129,7 +162,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOkWithWarning slap ["apply", rup, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning ["apply", rup, wrong, "-o", out, "--no-verify"]
           "wrong-source/NINJA2 --no-verify" "applied"
 
   -- xdelta1: CRC32 source verification
@@ -138,7 +171,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", xdelta1, wrong, "-o", out]
+        expectFail ["apply", xdelta1, wrong, "-o", out]
           "wrong-source/xdelta1" "mismatch"
 
   , testCase "wrong-source/xdelta1 --no-verify proceeds" $
@@ -146,7 +179,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOkWithWarning slap ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
   -- VCDIFF: Adler32 per-window verification
@@ -155,7 +188,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", vcdiff, wrong, "-o", out]
+        expectFail ["apply", vcdiff, wrong, "-o", out]
           "wrong-source/VCDIFF" "mismatch"
 
   , testCase "wrong-source/VCDIFF --no-verify proceeds" $
@@ -163,7 +196,7 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-out" $ \out -> do
         writeGarbage wrong (4 * 1024 * 1024)
         removeIfExists out
-        expectOkWithWarning slap ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
+        expectOkWithWarning ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
           "wrong-source/VCDIFF --no-verify" "applied"
 
   -- Swapped ROM: apply dm4y BPS patch to dm4y base (which IS the right source)
@@ -172,16 +205,16 @@ wrongSourceTests slap base bps ups rup xdelta1 vcdiff =
       withTempFile "slap-work" $ \work ->
       withTempFile "slap-out" $ \out -> do
         ByteString.readFile base >>= ByteString.writeFile work
-        _ <- runSlap slap ["apply", bps, work, "--in-place", "--no-backup"]
+        _ <- runExternal SlapBinary ["apply", bps, work, "--in-place", "--no-backup"] Nothing ""
         -- work is now the patched output, not the original source
         removeIfExists out
-        expectFail slap ["apply", bps, work, "-o", out]
+        expectFail ["apply", bps, work, "-o", out]
           "wrong-source/BPS patched-as-source" "mismatch"
   ]
 
 -- | APS-GBA: per-block CRC16 verification (advisory warning, not hard fail)
-wrongSourceApsGbaTests :: FilePath -> FilePath -> FilePath -> [TestTree]
-wrongSourceApsGbaTests slap _fftaBase apsGba =
+wrongSourceApsGbaTests :: FilePath -> FilePath -> [TestTree]
+wrongSourceApsGbaTests _fftaBase apsGba =
   [ testCase "wrong-source/APS-GBA warns on wrong source" $
       withTempFile "slap-wrong" $ \wrong ->
       withTempFile "slap-out" $ \out -> do
@@ -189,9 +222,9 @@ wrongSourceApsGbaTests slap _fftaBase apsGba =
         removeIfExists out
         -- APS-GBA block CRC16 is advisory (warning-only), so it proceeds
         -- but should print a warning about CRC16 mismatch
-        (exitCode, stdoutText, stderrText) <- runSlap slap ["apply", apsGba, wrong, "-o", out]
-        let combined = stdoutText ++ stderrText
-        case exitCode of
+        run <- runExternal SlapBinary ["apply", apsGba, wrong, "-o", out] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        case externalRunExitCode run of
           ExitSuccess ->
             assertBool "expected CRC16 mismatch warning"
               (ciContains "crc16 mismatch" combined)
@@ -249,15 +282,15 @@ corruptPatchCRCTests bps ups =
 ----------------------------------------------------------------------------
 
 -- | Apply BPS to a source of wrong size — graceful error, not crash.
-wrongSizeSourceTests :: FilePath -> FilePath -> FilePath -> [TestTree]
-wrongSizeSourceTests slap _base bps =
+wrongSizeSourceTests :: FilePath -> FilePath -> [TestTree]
+wrongSizeSourceTests _base bps =
   [ testCase "wrong-size/BPS too small" $
       withTempFile "slap-small" $ \small ->
       withTempFile "slap-out" $ \out -> do
         -- dm4y is 4 MB, give it 1 KB
         writeGarbage small 1024
         removeIfExists out
-        expectFail slap ["apply", bps, small, "-o", out]
+        expectFail ["apply", bps, small, "-o", out]
           "wrong-size/BPS too small" "mismatch"
 
   , testCase "wrong-size/BPS too large" $
@@ -266,7 +299,7 @@ wrongSizeSourceTests slap _base bps =
         -- dm4y is 4 MB, give it 8 MB
         writeGarbage large (8 * 1024 * 1024)
         removeIfExists out
-        expectFail slap ["apply", bps, large, "-o", out]
+        expectFail ["apply", bps, large, "-o", out]
           "wrong-size/BPS too large" "mismatch"
 
   , testCase "wrong-size/BPS empty source" $
@@ -274,7 +307,7 @@ wrongSizeSourceTests slap _base bps =
       withTempFile "slap-out" $ \out -> do
         ByteString.writeFile empty ByteString.empty
         removeIfExists out
-        expectFail slap ["apply", bps, empty, "-o", out]
+        expectFail ["apply", bps, empty, "-o", out]
           "wrong-size/BPS empty" "mismatch"
 
   -- With --no-verify, wrong size should still not crash
@@ -284,9 +317,9 @@ wrongSizeSourceTests slap _base bps =
         writeGarbage small 1024
         removeIfExists out
         -- May succeed or fail, but should not crash with an unhandled exception
-        (exitCode, stdoutText, stderrText) <- runSlap slap ["apply", bps, small, "-o", out, "--no-verify"]
-        let combined = stdoutText ++ stderrText
-        case exitCode of
+        run <- runExternal SlapBinary ["apply", bps, small, "-o", out, "--no-verify"] Nothing ""
+        let combined = externalRunStdout run ++ externalRunStderr run
+        case externalRunExitCode run of
           ExitSuccess -> pure ()  -- ok, it applied (maybe garbage, but didn't crash)
           ExitFailure code ->
             -- Normal failure (non-crash) exit codes are fine
@@ -393,9 +426,9 @@ crossFormatRoundTripTests base bps =
 -- | Create a patch from real ROM pairs, parse it back, apply, and verify
 -- the output matches the original target. Exercises create+parse+apply at
 -- realistic scale — something the QuickCheck property tests can't cover.
-createRoundTripTests :: BootstrapTargets -> FilePath -> FilePath
+createRoundTripTests :: IO BootstrapTargets -> FilePath -> FilePath
                      -> FilePath -> FilePath -> [TestTree]
-createRoundTripTests bootstrapTargets dm4yBase dm4yBps
+createRoundTripTests getTargets dm4yBase dm4yBps
                      stadium2Base stadium2Bps =
   [ testCase "create-round-trip/dm4y BPS" $ do
       (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
@@ -421,6 +454,7 @@ createRoundTripTests bootstrapTargets dm4yBase dm4yBps
     bootstrapTarget :: FilePath -> FilePath -> IO (ByteString, ByteString)
     bootstrapTarget basePath patchPath = do
       baseBytes <- mmapRomFile basePath
+      bootstrapTargets <- getTargets
       let targetBytes = lookupBootstrapTarget bootstrapTargets basePath patchPath
       pure (baseBytes, targetBytes)
 
@@ -564,5 +598,3 @@ smcShapeConstraintTests =
               ("setup: parse failed: " ++ renderSlapError slapError)
               >> error "unreachable"
             Right parsed -> pure parsed
-
-

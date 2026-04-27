@@ -1,11 +1,26 @@
 module Integration.Apply (applyTests) where
 
 import Integration.Helpers
-  (Tier, isHeavySuiteName, restrictToTier,
-   repoDir, parseSuiteFile, SuiteHeader(..), SuiteEntry(..),
-   sha1Hex, applyPatch, mmapRomFile)
+  ( Tier
+  , isHeavySuiteName
+  , restrictToTier
+  , repoDir
+  , parseSuiteFile
+  , SuiteHeader(..)
+  , SuiteEntry(..)
+  , sha1Hex
+  , applyPatch
+  , mmapRomFile
+  )
+import Integration.Skip
+  ( GroupPlan
+  , MaybeTest(..)
+  , SkipReason(..)
+  , namedGroup
+  )
 import Slap.Error (renderSlapError)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents
+  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -15,48 +30,60 @@ import System.FilePath ((</>), takeExtension)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
 
-applyTests :: Tier -> IO TestTree
+-- | The apply group walks every @.suite@ file under @test/suites/@ and
+-- registers one test per non-broken entry. A suite whose base ROM is
+-- absent contributes one 'MissingFixture' skip per intended test
+-- (preserving counts for the skip summary), keeping @apply@'s tree
+-- shape unchanged when fixtures are present.
+applyTests :: Tier -> IO GroupPlan
 applyTests tier = do
   repo <- repoDir
   let suitesDir = repo </> "test" </> "suites"
-  allFiles <- sort . filter (\fileName -> takeExtension fileName == ".suite")
-              <$> listDirectory suitesDir
-  groups <- mapM (makeSuiteGroup repo suitesDir)
-                 (restrictToTier tier isHeavySuiteName allFiles)
-  pure (testGroup "apply" (concat groups))
+  suiteFiles <- sort . filter (\fileName -> takeExtension fileName == ".suite")
+                <$> listDirectory suitesDir
+  perSuiteOutcomes <- mapM (planSuite repo suitesDir)
+                           (restrictToTier tier isHeavySuiteName suiteFiles)
+  pure (namedGroup "apply" (concat perSuiteOutcomes))
 
-makeSuiteGroup :: FilePath -> FilePath -> String -> IO [TestTree]
-makeSuiteGroup repo suitesDir name = do
-  let path = suitesDir </> name
-  (header, entries) <- parseSuiteFile path
-  let basePath = repo </> suiteBase header
-      expectedSha = suiteSha1 header
+-- | Plan a single suite. Returns either one 'WillRun' wrapping the
+-- suite's own 'testGroup', or N 'WillSkip' (one per intended test) so
+-- absent-fixture skip counts are accurate in the summary.
+planSuite :: FilePath -> FilePath -> String -> IO [MaybeTest]
+planSuite repo suitesDir suiteFileName = do
+  let suitePath = suitesDir </> suiteFileName
+  (header, entries) <- parseSuiteFile suitePath
+  let basePath     = repo </> suiteBase header
+      expectedSha  = suiteSha1 header
+      runnableEntries = filter isRunnable entries
+      suiteName    = take (length suiteFileName - 6) suiteFileName  -- strip .suite
   baseExists <- doesFileExist basePath
-  if not baseExists
-    then pure []  -- skip suite if base ROM missing
-    else do
-      let validEntries = filter isTestable entries
-      pure [testGroup suiteName
-              (map (makePatchTest repo basePath expectedSha) validEntries)]
+  if baseExists
+    then pure
+           [ WillRun
+               (testGroup suiteName
+                  (map (mkPatchTest repo basePath expectedSha) runnableEntries))
+           ]
+    else pure (replicate (length runnableEntries) (WillSkip (MissingFixture basePath)))
   where
-    suiteName = take (length name - 6) name  -- strip .suite
-    isTestable entry = entryConfidence entry /= "broken"
+    isRunnable entry = entryConfidence entry /= "broken"
 
-makePatchTest :: FilePath -> FilePath -> String -> SuiteEntry -> TestTree
-makePatchTest repo basePath expectedSha entry =
+mkPatchTest :: FilePath -> FilePath -> String -> SuiteEntry -> TestTree
+mkPatchTest repo basePath expectedSha entry =
   testCase (entryFormat entry) $ do
     let patchPath = repo </> entryPatch entry
     patchExists <- doesFileExist patchPath
     if not patchExists && entryConfidence entry == "untested"
-      then pure ()  -- silently skip untested entries with missing files
+      then pure ()  -- the suite file flags this entry as not-yet-acquired patch data
       else do
-        baseBytes <- mmapRomFile basePath
+        baseBytes  <- mmapRomFile basePath
         patchBytes <- ByteString.readFile patchPath
         case parseSome (PatchFileContents patchBytes) of
-          Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+          Left slapError ->
+            assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> do
             result <- applyPatch parsed (SourceFileContents baseBytes)
             case result of
-              Left slapError -> assertFailure ("apply failed: " ++ renderSlapError slapError)
-              Right (TargetFileContents output) -> assertEqual "SHA1 mismatch"
-                expectedSha (sha1Hex output)
+              Left slapError ->
+                assertFailure ("apply failed: " ++ renderSlapError slapError)
+              Right (TargetFileContents output) ->
+                assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

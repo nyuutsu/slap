@@ -7,12 +7,6 @@ module Integration.Helpers
   , onlyAtFull
     -- * ROM access (mmap-backed, kernel page cache only)
   , mmapRomFile
-    -- * Shared bootstrap targets
-  , BootstrapPair(..)
-  , BootstrapTargets
-  , collectBootstrapPairs
-  , buildBootstrapTargets
-  , lookupBootstrapTarget
     -- * Hashing
   , sha1Hex
     -- * Spec/suite parsing
@@ -28,8 +22,6 @@ module Integration.Helpers
   , attemptConvert
     -- * File discovery
   , repoDir
-  , findSlapBinary
-  , runSlap
     -- * Pattern matching
   , matchPattern
     -- * Subprocess assertions
@@ -48,36 +40,31 @@ module Integration.Helpers
   , withTempDir
   ) where
 
+import Integration.External (ExternalTool(..), ExternalRun(..), runExternal)
+
 import Slap.Binary (sha1)
 import Slap.Checksum (SHA1Hash(..))
 import Slap.Error (SlapError, CreateResult(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
-import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..), parseSome)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
+import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 
 import Control.Exception (catch, IOException)
-import Control.Monad (filterM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, isSpace)
 import Data.Int (Int64)
 import Data.List (isInfixOf, isPrefixOf)
-import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
-import qualified Data.Set as Set
-import System.Directory (doesFileExist, removeFile)
+import System.Directory (removeFile)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode(..))
-import System.FilePath ((</>))
 import System.IO.MMap (mmapFileByteString)
 import Test.Tasty.HUnit (assertBool, assertFailure)
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
-import System.Process (readProcessWithExitCode, readProcess)
 
 ----------------------------------------------------------------------------
 -- Test tier
@@ -129,99 +116,6 @@ onlyAtFull AllTests extras = extras
 -- (almost) nothing in residency. The returned ByteString is read-only.
 mmapRomFile :: FilePath -> IO ByteString
 mmapRomFile filePath = mmapFileByteString filePath Nothing
-
-----------------------------------------------------------------------------
--- Bootstrap targets
-----------------------------------------------------------------------------
-
--- | A pair of paths identifying a bootstrap operation: the base ROM that
--- downstream tests start from, and the patch that bootstraps it into the
--- target ROM they actually want to operate on. Stored as absolute paths so
--- two callers naming the same files always produce the same key.
-data BootstrapPair = BootstrapPair
-  { bootstrapBase  :: !FilePath
-  , bootstrapPatch :: !FilePath
-  } deriving (Eq, Ord, Show)
-
--- | Lookup table from 'BootstrapPair' to mmap'd target bytes. Built once at
--- the top of the test run and shared across every test tree that needs to
--- compare against a bootstrapped target. Values cost (almost) no GHC heap
--- because they are mmap'd views into temp files.
-newtype BootstrapTargets = BootstrapTargets
-  { bootstrapTargetsByPair :: Map BootstrapPair ByteString }
-
--- | Walk the create and crossval spec files (plus the failure-mode tests'
--- hardcoded pairs) and produce the deduplicated list of bootstrap pairs the
--- test run will need targets for. Pairs whose base or patch files are missing
--- on disk are silently dropped — the corresponding tests already self-skip
--- in that situation.
-collectBootstrapPairs :: Tier -> FilePath -> IO [BootstrapPair]
-collectBootstrapPairs tier repo = do
-  createRows   <- parseSpecFile (repo </> "test" </> "specs" </> "create.txt")
-  crossvalRows <- parseSpecFile (repo </> "test" </> "specs" </> "crossval.txt")
-  let fromSpecRow row = case row of
-        (_format : _scenario : baseRel : patchRel : _) ->
-          Just (BootstrapPair (repo </> baseRel) (repo </> patchRel))
-        _ -> Nothing
-      specPairs = mapMaybe fromSpecRow (createRows ++ crossvalRows)
-      failureModePairs =
-        [ BootstrapPair
-            (repo </> "test/data/dm4y/base.gbc")
-            (repo </> "test/data/dm4y/patch.bps")
-        , BootstrapPair
-            (repo </> "test/data/stadium2/base.z64")
-            (repo </> "test/data/stadium2/heavy-diff/patch.bps")
-        ]
-      allPairs = Set.toList (Set.fromList (specPairs ++ failureModePairs))
-  filterM bothFilesExist (restrictToTier tier pairIsHeavy allPairs)
-  where
-    pairIsHeavy pair = isHeavyPath (bootstrapBase pair)
-                    || isHeavyPath (bootstrapPatch pair)
-    bothFilesExist pair = do
-      baseExists  <- doesFileExist (bootstrapBase pair)
-      patchExists <- doesFileExist (bootstrapPatch pair)
-      pure (baseExists && patchExists)
-
--- | For each bootstrap pair: mmap the base, parse and apply the bootstrap
--- patch, write the resulting target bytes to a file inside @tempDir@, and
--- mmap that file back so the value stored in the map costs (almost) no GHC
--- heap. The transient peak during a single bootstrap is one target's worth
--- of bytes; once we re-mmap from disk, that allocation is unreferenced and
--- gets collected.
-buildBootstrapTargets :: FilePath -> [BootstrapPair] -> IO BootstrapTargets
-buildBootstrapTargets tempDir pairs = do
-  entries <- mapM bootstrap (zip [0 :: Int ..] pairs)
-  pure (BootstrapTargets (Map.fromList entries))
-  where
-    bootstrap (index, pair) = do
-      baseBytes  <- mmapRomFile (bootstrapBase pair)
-      patchBytes <- ByteString.readFile (bootstrapPatch pair)
-      case parseSome (PatchFileContents patchBytes) of
-        Left slapError ->
-          error ("bootstrap parse failed for " ++ bootstrapPatch pair
-                 ++ ": " ++ renderSlapError slapError)
-        Right parsed -> do
-          result <- applyPatch parsed (SourceFileContents baseBytes)
-          case result of
-            Left slapError ->
-              error ("bootstrap apply failed for " ++ bootstrapPatch pair
-                     ++ ": " ++ renderSlapError slapError)
-            Right (TargetFileContents targetBytes) -> do
-              let targetFile = tempDir </> ("target-" ++ show index ++ ".bin")
-              ByteString.writeFile targetFile targetBytes
-              mmappedTarget <- mmapRomFile targetFile
-              pure (pair, mmappedTarget)
-
--- | Look up a previously bootstrapped target by base ROM and bootstrap patch
--- path. Missing keys are programmer errors (the test should not have been
--- registered without a corresponding entry in the shared map), so this
--- throws via 'error' rather than returning a 'Maybe'.
-lookupBootstrapTarget :: BootstrapTargets -> FilePath -> FilePath -> ByteString
-lookupBootstrapTarget targets basePath patchPath =
-  case Map.lookup (BootstrapPair basePath patchPath) (bootstrapTargetsByPair targets) of
-    Just targetBytes -> targetBytes
-    Nothing -> error ("missing bootstrap target for base=" ++ show basePath
-                      ++ " patch=" ++ show patchPath)
 
 ----------------------------------------------------------------------------
 -- Hashing
@@ -387,22 +281,6 @@ repoDir = do
   maybeEnvironment <- lookupEnv "SLAP_REPO"
   pure (maybe "." id maybeEnvironment)
 
-findSlapBinary :: IO (Maybe FilePath)
-findSlapBinary = do
-  maybeEnvironment <- lookupEnv "SLAP_BIN"
-  case maybeEnvironment of
-    Just executablePath -> pure (Just executablePath)
-    Nothing -> do
-      result <- (Just . trim <$> readProcess "cabal" ["-v0", "list-bin", "slap"] "")
-                  `catch` (\(_ :: IOException) -> pure Nothing)
-      case result of
-        Just executablePath | not (null executablePath) -> pure (Just executablePath)
-        _ -> pure Nothing
-
-runSlap :: FilePath -> [String] -> IO (ExitCode, String, String)
-runSlap executable arguments = readProcessWithExitCode executable arguments ""
-
-
 ----------------------------------------------------------------------------
 -- Pattern matching
 ----------------------------------------------------------------------------
@@ -441,9 +319,16 @@ withTempDir = withSystemTempDirectory
 ----------------------------------------------------------------------------
 
 -- | Run slap, expect failure, check stderr+stdout contains pattern (case-insensitive).
-expectFail :: FilePath -> [String] -> String -> String -> IO ()
-expectFail slap arguments label pattern = do
-  (exitCode, stdoutText, stderrText) <- runSlap slap arguments
+--
+-- The slap binary path is resolved via 'Integration.External.runExternal'
+-- 'SlapBinary'; the 'Integration.Skip.requireSlapBinary' gate populates
+-- @SLAP_BIN@ once at startup so this resolution is a fast env-var read.
+expectFail :: [String] -> String -> String -> IO ()
+expectFail arguments label pattern = do
+  ExternalRun { externalRunExitCode = exitCode
+              , externalRunStdout   = stdoutText
+              , externalRunStderr   = stderrText } <-
+    runExternal SlapBinary arguments Nothing ""
   let combined = stdoutText ++ stderrText
   case exitCode of
     ExitFailure _ ->
@@ -453,9 +338,12 @@ expectFail slap arguments label pattern = do
       assertFailure (label ++ ": expected failure but got success: " ++ combined)
 
 -- | Run slap, expect success, check stderr+stdout contains pattern (case-insensitive).
-expectOk :: FilePath -> [String] -> String -> String -> IO ()
-expectOk slap arguments label pattern = do
-  (exitCode, stdoutText, stderrText) <- runSlap slap arguments
+expectOk :: [String] -> String -> String -> IO ()
+expectOk arguments label pattern = do
+  ExternalRun { externalRunExitCode = exitCode
+              , externalRunStdout   = stdoutText
+              , externalRunStderr   = stderrText } <-
+    runExternal SlapBinary arguments Nothing ""
   let combined = stdoutText ++ stderrText
   case exitCode of
     ExitSuccess ->
@@ -464,10 +352,13 @@ expectOk slap arguments label pattern = do
     ExitFailure _ ->
       assertFailure (label ++ ": expected success but got failure: " ++ combined)
 
--- | Like expectOk, but also asserts that a warning was emitted.
-expectOkWithWarning :: FilePath -> [String] -> String -> String -> IO ()
-expectOkWithWarning slap arguments label pattern = do
-  (exitCode, stdoutText, stderrText) <- runSlap slap arguments
+-- | Like 'expectOk', but also asserts that a warning was emitted.
+expectOkWithWarning :: [String] -> String -> String -> IO ()
+expectOkWithWarning arguments label pattern = do
+  ExternalRun { externalRunExitCode = exitCode
+              , externalRunStdout   = stdoutText
+              , externalRunStderr   = stderrText } <-
+    runExternal SlapBinary arguments Nothing ""
   let combined = stdoutText ++ stderrText
   case exitCode of
     ExitSuccess -> do

@@ -27,8 +27,16 @@ cabal: rusty-slap
 # `slap` executable is built before the integration suite spawns it via
 # `cabal list-bin slap`.  The rusty-stamp / relink dance lives in the
 # `cabal` target and runs once for both build and test.
+#
+# The integration suite writes one CSV row per test case via the
+# bundled csvReporter ingredient.  $SLAP_TEST_RESULTS overrides the
+# directory; new files are written per run, accumulating in there
+# until the user prunes.
+SLAP_TEST_RESULTS ?= test-results
 test: cabal
-	cabal test
+	@mkdir -p $(SLAP_TEST_RESULTS)
+	cabal test props
+	cabal test integration --test-options="--csv=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Run only the QuickCheck/property/conformance suite. Fast.
 props: cabal
@@ -37,7 +45,8 @@ props: cabal
 # Run only the integration suite (spawns the real `slap` binary
 # against fixture patches). Slower than `props`.
 integration: cabal
-	cabal test integration
+	@mkdir -p $(SLAP_TEST_RESULTS)
+	cabal test integration --test-options="--csv=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
 
 
 # Generate Haddock, if you're into that sort of thing.
