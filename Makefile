@@ -30,6 +30,20 @@ cabal: rusty-slap
 test: cabal
 	cabal test
 
+# Run only the QuickCheck/property/conformance suite. Fast.
+props: cabal
+	cabal test props
+
+# Run only the integration suite (spawns the real `slap` binary
+# against fixture patches). Slower than `props`.
+integration: cabal
+	cabal test integration
+
+
+# Generate Haddock, if you're into that sort of thing.
+haddock: cabal
+	cabal haddock slap-internal
+
 clean:
 	cd rusty-slap && cargo clean
 	cabal clean

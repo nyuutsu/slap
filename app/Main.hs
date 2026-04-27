@@ -408,7 +408,7 @@ verificationPolicyParser = flag EnforceVerification SkipVerification
 
 verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose
-  (long "verbose" <> short 'V' <> help "Print each record as it's applied")
+  (long "verbose" <> short 'v' <> help "Print each record as it's applied")
 
 -- | Parser for the four mutually exclusive output lanes.  'asum' tries
 -- each lane in turn; combinations that span multiple lanes are rejected
@@ -587,9 +587,9 @@ requestedMetadataCoreParser = do
                             <> help "Patch title (EBP/NINJA2)"))
     author            <- optional (option str (long "author" <> metavar "TEXT"
                             <> help "Patch author (EBP/DPS/NINJA2)"))
-    description       <- optional (option str (long "description" <> short 'd' <> metavar "TEXT"
+    description       <- optional (option str (long "description" <> metavar "TEXT"
                             <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
-    version           <- optional (option str (long "version" <> metavar "TEXT"
+    version           <- optional (option str (long "patch-version" <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
     includeUndo       <- optional (flag' OmitUndoData       (long "no-undo"
                             <> help "Omit undo data (default: included when the format supports it)"))

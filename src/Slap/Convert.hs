@@ -391,7 +391,7 @@ acceptedMetadataFields (CreateDirect format) = case format of
 acceptedMetadataFields (CreateDiff format) = case format of
   CreateBPS    -> Set.fromList [MEmbeddedBlob]
   CreateUPS    -> Set.empty
-  CreateDPS    -> Set.fromList [MTitle, MDescription, MAuthor, MVersion, MStability]
+  CreateDPS    -> Set.fromList [MTitle, MAuthor, MVersion, MStability]
   CreateNINJA2 -> Set.fromList
     [ MTitle, MAuthor, MVersion, MDescription, MGenre, MLanguage
     , MDate, MWebsite, MRomType, MPatchEncoding ]
@@ -880,7 +880,7 @@ createFromMemory (CreateDiff format) source target meta sourceContents _constrai
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
                     (DPS.DPSMetadata
-                      { DPS.dpsMetadataName    = fromMaybe "" (requestedTitle meta <|> requestedDescription meta)
+                      { DPS.dpsMetadataName    = fromMaybe "" (requestedTitle meta)
                       , DPS.dpsMetadataAuthor  = fromMaybe "" (requestedAuthor meta)
                       , DPS.dpsMetadataVersion = fromMaybe "" (requestedVersion meta)
                       })

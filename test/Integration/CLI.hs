@@ -247,7 +247,7 @@ createFlagTests slap base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         expectOk slap ["create", "--format", "ppf3",
-                        "-d", "test patch", base, target, patch]
+                        "--description", "test patch", base, target, patch]
           "create/ppf3" "wrote"
 
   , testCase "create/ppf3 undo data present by default" $
@@ -256,7 +256,7 @@ createFlagTests slap base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ppf3",
-                           "-d", "test patch", base, target, patch]
+                           "--description", "test patch", base, target, patch]
         expectOk slap ["info", patch] "create/ppf3 undo" "undo"
   ]
 
@@ -500,48 +500,48 @@ ninja1VerifyTests tier slap base ips = quickCases ++ onlyAtFull tier heavyCases
 
 descriptionTests :: FilePath -> FilePath -> FilePath -> [TestTree]
 descriptionTests slap base bps =
-  [ testCase "desc/aps-n64 create -d" $
+  [ testCase "desc/aps-n64 create --description" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
-        expectOk slap ["create", "--format", "aps-n64", "-d", "Test description",
+        expectOk slap ["create", "--format", "aps-n64", "--description", "Test description",
                         base, target, patch]
           "desc/aps-n64" "wrote"
         expectOk slap ["info", patch] "desc/aps-n64 info" "Test description"
 
-  , testCase "desc/pchtxt create -d hex nsobid" $
+  , testCase "desc/pchtxt create --description hex nsobid" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         let hexId = "AABBCCDD00112233445566778899AABB"
-        expectOk slap ["create", "--format", "pchtxt", "-d", hexId,
+        expectOk slap ["create", "--format", "pchtxt", "--description", hexId,
                         base, target, patch]
           "desc/pchtxt hex" "wrote"
         patchString <- ByteString8.unpack <$> ByteString.readFile patch
         assertBool "expected @nsobid" ("@nsobid" `isInfixOf` patchString)
 
-  , testCase "desc/pchtxt create -d comment" $
+  , testCase "desc/pchtxt create --description comment" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
-        expectOk slap ["create", "--format", "pchtxt", "-d", "My cool patch",
+        expectOk slap ["create", "--format", "pchtxt", "--description", "My cool patch",
                         base, target, patch]
           "desc/pchtxt comment" "wrote"
         patchString <- ByteString8.unpack <$> ByteString.readFile patch
         assertBool "expected // comment" ("// My cool patch" `isInfixOf` patchString)
 
-  , testCase "desc/pchtxt convert -d override" $
+  , testCase "desc/pchtxt convert --description override" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch1" $ \patch1 ->
       withTempFile "slap-patch2" $ \patch2 -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
-        _ <- runSlap slap ["create", "--format", "pchtxt", "-d", "original",
+        _ <- runSlap slap ["create", "--format", "pchtxt", "--description", "original",
                            base, target, patch1]
-        expectOk slap ["convert", patch1, "--to", "pchtxt", "-d", "override",
+        expectOk slap ["convert", patch1, "--to", "pchtxt", "--description", "override",
                         "-o", patch2]
           "desc/pchtxt convert" "converted"
         patchString <- ByteString8.unpack <$> ByteString.readFile patch2
@@ -640,14 +640,14 @@ metadataRejectionTests slap base bps =
           ["create", "--format", "bps", base, target, patch, "--metadata", blob]
           "metadata-accept/bps" "wrote"
 
-  , testCase "metadata-accept/ppf3 takes --no-undo --no-validate -d" $
+  , testCase "metadata-accept/ppf3 takes --no-undo --no-validate --description" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         expectOk slap
           ["create", "--format", "ppf3", base, target, patch,
-           "-d", "x", "--no-undo", "--no-validate"]
+           "--description", "x", "--no-undo", "--no-validate"]
           "metadata-accept/ppf3" "wrote"
 
   , testCase "metadata-accept/convert inherits source metadata silently" $
@@ -665,7 +665,7 @@ metadataRejectionTests slap base bps =
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runSlap slap ["apply", bps, target, "--in-place", "--no-backup"]
         _ <- runSlap slap ["create", "--format", "ebp", base, target, ebp,
-                           "--title", "Inherited", "--author", "n", "-d", "d"]
+                           "--title", "Inherited", "--author", "n", "--description", "d"]
         expectOk slap ["convert", ebp, "--to", "ips", "-o", ips]
           "metadata-accept/inherit" "converted"
   ]
