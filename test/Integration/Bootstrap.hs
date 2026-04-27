@@ -206,6 +206,13 @@ acquireBootstrap targetsRef pairs = do
   endTime        <- getMonotonicTime
   let elapsedSeconds = endTime - startTime
       builtCount     = Map.size (bootstrapTargetsByPair targets)
+  -- The bootstrap line lands mid-run because tasty acquires
+  -- 'withResource' lazily, right before the first test in the wrapped
+  -- subtree. A leading newline keeps it visually separate from
+  -- preceding test output. The structural fix (eager acquire, drop
+  -- the IORef bridge) is a candidate once the perf work has revealed
+  -- how bootstrap interacts with iteration.
+  hPutStrLn stderr ""
   hPutStrLn stderr
     (printf "bootstrap: built %d targets in %.3f seconds" builtCount elapsedSeconds)
   writeIORef targetsRef targets
