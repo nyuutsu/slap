@@ -25,7 +25,7 @@ import Slap.IPS.Types
   , offsetWidthByteCount
   )
 import Slap.Binary (getWord24BE)
-import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
+import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get
@@ -45,7 +45,6 @@ import Slap.Measure
   , Length(..)
   , FileSize(..)
   , ActionIndex(..)
-  , OverlapCount(..)
   , Cursor(..)
   , byteLength
   , firstAction
@@ -60,8 +59,9 @@ import Slap.Measure
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.List (sort)
 import qualified Data.Vector as Vector
+import Data.Vector (Vector)
+import qualified Data.Vector.Algorithms.Intro as Intro
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -436,7 +436,7 @@ validateRecordList variant = walkAt firstAction
 -- minutes-of-wall-clock cost on stadium2-scale 'IPS32' patches,
 -- which the sweep eliminates.
 detectOverlappingRecords :: FormatLabel
-                         -> Vector.Vector IPSRecord
+                         -> Vector IPSRecord
                          -> [SlapWarning]
 detectOverlappingRecords label records
   | overlapPairCount == 0 = []
@@ -450,20 +450,22 @@ detectOverlappingRecords label records
     -- Skipping these here also avoids a tie-break degeneracy: a
     -- record's own close and open at the same offset would otherwise
     -- collide under the close-before-open ordering.
-    recordSweepEvents :: IPSRecord -> [SweepEvent]
-    recordSweepEvents record =
-      let extent = recordExtent record
-      in if extentStart extent == extentEnd extent
-           then []
-           else [ IntervalOpens  (extentStart extent)
-                , IntervalCloses (extentEnd   extent)
-                ]
+    extentEvents :: RecordExtent -> Vector SweepEvent
+    extentEvents extent
+      | extentStart extent == extentEnd extent = Vector.empty
+      | otherwise = Vector.fromListN 2
+          [ IntervalOpens  (extentStart extent)
+          , IntervalCloses (extentEnd   extent)
+          ]
 
-    sweepEvents :: [SweepEvent]
-    sweepEvents = concatMap recordSweepEvents (Vector.toList records)
+    sweepEvents :: Vector SweepEvent
+    sweepEvents = Vector.concatMap (extentEvents . recordExtent) records
+
+    sortedEvents :: Vector SweepEvent
+    sortedEvents = Vector.modify Intro.sort sweepEvents
 
     finalState :: SweepState
-    finalState = foldl' stepSweep initialSweepState (sort sweepEvents)
+    finalState = Vector.foldl' stepSweep initialSweepState sortedEvents
 
     OverlapCount overlapPairCount = sweepOverlapPairs finalState
 

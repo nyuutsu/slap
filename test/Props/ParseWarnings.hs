@@ -13,10 +13,11 @@ module Props.ParseWarnings (parseWarningsTests) where
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.IPS.Parse as IPS
-import Slap.Error (Parsed(..), SlapWarning(..), renderSlapError)
+import Slap.Error (Parsed(..), SlapWarning(..), OverlapCount(..),
+                   renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (ActionIndex(..), Length(..), OverlapCount(..))
+import Slap.Measure (ActionIndex(..), Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString

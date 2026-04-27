@@ -127,6 +127,7 @@ library slap-internal
     , ram                  >= 0.21
     , text                 >= 2.0
     , vector               >= 0.13
+    , vector-algorithms
 
 executable slap
   main-is:          Main.hs

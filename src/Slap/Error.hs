@@ -10,6 +10,7 @@ module Slap.Error
   , CreateResult(..)
   , Parsed(..)
   , FieldName(..)
+  , OverlapCount(..)
   , fieldNameLabel
   , renderSlapError
   , renderApplyError
@@ -25,7 +26,6 @@ import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
 import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(..),
-                     OverlapCount(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
@@ -500,6 +500,21 @@ data Parsed value = Parsed
   { parsedValue    :: !value
   , parsedWarnings :: ![SlapWarning]
   } deriving (Show)
+
+----------------------------------------------------------------------------
+-- OverlapCount — payload of the OverlappingRecords warning
+----------------------------------------------------------------------------
+
+-- | The number of overlapping record pairs detected during an
+-- IPS-family parse. Carried by the 'OverlappingRecords' warning so
+-- the reader sees both that the patch contains overlapping writes
+-- and how many such intersections were found, without enumerating
+-- every pair (a pathological mutually-overlapping cluster of @k@
+-- records would otherwise produce @k*(k-1)/2@ near-duplicate
+-- warning lines). A value of zero is structurally impossible: the
+-- warning is only emitted when at least one pair was found.
+newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
+  deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
 -- renderApplyError
