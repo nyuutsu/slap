@@ -4,8 +4,9 @@
 -- > applyFmt (parseFmt (createFmt src tgt)) src == tgt
 --
 -- Plus a handful of format-specific round-trip-adjacent properties
--- (hash preservation for NINJA1/NINJA2, patch size bounds for BPS, etc.)
--- that are naturally expressed as extensions of the basic round-trip.
+-- (hash preservation for NINJA1/NINJA2, patch size bounds for BPS,
+-- COPY-chunk planning for GDIFF, etc.) that are naturally expressed
+-- as extensions of the basic round-trip.
 module Props.RoundTrip (roundTripTests) where
 
 import qualified Slap.BPS.Apply as BPS
@@ -33,8 +34,10 @@ import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Apply as APSGBA
-import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Apply as GDIFF
+import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.GDIFF.Parse as GDIFF
+import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.PPF.Parse as PPF
 import qualified Slap.PPF.Apply as PPF
 import qualified Slap.PCHTXT.Parse as PCHTXT
@@ -44,7 +47,8 @@ import qualified Slap.PCHTXT.Types as PCHTXT
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..), SentinelOffset(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     EncodedHunk(..), Hunk(..), SentinelOffset(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
@@ -53,6 +57,9 @@ import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createFromMemory)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Bits (shiftL)
+import Data.ByteString.Builder (word8, byteString, toLazyByteString)
 import Test.Tasty
 import Test.Tasty.HUnit (testCase, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
@@ -111,7 +118,11 @@ roundTripTests = testGroup "RoundTrip"
       [ testProperty "round-trip" prop_apsGba
       ]
   , testGroup "GDIFF"
-      [ testProperty "round-trip" prop_gdiff
+      [ testProperty "round-trip"                                    prop_gdiff
+      , testProperty "planCopy chunk lengths sum to total"           prop_planCopyLengthSum
+      , testProperty "planCopy chunk offsets chain without gaps"     prop_planCopyOffsetsChain
+      , testProperty "planCopy above-threshold yields only Copy255"  prop_planCopyAboveThresholdAllCopy255
+      , testProperty "planCopy round-trips through parseGDIFF"       prop_planCopyRoundTrips
       ]
   , testGroup "PCHTXT"
       [ testProperty "round-trip" prop_pchtxt
@@ -256,6 +267,144 @@ prop_gdiff = forAll genPair $ \(source, target) ->
         case GDIFF.applyGDIFF parsed (SourceFileContents source) of
           Left applyError       -> counterexample ("apply: " ++ renderSlapError applyError) $ property False
           Right targetContents  -> targetContents === TargetFileContents target
+
+----------------------------------------------------------------------------
+-- GDIFF planCopy properties
+--
+-- The W3C GDIFF spec defines its @int@ type as signed 32-bit, so a
+-- single COPY command's length field tops out at 'maxSingleCommandLength'
+-- (2^31-1 bytes). 'planCopy' is the encoder's chunking pass: it splits
+-- requests larger than that limit into a run of in-range chunks. These
+-- properties pin its behaviour down without ever allocating a multi-
+-- gigabyte payload — COPY commands carry only an offset and a length,
+-- so synthetic large inputs cost nothing to test.
+----------------------------------------------------------------------------
+
+-- Test-only accessors for 'CopyEncoding'. Verbose by design: a shortcut
+-- would silently become a partial selector if a future opcode were
+-- added.
+
+encodingLength :: GDIFF.CopyEncoding -> Int
+encodingLength = \case
+  GDIFF.Copy249 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy250 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy251 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy252 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy253 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy254 _ wireLength -> fromIntegral wireLength
+  GDIFF.Copy255 _ wireLength -> fromIntegral wireLength
+
+encodingOffset :: GDIFF.CopyEncoding -> Int
+encodingOffset = \case
+  GDIFF.Copy249 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy250 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy251 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy252 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy253 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy254 wireOffset _ -> fromIntegral wireOffset
+  GDIFF.Copy255 wireOffset _ -> fromIntegral wireOffset
+
+-- | Offsets spanning every opcode-offset bucket (ushort, int, long),
+-- capped well below 'Int's 64-bit range so chained-offset arithmetic
+-- never overflows.
+genCopyOffset :: Gen Offset
+genCopyOffset = oneof
+  [ Offset <$> chooseInt (0,                0xFFFF)
+  , Offset <$> chooseInt (0xFFFF + 1,       0xFFFFFFFF)
+  , Offset <$> chooseInt (0xFFFFFFFF + 1,   1 `shiftL` 48)
+  ]
+
+-- | Offsets that always select the @long@ offset bucket. The
+-- "above-threshold yields only 'Copy255'" property would otherwise
+-- see legitimate 'Copy251'/'Copy254' chunks for small offsets, since
+-- the encoder picks the narrowest opcode whose fields fit.
+genCopyLongOffset :: Gen Offset
+genCopyLongOffset = Offset <$> chooseInt (0xFFFFFFFF + 1, 1 `shiftL` 48)
+
+-- | Lengths spanning every opcode-length bucket plus the chunked-by-
+-- 'planCopy' regime above 'maxSingleCommandLength'.
+genCopyLength :: Gen Length
+genCopyLength = oneof
+  [ Length <$> chooseInt (0,          0xFF)
+  , Length <$> chooseInt (0xFF + 1,   0xFFFF)
+  , Length <$> chooseInt (0xFFFF + 1, unLength GDIFF.maxSingleCommandLength)
+  , genCopyAboveThresholdLength
+  ]
+
+-- | Lengths strictly larger than 'maxSingleCommandLength', forcing
+-- 'planCopy' to chunk.
+genCopyAboveThresholdLength :: Gen Length
+genCopyAboveThresholdLength = Length <$>
+  chooseInt (unLength GDIFF.maxSingleCommandLength + 1, 100 * unLength GDIFF.maxSingleCommandLength)
+
+-- | Chunk lengths must sum to the requested length.
+prop_planCopyLengthSum :: Property
+prop_planCopyLengthSum = forAll genCopyOffset $ \initialOffset ->
+  forAll genCopyLength $ \requestedLength ->
+    let chunks = GDIFF.planCopy initialOffset requestedLength
+    in sum (fmap encodingLength chunks) === unLength requestedLength
+
+-- | Successive chunk offsets must chain: each chunk's offset equals
+-- the preceding chunk's offset plus the preceding chunk's length, with
+-- neither gap nor overlap. The first chunk's offset must equal the
+-- requested initial offset.
+prop_planCopyOffsetsChain :: Property
+prop_planCopyOffsetsChain = forAll genCopyOffset $ \initialOffset ->
+  forAll genCopyLength $ \requestedLength ->
+    case GDIFF.planCopy initialOffset requestedLength of
+      []                  -> property True
+      firstChunk : others ->
+        encodingOffset firstChunk === unOffset initialOffset
+        .&&. conjoin (zipWith chainStep (firstChunk : others) others)
+  where
+    chainStep precedingChunk followingChunk =
+      encodingOffset followingChunk
+        === encodingOffset precedingChunk + encodingLength precedingChunk
+
+-- | Above-threshold inputs at long offsets must produce only 'Copy255'
+-- chunks. Restricted to offsets above 0xFFFFFFFF because the encoder
+-- legitimately picks 'Copy251'/'Copy254' for chunks whose offset still
+-- fits a 16- or 32-bit field; only beyond that range is 'Copy255' the
+-- only choice.
+prop_planCopyAboveThresholdAllCopy255 :: Property
+prop_planCopyAboveThresholdAllCopy255 = forAll genCopyLongOffset $ \initialOffset ->
+  forAll genCopyAboveThresholdLength $ \requestedLength ->
+    all isCopy255 (GDIFF.planCopy initialOffset requestedLength)
+  where
+    isCopy255 GDIFF.Copy255{} = True
+    isCopy255 _               = False
+
+-- | Round-trip: encode a synthetic above-threshold COPY through
+-- 'encodeCopy', wrap it with the GDIFF magic + version + EOF marker,
+-- and parse it back. The parsed COPY commands' lengths must sum to the
+-- requested length, and their offsets must chain from the requested
+-- initial offset with neither gap nor overlap. Synthetic patches carry
+-- no payload bytes — COPY commands reference offsets, not data — so
+-- multi-gigabyte 'Length' values cost nothing to test.
+prop_planCopyRoundTrips :: Property
+prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
+  forAll genCopyAboveThresholdLength $ \requestedLength ->
+    let patchBytes = LazyByteString.toStrict $ toLazyByteString $
+          byteString GDIFF.gdiffMagicBytes
+          <> word8 4
+          <> GDIFF.encodeCopy initialOffset requestedLength
+          <> word8 0
+    in case GDIFF.parseGDIFF (PatchFileContents patchBytes) of
+      Left parseError ->
+        counterexample (renderSlapError parseError) (property False)
+      Right (Parsed parsed _parseWarnings) ->
+        let parsedCommands = GDIFF.gdiffCommands parsed
+            parsedCopies =
+              [ (commandOffset, commandLength)
+              | GDIFF.GDiffCopy commandOffset (FileSize commandLength) <- parsedCommands ]
+            actualOffsets   = fmap (unOffset . fst) parsedCopies
+            chunkLengths    = fmap snd parsedCopies
+            expectedOffsets = scanl (+) (unOffset initialOffset) chunkLengths
+        in counterexample ("commands: " ++ show parsedCommands) $
+           conjoin
+             [ sum chunkLengths === unLength requestedLength
+             , conjoin (zipWith (===) actualOffsets expectedOffsets)
+             ]
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
