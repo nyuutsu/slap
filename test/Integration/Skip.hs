@@ -150,8 +150,9 @@ requireSlapBinary action = requireExternalTool SlapBinary $ \executablePath -> d
 renderSkipSummary :: [SkipReason] -> String
 renderSkipSummary [] = "(no skipped tests)"
 renderSkipSummary reasons =
-  intercalate "\n" ("SKIPPED:" : map (("  " ++) . renderReason) reasons)
+  unlines (header : map ("  " ++) (map renderReason reasons))
   where
+    header = "SKIPPED " ++ show (length reasons) ++ " tests:"
     renderReason (MissingFixture path)      = "missing fixture: " ++ path
     renderReason (MissingExternalTool tool) = "missing tool: " ++ externalToolName tool
 

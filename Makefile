@@ -5,7 +5,7 @@ RUSTY_A   := $(RUSTY_LIB)/librusty_slap.a
 # picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal test clean
+.PHONY: all rusty-slap cabal test test-onecore props integration haddock clean
 
 all: rusty-slap cabal
 
@@ -48,6 +48,10 @@ integration: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
 	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
 
+# Run integration tests using one CPU core, thus revealing how long each thing actually needs to take.
+test-onecore: cabal
+	@mkdir -p $(SLAP_TEST_RESULTS)
+	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/cpu-baseline-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Generate Haddock, if you're into that sort of thing.
 haddock: cabal
