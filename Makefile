@@ -5,7 +5,7 @@ RUSTY_A   := $(RUSTY_LIB)/librusty_slap.a
 # picks up CLMUL/PCLMULQDQ at compile time.
 export RUSTFLAGS += -C target-cpu=native
 
-.PHONY: all rusty-slap cabal test test-onecore props integration haddock clean
+.PHONY: all rusty-slap cabal test test-onecore haddock clean
 
 all: rusty-slap cabal
 
@@ -22,41 +22,25 @@ cabal: rusty-slap
 	fi
 	cabal build
 
-# Run every test: props (QuickCheck + spec conformance) and the full
-# integration suite.  Depends on `cabal` (not just `rusty-slap`) so the
-# `slap` executable is built before the integration suite spawns it via
-# `cabal list-bin slap`.  The rusty-stamp / relink dance lives in the
-# `cabal` target and runs once for both build and test.
-#
-# The integration suite writes one CSV row per test case via the
-# tasty-stats consoleStatsReporter ingredient.  $SLAP_TEST_RESULTS
-# overrides the directory; tasty-stats appends to existing files, so
-# we name each run with a timestamp to keep them separate.
 SLAP_TEST_RESULTS ?= test-results
+
+# Run all the tests.
 test: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
 	cabal test props
-	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
+	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/test-$$(date +%Y%m%d-%H%M%S).csv"
 
-# Run only the QuickCheck/property/conformance suite. Fast.
-props: cabal
-	cabal test props
-
-# Run only the integration suite (spawns the real `slap` binary
-# against fixture patches). Slower than `props`.
-integration: cabal
-	@mkdir -p $(SLAP_TEST_RESULTS)
-	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
-
-# Run integration tests using one CPU core, thus revealing how long each thing actually needs to take.
+# Run all the tests using one CPU core, thus revealing how long each thing actually needs to take.
 test-onecore: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
-	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/cpu-baseline-$$(date +%Y%m%d-%H%M%S).csv"
+	cabal test props
+	cabal test integration --test-options="--num-threads=1 --stats=$(SLAP_TEST_RESULTS)/test-onecore-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Generate Haddock, if you're into that sort of thing.
 haddock: cabal
 	cabal haddock slap-internal
 
+# Scrub 🧼
 clean:
 	cd rusty-slap && cargo clean
 	cabal clean
