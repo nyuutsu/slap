@@ -1,2 +1,14 @@
 packages: .
 extra-lib-dirs: /home/nyuu/repos/slap/rusty-slap/target/release
+
+-- tasty-stats 0.2.0.4 ships stale upper bounds on Hackage (tasty < 1.2,
+-- containers < 0.6, directory < 1.4, stm < 2.6, tagged < 0.9, time < 1.9).
+-- Its actual API surface is unchanged against tasty 1.5; the bounds are
+-- ecosystem rot, not breakage. Wave them through for that one package.
+allow-newer:
+    tasty-stats:tasty
+  , tasty-stats:containers
+  , tasty-stats:directory
+  , tasty-stats:stm
+  , tasty-stats:tagged
+  , tasty-stats:time

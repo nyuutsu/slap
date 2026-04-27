@@ -41,13 +41,14 @@ import Integration.External
 -- The skip vocabulary
 ----------------------------------------------------------------------------
 
--- | Why a planned test will not run. Three variants — anything else is
--- either a programmer error or a sign the suite has grown a fourth
--- skip-shape that deserves its own constructor.
+-- | Why a planned test will not run. Two variants — anything else is
+-- either a programmer error or a sign the suite has grown a third
+-- skip-shape that deserves its own constructor. The slap binary is
+-- one tool among the others ('SlapBinary' :: 'ExternalTool'); a
+-- missing slap is a 'MissingExternalTool', not its own variant.
 data SkipReason
   = MissingFixture FilePath
   | MissingExternalTool ExternalTool
-  | MissingSlapBinary
   deriving (Eq, Ord, Show)
 
 -- | Construction-phase outcome for a single planned test: it either
@@ -122,21 +123,18 @@ requireExternalTool tool action = do
     Just executablePath -> action executablePath
     Nothing             -> pure [WillSkip (MissingExternalTool tool)]
 
--- | Run @action@ only if the slap binary itself is resolvable. As a
--- side effect, the resolved path is exported back into @SLAP_BIN@ so
+-- | Like 'requireExternalTool' 'SlapBinary', but with a side effect:
+-- on success the resolved path is exported back into @SLAP_BIN@ so
 -- that subsequent 'resolveExternalTool SlapBinary' calls (one per
 -- 'runExternal SlapBinary' call site) hit the env-var fast path
 -- instead of paying a @cabal list-bin@ round-trip per test body.
+-- Kept as its own named gate so call sites read cleanly.
 requireSlapBinary
   :: (FilePath -> IO [MaybeTest])
   -> IO [MaybeTest]
-requireSlapBinary action = do
-  resolved <- resolveExternalTool SlapBinary
-  case resolved of
-    Just executablePath -> do
-      setEnv "SLAP_BIN" executablePath
-      action executablePath
-    Nothing -> pure [WillSkip MissingSlapBinary]
+requireSlapBinary action = requireExternalTool SlapBinary $ \executablePath -> do
+  setEnv "SLAP_BIN" executablePath
+  action executablePath
 
 ----------------------------------------------------------------------------
 -- Skip-summary rendering
@@ -165,8 +163,6 @@ bucketReasons = foldl' step emptyBuckets
     step buckets (MissingExternalTool tool) =
       buckets { reasonBucketsByTool =
         Map.insertWith (+) tool 1 (reasonBucketsByTool buckets) }
-    step buckets MissingSlapBinary =
-      buckets { reasonBucketsBySlapBinary = reasonBucketsBySlapBinary buckets + 1 }
     step buckets (MissingFixture _) =
       buckets { reasonBucketsByFixture = reasonBucketsByFixture buckets + 1 }
 
@@ -175,18 +171,17 @@ renderBuckets buckets =
   [ show count ++ " missing " ++ externalToolName tool
   | (tool, count) <- Map.toAscList (reasonBucketsByTool buckets)
   ]
-  ++ [ show count ++ " missing slap" | let count = reasonBucketsBySlapBinary buckets, count > 0 ]
-  ++ [ show count ++ " missing fixtures" | let count = reasonBucketsByFixture buckets, count > 0 ]
+  ++ [ show count ++ " missing fixtures"
+     | let count = reasonBucketsByFixture buckets, count > 0 ]
 
 -- | Internal accumulator for 'bucketReasons'.
 data ReasonBuckets = ReasonBuckets
-  { reasonBucketsByTool        :: !(Map.Map ExternalTool Int)
-  , reasonBucketsBySlapBinary  :: !Int
-  , reasonBucketsByFixture     :: !Int
+  { reasonBucketsByTool    :: !(Map.Map ExternalTool Int)
+  , reasonBucketsByFixture :: !Int
   }
 
 emptyBuckets :: ReasonBuckets
-emptyBuckets = ReasonBuckets Map.empty 0 0
+emptyBuckets = ReasonBuckets Map.empty 0
 
 ----------------------------------------------------------------------------
 -- $SLAP_REQUIRE_TOOLS pre-flight check
@@ -248,6 +243,5 @@ missingRequiredTools :: [ExternalTool] -> [SkipReason] -> [ExternalTool]
 missingRequiredTools requestedTools skipReasons =
   [ tool | tool <- requestedTools, any (skipBlamesTool tool) skipReasons ]
   where
-    skipBlamesTool SlapBinary MissingSlapBinary               = True
-    skipBlamesTool tool       (MissingExternalTool seenTool)  = tool == seenTool
-    skipBlamesTool _          _                               = False
+    skipBlamesTool tool (MissingExternalTool seenTool) = tool == seenTool
+    skipBlamesTool _    (MissingFixture _)             = False

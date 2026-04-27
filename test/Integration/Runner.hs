@@ -19,7 +19,6 @@ import Integration.CLI (cliTests)
 import Integration.Convert (convertTests)
 import Integration.Create (createTests)
 import Integration.CrossVal (crossValTests)
-import Integration.CsvReporter (csvReporter)
 import Integration.External (ExternalTool(..), resolveExternalTool)
 import Integration.FailureMode (failureModeTests)
 import Integration.Helpers (Tier, repoDir)
@@ -34,8 +33,8 @@ import Integration.Undo (undoTests)
 import System.Environment (setEnv)
 import System.IO (hPutStrLn, stderr)
 import Test.Tasty (defaultMainWithIngredients, testGroup)
-import Test.Tasty.Ingredients (composeReporters)
-import Test.Tasty.Runners (consoleTestReporter, listingTests)
+import Test.Tasty.Runners (listingTests)
+import Test.Tasty.Stats (consoleStatsReporter)
 
 -- | Bootstrap shared targets, run every integration test group, and
 -- hand the resulting tree to tasty's 'defaultMainWithIngredients'.
@@ -70,10 +69,7 @@ runIntegrationSuite tier = do
 
   let suiteTree   = testGroup "integration" (groupPlanTrees combinedPlan)
       wrappedTree = bootstrapAccessWrap bootstrapAccess suiteTree
-      ingredients =
-        [ listingTests
-        , composeReporters consoleTestReporter csvReporter
-        ]
+      ingredients = [listingTests, consoleStatsReporter]
   defaultMainWithIngredients ingredients wrappedTree
 
 -- | Resolve the slap binary once and cache the result in @SLAP_BIN@ so

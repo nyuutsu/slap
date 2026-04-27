@@ -29,14 +29,14 @@ cabal: rusty-slap
 # `cabal` target and runs once for both build and test.
 #
 # The integration suite writes one CSV row per test case via the
-# bundled csvReporter ingredient.  $SLAP_TEST_RESULTS overrides the
-# directory; new files are written per run, accumulating in there
-# until the user prunes.
+# tasty-stats consoleStatsReporter ingredient.  $SLAP_TEST_RESULTS
+# overrides the directory; tasty-stats appends to existing files, so
+# we name each run with a timestamp to keep them separate.
 SLAP_TEST_RESULTS ?= test-results
 test: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
 	cabal test props
-	cabal test integration --test-options="--csv=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
+	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
 
 # Run only the QuickCheck/property/conformance suite. Fast.
 props: cabal
@@ -46,7 +46,7 @@ props: cabal
 # against fixture patches). Slower than `props`.
 integration: cabal
 	@mkdir -p $(SLAP_TEST_RESULTS)
-	cabal test integration --test-options="--csv=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
+	cabal test integration --test-options="--stats=$(SLAP_TEST_RESULTS)/integration-$$(date +%Y%m%d-%H%M%S).csv"
 
 
 # Generate Haddock, if you're into that sort of thing.

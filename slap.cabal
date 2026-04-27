@@ -181,7 +181,6 @@ test-suite integration
                   , Integration.External
                   , Integration.Skip
                   , Integration.Bootstrap
-                  , Integration.CsvReporter
                   , Integration.Runner
                   , Integration.Apply
                   , Integration.Create
@@ -200,11 +199,10 @@ test-suite integration
     , directory     >= 1.3
     , filepath      >= 1.4
     , process       >= 1.6
-    , stm           >= 2.5
-    , tagged        >= 0.8
     , temporary     >= 1.3
     , tasty         >= 1.4
     , tasty-hunit   >= 0.10
+    , tasty-stats   >= 0.2
     , time          >= 1.12
     , mmap          >= 0.5
     , slap:slap-internal
