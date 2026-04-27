@@ -6,8 +6,8 @@
 -- present" pattern in a continuation that either runs and produces
 -- runnable trees, or short-circuits to a 'WillSkip' carrying the
 -- reason. The runner aggregates skips across groups, prints a
--- one-line summary, and (if @SLAP_REQUIRE_TOOLS@ is set) exits before
--- @defaultMain@ runs.
+-- per-skip summary block, and (if @SLAP_REQUIRE_TOOLS@ is set) exits
+-- before @defaultMain@ runs.
 module Integration.Skip
   ( SkipReason(..)
   , MaybeTest(..)
@@ -22,7 +22,6 @@ module Integration.Skip
   ) where
 
 import Data.List (intercalate, sort)
-import qualified Data.Map.Strict as Map
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode(..), exitWith)
@@ -140,48 +139,21 @@ requireSlapBinary action = requireExternalTool SlapBinary $ \executablePath -> d
 -- Skip-summary rendering
 ----------------------------------------------------------------------------
 
--- | One-line summary of every skip in the suite. Empty input returns
--- a placeholder so the runner can print unconditionally.
+-- | Multi-line summary listing every skipped test's reason: one
+-- @missing fixture: PATH@ or @missing tool: NAME@ line per skip,
+-- preserving full path / tool detail. Empty input returns a
+-- placeholder so the runner can print unconditionally.
 --
 -- > renderSkipSummary [] == "(no skipped tests)"
 -- > renderSkipSummary [MissingExternalTool Flips, MissingFixture "/x"]
--- >   == "SKIPPED 2 tests: 1 missing flips, 1 missing fixtures"
+-- >   == "SKIPPED:\n  missing tool: flips\n  missing fixture: /x"
 renderSkipSummary :: [SkipReason] -> String
 renderSkipSummary [] = "(no skipped tests)"
 renderSkipSummary reasons =
-  let total = length reasons
-      buckets = renderBuckets (bucketReasons reasons)
-  in "SKIPPED " ++ show total ++ " tests: " ++ intercalate ", " buckets
-
--- | Group skip reasons into named buckets. Each missing-tool bucket
--- gets its own entry (so the user can see which specific tool the
--- skips are blamed on); fixtures collapse into a single count, since
--- listing every absent fixture path would drown the line.
-bucketReasons :: [SkipReason] -> ReasonBuckets
-bucketReasons = foldl' step emptyBuckets
+  intercalate "\n" ("SKIPPED:" : map (("  " ++) . renderReason) reasons)
   where
-    step buckets (MissingExternalTool tool) =
-      buckets { reasonBucketsByTool =
-        Map.insertWith (+) tool 1 (reasonBucketsByTool buckets) }
-    step buckets (MissingFixture _) =
-      buckets { reasonBucketsByFixture = reasonBucketsByFixture buckets + 1 }
-
-renderBuckets :: ReasonBuckets -> [String]
-renderBuckets buckets =
-  [ show count ++ " missing " ++ externalToolName tool
-  | (tool, count) <- Map.toAscList (reasonBucketsByTool buckets)
-  ]
-  ++ [ show count ++ " missing fixtures"
-     | let count = reasonBucketsByFixture buckets, count > 0 ]
-
--- | Internal accumulator for 'bucketReasons'.
-data ReasonBuckets = ReasonBuckets
-  { reasonBucketsByTool    :: !(Map.Map ExternalTool Int)
-  , reasonBucketsByFixture :: !Int
-  }
-
-emptyBuckets :: ReasonBuckets
-emptyBuckets = ReasonBuckets Map.empty 0
+    renderReason (MissingFixture path)      = "missing fixture: " ++ path
+    renderReason (MissingExternalTool tool) = "missing tool: " ++ externalToolName tool
 
 ----------------------------------------------------------------------------
 -- $SLAP_REQUIRE_TOOLS pre-flight check
