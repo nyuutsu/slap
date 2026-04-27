@@ -252,7 +252,10 @@ prop_gdiff = forAll genPair $ \(source, target) ->
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed parsed _parseWarnings) -> GDIFF.applyGDIFF parsed (SourceFileContents source) === TargetFileContents target
+      Right (Parsed parsed _parseWarnings) ->
+        case GDIFF.applyGDIFF parsed (SourceFileContents source) of
+          Left applyError       -> counterexample ("apply: " ++ renderSlapError applyError) $ property False
+          Right targetContents  -> targetContents === TargetFileContents target
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->

@@ -4,15 +4,14 @@
 module Slap.GDIFF.Types
   ( GDiffPatch(..)
   , GDiffCommand(..)
-  , commandOutputSize
     -- * Named constants
   , gdiffMagicBytes
   ) where
 
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Measure (Offset, FileSize)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
+
 data GDiffCommand
   = GDiffData ByteString                             -- literal data to append
   | GDiffCopy { gdiffCopyOffset :: !Offset, gdiffCopyLength :: !FileSize }  -- offset into source, length
@@ -25,7 +24,3 @@ data GDiffPatch = GDiffPatch
 -- | GDIFF magic bytes (@0xD1 0xFF 0xD1 0xFF@) per W3C NOTE-GDIFF-19970901.
 gdiffMagicBytes :: ByteString
 gdiffMagicBytes = "\xd1\xff\xd1\xff"
-
-commandOutputSize :: GDiffCommand -> Int
-commandOutputSize (GDiffData payload)       = ByteString.length payload
-commandOutputSize (GDiffCopy _ copyLength) = unFileSize copyLength

@@ -5,7 +5,7 @@ module Slap.GDIFF.Describe
   , makeGDIFFRegion
   ) where
 
-import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), commandOutputSize)
+import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Explain
     ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
     , ExplainPayload(..), CopySource(..), ExplainSummary(..)
@@ -26,7 +26,7 @@ gdiffInfo patch = unlines $ filter (not . null)
   [ "format:      GDIFF (W3C)"
   , "commands:    " ++ show commandCount
   , "data cmds:   " ++ show dataCount ++ " (" ++ show dataBytes ++ " bytes)"
-  , "copy cmds:   " ++ show copyCount
+  , "copy cmds:   " ++ show copyCount ++ " (" ++ show copyBytes ++ " bytes)"
   , "output size: " ++ show totalOut
   ]
   where
@@ -34,8 +34,9 @@ gdiffInfo patch = unlines $ filter (not . null)
     commandCount = length commands
     dataCount = length [() | GDiffData _ <- commands]
     copyCount = length [() | GDiffCopy{} <- commands]
-    dataBytes = sum [ByteString.length payload | GDiffData payload <- commands]
-    totalOut = sum (map commandOutputSize commands)
+    dataBytes = sum [ByteString.length payload | GDiffData payload      <- commands]
+    copyBytes = sum [unFileSize copyLength     | GDiffCopy _ copyLength <- commands]
+    totalOut  = dataBytes + copyBytes
 
 explainGDIFF :: GDiffPatch -> ExplainData
 explainGDIFF patch = ExplainData
