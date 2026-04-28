@@ -4,7 +4,7 @@
 //! Concatenates target (windowed) + source, suffix-sorts, then walks the
 //! target left-to-right choosing the cheapest BPS action at each position.
 
-use crate::sa;
+use crate::suffix_sort::{self, SuffixArray};
 
 // BPS action tags.
 const SOURCE_READ: u64 = 0;
@@ -63,8 +63,8 @@ fn match_len(a: &[u8], b: &[u8]) -> usize {
 /// with a reverse index for O(1) rank lookup.
 struct SortedIndex {
     concat: Vec<u8>,
-    sorted: Vec<i32>,
-    reverse: Vec<usize>,
+    suffix_array: SuffixArray,
+    rank_at_position: Vec<usize>,
 }
 
 /// Build concatenated buffer (target window + source), suffix-sort, and
@@ -73,12 +73,12 @@ fn build_index(target: &[u8], source: &[u8], sortedsize: usize) -> SortedIndex {
     let mut concat = Vec::with_capacity(sortedsize + source.len());
     concat.extend_from_slice(&target[..sortedsize]);
     concat.extend_from_slice(source);
-    let sorted = sa::suffix_array(&concat);
-    let mut reverse = vec![0usize; concat.len()];
-    for (rank, &pos) in sorted.iter().enumerate() {
-        reverse[pos as usize] = rank;
+    let suffix_array = suffix_sort::suffix_sort(&concat);
+    let mut rank_at_position = vec![0usize; concat.len()];
+    for (rank, position) in suffix_array.positions().iter().enumerate() {
+        rank_at_position[position.as_index()] = rank;
     }
-    SortedIndex { concat, sorted, reverse }
+    SortedIndex { concat, suffix_array, rank_at_position }
 }
 
 /// Given two SA candidate positions, pick the one that better matches
@@ -121,7 +121,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
         sortedsize >>= 2;
     }
 
-    let SortedIndex { mut concat, mut sorted, mut reverse } =
+    let SortedIndex { mut concat, mut suffix_array, mut rank_at_position } =
         build_index(target, source, sortedsize);
 
     while outpos < target_len {
@@ -132,13 +132,13 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
             }
             let idx = build_index(target, source, sortedsize);
             concat = idx.concat;
-            sorted = idx.sorted;
-            reverse = idx.reverse;
+            suffix_array = idx.suffix_array;
+            rank_at_position = idx.rank_at_position;
         }
 
-        let sa_len = sorted.len();
+        let sa_len = suffix_array.len();
         let search = &target[outpos..sortedsize];
-        let idx = reverse[outpos];
+        let rank = rank_at_position[outpos];
 
         // Scan SA neighbors for nearest valid match.
         // Invalid zone: [outpos, sortedsize) — not-yet-written target bytes.
@@ -146,10 +146,10 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
         let mut dn: Option<usize> = None;
 
         {
-            let mut i = idx;
+            let mut i = rank;
             while i > 0 {
                 i -= 1;
-                let p = sorted[i] as usize;
+                let p = suffix_array.position_at_rank(i).as_index();
                 if p < outpos || p >= sortedsize {
                     up = Some(p);
                     break;
@@ -157,9 +157,9 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
             }
         }
         {
-            let mut i = idx + 1;
+            let mut i = rank + 1;
             while i < sa_len {
-                let p = sorted[i] as usize;
+                let p = suffix_array.position_at_rank(i).as_index();
                 if p < outpos || p >= sortedsize {
                     dn = Some(p);
                     break;

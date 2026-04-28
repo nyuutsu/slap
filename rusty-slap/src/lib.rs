@@ -1,7 +1,7 @@
 mod bps_diff;
 mod compress;
 mod crc32;
-mod sa;
+mod suffix_sort;
 
 /// CRC-32 with hardware acceleration via crc32fast.
 ///
@@ -11,32 +11,6 @@ mod sa;
 pub unsafe extern "C" fn rusty_crc32(data: *const u8, len: usize) -> u32 {
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
     crc32::crc32(slice)
-}
-
-/// Build suffix array via SA-IS (linear time).
-///
-/// Writes `len` i32 values into `sa_out`.  Returns 0 on success, -1 if
-/// `len` exceeds `i32::MAX`.
-///
-/// # Safety
-/// - `data` must point to `len` readable bytes.
-/// - `sa_out` must point to a buffer of at least `len` writable `i32`s.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn rusty_suffix_array(
-    data: *const u8,
-    len: usize,
-    sa_out: *mut i32,
-) -> i32 {
-    if len > i32::MAX as usize {
-        return -1;
-    }
-    if len == 0 {
-        return 0;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let sa = sa::suffix_array(slice);
-    unsafe { std::ptr::copy_nonoverlapping(sa.as_ptr(), sa_out, sa.len()) };
-    0
 }
 
 /// Compute BPS diff (action byte stream).
