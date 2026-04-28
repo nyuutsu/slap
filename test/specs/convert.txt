@@ -5,7 +5,7 @@
 #   stadium2-fair target:  f3b9f582c97d644c023622973ca04ef3b5a87dfc
 #   stadium2-size target:  1155bbd39201617638aab3f3b1087d3a11413b08
 #   paper-mario pmmq target: 50e583fca0d58173a6b3dbd7ae9aa0783e281ff2
-#   dm4y target:           10f5981bca3660127d308778b60a343e2e44dec7
+#   dm4y target:           b460119b0fbd80cecba3ded57fa11a16370dd43e
 #
 # ============================================================================
 # Rejections (one per reason)
@@ -34,7 +34,7 @@ pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |            
 # ============================================================================
 # Supplementary: PPF2 fileSize satisfies APS-N64 dest_size
 # ============================================================================
-ppf2       | aps-n64 | test/data/dm4y/patch.ppf2               | test/data/dm4y/base.gbc         | 10f5981bca3660127d308778b60a343e2e44dec7 | accept | dropping.*validation |
+ppf2       | aps-n64 | test/data/dm4y/patch.ppf2               | test/data/dm4y/base.gbc         | b460119b0fbd80cecba3ded57fa11a16370dd43e | accept | dropping.*validation |
 #
 # ============================================================================
 # --with bypass (apply-then-create)

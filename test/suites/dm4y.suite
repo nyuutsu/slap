@@ -1,22 +1,20 @@
 # Yu-Gi-Oh! Duel Monsters 4: Yuugi Deck (Japan) — dm4-hacking translation
-# 4 MB GBC ROM. Primary small-ROM test fixture: 14 format patches,
+# 4 MB GBC ROM. Primary small-ROM test fixture: 12 format patches,
 # exercises CLI behavior, failure modes, and format coverage.
 
 base:   test/data/dm4y/base.gbc
-sha1:   10f5981bca3660127d308778b60a343e2e44dec7
-desc:   dm4y translation (4 MB GBC, 14 formats)
+sha1:   b460119b0fbd80cecba3ded57fa11a16370dd43e
+desc:   dm4y translation (4 MB GBC, 12 formats)
 
-BPS      | test/data/dm4y/patch.bps       | real      | dm4-hacking translation project
-IPS      | test/data/dm4y/patch.ips       | converted | Flips
-IPS32    | test/data/dm4y/patch.ips32     | converted | sips
-UPS      | test/data/dm4y/patch.ups       | converted | Go ups
-PPF3     | test/data/dm4y/patch.ppf       | converted | MakePPF3
-PPF1     | test/data/dm4y/patch.ppf1  | converted | RomPatcher.js
-PPF2     | test/data/dm4y/patch.ppf2  | converted | RomPatcher.js
-EBP      | test/data/dm4y/patch.ebp       | converted | RomPatcher.js
-APS-N64  | test/data/dm4y/patch.aps       | converted | RomPatcher.js
-NINJA2   | test/data/dm4y/patch.rup       | converted | RomPatcher.js
+BPS      | test/data/dm4y/patch.bps       | converted | slap
+IPS      | test/data/dm4y/patch.ips       | converted | slap
+IPS32    | test/data/dm4y/patch.ips32     | converted | slap
+UPS      | test/data/dm4y/patch.ups       | converted | slap
+PPF3     | test/data/dm4y/patch.ppf       | converted | slap
+EBP      | test/data/dm4y/patch.ebp       | converted | slap
+APS-N64  | test/data/dm4y/patch.aps       | converted | slap
+NINJA2   | test/data/dm4y/patch.rup       | converted | slap
+GDIFF    | test/data/dm4y/patch.gdiff     | converted | slap
 VCDIFF   | test/data/dm4y/patch.vcdiff    | converted | xdelta3 -S none
 bsdiff   | test/data/dm4y/patch.bsdiff    | converted | bsdiff
 xdelta1  | test/data/dm4y/patch.xdelta1   | converted | xdelta 1.1.4
-GDIFF    | test/data/dm4y/patch.gdiff     | converted | javaxdelta
