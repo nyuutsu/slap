@@ -1,0 +1,11 @@
+# Pokemon Stadium 2 — fair-heavy (realistic ~7% edits, not adversarial)
+# 64 MB N64 ROM. Sits between dm4y (4 MB, real translation) and the
+# heavy-diff suite (40% PRNG-XOR'd, adversarial): meaningfully heavy
+# work for BPS to do, but with edit shapes a real ROM hack might make
+# (block swaps, region copies, structured tables, masked transforms).
+
+base:   test/data/stadium2/base.z64
+sha1:   f3b9f582c97d644c023622973ca04ef3b5a87dfc
+desc:   stadium2 fair-heavy (64 MB N64, ~7% changed, realistic shapes)
+
+BPS      | test/data/stadium2/fair-heavy/patch.bps         | synthetic | slap
