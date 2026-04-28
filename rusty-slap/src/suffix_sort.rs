@@ -7,78 +7,99 @@
 
 // ── Public surface ─────────────────────────────────────────────────────
 
-/// A position into a buffer being suffix-sorted. Wide enough to address
-/// any byte-addressable input; the underlying width is u64 so any input
-/// constructable in memory on a 64-bit system is in range.
-///
-/// The newtype exists because raw u64 is structurally identical to
-/// "byte count," "byte offset," "bucket index," and many other quantities
-/// in this module. Mixing them silently is the bug class this type
-/// prevents.
-///
-/// During construction the algorithm uses a narrower `InternalPosition`
-/// when the input fits — see the trait below — and converts to this
-/// public type once every slot has been placed.
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
-pub struct SuffixPosition(u64);
-
-impl SuffixPosition {
-    pub fn from_index(index: usize) -> Self {
-        SuffixPosition(index as u64)
-    }
-
-    pub fn as_index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-/// The result of suffix-sorting a buffer. Indexed by rank; entry r is
-/// the position in the original buffer where the r-th lexicographically
+/// The result of suffix-sorting a buffer. Entry at rank `r` is the
+/// position in the original buffer where the `r`-th lexicographically
 /// smallest suffix begins.
+///
+/// Storage width matches what was sufficient for the input: a narrow
+/// `Vec<u32>` for any input up to 4 GB (every realistic ROM size), a
+/// wide `Vec<u64>` only when the input crosses that threshold.
+/// Consumers see `usize` positions through the accessors; the variant
+/// is an implementation detail that earns the narrow-storage memory
+/// savings on the dominant induction passes.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct SuffixArray {
-    positions: Vec<SuffixPosition>,
+pub enum SuffixArray {
+    /// Suffix array stored at `u32` width. Used when the input length
+    /// fits in a `u32` (≤ 4 GB).
+    Narrow(Vec<u32>),
+    /// Suffix array stored at `u64` width. Used for inputs larger than
+    /// 4 GB.
+    Wide(Vec<u64>),
 }
 
 impl SuffixArray {
+    /// Number of suffixes — equal to the length of the input the SA was
+    /// built from.
     pub fn len(&self) -> usize {
-        self.positions.len()
+        match self {
+            SuffixArray::Narrow(positions) => positions.len(),
+            SuffixArray::Wide(positions) => positions.len(),
+        }
     }
 
     // Staticlib: rustc can't see FFI consumers, so any unused-internally
     // pub method trips dead_code; len/is_empty go together by convention.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.positions.is_empty()
+        self.len() == 0
     }
 
-    pub fn position_at_rank(&self, rank: usize) -> SuffixPosition {
-        self.positions[rank]
+    /// The position in the input at which the `rank`-th lexicographically
+    /// smallest suffix begins. Panics if `rank >= self.len()`.
+    pub fn position_at_rank(&self, rank: usize) -> usize {
+        match self {
+            SuffixArray::Narrow(positions) => positions[rank] as usize,
+            SuffixArray::Wide(positions) => positions[rank] as usize,
+        }
     }
 
-    pub fn positions(&self) -> &[SuffixPosition] {
-        &self.positions
+    /// Iterate positions in ascending rank order, widened to `usize`.
+    /// Lets callers walk the entire SA without branching on the variant
+    /// per element — useful when building a reverse rank index.
+    pub fn iter_positions(&self) -> SuffixPositionIter<'_> {
+        match self {
+            SuffixArray::Narrow(positions) => SuffixPositionIter::Narrow(positions.iter()),
+            SuffixArray::Wide(positions) => SuffixPositionIter::Wide(positions.iter()),
+        }
+    }
+}
+
+/// Iterator over a [`SuffixArray`]'s positions, widened to `usize`.
+/// Variants mirror the array's storage so each step is a direct load
+/// and zero-extend, with no boxing.
+pub enum SuffixPositionIter<'a> {
+    Narrow(std::slice::Iter<'a, u32>),
+    Wide(std::slice::Iter<'a, u64>),
+}
+
+impl<'a> Iterator for SuffixPositionIter<'a> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            SuffixPositionIter::Narrow(iter) => iter.next().map(|&position| position as usize),
+            SuffixPositionIter::Wide(iter) => iter.next().map(|&position| position as usize),
+        }
     }
 }
 
 /// Build the suffix array of `data` in linear time. The empty input
-/// produces an empty `SuffixArray`.
+/// produces an empty [`SuffixArray::Narrow`].
 ///
-/// Dispatches on input size: for inputs that fit in a `u32`-indexed scratch
-/// space (≤ 4 GB, i.e. effectively every realistic input), the SA is built
-/// in `Vec<u32>` to halve memory bandwidth on the induction passes; larger
-/// inputs build in `Vec<u64>`. Either way the returned `SuffixArray`
-/// exposes positions through the wider `SuffixPosition`, so consumers see
-/// no API change.
+/// Dispatches on input size: inputs that fit in a `u32`-indexed scratch
+/// space (≤ 4 GB, effectively every realistic input) are built in
+/// `Vec<u32>` to halve memory bandwidth on the induction passes; larger
+/// inputs build in `Vec<u64>`. The returned variant reflects the
+/// choice; consumers see `usize` positions either way.
 #[must_use]
 pub fn suffix_sort(data: &[u8]) -> SuffixArray {
     if data.is_empty() {
-        return SuffixArray { positions: Vec::new() };
+        return SuffixArray::Narrow(Vec::new());
     }
     if data.len() <= U32_INTERNAL_THRESHOLD {
-        suffix_sort_with_internal::<u32>(data)
+        SuffixArray::Narrow(suffix_sort_byte_alphabet::<u32>(data))
     } else {
-        suffix_sort_with_internal::<u64>(data)
+        SuffixArray::Wide(suffix_sort_byte_alphabet::<u64>(data))
     }
 }
 
@@ -147,11 +168,13 @@ const BYTE_ALPHABET_SIZE: usize = 256;
 
 /// An integer wide enough to index the SA scratch space during
 /// construction. Two impls live in this module: `u32` for inputs up to
-/// 4 GB, `u64` for larger. The public `SuffixArray` always exposes
-/// positions through the wider `SuffixPosition` regardless of which
-/// internal width was used — the trait exists only to specialise
-/// internal allocation, halving memory bandwidth on the dominant
-/// induction passes when the input fits in `u32`.
+/// 4 GB, `u64` for larger. The chosen width survives all the way to
+/// the public [`SuffixArray`], which wraps the constructed `Vec<P>`
+/// directly — the trait exists to specialise internal allocation,
+/// halving memory bandwidth on the dominant induction passes when the
+/// input fits in `u32`. It also serves as construction-time discipline
+/// against mixing positions with byte counts and bucket indices, which
+/// are all structurally `usize`.
 trait InternalPosition: Copy + Eq + Ord {
     /// Sentinel marking a not-yet-placed slot in the SA under
     /// construction. Both impls use the type's `MAX`, which the
@@ -206,20 +229,6 @@ impl InternalPosition for u64 {
 }
 
 // ── Algorithm ──────────────────────────────────────────────────────────
-
-/// Build the SA in `Vec<P>`-typed scratch space, then convert the placed
-/// positions to the wider `SuffixPosition` for the public surface. The
-/// conversion is one cache-line walk over the SA at the end, much cheaper
-/// than the induction passes that built it.
-fn suffix_sort_with_internal<P: InternalPosition>(data: &[u8]) -> SuffixArray {
-    let internal_suffix_array = suffix_sort_byte_alphabet::<P>(data);
-    SuffixArray {
-        positions: internal_suffix_array
-            .into_iter()
-            .map(|placed_position| SuffixPosition::from_index(placed_position.as_index()))
-            .collect(),
-    }
-}
 
 /// Top-level entry for byte input. Specialized so the dominant outer
 /// pass works directly on `&[u8]` without widening to a wider integer
@@ -573,10 +582,10 @@ mod tests {
 
     /// Reference suffix-array implementation: sort indices by their
     /// suffix lexicographically. O(n² log n); used as truth source.
-    fn naive_suffix_array(data: &[u8]) -> Vec<SuffixPosition> {
+    fn naive_suffix_array(data: &[u8]) -> Vec<usize> {
         let mut indices: Vec<usize> = (0..data.len()).collect();
         indices.sort_by(|&left, &right| data[left..].cmp(&data[right..]));
-        indices.into_iter().map(SuffixPosition::from_index).collect()
+        indices
     }
 
     /// Deterministic PRNG (SplitMix64).
@@ -595,11 +604,7 @@ mod tests {
     }
 
     fn ranks_of(data: &[u8]) -> Vec<usize> {
-        suffix_sort(data)
-            .positions()
-            .iter()
-            .map(|position| position.as_index())
-            .collect()
+        suffix_sort(data).iter_positions().collect()
     }
 
     #[test]
@@ -611,7 +616,7 @@ mod tests {
     fn single_byte() {
         let sa = suffix_sort(&[42]);
         assert_eq!(sa.len(), 1);
-        assert_eq!(sa.position_at_rank(0).as_index(), 0);
+        assert_eq!(sa.position_at_rank(0), 0);
     }
 
     #[test]
@@ -646,7 +651,7 @@ mod tests {
     fn random_fuzz_against_naive() {
         for length in [1usize, 2, 8, 64, 256, 1024] {
             let data = pseudo_random(0xdeadbeef ^ length as u64, length);
-            let actual: Vec<SuffixPosition> = suffix_sort(&data).positions().to_vec();
+            let actual: Vec<usize> = suffix_sort(&data).iter_positions().collect();
             let expected = naive_suffix_array(&data);
             assert_eq!(actual, expected, "mismatch at length {length}");
         }
@@ -662,9 +667,8 @@ mod tests {
     #[test]
     fn fuzz_large_input_u32_path() {
         let data = pseudo_random(0xfeed, 8192);
-        assert_eq!(
-            suffix_sort(&data).positions(),
-            naive_suffix_array(&data).as_slice(),
-        );
+        let actual: Vec<usize> = suffix_sort(&data).iter_positions().collect();
+        let expected = naive_suffix_array(&data);
+        assert_eq!(actual, expected);
     }
 }

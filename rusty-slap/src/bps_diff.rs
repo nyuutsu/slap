@@ -75,8 +75,8 @@ fn build_index(target: &[u8], source: &[u8], sortedsize: usize) -> SortedIndex {
     concat.extend_from_slice(source);
     let suffix_array = suffix_sort::suffix_sort(&concat);
     let mut rank_at_position = vec![0usize; concat.len()];
-    for (rank, position) in suffix_array.positions().iter().enumerate() {
-        rank_at_position[position.as_index()] = rank;
+    for (rank, position) in suffix_array.iter_positions().enumerate() {
+        rank_at_position[position] = rank;
     }
     SortedIndex { concat, suffix_array, rank_at_position }
 }
@@ -149,7 +149,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
             let mut i = rank;
             while i > 0 {
                 i -= 1;
-                let p = suffix_array.position_at_rank(i).as_index();
+                let p = suffix_array.position_at_rank(i);
                 if p < outpos || p >= sortedsize {
                     up = Some(p);
                     break;
@@ -159,7 +159,7 @@ pub fn bps_diff(source: &[u8], target: &[u8]) -> Vec<u8> {
         {
             let mut i = rank + 1;
             while i < sa_len {
-                let p = suffix_array.position_at_rank(i).as_index();
+                let p = suffix_array.position_at_rank(i);
                 if p < outpos || p >= sortedsize {
                     dn = Some(p);
                     break;
