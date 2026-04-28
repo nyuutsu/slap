@@ -15,29 +15,20 @@
 /// "byte count," "byte offset," "bucket index," and many other quantities
 /// in this module. Mixing them silently is the bug class this type
 /// prevents.
+///
+/// During construction the algorithm uses a narrower `InternalPosition`
+/// when the input fits — see the trait below — and converts to this
+/// public type once every slot has been placed.
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct SuffixPosition(u64);
 
 impl SuffixPosition {
-    /// Reserved value used internally to mark a not-yet-placed slot in a
-    /// suffix array under construction. A finished `SuffixArray` never
-    /// contains this value, and the public API has no way to expose it.
-    const UNPLACED_SLOT: SuffixPosition = SuffixPosition(u64::MAX);
-
     pub fn from_index(index: usize) -> Self {
-        debug_assert!(
-            index != usize::MAX,
-            "SuffixPosition cannot represent usize::MAX (reserved as the unplaced-slot sentinel)"
-        );
         SuffixPosition(index as u64)
     }
 
     pub fn as_index(self) -> usize {
         self.0 as usize
-    }
-
-    fn is_placed(self) -> bool {
-        self.0 != u64::MAX
     }
 }
 
@@ -72,13 +63,28 @@ impl SuffixArray {
 
 /// Build the suffix array of `data` in linear time. The empty input
 /// produces an empty `SuffixArray`.
+///
+/// Dispatches on input size: for inputs that fit in a `u32`-indexed scratch
+/// space (≤ 4 GB, i.e. effectively every realistic input), the SA is built
+/// in `Vec<u32>` to halve memory bandwidth on the induction passes; larger
+/// inputs build in `Vec<u64>`. Either way the returned `SuffixArray`
+/// exposes positions through the wider `SuffixPosition`, so consumers see
+/// no API change.
 #[must_use]
 pub fn suffix_sort(data: &[u8]) -> SuffixArray {
     if data.is_empty() {
         return SuffixArray { positions: Vec::new() };
     }
-    suffix_sort_byte_alphabet(data)
+    if data.len() <= U32_INTERNAL_THRESHOLD {
+        suffix_sort_with_internal::<u32>(data)
+    } else {
+        suffix_sort_with_internal::<u64>(data)
+    }
 }
+
+/// Largest input length that the `u32`-internal path can address. Equal
+/// to `u32::MAX`, leaving the all-ones value free as `UNPLACED_SLOT`.
+const U32_INTERNAL_THRESHOLD: usize = u32::MAX as usize;
 
 // ── Internal types ─────────────────────────────────────────────────────
 
@@ -139,19 +145,99 @@ impl Symbol for u32 {
 
 const BYTE_ALPHABET_SIZE: usize = 256;
 
+/// An integer wide enough to index the SA scratch space during
+/// construction. Two impls live in this module: `u32` for inputs up to
+/// 4 GB, `u64` for larger. The public `SuffixArray` always exposes
+/// positions through the wider `SuffixPosition` regardless of which
+/// internal width was used — the trait exists only to specialise
+/// internal allocation, halving memory bandwidth on the dominant
+/// induction passes when the input fits in `u32`.
+trait InternalPosition: Copy + Eq + Ord {
+    /// Sentinel marking a not-yet-placed slot in the SA under
+    /// construction. Both impls use the type's `MAX`, which the
+    /// algorithm will never legitimately produce as a real position
+    /// (the dispatcher caps input length one short of it).
+    const UNPLACED_SLOT: Self;
+
+    fn from_index(index: usize) -> Self;
+    fn as_index(self) -> usize;
+    fn is_placed(self) -> bool;
+}
+
+impl InternalPosition for u32 {
+    const UNPLACED_SLOT: u32 = u32::MAX;
+
+    fn from_index(index: usize) -> Self {
+        debug_assert!(
+            index <= u32::MAX as usize,
+            "u32 InternalPosition cannot represent index {index}; \
+             dispatcher should have routed to u64"
+        );
+        index as u32
+    }
+
+    fn as_index(self) -> usize {
+        self as usize
+    }
+
+    fn is_placed(self) -> bool {
+        self != u32::MAX
+    }
+}
+
+impl InternalPosition for u64 {
+    const UNPLACED_SLOT: u64 = u64::MAX;
+
+    fn from_index(index: usize) -> Self {
+        debug_assert!(
+            index != usize::MAX,
+            "u64 InternalPosition cannot represent usize::MAX (reserved as the unplaced-slot sentinel)"
+        );
+        index as u64
+    }
+
+    fn as_index(self) -> usize {
+        self as usize
+    }
+
+    fn is_placed(self) -> bool {
+        self != u64::MAX
+    }
+}
+
 // ── Algorithm ──────────────────────────────────────────────────────────
+
+/// Build the SA in `Vec<P>`-typed scratch space, then convert the placed
+/// positions to the wider `SuffixPosition` for the public surface. The
+/// conversion is one cache-line walk over the SA at the end, much cheaper
+/// than the induction passes that built it.
+fn suffix_sort_with_internal<P: InternalPosition>(data: &[u8]) -> SuffixArray {
+    let internal_suffix_array = suffix_sort_byte_alphabet::<P>(data);
+    SuffixArray {
+        positions: internal_suffix_array
+            .into_iter()
+            .map(|placed_position| SuffixPosition::from_index(placed_position.as_index()))
+            .collect(),
+    }
+}
 
 /// Top-level entry for byte input. Specialized so the dominant outer
 /// pass works directly on `&[u8]` without widening to a wider integer
 /// type — the source of the largest perf win over a naïve i32 SA-IS.
-fn suffix_sort_byte_alphabet(data: &[u8]) -> SuffixArray {
-    suffix_sort_over_alphabet(data, BYTE_ALPHABET_SIZE)
+fn suffix_sort_byte_alphabet<P: InternalPosition>(data: &[u8]) -> Vec<P> {
+    suffix_sort_over_alphabet::<u8, P>(data, BYTE_ALPHABET_SIZE)
 }
 
 /// Recursive entry. Input is a slice of names assigned by the parent
 /// call's LMS-naming step; alphabet size is the number of distinct names.
-fn suffix_sort_name_alphabet(names: &[u32], alphabet_size: usize) -> SuffixArray {
-    suffix_sort_over_alphabet(names, alphabet_size)
+/// The internal-position type is inherited from the parent call: once
+/// the dispatcher has decided the input fits in `P`, the recursive
+/// input (always shorter) fits too.
+fn suffix_sort_name_alphabet<P: InternalPosition>(
+    names: &[u32],
+    alphabet_size: usize,
+) -> Vec<P> {
+    suffix_sort_over_alphabet::<u32, P>(names, alphabet_size)
 }
 
 /// SA-IS body, generic over the symbol type. The algorithm:
@@ -164,14 +250,17 @@ fn suffix_sort_name_alphabet(names: &[u32], alphabet_size: usize) -> SuffixArray
 ///      the named string.
 ///   6. Re-place LMS positions in their exact order, induce L then S to
 ///      fill the rest of the SA exactly.
-fn suffix_sort_over_alphabet<S: Symbol>(input: &[S], alphabet_size: usize) -> SuffixArray {
+fn suffix_sort_over_alphabet<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    alphabet_size: usize,
+) -> Vec<P> {
     let n = input.len();
     let comparisons = compute_suffix_comparisons(input);
     let leftmost_smaller = find_leftmost_smaller_positions(&comparisons);
     let buckets = compute_bucket_layout(input, alphabet_size);
 
     // Approximate sort. Place LMS at bucket-ends in input order, then induce.
-    let mut suffix_array = vec![SuffixPosition::UNPLACED_SLOT; n];
+    let mut suffix_array = vec![P::UNPLACED_SLOT; n];
     place_leftmost_smaller_positions(
         input,
         &mut suffix_array,
@@ -186,11 +275,14 @@ fn suffix_sort_over_alphabet<S: Symbol>(input: &[S], alphabet_size: usize) -> Su
         name_leftmost_smaller_substrings(input, &suffix_array, &comparisons, &leftmost_smaller);
 
     // Sort LMS positions exactly: recurse if any names collide, else invert.
-    let leftmost_smaller_in_sorted_order =
-        sort_leftmost_smaller_by_names(&leftmost_smaller, &names_in_lms_order, distinct_names);
+    let leftmost_smaller_in_sorted_order = sort_leftmost_smaller_by_names::<P>(
+        &leftmost_smaller,
+        &names_in_lms_order,
+        distinct_names,
+    );
 
     // Exact sort. Re-place LMS in correct order at bucket-ends, induce.
-    suffix_array.iter_mut().for_each(|slot| *slot = SuffixPosition::UNPLACED_SLOT);
+    suffix_array.iter_mut().for_each(|slot| *slot = P::UNPLACED_SLOT);
     place_leftmost_smaller_positions(
         input,
         &mut suffix_array,
@@ -204,7 +296,7 @@ fn suffix_sort_over_alphabet<S: Symbol>(input: &[S], alphabet_size: usize) -> Su
         suffix_array.iter().all(|slot| slot.is_placed()),
         "every SA slot must be filled at this point"
     );
-    SuffixArray { positions: suffix_array }
+    suffix_array
 }
 
 /// Walk the input right-to-left, classifying each position as Larger or
@@ -269,9 +361,9 @@ fn compute_bucket_layout<S: Symbol>(input: &[S], alphabet_size: usize) -> Bucket
 /// buckets, iterating in reverse so that earlier-listed positions land
 /// in lower SA slots within each bucket. Used both for the approximate
 /// pass (input order) and the exact pass (sorted order).
-fn place_leftmost_smaller_positions<S: Symbol>(
+fn place_leftmost_smaller_positions<S: Symbol, P: InternalPosition>(
     input: &[S],
-    sa: &mut [SuffixPosition],
+    sa: &mut [P],
     positions_to_place: &[usize],
     buckets: &BucketLayout,
 ) {
@@ -279,7 +371,7 @@ fn place_leftmost_smaller_positions<S: Symbol>(
     for &position in positions_to_place.iter().rev() {
         let symbol_index = input[position].alphabet_index();
         bucket_end_cursors[symbol_index] -= 1;
-        sa[bucket_end_cursors[symbol_index]] = SuffixPosition::from_index(position);
+        sa[bucket_end_cursors[symbol_index]] = P::from_index(position);
     }
 }
 
@@ -289,9 +381,9 @@ fn place_leftmost_smaller_positions<S: Symbol>(
 /// one past the end seeds the predecessor n-1 unconditionally — that
 /// position is always Larger, and without seeding, no real position
 /// could trigger its placement.
-fn place_left_induced_suffixes<S: Symbol>(
+fn place_left_induced_suffixes<S: Symbol, P: InternalPosition>(
     input: &[S],
-    sa: &mut [SuffixPosition],
+    sa: &mut [P],
     comparisons: &[SuffixComparison],
     buckets: &BucketLayout,
 ) {
@@ -301,7 +393,7 @@ fn place_left_induced_suffixes<S: Symbol>(
     if n > 0 {
         let last_position = n - 1;
         let symbol_index = input[last_position].alphabet_index();
-        sa[bucket_start_cursors[symbol_index]] = SuffixPosition::from_index(last_position);
+        sa[bucket_start_cursors[symbol_index]] = P::from_index(last_position);
         bucket_start_cursors[symbol_index] += 1;
     }
 
@@ -317,7 +409,7 @@ fn place_left_induced_suffixes<S: Symbol>(
         let predecessor = position - 1;
         if comparisons[predecessor] == SuffixComparison::LargerThanSuccessor {
             let symbol_index = input[predecessor].alphabet_index();
-            sa[bucket_start_cursors[symbol_index]] = SuffixPosition::from_index(predecessor);
+            sa[bucket_start_cursors[symbol_index]] = P::from_index(predecessor);
             bucket_start_cursors[symbol_index] += 1;
         }
     }
@@ -328,9 +420,9 @@ fn place_left_induced_suffixes<S: Symbol>(
 /// available slot from the end of its bucket. By design this overwrites
 /// the approximate LMS placements — they served their purpose during
 /// L-induction and S-induction places each LMS at its final rank.
-fn place_right_induced_suffixes<S: Symbol>(
+fn place_right_induced_suffixes<S: Symbol, P: InternalPosition>(
     input: &[S],
-    sa: &mut [SuffixPosition],
+    sa: &mut [P],
     comparisons: &[SuffixComparison],
     buckets: &BucketLayout,
 ) {
@@ -350,7 +442,7 @@ fn place_right_induced_suffixes<S: Symbol>(
         if comparisons[predecessor] == SuffixComparison::SmallerThanSuccessor {
             let symbol_index = input[predecessor].alphabet_index();
             bucket_end_cursors[symbol_index] -= 1;
-            sa[bucket_end_cursors[symbol_index]] = SuffixPosition::from_index(predecessor);
+            sa[bucket_end_cursors[symbol_index]] = P::from_index(predecessor);
         }
     }
 }
@@ -363,9 +455,9 @@ fn place_right_induced_suffixes<S: Symbol>(
 ///
 /// Returns the names in LMS-input-order (parallel to `lms.positions`)
 /// and the count of distinct names.
-fn name_leftmost_smaller_substrings<S: Symbol>(
+fn name_leftmost_smaller_substrings<S: Symbol, P: InternalPosition>(
     input: &[S],
-    sa: &[SuffixPosition],
+    sa: &[P],
     comparisons: &[SuffixComparison],
     lms: &LeftmostSmallerPositions,
 ) -> (Vec<u32>, usize) {
@@ -450,18 +542,18 @@ fn leftmost_smaller_substrings_equal<S: Symbol>(
 /// Produce the LMS positions in their final lexicographic order.
 /// If naming saw collisions, recurse on the named string; otherwise
 /// invert the names directly.
-fn sort_leftmost_smaller_by_names(
+fn sort_leftmost_smaller_by_names<P: InternalPosition>(
     leftmost_smaller: &LeftmostSmallerPositions,
     names_in_lms_order: &[u32],
     distinct_names: usize,
 ) -> Vec<usize> {
     let lms_count = leftmost_smaller.positions.len();
     if distinct_names < lms_count {
-        let recursive_sa = suffix_sort_name_alphabet(names_in_lms_order, distinct_names);
-        recursive_sa
-            .positions
+        let recursive_suffix_array =
+            suffix_sort_name_alphabet::<P>(names_in_lms_order, distinct_names);
+        recursive_suffix_array
             .iter()
-            .map(|sorted_lms_rank| leftmost_smaller.positions[sorted_lms_rank.as_index()])
+            .map(|&sorted_lms_rank| leftmost_smaller.positions[sorted_lms_rank.as_index()])
             .collect()
     } else {
         let mut in_sorted_order = vec![0usize; lms_count];
@@ -558,5 +650,21 @@ mod tests {
             let expected = naive_suffix_array(&data);
             assert_eq!(actual, expected, "mismatch at length {length}");
         }
+    }
+
+    /// The dispatcher routes inputs ≤ `u32::MAX` through `Vec<u32>`-typed
+    /// scratch space, the path that virtually every real input takes.
+    /// Verify it on a multi-KB input — large enough that the recursive
+    /// step actually engages, small enough that the naive reference is
+    /// still tractable. Inputs large enough to require the `u64` path
+    /// (> 4 GB) aren't checkable this way, but the algorithm is identical
+    /// across both impls: only the integer width differs.
+    #[test]
+    fn fuzz_large_input_u32_path() {
+        let data = pseudo_random(0xfeed, 8192);
+        assert_eq!(
+            suffix_sort(&data).positions(),
+            naive_suffix_array(&data).as_slice(),
+        );
     }
 }
