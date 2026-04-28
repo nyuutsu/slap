@@ -1,11 +1,29 @@
 # Pokemon Stadium 2 — fair-heavy (realistic ~7% edits, not adversarial)
-# 64 MB N64 ROM. Sits between dm4y (4 MB, real translation) and the
-# heavy-diff suite (40% PRNG-XOR'd, adversarial): meaningfully heavy
-# work for BPS to do, but with edit shapes a real ROM hack might make
-# (block swaps, region copies, structured tables, masked transforms).
+# 64 MB N64 ROM. Sits one notch heavier than dm4y (4 MB, real
+# translation): meaningfully heavy work for BPS to do, but with edit
+# shapes a real ROM hack might make (block swaps, region copies,
+# structured tables, masked transforms).
 
 base:   test/data/stadium2/base.z64
 sha1:   f3b9f582c97d644c023622973ca04ef3b5a87dfc
 desc:   stadium2 fair-heavy (64 MB N64, ~7% changed, realistic shapes)
 
 BPS      | test/data/stadium2/fair-heavy/patch.bps         | synthetic | slap
+IPS32    | test/data/stadium2/fair-heavy/patch.ips32       | synthetic | slap
+UPS      | test/data/stadium2/fair-heavy/patch.ups         | synthetic | slap
+PPF3     | test/data/stadium2/fair-heavy/patch.ppf         | synthetic | slap
+NINJA2   | test/data/stadium2/fair-heavy/patch.rup         | synthetic | slap
+APS-N64  | test/data/stadium2/fair-heavy/patch.aps         | synthetic | slap
+GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
+
+# 2x2 validation: each format below was produced by slap and verified
+# against its canonical reference tool — slap-made and ref-made patches,
+# applied by both slap and the ref tool, all produced the target SHA.
+# IPS32 created with sips, applied with tools/atmosphere-ips/
+#   (Atmosphère's ApplyIpsPatch algorithm transliterated to a Linux CLI;
+#    no Switch-native IPS32 applier is runnable on this host)
+# UPS validated against Go ups
+# PPF3 validated against MakePPF3 (apply via applyppf3)
+# NINJA2 validated against RomPatcher.js
+# APS-N64 validated against RomPatcher.js (type=1, cart P3E)
+# GDIFF validated against javaxdelta

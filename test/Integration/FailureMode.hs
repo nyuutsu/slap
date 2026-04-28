@@ -68,7 +68,7 @@ failureModeTests tier getTargets = do
       fftaBase     = repo </> "test/data/ffta/base.gba"
       fftaAps      = repo </> "test/data/ffta/ffta-x.aps"
       stadium2Base = repo </> "test/data/stadium2/base.z64"
-      stadium2Bps  = repo </> "test/data/stadium2/heavy-diff/patch.bps"
+      stadium2Bps  = repo </> "test/data/stadium2/fair-heavy/patch.bps"
 
   let smcMaybes = map WillRun smcShapeConstraintTests
 

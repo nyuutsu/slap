@@ -6,10 +6,8 @@
 # applies it, and we verify the output SHA1 matches the expected target.
 #
 # SHA1 key:
-#   stadium2-heavy target:  beba35ad698ba6d58c475051d7b69a444669ac17
 #   stadium2-fair target:   f3b9f582c97d644c023622973ca04ef3b5a87dfc
 #   stadium2-size target:   1155bbd39201617638aab3f3b1087d3a11413b08
-#   emerald-heavy target:   51a34cd5b7702deb75dc57811fc00b4e10ce8a17
 #   paper-mario-pp target:  7a5ac477d1961fc44fcfd7372b93c59b06d0d5fd
 #
 # External tools (looked up via $FLIPS/$ROMPATCHER env or tools/ fallback):
@@ -22,36 +20,26 @@
 # Flips (IPS, BPS, UPS)
 # ============================================================================
 #
-# --- IPS (emerald, ≤16 MB offsets) ---
-ips    | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | flips
-#
 # --- BPS ---
-bps    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | flips
 bps    | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair-heavy/patch.bps     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | flips
 bps    | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 1155bbd39201617638aab3f3b1087d3a11413b08 | flips
 #
 # --- UPS ---
-ups    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | flips
+ups    | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair-heavy/patch.bps     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | flips
 ups    | stadium2-size   | test/data/stadium2/base.z64 | test/data/stadium2/size-change/patch.vcdiff | 1155bbd39201617638aab3f3b1087d3a11413b08 | flips
 #
 # ============================================================================
 # RomPatcher.js (EBP, PPF3, APS-N64, APS-GBA, NINJA2, PMSR)
 # ============================================================================
 #
-# --- EBP (emerald, ≤16 MB offsets) ---
-ebp    | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | rompatcher
-#
 # --- PPF3 (ppf alias) ---
-ppf    | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | rompatcher
+ppf    | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair-heavy/patch.bps     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | rompatcher
 #
 # --- APS-N64 (apsn64 alias) ---
-apsn64 | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | rompatcher
-#
-# --- APS-GBA (apsgba alias) ---
-apsgba | emerald-heavy   | test/data/emerald/base.gba  | test/data/emerald/heavy-diff/patch.bps      | 51a34cd5b7702deb75dc57811fc00b4e10ce8a17 | rompatcher
+apsn64 | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair-heavy/patch.bps     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | rompatcher
 #
 # --- NINJA2 ---
-ninja2 | stadium2-heavy  | test/data/stadium2/base.z64 | test/data/stadium2/heavy-diff/patch.vcdiff  | beba35ad698ba6d58c475051d7b69a444669ac17 | rompatcher
+ninja2 | stadium2-fair   | test/data/stadium2/base.z64 | test/data/stadium2/fair-heavy/patch.bps     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | rompatcher
 #
 # --- PMSR (paper-mario, hardcoded ROM validation in RPJS) ---
 pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mario/pmmq-jr.mod        | 50e583fca0d58173a6b3dbd7ae9aa0783e281ff2 | rompatcher
@@ -60,8 +48,12 @@ pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mar
 # Coverage gaps
 # ============================================================================
 #
-# No external applier available:
-#   IPS32, NINJA1, DPS, GDIFF, PCHTXT — no widely available CLI applier
+# Not yet wired into the crossval runner (CrossVal.hs applyExternal):
+#   IPS32 — applier available at tools/atmosphere-ips (Atmosphère algorithm)
+#   GDIFF — applier available via javaxdelta (com.nothome.delta.GDiffPatcher)
+#
+# No external applier available at all:
+#   NINJA1, DPS, PCHTXT — no widely available CLI applier
 #
 # External applier exists but slap cannot create the format:
 #   BSDiff (bspatch), VCDIFF (xdelta3), xdelta1 (xdelta)

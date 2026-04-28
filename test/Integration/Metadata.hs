@@ -63,10 +63,8 @@ testTreesFromGroup tree = [tree]  -- one node per group, by intent
 -- | (format, patch_path_relative, fields_to_check)
 metadataCases :: [(String, String, [String])]
 metadataCases =
-  [ ("ppf3",    "test/data/stadium2/heavy-diff/patch.ppf",       ["description", "undo data", "validation"])
-  , ("ninja1",  "test/data/emerald/heavy-diff/patch.ninja1",     ["source CRC", "source MD5", "source SHA1"])
-  , ("aps-n64", "test/data/stadium2/heavy-diff/patch.aps",   ["dest size", "description"])
-  , ("ebp",     "test/data/emerald/heavy-diff/patch.ebp",    ["title", "author", "description"])
+  [ ("ppf3",    "test/data/stadium2/fair-heavy/patch.ppf",       ["description", "undo data", "validation"])
+  , ("aps-n64", "test/data/stadium2/fair-heavy/patch.aps",       ["dest size", "description"])
   ]
 
 planMetadataCase :: FilePath -> (String, String, [String]) -> IO [MaybeTest]

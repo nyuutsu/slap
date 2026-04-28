@@ -90,7 +90,7 @@ collectBootstrapPairs tier repo = do
             (repo </> "test/data/dm4y/patch.bps")
         , BootstrapPair
             (repo </> "test/data/stadium2/base.z64")
-            (repo </> "test/data/stadium2/heavy-diff/patch.bps")
+            (repo </> "test/data/stadium2/fair-heavy/patch.bps")
         ]
       allPairs = Set.toList (Set.fromList (specPairs ++ failureModePairs))
   filterM bothFilesExist (restrictToTier tier pairIsHeavy allPairs)
