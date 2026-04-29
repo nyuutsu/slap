@@ -1,6 +1,7 @@
 module Integration.Create (createTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
+import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -19,7 +20,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat, noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -53,9 +54,15 @@ planCreateRow getTargets repo fields = case fields of
         let absoluteBase = repo </> basePath
             absoluteBoot = repo </> bootstrapPath
             label        = formatString ++ "/" ++ scenario
+            runnable     = mkRoundTripTest getTargets label format
+                             absoluteBase absoluteBoot targetSha
+            constructor
+              | format == CreateDiff CreateBPS
+              , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
+              | otherwise                                   = WillRun
         in requireFixture absoluteBase $ \_ ->
            requireFixture absoluteBoot $ \_ ->
-             pure [WillRun (mkRoundTripTest getTargets label format absoluteBase absoluteBoot targetSha)]
+             pure [constructor runnable]
     | otherwise -> pure []  -- spec row references unknown format
   _ -> pure []
 

@@ -2,6 +2,7 @@ module Integration.FailureMode (failureModeTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
 import Integration.External (ExternalRun(..), ExternalTool(..), runExternal)
+import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
 import Integration.Helpers
   ( Tier
   , onlyAtFull
@@ -96,9 +97,8 @@ failureModeTests tier getTargets = do
         pure (map WillRun (crossFormatRoundTripTests dm4yBase dm4yBps))
     , requireFixture dm4yBase $ \_ ->
         requireFixture stadium2Base $ \_ ->
-          pure (map WillRun
-                  (createRoundTripTests getTargets dm4yBase dm4yBps
-                                        stadium2Base stadium2Bps))
+          pure (createRoundTripTests getTargets dm4yBase dm4yBps
+                                     stadium2Base stadium2Bps)
     ]
 
   pure (namedGroup "failure-mode" (smcMaybes ++ corruptCrcMaybes ++ heavyMaybes))
@@ -426,31 +426,37 @@ crossFormatRoundTripTests base bps =
 -- | Create a patch from real ROM pairs, parse it back, apply, and verify
 -- the output matches the original target. Exercises create+parse+apply at
 -- realistic scale — something the QuickCheck property tests can't cover.
+--
+-- The stadium2 BPS row is the long pole of the entire suite (~11 s
+-- single-thread); 'planRoundTrip' consults
+-- 'Integration.HeavyTests.bpsCreateIsExpensive' so it ends up in
+-- the heavy bucket without this builder having to know about
+-- scheduling concerns directly.
 createRoundTripTests :: IO BootstrapTargets -> FilePath -> FilePath
-                     -> FilePath -> FilePath -> [TestTree]
+                     -> FilePath -> FilePath -> [MaybeTest]
 createRoundTripTests getTargets dm4yBase dm4yBps
                      stadium2Base stadium2Bps =
-  [ testCase "create-round-trip/dm4y BPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
-      createAndVerify "bps" baseBytes targetBytes
-
-  , testCase "create-round-trip/dm4y IPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
-      createAndVerify "ips" baseBytes targetBytes
-
-  , testCase "create-round-trip/dm4y UPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget dm4yBase dm4yBps
-      createAndVerify "ups" baseBytes targetBytes
-
-  , testCase "create-round-trip/stadium2 BPS" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget stadium2Base stadium2Bps
-      createAndVerify "bps" baseBytes targetBytes
-
-  , testCase "create-round-trip/stadium2 IPS32" $ do
-      (baseBytes, targetBytes) <- bootstrapTarget stadium2Base stadium2Bps
-      createAndVerify "ips32" baseBytes targetBytes
-  ]
+  map planRoundTrip
+    [ RoundTripCase "dm4y BPS"      dm4yBase     dm4yBps     "bps"
+    , RoundTripCase "dm4y IPS"      dm4yBase     dm4yBps     "ips"
+    , RoundTripCase "dm4y UPS"      dm4yBase     dm4yBps     "ups"
+    , RoundTripCase "stadium2 BPS"  stadium2Base stadium2Bps "bps"
+    , RoundTripCase "stadium2 IPS32" stadium2Base stadium2Bps "ips32"
+    ]
   where
+    planRoundTrip :: RoundTripCase -> MaybeTest
+    planRoundTrip roundTrip =
+      let basePath     = roundTripCaseBase   roundTrip
+          patchPath    = roundTripCasePatch  roundTrip
+          formatString = roundTripCaseFormat roundTrip
+          label        = "create-round-trip/" ++ roundTripCaseName roundTrip
+          tree         = testCase label $ do
+                           (baseBytes, targetBytes) <- bootstrapTarget basePath patchPath
+                           createAndVerify formatString baseBytes targetBytes
+          isHeavy      = formatString == "bps"
+                      && bpsCreateIsExpensive (FixtureName basePath)
+      in if isHeavy then WillRunHeavy tree else WillRun tree
+
     bootstrapTarget :: FilePath -> FilePath -> IO (ByteString, ByteString)
     bootstrapTarget basePath patchPath = do
       baseBytes <- mmapRomFile basePath
@@ -474,6 +480,17 @@ createRoundTripTests getTargets dm4yBase dm4yBps
                 Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
                 Right (TargetFileContents output) ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
+
+-- | One row in 'createRoundTripTests' — the source ROM, patch path
+-- the 'BootstrapTargets' look-up keys on, target format string, and
+-- a short label that becomes the second segment of the test name
+-- (@create-round-trip\/\<caseName\>@).
+data RoundTripCase = RoundTripCase
+  { roundTripCaseName    :: !String
+  , roundTripCaseBase    :: !FilePath
+  , roundTripCasePatch   :: !FilePath
+  , roundTripCaseFormat  :: !String
+  }
 
 ----------------------------------------------------------------------------
 -- 6. --require-smc-shaped-target-size constraint

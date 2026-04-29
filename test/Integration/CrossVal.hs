@@ -8,6 +8,7 @@ import Integration.External
   , parseExternalToolName
   , runExternal
   )
+import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
 import Integration.Helpers
   ( Tier(..)
   , repoDir
@@ -26,7 +27,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createFromMemory)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -63,10 +64,16 @@ planCrossValRow getTargets repo fields = case fields of
         let basePath = repo </> baseRelative
             bootPath = repo </> bootRelative
             label    = formatString ++ "/" ++ scenario
+            runnable = mkCrossValTest getTargets label format tool
+                         basePath bootPath targetSha
+            constructor
+              | format == CreateDiff CreateBPS
+              , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
+              | otherwise                                   = WillRun
         in requireFixture basePath $ \_ ->
            requireFixture bootPath $ \_ ->
              requireExternalTool tool $ \_ ->
-               pure [WillRun (mkCrossValTest getTargets label format tool basePath bootPath targetSha)]
+               pure [constructor runnable]
     | otherwise -> pure []  -- spec row references unknown format/tool wire name
   _ -> pure []              -- malformed spec row
 

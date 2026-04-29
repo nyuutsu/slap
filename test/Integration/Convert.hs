@@ -1,5 +1,6 @@
 module Integration.Convert (convertTests) where
 
+import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -27,6 +28,7 @@ import Slap.FileContents
 import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Convert
   ( CreateFormat(..)
+  , DiffCreate(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
   , ValidationInclusion(..)
@@ -72,9 +74,14 @@ planConvertRow repo fields = case fields of
             patchPath      = repo </> patchRel
             label          = sourceFormat ++ " -> " ++ targetFormat
                           ++ " (" ++ patchRel ++ ")"
+            runnable       = mkConvertTest repo patchPath baseRel targetSha verdict
+                               warningsString flagsString targetCreateFormat label
+            constructor
+              | targetCreateFormat == CreateDiff CreateBPS
+              , bpsCreateIsExpensive (FixtureName patchRel) = WillRunHeavy
+              | otherwise                                   = WillRun
         in requireFixture patchPath $ \_ ->
-             pure [WillRun (mkConvertTest repo patchPath baseRel targetSha verdict
-                              warningsString flagsString targetCreateFormat label)]
+             pure [constructor runnable]
     | otherwise -> pure []  -- unknown @--to FORMAT@ in the spec row
   _ -> pure []              -- malformed spec row
 
