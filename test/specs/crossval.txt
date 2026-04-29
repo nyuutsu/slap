@@ -48,12 +48,21 @@ pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mar
 # Coverage gaps
 # ============================================================================
 #
+# The below categories are not exhaustive and not perfect explanations of the "why".
+# In some cases no public create tool exists at all. 
+# In others the only tooling doesn't have a CLI mode.
+# In the latter case: I'm just not interested in figuring out how to incorporate gui stuff.
+# Regardless this section is for my reference and due to being in a distant outpost of the program
+# it's at risk of being forgotten and going stale.
+#
 # Not yet wired into the crossval runner (CrossVal.hs applyExternal):
-#   IPS32 — applier available at tools/atmosphere-ips (Atmosphère algorithm)
+#   IPS32 — applier available via a wrapper around Atmosphère's applier algorithm
 #   GDIFF — applier available via javaxdelta (com.nothome.delta.GDiffPatcher)
 #
 # No external applier available at all:
 #   NINJA1, DPS, PCHTXT — no widely available CLI applier
+#   This claim about Ninja1 isn't actually true. There is such a tool. But this was a
+#   fairly recent discovery. I'll set it up eventually.
 #
 # External applier exists but slap cannot create the format:
 #   BSDiff (bspatch), VCDIFF (xdelta3), xdelta1 (xdelta)
