@@ -13,6 +13,12 @@ module Slap.IPS.Types
   , IPSParseResult(..)
   , SMCShapeRequirement(..)
   , isSMCShapedSize
+    -- * Truncation-marker disposition
+  , DeclaredTargetSize(..)
+  , NaturalTargetSize(..)
+  , MarkerDisposition(..)
+  , decideMarkerDisposition
+  , effectiveTargetSize
     -- * Named constants
   , ipsMagicBytes
   , ips32MagicBytes
@@ -394,6 +400,79 @@ ipsVariantMaxRecordEnd :: IPSVariant -> Offset
 ipsVariantMaxRecordEnd variant =
   advance (ipsVariantMaxAddressableOffset (variantSpec variant))
           ipsMaxRecordPayload
+
+----------------------------------------------------------------------------
+-- Truncation-marker disposition
+----------------------------------------------------------------------------
+
+-- | A target file size declared by a Flips-style truncation marker
+-- in a 'StandardIPS' patch's post-EOF trailer. Distinct from
+-- 'NaturalTargetSize' because the two are compared at apply time
+-- and bare 'FileSize' arguments would let a transposition silently
+-- invert the policy decision.
+newtype DeclaredTargetSize = DeclaredTargetSize
+  { unDeclaredTargetSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | A target file size derived from the source size and the record
+-- stream's largest write end. The "natural" output size — what
+-- slap would produce in the absence of any truncation marker, equal
+-- to @max sourceSize maxRecordEnd@. Distinct from
+-- 'DeclaredTargetSize' for the same reason 'DeclaredTargetSize'
+-- exists.
+newtype NaturalTargetSize = NaturalTargetSize
+  { unNaturalTargetSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | What slap's policy decides to do with a 'StandardIPS' patch's
+-- post-EOF truncation marker, given the marker's declared size and
+-- the natural size derived from source plus records. Computed once
+-- at the start of apply so the buffer allocation, the per-record
+-- write loop, and the apply-time warnings all derive from the same
+-- ground truth. Pattern-matched exhaustively at every consumer; a
+-- future variant addition fires @-Wincomplete-patterns@.
+data MarkerDisposition
+  -- | No marker present. Effective target = natural. Silent.
+  = MarkerAbsent NaturalTargetSize
+  -- | Marker present and shrinks the output (@declared < natural@).
+  -- Effective target = declared. Records past effective are clipped
+  -- and counted; an apply-time warning surfaces the truncation, and
+  -- a second warning surfaces the clip count if any records crossed.
+  | MarkerHonoured DeclaredTargetSize NaturalTargetSize
+  -- | Marker present and exactly matches the natural size
+  -- (@declared == natural@). Effective target = declared. Silent —
+  -- the marker's assertion agrees with what slap was going to
+  -- produce anyway, and surfacing this would generate noise on
+  -- every patch that happens to truncate to a clean alignment.
+  | MarkerNoOp DeclaredTargetSize
+  -- | Marker present and would grow the output past natural
+  -- (@declared > natural@). Effective target = natural; the marker
+  -- is ignored for sizing per docs/ips/questions.md. Apply-time
+  -- warning emitted.
+  | MarkerIgnored DeclaredTargetSize NaturalTargetSize
+  deriving (Show, Eq)
+
+-- | Decide what slap does with the marker, given the patch's
+-- declared truncation size (or 'Nothing' if absent) and the natural
+-- size. Total, pure, the only place the comparison logic lives.
+decideMarkerDisposition
+  :: Maybe DeclaredTargetSize -> NaturalTargetSize -> MarkerDisposition
+decideMarkerDisposition Nothing natural = MarkerAbsent natural
+decideMarkerDisposition (Just declared) natural
+  | declaredFileSize <  naturalFileSize = MarkerHonoured declared natural
+  | declaredFileSize == naturalFileSize = MarkerNoOp declared
+  | otherwise                           = MarkerIgnored declared natural
+  where
+    declaredFileSize = unDeclaredTargetSize declared
+    naturalFileSize  = unNaturalTargetSize  natural
+
+-- | The buffer-allocation size implied by a 'MarkerDisposition'.
+-- Total over the four constructors.
+effectiveTargetSize :: MarkerDisposition -> FileSize
+effectiveTargetSize (MarkerAbsent   natural)            = unNaturalTargetSize  natural
+effectiveTargetSize (MarkerHonoured declared _natural)  = unDeclaredTargetSize declared
+effectiveTargetSize (MarkerNoOp     declared)           = unDeclaredTargetSize declared
+effectiveTargetSize (MarkerIgnored  _declared natural)  = unNaturalTargetSize  natural
 
 ----------------------------------------------------------------------------
 -- SNESTool truncation-shape filter

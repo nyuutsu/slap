@@ -31,6 +31,7 @@ import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
 import qualified Props.Identity as Identity
+import qualified Props.IPSMarkerPolicy as IPSMarkerPolicy
 import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
@@ -52,4 +53,5 @@ main = defaultMain $ testGroup "Properties"
   , Detection.detectionTests
   , ClassifyTargetCopy.classifyTargetCopyTests
   , ParseWarnings.parseWarningsTests
+  , IPSMarkerPolicy.ipsMarkerPolicyTests
   ]

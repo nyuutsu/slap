@@ -17,7 +17,7 @@ import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Types (IPSParseResult(..))
 
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError, renderSlapWarning)
+import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
@@ -214,7 +214,8 @@ prop_ipsSentinelWithSource =
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
          Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-           IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+           fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
+             === Right (TargetFileContents target)
          Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
            counterexample "test fixture unexpectedly EBP" $ property False
          Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->

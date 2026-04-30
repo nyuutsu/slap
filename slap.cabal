@@ -150,6 +150,7 @@ test-suite props
                   , Props.Detection
                   , Props.Helpers
                   , Props.Identity
+                  , Props.IPSMarkerPolicy
                   , Props.ParseWarnings
                   , Props.RoundTrip
                   , Props.SpecConformance

@@ -13,6 +13,8 @@ module Slap.Error
   , noWarnings
   , FieldName(..)
   , OverlapCount(..)
+  , ClippedRecordCount(..)
+  , OvershootBytes(..)
   , fieldNameLabel
   , renderSlapError
   , renderApplyError
@@ -42,6 +44,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
+import Slap.IPS.Types (DeclaredTargetSize(..), NaturalTargetSize(..))
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
 
@@ -441,6 +444,29 @@ data SlapWarning
   -- 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
+  -- | A 'StandardIPS' patch's post-EOF truncation marker declared a
+  -- target size smaller than the natural size, and slap honoured it.
+  -- Surfaces the truncation as a deliberate diagnostic even when no
+  -- records cross the boundary. Pairs with 'IPSRecordsClippedByMarker'
+  -- when records were also clipped.
+  | IPSTruncationMarkerHonoured FormatLabel DeclaredTargetSize NaturalTargetSize
+
+  -- | One or more records' write regions extended past the
+  -- truncation boundary that slap honoured, and were clipped to fit.
+  -- Aggregate count in the style of 'OverlappingRecords'; per-record
+  -- detail omitted to keep a pathological patch from drowning
+  -- everything else. Only fires when at least one record crossed the
+  -- boundary; the 'ActionIndex' names the first such record in wire
+  -- order.
+  | IPSRecordsClippedByMarker FormatLabel ClippedRecordCount ActionIndex OvershootBytes
+
+  -- | A 'StandardIPS' patch's truncation marker declared a target
+  -- size larger than the natural size, which would grow the output
+  -- via zero-fill. Per the docs/ips/questions.md policy, slap ignores
+  -- the marker for sizing and emits this warning so the user learns
+  -- the patch declared something slap chose not to act on.
+  | IPSTruncationMarkerIgnored FormatLabel DeclaredTargetSize NaturalTargetSize
+
   -- | An APS-N64 type-1 patch declares a country code byte that is
   -- not one of the documented N64 cartridge ROM region codes. The
   -- byte is preserved verbatim for round-tripping; slap proceeds
@@ -523,7 +549,7 @@ data Outcome a = Outcome
   { outcomeValue    :: !a
   , outcomeWarnings :: ![SlapWarning]
   }
-  deriving (Show, Functor)
+  deriving (Eq, Show, Functor)
 
 -- | Wrap a warning-free value in the 'Outcome' envelope. Every wrap
 -- site at the apply/undo boundary uses this so the @[]@ warning list
@@ -545,6 +571,22 @@ noWarnings value = Outcome value []
 -- warning lines). A value of zero is structurally impossible: the
 -- warning is only emitted when at least one pair was found.
 newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | The number of IPS records clipped to fit a honoured truncation
+-- marker. Value-zero is structurally impossible: the warning is
+-- only emitted when at least one record crossed the boundary.
+newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | The total byte length lost across all clipped records when a
+-- truncation marker was honoured. Sums the per-record overshoots
+-- (each record's "bytes beyond effective target"), so a single
+-- record clipped by 100 bytes and ten records each clipped by 10
+-- both report 100. Carried by 'IPSRecordsClippedByMarker' so the
+-- user sees not just "records were clipped" but "this much was
+-- thrown away."
+newtype OvershootBytes = OvershootBytes { unOvershootBytes :: Length }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
@@ -793,6 +835,31 @@ renderSlapWarning (UnsortedRecords label (ActionIndex idx)) =
 renderSlapWarning (IPS32TrailingBytes label (Length n)) =
   "note: " ++ formatLabelName label
   ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
+
+renderSlapWarning (IPSTruncationMarkerHonoured label
+    (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
+  formatLabelName label
+  ++ " apply: honoured truncation marker (declared "
+  ++ show (unFileSize declared) ++ " bytes, natural "
+  ++ show (unFileSize natural) ++ " bytes)"
+
+renderSlapWarning (IPSRecordsClippedByMarker label
+    (ClippedRecordCount count) (ActionIndex firstIndex) (OvershootBytes overshoot)) =
+  formatLabelName label ++ " apply: "
+  ++ show count
+  ++ (if count == 1 then " record" else " records")
+  ++ " clipped by truncation marker (first at step #"
+  ++ show firstIndex ++ ", "
+  ++ show (unLength overshoot)
+  ++ (if unLength overshoot == 1 then " byte" else " bytes")
+  ++ " total clipped)"
+
+renderSlapWarning (IPSTruncationMarkerIgnored label
+    (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
+  formatLabelName label
+  ++ " apply: ignored truncation marker (declared "
+  ++ show (unFileSize declared) ++ " bytes, natural "
+  ++ show (unFileSize natural) ++ " bytes; declared > natural means the marker would grow the output, which slap does not honour)"
 
 renderSlapWarning (APSN64UnrecognisedCountry byte) =
   "note: " ++ formatLabelName LabelAPSN64

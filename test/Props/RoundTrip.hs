@@ -45,7 +45,7 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
+import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      EncodedHunk(..), Hunk(..), SentinelOffset(..))
@@ -170,7 +170,8 @@ prop_ips = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
+          === Right (TargetFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -183,7 +184,8 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
+          === Right (TargetFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -426,7 +428,8 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        IPS.applyIPS (SourceFileContents source) ipsPatch === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
+          === Right (TargetFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -439,7 +442,8 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanEBP ebpPatch) _parseWarnings) ->
-        IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch) === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch))
+          === Right (TargetFileContents target)
       Right (Parsed (IPSParseCleanIPS _ipsPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly plain IPS" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->

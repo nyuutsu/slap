@@ -18,13 +18,15 @@ import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), renderSlapError)
+import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
+                   ClippedRecordCount(..), OvershootBytes(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
-import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
-import Slap.Measure (FileSize(..), Offset(..))
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize,
+                       DeclaredTargetSize(..), NaturalTargetSize(..))
+import Slap.Measure (FileSize(..), Offset(..), Length(..), ActionIndex(..))
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.UPS.Apply (applyUPS)
@@ -120,8 +122,8 @@ specConformanceTests = testGroup "SpecConformance"
       ]
   , testGroup "IPS"
       [ testGroup "apply-errors"
-          [ testCase "zero-target-with-records-rejected"
-              ipsApplyZeroTargetWithRecordsRejected
+          [ testCase "zero-target-with-records-clipped-and-warned"
+              ipsApplyZeroTargetWithRecordsClipped
           ]
       , testGroup "isSMCShapedSize"
           [ testCase "0x000-rejected"  (isSMCShapedSize (FileSize 0x000)    @?= False)
@@ -862,22 +864,36 @@ upsApplyBlockPastTarget =
 ----------------------------------------------------------------------------
 
 -- | A 'StandardIPS' patch whose Flips-style truncation marker declares
--- a zero-byte target but whose record stream is non-empty. Apply's
--- zero-target short-circuit fires only when the record vector is also
--- empty; this case must instead reach the per-record bounds guard and
--- surface as 'ApplyWritesPastTarget', rather than silently discarding
--- the record and returning an empty target.
-ipsApplyZeroTargetWithRecordsRejected :: Assertion
-ipsApplyZeroTargetWithRecordsRejected =
+-- a zero-byte target but whose record stream is non-empty. Under the
+-- honour-only-when-shrinking policy, declared (0) is strictly less
+-- than the natural size derived from the lone record (1), so the
+-- marker is honoured: the record's payload is entirely past the
+-- effective end and is clipped, producing an empty target plus the
+-- pair of warnings 'IPSTruncationMarkerHonoured' and
+-- 'IPSRecordsClippedByMarker'. Apply does not surface
+-- 'ApplyWritesPastTarget' here — that error path is reserved for the
+-- defensive guard on the three non-Honoured dispositions, which is
+-- structurally unreachable.
+ipsApplyZeroTargetWithRecordsClipped :: Assertion
+ipsApplyZeroTargetWithRecordsClipped =
   let record = IPSRecordCopy { ipsCopyOffset  = Offset 0
                              , ipsCopyPayload = ByteString.pack [0xFF] }
       patch  = IPSPatch { ipsVariant             = StandardIPS
                         , ipsRecords             = Vector.singleton record
                         , ipsTruncatedTargetSize = Just (FileSize 0) }
+      expectedHonoured = IPSTruncationMarkerHonoured LabelIPS
+        (DeclaredTargetSize (FileSize 0))
+        (NaturalTargetSize  (FileSize 1))
+      expectedClipped  = IPSRecordsClippedByMarker LabelIPS
+        (ClippedRecordCount 1) (ActionIndex 0) (OvershootBytes (Length 1))
   in case applyIPS (SourceFileContents ByteString.empty) patch of
-       Left (ApplyFailed LabelIPS ApplyWritesPastTarget{}) -> pure ()
-       outcome -> assertFailure
-         ("expected ApplyWritesPastTarget, got: " ++ show outcome)
+       Right (Outcome (TargetFileContents target) warnings) -> do
+         assertEqual "target should be empty" 0 (ByteString.length target)
+         assertEqual "warnings"
+           [expectedHonoured, expectedClipped] warnings
+       Left slapError -> assertFailure
+         ("expected successful clipped apply, got error: "
+          ++ renderSlapError slapError)
 
 ----------------------------------------------------------------------------
 -- BPS apply cursor-underflow errors
