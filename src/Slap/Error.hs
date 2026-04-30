@@ -520,10 +520,7 @@ data CreateResult = CreateResult
 ----------------------------------------------------------------------------
 
 -- | The parse-side companion to 'CreateResult': a successfully parsed
--- payload paired with any warnings the parser accumulated. Today every
--- parser emits an empty warning list; the channel is infrastructure for
--- future parsers that want to flag recoverable shape anomalies without
--- failing outright.
+-- payload paired with any warnings the parser accumulated.
 data Parsed value = Parsed
   { parsedValue    :: !value
   , parsedWarnings :: ![SlapWarning]
@@ -535,21 +532,21 @@ data Parsed value = Parsed
 
 -- | The value and warning channels of an apply or undo operation.
 -- Mirrors 'CreateResult' on the create side and 'Parsed' on the parse
--- side — every value-producing operation in slap now pairs its value
--- with a warning channel. The polymorphic parameter lets a single
--- envelope serve both apply (carrying 'TargetFileContents') and undo
--- (carrying 'SourceFileContents') without duplicating the shape; the
--- 'Functor' instance lets a wrapper function the inner value through
--- 'fmap' without unpacking the envelope.
+-- side — every value-producing operation in slap pairs its value with
+-- a warning channel. The polymorphic parameter lets a single envelope
+-- serve both apply (carrying 'TargetFileContents') and undo (carrying
+-- 'SourceFileContents') without duplicating the shape; the 'Functor'
+-- instance lets a wrapper function the inner value through 'fmap'
+-- without unpacking the envelope.
 --
--- The first prompt to populate the warning channel is the IPS
--- truncation-marker policy; today every format passes an empty list,
--- and the envelope is pure plumbing.
+-- Wrap sites that don't emit warnings use 'noWarnings' to lift their
+-- bare value into the envelope; sites that do construct 'Outcome'
+-- directly with the warning list.
 data Outcome a = Outcome
   { outcomeValue    :: !a
   , outcomeWarnings :: ![SlapWarning]
   }
-  deriving (Eq, Show, Functor)
+  deriving (Show, Functor)
 
 -- | Wrap a warning-free value in the 'Outcome' envelope. Every wrap
 -- site at the apply/undo boundary uses this so the @[]@ warning list
