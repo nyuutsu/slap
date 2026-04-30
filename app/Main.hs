@@ -36,7 +36,8 @@ import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
 import Slap.FFI (rustyCRC32)
-import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), renderSlapError, renderSlapWarning)
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), Outcome(..),
+                   renderSlapError, renderSlapWarning)
 import Slap.Format (MetaField(..), padHex, renderField,
                     rightwardsArrow, checkMark, ballotX, emDash,
                     spacePaddedRightwardsArrow)
@@ -858,7 +859,9 @@ doApply parsedCommand = do
         sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
         let source = SourceFileContents sourceBytes
         verifySource verificationPolicy verification source
-        target <- orDie =<< runApply (patchApply parsed) source
+        outcome <- orDie =<< runApply (patchApply parsed) source
+        emitWarnings WarningProper (outcomeWarnings outcome)
+        let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unTargetFileContents target)
         let appliedSummary = patchRecordSummary parsed
@@ -912,8 +915,10 @@ doUndo parsedCommand = do
     Nothing -> die "undo not supported for this format"
     Just undo -> do
       modified <- ByteString.readFile (undoSource parsedCommand)
-      SourceFileContents result <- orDie (runUndo undo (TargetFileContents modified))
-      let outputPath = case undoOutput parsedCommand of
+      outcome <- orDie (runUndo undo (TargetFileContents modified))
+      emitWarnings WarningProper (outcomeWarnings outcome)
+      let SourceFileContents result = outcomeValue outcome
+          outputPath = case undoOutput parsedCommand of
             UndoInPlace                 -> undoSource parsedCommand
             UndoToExplicitFile explicit -> explicit
       ByteString.writeFile outputPath result
@@ -1019,8 +1024,10 @@ doConvert parsedCommand = do
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
-applyForConvert somePatch source =
-  orDie =<< runApply (patchApply somePatch) source
+applyForConvert somePatch source = do
+  outcome <- orDie =<< runApply (patchApply somePatch) source
+  emitWarnings WarningProper (outcomeWarnings outcome)
+  pure (outcomeValue outcome)
 
 -- | Error message when --with is required but not provided.
 needSourceMessage :: SomePatch -> String

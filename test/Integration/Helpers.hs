@@ -44,7 +44,7 @@ import Integration.External (ExternalTool(..), ExternalRun(..), runExternal)
 
 import Slap.Binary (sha1)
 import Slap.Checksum (SHA1Hash(..))
-import Slap.Error (SlapError, CreateResult(..), renderSlapError)
+import Slap.Error (SlapError, CreateResult(..), Outcome(..), renderSlapError)
 import Slap.Format (padHex)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
@@ -223,7 +223,8 @@ parseCreateFormat formatString = case map toLower formatString of
 
 -- | Apply a parsed patch to source bytes.
 applyPatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
-applyPatch somePatch source = runApply (patchApply somePatch) source
+applyPatch somePatch source =
+  fmap (fmap outcomeValue) (runApply (patchApply somePatch) source)
 
 -- | Undo a parsed patch.
 undoPatch :: SomePatch -> TargetFileContents -> IO (Either String SourceFileContents)
@@ -231,7 +232,7 @@ undoPatch somePatch target = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
   Just undo -> case runUndo undo target of
     Left err -> pure (Left (renderSlapError err))
-    Right result -> pure (Right result)
+    Right outcome -> pure (Right (outcomeValue outcome))
 
 removeIfExists :: FilePath -> IO ()
 removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pure ())

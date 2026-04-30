@@ -24,7 +24,7 @@ module Props.Helpers
   ) where
 
 import qualified Slap.NINJA2.Types as NINJA2
-import Slap.Error (SlapError, SlapWarning(..))
+import Slap.Error (SlapError, SlapWarning(..), Outcome(..))
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..))
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -96,7 +96,8 @@ genEofPair = do
 
 -- | Apply through the SomePatch closure.
 applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
-applySomePatch somePatch source = runApply (patchApply somePatch) source
+applySomePatch somePatch source =
+  fmap (fmap outcomeValue) (runApply (patchApply somePatch) source)
 
 ----------------------------------------------------------------------------
 -- Truncation

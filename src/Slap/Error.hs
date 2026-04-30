@@ -9,6 +9,8 @@ module Slap.Error
   , DroppedValue(..)
   , CreateResult(..)
   , Parsed(..)
+  , Outcome(..)
+  , noWarnings
   , FieldName(..)
   , OverlapCount(..)
   , fieldNameLabel
@@ -500,6 +502,35 @@ data Parsed value = Parsed
   { parsedValue    :: !value
   , parsedWarnings :: ![SlapWarning]
   } deriving (Show)
+
+----------------------------------------------------------------------------
+-- Outcome
+----------------------------------------------------------------------------
+
+-- | The value and warning channels of an apply or undo operation.
+-- Mirrors 'CreateResult' on the create side and 'Parsed' on the parse
+-- side — every value-producing operation in slap now pairs its value
+-- with a warning channel. The polymorphic parameter lets a single
+-- envelope serve both apply (carrying 'TargetFileContents') and undo
+-- (carrying 'SourceFileContents') without duplicating the shape; the
+-- 'Functor' instance lets a wrapper function the inner value through
+-- 'fmap' without unpacking the envelope.
+--
+-- The first prompt to populate the warning channel is the IPS
+-- truncation-marker policy; today every format passes an empty list,
+-- and the envelope is pure plumbing.
+data Outcome a = Outcome
+  { outcomeValue    :: !a
+  , outcomeWarnings :: ![SlapWarning]
+  }
+  deriving (Show, Functor)
+
+-- | Wrap a warning-free value in the 'Outcome' envelope. Every wrap
+-- site at the apply/undo boundary uses this so the @[]@ warning list
+-- has exactly one home; specific apply or undo paths that actually
+-- emit warnings will construct 'Outcome' directly.
+noWarnings :: a -> Outcome a
+noWarnings value = Outcome value []
 
 ----------------------------------------------------------------------------
 -- OverlapCount — payload of the OverlappingRecords warning
