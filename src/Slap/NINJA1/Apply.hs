@@ -3,6 +3,7 @@ module Slap.NINJA1.Apply
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..))
+import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
@@ -16,8 +17,8 @@ import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
 -- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
-applyNINJA1Memory :: NINJA1Patch -> SourceFileContents -> TargetFileContents
-applyNINJA1Memory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
+applyNINJA1Memory :: NINJA1Patch -> SourceFileContents -> Either SlapError TargetFileContents
+applyNINJA1Memory patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

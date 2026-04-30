@@ -4,6 +4,7 @@ module Slap.PCHTXT.Apply
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Binary (copyByteStringRange)
+import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -16,8 +17,8 @@ import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
 -- | Apply a PCHTXT patch in memory: copy source, then overwrite at offsets.
-applyPCHTXTMemory :: PCHTXTPatch -> SourceFileContents -> TargetFileContents
-applyPCHTXTMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
+applyPCHTXTMemory :: PCHTXTPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyPCHTXTMemory patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

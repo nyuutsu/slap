@@ -4,6 +4,7 @@ module Slap.PMSR.Apply
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyByteStringRange)
+import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -16,8 +17,8 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
-applyPMSRMemory :: PMSRPatch -> SourceFileContents -> TargetFileContents
-applyPMSRMemory patch (SourceFileContents source) = TargetFileContents $ unsafeCreate outputSize $ \targetPointer -> do
+applyPMSRMemory :: PMSRPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyPMSRMemory patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
