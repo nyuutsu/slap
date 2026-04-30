@@ -200,7 +200,7 @@ applyOutputRefusalTests =
       assertRefusesTruncation CreateIPS32 "IPS32"
   ]
 
--- | Build a 'StandardIPS' patch whose Flips-style truncation marker
+-- | Build a 'StandardIPS' patch whose post-EOF truncation marker
 -- declares a target smaller than the source. Shared by both refusal
 -- tests so the truncating-IPS construction lives in one place.
 makeTruncatingIPSPatch :: IO SomePatch

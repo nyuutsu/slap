@@ -863,7 +863,7 @@ upsApplyBlockPastTarget =
 -- IPS apply error paths
 ----------------------------------------------------------------------------
 
--- | A 'StandardIPS' patch whose Flips-style truncation marker declares
+-- | A 'StandardIPS' patch whose post-EOF truncation marker declares
 -- a zero-byte target but whose record stream is non-empty. Under the
 -- honour-only-when-shrinking policy, declared (0) is strictly less
 -- than the natural size derived from the lone record (1), so the

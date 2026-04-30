@@ -268,7 +268,7 @@ data SlapError
   -- | A parser found bytes after a recognized stream-closing trailer
   -- marker that don't match any post-trailer shape the format
   -- accepts. The motivating example is the IPS family: 'StandardIPS'
-  -- accepts an empty post-@"EOF"@ trailer, a Flips-style truncation
+  -- accepts an empty post-@"EOF"@ trailer, a 3-byte post-EOF truncation
   -- marker, or an EBP JSON metadata blob, while 'IPS32' accepts only
   -- the empty post-@"EEOF"@ trailer; bytes outside those shapes are
   -- a structured parse failure rather than a 'Get'-monad
@@ -437,8 +437,8 @@ data SlapWarning
   -- | An 'IPS32' patch had trailing bytes past the @"EEOF"@ marker
   -- that did not match any recognised post-trailer shape. slap drops
   -- the trailing slice and proceeds. 'StandardIPS' has three
-  -- well-attested post-@"EOF"@ shapes (empty, Flips truncation
-  -- marker, EBP JSON blob) and keeps its strict rejection of
+  -- well-attested post-@"EOF"@ shapes (empty, 3-byte post-EOF
+  -- truncation marker, EBP JSON blob) and keeps its strict rejection of
   -- garbage trailers; 'IPS32' has none, and a lenient drop is the
   -- useful choice in the absence of a shape to recognise. The
   -- 'Length' is the byte count dropped.

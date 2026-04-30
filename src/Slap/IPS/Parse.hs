@@ -606,7 +606,7 @@ detectFirstUnsortedRecord label recordVector = scanFrom 1
 ebpJSONOpeningByte :: Word8
 ebpJSONOpeningByte = 0x7B
 
--- | The exact byte length of a Flips-style truncation marker that
+-- | The exact byte length of a post-EOF truncation marker that
 -- may follow a 'StandardIPS' @"EOF"@ trailer. The marker carries a
 -- big-endian truncation offset whose width matches the variant's
 -- own offset field — three bytes for 'StandardIPS'. Local to Parse
@@ -641,7 +641,7 @@ data IPSCleanResult = IPSCleanResult
 --      canonical case from the original SNESTool spec.
 --
 --   2. exactly 'ipsTruncationMarkerLength' bytes → 'IPSParseCleanIPS'
---      with a Flips-style truncation marker. Decoded as a 24-bit
+--      with a 3-byte post-EOF truncation marker. Decoded as a 24-bit
 --      big-endian unsigned value and stored as
 --      'ipsTruncatedTargetSize'.
 --

@@ -595,7 +595,7 @@ smcShapeConstraintTests =
         (SourceFileContents source) (TargetFileContents target)
         noMetadataRequested Nothing smcConstraints
 
-    -- Build a parsed IPS patch whose Flips-style truncation marker
+    -- Build a parsed IPS patch whose post-EOF truncation marker
     -- declares a non-SMC-shaped target size. Constructed via the
     -- create path with constraints disabled so the produced patch
     -- carries the marker; then re-parsed so 'patchContents' is

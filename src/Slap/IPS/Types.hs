@@ -180,7 +180,7 @@ data IPSPatch = IPSPatch
   -- allocated cons cells would be.
   , ipsRecords             :: !(Vector IPSRecord)
   , ipsTruncatedTargetSize :: !(Maybe FileSize)
-    -- ^ The target file size declared by a Flips-style truncation
+    -- ^ The target file size declared by a post-EOF truncation
     -- marker following the @"EOF"@ trailer, if one was present.
     -- 'Nothing' means the patch did not declare a truncation and
     -- the final target size is implied by the largest record end.
@@ -246,7 +246,7 @@ data IPSParseResult
   = IPSParseCleanIPS IPSPatch
     -- ^ A 'StandardIPS' or 'IPS32' patch whose record stream was
     -- closed by a well-formed EOF marker. The trailer after the
-    -- marker was either absent, or a Flips-style 3-byte truncation
+    -- marker was either absent, or a 3-byte post-EOF truncation
     -- marker (captured in 'ipsTruncatedTargetSize'). Covers every
     -- plain-IPS success case; EBP is the sibling constructor.
   | IPSParseCleanEBP EBPPatch

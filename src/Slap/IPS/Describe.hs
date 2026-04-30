@@ -73,7 +73,7 @@ import qualified Data.Vector as Vector
 -- wire facts come from 'variantSpec' so nothing in this module
 -- hardcodes @"PATCH"@ / @"IPS32"@ / @"EOF"@ / @"EEOF"@ strings or
 -- the 24/32-bit offset widths. The truncation line is emitted
--- only when the parser observed a Flips-style truncation marker.
+-- only when the parser observed a post-EOF truncation marker.
 ipsMeta :: IPSPatch -> [MetaField]
 ipsMeta patch =
   ipsVariantMetaFields (ipsVariant patch)

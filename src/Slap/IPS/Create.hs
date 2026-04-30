@@ -223,7 +223,7 @@ encodeOffset Offset32 offsetValue =
   <> word8 (fromIntegral ((offsetValue `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (offsetValue .&. 0xFF))
 
--- | Encode a Flips-style truncation marker: a single big-endian
+-- | Encode a post-EOF truncation marker: a single big-endian
 -- offset value, in the same width as the variant's record offsets.
 -- Only emitted for 'StandardIPS'; see 'encodeIPSPatch' for the
 -- IPS32 rationale.
