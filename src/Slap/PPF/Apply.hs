@@ -1,4 +1,4 @@
-module Slap.PPF.Apply (applyPatchMemory, undoPatchMemory) where
+module Slap.PPF.Apply (applyPPF, undoPPF) where
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
                         ppfVersionLabel)
@@ -26,8 +26,8 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Validates every record write against the output buffer bounds.
 -- Returns 'Left' on malformed patches (negative offsets, writes past
 -- the buffer); returns 'Right' with byte-identical output on success.
-applyPatchMemory :: PPFPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyPatchMemory patch (SourceFileContents source)
+applyPPF :: PPFPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyPPF patch (SourceFileContents source)
   | unFileSize outputFileSize < 0 =
       Left (NegativeTargetSize label outputFileSize)
   | unFileSize outputFileSize == 0 =
@@ -113,8 +113,8 @@ applyPatchMemory patch (SourceFileContents source)
 -- Validates every record write against the input buffer bounds.
 -- Returns 'Left' on malformed undo data (negative offsets, writes past
 -- the buffer); returns 'Right' with byte-identical output on success.
-undoPatchMemory :: PPFPatch -> TargetFileContents -> Either SlapError SourceFileContents
-undoPatchMemory patch (TargetFileContents input)
+undoPPF :: PPFPatch -> TargetFileContents -> Either SlapError SourceFileContents
+undoPPF patch (TargetFileContents input)
   | inputLength == 0 =
       Right (SourceFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do

@@ -1,5 +1,5 @@
 module Slap.APSN64.Apply
-  ( applyAPSN64Memory
+  ( applyAPSN64
   ) where
 
 import Slap.APSN64.Types
@@ -17,8 +17,8 @@ import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
-applyAPSN64Memory :: APSN64Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyAPSN64Memory (APSN64Patch _ records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \targetPointer -> do
+applyAPSN64 :: APSN64Patch -> SourceFileContents -> Either SlapError TargetFileContents
+applyAPSN64 (APSN64Patch _ records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)

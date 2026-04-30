@@ -413,7 +413,7 @@ prop_apsGba = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        APSGBA.applyAPSGBAMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
+        APSGBA.applyAPSGBA parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 ----------------------------------------------------------------------------
 -- IPS32 / EBP: no truncation marker, target must be >= source
@@ -452,7 +452,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF.parsePatch patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF.applyPatchMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF.applyPPF parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
@@ -461,7 +461,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         PMSR.applyPMSRMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
+         PMSR.applyPMSR parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
@@ -470,7 +470,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         NINJA1.applyNINJA1Memory parsed (SourceFileContents source) === Right (TargetFileContents target)
+         NINJA1.applyNINJA1 parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
@@ -502,7 +502,7 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.applyNINJA2Memory parsed (SourceFileContents source) === Right (TargetFileContents target)
+        NINJA2.applyNINJA2 parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 -- | Round-trip restricted to the @len(source) > len(target)@ regime,
 -- where the NINJA2 wire carries the discarded source tail as a
@@ -517,7 +517,7 @@ prop_ninja2Truncate = forAll genShrinkingPair $ \(source, target) ->
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.applyNINJA2Memory parsed (SourceFileContents source) === Right (TargetFileContents target)
+        NINJA2.applyNINJA2 parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
@@ -554,7 +554,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         PCHTXT.applyPCHTXTMemory parsed (SourceFileContents source) === Right (TargetFileContents target)
+         PCHTXT.applyPCHTXT parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
@@ -564,7 +564,7 @@ prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         APSN64.applyAPSN64Memory parsed (SourceFileContents source) === Right (TargetFileContents target)
+         APSN64.applyAPSN64 parsed (SourceFileContents source) === Right (TargetFileContents target)
 
 ----------------------------------------------------------------------------
 -- BPS efficiency properties

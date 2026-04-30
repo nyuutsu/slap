@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Slap.APSGBA.Apply
-  ( applyAPSGBAMemory
+  ( applyAPSGBA
   , safeSlice
   ) where
 
@@ -22,8 +22,8 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
-applyAPSGBAMemory :: APSGBAPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyAPSGBAMemory (APSGBAPatch header records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate targetSize $ \targetPointer -> do
+applyAPSGBA :: APSGBAPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyAPSGBA (APSGBAPatch header records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate targetSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
     when (targetSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)

@@ -96,7 +96,7 @@ genEofPair = do
 
 -- | Apply through the SomePatch closure.
 applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
-applySomePatch somePatch source = inMemoryApply (patchApply somePatch) source
+applySomePatch somePatch source = runApply (patchApply somePatch) source
 
 ----------------------------------------------------------------------------
 -- Truncation

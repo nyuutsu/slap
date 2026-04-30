@@ -223,13 +223,13 @@ parseCreateFormat formatString = case map toLower formatString of
 
 -- | Apply a parsed patch to source bytes.
 applyPatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
-applyPatch somePatch source = inMemoryApply (patchApply somePatch) source
+applyPatch somePatch source = runApply (patchApply somePatch) source
 
 -- | Undo a parsed patch.
 undoPatch :: SomePatch -> TargetFileContents -> IO (Either String SourceFileContents)
 undoPatch somePatch target = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
-  Just (UndoInMemory undoFunction) -> case undoFunction target of
+  Just undo -> case runUndo undo target of
     Left err -> pure (Left (renderSlapError err))
     Right result -> pure (Right result)
 

@@ -1,5 +1,5 @@
 module Slap.NINJA2.Apply
-  ( applyNINJA2Memory
+  ( applyNINJA2
   ) where
 
 import Slap.NINJA2.Types
@@ -19,8 +19,8 @@ import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 -- | Apply a NINJA2 patch in memory: XOR records + overflow handling.
-applyNINJA2Memory :: NINJA2Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyNINJA2Memory patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \outputPointer -> do
+applyNINJA2 :: NINJA2Patch -> SourceFileContents -> Either SlapError TargetFileContents
+applyNINJA2 patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \outputPointer -> do
     -- Copy source, zero-fill any extension
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $

@@ -104,8 +104,8 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 -- Direct formats (IPS, PPF, etc.) overlay records onto a copy of the
 -- source; differential formats (BPS, UPS, VCDIFF, etc.) compute the
 -- target from source bytes and patch instructions.
-newtype ApplyStrategy = InMemory
-  { inMemoryApply :: SourceFileContents -> IO (Either SlapError TargetFileContents) }
+newtype ApplyStrategy = ApplyStrategy
+  { runApply :: SourceFileContents -> IO (Either SlapError TargetFileContents) }
 
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
@@ -181,8 +181,8 @@ noVerification = Verification
 -- original. Returns 'Left' on malformed undo data (bounds violations,
 -- negative offsets). For self-inverse formats like UPS (XOR-based),
 -- the apply function itself serves as the undo.
-newtype UndoStrategy = UndoInMemory
-  (TargetFileContents -> Either SlapError SourceFileContents)
+newtype UndoStrategy = UndoStrategy
+  { runUndo :: TargetFileContents -> Either SlapError SourceFileContents }
 
 -- | Record count and unit label for display.
 data RecordSummary = RecordSummary
@@ -232,10 +232,10 @@ parseSome patchContents = case detectFormat patchContents of
         { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
         , patchExplain        = PPF.explainPPF patch
         , patchIsDifferential = False
-        , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (PPF.applyPatchMemory patch source) }
+        , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (PPF.applyPPF patch source) }
         , patchUndo           = if PPF.ppfHasUndo patch
-                                 then Just (UndoInMemory $ PPF.undoPatchMemory patch)
+                                 then Just (UndoStrategy (PPF.undoPPF patch))
                                  else Nothing
         , patchVerification   = ppfVerification
         , patchWarnings       = parseWarnings
@@ -294,8 +294,8 @@ parseSome patchContents = case detectFormat patchContents of
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS ipsPatch
             , patchIsDifferential = False
-            , patchApply          = InMemory
-                  { inMemoryApply = \source -> pure (IPS.applyIPS source ipsPatch) }
+            , patchApply          = ApplyStrategy
+                  { runApply = \source -> pure (IPS.applyIPS source ipsPatch) }
             , patchUndo           = Nothing
             , patchVerification   = noVerification
             , patchWarnings       = parseWarnings
@@ -323,8 +323,8 @@ parseSome patchContents = case detectFormat patchContents of
             { patchFormat         = LabelEBP
             , patchExplain        = IPS.explainEBP ebpPatch
             , patchIsDifferential = False
-            , patchApply          = InMemory
-                  { inMemoryApply = \source -> pure (IPS.applyIPS source basePatch) }
+            , patchApply          = ApplyStrategy
+                  { runApply = \source -> pure (IPS.applyIPS source basePatch) }
             , patchUndo           = Nothing
             , patchVerification   = noVerification
             , patchWarnings       = parseWarnings
@@ -351,8 +351,8 @@ parseSome patchContents = case detectFormat patchContents of
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS truncatedPatch
             , patchIsDifferential = False
-            , patchApply          = InMemory
-                  { inMemoryApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
+            , patchApply          = ApplyStrategy
+                  { runApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
             , patchUndo           = Nothing
             , patchVerification   = noVerification
             , patchWarnings       = parseWarnings
@@ -377,8 +377,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelBPS
       , patchExplain        = BPS.explainBPS patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (BPS.applyBPS patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (BPS.applyBPS patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
           { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
@@ -409,9 +409,9 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelUPS
       , patchExplain        = UPS.explainUPS patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (UPS.applyUPS patch source) }
-      , patchUndo           = Just $ UndoInMemory $ \(TargetFileContents modified) ->
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (UPS.applyUPS patch source) }
+      , patchUndo           = Just $ UndoStrategy $ \(TargetFileContents modified) ->
           -- UPS is self-inverse (XOR-based): applying the patch to the
           -- target recovers the source. For a well-parsed patch this
           -- reapplication cannot fail.
@@ -455,8 +455,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelVCDIFF
       , patchExplain        = VCDIFF.explainVCDIFF patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (VCDIFF.applyVCDIFF patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (VCDIFF.applyVCDIFF patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
       , patchWarnings       = parseWarnings
@@ -483,8 +483,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelAPSN64
       , patchExplain        = APSN64.explainAPSN64 patch
       , patchIsDifferential = False
-      , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (APSN64.applyAPSN64Memory patch source) }
+      , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (APSN64.applyAPSN64 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
             { verifySourceBytes = concat
@@ -524,8 +524,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelNINJA2
       , patchExplain        = NINJA2.explainNINJA2 patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (NINJA2.applyNINJA2Memory patch source) }
+      , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (NINJA2.applyNINJA2 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
           { verifySourceMD5 = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
@@ -572,8 +572,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelNINJA1
       , patchExplain        = NINJA1.explainNINJA1 patch
       , patchIsDifferential = False
-      , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (NINJA1.applyNINJA1Memory patch source) }
+      , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (NINJA1.applyNINJA1 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
           { verifySourceCRC32  = NINJA1.ninja1SourceCRC patch
@@ -602,8 +602,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelBSDiff
       , patchExplain        = BSDiff.explainBSDiff patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (BSDiff.applyBSDiff patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (BSDiff.applyBSDiff patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchWarnings       = parseWarnings
@@ -621,8 +621,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelGDIFF
       , patchExplain        = GDIFF.explainGDIFF patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (GDIFF.applyGDIFF patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (GDIFF.applyGDIFF patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchWarnings       = parseWarnings
@@ -647,8 +647,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelXDelta1
       , patchExplain        = XDelta1.explainXDelta1 patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (XDelta1.applyXDelta1 patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (XDelta1.applyXDelta1 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = xdeltaVerification
       , patchWarnings       = parseWarnings
@@ -667,8 +667,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelPMSR
       , patchExplain        = PMSR.explainPMSR patch
       , patchIsDifferential = False
-      , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (PMSR.applyPMSRMemory patch source) }
+      , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (PMSR.applyPMSR patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchWarnings       = parseWarnings
@@ -692,8 +692,8 @@ parseSome patchContents = case detectFormat patchContents of
       { patchFormat         = LabelPCHTXT
       , patchExplain        = PCHTXT.explainPCHTXT patch
       , patchIsDifferential = False
-      , patchApply          = InMemory
-            { inMemoryApply = \source -> pure (PCHTXT.applyPCHTXTMemory patch source) }
+      , patchApply          = ApplyStrategy
+            { runApply = \source -> pure (PCHTXT.applyPCHTXT patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchWarnings       = parseWarnings
@@ -725,8 +725,8 @@ parseDPSBlock patchContents = case DPS.parseDPS patchContents of
       { patchFormat         = LabelDPS
       , patchExplain        = DPS.explainDPS patch
       , patchIsDifferential = True
-      , patchApply          = InMemory
-          { inMemoryApply     = \source -> pure (DPS.applyDPS patch source) }
+      , patchApply          = ApplyStrategy
+          { runApply     = \source -> pure (DPS.applyDPS patch source) }
       , patchVerification   = noVerification
             { verifyFileSizeRequired = Just (DPS.dpsOriginalSize patch) }
       , patchUndo           = Nothing
@@ -767,8 +767,8 @@ parseAPSGBABlock patchContents = do
     { patchFormat         = LabelAPSGBA
     , patchExplain        = APSGBA.explainAPSGBA patch
     , patchIsDifferential = True
-    , patchApply          = InMemory
-          { inMemoryApply = \source -> pure (APSGBA.applyAPSGBAMemory patch source) }
+    , patchApply          = ApplyStrategy
+          { runApply = \source -> pure (APSGBA.applyAPSGBA patch source) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
           { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records

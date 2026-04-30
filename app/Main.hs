@@ -858,7 +858,7 @@ doApply parsedCommand = do
         sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
         let source = SourceFileContents sourceBytes
         verifySource verificationPolicy verification source
-        target <- orDie =<< inMemoryApply (patchApply parsed) source
+        target <- orDie =<< runApply (patchApply parsed) source
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unTargetFileContents target)
         let appliedSummary = patchRecordSummary parsed
@@ -910,9 +910,9 @@ doUndo parsedCommand = do
     Quiet   -> pure ()
   case patchUndo parsed of
     Nothing -> die "undo not supported for this format"
-    Just (UndoInMemory revert) -> do
+    Just undo -> do
       modified <- ByteString.readFile (undoSource parsedCommand)
-      SourceFileContents result <- orDie (revert (TargetFileContents modified))
+      SourceFileContents result <- orDie (runUndo undo (TargetFileContents modified))
       let outputPath = case undoOutput parsedCommand of
             UndoInPlace                 -> undoSource parsedCommand
             UndoToExplicitFile explicit -> explicit
@@ -1020,7 +1020,7 @@ doConvert parsedCommand = do
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
 applyForConvert somePatch source =
-  orDie =<< inMemoryApply (patchApply somePatch) source
+  orDie =<< runApply (patchApply somePatch) source
 
 -- | Error message when --with is required but not provided.
 needSourceMessage :: SomePatch -> String
