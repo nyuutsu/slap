@@ -34,6 +34,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
                      MaxAddressableSize(..),
+                     DeclaredTargetSize(..), NaturalTargetSize(..),
                      RequiredLength(..), ActualLength(..),
                      EncodedLength(..), MaxLength(..),
                      OriginalLength(..), TruncatedLength(..),
@@ -44,7 +45,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
-import Slap.IPS.Types (DeclaredTargetSize(..), NaturalTargetSize(..))
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
 

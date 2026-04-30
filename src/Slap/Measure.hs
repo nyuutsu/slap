@@ -16,6 +16,8 @@ module Slap.Measure
   , ActualSize(..)
   , ExpectedSize(..)
   , MaxAddressableSize(..)
+  , DeclaredTargetSize(..)
+  , NaturalTargetSize(..)
     -- * Parse/create-error role newtypes
   , RequiredLength(..)
   , ActualLength(..)
@@ -150,6 +152,27 @@ newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
 -- silently produce a malformed patch via 'fromIntegral' truncation
 -- on 32-bit, where 'Int' is 31-bit-addressable).
 newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | A target file size declared explicitly by something in the
+-- patch — a header field, a trailer marker, or similar. Distinct
+-- from 'NaturalTargetSize' because some formats compare the two at
+-- apply time to decide whether the declaration is honoured (only
+-- IPS does this today, via its optional post-EOF truncation marker).
+-- Bare 'FileSize' arguments at the comparison would let a
+-- transposition silently invert the policy decision.
+newtype DeclaredTargetSize = DeclaredTargetSize
+  { unDeclaredTargetSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | A target file size derived from operation inputs alone: the
+-- source size and the maximum write end across the patch's records,
+-- actions, or hunks. Equal to @max sourceSize maxRecordEnd@ for IPS
+-- (the format that uses this distinction today). Distinct from
+-- 'DeclaredTargetSize' for the same reason 'DeclaredTargetSize'
+-- exists.
+newtype NaturalTargetSize = NaturalTargetSize
+  { unNaturalTargetSize :: FileSize }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------

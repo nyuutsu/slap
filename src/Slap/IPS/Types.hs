@@ -14,8 +14,6 @@ module Slap.IPS.Types
   , SMCShapeRequirement(..)
   , isSMCShapedSize
     -- * Truncation-marker disposition
-  , DeclaredTargetSize(..)
-  , NaturalTargetSize(..)
   , MarkerDisposition(..)
   , decideMarkerDisposition
   , effectiveTargetSize
@@ -49,6 +47,8 @@ import Slap.Measure
   , Length(..)
   , FileSize(..)
   , Cursor(..)
+  , DeclaredTargetSize(..)
+  , NaturalTargetSize(..)
   , byteLength
   , ipsSentinel
   , ips32Sentinel
@@ -404,25 +404,6 @@ ipsVariantMaxRecordEnd variant =
 ----------------------------------------------------------------------------
 -- Truncation-marker disposition
 ----------------------------------------------------------------------------
-
--- | A target file size declared by a Flips-style truncation marker
--- in a 'StandardIPS' patch's post-EOF trailer. Distinct from
--- 'NaturalTargetSize' because the two are compared at apply time
--- and bare 'FileSize' arguments would let a transposition silently
--- invert the policy decision.
-newtype DeclaredTargetSize = DeclaredTargetSize
-  { unDeclaredTargetSize :: FileSize }
-  deriving (Eq, Ord, Show)
-
--- | A target file size derived from the source size and the record
--- stream's largest write end. The "natural" output size — what
--- slap would produce in the absence of any truncation marker, equal
--- to @max sourceSize maxRecordEnd@. Distinct from
--- 'DeclaredTargetSize' for the same reason 'DeclaredTargetSize'
--- exists.
-newtype NaturalTargetSize = NaturalTargetSize
-  { unNaturalTargetSize :: FileSize }
-  deriving (Eq, Ord, Show)
 
 -- | What slap's policy decides to do with a 'StandardIPS' patch's
 -- post-EOF truncation marker, given the marker's declared size and

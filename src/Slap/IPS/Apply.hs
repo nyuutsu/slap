@@ -4,7 +4,6 @@ module Slap.IPS.Apply
 
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        ipsRecordOffset, recordPayloadLength,
-                       DeclaredTargetSize(..), NaturalTargetSize(..),
                        MarkerDisposition(..), decideMarkerDisposition,
                        effectiveTargetSize)
 import Slap.Binary (copyRegion)
@@ -14,6 +13,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
                      RequestedLength(..), RemainingLength(..),
+                     DeclaredTargetSize(..), NaturalTargetSize(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength, byteLength,
                      firstAction, nextAction, plusOffset)

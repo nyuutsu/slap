@@ -24,9 +24,9 @@ import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
-import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize,
-                       DeclaredTargetSize(..), NaturalTargetSize(..))
-import Slap.Measure (FileSize(..), Offset(..), Length(..), ActionIndex(..))
+import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
+import Slap.Measure (FileSize(..), Offset(..), Length(..), ActionIndex(..),
+                     DeclaredTargetSize(..), NaturalTargetSize(..))
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.UPS.Apply (applyUPS)

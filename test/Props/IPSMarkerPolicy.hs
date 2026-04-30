@@ -7,14 +7,14 @@ module Props.IPSMarkerPolicy (ipsMarkerPolicyTests) where
 
 import qualified Slap.IPS.Apply as IPS
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
-                       DeclaredTargetSize(..), NaturalTargetSize(..),
                        MarkerDisposition(..), decideMarkerDisposition)
 import Slap.Error (Outcome(..), SlapWarning(..),
                    ClippedRecordCount(..), OvershootBytes(..),
                    renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActionIndex(..))
+                     ActionIndex(..),
+                     DeclaredTargetSize(..), NaturalTargetSize(..))
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import qualified Data.ByteString as ByteString
