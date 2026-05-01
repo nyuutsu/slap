@@ -37,6 +37,13 @@ module Slap.IPS.Create
   , buildEBPMetadataJSON
     -- * Optimizer pass-through (re-exported for callers and tests)
   , optimalIPSRecords
+    -- * Encoding limits and narrowing
+  , EncodingLimits(..)
+  , ipsLimits
+  , ips32Limits
+  , ebpLimits
+  , narrowHunk
+  , narrowHunks
   ) where
 
 import Slap.Binary (putWord16BE)
@@ -47,7 +54,7 @@ import Slap.FileContents
   , unPatchFileContents
   )
 import Slap.Format (padHex)
-import Slap.FormatLabel (FormatLabel)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
   ( IPSVariant(..)
@@ -62,6 +69,10 @@ import Slap.Measure
   , Delta(..)
   , Cursor(..)
   , EncodedHunk(..)
+  , Hunk(..)
+  , Offset(..)
+  , ActualOffset(..)
+  , MaxOffset(..)
   , SentinelOffset(..)
   , offsetToInt
   )
@@ -321,3 +332,56 @@ buildEBPMetadataJSON fields =
             ++ escapeJSONString rest
       | otherwise =
           currentChar : escapeJSONString rest
+
+----------------------------------------------------------------------------
+-- Encoding limits and narrowing
+----------------------------------------------------------------------------
+
+-- | The wire-format range an IPS-family variant can address. Carries
+-- the format label alongside the maximum offset so 'narrowHunk' can
+-- tag overflow errors with the right format name without taking a
+-- separate label parameter.
+data EncodingLimits = EncodingLimits
+  { maximumOffset :: !Offset
+  , formatLabel   :: !FormatLabel
+  } deriving (Show)
+
+ipsLimits :: EncodingLimits
+ipsLimits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFF
+  , formatLabel   = LabelIPS
+  }
+
+ips32Limits :: EncodingLimits
+ips32Limits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelIPS32
+  }
+
+ebpLimits :: EncodingLimits
+ebpLimits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFF
+  , formatLabel   = LabelEBP
+  }
+
+-- | Narrow a 'Hunk' to an 'EncodedHunk' by checking its offset
+-- against the variant's wire-format range. Overflow surfaces as an
+-- 'OffsetExceedsRange' tagged with the limits' format label, so the
+-- error renders with exactly one format-name prefix.
+narrowHunk :: EncodingLimits -> Hunk -> Either SlapError EncodedHunk
+narrowHunk limits hunk
+  | unOffset offset > unOffset maximum_ =
+      Left (OffsetExceedsRange (formatLabel limits)
+                               (ActualOffset offset)
+                               (MaxOffset maximum_))
+  | otherwise =
+      Right EncodedHunk
+        { encodedOffset  = offset
+        , encodedPayload = hunkPayload hunk
+        }
+  where
+    offset   = hunkOffset hunk
+    maximum_ = maximumOffset limits
+
+narrowHunks :: EncodingLimits -> [Hunk] -> Either SlapError [EncodedHunk]
+narrowHunks limits = traverse (narrowHunk limits)

@@ -65,11 +65,10 @@ import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (FileSize(..), Hunk(..), UndoHunk(..),
-                      EncodedHunk(..), EncodingLimits,
+                      EncodedHunk(..),
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      narrowHunks, narrowHunksUnbounded, splitHunks,
-                      ipsLimits, ips32Limits, ebpLimits)
+                      narrowHunksUnbounded, splitHunks)
 import Slap.Constraint (Constraint(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -729,17 +728,17 @@ convertDirect contents (CreateDirect target) meta constraints = do
         }
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
-encodingLimits :: DirectCreate -> Maybe EncodingLimits
-encodingLimits CreateIPS   = Just ipsLimits
-encodingLimits CreateIPS32 = Just ips32Limits
-encodingLimits CreateEBP   = Just ebpLimits
+encodingLimits :: DirectCreate -> Maybe IPS.EncodingLimits
+encodingLimits CreateIPS   = Just IPS.ipsLimits
+encodingLimits CreateIPS32 = Just IPS.ips32Limits
+encodingLimits CreateEBP   = Just IPS.ebpLimits
 encodingLimits _           = Nothing
 
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> RequestedPatchMetadata
-             -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
+             -> Maybe IPS.EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints = case target of
   CreateIPS -> do
     narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
@@ -820,10 +819,7 @@ encodeDirect contents source target meta limits constraints = case target of
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
       Nothing  -> Right . narrowHunksUnbounded
-      Just lim -> wrapNarrow . narrowHunks lim
-    wrapNarrow :: Either String a -> Either SlapError a
-    wrapNarrow (Right value) = Right value
-    wrapNarrow (Left errorMessage) = Left (ParseError (directLabel target) errorMessage)
+      Just lim -> IPS.narrowHunks lim
     resolveIPSSentinel :: FormatLabel -> IPSVariant -> [EncodedHunk]
                        -> Either SlapError [EncodedHunk]
     resolveIPSSentinel label variant =

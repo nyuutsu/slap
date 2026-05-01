@@ -39,7 +39,6 @@ module Slap.Measure
   , Hunk(..)
   , UndoHunk(..)
   , EncodedHunk(..)
-  , EncodingLimits(..)
     -- * Conversions
   , offsetToInt
   , fileSizeToInt
@@ -66,16 +65,10 @@ module Slap.Measure
   , byteLength
   , hunkEnd
     -- * Narrowing
-  , narrowHunk
-  , narrowHunks
   , narrowHunkUnbounded
   , narrowHunksUnbounded
     -- * Splitting
   , splitHunks
-    -- * Encoding limits
-  , ipsLimits
-  , ips32Limits
-  , ebpLimits
     -- * IPS sentinel values
   , ipsSentinel
   , ips32Sentinel
@@ -85,8 +78,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word8, Word32)
 import Foreign.Ptr (Ptr, plusPtr)
-import Numeric (showHex)
-import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 
 ----------------------------------------------------------------------------
@@ -281,11 +272,6 @@ data EncodedHunk = EncodedHunk
   , encodedPayload :: !ByteString
   } deriving (Eq, Show)
 
-data EncodingLimits = EncodingLimits
-  { maximumOffset  :: !Offset
-  , formatLabel    :: !FormatLabel
-  } deriving (Show)
-
 ----------------------------------------------------------------------------
 -- Instances
 ----------------------------------------------------------------------------
@@ -441,22 +427,6 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 -- Narrowing
 ----------------------------------------------------------------------------
 
-narrowHunk :: EncodingLimits -> Hunk -> Either String EncodedHunk
-narrowHunk limits hunk
-  | unOffset (hunkOffset hunk) > unOffset (maximumOffset limits) =
-      Left (formatLabelName (formatLabel limits) ++ ": hunk offset 0x"
-            ++ showHex (unOffset (hunkOffset hunk)) ""
-            ++ " exceeds maximum offset 0x"
-            ++ showHex (unOffset (maximumOffset limits)) "")
-  | otherwise =
-      Right EncodedHunk
-        { encodedOffset  = hunkOffset hunk
-        , encodedPayload = hunkPayload hunk
-        }
-
-narrowHunks :: EncodingLimits -> [Hunk] -> Either String [EncodedHunk]
-narrowHunks limits = traverse (narrowHunk limits)
-
 narrowHunkUnbounded :: Hunk -> EncodedHunk
 narrowHunkUnbounded hunk = EncodedHunk
   { encodedOffset  = hunkOffset hunk
@@ -483,26 +453,8 @@ splitHunks maxPayload = concatMap splitOne
           in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
 
 ----------------------------------------------------------------------------
--- Encoding limits
+-- IPS sentinel values
 ----------------------------------------------------------------------------
-
-ipsLimits :: EncodingLimits
-ipsLimits = EncodingLimits
-  { maximumOffset  = Offset 0xFFFFFF
-  , formatLabel    = LabelIPS
-  }
-
-ips32Limits :: EncodingLimits
-ips32Limits = EncodingLimits
-  { maximumOffset  = Offset 0xFFFFFFFF
-  , formatLabel    = LabelIPS32
-  }
-
-ebpLimits :: EncodingLimits
-ebpLimits = EncodingLimits
-  { maximumOffset  = Offset 0xFFFFFF
-  , formatLabel    = LabelEBP
-  }
 
 -- | IPS EOF marker value (ASCII "EOF").
 ipsSentinel :: Word32
