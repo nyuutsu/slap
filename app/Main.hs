@@ -667,27 +667,57 @@ embeddedBlobIntentParser = asum
   , pure CarryIfPresent
   ]
 
+-- | Whether a CLI token is part of the canonical advertised set or
+-- a quietly-accepted alias.  The parser case bodies in
+-- 'parseCreateFormat' and 'parseRomType' historically inlined the
+-- canonical list in their error messages and had no compiler-checked
+-- relationship to the case arms.  Tagging each token in a single
+-- table lets the advertised list be derived, eliminating any drift
+-- between "what the parser accepts" and "what we tell users to type."
+data TokenVisibility = Canonical | Alias
+
+-- | The full set of CLI tokens 'parseCreateFormat' accepts, paired
+-- with the 'CreateFormat' each token resolves to and a tag for
+-- whether the token is advertised in error messages and help strings
+-- ('Canonical') or quietly accepted as a convenience alias ('Alias').
+-- Source of truth — both 'parseCreateFormat' and
+-- 'advertisedCreateFormats' derive from this table.
+createFormatTokens :: [(String, CreateFormat, TokenVisibility)]
+createFormatTokens =
+  [ ("bps",     CreateDiff   CreateBPS,    Canonical)
+  , ("ips",     CreateDirect CreateIPS,    Canonical)
+  , ("ips32",   CreateDirect CreateIPS32,  Canonical)
+  , ("ebp",     CreateDirect CreateEBP,    Canonical)
+  , ("ups",     CreateDiff   CreateUPS,    Canonical)
+  , ("ppf3",    CreateDirect CreatePPF3,   Canonical)
+  , ("ppf",     CreateDirect CreatePPF3,   Alias)
+  , ("pmsr",    CreateDirect CreatePMSR,   Canonical)
+  , ("ninja1",  CreateDirect CreateNINJA1, Canonical)
+  , ("dps",     CreateDiff   CreateDPS,    Canonical)
+  , ("ninja2",  CreateDiff   CreateNINJA2, Canonical)
+  , ("aps-n64", CreateDirect CreateAPSN64, Canonical)
+  , ("apsn64",  CreateDirect CreateAPSN64, Alias)
+  , ("aps-gba", CreateDiff   CreateAPSGBA, Canonical)
+  , ("apsgba",  CreateDiff   CreateAPSGBA, Alias)
+  , ("gdiff",   CreateDiff   CreateGDIFF,  Canonical)
+  , ("pchtxt",  CreateDirect CreatePCHTXT, Canonical)
+  ]
+
+-- | The canonical create-format tokens 'parseCreateFormat'
+-- advertises in its error message and the @--format@ / @--to@ help
+-- strings.  Derived from 'createFormatTokens' by filtering out
+-- aliases.
+advertisedCreateFormats :: [String]
+advertisedCreateFormats =
+  [token | (token, _format, Canonical) <- createFormatTokens]
+
 parseCreateFormat :: String -> Either String CreateFormat
-parseCreateFormat input = case map toLower input of
-  "bps"     -> Right (CreateDiff CreateBPS)
-  "ips"     -> Right (CreateDirect CreateIPS)
-  "ips32"   -> Right (CreateDirect CreateIPS32)
-  "ebp"     -> Right (CreateDirect CreateEBP)
-  "ups"     -> Right (CreateDiff CreateUPS)
-  "ppf3"    -> Right (CreateDirect CreatePPF3)
-  "ppf"     -> Right (CreateDirect CreatePPF3)
-  "pmsr"    -> Right (CreateDirect CreatePMSR)
-  "ninja1"  -> Right (CreateDirect CreateNINJA1)
-  "dps"     -> Right (CreateDiff CreateDPS)
-  "ninja2"  -> Right (CreateDiff CreateNINJA2)
-  "aps-n64" -> Right (CreateDirect CreateAPSN64)
-  "apsn64"  -> Right (CreateDirect CreateAPSN64)
-  "aps-gba" -> Right (CreateDiff CreateAPSGBA)
-  "apsgba"  -> Right (CreateDiff CreateAPSGBA)
-  "gdiff"   -> Right (CreateDiff CreateGDIFF)
-  "pchtxt"  -> Right (CreateDirect CreatePCHTXT)
-  _         -> Left ("unknown format: " ++ input
-                  ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
+parseCreateFormat input =
+  case lookup (map toLower input)
+              [(token, format) | (token, format, _visibility) <- createFormatTokens] of
+    Just format -> Right format
+    Nothing     -> Left ("unknown format: " ++ input
+                      ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
 
 parsePatchEncoding :: String -> Either String PatchEncoding
 parsePatchEncoding input = case map toLower input of
@@ -695,52 +725,55 @@ parsePatchEncoding input = case map toLower input of
   "system" -> Right PatchEncodingSystem
   _        -> Left ("unknown patch encoding: " ++ input ++ "\n  expected: utf8, system")
 
+-- | The full set of CLI tokens 'parseRomType' accepts, paired with
+-- the 'PlatformType' each token resolves to and a 'TokenVisibility'
+-- tag.  Source of truth — both 'parseRomType' and 'advertisedRomTypes'
+-- derive from this table.  No aliases today; every token is
+-- 'Canonical'.
+romTypeTokens :: [(String, PlatformType, TokenVisibility)]
+romTypeTokens =
+  [ ("raw",  PlatformRaw,             Canonical)
+  , ("nes",  PlatformNES,             Canonical)
+  , ("fds",  PlatformFDS,             Canonical)
+  , ("snes", PlatformSNES,            Canonical)
+  , ("n64",  PlatformN64,             Canonical)
+  , ("gb",   PlatformGB,              Canonical)
+  , ("gbc",  PlatformGBC,             Canonical)
+  , ("gba",  PlatformGBA,             Canonical)
+  , ("ngp",  PlatformNGP,             Canonical)
+  , ("ngpc", PlatformNGPC,            Canonical)
+  , ("sms",  PlatformSMS,             Canonical)
+  , ("gg",   PlatformGameGear,        Canonical)
+  , ("mega", PlatformGenesis,         Canonical)
+  , ("pce",  PlatformPCEngine,        Canonical)
+  , ("ws",   PlatformWonderSwan,      Canonical)
+  , ("wsc",  PlatformWonderSwanColor, Canonical)
+  , ("lynx", PlatformLynx,            Canonical)
+  , ("jag",  PlatformJaguar,          Canonical)
+  , ("gp32", PlatformGP32,            Canonical)
+  ]
+
+-- | The canonical ROM-type tokens 'parseRomType' advertises in its
+-- error message and the @--rom-type@ help string.  Derived from
+-- 'romTypeTokens' by filtering out aliases.  (Today every entry is
+-- canonical; the filter is structural, not narrowing.)
+advertisedRomTypes :: [String]
+advertisedRomTypes =
+  [token | (token, _platformType, Canonical) <- romTypeTokens]
+
 parseRomType :: String -> Either String PlatformType
-parseRomType input = case map toLower input of
-  "raw"  -> Right PlatformRaw
-  "nes"  -> Right PlatformNES
-  "fds"  -> Right PlatformFDS
-  "snes" -> Right PlatformSNES
-  "n64"  -> Right PlatformN64
-  "gb"   -> Right PlatformGB
-  "gbc"  -> Right PlatformGBC
-  "gba"  -> Right PlatformGBA
-  "ngp"  -> Right PlatformNGP
-  "ngpc" -> Right PlatformNGPC
-  "sms"  -> Right PlatformSMS
-  "gg"   -> Right PlatformGameGear
-  "mega" -> Right PlatformGenesis
-  "pce"  -> Right PlatformPCEngine
-  "ws"   -> Right PlatformWonderSwan
-  "wsc"  -> Right PlatformWonderSwanColor
-  "lynx" -> Right PlatformLynx
-  "jag"  -> Right PlatformJaguar
-  "gp32" -> Right PlatformGP32
-  _      -> Left ("unknown ROM type: " ++ input
-                ++ "\n  expected: " ++ intercalate ", " advertisedRomTypes)
+parseRomType input =
+  case lookup (map toLower input)
+              [(token, platformType) | (token, platformType, _visibility) <- romTypeTokens] of
+    Just platformType -> Right platformType
+    Nothing           -> Left ("unknown ROM type: " ++ input
+                            ++ "\n  expected: " ++ intercalate ", " advertisedRomTypes)
 
 parseImageType :: String -> Either String PPFImageType
 parseImageType typeString = case map toLower typeString of
   "bin" -> Right BIN
   "gi"  -> Right GI
   _ -> Left ("unknown image type: " ++ typeString ++ "\n  expected: bin, gi")
-
--- | The canonical create-format tokens 'parseCreateFormat'
--- advertises in its error message and the @--format@ / @--to@
--- help strings.  Aliases (@ppf@, @apsn64@, @apsgba@) are accepted
--- by the parser's case body but not advertised — users see one
--- canonical spelling per format.
-advertisedCreateFormats :: [String]
-advertisedCreateFormats =
-  ["bps", "ips", "ips32", "ebp", "ups", "ppf3", "pmsr", "ninja1",
-   "ninja2", "dps", "aps-n64", "aps-gba", "gdiff", "pchtxt"]
-
--- | The canonical ROM-type tokens 'parseRomType' advertises in its
--- error message and the @--rom-type@ help string.
-advertisedRomTypes :: [String]
-advertisedRomTypes =
-  ["raw", "nes", "fds", "snes", "n64", "gb", "gbc", "gba", "ngp",
-   "ngpc", "sms", "gg", "mega", "pce", "ws", "wsc", "lynx", "jag", "gp32"]
 
 patchInfoParser :: Parser InfoCommand
 patchInfoParser = do
