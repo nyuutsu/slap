@@ -421,7 +421,7 @@ verbosityParser = flag Quiet Verbose
 -- explicit-file lane (consuming the flag but missing the path) and
 -- optparse-applicative would prefer that partial match's error over the
 -- derived-file lane's success.  Within 'writingLane', whether the user
--- supplied an explicit path decides which constructor 'mkWritingLane'
+-- supplied an explicit path decides which constructor 'chooseWritingLane'
 -- returns, and @--force@ is consumed at that one site.  @--in-place@
 -- and @--dry-run@ commit to their own lanes, so combining them with
 -- @--force@ leaves @--force@ unconsumed and produces a parse error.
@@ -446,7 +446,7 @@ applyOutputParser = asum
           (long "no-backup" <> help "Don't create .bak backup with --in-place")
 
     writingLane :: Parser ApplyOutput
-    writingLane = mkWritingLane
+    writingLane = chooseWritingLane
       <$> optional outputPathOption
       <*> overwritePolicyFlag
       where
@@ -462,9 +462,9 @@ applyOutputParser = asum
           (long "force" <> short 'f'
             <> help "Overwrite existing output files")
 
-        mkWritingLane :: Maybe FilePath -> OverwritePolicy -> ApplyOutput
-        mkWritingLane Nothing     policy = ApplyToDerivedFile policy
-        mkWritingLane (Just path) policy = ApplyToExplicitFile path policy
+        chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> ApplyOutput
+        chooseWritingLane Nothing     policy = ApplyToDerivedFile policy
+        chooseWritingLane (Just path) policy = ApplyToExplicitFile path policy
 
 fileReadingOptionsParser :: Parser FileReadingOptions
 fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
