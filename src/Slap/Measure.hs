@@ -470,15 +470,16 @@ narrowHunksUnbounded = map narrowHunkUnbounded
 -- Splitting
 ----------------------------------------------------------------------------
 
--- | Split hunks so each payload is <= maxSize bytes.
-splitHunks :: Int -> [Hunk] -> [Hunk]
-splitHunks maxSize = concatMap splitOne
+-- | Split hunks so each payload is <= maxPayload bytes.
+splitHunks :: Length -> [Hunk] -> [Hunk]
+splitHunks maxPayload = concatMap splitOne
   where
+    payloadBytes = unLength maxPayload
     splitOne (Hunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= maxSize = [Hunk hunkOffset hunkPayload]
+      | ByteString.length hunkPayload <= payloadBytes = [Hunk hunkOffset hunkPayload]
       | otherwise =
-          let (chunk, remaining) = ByteString.splitAt maxSize hunkPayload
-              nextOffset = advance hunkOffset (Length maxSize)
+          let (chunk, remaining) = ByteString.splitAt payloadBytes hunkPayload
+              nextOffset = advance hunkOffset maxPayload
           in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
 
 ----------------------------------------------------------------------------

@@ -15,6 +15,7 @@ module Slap.PPF.Types
     , ppfPreambleLength
     , ppf2HeaderLength
     , ppf3MinHeaderLength
+    , ppf3MaxRecordPayload
     , ppf4HeaderLength
     , ppf4PostDescriptionLength
     , fileIdMarkerLength
@@ -108,6 +109,14 @@ ppf2HeaderLength = Length 1084
 -- | Minimum PPF3 header length (without optional validation block).
 ppf3MinHeaderLength :: Length
 ppf3MinHeaderLength = Length 60
+
+-- | Maximum payload bytes a single PPF3 record can carry. The PPF3
+-- record format uses a single-byte size field, capping payload at
+-- @0xFF = 255@. Both 'Slap.PPF.Create.encodePPF3' record splitting and
+-- the 'Slap.PPF.Create.computeUndo' undo-hunk splitter respect this
+-- bound.
+ppf3MaxRecordPayload :: Length
+ppf3MaxRecordPayload = Length 255
 
 -- | PPF4 header length in bytes.
 ppf4HeaderLength :: Length

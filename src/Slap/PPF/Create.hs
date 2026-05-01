@@ -1,11 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Slap.PPF.Create (encodePPF3, encodeFileIdDiz) where
+module Slap.PPF.Create (encodePPF3, encodeFileIdDiz, computeUndo) where
 
 import Slap.PPF.Types (PPFImageType(..), PPFFileId(..), ValidationBlockBytes(..),
-                       fromImageType, ppfDescriptionLength)
+                       fromImageType, ppfDescriptionLength, ppf3MaxRecordPayload)
 import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
-                     OriginalLength(..), TruncatedLength(..))
+                     OriginalLength(..), TruncatedLength(..), advance)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -46,8 +46,8 @@ encodeUndoRecord hasUndo (UndoHunk hunkOffset hunkPayload hunkOriginal) =
   <> if hasUndo then byteString hunkOriginal else mempty
 
 -- | Encode a PPF3 patch from pre-split records.
--- Records: [Hunk], each payload ≤ 255 bytes.
--- Undo hunks (if provided): [UndoHunk], each ≤ 255 bytes.
+-- Records: [Hunk], each payload ≤ 255 bytes ('ppf3MaxRecordPayload').
+-- Undo hunks (if provided): [UndoHunk], each ≤ 255 bytes ('ppf3MaxRecordPayload').
 encodePPF3 :: [Hunk]
            -> String
            -> Maybe [UndoHunk]
@@ -80,3 +80,26 @@ encodeFileIdDiz (PPFFileId content) = LazyByteString.toStrict $ toLazyByteString
   <> byteString content
   <> byteString "@END_FILE_ID.DIZ"
   <> word16LE (fromIntegral (ByteString.length content))
+
+-- | Compute undo hunks from source bytes and diff records.
+-- Each record is split at the PPF3 max-payload limit ('ppf3MaxRecordPayload').
+computeUndo :: ByteString -> [Hunk] -> [UndoHunk]
+computeUndo source = concatMap splitUndo
+  where
+    sourceLength = ByteString.length source
+    payloadBytes = unLength ppf3MaxRecordPayload
+    splitUndo (Hunk hunkOffset hunkPayload)
+      | ByteString.null hunkPayload = []
+      | ByteString.length hunkPayload <= payloadBytes =
+          [UndoHunk hunkOffset hunkPayload (oldBytes (unOffset hunkOffset) (ByteString.length hunkPayload))]
+      | otherwise =
+          let chunk = ByteString.take payloadBytes hunkPayload
+              intOffset = unOffset hunkOffset
+          in UndoHunk hunkOffset chunk (oldBytes intOffset payloadBytes)
+             : splitUndo (Hunk (advance hunkOffset ppf3MaxRecordPayload) (ByteString.drop payloadBytes hunkPayload))
+    oldBytes position chunkLength
+      | position >= sourceLength = ByteString.replicate chunkLength 0
+      | position + chunkLength > sourceLength =
+          ByteString.take (sourceLength - position) (ByteString.drop position source)
+          <> ByteString.replicate (chunkLength - (sourceLength - position)) 0
+      | otherwise = ByteString.take chunkLength (ByteString.drop position source)

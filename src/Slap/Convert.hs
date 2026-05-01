@@ -35,7 +35,8 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF.Create as PPF
-import Slap.PPF.Types (PPFImageType(..), PPFFileId, ValidationBlockBytes(..))
+import Slap.PPF.Types (PPFImageType(..), PPFFileId, ValidationBlockBytes(..),
+                       ppf3MaxRecordPayload)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
@@ -63,11 +64,11 @@ import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
-import Slap.Measure (Offset(..), FileSize(..), Length(..), Hunk(..), UndoHunk(..),
+import Slap.Measure (FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..), EncodingLimits,
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      advance, narrowHunks, narrowHunksUnbounded, splitHunks,
+                      narrowHunks, narrowHunksUnbounded, splitHunks,
                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.Constraint (Constraint(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
@@ -741,7 +742,7 @@ encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> Requested
              -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints = case target of
   CreateIPS -> do
-    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- resolveIPSSentinel LabelIPS StandardIPS narrowed
     rejectNonSMCShapedTruncation constraints contents
     Right (CreateResult
@@ -749,7 +750,7 @@ encodeDirect contents source target meta limits constraints = case target of
             [])
   CreateIPS32 -> do
     rejectTruncation LabelIPS32 contents source
-    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- resolveIPSSentinel LabelIPS32 IPS32 narrowed
     -- IPS32 has no community-recognised truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
@@ -760,7 +761,7 @@ encodeDirect contents source target meta limits constraints = case target of
             [])
   CreateEBP -> do
     rejectTruncation LabelEBP contents source
-    narrowed <- narrow (splitHunks (unLength ipsMaxRecordPayload) (contentsRecords contents))
+    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- resolveIPSSentinel LabelEBP StandardIPS narrowed
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
@@ -788,7 +789,7 @@ encodeDirect contents source target meta limits constraints = case target of
             [])
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
-    let ppfResult = PPF.encodePPF3 (splitHunks 255 (contentsRecords contents)) description
+    let ppfResult = PPF.encodePPF3 (splitHunks ppf3MaxRecordPayload (contentsRecords contents)) description
                       (contentsUndoData contents) (contentsValidation contents) imageType
     in Right $ case contentsFileIdDiz contents of
          Nothing  -> ppfResult
@@ -929,7 +930,7 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
                     then Just (ValidationBlockBytes (ByteString.take 1024 (ByteString.drop validationOffset source)))
                     else Nothing
   , contentsUndoData    = if needs FUndoData
-                    then Just (computeUndo source patchHunks)
+                    then Just (PPF.computeUndo source patchHunks)
                     else Nothing
   -- Populated whenever the target is smaller than the source regardless
   -- of whether the target format carries a truncation marker: formats
@@ -973,28 +974,6 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
     contract         = directConversionContract format undoChoice validationChoice
     allFields = contractRequiredFields contract `Set.union` contractAcceptedFields contract
     needs field = field `Set.member` allFields
-
--- | Compute undo hunks from source bytes and diff records.
--- Each record is split at 255 bytes (PPF3 record size limit).
-computeUndo :: ByteString.ByteString -> [Hunk] -> [UndoHunk]
-computeUndo source = concatMap splitUndo
-  where
-    sourceLength = ByteString.length source
-    splitUndo (Hunk hunkOffset hunkPayload)
-      | ByteString.null hunkPayload = []
-      | ByteString.length hunkPayload <= 255 =
-          [UndoHunk hunkOffset hunkPayload (oldBytes (unOffset hunkOffset) (ByteString.length hunkPayload))]
-      | otherwise =
-          let chunk = ByteString.take 255 hunkPayload
-              intOffset = unOffset hunkOffset
-          in UndoHunk hunkOffset chunk (oldBytes intOffset 255)
-             : splitUndo (Hunk (advance hunkOffset (Length 255)) (ByteString.drop 255 hunkPayload))
-    oldBytes position chunkLength
-      | position >= sourceLength = ByteString.replicate chunkLength 0
-      | position + chunkLength > sourceLength =
-          ByteString.take (sourceLength - position) (ByteString.drop position source)
-          <> ByteString.replicate (chunkLength - (sourceLength - position)) 0
-      | otherwise = ByteString.take chunkLength (ByteString.drop position source)
 
 ----------------------------------------------------------------------------
 -- Internal helpers
