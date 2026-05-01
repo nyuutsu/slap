@@ -14,6 +14,7 @@ module Slap.Error
   , FieldName(..)
   , OverlapCount(..)
   , ClippedRecordCount(..)
+  , OOBBlockCount(..)
   , OvershootBytes(..)
   , fieldNameLabel
   , renderSlapError
@@ -498,7 +499,7 @@ data SlapWarning
   | PlatformAmbiguous FormatLabel String String String  -- source format, combined name, default name, override value
 
   -- Apply: out-of-bounds block clipping
-  | ApplyOOBBlocksSkipped FormatLabel Int ActionIndex Length FileSize
+  | ApplyOOBBlocksSkipped FormatLabel OOBBlockCount ActionIndex Length FileSize
 
   -- Format-specific
   | SubformatConverted FormatLabel String String
@@ -574,6 +575,14 @@ newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
 -- marker. Value-zero is structurally impossible: the warning is
 -- only emitted when at least one record crossed the boundary.
 newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | The number of UPS blocks whose write region extends past the
+-- declared target file size. Value-zero is structurally impossible:
+-- the warning is only emitted when at least one block was OOB.
+-- Peer to 'ClippedRecordCount' — both count records-or-blocks that
+-- a format's apply path skipped under a defined policy.
+newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
   deriving (Eq, Ord, Show)
 
 -- | The total byte length lost across all clipped records when a
@@ -919,7 +928,7 @@ renderSlapWarning (PlatformAmbiguous label combined chosen override) =
   ++ " is ambiguous; defaults to " ++ chosen
   ++ " on conversion (override with --rom-type " ++ override ++ ")"
 
-renderSlapWarning (ApplyOOBBlocksSkipped label count firstIndex overshoot declaredSize) =
+renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex overshoot declaredSize) =
   formatLabelName label ++ " apply: "
   ++ show count ++ plural count " block writes" " blocks write"
   ++ " past declared target size ("

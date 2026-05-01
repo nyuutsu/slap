@@ -4,7 +4,7 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Error (SlapError(..), SlapWarning(..))
+import Slap.Error (SlapError(..), SlapWarning(..), OOBBlockCount(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
@@ -177,6 +177,18 @@ applyUPS patch (SourceFileContents source)
 -- OOB block detection
 ----------------------------------------------------------------------------
 
+-- | Per-block walk state for 'detectOOBBlocks'. Threaded through
+-- 'Vector.ifoldl'' over the patch's blocks; each block either falls
+-- entirely within the declared target (cursor advances; counts
+-- unchanged) or extends past it (cursor still advances, counts
+-- update). Module-internal; not exported.
+data OOBWalkState = OOBWalkState
+  { oobPosition   :: !Offset
+  , oobCount      :: !OOBBlockCount
+  , oobFirstIndex :: !(Maybe ActionIndex)
+  , oobOvershoot  :: !Length
+  }
+
 -- | Walk the block stream and detect blocks whose span exceeds the
 -- declared target size. Returns a single summary warning if any OOB
 -- blocks exist, or an empty list if all blocks fit. Called at parse
@@ -184,31 +196,38 @@ applyUPS patch (SourceFileContents source)
 -- user sees the diagnostic before apply runs, and 'applyUPS' clips
 -- the writes silently.
 detectOOBBlocks :: UPSPatch -> [SlapWarning]
-detectOOBBlocks patch =
-  case firstOOBIndex of
-    Nothing       -> []
-    Just firstIdx ->
-      [ApplyOOBBlocksSkipped LabelUPS oobBlockCount firstIdx
-                             totalOvershoot targetFileSize]
+detectOOBBlocks patch = case oobFirstIndex finalState of
+  Nothing       -> []
+  Just firstIdx ->
+    [ApplyOOBBlocksSkipped LabelUPS
+      (oobCount finalState) firstIdx
+      (oobOvershoot finalState) targetFileSize]
   where
     targetFileSize = upsTargetSize patch
 
-    (_, oobBlockCount, firstOOBIndex, totalOvershoot) =
-      Vector.ifoldl' walkBlock (Offset 0, 0, Nothing, Length 0) (upsBlocks patch)
+    initialState = OOBWalkState
+      { oobPosition   = Offset 0
+      , oobCount      = OOBBlockCount 0
+      , oobFirstIndex = Nothing
+      , oobOvershoot  = Length 0
+      }
 
-    walkBlock (position, count, firstIdx, overshoot) blockIdx
-              (UPSBlock skipLen xorData) =
+    finalState = Vector.ifoldl' walkBlock initialState (upsBlocks patch)
+
+    walkBlock state blockIdx (UPSBlock skipLen xorData) =
       let xorLen        = Length (ByteString.length xorData)
           totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
-          nextPosition  = advance position totalBlockLen
-      in if fitsWithin position totalBlockLen targetFileSize
-           then (nextPosition, count, firstIdx, overshoot)
-           else let remaining      = remainingFromOffset position targetFileSize
+          nextPosition  = advance (oobPosition state) totalBlockLen
+      in if fitsWithin (oobPosition state) totalBlockLen targetFileSize
+           then state { oobPosition = nextPosition }
+           else let remaining      = remainingFromOffset (oobPosition state) targetFileSize
                     blockOvershoot = subtractLength totalBlockLen remaining
-                in ( nextPosition
-                   , count + 1
-                   , case firstIdx of
-                       Just _  -> firstIdx
-                       Nothing -> Just (ActionIndex blockIdx)
-                   , overshoot <> blockOvershoot
-                   )
+                    OOBBlockCount currentCount = oobCount state
+                in state
+                  { oobPosition   = nextPosition
+                  , oobCount      = OOBBlockCount (currentCount + 1)
+                  , oobFirstIndex = case oobFirstIndex state of
+                      Just _  -> oobFirstIndex state
+                      Nothing -> Just (ActionIndex blockIdx)
+                  , oobOvershoot  = oobOvershoot state <> blockOvershoot
+                  }
