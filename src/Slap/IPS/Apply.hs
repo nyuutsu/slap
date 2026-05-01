@@ -8,7 +8,7 @@ import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        effectiveTargetSize)
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..), SlapWarning(..),
-                   Outcome(..), ClippedRecordCount(..), OvershootBytes(..))
+                   Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
@@ -168,13 +168,12 @@ applyIPS (SourceFileContents source) patch
             Nothing -> ClipAccumulator
               { clipCount      = ClippedRecordCount 1
               , clipFirstIndex = recordIndex
-              , clipOvershoot  = OvershootBytes overshootLen
+              , clipOvershoot  = MarkerOvershootBytes overshootLen
               }
             Just existing -> existing
               { clipCount     = ClippedRecordCount
                                   (unClippedRecordCount (clipCount existing) + 1)
-              , clipOvershoot = OvershootBytes
-                                  (unOvershootBytes (clipOvershoot existing) <> overshootLen)
+              , clipOvershoot = clipOvershoot existing <> MarkerOvershootBytes overshootLen
               }
 
         -- | Seed every byte of the output buffer before any record
@@ -314,5 +313,5 @@ applyIPS (SourceFileContents source) patch
 data ClipAccumulator = ClipAccumulator
   { clipCount      :: !ClippedRecordCount
   , clipFirstIndex :: !ActionIndex
-  , clipOvershoot  :: !OvershootBytes
+  , clipOvershoot  :: !MarkerOvershootBytes
   }

@@ -19,7 +19,7 @@ import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
-                   ClippedRecordCount(..), OvershootBytes(..), renderSlapError)
+                   ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -885,7 +885,7 @@ ipsApplyZeroTargetWithRecordsClipped =
         (DeclaredTargetSize (FileSize 0))
         (NaturalTargetSize  (FileSize 1))
       expectedClipped  = IPSRecordsClippedByMarker LabelIPS
-        (ClippedRecordCount 1) (ActionIndex 0) (OvershootBytes (Length 1))
+        (ClippedRecordCount 1) (ActionIndex 0) (MarkerOvershootBytes (Length 1))
   in case applyIPS (SourceFileContents ByteString.empty) patch of
        Right (Outcome (TargetFileContents target) warnings) -> do
          assertEqual "target should be empty" 0 (ByteString.length target)

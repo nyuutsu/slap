@@ -9,7 +9,7 @@ import qualified Slap.IPS.Apply as IPS
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        MarkerDisposition(..), decideMarkerDisposition)
 import Slap.Error (Outcome(..), SlapWarning(..),
-                   ClippedRecordCount(..), OvershootBytes(..),
+                   ClippedRecordCount(..), MarkerOvershootBytes(..),
                    renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -287,7 +287,7 @@ test_honouredRecordsCrossClip = do
           (NaturalTargetSize  (FileSize 110))
       clippedWarning =
         IPSRecordsClippedByMarker LabelIPS
-          (ClippedRecordCount 1) (ActionIndex 0) (OvershootBytes (Length 20))
+          (ClippedRecordCount 1) (ActionIndex 0) (MarkerOvershootBytes (Length 20))
   outcome <- runApplyOrFail source patch
   assertApplyResult "MarkerHonoured records-cross"
     90 [honouredWarning, clippedWarning] outcome
@@ -306,7 +306,7 @@ test_honouredRecordStraddles = do
           (NaturalTargetSize  (FileSize 100))
       clippedWarning =
         IPSRecordsClippedByMarker LabelIPS
-          (ClippedRecordCount 1) (ActionIndex 0) (OvershootBytes (Length 20))
+          (ClippedRecordCount 1) (ActionIndex 0) (MarkerOvershootBytes (Length 20))
   outcome <- runApplyOrFail source patch
   assertApplyResult "MarkerHonoured straddles"
     80 [honouredWarning, clippedWarning] outcome

@@ -4,7 +4,8 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Error (SlapError(..), SlapWarning(..), OOBBlockCount(..))
+import Slap.Error (SlapError(..), SlapWarning(..),
+                   OOBBlockCount(..), OOBOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(..),
@@ -186,7 +187,7 @@ data OOBWalkState = OOBWalkState
   { oobPosition   :: !Offset
   , oobCount      :: !OOBBlockCount
   , oobFirstIndex :: !(Maybe ActionIndex)
-  , oobOvershoot  :: !Length
+  , oobOvershoot  :: !OOBOvershootBytes
   }
 
 -- | Walk the block stream and detect blocks whose span exceeds the
@@ -209,7 +210,7 @@ detectOOBBlocks patch = case oobFirstIndex finalState of
       { oobPosition   = Offset 0
       , oobCount      = OOBBlockCount 0
       , oobFirstIndex = Nothing
-      , oobOvershoot  = Length 0
+      , oobOvershoot  = mempty
       }
 
     finalState = Vector.ifoldl' walkBlock initialState (upsBlocks patch)
@@ -229,5 +230,5 @@ detectOOBBlocks patch = case oobFirstIndex finalState of
                   , oobFirstIndex = case oobFirstIndex state of
                       Just _  -> oobFirstIndex state
                       Nothing -> Just (ActionIndex blockIdx)
-                  , oobOvershoot  = oobOvershoot state <> blockOvershoot
+                  , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
                   }

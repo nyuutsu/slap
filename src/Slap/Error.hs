@@ -15,7 +15,8 @@ module Slap.Error
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
-  , OvershootBytes(..)
+  , MarkerOvershootBytes(..)
+  , OOBOvershootBytes(..)
   , fieldNameLabel
   , renderSlapError
   , renderApplyError
@@ -459,7 +460,7 @@ data SlapWarning
   -- everything else. Only fires when at least one record crossed the
   -- boundary; the 'ActionIndex' names the first such record in wire
   -- order.
-  | IPSRecordsClippedByMarker FormatLabel ClippedRecordCount ActionIndex OvershootBytes
+  | IPSRecordsClippedByMarker FormatLabel ClippedRecordCount ActionIndex MarkerOvershootBytes
 
   -- | A 'StandardIPS' patch's truncation marker declared a target
   -- size larger than the natural size, which would grow the output
@@ -499,7 +500,7 @@ data SlapWarning
   | PlatformAmbiguous FormatLabel String String String  -- source format, combined name, default name, override value
 
   -- Apply: out-of-bounds block clipping
-  | ApplyOOBBlocksSkipped FormatLabel OOBBlockCount ActionIndex Length FileSize
+  | ApplyOOBBlocksSkipped FormatLabel OOBBlockCount ActionIndex OOBOvershootBytes FileSize
 
   -- Format-specific
   | SubformatConverted FormatLabel String String
@@ -585,15 +586,30 @@ newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
 newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
   deriving (Eq, Ord, Show)
 
--- | The total byte length lost across all clipped records when a
--- truncation marker was honoured. Sums the per-record overshoots
+-- | The total byte length lost across all records clipped by an
+-- honoured IPS truncation marker. Sums the per-record overshoots
 -- (each record's "bytes beyond effective target"), so a single
 -- record clipped by 100 bytes and ten records each clipped by 10
 -- both report 100. Carried by 'IPSRecordsClippedByMarker' so the
 -- user sees not just "records were clipped" but "this much was
--- thrown away."
-newtype OvershootBytes = OvershootBytes { unOvershootBytes :: Length }
-  deriving (Eq, Ord, Show)
+-- thrown away." Peer to 'OOBOvershootBytes' — both sum per-event
+-- overshoots under a format-specific apply-time policy.
+--
+-- 'Semigroup' and 'Monoid' are derived through to 'Length' so walk
+-- sites accumulating overshoots can use '<>' and 'mempty' directly.
+newtype MarkerOvershootBytes = MarkerOvershootBytes { unMarkerOvershootBytes :: Length }
+  deriving (Eq, Ord, Show, Semigroup, Monoid)
+
+-- | The total byte length lost across all UPS blocks whose write
+-- region extended past the declared target file size. Sums the
+-- per-block overshoots, so a single block clipped by 100 bytes and
+-- ten blocks each clipped by 10 both report 100. Carried by
+-- 'ApplyOOBBlocksSkipped'. Peer to 'MarkerOvershootBytes'.
+--
+-- 'Semigroup' and 'Monoid' are derived through to 'Length' so the
+-- 'detectOOBBlocks' walk can use '<>' and 'mempty' directly.
+newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
+  deriving (Eq, Ord, Show, Semigroup, Monoid)
 
 ----------------------------------------------------------------------------
 -- renderApplyError
@@ -850,7 +866,7 @@ renderSlapWarning (IPSTruncationMarkerHonoured label
   ++ show (unFileSize natural) ++ " bytes)"
 
 renderSlapWarning (IPSRecordsClippedByMarker label
-    (ClippedRecordCount count) (ActionIndex firstIndex) (OvershootBytes overshoot)) =
+    (ClippedRecordCount count) (ActionIndex firstIndex) (MarkerOvershootBytes overshoot)) =
   formatLabelName label ++ " apply: "
   ++ show count
   ++ (if count == 1 then " record" else " records")
@@ -928,7 +944,7 @@ renderSlapWarning (PlatformAmbiguous label combined chosen override) =
   ++ " is ambiguous; defaults to " ++ chosen
   ++ " on conversion (override with --rom-type " ++ override ++ ")"
 
-renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex overshoot declaredSize) =
+renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
   formatLabelName label ++ " apply: "
   ++ show count ++ plural count " block writes" " blocks write"
   ++ " past declared target size ("
