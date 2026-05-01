@@ -1137,17 +1137,14 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
     checkHash verificationPolicy SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-  -- Per-block CRC16, PPF validation block, advisory file size, and source
-  -- byte checks are warning-only; skip them entirely under --no-verify.
-  when (verificationPolicy == EnforceVerification) $ do
-    forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-      warnBlock "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
-    forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
-      warnPPFBlock blockOffset expectedData sourceBytes
-    forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
-      warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-    forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
-      warnSourceBytes checkLabel checkOffset expectedData sourceBytes
+  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+    warnBlock verificationPolicy "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+  forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
+    warnPPFBlock verificationPolicy blockOffset expectedData sourceBytes
+  forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
+    warnFileSize verificationPolicy expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+  forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
+    warnSourceBytes verificationPolicy checkLabel checkOffset expectedData sourceBytes
 
 verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
 verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
@@ -1155,11 +1152,8 @@ verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = 
     checkCRC verificationPolicy TargetSide expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash verificationPolicy TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
-  case verificationPolicy of
-    SkipVerification    -> pure ()
-    EnforceVerification ->
-      forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-        warnBlock "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
+  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+    warnBlock verificationPolicy "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
 
@@ -1206,21 +1200,27 @@ checkAdler verificationPolicy windowOffset expected actual
             ++ " (expected 0x" ++ showAdler32 expected
             ++ ", got 0x" ++ showAdler32 actual ++ ")"
 
-warnBlock :: String -> Offset -> CRC16 -> CRC16 -> IO ()
-warnBlock label blockOffset expected actual
-  | expected == actual = pure ()
-  | otherwise = warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
+warnBlock :: VerificationPolicy -> String -> Offset -> CRC16 -> CRC16 -> IO ()
+warnBlock verificationPolicy label blockOffset expected actual = case verificationPolicy of
+  SkipVerification    -> pure ()
+  EnforceVerification
+    | expected == actual -> pure ()
+    | otherwise          -> warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
 
-warnPPFBlock :: Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
-warnPPFBlock blockOffset (ValidationBlockBytes expectedData) sourceBytes =
-  let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
-  in when (actual /= expectedData) $
-       warn ("validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
+warnPPFBlock :: VerificationPolicy -> Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
+warnPPFBlock verificationPolicy blockOffset (ValidationBlockBytes expectedData) sourceBytes = case verificationPolicy of
+  SkipVerification    -> pure ()
+  EnforceVerification ->
+    let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
+    in when (actual /= expectedData) $
+         warn ("validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
 
-warnFileSize :: FileSize -> FileSize -> IO ()
-warnFileSize (FileSize expectedSize) (FileSize actualSize) =
-  when (expectedSize /= actualSize) $
-    warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
+warnFileSize :: VerificationPolicy -> FileSize -> FileSize -> IO ()
+warnFileSize verificationPolicy (FileSize expectedSize) (FileSize actualSize) = case verificationPolicy of
+  SkipVerification    -> pure ()
+  EnforceVerification ->
+    when (expectedSize /= actualSize) $
+      warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
 
 checkFileSize :: VerificationPolicy -> VerificationSide -> FileSize -> FileSize -> IO ()
 checkFileSize verificationPolicy side (FileSize expectedSize) (FileSize actualSize)
@@ -1233,11 +1233,13 @@ checkFileSize verificationPolicy side (FileSize expectedSize) (FileSize actualSi
     mismatchMessage = label ++ " file size mismatch (expected "
                    ++ show expectedSize ++ " bytes, got " ++ show actualSize ++ " bytes)"
 
-warnSourceBytes :: String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-warnSourceBytes label checkOffset expectedData sourceBytes =
-  let actual = safeSlice (unOffset checkOffset) (ByteString.length expectedData) sourceBytes
-  in when (actual /= expectedData) $
-       warn (label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset))
+warnSourceBytes :: VerificationPolicy -> String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+warnSourceBytes verificationPolicy label checkOffset expectedData sourceBytes = case verificationPolicy of
+  SkipVerification    -> pure ()
+  EnforceVerification ->
+    let actual = safeSlice (unOffset checkOffset) (ByteString.length expectedData) sourceBytes
+    in when (actual /= expectedData) $
+         warn (label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset))
 
 safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
 safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)
