@@ -48,6 +48,7 @@ import qualified Data.ByteString as ByteString
 import Control.Monad (when, forM_)
 import Data.Foldable (traverse_)
 import Data.Char (toLower)
+import Data.List (intercalate)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -569,14 +570,15 @@ convertWithSourceParser = ConvertWithSource
 createFormatParser :: Parser CreateFormat
 createFormatParser = option (eitherReader parseCreateFormat)
   (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
-    <> help "Output format: bps (default), ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+    <> help ("Output format: " ++ intercalate ", " advertisedCreateFormats
+              ++ " (default: bps)"))
 
 -- | The target-format flag accepted by @slap convert@.  No default:
 -- conversion has to know what it is converting to.
 convertToParser :: Parser CreateFormat
 convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
-    <> help "Target format: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+    <> help ("Target format: " ++ intercalate ", " advertisedCreateFormats))
 
 -- | Parser for the fourteen metadata fields shared between @create@
 -- and @convert@.  The embedded-blob concern lives elsewhere because
@@ -599,7 +601,7 @@ requestedMetadataCoreParser = do
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
-                            <> help "ROM type (NINJA1/NINJA2): raw, nes, fds, snes, n64, gb, gbc, gba, ..."))
+                            <> help ("ROM type (NINJA1/NINJA2): " ++ intercalate ", " advertisedRomTypes)))
     imageType         <- optional (option (eitherReader parseImageType) (long "image-type" <> metavar "TYPE"
                             <> help "Image type (PPF3): bin, gi"))
     genre             <- optional (option str (long "genre" <> metavar "TEXT"
@@ -612,7 +614,7 @@ requestedMetadataCoreParser = do
                             <> help "Website (NINJA2)"))
     patchEncoding     <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
                             <> value PatchEncodingUTF8
-                            <> help "Text encoding for NINJA2 metadata: utf8 (default), system")
+                            <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8)")
     pure RequestedMetadataCore
       { coreTitle               = title
       , coreAuthor              = author
@@ -666,7 +668,7 @@ embeddedBlobIntentParser = asum
   ]
 
 parseCreateFormat :: String -> Either String CreateFormat
-parseCreateFormat formatString = case map toLower formatString of
+parseCreateFormat input = case map toLower input of
   "bps"     -> Right (CreateDiff CreateBPS)
   "ips"     -> Right (CreateDirect CreateIPS)
   "ips32"   -> Right (CreateDirect CreateIPS32)
@@ -684,17 +686,17 @@ parseCreateFormat formatString = case map toLower formatString of
   "apsgba"  -> Right (CreateDiff CreateAPSGBA)
   "gdiff"   -> Right (CreateDiff CreateGDIFF)
   "pchtxt"  -> Right (CreateDirect CreatePCHTXT)
-  _ -> Left ("unknown format: " ++ formatString ++ "\n  expected: bps, ips, ips32, ebp, ups, ppf3, pmsr, ninja1, ninja2, dps, aps-n64, aps-gba, gdiff, pchtxt")
+  _         -> Left ("unknown format: " ++ input
+                  ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
 
 parsePatchEncoding :: String -> Either String PatchEncoding
-parsePatchEncoding encodingString = case map toLower encodingString of
+parsePatchEncoding input = case map toLower input of
   "utf8"   -> Right PatchEncodingUTF8
-  "utf-8"  -> Right PatchEncodingUTF8
   "system" -> Right PatchEncodingSystem
-  _ -> Left ("unknown patch encoding: " ++ encodingString ++ "\n  expected: utf8, system")
+  _        -> Left ("unknown patch encoding: " ++ input ++ "\n  expected: utf8, system")
 
 parseRomType :: String -> Either String PlatformType
-parseRomType typeString = case map toLower typeString of
+parseRomType input = case map toLower input of
   "raw"  -> Right PlatformRaw
   "nes"  -> Right PlatformNES
   "fds"  -> Right PlatformFDS
@@ -714,14 +716,31 @@ parseRomType typeString = case map toLower typeString of
   "lynx" -> Right PlatformLynx
   "jag"  -> Right PlatformJaguar
   "gp32" -> Right PlatformGP32
-  _ -> Left ("unknown ROM type: " ++ typeString
-    ++ "\n  expected: raw, nes, fds, snes, n64, gb, gbc, gba, ngp, ngpc, sms, gg, mega, pce, ws, wsc, lynx, jag, gp32")
+  _      -> Left ("unknown ROM type: " ++ input
+                ++ "\n  expected: " ++ intercalate ", " advertisedRomTypes)
 
 parseImageType :: String -> Either String PPFImageType
 parseImageType typeString = case map toLower typeString of
   "bin" -> Right BIN
   "gi"  -> Right GI
   _ -> Left ("unknown image type: " ++ typeString ++ "\n  expected: bin, gi")
+
+-- | The canonical create-format tokens 'parseCreateFormat'
+-- advertises in its error message and the @--format@ / @--to@
+-- help strings.  Aliases (@ppf@, @apsn64@, @apsgba@) are accepted
+-- by the parser's case body but not advertised — users see one
+-- canonical spelling per format.
+advertisedCreateFormats :: [String]
+advertisedCreateFormats =
+  ["bps", "ips", "ips32", "ebp", "ups", "ppf3", "pmsr", "ninja1",
+   "ninja2", "dps", "aps-n64", "aps-gba", "gdiff", "pchtxt"]
+
+-- | The canonical ROM-type tokens 'parseRomType' advertises in its
+-- error message and the @--rom-type@ help string.
+advertisedRomTypes :: [String]
+advertisedRomTypes =
+  ["raw", "nes", "fds", "snes", "n64", "gb", "gbc", "gba", "ngp",
+   "ngpc", "sms", "gg", "mega", "pce", "ws", "wsc", "lynx", "jag", "gp32"]
 
 patchInfoParser :: Parser InfoCommand
 patchInfoParser = do
