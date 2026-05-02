@@ -1,10 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.PPF.Types
     ( PPFVersion(..)
     , PPFImageType(..)
     , fromImageType
     , PPFValidation(..)
     , ValidationBlockBytes(..)
-    , PPFRecordCommand(..)
     , PPFRecord(..)
     , PPFFileId(..)
     , PPFPatch(..)
@@ -16,10 +17,12 @@ module Slap.PPF.Types
     , ppf2HeaderLength
     , ppf3MinHeaderLength
     , ppf3MaxRecordPayload
-    , ppf4HeaderLength
-    , ppf4PostDescriptionLength
     , fileIdMarkerLength
     , fileIdFooterLength
+    , ppf1MagicBytes
+    , ppf2MagicBytes
+    , ppf3MagicBytes
+    , ppf4MagicBytes
       -- * Labels
     , ppfVersionLabel
     ) where
@@ -29,8 +32,10 @@ import Data.Word (Word8)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize)
 
--- | PPF format version.
-data PPFVersion = PPF1 | PPF2 | PPF3 | PPF4
+-- | PPF format version. PPF4 is its own format with its own type
+-- ('Slap.PPF4.Types.PPF4Patch'); only the published-spec PPF1/2/3
+-- variants share this 'PPFPatch' shape.
+data PPFVersion = PPF1 | PPF2 | PPF3
   deriving (Show, Eq, Ord)
 
 -- | PPF3 image type — determines the validation block source offset.
@@ -54,17 +59,11 @@ data PPFValidation = PPFValidation
   , validationBlock     :: !ValidationBlockBytes  -- ^ 1024 bytes stored in the patch (copied from the target image at creation time)
   } deriving (Show)
 
--- | Record command type.  Replace is standard for PPF1/2/3; Append exists
--- only in Pyriel's internal format (reverse-engineered from the Suikoden patchers).
-data PPFRecordCommand = Replace | Append
-  deriving (Show, Eq)
-
 -- | A single patch record.
 data PPFRecord = PPFRecord
-  { recordOffset  :: !Offset           -- ^ Byte offset in target file
-  , recordData    :: !ByteString       -- ^ Replacement bytes
-  , recordUndo    :: !(Maybe ByteString) -- ^ Original bytes (PPF3 only, if undo data present)
-  , recordCommand :: !PPFRecordCommand    -- ^ Replace or Append (PPF4 only; always Replace for PPF1/2/3)
+  { recordOffset :: !Offset             -- ^ Byte offset in target file
+  , recordData   :: !ByteString         -- ^ Replacement bytes
+  , recordUndo   :: !(Maybe ByteString) -- ^ Original bytes, present only when 'ppfHasUndo' is set (PPF3 with undo data)
   } deriving (Show)
 
 -- | Optional File_ID.diz content appended to PPF2/PPF3 files.
@@ -118,16 +117,6 @@ ppf3MinHeaderLength = Length 60
 ppf3MaxRecordPayload :: Length
 ppf3MaxRecordPayload = Length 255
 
--- | PPF4 header length in bytes.
-ppf4HeaderLength :: Length
-ppf4HeaderLength = Length 60
-
--- | Length of the flag/padding bytes after the description field in a
--- PPF4 header. Per Pyriel's source: image_type (1) + validation_flag (1)
--- + undo_flag (1) + expansion (1).
-ppf4PostDescriptionLength :: Length
-ppf4PostDescriptionLength = Length 4
-
 -- | Length of the "FILE_ID.DIZ" marker prefix in the File_ID.diz trailer.
 fileIdMarkerLength :: Length
 fileIdMarkerLength = Length 18
@@ -136,9 +125,17 @@ fileIdMarkerLength = Length 18
 fileIdFooterLength :: Length
 fileIdFooterLength = Length 16
 
+-- | Wire-format magic prefix for each PPF version. Four bytes,
+-- ASCII "PPF1" through "PPF4". The detector pattern-matches on
+-- these to route an input to the correct per-version parser.
+ppf1MagicBytes, ppf2MagicBytes, ppf3MagicBytes, ppf4MagicBytes :: ByteString
+ppf1MagicBytes = "PPF1"
+ppf2MagicBytes = "PPF2"
+ppf3MagicBytes = "PPF3"
+ppf4MagicBytes = "PPF4"
+
 -- | Map a PPF version to its format label.
 ppfVersionLabel :: PPFVersion -> FormatLabel
 ppfVersionLabel PPF1 = LabelPPF1
 ppfVersionLabel PPF2 = LabelPPF2
 ppfVersionLabel PPF3 = LabelPPF3
-ppfVersionLabel PPF4 = LabelPPF4

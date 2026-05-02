@@ -24,7 +24,13 @@ import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..), UndoHunk(..))
 import qualified Slap.PPF.Types as PPF
-import qualified Slap.PPF.Parse as PPF
+import qualified Slap.PPF1.Parse as PPF1
+import qualified Slap.PPF2.Parse as PPF2
+import qualified Slap.PPF3.Parse as PPF3
+import qualified Slap.PPF4.Parse as PPF4
+import qualified Slap.PPF4.Types as PPF4
+import qualified Slap.PPF4.Apply as PPF4
+import qualified Slap.PPF4.Describe as PPF4
 import qualified Slap.PPF.Apply as PPF
 import qualified Slap.PPF.Describe as PPF
 import qualified Slap.IPS.Apply as IPS
@@ -232,61 +238,19 @@ parseSome patchContents = case detectFormat patchContents of
     | Yay0.isYay0 rawBytes -> parseYay0Container patchContents
     | otherwise -> Left UnrecognizedFormat
 
-  Just (PatchDirect FormatPPF) -> do
-    Parsed patch parseWarnings <- PPF.parsePatch patchContents
-    let records = PPF.ppfRecords patch
-        hasAppend = any (\record -> PPF.recordCommand record == PPF.Append) records
-        ppfVerification = noVerification
-            { verifyPPFBlock = case PPF.ppfValidation patch of
-                Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
-                Nothing  -> Nothing
-            , verifyFileSizeAdvisory = PPF.ppfFileSize patch
-            }
-    Right SomePatch
-        { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
-        , patchExplain        = PPF.explainPPF patch
-        , patchKind           = Direct
-        , patchApply          = ApplyStrategy
-            { runApply = \source -> pure (fmap noWarnings (PPF.applyPPF patch source)) }
-        , patchUndo           = if PPF.ppfHasUndo patch
-                                 then Just (UndoStrategy (fmap noWarnings . PPF.undoPPF patch))
-                                 else Nothing
-        , patchVerification   = ppfVerification
-        , patchWarnings       = parseWarnings
-                                ++ [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
-        , patchRecordSummary  = RecordSummary (length records) "records"
-        , patchSourceNotes    = []
-        , patchMetadata       = Nothing
-        , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
-                                in noMetadataRequested
-                                  { requestedDescription         = if null description then Nothing else Just description
-                                  , requestedImageType           = PPF.ppfImageType patch
-                                  , requestedUndoInclusion       = if PPF.ppfHasUndo patch then Just IncludeUndoData else Nothing
-                                  , requestedValidationInclusion = if isJust (PPF.ppfValidation patch) then Just IncludeValidationBlock else Nothing
-                                  }
-        , patchContents  = if hasAppend then Nothing else Just PatchContents
-            { contentsRecords     = map (\record -> Hunk (PPF.recordOffset record) (PPF.recordData record)) records
-            , contentsDescription = Just (PPF.ppfDescription patch)
-            , contentsSourceCRC32 = Nothing
-            , contentsSourceMD5   = Nothing
-            , contentsSourceSHA1  = Nothing
-            , contentsDestinationSize    = PPF.ppfFileSize patch
-            , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
-            , contentsUndoData    = if PPF.ppfHasUndo patch
-                              then Just [ UndoHunk (PPF.recordOffset record) (PPF.recordData record) (fromMaybe ByteString.empty (PPF.recordUndo record))
-                                        | record <- records ]
-                              else Nothing
-            , contentsTruncation  = Nothing
-            , contentsEBPMeta     = Nothing
-            , contentsRomType     = Nothing
-            , contentsImageType   = PPF.ppfImageType patch
-            , contentsFileIdDiz   = PPF.ppfFileId patch
-            , contentsPCHTXTBlocks = Nothing
-            , contentsNINJA1Compressed = Nothing
-            , contentsMetadata = Nothing
-            , contentsPatchEncoding = Nothing
-            }
-        }
+  -- Temporary inline four-way dispatch over the PPF magic-byte
+  -- constants. PPF1/2/3 share a parsed type ('PPF.PPFPatch') and route
+  -- through 'parseSomePatchFromPPF'; PPF4 has its own type
+  -- ('PPF4.PPF4Patch') and a peer helper. The detector still produces
+  -- unified FormatPPF; making it honest about the four versions is a
+  -- separate prompt, after which these guards collapse into four
+  -- one-line arms in the main dispatch table.
+  Just (PatchDirect FormatPPF)
+    | ppfMagic == PPF.ppf1MagicBytes -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF
+    | ppfMagic == PPF.ppf2MagicBytes -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF
+    | ppfMagic == PPF.ppf3MagicBytes -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
+    | ppfMagic == PPF.ppf4MagicBytes -> PPF4.parsePPF4 patchContents >>= parseSomePatchFromPPF4
+    | otherwise                      -> Left UnrecognizedFormat
 
   Just (PatchDirect FormatIPS) ->
     let expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
@@ -726,10 +690,106 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDiff FormatDPS) -> parseDPSBlock patchContents
   where
     rawBytes = unPatchFileContents patchContents
+    ppfMagic = ByteString.take 4 rawBytes
 
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
+
+-- | Build a 'SomePatch' from a parsed PPF1/2/3 patch. The three
+-- published-spec PPF versions share a single parsed type
+-- ('PPF.PPFPatch') and route through this helper. PPF4, which has its
+-- own type with a two-phase shape, has a peer helper
+-- 'parseSomePatchFromPPF4'.
+parseSomePatchFromPPF :: Parsed PPF.PPFPatch -> Either SlapError SomePatch
+parseSomePatchFromPPF (Parsed patch parseWarnings) =
+  let records = PPF.ppfRecords patch
+      ppfVerification = noVerification
+          { verifyPPFBlock = case PPF.ppfValidation patch of
+              Just validation -> Just (ValidationBlock (PPF.validationOffset (PPF.validationImageType validation)) (PPF.validationBlock validation))
+              Nothing  -> Nothing
+          , verifyFileSizeAdvisory = PPF.ppfFileSize patch
+          }
+  in Right SomePatch
+      { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
+      , patchExplain        = PPF.explainPPF patch
+      , patchKind           = Direct
+      , patchApply          = ApplyStrategy
+          { runApply = \source -> pure (fmap noWarnings (PPF.applyPPF patch source)) }
+      , patchUndo           = if PPF.ppfHasUndo patch
+                               then Just (UndoStrategy (fmap noWarnings . PPF.undoPPF patch))
+                               else Nothing
+      , patchVerification   = ppfVerification
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
+      , patchRecordSummary  = RecordSummary (length records) "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
+                              in noMetadataRequested
+                                { requestedDescription         = if null description then Nothing else Just description
+                                , requestedImageType           = PPF.ppfImageType patch
+                                , requestedUndoInclusion       = if PPF.ppfHasUndo patch then Just IncludeUndoData else Nothing
+                                , requestedValidationInclusion = if isJust (PPF.ppfValidation patch) then Just IncludeValidationBlock else Nothing
+                                }
+      , patchContents  = Just PatchContents
+          { contentsRecords     = map (\record -> Hunk (PPF.recordOffset record) (PPF.recordData record)) records
+          , contentsDescription = Just (PPF.ppfDescription patch)
+          , contentsSourceCRC32 = Nothing
+          , contentsSourceMD5   = Nothing
+          , contentsSourceSHA1  = Nothing
+          , contentsDestinationSize    = PPF.ppfFileSize patch
+          , contentsValidation  = fmap PPF.validationBlock (PPF.ppfValidation patch)
+          , contentsUndoData    = if PPF.ppfHasUndo patch
+                            then Just [ UndoHunk (PPF.recordOffset record) (PPF.recordData record) (fromMaybe ByteString.empty (PPF.recordUndo record))
+                                      | record <- records ]
+                            else Nothing
+          , contentsTruncation  = Nothing
+          , contentsEBPMeta     = Nothing
+          , contentsRomType     = Nothing
+          , contentsImageType   = PPF.ppfImageType patch
+          , contentsFileIdDiz   = PPF.ppfFileId patch
+          , contentsPCHTXTBlocks = Nothing
+          , contentsNINJA1Compressed = Nothing
+          , contentsMetadata = Nothing
+          , contentsPatchEncoding = Nothing
+          }
+      }
+
+-- | Build a 'SomePatch' from a parsed PPF4 patch. PPF4 is a two-phase
+-- format (Replace records, then Append records) with no validation
+-- block, no undo, no image type, and no File_ID.diz trailer — none of
+-- the metadata that 'parseSomePatchFromPPF' carries for PPF1/2/3.
+-- Source-less conversion is structurally possible only when the patch
+-- has no Append records (Appends carry no meaningful offset, and so
+-- can't be expressed as 'Hunk's).
+parseSomePatchFromPPF4 :: Parsed PPF4.PPF4Patch -> Either SlapError SomePatch
+parseSomePatchFromPPF4 (Parsed patch parseWarnings) =
+  let replaces = PPF4.ppf4Replaces patch
+      appends  = PPF4.ppf4Appends patch
+      totalRecords = length replaces + length appends
+  in Right SomePatch
+      { patchFormat         = LabelPPF4
+      , patchExplain        = PPF4.explainPPF4 patch
+      , patchKind           = Direct
+      , patchApply          = ApplyStrategy
+          { runApply = \source -> pure (fmap noWarnings (PPF4.applyPPF4 patch source)) }
+      , patchUndo           = Nothing
+      , patchVerification   = noVerification
+      , patchWarnings       = parseWarnings
+                              ++ [EmptyPatch LabelPPF4 "records" | totalRecords == 0]
+      , patchRecordSummary  = RecordSummary totalRecords "records"
+      , patchSourceNotes    = []
+      , patchMetadata       = Nothing
+      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF4.ppf4Description patch))
+                              in noMetadataRequested
+                                { requestedDescription = if null description then Nothing else Just description
+                                }
+      , patchContents       = if null appends
+                                then Just (emptyContents (map (\replace -> Hunk (PPF4.replaceOffset replace) (PPF4.replaceData replace)) replaces))
+                                       { contentsDescription = Just (PPF4.ppf4Description patch) }
+                                else Nothing
+      }
 
 parseDPSBlock :: PatchFileContents -> Either SlapError SomePatch
 parseDPSBlock patchContents = case DPS.parseDPS patchContents of

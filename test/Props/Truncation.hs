@@ -19,7 +19,7 @@ import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.GDIFF.Parse as GDIFF
-import qualified Slap.PPF.Parse as PPF
+import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.BSDiff.Parse as BSDiff
@@ -92,7 +92,7 @@ prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> truncated PPF.parsePatch patch
+    Right (CreateResult patch _) -> truncated PPF3.parsePPF3 patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(source, target) ->

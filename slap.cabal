@@ -107,10 +107,17 @@ library slap-internal
     , Slap.XDelta1.Types
     , Slap.Yay0
     , Slap.PPF.Apply
+    , Slap.PPF.Common
     , Slap.PPF.Create
     , Slap.PPF.Describe
-    , Slap.PPF.Parse
     , Slap.PPF.Types
+    , Slap.PPF1.Parse
+    , Slap.PPF2.Parse
+    , Slap.PPF3.Parse
+    , Slap.PPF4.Apply
+    , Slap.PPF4.Describe
+    , Slap.PPF4.Parse
+    , Slap.PPF4.Types
   hs-source-dirs:   src
   default-language: GHC2024
   ghc-options:      -Wall -Werror -O2 -g3

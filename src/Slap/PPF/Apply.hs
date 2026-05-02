@@ -1,7 +1,6 @@
 module Slap.PPF.Apply (applyPPF, undoPPF) where
 
-import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
-                        ppfVersionLabel)
+import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), ppfVersionLabel)
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -44,7 +43,6 @@ applyPPF patch (SourceFileContents source)
                     (unFileSize outputFileSize - unFileSize sourceFileSize)
         -- Apply records with bounds checking
         applyRecordStream outputPointer errorRef firstAction
-                          (Offset (unFileSize sourceFileSize))
                           (ppfRecords patch)
       errorState <- readIORef errorRef
       pure $ case errorState of
@@ -62,22 +60,14 @@ applyPPF patch (SourceFileContents source)
     computeOutputFileSize sourceSize records = foldl' accumulateSize sourceSize records
       where
         accumulateSize :: FileSize -> PPFRecord -> FileSize
-        accumulateSize currentSize record = case recordCommand record of
-          Replace ->
-            let writeEnd = advance (recordOffset record) (byteLength (recordData record))
-            in FileSize (max (unFileSize currentSize) (unOffset writeEnd))
-          Append ->
-            FileSize (unFileSize currentSize + unLength (byteLength (recordData record)))
+        accumulateSize currentSize record =
+          let writeEnd = advance (recordOffset record) (byteLength (recordData record))
+          in FileSize (max (unFileSize currentSize) (unOffset writeEnd))
 
     applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
-                      -> ActionIndex -> Offset -> [PPFRecord] -> IO ()
-    applyRecordStream _ _ _ _ [] = pure ()
-    applyRecordStream outputPointer errorRef recordIndex currentEnd (record : rest) =
-      case recordCommand record of
-        Replace -> handleReplace outputPointer errorRef recordIndex currentEnd record rest
-        Append  -> handleAppend outputPointer errorRef recordIndex currentEnd record rest
-
-    handleReplace outputPointer errorRef recordIndex currentEnd record rest
+                      -> ActionIndex -> [PPFRecord] -> IO ()
+    applyRecordStream _ _ _ [] = pure ()
+    applyRecordStream outputPointer errorRef recordIndex (record : rest)
       | unOffset writeOffset < 0 =
           abort errorRef (ApplyNegativeRecordOffset recordIndex writeOffset)
       | not (fitsWithin writeOffset payloadLength outputFileSize) =
@@ -86,24 +76,10 @@ applyPPF patch (SourceFileContents source)
                            (RemainingLength (remainingFromOffset writeOffset outputFileSize)))
       | otherwise = do
           copyRegion outputPointer writeOffset (recordData record) (Offset 0) payloadLength
-          let writeEnd = Offset (max (unOffset currentEnd)
-                                     (unOffset writeOffset + unLength payloadLength))
           applyRecordStream outputPointer errorRef
-            (nextAction recordIndex) writeEnd rest
+            (nextAction recordIndex) rest
       where
         writeOffset   = recordOffset record
-        payloadLength = byteLength (recordData record)
-
-    handleAppend outputPointer errorRef recordIndex currentEnd record rest
-      | not (fitsWithin currentEnd payloadLength outputFileSize) =
-          abort errorRef (ApplyWritesPastTarget recordIndex
-                           (RequestedLength payloadLength)
-                           (RemainingLength (remainingFromOffset currentEnd outputFileSize)))
-      | otherwise = do
-          copyRegion outputPointer currentEnd (recordData record) (Offset 0) payloadLength
-          applyRecordStream outputPointer errorRef
-            (nextAction recordIndex) (advance currentEnd payloadLength) rest
-      where
         payloadLength = byteLength (recordData record)
 
     abort :: IORef (Maybe ApplyError) -> ApplyError -> IO ()
@@ -134,11 +110,7 @@ undoPPF patch (TargetFileContents input)
                      -> ActionIndex -> [PPFRecord] -> IO ()
     undoRecordStream _ _ _ [] = pure ()
     undoRecordStream outputPointer errorRef recordIndex (record : rest) =
-      case recordCommand record of
-        Replace -> handleUndoReplace outputPointer errorRef recordIndex record rest
-        Append  -> abort errorRef (ApplyWritesPastTarget recordIndex
-                     (RequestedLength (byteLength (recordData record)))
-                     (RemainingLength (Length 0)))
+      handleUndoReplace outputPointer errorRef recordIndex record rest
 
     handleUndoReplace outputPointer errorRef recordIndex record rest
       | ByteString.null undoPayload =

@@ -1,6 +1,6 @@
 module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
 
-import Slap.PPF.Types (PPFPatch(..), PPFRecord(..), PPFRecordCommand(..),
+import Slap.PPF.Types (PPFPatch(..), PPFRecord(..),
                         PPFVersion(..), PPFValidation(..),
                         ValidationBlockBytes(..), PPFFileId(..),
                         validationOffset)
@@ -63,7 +63,6 @@ versionString :: PPFVersion -> String
 versionString PPF1 = "1"
 versionString PPF2 = "2"
 versionString PPF3 = "3"
-versionString PPF4 = "4 (Pyriel internal format)"
 
 bytesInfo :: [PPFRecord] -> String
 bytesInfo records =
@@ -106,20 +105,16 @@ ppfExplainVersionString :: PPFVersion -> String
 ppfExplainVersionString PPF1 = "PPF1"
 ppfExplainVersionString PPF2 = "PPF2"
 ppfExplainVersionString PPF3 = "PPF3"
-ppfExplainVersionString PPF4 = "PPF4 (Pyriel internal format)"
 
 makePPFRegion :: PPFRecord -> ExplainRegion
 makePPFRegion record = ExplainRegion
   { regionOffset     = recordOffset record
   , regionSize       = Length (ByteString.length (recordData record))
-  , regionLabel      = commandString
+  , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (recordData record)
   , regionAnnotation = AnnotAt AtOffset (recordOffset record) undoDetail
   }
   where
-    commandString = case recordCommand record of
-      Replace -> "Write  "
-      Append  -> "Append "
     undoDetail = case recordUndo record of
       Nothing -> []
       Just _  -> [DetailUndo]

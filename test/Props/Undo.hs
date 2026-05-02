@@ -9,7 +9,7 @@ module Props.Undo (undoTests) where
 
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Parse as UPS
-import qualified Slap.PPF.Parse as PPF
+import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PPF.Apply as PPF
 
 import Slap.Error (CreateResult(..), Parsed(..), renderSlapError)
@@ -51,7 +51,7 @@ prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
   case createPatch (CreateDirect CreatePPF3) (SourceFileContents source) (TargetFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> case PPF.parsePatch patch of
+    Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
         case PPF.applyPPF parsed (SourceFileContents source) of
