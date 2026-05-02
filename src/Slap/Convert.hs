@@ -21,7 +21,7 @@ module Slap.Convert
   , canConvert
   , conversionNotes
   , convertDirect
-  , createFromMemory
+  , createPatch
   , createDefaultNotes
   , mergeRequestedMetadata
   , trimNullSpace
@@ -149,7 +149,7 @@ data CreateFormat
 
 -- | User intent about what metadata should end up in an emitted patch.
 -- Built from CLI flags in 'app/Main.hs' (and from parsed source patches
--- during conversion), then consumed by 'createFromMemory' /
+-- during conversion), then consumed by 'createPatch' /
 -- 'encodeDirect'.  Every 'Maybe' field's 'Nothing' means "the user
 -- didn't specify; let the format pick its default"; a 'Just' carries
 -- an explicit request.
@@ -169,7 +169,7 @@ data CreateFormat
 -- 'CreateAPSN64' consumes 'requestedDescription' (50-byte header
 -- field).
 --
--- Diff-format consumption is read directly out of 'createFromMemory'\'s
+-- Diff-format consumption is read directly out of 'createPatch'\'s
 -- diff arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
 -- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
 -- consumes 'requestedTitle'\/'requestedDescription' (name),
@@ -374,7 +374,7 @@ directConversionContract target undoChoice validationChoice = case target of
 --
 -- Direct-format entries derive from the per-format reads inside
 -- 'buildContents' and 'encodeDirect'; diff-format entries derive from
--- the per-format reads inside 'createFromMemory'.  An entry here means
+-- the per-format reads inside 'createPatch'.  An entry here means
 -- "the format-specific encoder reads this field"; absence means
 -- "setting this field on the CLI would do nothing observable for this
 -- format."
@@ -861,18 +861,29 @@ encodeDirect contents source target meta limits constraints = case target of
 -- Create
 ----------------------------------------------------------------------------
 
--- | Create a patch from source and target bytes.
--- The optional 'PatchContents' carries structural data from the source patch
--- (EBP JSON, File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for
--- inheritance in the @--with@ conversion path.
-createFromMemory :: CreateFormat -> SourceFileContents -> TargetFileContents
-                 -> RequestedPatchMetadata -> Maybe PatchContents
-                 -> RequestedConstraints
-                 -> Either SlapError CreateResult
-createFromMemory (CreateDirect format) source target meta sourceContents constraints =
+-- | The dynamic create entry point: dispatches on 'CreateFormat' to the
+-- direct pipeline (universal 'PatchContents' assembly, then 'encodeDirect')
+-- or to the appropriate per-format diff creator. The optional
+-- 'PatchContents' carries structural data from the source patch (EBP JSON,
+-- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for inheritance in
+-- the @--with@ conversion path.
+createPatch :: CreateFormat -> SourceFileContents -> TargetFileContents
+            -> RequestedPatchMetadata -> Maybe PatchContents
+            -> RequestedConstraints
+            -> Either SlapError CreateResult
+createPatch (CreateDirect format) source target meta sourceContents constraints =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format) constraints
-createFromMemory (CreateDiff format) source target meta sourceContents _constraints = case format of
+createPatch (CreateDiff format) source target meta sourceContents _constraints = case format of
+  -- The constraints parameter is unused on the diff arm: today no
+  -- diff format honors any constraint ('acceptedConstraints' returns
+  -- 'Set.empty' for every 'CreateDiff' constructor), and any
+  -- user-requested constraint against a diff format is rejected
+  -- upstream by 'rejectIncompatibleConstraints' in 'doCreate' /
+  -- 'doConvert' before this arm runs. The parameter stays in the
+  -- signature for shape-symmetry with the direct arm; when a future
+  -- constraint becomes diff-honorable, both the matrix entry in
+  -- 'acceptedConstraints' and this arm's plumbing change at once.
   CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target

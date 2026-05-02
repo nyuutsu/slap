@@ -18,7 +18,7 @@
 -- There is no @createIPS@ / @createIPS32@ / @createEBP@ porcelain
 -- — neither here nor in "Slap.Create". End-to-end creation for the
 -- IPS family is a coordination-layer concern: the
--- 'Slap.Convert.createFromMemory' pipeline threads a 'PatchContents'
+-- 'Slap.Convert.createPatch' pipeline threads a 'PatchContents'
 -- through 'Slap.Convert.buildContents' and 'Slap.Convert.encodeDirect',
 -- which is where the live creation path runs. The direct family
 -- shares that pipeline, so a per-format typed front door would have
@@ -264,7 +264,7 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- Records whose offset is not the sentinel pass through unchanged —
 -- the explicit "not a collision" branch, not a silent catch-all.
 --
--- Both 'Slap.Convert.createFromMemory' (with real source bytes) and
+-- Both 'Slap.Convert.createPatch' (with real source bytes) and
 -- 'Slap.Convert.convertDirect' (with an empty 'SourceFileContents')
 -- call through this function. The shape of the source bytes decides
 -- whether a given collision is fixable; the caller decides whether

@@ -13,7 +13,7 @@
 -- universal record shape, 'Slap.Convert.encodeDirect' walks it
 -- into the target format — so a per-format typed front door would
 -- have nothing format-level to wrap. Direct-format callers route
--- through 'createFromMemory', which is re-exported here for the
+-- through 'createPatch', which is re-exported here for the
 -- convenience of \"I want to make a patch\" callers who don't want
 -- to think about which submodule to import.
 --
@@ -29,7 +29,7 @@ module Slap.Create
   , createAPSGBA
   , createGDIFF
     -- * Dynamic entry point (re-export)
-  , createFromMemory
+  , createPatch
   ) where
 
 import qualified Slap.BPS.Create as BPS
@@ -42,7 +42,7 @@ import Slap.NINJA2.Types (NINJA2Metadata)
 import Slap.APSGBA.Create (createAPSGBA)
 import Slap.GDIFF.Create (createGDIFF)
 
-import Slap.Convert (createFromMemory)
+import Slap.Convert (createPatch)
 import Slap.Error (SlapError, CreateResult)
 import Slap.FileContents (SourceFileContents, TargetFileContents)
 

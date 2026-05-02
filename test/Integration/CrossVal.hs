@@ -28,7 +28,7 @@ import Integration.Skip
   )
 import Slap.Convert
   (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents
   (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
@@ -91,7 +91,7 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
     bootstrapTargets <- getTargets
     baseBytes        <- mmapRomFile basePath
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
-    case createFromMemory format
+    case createPatch format
            (SourceFileContents baseBytes)
            (TargetFileContents targetBytes)
            noMetadataRequested Nothing noConstraintsRequested of

@@ -21,7 +21,7 @@ import Integration.Skip
   )
 import Slap.Convert
   (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
@@ -85,7 +85,7 @@ mkRoundTripTest getTargets label format basePath bootPath expectedTargetSha =
 -- and assert the resulting SHA1.
 roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha =
-  case createFromMemory format
+  case createPatch format
          (SourceFileContents baseBytes)
          (TargetFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested of

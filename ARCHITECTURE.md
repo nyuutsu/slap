@@ -74,7 +74,7 @@ format or a new field/constraint fires `-Wincomplete-patterns`
 everywhere a decision is needed.
 
 `Slap.Create` hosts per-format porcelain for differential creation
-only. Direct creation goes through `createFromMemory` and routes
+only. Direct creation goes through `createPatch` and routes
 through `Convert`'s `PatchContents` pipeline (`buildContents` then
 `encodeDirect`); the pipeline is shared, so per-format porcelain
 would have nothing format-level to wrap.

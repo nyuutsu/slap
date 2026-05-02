@@ -42,7 +42,7 @@ import Slap.Convert
   )
 import Slap.Constraint (Constraint(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -375,7 +375,7 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createFromMemory createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
@@ -388,7 +388,7 @@ crossFormatRoundTripTests base bps =
                 Right (TargetFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createFromMemory createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
+                  case createPatch createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
@@ -401,7 +401,7 @@ crossFormatRoundTripTests base bps =
                             Right (TargetFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createFromMemory createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
+                              case createPatch createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome patchC of
@@ -469,7 +469,7 @@ createRoundTripTests getTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createFromMemory createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome patchBytes of
@@ -540,7 +540,7 @@ smcShapeConstraintTests =
   , testCase "smc-shape/BPS rejected at constraint-acceptance layer" $
       -- The create entry point ('doCreate' in @app/Main.hs@) runs
       -- 'rejectIncompatibleConstraints' before invoking
-      -- 'createFromMemory'; the constraint never reaches the
+      -- 'createPatch'; the constraint never reaches the
       -- per-format encoder. Exercise that check directly.
       case rejectIncompatibleConstraints (CreateDiff CreateBPS) smcConstraints of
         Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
@@ -554,7 +554,7 @@ smcShapeConstraintTests =
       -- wire-valid truncation marker it always has.
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
-      case createFromMemory (CreateDirect CreateIPS)
+      case createPatch (CreateDirect CreateIPS)
              (SourceFileContents source) (TargetFileContents target)
              noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure
@@ -591,7 +591,7 @@ smcShapeConstraintTests =
       { requestedSMCShape = RequireSMCShapedTruncation }
 
     createWithSMC source target =
-      createFromMemory (CreateDirect CreateIPS)
+      createPatch (CreateDirect CreateIPS)
         (SourceFileContents source) (TargetFileContents target)
         noMetadataRequested Nothing smcConstraints
 
@@ -603,7 +603,7 @@ smcShapeConstraintTests =
     buildNonSMCShapedIPS = do
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
-      case createFromMemory (CreateDirect CreateIPS)
+      case createPatch (CreateDirect CreateIPS)
              (SourceFileContents source) (TargetFileContents target)
              noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure

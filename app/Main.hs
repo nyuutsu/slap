@@ -29,7 +29,7 @@ import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      formatExtension, formatName)
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.IPS.Types (SMCShapeRequirement(..))
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
@@ -988,7 +988,7 @@ doCreate parsedCommand = do
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
-  result <- orDie (createFromMemory
+  result <- orDie (createPatch
                      (createFormat parsedCommand)
                      (SourceFileContents originalBytes)
                      (TargetFileContents modifiedBytes)
@@ -1060,7 +1060,7 @@ doConvert parsedCommand = do
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orDie (createFromMemory (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
+      createResult <- orDie (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)

@@ -27,7 +27,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       noMetadataRequested, noConstraintsRequested, directConversionContract,
                       emptyContents, canConvert, convertDirect, conversionNotes)
 import Slap.PPF.Types (ValidationBlockBytes(..))
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
 
@@ -209,7 +209,7 @@ prop_ipsSentinelWithSource =
   let eofOffset = 0x454F46
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
-  in case createFromMemory (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  in case createPatch (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

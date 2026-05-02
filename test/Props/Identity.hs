@@ -11,7 +11,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested)
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -46,7 +46,7 @@ allCreateFormats =
 -- | For any non-empty source, create(src, src) should be an identity patch.
 prop_identity :: CreateFormat -> Property
 prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
-  case createFromMemory format (SourceFileContents source) (TargetFileContents source) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch format (SourceFileContents source) (TargetFileContents source) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case parseSome patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

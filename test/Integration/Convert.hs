@@ -21,7 +21,7 @@ import Integration.Skip
   , namedGroup
   , requireFixture
   )
-import Slap.Create (createFromMemory)
+import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents
   (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
@@ -207,7 +207,7 @@ makeTruncatingIPSPatch :: IO SomePatch
 makeTruncatingIPSPatch =
   let sourceBytes = ByteString.replicate 1024 0x00
       targetBytes = ByteString.replicate 512 0xFF
-  in case createFromMemory (CreateDirect CreateIPS)
+  in case createPatch (CreateDirect CreateIPS)
          (SourceFileContents sourceBytes) (TargetFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested of
        Left slapError ->
