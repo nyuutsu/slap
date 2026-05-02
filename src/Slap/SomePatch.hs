@@ -441,7 +441,7 @@ parseSome patchContents = case detectFormat patchContents of
   -- Disambiguate via GBA's fixed record structure (12 + N*65544 bytes,
   -- 64KB-aligned offsets).
   Just (PatchDirect FormatAPSN64)
-    | apsGbaStructure rawBytes -> parseAPSGBABlock patchContents
+    | APSGBA.apsGbaStructure rawBytes -> parseAPSGBABlock patchContents
     | otherwise -> do
     Parsed patch@(APSN64.APSN64Patch header records) parseWarnings <- APSN64.parseAPSN64 patchContents
     let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
@@ -845,17 +845,4 @@ parseAPSGBABlock patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     , patchContents  = Nothing
     }
-
--- | Structural check for APS-GBA: header + N * 65544-byte records,
--- each record offset 64KB-aligned.  Used to disambiguate "APS10" (N64) from
--- "APS1" + source_size when size mod 256 == 48.
-apsGbaStructure :: ByteString.ByteString -> Bool
-apsGbaStructure input =
-  let dataLength = ByteString.length input - APSGBA.apsGbaHeaderSize
-      recordCount = dataLength `div` APSGBA.apsGbaRecordSize
-  in dataLength == 0
-     || (dataLength >= APSGBA.apsGbaRecordSize && dataLength `mod` APSGBA.apsGbaRecordSize == 0
-         && all (\index -> let position = APSGBA.apsGbaHeaderSize + index * APSGBA.apsGbaRecordSize
-                       in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
-                [0 .. recordCount - 1])
 
