@@ -238,22 +238,16 @@ parseSome patchContents = case detectFormat patchContents of
     | Yay0.isYay0 rawBytes -> parseYay0Container patchContents
     | otherwise -> Left UnrecognizedFormat
 
-  -- Temporary inline four-way dispatch over the PPF magic-byte
-  -- constants. PPF1/2/3 share a parsed type ('PPF.PPFPatch') and route
-  -- through 'parseSomePatchFromPPF'; PPF4 has its own type
-  -- ('PPF4.PPF4Patch') and a peer helper. The detector still produces
-  -- unified FormatPPF; making it honest about the four versions is a
-  -- separate prompt, after which these guards collapse into four
-  -- one-line arms in the main dispatch table.
-  Just (PatchDirect FormatPPF)
-    | ppfMagic == PPF.ppf1MagicBytes -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF
-    | ppfMagic == PPF.ppf2MagicBytes -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF
-    | ppfMagic == PPF.ppf3MagicBytes -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
-    | ppfMagic == PPF.ppf4MagicBytes -> PPF4.parsePPF4 patchContents >>= parseSomePatchFromPPF4
-    | otherwise                      -> Left UnrecognizedFormat
+  Just (PatchDirect FormatPPF1) -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect FormatPPF2) -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect FormatPPF3) -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect FormatPPF4) -> PPF4.parsePPF4 patchContents >>= parseSomePatchFromPPF4
 
-  Just (PatchDirect FormatIPS) ->
-    let expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
+  Just (PatchDirect (FormatIPS variant)) ->
+    let label = case variant of
+          IPS.StandardIPS -> LabelIPS
+          IPS.IPS32       -> LabelIPS32
+        expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
                                            , ipsCopyPayload = recordPayload }) =
           Hunk recordOffset recordPayload
         expandIPSRecord (IPS.IPSRecordRLE { ipsRleOffset = recordOffset
@@ -265,9 +259,6 @@ parseSome patchContents = case detectFormat patchContents of
       Right (Parsed parseResult parseWarnings) -> case parseResult of
         IPS.IPSParseCleanIPS ipsPatch ->
           let records = IPS.ipsRecords ipsPatch
-              label = case IPS.ipsVariant ipsPatch of
-                IPS.StandardIPS -> LabelIPS
-                IPS.IPS32       -> LabelIPS32
           in Right SomePatch
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS ipsPatch
@@ -316,15 +307,12 @@ parseSome patchContents = case detectFormat patchContents of
                 , contentsEBPMeta    = Just (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
                 }
             }
-        IPS.IPSParseTruncated variant records ->
+        IPS.IPSParseTruncated _variant records ->
           let truncatedPatch = IPS.IPSPatch
                 { IPS.ipsVariant             = variant
                 , IPS.ipsRecords             = records
                 , IPS.ipsTruncatedTargetSize = Nothing
                 }
-              label = case variant of
-                IPS.StandardIPS -> LabelIPS
-                IPS.IPS32       -> LabelIPS32
           in Right SomePatch
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS truncatedPatch
@@ -690,7 +678,6 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDiff FormatDPS) -> parseDPSBlock patchContents
   where
     rawBytes = unPatchFileContents patchContents
-    ppfMagic = ByteString.take 4 rawBytes
 
 ----------------------------------------------------------------------------
 -- Helpers

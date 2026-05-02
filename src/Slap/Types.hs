@@ -4,13 +4,22 @@ module Slap.Types
   , PatchFormat(..)
   ) where
 
+import Slap.IPS.Types (IPSVariant(..))
+
 -- | Direct patch format: encodes "write these bytes at offset X."
 -- The source file is not needed to reconstruct the target — the patch
 -- carries the literal replacement bytes (or fill values) at each offset.
 data DirectFormat
-  = FormatIPS | FormatPPF | FormatNINJA1 | FormatPMSR
-  | FormatPCHTXT | FormatAPSN64
-  deriving (Show, Eq, Enum, Bounded)
+  = FormatIPS IPSVariant
+  | FormatPPF1
+  | FormatPPF2
+  | FormatPPF3
+  | FormatPPF4
+  | FormatNINJA1
+  | FormatPMSR
+  | FormatPCHTXT
+  | FormatAPSN64
+  deriving (Show, Eq)
 
 -- | Differential patch format: encodes instructions that transform
 -- source bytes into target bytes.  The source file is required.
