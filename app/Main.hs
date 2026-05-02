@@ -5,6 +5,7 @@ module Main (main) where
 
 import Slap.SomePatch
   ( SomePatch(..)
+  , PatchKind(..)
   , RecordSummary(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
@@ -1081,15 +1082,34 @@ applyForConvert somePatch source = do
   emitWarnings WarningProper (outcomeWarnings outcome)
   pure (outcomeValue outcome)
 
+-- | Local helper for 'needSourceMessage' — the cause/consequence pair
+-- of why source-less convert fails for a given 'PatchKind'.
+data SourceRequiredReason = SourceRequiredReason
+  { sourceRequiredCause       :: String
+  , sourceRequiredConsequence :: String
+  }
+
 -- | Error message when --with is required but not provided.
+-- The cause/consequence pair is carried by 'SourceRequiredReason' so
+-- the two strings for one 'PatchKind' arm sit visually adjacent at
+-- the construction site, and a future third 'PatchKind' constructor
+-- fires '-Wincomplete-patterns' once instead of in two parallel cases.
 needSourceMessage :: SomePatch -> String
-needSourceMessage somePatch = "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
-  ++ name ++ " " ++ reason ++ " " ++ [emDash] ++ " the original ROM is needed\nto reconstruct the target file for re-encoding."
+needSourceMessage somePatch =
+  "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
+  ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
+  ++ sourceRequiredConsequence reason
   where
-    name = formatLabelName (patchFormat somePatch)
-    reason
-      | patchIsDifferential somePatch = "stores differential data, not raw bytes"
-      | otherwise                  = "does not carry extractable records"
+    name   = formatLabelName (patchFormat somePatch)
+    reason = case patchKind somePatch of
+      Differential -> SourceRequiredReason
+        { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+        }
+      Direct -> SourceRequiredReason
+        { sourceRequiredCause       = "can't be converted directly into another patch format"
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+        }
 
 -- | Warn when the source patch carries embedded BPS metadata bytes and
 -- the target format has no metadata channel to put them in — i.e.,

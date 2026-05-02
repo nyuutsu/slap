@@ -1,5 +1,6 @@
 module Slap.SomePatch
   ( SomePatch(..)
+  , PatchKind(..)
   , RecordSummary(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
@@ -191,13 +192,25 @@ data RecordSummary = RecordSummary
   , recordUnit  :: !String       -- "records", "actions", "commands", etc.
   } deriving (Show)
 
+-- | How the patch's records relate to the target file.
+--
+-- 'Direct' patches carry replacement bytes that get written into the
+-- target. 'Differential' patches carry delta instructions that need
+-- the source file to apply. The kind drives whether source-less
+-- conversion is structurally possible: 'Differential' patches always
+-- need the source to convert; 'Direct' patches usually don't, though
+-- specific 'Direct' patches can carry features that prevent
+-- conversion (e.g. PPF with Append commands).
+data PatchKind = Direct | Differential
+  deriving (Show, Eq)
+
 -- | A parsed patch with all operations pre-bound as closures.
 -- The only dispatch point is 'parseSome'; every consumer works
 -- through these fields, never inspecting the underlying format.
 data SomePatch = SomePatch
   { patchFormat         :: FormatLabel
   , patchExplain        :: ExplainData
-  , patchIsDifferential :: Bool
+  , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
   , patchVerification   :: Verification
@@ -232,7 +245,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
         { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
         , patchExplain        = PPF.explainPPF patch
-        , patchIsDifferential = False
+        , patchKind           = Direct
         , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (PPF.applyPPF patch source)) }
         , patchUndo           = if PPF.ppfHasUndo patch
@@ -294,7 +307,7 @@ parseSome patchContents = case detectFormat patchContents of
           in Right SomePatch
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS ipsPatch
-            , patchIsDifferential = False
+            , patchKind           = Direct
             , patchApply          = ApplyStrategy
                   { runApply = \source -> pure (IPS.applyIPS source ipsPatch) }
             , patchUndo           = Nothing
@@ -323,7 +336,7 @@ parseSome patchContents = case detectFormat patchContents of
           in Right SomePatch
             { patchFormat         = LabelEBP
             , patchExplain        = IPS.explainEBP ebpPatch
-            , patchIsDifferential = False
+            , patchKind           = Direct
             , patchApply          = ApplyStrategy
                   { runApply = \source -> pure (IPS.applyIPS source basePatch) }
             , patchUndo           = Nothing
@@ -351,7 +364,7 @@ parseSome patchContents = case detectFormat patchContents of
           in Right SomePatch
             { patchFormat         = label
             , patchExplain        = IPS.explainIPS truncatedPatch
-            , patchIsDifferential = False
+            , patchKind           = Direct
             , patchApply          = ApplyStrategy
                   { runApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
             , patchUndo           = Nothing
@@ -377,7 +390,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelBPS
       , patchExplain        = BPS.explainBPS patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (BPS.applyBPS patch source)) }
       , patchUndo           = Nothing
@@ -409,7 +422,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelUPS
       , patchExplain        = UPS.explainUPS patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (UPS.applyUPS patch source)) }
       , patchUndo           = Just $ UndoStrategy $ \(TargetFileContents modified) ->
@@ -456,7 +469,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelVCDIFF
       , patchExplain        = VCDIFF.explainVCDIFF patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (VCDIFF.applyVCDIFF patch source)) }
       , patchUndo           = Nothing
@@ -484,7 +497,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelAPSN64
       , patchExplain        = APSN64.explainAPSN64 patch
-      , patchIsDifferential = False
+      , patchKind           = Direct
       , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (APSN64.applyAPSN64 patch source)) }
       , patchUndo           = Nothing
@@ -525,7 +538,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelNINJA2
       , patchExplain        = NINJA2.explainNINJA2 patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (NINJA2.applyNINJA2 patch source)) }
       , patchUndo           = Nothing
@@ -573,7 +586,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelNINJA1
       , patchExplain        = NINJA1.explainNINJA1 patch
-      , patchIsDifferential = False
+      , patchKind           = Direct
       , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (NINJA1.applyNINJA1 patch source)) }
       , patchUndo           = Nothing
@@ -603,7 +616,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelBSDiff
       , patchExplain        = BSDiff.explainBSDiff patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (BSDiff.applyBSDiff patch source)) }
       , patchUndo           = Nothing
@@ -622,7 +635,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelGDIFF
       , patchExplain        = GDIFF.explainGDIFF patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (GDIFF.applyGDIFF patch source)) }
       , patchUndo           = Nothing
@@ -648,7 +661,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelXDelta1
       , patchExplain        = XDelta1.explainXDelta1 patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (XDelta1.applyXDelta1 patch source)) }
       , patchUndo           = Nothing
@@ -668,7 +681,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelPMSR
       , patchExplain        = PMSR.explainPMSR patch
-      , patchIsDifferential = False
+      , patchKind           = Direct
       , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (PMSR.applyPMSR patch source)) }
       , patchUndo           = Nothing
@@ -693,7 +706,7 @@ parseSome patchContents = case detectFormat patchContents of
     Right SomePatch
       { patchFormat         = LabelPCHTXT
       , patchExplain        = PCHTXT.explainPCHTXT patch
-      , patchIsDifferential = False
+      , patchKind           = Direct
       , patchApply          = ApplyStrategy
             { runApply = \source -> pure (fmap noWarnings (PCHTXT.applyPCHTXT patch source)) }
       , patchUndo           = Nothing
@@ -726,7 +739,7 @@ parseDPSBlock patchContents = case DPS.parseDPS patchContents of
     in Right SomePatch
       { patchFormat         = LabelDPS
       , patchExplain        = DPS.explainDPS patch
-      , patchIsDifferential = True
+      , patchKind           = Differential
       , patchApply          = ApplyStrategy
           { runApply     = \source -> pure (fmap noWarnings (DPS.applyDPS patch source)) }
       , patchVerification   = noVerification
@@ -768,7 +781,7 @@ parseAPSGBABlock patchContents = do
   Right SomePatch
     { patchFormat         = LabelAPSGBA
     , patchExplain        = APSGBA.explainAPSGBA patch
-    , patchIsDifferential = True
+    , patchKind           = Differential
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (APSGBA.applyAPSGBA patch source)) }
     , patchUndo           = Nothing

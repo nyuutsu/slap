@@ -45,9 +45,9 @@ import Integration.External (ExternalTool(..), ExternalRun(..), runExternal)
 import Slap.Binary (sha1)
 import Slap.Checksum (SHA1Hash(..))
 import Slap.Error (SlapError, CreateResult(..), Outcome(..), renderSlapError)
-import Slap.Format (padHex)
+import Slap.Format (padHex, emDash)
 import Slap.FormatLabel (formatLabelName)
-import Slap.SomePatch (SomePatch(..), ApplyStrategy(..), UndoStrategy(..))
+import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
 import Slap.Create (createPatch)
@@ -241,6 +241,13 @@ removeIfExists filePath = removeFile filePath `catch` (\(_ :: IOException) -> pu
 -- Conversion
 ----------------------------------------------------------------------------
 
+-- | Local helper for 'attemptConvert' — the cause/consequence pair
+-- of why source-less convert fails for a given 'PatchKind'.
+data SourceRequiredReason = SourceRequiredReason
+  { sourceRequiredCause       :: String
+  , sourceRequiredConsequence :: String
+  }
+
 -- | Replicate the convert logic from Main.hs.
 attemptConvert
   :: SomePatch
@@ -265,13 +272,19 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   where
     needWithMsg thePatch =
       "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
-      ++ name ++ " " ++ reason ++ " \8212 the original ROM is needed\n"
-      ++ "to reconstruct the target file for re-encoding."
+      ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
+      ++ sourceRequiredConsequence reason
       where
-        name = formatLabelName (patchFormat thePatch)
-        reason
-          | patchIsDifferential thePatch = "stores differential data, not raw bytes"
-          | otherwise                    = "applies in-place to the target file"
+        name   = formatLabelName (patchFormat thePatch)
+        reason = case patchKind thePatch of
+          Differential -> SourceRequiredReason
+            { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
+            , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+            }
+          Direct -> SourceRequiredReason
+            { sourceRequiredCause       = "can't be converted directly into another patch format"
+            , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+            }
 
 ----------------------------------------------------------------------------
 -- File discovery
