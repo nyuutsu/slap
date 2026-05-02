@@ -17,6 +17,13 @@ module Slap.Error
   , OOBBlockCount(..)
   , MarkerOvershootBytes(..)
   , OOBOvershootBytes(..)
+  , VerificationSide(..)
+  , HashAlgorithm(..)
+  , ExpectedAdler32(..)
+  , ActualAdler32(..)
+  , ByteCheckLabel(..)
+  , verificationSideLabel
+  , hashAlgorithmLabel
   , fieldNameLabel
   , renderSlapError
   , renderApplyError
@@ -27,7 +34,8 @@ module Slap.Error
 import Numeric (showHex)
 import Slap.FileContents (PatchFileContents)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
-import Slap.Checksum (CRC32, MD5Hash(..), SHA1Hash(..), showCRC32,
+import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
+                      showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -378,6 +386,18 @@ data SlapError
   -- user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
   | TruncationViolatesSMCShape !FileSize
 
+  -- | A verification check would have produced a 'SlapWarning' but
+  -- the user did not pass @--no-verify@, so the mismatch is fatal.
+  -- The embedded 'SlapWarning' is one of the four "downgraded fatal"
+  -- kinds: 'VerificationCRCMismatch', 'VerificationHashMismatch',
+  -- 'VerificationAdler32Mismatch', or 'VerificationFileSizeMismatch'.
+  -- The renderer delegates to 'renderSlapWarning' for the body and
+  -- appends the @--no-verify@ tail. No type-level guarantee enforces
+  -- that the embedded warning is one of the four fatal-promotable
+  -- kinds; the four 'check*' helpers in 'Main' are the only callers
+  -- and the audit surface is tractable.
+  | VerificationFatal SlapWarning
+
   -- Container
   | Yay0DecompressionFailed String
 
@@ -506,6 +526,25 @@ data SlapWarning
   | SubformatConverted FormatLabel String String
   | OffsetShiftApplied
 
+  -- Verification: source/target integrity check mismatches
+  --
+  -- These fire from app/Main.hs's verification helpers. The four
+  -- "downgraded fatal" kinds (CRC, hash, Adler32, file-size) emit
+  -- when the user passed --no-verify; the same mismatch promotes to
+  -- 'VerificationFatal' under EnforceVerification. The four
+  -- "advisory" kinds always emit only as warnings; they have no
+  -- fatal counterpart because the underlying check is advisory by
+  -- design (block CRC16, PPF validation block, file-size advisory,
+  -- source-bytes byte-range comparison).
+  | VerificationCRCMismatch       VerificationSide ExpectedCRC32 ActualCRC32
+  | VerificationHashMismatch      VerificationSide HashAlgorithm
+  | VerificationAdler32Mismatch   Offset ExpectedAdler32 ActualAdler32
+  | VerificationFileSizeMismatch  VerificationSide ExpectedSize ActualSize
+  | VerificationBlockCRC16Mismatch VerificationSide Offset
+  | VerificationPPFBlockMismatch  Offset
+  | VerificationFileSizeAdvisory  ExpectedSize ActualSize
+  | VerificationSourceBytesMismatch ByteCheckLabel Offset
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -610,6 +649,48 @@ newtype MarkerOvershootBytes = MarkerOvershootBytes { unMarkerOvershootBytes :: 
 -- 'detectOOBBlocks' walk can use '<>' and 'mempty' directly.
 newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
   deriving (Eq, Ord, Show, Semigroup, Monoid)
+
+----------------------------------------------------------------------------
+-- Verification: shared payload types
+----------------------------------------------------------------------------
+
+-- | Which side of the apply (source ROM or target ROM) a verification
+-- check fired against. Carried by the verification 'SlapWarning'
+-- constructors so the renderer can name "source" vs "target" without
+-- callers passing strings.
+data VerificationSide = SourceSide | TargetSide
+  deriving (Show, Eq)
+
+verificationSideLabel :: VerificationSide -> String
+verificationSideLabel SourceSide = "source"
+verificationSideLabel TargetSide = "target"
+
+-- | Which hash algorithm a verification check used. Carried by
+-- 'VerificationHashMismatch' so the renderer can name "MD5" vs "SHA1"
+-- without callers passing strings.
+data HashAlgorithm = MD5 | SHA1
+  deriving (Show, Eq)
+
+hashAlgorithmLabel :: HashAlgorithm -> String
+hashAlgorithmLabel MD5  = "MD5"
+hashAlgorithmLabel SHA1 = "SHA1"
+
+-- | An Adler32 value that a patch declared or stored. Peer to
+-- 'ExpectedCRC32'; carried by 'VerificationAdler32Mismatch'.
+newtype ExpectedAdler32 = ExpectedAdler32 { unExpectedAdler32 :: Adler32 }
+  deriving (Show, Eq)
+
+-- | An Adler32 value that was computed from the actual data. Peer to
+-- 'ActualCRC32'; carried by 'VerificationAdler32Mismatch'.
+newtype ActualAdler32 = ActualAdler32 { unActualAdler32 :: Adler32 }
+  deriving (Show, Eq)
+
+-- | The label of an advisory byte-range check ("N64 cart ID",
+-- "N64 country", "N64 CRC", \[future\] ...). Carried by
+-- 'VerificationSourceBytesMismatch' so the renderer names the check
+-- without callers passing bare strings.
+newtype ByteCheckLabel = ByteCheckLabel { unByteCheckLabel :: String }
+  deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
 -- renderApplyError
@@ -816,6 +897,9 @@ renderSlapError (TruncationViolatesSMCShape size) =
   ++ " bytes does not satisfy (size & 0xFFF) == 0x200; "
   ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
+renderSlapError (VerificationFatal warning) =
+  renderSlapWarning warning ++ "\n  use --no-verify to apply anyway"
+
 renderSlapError (Yay0DecompressionFailed detail) =
   "Yay0 decompression failed: " ++ detail
 
@@ -960,6 +1044,40 @@ renderSlapWarning (SubformatConverted label fromSub toSub) =
 
 renderSlapWarning OffsetShiftApplied =
   "note: PCHTXT offset_shift applied to absolute offsets; output has no @flag directive"
+
+----------------------------------------------------------------------------
+-- Verification: source/target integrity check mismatches
+----------------------------------------------------------------------------
+
+renderSlapWarning (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
+  verificationSideLabel side ++ " CRC mismatch (expected 0x"
+  ++ showCRC32 expected ++ ", got 0x" ++ showCRC32 actual ++ ")"
+
+renderSlapWarning (VerificationHashMismatch side algorithm) =
+  verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm ++ " mismatch"
+
+renderSlapWarning (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
+  "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
+  ++ " (expected 0x" ++ showAdler32 expected
+  ++ ", got 0x" ++ showAdler32 actual ++ ")"
+
+renderSlapWarning (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
+  verificationSideLabel side ++ " file size mismatch (expected "
+  ++ show (unFileSize expectedSize) ++ " bytes, got "
+  ++ show (unFileSize actualSize) ++ " bytes)"
+
+renderSlapWarning (VerificationBlockCRC16Mismatch side blockOffset) =
+  verificationSideLabel side ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
+
+renderSlapWarning (VerificationPPFBlockMismatch blockOffset) =
+  "validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
+
+renderSlapWarning (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
+  "file size mismatch (expected " ++ show (unFileSize expectedSize)
+  ++ ", got " ++ show (unFileSize actualSize) ++ ")"
+
+renderSlapWarning (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
+  label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset)
 
 ----------------------------------------------------------------------------
 -- Helpers

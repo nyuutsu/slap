@@ -18,7 +18,8 @@ import Slap.SomePatch
   , parseSome
   )
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     ExpectedSize(..), ActualSize(..))
 import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
                      PatchContents,
                      RequestedPatchMetadata(..),
@@ -35,11 +36,14 @@ import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32)
-import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..), showCRC32, showAdler32)
+import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..),
+                      ExpectedCRC32(..), ActualCRC32(..), showCRC32)
 import Slap.FFI (rustyCRC32)
-import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), Outcome(..),
+import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..),
+                   VerificationSide(..), HashAlgorithm(..),
+                   ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    renderSlapError, renderSlapWarning)
-import Slap.Format (MetaField(..), padHex, renderField,
+import Slap.Format (MetaField(..), renderField,
                     rightwardsArrow, checkMark, ballotX, emDash,
                     spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
@@ -799,7 +803,7 @@ readUnwrap path = do
     Just format -> do
       result <- unwrapArchive format path
       case result of
-        Left errorMessage -> die errorMessage
+        Left errorMessage -> bail errorMessage
         Right (unwrappedBytes, entryName) -> do
           hPutStrLn stderr ("slap: unwrapped " ++ path ++ spacePaddedRightwardsArrow ++ entryName)
           pure unwrappedBytes
@@ -912,7 +916,7 @@ doApply parsedCommand = do
         sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
         let source = SourceFileContents sourceBytes
         verifySource verificationPolicy verification source
-        outcome <- orDie =<< runApply (patchApply parsed) source
+        outcome <- orBail =<< runApply (patchApply parsed) source
         emitWarnings WarningProper (outcomeWarnings outcome)
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
@@ -965,10 +969,10 @@ doUndo parsedCommand = do
     Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
     Quiet   -> pure ()
   case patchUndo parsed of
-    Nothing -> die "undo not supported for this format"
+    Nothing -> bail "undo not supported for this format"
     Just undo -> do
       modified <- ByteString.readFile (undoSource parsedCommand)
-      outcome <- orDie (runUndo undo (TargetFileContents modified))
+      outcome <- orBail (runUndo undo (TargetFileContents modified))
       emitWarnings WarningProper (outcomeWarnings outcome)
       let SourceFileContents result = outcomeValue outcome
           outputPath = case undoOutput parsedCommand of
@@ -984,12 +988,12 @@ doUndo parsedCommand = do
 doCreate :: CreateCommand -> IO ()
 doCreate parsedCommand = do
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
-  orDie (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
-  orDie (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
+  orBail (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
+  orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
-  result <- orDie (createPatch
+  result <- orBail (createPatch
                      (createFormat parsedCommand)
                      (SourceFileContents originalBytes)
                      (TargetFileContents modifiedBytes)
@@ -1035,8 +1039,8 @@ chooseConvertDispatch parsedCommand parsed =
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
-  orDie (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
-  orDie (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
+  orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
+  orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   let outputFile = case convertOutput parsedCommand of
@@ -1061,24 +1065,24 @@ doConvert parsedCommand = do
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orDie (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
-      convertResult <- orDie (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand))
+      convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ resultWarnings convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     ConvertRequiresSource somePatch ->
-      die (needSourceMessage somePatch)
+      bail (needSourceMessage somePatch)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
 applyForConvert somePatch source = do
-  outcome <- orDie =<< runApply (patchApply somePatch) source
+  outcome <- orBail =<< runApply (patchApply somePatch) source
   emitWarnings WarningProper (outcomeWarnings outcome)
   pure (outcomeValue outcome)
 
@@ -1140,7 +1144,7 @@ refuseOverwrite ForceOverwrite  _          = pure ()
 refuseOverwrite RefuseOverwrite outputPath = do
   exists <- doesFileExist outputPath
   when exists $
-    die (outputPath ++ " already exists (use --force to overwrite)")
+    bail (outputPath ++ " already exists (use --force to overwrite)")
 
 ----------------------------------------------------------------------------
 -- Verification helpers
@@ -1158,13 +1162,13 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
   forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy "source" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+    warnBlock verificationPolicy SourceSide blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
     warnPPFBlock verificationPolicy blockOffset expectedData sourceBytes
   forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
     warnFileSize verificationPolicy expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
   forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
-    warnSourceBytes verificationPolicy checkLabel checkOffset expectedData sourceBytes
+    warnSourceBytes verificationPolicy (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
 
 verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
 verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
@@ -1173,59 +1177,43 @@ verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = 
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash verificationPolicy TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
   forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy "target" blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
+    warnBlock verificationPolicy TargetSide blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
-
-data VerificationSide = SourceSide | TargetSide
-  deriving (Show, Eq)
-
-verificationSideLabel :: VerificationSide -> String
-verificationSideLabel SourceSide = "source"
-verificationSideLabel TargetSide = "target"
-
-data HashAlgorithm = MD5 | SHA1
-  deriving (Show, Eq)
-
-hashAlgorithmLabel :: HashAlgorithm -> String
-hashAlgorithmLabel MD5  = "MD5"
-hashAlgorithmLabel SHA1 = "SHA1"
 
 checkCRC :: VerificationPolicy -> VerificationSide -> CRC32 -> CRC32 -> IO ()
 checkCRC verificationPolicy side expected actual
   | expected == actual = pure ()
-  | otherwise = case verificationPolicy of
-      SkipVerification    -> warn (mismatchMessage)
-      EnforceVerification -> die (mismatchMessage ++ "\n  use --no-verify to apply anyway")
-  where
-    label = verificationSideLabel side
-    mismatchMessage = label ++ " CRC mismatch (expected "
-                   ++ formatCRC expected ++ ", got " ++ formatCRC actual ++ ")"
+  | otherwise =
+      let warning = VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)
+      in case verificationPolicy of
+           SkipVerification    -> emitWarnings WarningProper [warning]
+           EnforceVerification -> bailError (VerificationFatal warning)
 
 checkHash :: VerificationPolicy -> VerificationSide -> HashAlgorithm -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 checkHash verificationPolicy side algorithm expected actual
   | expected == actual = pure ()
-  | otherwise = case verificationPolicy of
-      SkipVerification    -> warn (label ++ " mismatch")
-      EnforceVerification -> die (label ++ " mismatch\n  use --no-verify to apply anyway")
-  where label = verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm
+  | otherwise =
+      let warning = VerificationHashMismatch side algorithm
+      in case verificationPolicy of
+           SkipVerification    -> emitWarnings WarningProper [warning]
+           EnforceVerification -> bailError (VerificationFatal warning)
 
 checkAdler :: VerificationPolicy -> Offset -> Adler32 -> Adler32 -> IO ()
 checkAdler verificationPolicy windowOffset expected actual
   | expected == actual = pure ()
-  | otherwise = case verificationPolicy of
-      SkipVerification    -> warn message
-      EnforceVerification -> die (message ++ "\n  use --no-verify to apply anyway")
-  where message = "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
-            ++ " (expected 0x" ++ showAdler32 expected
-            ++ ", got 0x" ++ showAdler32 actual ++ ")"
+  | otherwise =
+      let warning = VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)
+      in case verificationPolicy of
+           SkipVerification    -> emitWarnings WarningProper [warning]
+           EnforceVerification -> bailError (VerificationFatal warning)
 
-warnBlock :: VerificationPolicy -> String -> Offset -> CRC16 -> CRC16 -> IO ()
-warnBlock verificationPolicy label blockOffset expected actual = case verificationPolicy of
+warnBlock :: VerificationPolicy -> VerificationSide -> Offset -> CRC16 -> CRC16 -> IO ()
+warnBlock verificationPolicy side blockOffset expected actual = case verificationPolicy of
   SkipVerification    -> pure ()
   EnforceVerification
     | expected == actual -> pure ()
-    | otherwise          -> warn (label ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
+    | otherwise          -> emitWarnings WarningProper [VerificationBlockCRC16Mismatch side blockOffset]
 
 warnPPFBlock :: VerificationPolicy -> Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
 warnPPFBlock verificationPolicy blockOffset (ValidationBlockBytes expectedData) sourceBytes = case verificationPolicy of
@@ -1233,33 +1221,31 @@ warnPPFBlock verificationPolicy blockOffset (ValidationBlockBytes expectedData) 
   EnforceVerification ->
     let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
     in when (actual /= expectedData) $
-         warn ("validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset))
+         emitWarnings WarningProper [VerificationPPFBlockMismatch blockOffset]
 
 warnFileSize :: VerificationPolicy -> FileSize -> FileSize -> IO ()
-warnFileSize verificationPolicy (FileSize expectedSize) (FileSize actualSize) = case verificationPolicy of
+warnFileSize verificationPolicy expected actual = case verificationPolicy of
   SkipVerification    -> pure ()
   EnforceVerification ->
-    when (expectedSize /= actualSize) $
-      warn ("file size mismatch (expected " ++ show expectedSize ++ ", got " ++ show actualSize ++ ")")
+    when (expected /= actual) $
+      emitWarnings WarningProper [VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actual)]
 
 checkFileSize :: VerificationPolicy -> VerificationSide -> FileSize -> FileSize -> IO ()
-checkFileSize verificationPolicy side (FileSize expectedSize) (FileSize actualSize)
-  | expectedSize == actualSize = pure ()
-  | otherwise = case verificationPolicy of
-      SkipVerification    -> warn mismatchMessage
-      EnforceVerification -> die (mismatchMessage ++ "\n  use --no-verify to apply anyway")
-  where
-    label = verificationSideLabel side
-    mismatchMessage = label ++ " file size mismatch (expected "
-                   ++ show expectedSize ++ " bytes, got " ++ show actualSize ++ " bytes)"
+checkFileSize verificationPolicy side expected actual
+  | expected == actual = pure ()
+  | otherwise =
+      let warning = VerificationFileSizeMismatch side (ExpectedSize expected) (ActualSize actual)
+      in case verificationPolicy of
+           SkipVerification    -> emitWarnings WarningProper [warning]
+           EnforceVerification -> bailError (VerificationFatal warning)
 
-warnSourceBytes :: VerificationPolicy -> String -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+warnSourceBytes :: VerificationPolicy -> ByteCheckLabel -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
 warnSourceBytes verificationPolicy label checkOffset expectedData sourceBytes = case verificationPolicy of
   SkipVerification    -> pure ()
   EnforceVerification ->
     let actual = safeSlice (unOffset checkOffset) (ByteString.length expectedData) sourceBytes
     in when (actual /= expectedData) $
-         warn (label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset))
+         emitWarnings WarningProper [VerificationSourceBytesMismatch label checkOffset]
 
 safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
 safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)
@@ -1275,20 +1261,17 @@ emitWarnings :: WarningSeverity -> [SlapWarning] -> IO ()
 emitWarnings severity = traverse_ $ \warning ->
   hPutStrLn stderr (severityPrefix severity ++ renderSlapWarning warning)
 
-warn :: String -> IO ()
-warn message = hPutStrLn stderr ("slap: warning: " ++ message)
+bail :: String -> IO a
+bail message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
 
-die :: String -> IO a
-die message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
-
-dieError :: SlapError -> IO a
-dieError = die . renderSlapError
+bailError :: SlapError -> IO a
+bailError = bail . renderSlapError
 
 -- | Unwrap an 'Either SlapError' or terminate with a rendered error.
--- Replaces the 'case ... of Left err -> dieError err; Right v -> ...' pattern
+-- Replaces the 'case ... of Left err -> bailError err; Right v -> ...' pattern
 -- that appears in every do-function that calls into the library.
-orDie :: Either SlapError a -> IO a
-orDie = either dieError pure
+orBail :: Either SlapError a -> IO a
+orBail = either bailError pure
 
 -- | Read a patch file, parse it, return the parsed 'SomePatch'.  Terminates
 -- with a rendered error if the file can't be read or the bytes don't parse.
@@ -1298,4 +1281,4 @@ orDie = either dieError pure
 readAndParsePatch :: FilePath -> IO SomePatch
 readAndParsePatch path = do
   patchBytes <- readUnwrap path
-  orDie (parseSome (PatchFileContents patchBytes))
+  orBail (parseSome (PatchFileContents patchBytes))
