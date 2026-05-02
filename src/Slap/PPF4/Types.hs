@@ -29,9 +29,10 @@ data PPF4Patch = PPF4Patch
   } deriving (Show)
 
 -- | A PPF4 Replace record: writes 'replaceData' at 'replaceOffset' in
--- the target. Replace records cannot grow the file; the offset must be
--- in @[0, sourceFileSize)@. (Bug 1 in slap today: this range check is
--- not enforced at apply time. The follow-up commit adds it.)
+-- the target. Replace records cannot grow the file; the offset plus
+-- the payload length must be in @[0, sourceFileSize]@. Enforced at
+-- apply time by 'Slap.PPF4.Apply.applyPPF4', which fails with
+-- 'Slap.Error.ApplyReplaceGrowsFile' on violation.
 data PPF4Replace = PPF4Replace
   { replaceOffset :: !Offset
   , replaceData   :: !ByteString

@@ -233,6 +233,13 @@ data ApplyError
   -- the negative value as parsed.
   | ApplyNegativeRecordOffset ActionIndex Offset
 
+  -- | A PPF4 Replace record would write past the source file's end.
+  -- PPF4 Replace records cannot grow the file (only Append records
+  -- can); the reference applier rejects this with ERROR_BAD_SIZE.
+  -- The 'Offset' is the record's start; the 'RequestedLength' is the
+  -- record's payload length; the 'FileSize' is the source size.
+  | ApplyReplaceGrowsFile ActionIndex Offset RequestedLength FileSize
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -734,6 +741,14 @@ renderApplyError (ApplyTargetUnderfilled (ActualSize actualSize) (ExpectedSize e
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
   "record " ++ show (unActionIndex actionIndex)
   ++ " has negative offset " ++ show (unOffset offset)
+
+renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payloadLength) sourceSize) =
+  "record " ++ show (unActionIndex actionIndex)
+  ++ ": Replace at offset 0x" ++ showHex (unOffset offset) ""
+  ++ " writes " ++ show (unLength payloadLength) ++ " bytes"
+  ++ ", which would extend past the source size of "
+  ++ show (unFileSize sourceSize) ++ " bytes"
+  ++ " (PPF4 Replaces cannot grow the file; use Append records)"
 
 ----------------------------------------------------------------------------
 -- renderSlapError
