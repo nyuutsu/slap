@@ -33,7 +33,7 @@ import Data.IORef
 import Data.Int (Int64)
 import Data.STRef (newSTRef, readSTRef, writeSTRef, modifySTRef')
 import Data.Word (Word8)
-import Foreign.Ptr (Ptr)
+import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 ----------------------------------------------------------------------------
@@ -227,7 +227,13 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
         let count = min size (targetLength - windowOffset)
         when (addRunPosition >= 0 && addRunPosition < ByteString.length addRunBytes && count > 0) $ do
           let byte = ByteString.index addRunBytes addRunPosition
-          mapM_ (\offset -> pokeByteOff outputPointer (globalOutputOffset + windowOffset + offset) byte) [0..count-1]
+              writeBase = outputPointer `plusPtr` (globalOutputOffset + windowOffset)
+              runLoop !byteOffset
+                | byteOffset >= count = pure ()
+                | otherwise = do
+                    pokeByteOff writeBase byteOffset byte
+                    runLoop (byteOffset + 1)
+          runLoop 0
         writeIORef addRunPositionReference (addRunPosition + 1)
         writeIORef windowOffsetReference (windowOffset + count)
 
@@ -239,10 +245,15 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
         address <- decodeAddress cache mode here addressPositionReference addressBytes
         let count = min size (targetLength - windowOffset)
         -- Copy byte-by-byte (target region may overlap)
-        mapM_ (\offset -> do
-          byte <- readSourceWindow (fromIntegral address + offset)
-          pokeByteOff outputPointer (globalOutputOffset + windowOffset + offset) byte
-          ) [0..count-1]
+        let readBase  = fromIntegral address :: Int
+            writeBase = outputPointer `plusPtr` (globalOutputOffset + windowOffset)
+            copyLoop !byteOffset
+              | byteOffset >= count = pure ()
+              | otherwise = do
+                  byte <- readSourceWindow (readBase + byteOffset)
+                  pokeByteOff writeBase byteOffset byte
+                  copyLoop (byteOffset + 1)
+        copyLoop 0
         writeIORef windowOffsetReference (windowOffset + count)
 
   -- Process instruction stream
@@ -262,11 +273,20 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
   -- from the corresponding source positions after instructions are exhausted.
   windowOffset <- readIORef windowOffsetReference
   if hasSource && windowOffset < targetLength
-    then mapM_ (\offset -> do
-      let sourceIndex = sourceSegmentOffset + windowOffset + offset
-      byte <- if sourceIndex < ByteString.length source then pure (ByteString.index source sourceIndex) else pure 0
-      pokeByteOff outputPointer (globalOutputOffset + windowOffset + offset) byte
-      ) [0..targetLength - windowOffset - 1]
+    then do
+      let totalBytes = targetLength - windowOffset
+          sourceBase = sourceSegmentOffset + windowOffset
+          writeBase  = outputPointer `plusPtr` (globalOutputOffset + windowOffset)
+          fillLoop !byteOffset
+            | byteOffset >= totalBytes = pure ()
+            | otherwise = do
+                let sourceIndex = sourceBase + byteOffset
+                byte <- if sourceIndex < ByteString.length source
+                          then pure (ByteString.index source sourceIndex)
+                          else pure 0
+                pokeByteOff writeBase byteOffset byte
+                fillLoop (byteOffset + 1)
+      fillLoop 0
     else pure ()
 
   writeIORef globalOutputOffsetRef (globalOutputOffset + targetLength)
