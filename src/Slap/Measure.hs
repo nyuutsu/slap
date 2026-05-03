@@ -8,7 +8,7 @@ module Slap.Measure
   , Delta(..)
   , Position(..)
   , SignedOffset(..)
-  , ActionIndex(..)
+  , ActionIndex(unActionIndex)
   , ReadOffset(..)
   , WritePosition(..)
   , RequestedLength(..)
@@ -53,6 +53,8 @@ module Slap.Measure
   , remainingFromOffset
   , firstAction
   , nextAction
+  , streamEndIndex
+  , actionAtPosition
   , subtractLength
   , minLength
   , negativeOvershoot
@@ -355,6 +357,27 @@ firstAction = ActionIndex 0
 -- | Step to the next action in a stream.
 nextAction :: ActionIndex -> ActionIndex
 nextAction (ActionIndex index) = ActionIndex (index + 1)
+
+-- | The 'ActionIndex' one past the end of an action stream — the
+-- termination bound for a recursive applier walking an indexed
+-- container. The 'Foldable' constraint forces callers to hand in
+-- the actual stream rather than a pre-computed count, foreclosing
+-- the @ActionIndex (length xs)@ shape that fabricates an index
+-- from a count where threading was the right verb. All current
+-- call sites pass @Vector.Vector@, where 'length' is O(1).
+streamEndIndex :: Foldable t => t a -> ActionIndex
+streamEndIndex stream = ActionIndex (length stream)
+
+-- | An 'ActionIndex' identified by its position in a stream the
+-- caller is iterating over by hand — parse-time scanners with
+-- 'Int' loop counters, OOB detectors driven by 'Vector.ifoldl''.
+-- The newtype boundary makes "this 'Int' is a step number, not a
+-- byte offset or a length" explicit at the call site. Prefer
+-- threading via 'firstAction' / 'nextAction' when the surrounding
+-- code can express the walk that way; reach for this builder only
+-- when the index genuinely arrives from an external loop.
+actionAtPosition :: Int -> ActionIndex
+actionAtPosition = ActionIndex
 
 -- | Subtract two 'Length' values, clamping to zero on underflow.
 -- Used in apply workers when computing the remaining bytes after a

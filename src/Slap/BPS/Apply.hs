@@ -9,14 +9,14 @@ import Slap.Binary (copyRegion, copyInPlace)
 import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), ActionIndex(..),
+                     SignedOffset(..), ActionIndex(unActionIndex),
                      SignedOffsetSign(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
                      Cursor(..), examineSignedOffset, fitsWithin,
                      remainingFromOffset,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import Control.Monad (unless)
@@ -95,7 +95,7 @@ applyBPS patch (SourceFileContents source)
     targetSize      = bpsTargetSize patch
     sourceSize      = FileSize (ByteString.length source)
     actions         = bpsActions patch
-    actionStreamEnd = ActionIndex (Vector.length actions)
+    actionStreamEnd = streamEndIndex actions
 
     runApply outputPointer errorRef =
       let

@@ -25,7 +25,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchF
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
-import Slap.Measure (FileSize(..), Offset(..), Length(..), ActionIndex(..),
+import Slap.Measure (FileSize(..), Offset(..), Length(..), actionAtPosition,
                      DeclaredTargetSize(..), NaturalTargetSize(..))
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
@@ -885,7 +885,7 @@ ipsApplyZeroTargetWithRecordsClipped =
         (DeclaredTargetSize (FileSize 0))
         (NaturalTargetSize  (FileSize 1))
       expectedClipped  = IPSRecordsClippedByMarker LabelIPS
-        (ClippedRecordCount 1) (ActionIndex 0) (MarkerOvershootBytes (Length 1))
+        (ClippedRecordCount 1) (actionAtPosition 0) (MarkerOvershootBytes (Length 1))
   in case applyIPS (SourceFileContents ByteString.empty) patch of
        Right (Outcome (TargetFileContents target) warnings) -> do
          assertEqual "target should be empty" 0 (ByteString.length target)

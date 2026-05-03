@@ -44,11 +44,12 @@ import Slap.Measure
   ( Offset(..)
   , Length(..)
   , FileSize(..)
-  , ActionIndex(..)
+  , ActionIndex
   , Cursor(..)
   , byteLength
   , firstAction
   , nextAction
+  , actionAtPosition
   , RequiredLength(..)
   , ActualLength(..)
   , ActualMagic(..)
@@ -584,7 +585,7 @@ detectFirstUnsortedRecord label recordVector = scanFrom 1
     scanFrom candidateIndex
       | candidateIndex >= recordCount = []
       | laterOffset < earlierOffset   =
-          [UnsortedRecords label (ActionIndex candidateIndex)]
+          [UnsortedRecords label (actionAtPosition candidateIndex)]
       | otherwise                     = scanFrom (candidateIndex + 1)
       where
         earlierOffset = ipsRecordOffset (recordVector Vector.! (candidateIndex - 1))

@@ -11,12 +11,12 @@ import Slap.Error (SlapError(..), ApplyError(..), SlapWarning(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActionIndex(..),
+                     ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength, byteLength,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import Control.Monad (when)
@@ -151,7 +151,7 @@ applyIPS (SourceFileContents source) patch
       [IPSRecordsClippedByMarker patchLabel
         (clipCount clip) (clipFirstIndex clip) (clipOvershoot clip)]
 
-    recordStreamEnd = ActionIndex (Vector.length records)
+    recordStreamEnd = streamEndIndex records
 
     runApply outputPointer errorRef clipRef =
       let

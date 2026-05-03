@@ -7,7 +7,7 @@ import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActionIndex(..),
+                     ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset,
                      byteLength,

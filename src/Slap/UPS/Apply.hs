@@ -8,10 +8,11 @@ import Slap.Error (SlapError(..), SlapWarning(..),
                    OOBBlockCount(..), OOBOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActionIndex(..),
+                     ActionIndex(unActionIndex),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength,
-                     firstAction, nextAction, plusOffset)
+                     firstAction, nextAction,
+                     streamEndIndex, actionAtPosition, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import Control.Monad (when)
@@ -56,7 +57,7 @@ applyUPS patch (SourceFileContents source)
     targetSize     = upsTargetSize patch
     sourceSize     = FileSize (ByteString.length source)
     blocks         = upsBlocks patch
-    blockStreamEnd = ActionIndex (Vector.length blocks)
+    blockStreamEnd = streamEndIndex blocks
 
     runApply outputPointer sourcePointer =
       let
@@ -229,6 +230,6 @@ detectOOBBlocks patch = case oobFirstIndex finalState of
                   , oobCount      = OOBBlockCount (currentCount + 1)
                   , oobFirstIndex = case oobFirstIndex state of
                       Just _  -> oobFirstIndex state
-                      Nothing -> Just (ActionIndex blockIdx)
+                      Nothing -> Just (actionAtPosition blockIdx)
                   , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
                   }

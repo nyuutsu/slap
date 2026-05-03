@@ -4,7 +4,7 @@ import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActionIndex(..),
+                     ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength,

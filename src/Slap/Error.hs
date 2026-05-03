@@ -39,7 +39,7 @@ import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), ActionIndex(..),
+                     SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
@@ -930,9 +930,9 @@ renderSlapWarning (EmptyPatch _label unit) =
 renderSlapWarning (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
 
-renderSlapWarning (ZeroCountRLERecord label (ActionIndex idx)) =
+renderSlapWarning (ZeroCountRLERecord label actionIndex) =
   "note: " ++ formatLabelName label
-  ++ ": zero-count RLE record at position " ++ show idx
+  ++ ": zero-count RLE record at position " ++ show (unActionIndex actionIndex)
   ++ " (accepted as no-op)"
 
 renderSlapWarning NegativeZeroInBPS =
@@ -947,9 +947,9 @@ renderSlapWarning (OverlappingRecords label (OverlapCount pairCount)) =
                         else " overlapping record pairs")
   ++ " (later writes clobber earlier; unusual)"
 
-renderSlapWarning (UnsortedRecords label (ActionIndex idx)) =
+renderSlapWarning (UnsortedRecords label actionIndex) =
   "note: " ++ formatLabelName label
-  ++ ": record at position " ++ show idx
+  ++ ": record at position " ++ show (unActionIndex actionIndex)
   ++ " has a lower offset than the record before it"
   ++ " (unsorted records; applied in wire order)"
 
@@ -965,12 +965,12 @@ renderSlapWarning (IPSTruncationMarkerHonoured label
   ++ show (unFileSize natural) ++ " bytes)"
 
 renderSlapWarning (IPSRecordsClippedByMarker label
-    (ClippedRecordCount count) (ActionIndex firstIndex) (MarkerOvershootBytes overshoot)) =
+    (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
   formatLabelName label ++ " apply: "
   ++ show count
   ++ (if count == 1 then " record" else " records")
   ++ " clipped by truncation marker (first at step #"
-  ++ show firstIndex ++ ", "
+  ++ show (unActionIndex firstIndex) ++ ", "
   ++ show (unLength overshoot)
   ++ (if unLength overshoot == 1 then " byte" else " bytes")
   ++ " total clipped)"

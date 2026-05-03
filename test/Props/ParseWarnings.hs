@@ -17,7 +17,7 @@ import Slap.Error (Parsed(..), SlapWarning(..), OverlapCount(..),
                    renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (ActionIndex(..), Length(..))
+import Slap.Measure (actionAtPosition, Length(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -133,7 +133,7 @@ zeroCountRLEEmitsWarning =
                 <> rleRecord 0x000100 0 0xAA
                 <> standardIPSTrailer
   in assertParseWarnings patchBytes
-       [ZeroCountRLERecord LabelIPS (ActionIndex 0)]
+       [ZeroCountRLERecord LabelIPS (actionAtPosition 0)]
 
 -- | Two copy records whose write regions intersect: record 0 writes
 -- 10 bytes at offset 0; record 1 writes 10 bytes at offset 5. The
@@ -166,7 +166,7 @@ unsortedRecordsEmitOneWarning =
                    <> copyRecord 10 secondPayload
                    <> standardIPSTrailer
   in assertParseWarnings patchBytes
-       [UnsortedRecords LabelIPS (ActionIndex 1)]
+       [UnsortedRecords LabelIPS (actionAtPosition 1)]
 
 -- | A minimal 'IPS32' patch — magic, no records, the @"EEOF"@
 -- trailer, and five arbitrary trailing bytes. The parser must
