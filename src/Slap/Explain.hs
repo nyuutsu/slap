@@ -18,7 +18,8 @@ module Slap.Explain
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField,
                     spacePaddedEnDash)
-import Slap.Measure (Offset(..), Length(..), Delta(..), advance)
+import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset), advance)
+import Slap.Error (CursorKind, renderCursorKind)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
@@ -104,6 +105,8 @@ data AnnotDetail
   | DetailSource Offset         -- "(source 0xN)"
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
   | DetailCRC16 CRC16 CRC16     -- "(src CRC16 0xN, tgt CRC16 0xN)"
+  | DetailCursorUnderflow CursorKind SignedOffset
+                                -- "*** <kind> cursor underflow: -N (patch invalid here) ***"
 
 -- | Byte offset range for a non-empty set of regions.
 -- 'rangeStart' is the first modified byte; 'rangeEnd' is one past the last.
@@ -228,6 +231,9 @@ renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 (unOffs
 renderDetail (DetailSourceIndex _)          = ""
 renderDetail (DetailCRC16 sourceCrc targetCrc) =
   "  (src CRC16 " ++ showCRC16 sourceCrc ++ ", tgt CRC16 " ++ showCRC16 targetCrc ++ ")"
+renderDetail (DetailCursorUnderflow cursorKind underflowedCursor) =
+  "  *** " ++ renderCursorKind cursorKind ++ " cursor underflow: "
+  ++ show (unSignedOffset underflowedCursor) ++ " (patch invalid here) ***"
 
 ----------------------------------------------------------------------------
 -- Source-aware helpers

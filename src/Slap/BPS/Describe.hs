@@ -15,9 +15,12 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
+import Slap.Error (CursorKind(SourceCursor))
 import Slap.Format (MetaField(..), renderField)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), Cursor(..))
+                     SignedOffset(SignedOffset),
+                     SignedOffsetSign(..), Cursor(..),
+                     examineSignedOffset)
 
 import Slap.TextEncoding (decodeLocaleField)
 
@@ -101,12 +104,14 @@ makeBPSRegion state action = case action of
     let nextSourceRelative = displace (regionSourceRelative state) actionDelta
         nextOutputPosition = advance (regionOutputPosition state) actionLength
         advancedSourceRelative = advance nextSourceRelative actionLength
+        annotationDetails = case examineSignedOffset nextSourceRelative of
+          NonNegativeCursor safeSourceStart ->
+            [DetailSource safeSourceStart, DetailDelta actionDelta]
+          NegativeCursor underflowedCursor ->
+            [DetailCursorUnderflow SourceCursor underflowedCursor, DetailDelta actionDelta]
     in ( BPSRegionState nextOutputPosition advancedSourceRelative
        , ExplainRegion (regionOutputPosition state) actionLength "SourceCopy " (PayloadCopy FromSource)
-           (AnnotAt AtOutput (regionOutputPosition state)
-             [ DetailSource (Offset (unSignedOffset nextSourceRelative))
-             , DetailDelta actionDelta
-             ])
+           (AnnotAt AtOutput (regionOutputPosition state) annotationDetails)
        )
   TargetCopy actionLength actionDelta ->
     ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
