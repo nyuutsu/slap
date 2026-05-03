@@ -49,7 +49,6 @@ module Slap.Measure
     -- * Cursor typeclass
   , Cursor(..)
     -- * Cursor helpers
-  , clampToOffset
   , remainingFromOffset
   , firstAction
   , nextAction
@@ -57,7 +56,6 @@ module Slap.Measure
   , actionAtPosition
   , subtractLength
   , minLength
-  , negativeOvershoot
   , plusOffset
   , SignedOffsetSign(..)
   , examineSignedOffset
@@ -92,6 +90,14 @@ newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
 newtype Delta    = Delta    { unDelta    :: Int } deriving (Eq, Ord, Show)
 newtype Position = Position { unPosition :: Int } deriving (Eq, Ord, Show)
 
+-- | A cursor position carrying the result of signed arithmetic.
+-- BPS apply's @SourceCopy@ and @TargetCopy@ actions advance their
+-- relative cursors by a signed delta, and the post-displace value
+-- can be negative. Per the BPS spec a negative cursor means the
+-- patch is invalid; the negative case is detected at the read site
+-- via 'examineSignedOffset' and produces 'ApplyCursorUnderflow'.
+-- Outside the displace-then-examine pattern, code should use
+-- 'Offset' instead.
 newtype SignedOffset = SignedOffset { unSignedOffset :: Int }
   deriving (Eq, Ord, Show)
 
@@ -312,11 +318,15 @@ seekTo handle targetOffset =
 -- Cursor typeclass
 ----------------------------------------------------------------------------
 
--- | Buffer cursors that support position arithmetic. 'Offset' is the
--- everyday case (forward-walking, non-negative by convention).
--- 'SignedOffset' is the rare case where transient negative values
--- are legitimate before being clamped at the read site (currently
--- only BPS apply's source/target relative cursors).
+-- | Buffer cursors that support position arithmetic. 'Offset' is
+-- the everyday case (forward-walking; non-negative by convention).
+-- 'SignedOffset' carries the potentially-negative result of BPS
+-- apply's relative-delta arithmetic from the displace site to the
+-- validity check at the read site. Per the BPS spec, a negative
+-- cursor means the patch is invalid; slap detects this at apply
+-- time via 'examineSignedOffset', per the wire-vs-semantic-
+-- invalidity doctrine in @questions.md@. Currently only BPS apply
+-- uses the 'SignedOffset' instance.
 class Cursor cursor where
   advance  :: cursor -> Length -> cursor
   displace :: cursor -> Delta  -> cursor
@@ -336,12 +346,6 @@ instance Cursor SignedOffset where
 ----------------------------------------------------------------------------
 -- Cursor helpers
 ----------------------------------------------------------------------------
-
--- | Clamp a 'SignedOffset' to a non-negative 'Offset'. The only
--- legal way to obtain an 'Offset' from a 'SignedOffset', so the
--- clamping step is impossible to forget.
-clampToOffset :: SignedOffset -> Offset
-clampToOffset (SignedOffset position) = Offset (max 0 position)
 
 -- | The number of bytes remaining in a file from a given offset.
 -- Returns a non-negative 'Length' (clamped to zero if the offset is
@@ -393,29 +397,25 @@ subtractLength (Length minuend) (Length subtrahend) =
 minLength :: Length -> Length -> Length
 minLength (Length left) (Length right) = Length (min left right)
 
--- | The amount by which a 'SignedOffset' has overshot into the
--- negative range, expressed as a non-negative 'Length'. Returns
--- zero if the cursor is non-negative. Used by apply workers when
--- a relative-delta cursor has been driven below zero by a malformed
--- patch and the leading out-of-range bytes need to be zero-filled.
-negativeOvershoot :: SignedOffset -> Length
-negativeOvershoot (SignedOffset position) = Length (max 0 (negate position))
-
 -- | The result of examining a 'SignedOffset' for non-negativity.
--- 'NonNegativeCursor' carries an 'Offset' with its non-negativity
--- proven by construction — the only way to obtain this constructor
--- is via 'examineSignedOffset', which performs the check. This lets
--- apply workers branch on cursor validity and receive a refinement-
--- typed 'Offset' in the valid branch, rather than calling
--- 'clampToOffset' after a manual guard (which reads as if clamping
--- were still happening when it isn't).
+-- 'NonNegativeCursor' carries an 'Offset' the apply path can use
+-- for reads; 'NegativeCursor' carries the original signed value
+-- so the negative case can flow into error context (e.g. as the
+-- 'SignedOffset' field of 'ApplyCursorUnderflow'). Production
+-- code obtains values of this type via 'examineSignedOffset'; the
+-- data constructors are exported for pattern-matching at use
+-- sites. Direct construction of @NonNegativeCursor (Offset n)@
+-- for negative @n@ would compile — the non-negativity is a
+-- discipline enforced at the construction site, not by the type
+-- system.
 data SignedOffsetSign
   = NegativeCursor SignedOffset
   | NonNegativeCursor Offset
   deriving (Show, Eq)
 
--- | Examine a 'SignedOffset' and return either the original negative
--- value or a proven-non-negative 'Offset'.
+-- | Examine a 'SignedOffset' and return either the original
+-- negative value (carried for error reporting) or a non-negative
+-- 'Offset' suitable for use as a read position.
 examineSignedOffset :: SignedOffset -> SignedOffsetSign
 examineSignedOffset signedCursor@(SignedOffset position)
   | position < 0 = NegativeCursor signedCursor
