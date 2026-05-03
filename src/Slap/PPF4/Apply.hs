@@ -42,7 +42,7 @@ applyPPF4 patch (SourceFileContents source)
           fillBytes (plusOffset outputPointer (Offset (unFileSize sourceFileSize)))
                     (0 :: Word8)
                     (unFileSize outputFileSize - unFileSize sourceFileSize)
-        applyReplaces outputPointer errorRef firstAction (ppf4Replaces patch)
+        appendStartIndex <- applyReplaces outputPointer errorRef firstAction (ppf4Replaces patch)
         -- Skip the Append phase if the Replace phase already errored,
         -- so the first failure wins (an Append-phase failure on a
         -- buffer corrupted by a failed Replace would otherwise
@@ -52,7 +52,7 @@ applyPPF4 patch (SourceFileContents source)
           Just _  -> pure ()
           Nothing ->
             applyAppends outputPointer errorRef
-                         (ActionIndex (length (ppf4Replaces patch)))
+                         appendStartIndex
                          appendStartOffset (ppf4Appends patch)
       errorState <- readIORef errorRef
       pure $ case errorState of
@@ -71,15 +71,17 @@ applyPPF4 patch (SourceFileContents source)
     appendStartOffset = Offset (unFileSize sourceFileSize)
 
     applyReplaces :: Ptr Word8 -> IORef (Maybe ApplyError)
-                  -> ActionIndex -> [PPF4Replace] -> IO ()
-    applyReplaces _ _ _ [] = pure ()
+                  -> ActionIndex -> [PPF4Replace] -> IO ActionIndex
+    applyReplaces _ _ recordIndex [] = pure recordIndex
     applyReplaces outputPointer errorRef recordIndex (replace : rest)
-      | unOffset writeOffset < 0 =
+      | unOffset writeOffset < 0 = do
           writeIORef errorRef (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
-      | not (fitsWithin writeOffset payloadLength sourceFileSize) =
+          pure recordIndex
+      | not (fitsWithin writeOffset payloadLength sourceFileSize) = do
           writeIORef errorRef (Just (ApplyReplaceGrowsFile recordIndex writeOffset
                                        (RequestedLength payloadLength)
                                        sourceFileSize))
+          pure recordIndex
       | otherwise = do
           copyRegion outputPointer writeOffset (replaceData replace) (Offset 0) payloadLength
           applyReplaces outputPointer errorRef (nextAction recordIndex) rest
