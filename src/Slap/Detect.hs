@@ -6,6 +6,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (find)
+import qualified Slap.APSGBA.Parse as APSGBA (apsGbaStructure)
 import Slap.APSGBA.Types (apsGbaMagicBytes)
 import Slap.APSN64.Types (apsN64MagicBytes)
 import Slap.BPS.Types (bpsMagicBytes)
@@ -90,13 +91,25 @@ probeMatches (PatchFileContents fileBytes) probe =
 detectFormat :: PatchFileContents -> Maybe PatchFormat
 detectFormat patchFile =
   case find (probeMatches patchFile) magicProbes of
-    Just probe -> Just (probeFormat probe)
+    Just probe -> Just (resolveAmbiguity (probeFormat probe))
     Nothing
       | detectPCHTXT fileBytes -> Just (PatchDirect FormatPCHTXT)
       | DPS.isDPS fileBytes    -> Just (PatchDiff   FormatDPS)
       | otherwise              -> Nothing
   where
     PatchFileContents fileBytes = patchFile
+
+    -- | Some probe results are ambiguous between two formats and need a
+    -- structural test to disambiguate. Today's only such case: APSN64
+    -- and APS-GBA share enough magic prefix that an APS-GBA file with
+    -- @source_size == 0x30@ reads as @"APS10"@ for its first 5 bytes
+    -- and the longer-wins probe rule routes it to APSN64. The APS-GBA
+    -- record-shape test catches this and re-routes to 'FormatAPSGBA'.
+    -- Other probe results pass through unchanged.
+    resolveAmbiguity :: PatchFormat -> PatchFormat
+    resolveAmbiguity (PatchDirect FormatAPSN64)
+      | APSGBA.apsGbaStructure fileBytes = PatchDiff FormatAPSGBA
+    resolveAmbiguity format = format
 
 ----------------------------------------------------------------------------
 -- PCHTXT directives

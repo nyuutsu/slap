@@ -243,9 +243,7 @@ parseSome patchContents = case detectFormat patchContents of
   Just (PatchDirect FormatPPF3)           -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
   Just (PatchDirect FormatPPF4)           -> parseSomePatchFromPPF4 patchContents
   Just (PatchDirect (FormatIPS variant))  -> parseSomePatchFromIPS variant patchContents
-  Just (PatchDirect FormatAPSN64)
-    | APSGBA.apsGbaStructure rawBytes     -> parseSomePatchFromAPSGBA patchContents
-    | otherwise                           -> parseSomePatchFromAPSN64 patchContents
+  Just (PatchDirect FormatAPSN64)         -> parseSomePatchFromAPSN64 patchContents
   Just (PatchDirect FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
   Just (PatchDirect FormatPMSR)           -> parseSomePatchFromPMSR patchContents
   Just (PatchDirect FormatPCHTXT)         -> parseSomePatchFromPCHTXT patchContents
@@ -559,9 +557,10 @@ parseSomePatchFromVCDIFF patchContents = do
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but
 -- "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
--- The dispatch arm for FormatAPSN64 disambiguates via GBA's fixed record
--- structure (12 + N*65544 bytes, 64KB-aligned offsets) and routes
--- structurally-GBA inputs to 'parseSomePatchFromAPSGBA'.
+-- detectFormat disambiguates via GBA's fixed record structure (12 +
+-- N*65544 bytes, 64KB-aligned offsets) and re-routes structurally-GBA
+-- inputs to 'FormatAPSGBA' upstream of this function, so by the time
+-- 'parseSomePatchFromAPSN64' runs the bytes really are APSN64.
 parseSomePatchFromAPSN64 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSN64 patchContents = do
   Parsed patch@(APSN64.APSN64Patch header records) parseWarnings <- APSN64.parseAPSN64 patchContents
