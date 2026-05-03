@@ -19,7 +19,7 @@ module Slap.Yay0 (isYay0, decompressYay0) where
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (testBit, shiftL, shiftR, (.&.), (.|.))
-import Control.Monad (forM_, unless)
+import Control.Monad (unless)
 import Data.IORef
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr, plusPtr)
@@ -102,6 +102,12 @@ decompressYay0 input
 -- Must be byte-by-byte because source and destination can overlap.
 copyBack :: Ptr Word8 -> Int -> Int -> Int -> IO ()
 copyBack outputPointer written distance count =
-  forM_ [0..count-1] $ \index -> do
-    value <- peekByteOff outputPointer (written - distance + index) :: IO Word8
-    pokeByteOff outputPointer (written + index) value
+  let readBase  = outputPointer `plusPtr` (written - distance)
+      writeBase = outputPointer `plusPtr` written
+      loop !byteOffset
+        | byteOffset >= count = pure ()
+        | otherwise = do
+            value <- peekByteOff readBase byteOffset :: IO Word8
+            pokeByteOff writeBase byteOffset value
+            loop (byteOffset + 1)
+  in loop 0

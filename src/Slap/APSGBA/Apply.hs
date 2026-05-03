@@ -29,11 +29,17 @@ applyAPSGBA (APSGBAPatch header records) (SourceFileContents source) = Right $ T
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)
     forM_ records $ \(APSGBARecord recordOffset _ _ xorPayload) -> do
       let blockOffset = unOffset recordOffset
-      forM_ [0..apsGbaBlockSize - 1] $ \index -> do
-        let position = blockOffset + index
-        when (position < targetSize) $ do
-          original <- peekByteOff targetPointer position :: IO Word8
-          pokeByteOff targetPointer position (original `xor` ByteString.index xorPayload index)
+          writeBase = targetPointer `plusPtr` blockOffset
+          loop !byteOffset
+            | byteOffset >= apsGbaBlockSize = pure ()
+            | otherwise = do
+                let position = blockOffset + byteOffset
+                when (position < targetSize) $ do
+                  original <- peekByteOff writeBase byteOffset :: IO Word8
+                  pokeByteOff writeBase byteOffset
+                    (original `xor` ByteString.index xorPayload byteOffset)
+                loop (byteOffset + 1)
+      loop 0
   where
     sourceLength = ByteString.length source
     targetSize = unFileSize (apsGbaTargetSize header)

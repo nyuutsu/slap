@@ -14,6 +14,7 @@ import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), Cursor(..), remainingFromOffset)
 import Data.Word (Word8)
+import Foreign.Ptr (plusPtr)
 import Foreign.Storable (pokeByteOff)
 
 applyBSDiff :: BSDiffPatch -> SourceFileContents -> Either SlapError TargetFileContents
@@ -32,11 +33,18 @@ applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ uns
               (remainingFromOffset (advance outputPosition addLength) targetFileSize)
             seekDelta = controlSeek control
         -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
-        mapM_ (\index -> do
-          let sourceByte = safeByteAt source    (unSignedOffset originalPosition + index)
-              diffByte   = safeByteAt diffBytes (unOffset diffOffset + index)
-          pokeByteOff targetPointer (unOffset outputPosition + index)
-            (sourceByte + diffByte :: Word8)) [0 .. unLength addLength - 1]
+        let totalBytes = unLength addLength
+            sourceBase = unSignedOffset originalPosition
+            diffBase   = unOffset diffOffset
+            writeBase  = targetPointer `plusPtr` unOffset outputPosition
+            addLoop !byteOffset
+              | byteOffset >= totalBytes = pure ()
+              | otherwise = do
+                  let sourceByte = safeByteAt source    (sourceBase + byteOffset)
+                      diffByte   = safeByteAt diffBytes (diffBase + byteOffset)
+                  pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
+                  addLoop (byteOffset + 1)
+        addLoop 0
         -- Copy: target[outputPosition+addLength..] = extra[extraOffset..]
         let safeCopyLength = if unOffset extraOffset >= 0 && unOffset extraOffset < extraLength
                         then min copyLength (Length (extraLength - unOffset extraOffset))

@@ -29,10 +29,15 @@ applyNINJA2 patch (SourceFileContents source) = Right $ TargetFileContents $ uns
     forM_ (ninja2Records patch) $ \(NINJA2Record writeOffset xorPayload) -> do
       let writePosition = offsetToInt writeOffset
           recordLength = ByteString.length xorPayload
-      forM_ [0..recordLength-1] $ \position -> do
-        let bytePosition = writePosition + position
-        original <- peekByteOff outputPointer bytePosition :: IO Word8
-        pokeByteOff outputPointer bytePosition (original `xor` ByteString.index xorPayload position)
+          writeBase = outputPointer `plusPtr` writePosition
+          loop !byteOffset
+            | byteOffset >= recordLength = pure ()
+            | otherwise = do
+                original <- peekByteOff writeBase byteOffset :: IO Word8
+                pokeByteOff writeBase byteOffset
+                  (original `xor` ByteString.index xorPayload byteOffset)
+                loop (byteOffset + 1)
+      loop 0
     -- Overflow: append-mode payload is the new tail bytes (XOR'd with 0xFF
     -- on disk) and is written at sourceSize; truncate-mode payload is the
     -- discarded tail bytes preserved for round-trip and is *not* applied —
