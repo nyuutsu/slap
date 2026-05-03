@@ -48,7 +48,6 @@ import Slap.Measure
   , subtractLength
   )
 
-import Control.Monad (forM_)
 import Control.Monad.ST (ST, runST)
 import Data.Array (Array, listArray, (!))
 import Data.Array.MArray (newArray, readArray, writeArray)
@@ -351,66 +350,74 @@ partitionDiffRegion offsetWidth _target region
         :: ST s (STUArray s Int Int)
       writeArray costArray 0 0
 
-      forM_ [1 .. seedPositionCount - 1] $ \destinationIndex -> do
-        let destinationPosition = seedPositionArray ! destinationIndex
+      -- Forward DP pass: for each destination from 1 upward, find
+      -- the cheapest predecessor (copy candidate or RLE candidate)
+      -- and record the winning cost and predecessor in the two DP
+      -- arrays.
+      let scanDestinations !destinationIndex
+            | destinationIndex >= seedPositionCount = pure ()
+            | otherwise = do
+                let destinationPosition = seedPositionArray ! destinationIndex
 
-            -- Copy candidate scan: walk all earlier seed positions
-            -- whose distance to the destination is within the
-            -- per-record payload cap, and pick the one whose
-            -- (predecessor cost + copy-record cost) is smallest.
-            -- Returns @(bestCost, bestPredecessorIndex)@.
-            scanCopyCandidates !bestCost !bestPredecessor !sourceIndex
-              | sourceIndex < 0 = pure (bestCost, bestPredecessor)
-              | destinationPosition - (seedPositionArray ! sourceIndex)
-                    > maxRecordPayloadBytes =
-                  pure (bestCost, bestPredecessor)
-              | otherwise = do
-                  predecessorCost <- readArray costArray sourceIndex
-                  let recordPayloadLength =
-                        destinationPosition - (seedPositionArray ! sourceIndex)
-                      candidateCost =
-                        predecessorCost
-                        + copyRecordOverhead
-                        + recordPayloadLength
-                  if candidateCost < bestCost
-                    then scanCopyCandidates candidateCost
-                                            sourceIndex
-                                            (sourceIndex - 1)
-                    else scanCopyCandidates bestCost
-                                            bestPredecessor
-                                            (sourceIndex - 1)
+                    -- Copy candidate scan: walk all earlier seed positions
+                    -- whose distance to the destination is within the
+                    -- per-record payload cap, and pick the one whose
+                    -- (predecessor cost + copy-record cost) is smallest.
+                    -- Returns @(bestCost, bestPredecessorIndex)@.
+                    scanCopyCandidates !bestCost !bestPredecessor !sourceIndex
+                      | sourceIndex < 0 = pure (bestCost, bestPredecessor)
+                      | destinationPosition - (seedPositionArray ! sourceIndex)
+                            > maxRecordPayloadBytes =
+                          pure (bestCost, bestPredecessor)
+                      | otherwise = do
+                          predecessorCost <- readArray costArray sourceIndex
+                          let recordPayloadLength =
+                                destinationPosition - (seedPositionArray ! sourceIndex)
+                              candidateCost =
+                                predecessorCost
+                                + copyRecordOverhead
+                                + recordPayloadLength
+                          if candidateCost < bestCost
+                            then scanCopyCandidates candidateCost
+                                                    sourceIndex
+                                                    (sourceIndex - 1)
+                            else scanCopyCandidates bestCost
+                                                    bestPredecessor
+                                                    (sourceIndex - 1)
 
-        (copyCandidateCost, copyCandidatePredecessor) <-
-          scanCopyCandidates impossiblyExpensiveCost (-1) (destinationIndex - 1)
+                (copyCandidateCost, copyCandidatePredecessor) <-
+                  scanCopyCandidates impossiblyExpensiveCost (-1) (destinationIndex - 1)
 
-        -- RLE candidate: only available when the destination's
-        -- preceding seed position is inside the same maximal run as
-        -- the destination AND the resulting run length crosses the
-        -- RLE break-even (4 bytes for both variants — see
-        -- 'rleBreakEvenRunLength').
-        let rleEligiblePredecessor =
-              rleEligiblePredecessorArray ! destinationIndex
-            rleCandidateRunLength
-              | rleEligiblePredecessor >= 0 =
-                  destinationPosition
-                  - (seedPositionArray ! rleEligiblePredecessor)
-              | otherwise = 0
+                -- RLE candidate: only available when the destination's
+                -- preceding seed position is inside the same maximal run as
+                -- the destination AND the resulting run length crosses the
+                -- RLE break-even (4 bytes for both variants — see
+                -- 'rleBreakEvenRunLength').
+                let rleEligiblePredecessor =
+                      rleEligiblePredecessorArray ! destinationIndex
+                    rleCandidateRunLength
+                      | rleEligiblePredecessor >= 0 =
+                          destinationPosition
+                          - (seedPositionArray ! rleEligiblePredecessor)
+                      | otherwise = 0
 
-        (winningCost, winningPredecessor) <-
-          if rleEligiblePredecessor >= 0
-               && rleCandidateRunLength > rleBreakEvenLength
-            then do
-              rlePredecessorCost <-
-                readArray costArray rleEligiblePredecessor
-              let rleCandidateCost =
-                    rlePredecessorCost + rleRecordOverhead
-              if rleCandidateCost < copyCandidateCost
-                then pure (rleCandidateCost, rleEligiblePredecessor)
-                else pure (copyCandidateCost, copyCandidatePredecessor)
-            else pure (copyCandidateCost, copyCandidatePredecessor)
+                (winningCost, winningPredecessor) <-
+                  if rleEligiblePredecessor >= 0
+                       && rleCandidateRunLength > rleBreakEvenLength
+                    then do
+                      rlePredecessorCost <-
+                        readArray costArray rleEligiblePredecessor
+                      let rleCandidateCost =
+                            rlePredecessorCost + rleRecordOverhead
+                      if rleCandidateCost < copyCandidateCost
+                        then pure (rleCandidateCost, rleEligiblePredecessor)
+                        else pure (copyCandidateCost, copyCandidatePredecessor)
+                    else pure (copyCandidateCost, copyCandidatePredecessor)
 
-        writeArray costArray        destinationIndex winningCost
-        writeArray predecessorArray destinationIndex winningPredecessor
+                writeArray costArray        destinationIndex winningCost
+                writeArray predecessorArray destinationIndex winningPredecessor
+                scanDestinations (destinationIndex + 1)
+      scanDestinations 1
 
       -- Backtrack from the final position, building the record list
       -- in offset order. Each step reads the chosen predecessor of
