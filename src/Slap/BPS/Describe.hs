@@ -1,6 +1,5 @@
 module Slap.BPS.Describe
-  ( bpsInfo
-  , bpsMeta
+  ( bpsMeta
   , explainBPS
   , BPSRegionState(..)
   , initialBPSRegionState
@@ -16,7 +15,7 @@ import Slap.Explain
     )
 import Slap.Checksum (showCRC32)
 import Slap.Error (CursorKind(SourceCursor))
-import Slap.Format (MetaField(..), renderField)
+import Slap.Format (MetaField(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),
@@ -48,12 +47,6 @@ bpsMeta patch = concat
       | character >= ' ' && character <= '~' = character
       | otherwise                            = '.'
 
-bpsInfo :: BPSPatch -> String
-bpsInfo patch = unlines $ filter (not . null) $
-  [ "format:      BPS" ]
-  ++ map renderField (bpsMeta patch)
-  ++ [ "actions:     " ++ show (Vector.length (bpsActions patch)) ]
-
 explainBPS :: BPSPatch -> ExplainData
 explainBPS patch = ExplainData
   { explainFormat   = "BPS"
@@ -69,7 +62,7 @@ explainBPS patch = ExplainData
   where
     actionCount = Vector.length (bpsActions patch)
 
--- | Maximum number of metadata bytes shown in 'bpsInfo' output before
+-- | Maximum number of metadata bytes shown in 'bpsMeta' output before
 -- truncation. Larger metadata blobs are truncated with an ellipsis.
 metadataPreviewBytes :: Int
 metadataPreviewBytes = 200

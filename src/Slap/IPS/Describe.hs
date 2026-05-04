@@ -1,8 +1,11 @@
--- | Describe layer for the IPS family — what slap's @info@ and
--- @explain@ verbs consume for already-parsed 'IPSPatch' and
--- 'EBPPatch' values. Counterparts to @bpsInfo@ / @explainBPS@ in
--- 'Slap.BPS.Describe' and @upsInfo@ / @explainUPS@ in
--- 'Slap.UPS.Describe'.
+-- | Describe layer for the IPS family — the per-patch metadata
+-- ('ipsMeta', 'ebpMeta') and structured 'ExplainData' builders
+-- ('explainIPS', 'explainEBP') consumed by slap's @info@ and
+-- @explain@ verbs. Both verbs read these via the 'patchExplain'
+-- field on a parsed 'Slap.SomePatch.SomePatch'; rendering lives in
+-- @doInfo@ and @doExplain@ in @app/Main.hs@, not here.
+-- Counterparts to 'Slap.BPS.Describe.explainBPS' / 'Slap.BPS.Describe.bpsMeta'
+-- and 'Slap.UPS.Describe.explainUPS' / 'Slap.UPS.Describe.upsMeta'.
 --
 -- Two top-level function families rather than one taking an
 -- @Either IPSPatch EBPPatch@: 'Slap.IPS.Parse' already discriminates
@@ -21,11 +24,9 @@
 -- 'Slap.IPS.Parse' draws.
 module Slap.IPS.Describe
   ( -- * Plain IPS
-    ipsInfo
-  , ipsMeta
+    ipsMeta
   , explainIPS
     -- * EBP-wrapped IPS
-  , ebpInfo
   , ebpMeta
   , explainEBP
     -- * Region builder
@@ -57,7 +58,7 @@ import Slap.Explain
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Format (MetaField(..), padHex, renderField,
+import Slap.Format (MetaField(..), padHex,
                     renderPrintableASCIIOrHex, renderUTF8OrByteCount)
 import Slap.Measure (Offset(..), Length(..), FileSize(..))
 
@@ -66,7 +67,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 ----------------------------------------------------------------------------
--- ipsInfo / ipsMeta — plain IPSPatch
+-- ipsMeta — plain IPSPatch
 ----------------------------------------------------------------------------
 
 -- | One-line-per-field metadata for an 'IPSPatch'. The variant's
@@ -103,18 +104,8 @@ truncationMetaField Nothing =
 truncationMetaField (Just truncatedTargetSize) =
   [MetaField "truncate" (show (unFileSize truncatedTargetSize) ++ " bytes")]
 
--- | Short per-patch summary for @slap info@ on a plain IPS patch.
--- Mirrors the shape of 'Slap.BPS.Describe.bpsInfo' and
--- 'Slap.UPS.Describe.upsInfo': a @format:@ line, the 'ipsMeta'
--- fields rendered column-aligned, and a trailing record count.
-ipsInfo :: IPSPatch -> String
-ipsInfo patch = unlines $
-  [ "format:      " ++ ipsVariantDisplayName (ipsVariant patch) ]
-  ++ map renderField (ipsMeta patch)
-  ++ [ "records:     " ++ show (Vector.length (ipsRecords patch)) ]
-
 ----------------------------------------------------------------------------
--- ebpInfo / ebpMeta — EBP-wrapped IPSPatch
+-- ebpMeta — EBP-wrapped IPSPatch
 ----------------------------------------------------------------------------
 
 -- | One-line-per-field metadata for an 'EBPPatch'. Delegates the
@@ -129,17 +120,6 @@ ebpMeta patch =
   ipsMeta (ebpBasePatch patch)
   ++ [ MetaField "metadata"
          (renderEBPMetadata (unEBPMetadata (ebpMetadata patch))) ]
-
--- | Short per-patch summary for @slap info@ on an EBP-wrapped patch.
--- The format line hardcodes @"EBP"@ because EBP is a wrapper format
--- whose underlying variant is always 'StandardIPS' by invariant;
--- the variant-specific wire facts still appear in 'ebpMeta'.
-ebpInfo :: EBPPatch -> String
-ebpInfo patch = unlines $
-  [ "format:      EBP" ]
-  ++ map renderField (ebpMeta patch)
-  ++ [ "records:     "
-       ++ show (Vector.length (ipsRecords (ebpBasePatch patch))) ]
 
 ----------------------------------------------------------------------------
 -- explain — structured description for the explain renderer
@@ -219,9 +199,9 @@ makeIPSRegion record = ExplainRegion
 ----------------------------------------------------------------------------
 
 -- | The human-facing format name for an 'IPSVariant'. Used on the
--- @format:@ line by 'ipsInfo' and 'explainIPS'. Not a wire fact
--- (the bytes are in 'ipsVariantMagic'; this is a different thing —
--- what the user calls the variant in prose) and therefore not on
+-- @format:@ line by 'explainIPS'. Not a wire fact (the bytes are
+-- in 'ipsVariantMagic'; this is a different thing — what the user
+-- calls the variant in prose) and therefore not on
 -- 'IPSVariantSpec'. 'EBPPatch' does not use this helper — it
 -- hardcodes @"EBP"@ because EBP is a wrapper format and its
 -- underlying variant is always 'StandardIPS' by invariant.

@@ -1,13 +1,12 @@
 module Slap.NINJA2.Describe
-  ( ninja2Info
-  , ninja2Meta
+  ( ninja2Meta
   , explainNINJA2
   , makeNINJA2Region
   ) where
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.Format (MetaField(..), padHex)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
@@ -59,12 +58,6 @@ ninja2Meta patch = concat
       (Just OverflowTruncate, Just payload) -> [MetaField "overflow" ("truncate " ++ show (ByteString.length payload) ++ " bytes")]
       (_, Just payload)                     -> [MetaField "overflow" (show (ByteString.length payload) ++ " bytes")]
       _                                     -> []
-
-ninja2Info :: NINJA2Patch -> String
-ninja2Info patch = unlines $ filter (not . null) $
-  [ "format:      NINJA2" ]
-  ++ map renderField (ninja2Meta patch)
-  ++ [ "records:     " ++ show (length (ninja2Records patch)) ]
 
 ----------------------------------------------------------------------------
 -- Explain

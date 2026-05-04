@@ -1,6 +1,5 @@
 module Slap.APSGBA.Describe
-  ( apsGBAInfo
-  , apsGBAMeta
+  ( apsGBAMeta
   , explainAPSGBA
   , makeGBARegion
   ) where
@@ -9,7 +8,7 @@ import Slap.APSGBA.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (MetaField(..), renderField)
+import Slap.Format (MetaField(..))
 import Slap.Measure (Length(..), FileSize(..))
 
 apsGBAMeta :: APSGBAPatch -> [MetaField]
@@ -17,12 +16,6 @@ apsGBAMeta (APSGBAPatch header _) =
   [ MetaField "source size" (show (unFileSize (apsGbaSourceSize header)))
   , MetaField "target size" (show (unFileSize (apsGbaTargetSize header)))
   ]
-
-apsGBAInfo :: APSGBAPatch -> String
-apsGBAInfo patch@(APSGBAPatch _ records) = unlines $ filter (not . null) $
-  [ "format:      APS (GBA)" ]
-  ++ map renderField (apsGBAMeta patch)
-  ++ [ "blocks:      " ++ show (length records) ]
 
 explainAPSGBA :: APSGBAPatch -> ExplainData
 explainAPSGBA patch@(APSGBAPatch _header records) = ExplainData

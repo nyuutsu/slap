@@ -1,6 +1,5 @@
 module Slap.APSN64.Describe
-  ( apsN64Info
-  , apsN64Meta
+  ( apsN64Meta
   , explainAPSN64
   , makeN64Region
   ) where
@@ -9,7 +8,7 @@ import Slap.APSN64.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.Format (MetaField(..), padHex)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
@@ -62,12 +61,6 @@ apsN64Meta (APSN64Patch header _) = concat
     renderAPSN64Country APSN64CountryEuropeY         = "Europe (Y)"
     renderAPSN64Country (APSN64CountryUnrecognised byte) =
       "unrecognised (0x" ++ padHex 2 byte ++ ")"
-
-apsN64Info :: APSN64Patch -> String
-apsN64Info patch@(APSN64Patch _ records) = unlines $ filter (not . null) $
-  [ "format:      APS (N64)" ]
-  ++ map renderField (apsN64Meta patch)
-  ++ [ "records:     " ++ show (length records) ]
 
 explainAPSN64 :: APSN64Patch -> ExplainData
 explainAPSN64 patch@(APSN64Patch _header records) = ExplainData

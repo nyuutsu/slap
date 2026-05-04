@@ -1,6 +1,5 @@
 module Slap.VCDIFF.Describe
-  ( vcdiffInfo
-  , vcdiffMeta
+  ( vcdiffMeta
   , explainVCDIFF
   , makeVCDIFFSection
   , decodedToRegion
@@ -18,7 +17,7 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showAdler32)
-import Slap.Format (MetaField(..), padHex, renderField)
+import Slap.Format (MetaField(..), padHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
 
 import qualified Data.ByteString as ByteString
@@ -42,14 +41,6 @@ vcdiffMeta patch = concat
     then [MetaField "checksums" "Adler32 (xdelta3)"]
     else []
   ]
-
-vcdiffInfo :: VCDIFFPatch -> String
-vcdiffInfo patch = unlines $ filter (not . null) $
-  [ "format:      VCDIFF" ++ case vcdiffVersion (vcdiffHeader patch) of
-                                VCDIFFXDelta3 -> " (xdelta3)"
-                                VCDIFFStandard -> "" ]
-  ++ map renderField (vcdiffMeta patch)
-  ++ [ "windows:     " ++ show (length (vcdiffWindows patch)) ]
 
 displayVersion :: VCDIFFVersion -> String
 displayVersion VCDIFFStandard = "0 (standard)"

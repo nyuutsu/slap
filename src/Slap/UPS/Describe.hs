@@ -1,6 +1,5 @@
 module Slap.UPS.Describe
-  ( upsInfo
-  , upsMeta
+  ( upsMeta
   , explainUPS
   , makeUPSRegion
   ) where
@@ -12,7 +11,7 @@ import Slap.Explain
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Format (MetaField(..), renderField)
+import Slap.Format (MetaField(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import qualified Data.ByteString as ByteString
@@ -26,12 +25,6 @@ upsMeta patch =
   , MetaField "target CRC" (showCRC32 (upsTargetCRC patch))
   , MetaField "patch CRC" (showCRC32 (upsPatchCRC patch))
   ]
-
-upsInfo :: UPSPatch -> String
-upsInfo patch = unlines $
-  [ "format:      UPS" ]
-  ++ map renderField (upsMeta patch)
-  ++ [ "blocks:      " ++ show (Vector.length (upsBlocks patch)) ]
 
 explainUPS :: UPSPatch -> ExplainData
 explainUPS patch = ExplainData
