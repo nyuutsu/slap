@@ -3,8 +3,8 @@
 -- These are structured carriers populated at parse time without any
 -- per-record analytical work — no section-building, no per-record
 -- annotation, no payload classification. The expensive analytical
--- carrier is 'Slap.Explain.ExplainData', built only when @slap explain@
--- needs it.
+-- carrier is 'Slap.Explain.PatchAnalysis', built only when @slap
+-- explain@ needs it.
 --
 -- The cheap path's contract: every field on 'PatchHeader' is a fact
 -- the format helper already knew at parse time and trivially carries

@@ -1,11 +1,14 @@
 -- | Describe layer for the IPS family — the per-patch metadata
--- ('ipsMeta', 'ebpMeta') and structured 'ExplainData' builders
--- ('explainIPS', 'explainEBP') consumed by slap's @info@ and
--- @explain@ verbs. Both verbs read these via the 'patchExplain'
--- field on a parsed 'Slap.SomePatch.SomePatch'; rendering lives in
--- @doInfo@ and @doExplain@ in @app/Main.hs@, not here.
--- Counterparts to 'Slap.BPS.Describe.explainBPS' / 'Slap.BPS.Describe.bpsMeta'
--- and 'Slap.UPS.Describe.explainUPS' / 'Slap.UPS.Describe.upsMeta'.
+-- ('ipsMeta', 'ebpMeta') and structured 'PatchAnalysis' builders
+-- ('analyzeIPS', 'analyzeEBP') consumed by slap's @explain@ verb.
+-- The analytical builders feed 'patchAnalysis' on the parsed
+-- 'Slap.SomePatch.SomePatch' (lazy; only forced by @slap explain@);
+-- the 'ipsMeta' / 'ebpMeta' helpers feed @headerLines@ on
+-- 'patchHeader' which is what @slap info@ and @slap apply@ read.
+-- Rendering lives in 'Slap.Explain' / @doInfo@ / @doExplain@ in
+-- @app/Main.hs@, not here.
+-- Counterparts to 'Slap.BPS.Describe.analyzeBPS' / 'Slap.BPS.Describe.bpsMeta'
+-- and 'Slap.UPS.Describe.analyzeUPS' / 'Slap.UPS.Describe.upsMeta'.
 --
 -- Two top-level function families rather than one taking an
 -- @Either IPSPatch EBPPatch@: 'Slap.IPS.Parse' already discriminates
@@ -25,10 +28,10 @@
 module Slap.IPS.Describe
   ( -- * Plain IPS
     ipsMeta
-  , explainIPS
+  , analyzeIPS
     -- * EBP-wrapped IPS
   , ebpMeta
-  , explainEBP
+  , analyzeEBP
     -- * Region builder
   , makeIPSRegion
     -- * Display range
@@ -48,11 +51,11 @@ import Slap.IPS.Types
   , variantSpec
   )
 import Slap.Explain
-  ( ExplainData(..)
-  , ExplainSection(..)
-  , ExplainRegion(..)
-  , ExplainPayload(..)
-  , ExplainSummary(..)
+  ( PatchAnalysis(..)
+  , AnalysisSection(..)
+  , AnalysisRegion(..)
+  , AnalysisPayload(..)
+  , AnalysisSummary(..)
   , SummaryInfo(..)
   , SummaryByteInfo(..)
   , SummaryBytes(..)
@@ -127,14 +130,13 @@ ebpMeta patch =
          (renderEBPMetadata (unEBPMetadata (ebpMetadata patch))) ]
 
 ----------------------------------------------------------------------------
--- explain — structured description for the explain renderer
+-- analyze — structured analysis for the explain renderer
 ----------------------------------------------------------------------------
 
--- | Build structured 'ExplainData' for a plain 'IPSPatch'. Every
--- record becomes one 'ExplainRegion' via 'makeIPSRegion'; the
--- patch-level header reuses 'ipsMeta'; the summary reports the
--- record count and the total bytes that the stream would write to
--- the target.
+-- | Build a 'PatchAnalysis' for a plain 'IPSPatch'. Every record
+-- becomes one 'AnalysisRegion' via 'makeIPSRegion'; the summary
+-- reports the record count and the total bytes that the stream
+-- would write to the target.
 --
 -- The record walk stays lazy over the underlying 'Vector' via
 -- 'Vector.toList': 'renderExplain' consumes the region list in
@@ -143,16 +145,13 @@ ebpMeta patch =
 -- a strict 'Vector.foldl'' so the traversal is a single pass and
 -- the accumulator cannot build a thunk chain even on the
 -- stadium2-scale @.ips32@ fixture.
-explainIPS :: IPSPatch -> ExplainData
-explainIPS patch = ExplainData
-  { explainFormat   = ipsVariantDisplayName (ipsVariant patch)
-  , explainHeader   = ipsMeta patch
-  , explainSections =
+analyzeIPS :: IPSPatch -> PatchAnalysis
+analyzeIPS patch = PatchAnalysis
+  { analysisSections =
       [ SectionRegions
           (map makeIPSRegion (Vector.toList (ipsRecords patch))) ]
-  , explainSummary  = Summary (SummaryInfo recordCount "records"
-                                 (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+  , analysisSummary  = Summary (SummaryInfo recordCount "records"
+                                  (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     recordVector = ipsRecords patch
@@ -163,27 +162,25 @@ explainIPS patch = ExplainData
                      0
                      recordVector
 
--- | Build structured 'ExplainData' for an 'EBPPatch'. Delegates to
--- 'explainIPS' for the record walk and summary, then rewrites the
--- format name to @"EBP"@ and swaps the header for 'ebpMeta' so the
--- metadata line shows up in the explain output alongside the
--- variant facts.
-explainEBP :: EBPPatch -> ExplainData
-explainEBP patch =
-  (explainIPS (ebpBasePatch patch))
-    { explainFormat = "EBP"
-    , explainHeader = ebpMeta patch
-    }
+-- | Build a 'PatchAnalysis' for an 'EBPPatch'. Delegates entirely to
+-- 'analyzeIPS' on the underlying base patch — the EBP wrapper adds
+-- only header metadata (a 'metadata' line in 'ebpMeta'), not new
+-- region shape, so the analytical breakdown is identical to plain
+-- IPS. The format-name distinction comes from 'patchHeader' on the
+-- 'Slap.SomePatch.SomePatch' record, not from the analytical
+-- carrier.
+analyzeEBP :: EBPPatch -> PatchAnalysis
+analyzeEBP = analyzeIPS . ebpBasePatch
 
--- | Build a single 'ExplainRegion' from an 'IPSRecord'. Copy records
+-- | Build a single 'AnalysisRegion' from an 'IPSRecord'. Copy records
 -- become 'PayloadWrite' regions carrying their literal bytes; RLE
 -- records become 'PayloadFill' regions tagged with 'DetailRLE'.
 -- The offset and the region size are both taken from the
 -- constructor-agnostic 'ipsRecordOffset' and 'recordPayloadLength'
 -- helpers, so this walk never re-pattern-matches to recompute
 -- either.
-makeIPSRegion :: IPSRecord -> ExplainRegion
-makeIPSRegion record = ExplainRegion
+makeIPSRegion :: IPSRecord -> AnalysisRegion
+makeIPSRegion record = AnalysisRegion
   { regionOffset     = recordTargetOffset
   , regionSize       = recordPayloadLength record
   , regionLabel      = regionLabelString
@@ -202,17 +199,6 @@ makeIPSRegion record = ExplainRegion
 ----------------------------------------------------------------------------
 -- Display helpers
 ----------------------------------------------------------------------------
-
--- | The human-facing format name for an 'IPSVariant'. Used on the
--- @format:@ line by 'explainIPS'. Not a wire fact (the bytes are
--- in 'ipsVariantMagic'; this is a different thing — what the user
--- calls the variant in prose) and therefore not on
--- 'IPSVariantSpec'. 'EBPPatch' does not use this helper — it
--- hardcodes @"EBP"@ because EBP is a wrapper format and its
--- underlying variant is always 'StandardIPS' by invariant.
-ipsVariantDisplayName :: IPSVariant -> String
-ipsVariantDisplayName StandardIPS = "IPS"
-ipsVariantDisplayName IPS32       = "IPS32"
 
 -- | Human-readable rendering of an 'OffsetWidth'. Used by
 -- 'ipsVariantInfoLines' so the reader sees @"24-bit"@ rather than

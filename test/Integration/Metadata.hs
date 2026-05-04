@@ -96,8 +96,8 @@ mkFieldTest patchPath format fieldName = testCase fieldName $ do
         Right (CreateResult convertedBytes _) -> case parseSome convertedBytes of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
-            let originalInfo = renderSummary Nothing (patchExplain original)
-                convertedInfo = renderSummary Nothing (patchExplain converted)
+            let originalInfo = renderSummary (patchHeader original) (patchAnalysis original) Nothing
+                convertedInfo = renderSummary (patchHeader converted) (patchAnalysis converted) Nothing
                 originalValue = extractField fieldName originalInfo
                 convertedValue = extractField fieldName convertedInfo
             assertEqual ("field '" ++ fieldName ++ "' mismatch") originalValue convertedValue
@@ -151,7 +151,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
-          let info = renderExplain Nothing (patchExplain parsed)
+          let info = renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing
           assertBool "info mentions metadata content"
             ("hello-world-metadata" `isInfixOf` info)
           assertBool "info shows byte count"
@@ -164,7 +164,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
-          assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain Nothing (patchExplain parsed))
+          assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
   ]
 
 -- | Run 'createBPS' and unwrap. Test inputs are small and well-formed,

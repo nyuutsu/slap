@@ -118,7 +118,7 @@ corruptTests =
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
       case parseSome (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailure ("parseSome rejected truncated IPS: " ++ renderSlapError slapError)
-        Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` renderSummary Nothing (patchExplain parsed))
+        Right parsed -> assertBool "expected '0' in info" ("0" `isInfixOf` renderSummary (patchHeader parsed) (patchAnalysis parsed) Nothing)
 
   , testCase "corrupt/info truncated BPS" $ do
       let truncatedBPS = ByteString.pack [0x42,0x50,0x53,0x31]
@@ -307,14 +307,14 @@ warningTests repo =
       case parseSome (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'empty patch' in info"
-                     (ciContains "empty patch" (renderSummary Nothing (patchExplain parsed)))
+                     (ciContains "empty patch" (renderSummary (patchHeader parsed) (patchAnalysis parsed) Nothing))
 
   , testCase "warnings/empty IPS warns empty only" $ do
       let emptyIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
       case parseSome (PatchFileContents emptyIPS) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
-          let info = renderSummary Nothing (patchExplain parsed)
+          let info = renderSummary (patchHeader parsed) (patchAnalysis parsed) Nothing
           assertBool "should warn 'empty patch'" ("empty patch" `isInfixOf` info)
           assertBool "should NOT warn 'no EOF'" (not ("no EOF" `isInfixOf` info))
 

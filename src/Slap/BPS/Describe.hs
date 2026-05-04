@@ -1,6 +1,6 @@
 module Slap.BPS.Describe
   ( bpsMeta
-  , explainBPS
+  , analyzeBPS
   , BPSRegionState(..)
   , initialBPSRegionState
   , makeBPSRegion
@@ -8,8 +8,8 @@ module Slap.BPS.Describe
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
 import Slap.Explain
-    ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
-    , ExplainPayload(..), CopySource(..), ExplainSummary(..)
+    ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
+    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -47,17 +47,14 @@ bpsMeta patch = concat
       | character >= ' ' && character <= '~' = character
       | otherwise                            = '.'
 
-explainBPS :: BPSPatch -> ExplainData
-explainBPS patch = ExplainData
-  { explainFormat   = "BPS"
-  , explainHeader   = bpsMeta patch
+analyzeBPS :: BPSPatch -> PatchAnalysis
+analyzeBPS patch = PatchAnalysis
     -- 'mapAccumL' is list-shaped; 'Data.Vector' has no direct equivalent.
-    -- 'explain' runs once per @slap explain@ invocation, not per byte,
+    -- 'analyze' runs once per @slap explain@ invocation, not per byte,
     -- so the toList round-trip here is not in the hot path and the
     -- straightforward expression is preferable to a manual unfold.
-  , explainSections = [SectionRegions (snd (mapAccumL makeBPSRegion initialBPSRegionState (Vector.toList (bpsActions patch))))]
-  , explainSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
-  , explainNotes    = []
+  { analysisSections = [SectionRegions (snd (mapAccumL makeBPSRegion initialBPSRegionState (Vector.toList (bpsActions patch))))]
+  , analysisSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
   }
   where
     actionCount = Vector.length (bpsActions patch)
@@ -80,17 +77,17 @@ data BPSRegionState = BPSRegionState
 initialBPSRegionState :: BPSRegionState
 initialBPSRegionState = BPSRegionState (Offset 0) (SignedOffset 0)
 
-makeBPSRegion :: BPSRegionState -> BPSAction -> (BPSRegionState, ExplainRegion)
+makeBPSRegion :: BPSRegionState -> BPSAction -> (BPSRegionState, AnalysisRegion)
 makeBPSRegion state action = case action of
   SourceRead actionLength ->
     ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
-    , ExplainRegion (regionOutputPosition state) actionLength "SourceRead " (PayloadCopy FromSource)
+    , AnalysisRegion (regionOutputPosition state) actionLength "SourceRead " (PayloadCopy FromSource)
         (AnnotAt AtOutput (regionOutputPosition state) [DetailSource (regionOutputPosition state)])
     )
   TargetRead payload ->
     let payloadLength = Length (ByteString.length payload)
     in ( state { regionOutputPosition = advance (regionOutputPosition state) payloadLength }
-       , ExplainRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
+       , AnalysisRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
            (AnnotAt AtOutput (regionOutputPosition state) [])
        )
   SourceCopy actionLength actionDelta ->
@@ -103,11 +100,11 @@ makeBPSRegion state action = case action of
           NegativeCursor underflowedCursor ->
             [DetailCursorUnderflow SourceCursor underflowedCursor, DetailDelta actionDelta]
     in ( BPSRegionState nextOutputPosition advancedSourceRelative
-       , ExplainRegion (regionOutputPosition state) actionLength "SourceCopy " (PayloadCopy FromSource)
+       , AnalysisRegion (regionOutputPosition state) actionLength "SourceCopy " (PayloadCopy FromSource)
            (AnnotAt AtOutput (regionOutputPosition state) annotationDetails)
        )
   TargetCopy actionLength actionDelta ->
     ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
-    , ExplainRegion (regionOutputPosition state) actionLength "TargetCopy " (PayloadCopy FromTarget)
+    , AnalysisRegion (regionOutputPosition state) actionLength "TargetCopy " (PayloadCopy FromTarget)
         (AnnotAt AtOutput (regionOutputPosition state) [DetailDelta actionDelta])
     )

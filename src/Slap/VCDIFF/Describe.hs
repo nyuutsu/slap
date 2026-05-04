@@ -1,6 +1,6 @@
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
-  , explainVCDIFF
+  , analyzeVCDIFF
   , makeVCDIFFSection
   , decodedToRegion
   ) where
@@ -11,8 +11,8 @@ import Slap.VCDIFF.Types
     )
 import Slap.VCDIFF.Apply (decodeWindowInstructions)
 import Slap.Explain
-    ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
-    , ExplainPayload(..), CopySource(..), ExplainSummary(..)
+    ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
+    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -48,19 +48,14 @@ displayVersion VCDIFFStandard = "0 (standard)"
 displayVersion VCDIFFXDelta3  = "0x53 (xdelta3)"
 
 ----------------------------------------------------------------------------
--- Explain
+-- Analyze
 ----------------------------------------------------------------------------
 
-explainVCDIFF :: VCDIFFPatch -> ExplainData
-explainVCDIFF patch = ExplainData
-  { explainFormat   = "VCDIFF" ++ case vcdiffVersion (vcdiffHeader patch) of
-                                    VCDIFFXDelta3 -> " (xdelta3)"
-                                    VCDIFFStandard -> ""
-  , explainHeader   = vcdiffMeta patch
-  , explainSections = concat windowSections
-  , explainSummary  = Summary (SummaryInfo totalInstructions "instructions"
-                   (Just (SummaryByteInfo totalTarget BytesTotalOutput)))
-  , explainNotes    = []
+analyzeVCDIFF :: VCDIFFPatch -> PatchAnalysis
+analyzeVCDIFF patch = PatchAnalysis
+  { analysisSections = concat windowSections
+  , analysisSummary  = Summary (SummaryInfo totalInstructions "instructions"
+                                  (Just (SummaryByteInfo totalTarget BytesTotalOutput)))
   }
   where
     windows = vcdiffWindows patch
@@ -75,7 +70,7 @@ explainVCDIFF patch = ExplainData
                      | (index, (globalOffset, window, decodedInstructions)) <- zip [1..] (zip3 globalOffsets windows decoded) ]
 
 makeVCDIFFSection :: Int -> Offset -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
-                -> [ExplainSection]
+                -> [AnalysisSection]
 makeVCDIFFSection index globalOffset window instructions =
   [ SectionLabeled ("window " ++ show index ++ ":")
       ( [ InfoLine "target size" (show (unFileSize (vcdiffTargetLength window)))
@@ -93,30 +88,30 @@ makeVCDIFFSection index globalOffset window instructions =
       Nothing      -> []
       Just adler   -> [InfoLine "adler32" ("0x" ++ showAdler32 adler)]
 
-decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> ExplainRegion
+decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> AnalysisRegion
 decodedToRegion globalOffset instruction = case instruction of
-  DecodedAdd windowOffset payload -> ExplainRegion
+  DecodedAdd windowOffset payload -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = Length (ByteString.length payload)
     , regionLabel      = "Add    "
     , regionPayload    = PayloadWrite payload
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
     }
-  DecodedRun windowOffset fillByte count -> ExplainRegion
+  DecodedRun windowOffset fillByte count -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = count
     , regionLabel      = "Run  "
     , regionPayload    = PayloadFill fillByte count
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
     }
-  DecodedCopy windowOffset copySize (Just sourceOffset) -> ExplainRegion
+  DecodedCopy windowOffset copySize (Just sourceOffset) -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
     , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource sourceOffset]
     }
-  DecodedCopy windowOffset copySize Nothing -> ExplainRegion
+  DecodedCopy windowOffset copySize Nothing -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = copySize
     , regionLabel      = "Copy   "

@@ -1,12 +1,12 @@
 module Slap.APSN64.Describe
   ( apsN64Meta
-  , explainAPSN64
+  , analyzeAPSN64
   , makeN64Region
   ) where
 
 import Slap.APSN64.Types
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display (InfoLine(..))
 import Slap.Format (padHex)
@@ -63,24 +63,21 @@ apsN64Meta (APSN64Patch header _) = concat
     renderAPSN64Country (APSN64CountryUnrecognized byte) =
       "unrecognized (0x" ++ padHex 2 byte ++ ")"
 
-explainAPSN64 :: APSN64Patch -> ExplainData
-explainAPSN64 patch@(APSN64Patch _header records) = ExplainData
-  { explainFormat   = "APS (N64)"
-  , explainHeader   = apsN64Meta patch
-  , explainSections = [SectionRegions (Vector.toList (Vector.map makeN64Region records))]
-  , explainSummary  = Summary (SummaryInfo (length records) "records" Nothing)
-  , explainNotes    = []
+analyzeAPSN64 :: APSN64Patch -> PatchAnalysis
+analyzeAPSN64 (APSN64Patch _header records) = PatchAnalysis
+  { analysisSections = [SectionRegions (Vector.toList (Vector.map makeN64Region records))]
+  , analysisSummary  = Summary (SummaryInfo (length records) "records" Nothing)
   }
 
-makeN64Region :: APSN64Record -> ExplainRegion
-makeN64Region (APSN64Normal recordOffset recordPayload) = ExplainRegion
+makeN64Region :: APSN64Record -> AnalysisRegion
+makeN64Region (APSN64Normal recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
-makeN64Region (APSN64RLE recordOffset fillValue fillCount) = ExplainRegion
+makeN64Region (APSN64RLE recordOffset fillValue fillCount) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = Length (fromIntegral fillCount)
   , regionLabel      = "Fill "

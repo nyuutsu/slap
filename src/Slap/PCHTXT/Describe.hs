@@ -1,7 +1,7 @@
 module Slap.PCHTXT.Describe
   ( pchtxtInfo
   , pchtxtMeta
-  , explainPCHTXT
+  , analyzePCHTXT
   , makePCHTXTBlock
   , makePCHTXTEntry
   , pchtxtEntriesRange
@@ -9,8 +9,8 @@ module Slap.PCHTXT.Describe
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.PCHTXT.Create (hexPad)
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
 import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Measure (Offset(..), Length(..),
@@ -49,20 +49,17 @@ pchtxtInfo patch = unlines $ filter (not . null) $
               highestEnd = unOffset (maximum (map (\entry -> advance (pchtxtOffset entry) (byteLength (pchtxtData entry))) enabledEntries))
           in "range:       0x" ++ hexPad 8 lowestOffset ++ " - 0x" ++ hexPad 8 highestEnd
 
-explainPCHTXT :: PCHTXTPatch -> ExplainData
-explainPCHTXT patch = ExplainData
-  { explainFormat   = "PCHTXT (Nintendo Switch)"
-  , explainHeader   = pchtxtMeta patch
-  , explainSections = map makePCHTXTBlock (zip [1..] (pchtxtBlocks patch))
-  , explainSummary  = Summary (SummaryInfo (length enabledEntries) "enabled entries" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+analyzePCHTXT :: PCHTXTPatch -> PatchAnalysis
+analyzePCHTXT patch = PatchAnalysis
+  { analysisSections = map makePCHTXTBlock (zip [1..] (pchtxtBlocks patch))
+  , analysisSummary  = Summary (SummaryInfo (length enabledEntries) "enabled entries" (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     enabledEntries = concatMap pchtxtBlockEntries
                        (filter pchtxtBlockEnabled (pchtxtBlocks patch))
     totalBytes = sum (map (ByteString.length . pchtxtData) enabledEntries)
 
-makePCHTXTBlock :: (Int, PCHTXTBlock) -> ExplainSection
+makePCHTXTBlock :: (Int, PCHTXTBlock) -> AnalysisSection
 makePCHTXTBlock (index, block) =
   SectionBlock label (map makePCHTXTEntry (pchtxtBlockEntries block))
   where
@@ -70,8 +67,8 @@ makePCHTXTBlock (index, block) =
     description = maybe "" (" -- " ++) (pchtxtBlockDescription block)
     label = "block " ++ show index ++ " (" ++ status ++ ")" ++ description
 
-makePCHTXTEntry :: PCHTXTEntry -> ExplainRegion
-makePCHTXTEntry entry = ExplainRegion
+makePCHTXTEntry :: PCHTXTEntry -> AnalysisRegion
+makePCHTXTEntry entry = AnalysisRegion
   { regionOffset     = pchtxtOffset entry
   , regionSize       = Length (ByteString.length (pchtxtData entry))
   , regionLabel      = "Write  "

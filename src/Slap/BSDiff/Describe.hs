@@ -1,17 +1,17 @@
 module Slap.BSDiff.Describe
   ( bsdiffInfo
   , bsdiffMeta
-  , explainBSDiff
+  , analyzeBSDiff
   , makeBSDiffRegion
   ) where
 
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
 import Slap.Explain
-  ( ExplainData(..)
-  , ExplainSection(..)
-  , ExplainRegion(..)
-  , ExplainPayload(..)
-  , ExplainSummary(..)
+  ( PatchAnalysis(..)
+  , AnalysisSection(..)
+  , AnalysisRegion(..)
+  , AnalysisPayload(..)
+  , AnalysisSummary(..)
   , SummaryInfo(..)
   , Annotation(..)
   )
@@ -42,28 +42,25 @@ bsdiffInfo patch = unlines $ filter (not . null) $
       | otherwise = "controls:    " ++ show (length (bsdiffControls patch)) ++ " tuples"
 
 ----------------------------------------------------------------------------
--- Explain
+-- Analyze
 ----------------------------------------------------------------------------
 
-explainBSDiff :: BSDiffPatch -> ExplainData
-explainBSDiff patch = ExplainData
-  { explainFormat   = "BSDiff / BDF (BSDIFF40)"
-  , explainHeader   = bsdiffMeta patch
-  , explainSections = if null (bsdiffControls patch)
-                 then [SectionText "(control data not decoded)"]
-                 else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffControls patch)))]
-  , explainSummary  = if null (bsdiffControls patch)
-                 then SummaryNone
-                 else Summary (SummaryInfo (length (bsdiffControls patch)) "control tuples" Nothing)
-  , explainNotes    = []
+analyzeBSDiff :: BSDiffPatch -> PatchAnalysis
+analyzeBSDiff patch = PatchAnalysis
+  { analysisSections = if null (bsdiffControls patch)
+                  then [SectionText "(control data not decoded)"]
+                  else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffControls patch)))]
+  , analysisSummary  = if null (bsdiffControls patch)
+                  then SummaryNone
+                  else Summary (SummaryInfo (length (bsdiffControls patch)) "control tuples" Nothing)
   }
 
-makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, ExplainRegion)
+makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, AnalysisRegion)
 makeBSDiffRegion outputPosition control =
   let addLength = controlAdd control
       copyLength = controlCopy control
   in ( advance outputPosition (addLength <> copyLength)
-     , ExplainRegion
+     , AnalysisRegion
        { regionOffset     = outputPosition
        , regionSize       = addLength <> copyLength
        , regionLabel      = ""

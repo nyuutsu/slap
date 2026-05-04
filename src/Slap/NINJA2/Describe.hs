@@ -1,6 +1,6 @@
 module Slap.NINJA2.Describe
   ( ninja2Meta
-  , explainNINJA2
+  , analyzeNINJA2
   , makeNINJA2Region
   ) where
 
@@ -9,8 +9,8 @@ import Slap.Checksum (MD5Hash(..))
 import Slap.Display (InfoLine(..))
 import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..))
 
 import qualified Data.ByteString as ByteString
@@ -64,19 +64,16 @@ ninja2Meta patch = concat
 -- Explain
 ----------------------------------------------------------------------------
 
-explainNINJA2 :: NINJA2Patch -> ExplainData
-explainNINJA2 patch = ExplainData
-  { explainFormat   = "NINJA2"
-  , explainHeader   = ninja2Meta patch
-  , explainSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" Nothing)
-  , explainNotes    = []
+analyzeNINJA2 :: NINJA2Patch -> PatchAnalysis
+analyzeNINJA2 patch = PatchAnalysis
+  { analysisSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch))]
+  , analysisSummary  = Summary (SummaryInfo recordCount "records" Nothing)
   }
   where
     recordCount = length (ninja2Records patch)
 
-makeNINJA2Region :: NINJA2Record -> ExplainRegion
-makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = ExplainRegion
+makeNINJA2Region :: NINJA2Record -> AnalysisRegion
+makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = Length (ByteString.length deltaBytes)
   , regionLabel      = "XOR  "

@@ -1,7 +1,7 @@
 module Slap.XDelta1.Describe
   ( xdelta1Info
   , xdelta1Meta
-  , explainXDelta1
+  , analyzeXDelta1
   , makeXDelta1Region
   , makeXDelta1SourceText
   ) where
@@ -11,8 +11,8 @@ import Slap.XDelta1.Types
     , XDelta1SourceKind(..), XDelta1OffsetMode(..), fromXDelta1Version
     )
 import Slap.Explain
-    ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
-    , ExplainPayload(..), CopySource(..), ExplainSummary(..)
+    ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
+    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -67,20 +67,17 @@ xdelta1Info patch = unlines $ filter (not . null) $
 -- Explain
 ----------------------------------------------------------------------------
 
-explainXDelta1 :: XDelta1Patch -> ExplainData
-explainXDelta1 patch = ExplainData
-  { explainFormat   = "xdelta1 v" ++ fromXDelta1Version (xdelta1Version patch)
-  , explainHeader   = xdelta1Meta patch
-  , explainSections = map makeXDelta1SourceText (zip [0..] (xdelta1Sources patch))
+analyzeXDelta1 :: XDelta1Patch -> PatchAnalysis
+analyzeXDelta1 patch = PatchAnalysis
+  { analysisSections = map makeXDelta1SourceText (zip [0..] (xdelta1Sources patch))
       ++ [SectionText "", SectionText ("instructions: " ++ show instructionCount), SectionText ""]
       ++ [SectionRegions (map makeXDelta1Region (xdelta1Instructions patch))]
-  , explainSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (unFileSize (xdelta1TargetLength patch)) BytesTotalOutput)))
-  , explainNotes    = []
+  , analysisSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (unFileSize (xdelta1TargetLength patch)) BytesTotalOutput)))
   }
   where
     instructionCount = length (xdelta1Instructions patch)
 
-makeXDelta1SourceText :: (Int, XDelta1Source) -> ExplainSection
+makeXDelta1SourceText :: (Int, XDelta1Source) -> AnalysisSection
 makeXDelta1SourceText (index, sourceEntry) = SectionText $
   "  [" ++ show index ++ "] " ++ decodeLocaleField (xdelta1SourceName sourceEntry)
   ++ (case xdelta1SourceKind sourceEntry of DataSegmentSource -> " (data)"; FileSource -> " (file)")
@@ -88,8 +85,8 @@ makeXDelta1SourceText (index, sourceEntry) = SectionText $
   ++ "  " ++ show (unFileSize (xdelta1SourceLength sourceEntry)) ++ " bytes"
   ++ "  MD5:" ++ hexByteString (unMD5Hash (xdelta1SourceMD5 sourceEntry))
 
-makeXDelta1Region :: XDelta1Instruction -> ExplainRegion
-makeXDelta1Region instruction = ExplainRegion
+makeXDelta1Region :: XDelta1Instruction -> AnalysisRegion
+makeXDelta1Region instruction = AnalysisRegion
   { regionOffset     = xdelta1InstructionOffset instruction
   , regionSize       = Length (unFileSize (xdelta1InstructionLength instruction))
   , regionLabel      = "Copy  "

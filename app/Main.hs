@@ -893,7 +893,7 @@ doExplain parsedCommand = do
   let renderFunction = case explainVerbosity parsedCommand of
         Summary     -> renderSummary
         FullRecords -> renderExplain
-  putStr (renderFunction maybeSource (patchExplain parsed))
+  putStr (renderFunction (patchHeader parsed) (patchAnalysis parsed) maybeSource)
   emitWarnings WarningProper (patchWarnings parsed)
 
 ----------------------------------------------------------------------------
@@ -920,7 +920,7 @@ doApply parsedCommand = do
   parsed <- readAndParsePatch (applyPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   case applyVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+    Verbose -> hPutStr stderr (renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
     Quiet   -> pure ()
 
   let verification = patchVerification parsed
@@ -976,7 +976,7 @@ doUndo parsedCommand = do
   parsed <- readAndParsePatch (undoPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   case undoVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderExplain Nothing (patchExplain parsed))
+    Verbose -> hPutStr stderr (renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
     Quiet   -> pure ()
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"

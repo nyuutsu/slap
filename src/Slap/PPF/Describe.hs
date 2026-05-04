@@ -1,5 +1,5 @@
 module Slap.PPF.Describe
-  ( ppfInfo, ppfMeta, explainPPF
+  ( ppfInfo, ppfMeta, analyzePPF
   , ppfRecordsRange
   ) where
 
@@ -11,11 +11,11 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance, byteLength)
 import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Explain
-  ( ExplainData(..)
-  , ExplainSection(SectionRegions)
-  , ExplainRegion(..)
-  , ExplainPayload(PayloadWrite)
-  , ExplainSummary(Summary)
+  ( PatchAnalysis(..)
+  , AnalysisSection(SectionRegions)
+  , AnalysisRegion(..)
+  , AnalysisPayload(PayloadWrite)
+  , AnalysisSummary(Summary)
   , SummaryInfo(..)
   , SummaryByteInfo(..)
   , SummaryBytes(BytesTotal)
@@ -89,29 +89,21 @@ stripTrailing :: ByteString.ByteString -> ByteString.ByteString
 stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')
 
 ----------------------------------------------------------------------------
--- Explain
+-- Analyze
 ----------------------------------------------------------------------------
 
--- | Build an ExplainData for a PPF patch, suitable for detailed rendering.
-explainPPF :: PPFPatch -> ExplainData
-explainPPF patch = ExplainData
-  { explainFormat   = ppfExplainVersionString (ppfVersion patch)
-  , explainHeader   = ppfMeta patch
-  , explainSections = [SectionRegions (map makePPFRegion (ppfRecords patch))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+-- | Build a 'PatchAnalysis' for a PPF patch, suitable for detailed rendering.
+analyzePPF :: PPFPatch -> PatchAnalysis
+analyzePPF patch = PatchAnalysis
+  { analysisSections = [SectionRegions (map makePPFRegion (ppfRecords patch))]
+  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     recordCount = length (ppfRecords patch)
     totalBytes = sum (map (ByteString.length . recordData) (ppfRecords patch))
 
-ppfExplainVersionString :: PPFVersion -> String
-ppfExplainVersionString PPF1 = "PPF1"
-ppfExplainVersionString PPF2 = "PPF2"
-ppfExplainVersionString PPF3 = "PPF3"
-
-makePPFRegion :: PPFRecord -> ExplainRegion
-makePPFRegion record = ExplainRegion
+makePPFRegion :: PPFRecord -> AnalysisRegion
+makePPFRegion record = AnalysisRegion
   { regionOffset     = recordOffset record
   , regionSize       = Length (ByteString.length (recordData record))
   , regionLabel      = "Write  "

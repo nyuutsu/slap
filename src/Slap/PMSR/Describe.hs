@@ -1,15 +1,15 @@
 module Slap.PMSR.Describe
   ( pmsrInfo
   , pmsrMeta
-  , explainPMSR
+  , analyzePMSR
   , makePMSRRegion
   , pmsrRecordsRange
   ) where
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Explain
-    ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
-    , ExplainPayload(..), ExplainSummary(..)
+    ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
+    , AnalysisPayload(..), AnalysisSummary(..)
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..)
     )
@@ -64,13 +64,10 @@ pmsrInfo patch = unlines $ filter (not . null)
 -- Explain
 ----------------------------------------------------------------------------
 
-explainPMSR :: PMSRPatch -> ExplainData
-explainPMSR patch = ExplainData
-  { explainFormat   = "PMSR (Paper Mario Star Rod)"
-  , explainHeader   = pmsrMeta patch
-  , explainSections = [SectionRegions (map makePMSRRegion (Vector.toList records))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+analyzePMSR :: PMSRPatch -> PatchAnalysis
+analyzePMSR patch = PatchAnalysis
+  { analysisSections = [SectionRegions (map makePMSRRegion (Vector.toList records))]
+  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     records      = pmsrRecords patch
@@ -80,8 +77,8 @@ explainPMSR patch = ExplainData
     addPayloadBytes runningTotal record =
       runningTotal + ByteString.length (pmsrData record)
 
-makePMSRRegion :: PMSRRecord -> ExplainRegion
-makePMSRRegion record = ExplainRegion
+makePMSRRegion :: PMSRRecord -> AnalysisRegion
+makePMSRRegion record = AnalysisRegion
   { regionOffset     = pmsrOffset record
   , regionSize       = Length (ByteString.length (pmsrData record))
   , regionLabel      = "Write  "

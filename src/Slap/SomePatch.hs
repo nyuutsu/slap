@@ -91,7 +91,7 @@ import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
-import Slap.Explain (ExplainData(..))
+import Slap.Explain (PatchAnalysis)
 import Slap.Display
   ( PatchHeader(..), FormatHeader(..)
   , Tally(..), CountUnit(..), ByteCount(..)
@@ -219,7 +219,14 @@ data PatchKind = Direct | Differential
 -- through these fields, never inspecting the underlying format.
 data SomePatch = SomePatch
   { patchFormat         :: FormatLabel
-  , patchExplain        :: ExplainData
+  , patchAnalysis       :: PatchAnalysis
+    -- ^ The analytical-pass carrier consumed by @slap explain@. The
+    -- field is non-strict on purpose: @slap info@ and @slap apply@
+    -- never force it, so the per-record analytical work each
+    -- 'analyze\<Format\>' producer encodes is paid only when
+    -- 'renderExplain' or 'renderSummary' actually walks the
+    -- 'analysisSections' / 'analysisSummary'. Code that runs on
+    -- every parse must not force this field.
   , patchKind           :: PatchKind
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
@@ -229,7 +236,7 @@ data SomePatch = SomePatch
   , patchHeader         :: PatchHeader
     -- ^ Cheap display carrier consumed by @slap info@ and @slap apply@.
     -- Populated at parse time without per-record analytical work.
-    -- The expensive analytical carrier is 'patchExplain'.
+    -- The expensive analytical carrier is 'patchAnalysis'.
   , patchContents       :: Maybe PatchContents
   , patchSourceNotes    :: [SlapWarning]
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
@@ -287,7 +294,7 @@ parseSomePatchFromPPF (Parsed patch parseWarnings) =
           }
   in Right SomePatch
       { patchFormat         = PPF.ppfVersionLabel (PPF.ppfVersion patch)
-      , patchExplain        = PPF.explainPPF patch
+      , patchAnalysis       = PPF.analyzePPF patch
       , patchKind           = Direct
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (PPF.applyPPF patch source)) }
@@ -355,7 +362,7 @@ parseSomePatchFromPPF4 patchContents = do
       totalRecords = length replaces + length appends
   Right SomePatch
       { patchFormat         = LabelPPF4
-      , patchExplain        = PPF4.explainPPF4 patch
+      , patchAnalysis       = PPF4.analyzePPF4 patch
       , patchKind           = Direct
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (PPF4.applyPPF4 patch source)) }
@@ -404,7 +411,7 @@ parseSomePatchFromIPS variant patchContents = do
       let records = IPS.ipsRecords ipsPatch
       in Right SomePatch
         { patchFormat         = label
-        , patchExplain        = IPS.explainIPS ipsPatch
+        , patchAnalysis       = IPS.analyzeIPS ipsPatch
         , patchKind           = Direct
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source ipsPatch) }
@@ -441,7 +448,7 @@ parseSomePatchFromIPS variant patchContents = do
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
-        , patchExplain        = IPS.explainEBP ebpPatch
+        , patchAnalysis       = IPS.analyzeEBP ebpPatch
         , patchKind           = Direct
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source basePatch) }
@@ -474,7 +481,7 @@ parseSomePatchFromIPS variant patchContents = do
             }
       in Right SomePatch
         { patchFormat         = label
-        , patchExplain        = IPS.explainIPS truncatedPatch
+        , patchAnalysis       = IPS.analyzeIPS truncatedPatch
         , patchKind           = Direct
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
@@ -509,7 +516,7 @@ parseSomePatchFromBPS patchContents = do
                     else Just metadataBytes
   Right SomePatch
     { patchFormat         = LabelBPS
-    , patchExplain        = BPS.explainBPS patch
+    , patchAnalysis       = BPS.analyzeBPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (BPS.applyBPS patch source)) }
@@ -550,7 +557,7 @@ parseSomePatchFromUPS patchContents = do
   let blocks = UPS.upsBlocks patch
   Right SomePatch
     { patchFormat         = LabelUPS
-    , patchExplain        = UPS.explainUPS patch
+    , patchAnalysis       = UPS.analyzeUPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (UPS.applyUPS patch source)) }
@@ -606,7 +613,7 @@ parseSomePatchFromVCDIFF patchContents = do
         ]
   Right SomePatch
     { patchFormat         = LabelVCDIFF
-    , patchExplain        = VCDIFF.explainVCDIFF patch
+    , patchAnalysis       = VCDIFF.analyzeVCDIFF patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (VCDIFF.applyVCDIFF patch source)) }
@@ -646,7 +653,7 @@ parseSomePatchFromAPSN64 patchContents = do
       expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
   Right SomePatch
     { patchFormat         = LabelAPSN64
-    , patchExplain        = APSN64.explainAPSN64 patch
+    , patchAnalysis       = APSN64.analyzeAPSN64 patch
     , patchKind           = Direct
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (APSN64.applyAPSN64 patch source)) }
@@ -694,7 +701,7 @@ parseSomePatchFromNINJA2 patchContents = do
       (platformType, platformWarnings) = ninja2ToPlatform romTypeForPlatformConversion
   Right SomePatch
     { patchFormat         = LabelNINJA2
-    , patchExplain        = NINJA2.explainNINJA2 patch
+    , patchAnalysis       = NINJA2.analyzeNINJA2 patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (NINJA2.applyNINJA2 patch source)) }
@@ -751,7 +758,7 @@ parseSomePatchFromNINJA1 patchContents = do
         _              -> []
   Right SomePatch
     { patchFormat         = LabelNINJA1
-    , patchExplain        = NINJA1.explainNINJA1 patch
+    , patchAnalysis       = NINJA1.analyzeNINJA1 patch
     , patchKind           = Direct
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (NINJA1.applyNINJA1 patch source)) }
@@ -792,7 +799,7 @@ parseSomePatchFromBSDiff patchContents = do
   Parsed patch parseWarnings <- BSDiff.parseBSDiff patchContents
   Right SomePatch
     { patchFormat         = LabelBSDiff
-    , patchExplain        = BSDiff.explainBSDiff patch
+    , patchAnalysis       = BSDiff.analyzeBSDiff patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (BSDiff.applyBSDiff patch source)) }
@@ -820,7 +827,7 @@ parseSomePatchFromGDIFF patchContents = do
   Parsed patch parseWarnings <- GDIFF.parseGDIFF patchContents
   Right SomePatch
     { patchFormat         = LabelGDIFF
-    , patchExplain        = GDIFF.explainGDIFF patch
+    , patchAnalysis       = GDIFF.analyzeGDIFF patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (GDIFF.applyGDIFF patch source)) }
@@ -855,7 +862,7 @@ parseSomePatchFromXDelta1 patchContents = do
         }
   Right SomePatch
     { patchFormat         = LabelXDelta1
-    , patchExplain        = XDelta1.explainXDelta1 patch
+    , patchAnalysis       = XDelta1.analyzeXDelta1 patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (XDelta1.applyXDelta1 patch source)) }
@@ -885,7 +892,7 @@ parseSomePatchFromPMSR patchContents = do
   let records = PMSR.pmsrRecords patch
   Right SomePatch
     { patchFormat         = LabelPMSR
-    , patchExplain        = PMSR.explainPMSR patch
+    , patchAnalysis       = PMSR.analyzePMSR patch
     , patchKind           = Direct
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (PMSR.applyPMSR patch source)) }
@@ -923,7 +930,7 @@ parseSomePatchFromPCHTXT patchContents = do
       sourceNotes = [OffsetShiftApplied | PCHTXT.pchtxtHasShift patch]
   Right SomePatch
     { patchFormat         = LabelPCHTXT
-    , patchExplain        = PCHTXT.explainPCHTXT patch
+    , patchAnalysis       = PCHTXT.analyzePCHTXT patch
     , patchKind           = Direct
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (PCHTXT.applyPCHTXT patch source)) }
@@ -955,7 +962,7 @@ parseSomePatchFromAPSGBA patchContents = do
   Parsed patch@(APSGBA.APSGBAPatch header records) parseWarnings <- APSGBA.parseAPSGBA patchContents
   Right SomePatch
     { patchFormat         = LabelAPSGBA
-    , patchExplain        = APSGBA.explainAPSGBA patch
+    , patchAnalysis       = APSGBA.analyzeAPSGBA patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noWarnings (APSGBA.applyAPSGBA patch source)) }
@@ -988,7 +995,7 @@ parseSomePatchFromDPS patchContents = do
   let records = DPS.dpsRecords patch
   Right SomePatch
     { patchFormat         = LabelDPS
-    , patchExplain        = DPS.explainDPS patch
+    , patchAnalysis       = DPS.analyzeDPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (DPS.applyDPS patch source)) }
@@ -1023,9 +1030,11 @@ parseSomePatchFromDPS patchContents = do
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
 -- Decompress the envelope and recurse into parseSome on the inner bytes.
--- The format suffix @"\/Yay0"@ is appended to both display carriers
--- ('patchExplain' for the analytical path; 'patchHeader' for the cheap
--- info\/apply path) so the user can see the envelope at a glance.
+-- The format suffix @"\/Yay0"@ is appended to 'patchHeader' so the user
+-- can see the envelope at a glance — the analytical carrier
+-- 'patchAnalysis' no longer carries a format-name field, since
+-- 'renderExplain' and 'renderSummary' read the format-name straight
+-- off 'patchHeader' now.
 parseSomePatchFromYay0 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromYay0 (PatchFileContents input) = case Yay0.decompressYay0 input of
   Left errorMessage   -> Left (Yay0DecompressionFailed errorMessage)
@@ -1035,8 +1044,6 @@ parseSomePatchFromYay0 (PatchFileContents input) = case Yay0.decompressYay0 inpu
       let innerHeader = headerFormat (patchHeader parsed)
           wrappedExtra = Just (maybe "/Yay0" (++ "/Yay0") (formatExtra innerHeader))
       in Right parsed
-        { patchExplain = (patchExplain parsed)
-            { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
-        , patchHeader = (patchHeader parsed)
+        { patchHeader = (patchHeader parsed)
             { headerFormat = innerHeader { formatExtra = wrappedExtra } }
         }

@@ -1,12 +1,12 @@
 module Slap.APSGBA.Describe
   ( apsGBAMeta
-  , explainAPSGBA
+  , analyzeAPSGBA
   , makeGBARegion
   ) where
 
 import Slap.APSGBA.Types
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                     ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+                     AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display (InfoLine(..))
 import Slap.Measure (Length(..), FileSize(..))
@@ -17,17 +17,14 @@ apsGBAMeta (APSGBAPatch header _) =
   , InfoLine "target size" (show (unFileSize (apsGbaTargetSize header)))
   ]
 
-explainAPSGBA :: APSGBAPatch -> ExplainData
-explainAPSGBA patch@(APSGBAPatch _header records) = ExplainData
-  { explainFormat   = "APS (GBA)"
-  , explainHeader   = apsGBAMeta patch
-  , explainSections = [SectionRegions (map makeGBARegion records)]
-  , explainSummary  = Summary (SummaryInfo (length records) "blocks" Nothing)
-  , explainNotes    = []
+analyzeAPSGBA :: APSGBAPatch -> PatchAnalysis
+analyzeAPSGBA (APSGBAPatch _header records) = PatchAnalysis
+  { analysisSections = [SectionRegions (map makeGBARegion records)]
+  , analysisSummary  = Summary (SummaryInfo (length records) "blocks" Nothing)
   }
 
-makeGBARegion :: APSGBARecord -> ExplainRegion
-makeGBARegion record = ExplainRegion
+makeGBARegion :: APSGBARecord -> AnalysisRegion
+makeGBARegion record = AnalysisRegion
   { regionOffset     = apsGbaOffset record
   , regionSize       = Length apsGbaBlockSize
   , regionLabel      = "XOR block  "

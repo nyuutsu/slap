@@ -1,10 +1,10 @@
 module Slap.Explain
-  ( ExplainData(..)
-  , ExplainSection(..)
-  , ExplainRegion(..)
-  , ExplainPayload(..)
+  ( PatchAnalysis(..)
+  , AnalysisSection(..)
+  , AnalysisRegion(..)
+  , AnalysisPayload(..)
   , CopySource(..)
-  , ExplainSummary(..)
+  , AnalysisSummary(..)
   , SummaryInfo(..)
   , SummaryByteInfo(..)
   , SummaryBytes(..)
@@ -16,7 +16,8 @@ module Slap.Explain
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), PatchHeader(..), renderInfoLine,
+                     renderPatchHeader)
 import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
                     spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
@@ -35,29 +36,42 @@ import Data.Word (Word8)
 -- Types
 ----------------------------------------------------------------------------
 
-data ExplainData = ExplainData
-  { explainFormat   :: String              -- "PPF3", "IPS (EBP)", "BPS", etc.
-  , explainHeader   :: [InfoLine]          -- key-value metadata
-  , explainSections :: [ExplainSection]    -- grouped content
-  , explainSummary  :: ExplainSummary      -- structured summary
-  , explainNotes    :: [String]            -- trailing messages
+-- | The analytical-pass result: per-record breakdown and structured
+-- summary. Populated by per-format @analyze\<Format\>@ functions
+-- (in each format's @Describe@ module) that walk the record stream
+-- and produce 'AnalysisSection' values describing every record's
+-- offset, size, label, payload, and annotation.
+--
+-- This carrier is consumed by @slap explain@ (both verbosity modes).
+-- It is intentionally NOT consumed by @slap info@ or @slap apply@ —
+-- those read 'Slap.Display.PatchHeader' from
+-- 'Slap.SomePatch.patchHeader' instead, a cheaper carrier that
+-- doesn't require record-by-record work.
+--
+-- 'PatchAnalysis' lives behind a non-strict field on
+-- 'Slap.SomePatch.SomePatch' (@patchAnalysis@); the analytical cost
+-- is paid only when consumers force the field. Code that runs on
+-- every parse must not force this field.
+data PatchAnalysis = PatchAnalysis
+  { analysisSections :: [AnalysisSection]
+  , analysisSummary  :: AnalysisSummary
   }
 
-data ExplainSection
-  = SectionRegions [ExplainRegion]              -- flat numbered list
-  | SectionBlock String [ExplainRegion]         -- labeled block + entries (PCHTXT)
-  | SectionLabeled String [InfoLine]            -- labeled block + kv pairs (VCDIFF)
-  | SectionText String                          -- free text line
+data AnalysisSection
+  = SectionRegions [AnalysisRegion]              -- flat numbered list
+  | SectionBlock String [AnalysisRegion]         -- labeled block + entries (PCHTXT)
+  | SectionLabeled String [InfoLine]             -- labeled block + kv pairs (VCDIFF)
+  | SectionText String                           -- free text line
 
-data ExplainRegion = ExplainRegion
+data AnalysisRegion = AnalysisRegion
   { regionOffset     :: Offset             -- primary offset (output or target)
   , regionSize       :: Length             -- bytes affected
   , regionLabel      :: String             -- operation label with trailing space
-  , regionPayload    :: ExplainPayload
+  , regionPayload    :: AnalysisPayload
   , regionAnnotation :: Annotation         -- structured trailing metadata
   }
 
-data ExplainPayload
+data AnalysisPayload
   = PayloadWrite ByteString            -- literal data (renderer hex dumps)
   | PayloadFill !Word8 !Length         -- fill byte + repeat count
   | PayloadCopy CopySource             -- copy operation
@@ -67,7 +81,7 @@ data ExplainPayload
 data CopySource = FromSource | FromTarget | FromPatch
   deriving (Eq, Show)
 
-data ExplainSummary
+data AnalysisSummary
   = SummaryNone
   | Summary !SummaryInfo
 
@@ -123,25 +137,24 @@ data PayloadCounts = PayloadCounts
 -- Renderer
 ----------------------------------------------------------------------------
 
-renderExplain :: Maybe ByteString -> ExplainData -> String
-renderExplain mSource explainData = unlines $
-  [ "format:      " ++ explainFormat explainData ]
-  ++ map renderInfoLine (explainHeader explainData)
-  ++ [""]
-  ++ concatMap renderSection (explainSections explainData)
-  ++ notesLines
-  ++ [renderSummaryLine (explainSummary explainData) | not (isSummaryNone (explainSummary explainData))]
+renderExplain :: PatchHeader -> PatchAnalysis -> Maybe ByteString -> String
+renderExplain header analysis mSource = unlines $ joinSections
+  [ map renderInfoLine (renderPatchHeader header)
+  , concatMap renderSection (analysisSections analysis)
+  , summaryLines (analysisSummary analysis)
+  ]
   where
-    notesLines = explainNotes explainData
+    summaryLines SummaryNone   = []
+    summaryLines summary       = [renderSummaryLine summary]
 
     renderSection (SectionRegions regions) =
       zipWith renderRegion [1..] regions
 
     renderSection (SectionBlock label regions) =
-      label : map renderBlockEntry regions ++ [""]
+      label : map renderBlockEntry regions
 
     renderSection (SectionLabeled label fields) =
-      label : map renderLabeledField fields ++ [""]
+      label : map renderLabeledField fields
 
     renderSection (SectionText text) = [text]
 
@@ -182,11 +195,15 @@ renderExplain mSource explainData = unlines $
       PayloadMeta _ ->
         padNum index ++ "  " ++ regionLabel region ++ annotation region
 
-isSummaryNone :: ExplainSummary -> Bool
-isSummaryNone SummaryNone = True
-isSummaryNone _           = False
+-- | Stitch a list of section blocks into a single line stream with a
+-- blank line separating each non-empty block. Empty blocks are dropped
+-- so the output never carries adjacent blanks. Defined once here and
+-- shared by 'renderExplain' and 'renderSummary' so blank-line semantics
+-- live in one named place.
+joinSections :: [[String]] -> [String]
+joinSections = intercalate [""] . filter (not . null)
 
-renderSummaryLine :: ExplainSummary -> String
+renderSummaryLine :: AnalysisSummary -> String
 renderSummaryLine SummaryNone = ""
 renderSummaryLine (Summary info) =
   show (summaryCount info) ++ " " ++ summaryUnitLabel info
@@ -257,7 +274,7 @@ renderResolvedXOR Nothing _ _ = ""
 renderResolvedXOR (Just source) offset deltaBytes =
   "\n" ++ labeledHexDump "resolved" (resolveXOR source offset deltaBytes)
 
-renderCopySource :: Maybe ByteString -> ExplainRegion -> String
+renderCopySource :: Maybe ByteString -> AnalysisRegion -> String
 renderCopySource Nothing _ = ""
 renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
@@ -270,22 +287,16 @@ renderCopySource (Just source) region =
 -- Summary renderer
 ----------------------------------------------------------------------------
 
-renderSummary :: Maybe ByteString -> ExplainData -> String
-renderSummary mSource explainData = unlines $ filter (not . null) $
-  [ "format:      " ++ explainFormat explainData
-  , "records:     " ++ commaNum totalRecords
+renderSummary :: PatchHeader -> PatchAnalysis -> Maybe ByteString -> String
+renderSummary header analysis mSource = unlines $ joinSections
+  [ map renderInfoLine (renderPatchHeader header)
+  , modifiedLine ++ rangeLine ++ sizeChangeLine
+  , regionsBlock ++ recordSizeLine
+  , sparkline
+  , capabilityNotes
   ]
-  ++ modifiedLine
-  ++ rangeLine
-  ++ sizeChangeLine
-  ++ [""]
-  ++ regionsBlock
-  ++ recordSizeLine
-  ++ [""]
-  ++ sparkline
-  ++ capabilityNotes
   where
-    allRegions = concatMap sectionRegions (explainSections explainData)
+    allRegions = concatMap sectionRegions (analysisSections analysis)
 
     totalRecords = length allRegions
 
@@ -344,7 +355,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       (Just sourceString, _, Just targetString) -> makeSizeLine sourceString targetString
       _ -> []
 
-    lookupHeader key = infoLineValue <$> find (\field -> infoLineLabel field == key) (explainHeader explainData)
+    lookupHeader key = infoLineValue <$> find (\line -> infoLineLabel line == key) (headerLines header)
 
     makeSizeLine sourceString targetString =
       case (parseSize sourceString, parseSize targetString) of
@@ -370,7 +381,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     bucketWidth :: OffsetRange -> Int
     bucketWidth range = max 1 (max 1 (unLength (rangeLength range)) `div` bucketCount)
 
-    toBucket :: OffsetRange -> ExplainRegion -> [(Int, Int)]
+    toBucket :: OffsetRange -> AnalysisRegion -> [(Int, Int)]
     toBucket range region =
       let width = bucketWidth range
           startBucket = (unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width
@@ -471,8 +482,8 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
           hasMeta = any (\region -> case regionPayload region of PayloadMeta _ -> True; _ -> False) allRegions
           hasDelta = hasCopy || hasXOR || hasMeta
       in case (hasDelta, mSource) of
-           (True, Just _)  -> ["", "note: source file provided; use --records to see resolved content"]
-           (True, Nothing) -> ["", "note: patch uses delta/reference operations (requires source file)"]
+           (True, Just _)  -> ["note: source file provided; use --records to see resolved content"]
+           (True, Nothing) -> ["note: patch uses delta/reference operations (requires source file)"]
            _               -> []
 
 -- | Format an integer with comma grouping.

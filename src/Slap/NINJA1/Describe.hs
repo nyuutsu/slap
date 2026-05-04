@@ -1,15 +1,15 @@
 module Slap.NINJA1.Describe
   ( ninja1Info
   , ninja1Meta
-  , explainNINJA1
+  , analyzeNINJA1
   , makeNINJA1Region
   , ninja1RecordsRange
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
                            romTypeName, subFormatName)
-import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
-                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
+import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
@@ -50,24 +50,20 @@ ninja1Info patch = unlines $ filter (not . null) $
     totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
 ----------------------------------------------------------------------------
--- Explain
+-- Analyze
 ----------------------------------------------------------------------------
 
-explainNINJA1 :: NINJA1Patch -> ExplainData
-explainNINJA1 patch = ExplainData
-  { explainFormat   = "NINJA1 (" ++ subFormatString ++ ")"
-  , explainHeader   = ninja1Meta patch
-  , explainSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+analyzeNINJA1 :: NINJA1Patch -> PatchAnalysis
+analyzeNINJA1 patch = PatchAnalysis
+  { analysisSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
+  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     recordCount = length (ninja1Records patch)
-    subFormatString = subFormatName (ninja1SubFormat patch)
     totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
-makeNINJA1Region :: NINJA1Record -> ExplainRegion
-makeNINJA1Region (NINJA1Record recordOffset recordPayload) = ExplainRegion
+makeNINJA1Region :: NINJA1Record -> AnalysisRegion
+makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
   , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "

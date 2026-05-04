@@ -1,14 +1,14 @@
 module Slap.DPS.Describe
   ( dpsInfo
   , dpsMeta
-  , explainDPS
+  , analyzeDPS
   , makeDPSRegion
   ) where
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..))
 import Slap.Explain
-    ( ExplainData(..), ExplainSection(..), ExplainRegion(..)
-    , ExplainPayload(..), CopySource(..), ExplainSummary(..)
+    ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
+    , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
@@ -51,13 +51,10 @@ dpsInfo patch = unlines $ filter (not . null) $
 -- Explain
 ----------------------------------------------------------------------------
 
-explainDPS :: DPSPatch -> ExplainData
-explainDPS patch = ExplainData
-  { explainFormat   = "DPS"
-  , explainHeader   = dpsMeta patch
-  , explainSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
-  , explainSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
-  , explainNotes    = []
+analyzeDPS :: DPSPatch -> PatchAnalysis
+analyzeDPS patch = PatchAnalysis
+  { analysisSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
+  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
   }
   where
     recordCount = length (dpsRecords patch)
@@ -65,15 +62,15 @@ explainDPS patch = ExplainData
     recordBytes (DPSEnclosedData _ payload)       = ByteString.length payload
     recordBytes (DPSCopyFromROM _ _ copyLength) = unLength copyLength
 
-makeDPSRegion :: DPSRecord -> ExplainRegion
-makeDPSRegion (DPSEnclosedData outputOffset payload) = ExplainRegion
+makeDPSRegion :: DPSRecord -> AnalysisRegion
+makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion
   { regionOffset     = outputOffset
   , regionSize       = Length (ByteString.length payload)
   , regionLabel      = "Data   "
   , regionPayload    = PayloadWrite payload
   , regionAnnotation = AnnotAt AtOffset outputOffset []
   }
-makeDPSRegion (DPSCopyFromROM outputOffset sourceOffset copyLength) = ExplainRegion
+makeDPSRegion (DPSCopyFromROM outputOffset sourceOffset copyLength) = AnalysisRegion
   { regionOffset     = outputOffset
   , regionSize       = copyLength
   , regionLabel      = "Copy   "
