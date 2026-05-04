@@ -16,7 +16,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.Explain (renderExplain, renderSummary)
+import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents
   (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
@@ -96,8 +96,8 @@ mkFieldTest patchPath format fieldName = testCase fieldName $ do
         Right (CreateResult convertedBytes _) -> case parseSome convertedBytes of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
-            let originalInfo = renderSummary (patchHeader original) (patchAnalysis original) Nothing
-                convertedInfo = renderSummary (patchHeader converted) (patchAnalysis converted) Nothing
+            let originalInfo = renderAnalysisSummary (patchInfo original) (patchAnalysis original) Nothing
+                convertedInfo = renderAnalysisSummary (patchInfo converted) (patchAnalysis converted) Nothing
                 originalValue = extractField fieldName originalInfo
                 convertedValue = extractField fieldName convertedInfo
             assertEqual ("field '" ++ fieldName ++ "' mismatch") originalValue convertedValue
@@ -151,7 +151,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
-          let info = renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing
+          let info = renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing
           assertBool "info mentions metadata content"
             ("hello-world-metadata" `isInfixOf` info)
           assertBool "info shows byte count"
@@ -164,7 +164,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
-          assertBool "info shows (none)" ("(none)" `isInfixOf` renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
+          assertBool "info shows (none)" ("(none)" `isInfixOf` renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
   ]
 
 -- | Run 'createBPS' and unwrap. Test inputs are small and well-formed,

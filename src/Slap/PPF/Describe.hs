@@ -9,9 +9,9 @@ import Slap.PPF.Types (PPFPatch(..), PPFRecord(..),
                         validationOffset)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
-import Slap.Explain
+import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
   , AnalysisRegion(..)
@@ -86,7 +86,7 @@ makePPFRegion record = AnalysisRegion
 ----------------------------------------------------------------------------
 
 -- | The 'OffsetRange' spanning a non-empty PPF record stream,
--- consumed by the cheap display path's 'Slap.Display.PatchHeader'
+-- consumed by the cheap display path's 'Slap.Display.Info.PatchInfo'
 -- construction. Returns 'Nothing' on an empty stream so the display
 -- layer suppresses the range line.
 ppfRecordsRange :: [PPFRecord] -> Maybe OffsetRange

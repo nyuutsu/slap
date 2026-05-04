@@ -16,11 +16,9 @@ import Slap.SomePatch
   , AdvisoryExpectedBytes(..)
   , parseSome
   )
-import Slap.Display
-  ( PatchHeader, headerTally, headerUnit, headerBytes
-  , Tally(..), renderCountUnit, renderByteCount
-  , renderInfoLine, renderPatchHeader
-  )
+import Slap.Display.Common (renderInfoLine)
+import Slap.Display.Info (renderPatchInfo, renderActionLine)
+import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ExpectedSize(..), ActualSize(..))
@@ -50,7 +48,6 @@ import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..)
 import Slap.Format (rightwardsArrow, checkMark, ballotX, emDash,
                     spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
-import Slap.Explain (renderExplain, renderSummary)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, forM_)
@@ -265,7 +262,7 @@ data VerificationPolicy
 --
 -- @Quiet@ (default) prints only the final \"applied N records → PATH\"
 -- summary.  @Verbose@ (set by @-V@\/@--verbose@) also prints each
--- record as it's applied, via 'renderExplain'.
+-- record as it's applied, via 'renderAnalysisFull'.
 data Verbosity
   = Quiet
   | Verbose
@@ -874,7 +871,7 @@ resolveConvertMetadata inputs = do
 doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
   parsed <- readAndParsePatch (infoPatch parsedCommand)
-  mapM_ (putStrLn . renderInfoLine) (renderPatchHeader (patchHeader parsed))
+  mapM_ (putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
   emitWarnings WarningProper (patchWarnings parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
@@ -891,36 +888,21 @@ doExplain parsedCommand = do
     Nothing   -> pure Nothing
     Just path -> Just <$> readMaybeUnwrap (explainFileReading parsedCommand) path
   let renderFunction = case explainVerbosity parsedCommand of
-        Summary     -> renderSummary
-        FullRecords -> renderExplain
-  putStr (renderFunction (patchHeader parsed) (patchAnalysis parsed) maybeSource)
+        Summary     -> renderAnalysisSummary
+        FullRecords -> renderAnalysisFull
+  putStr (renderFunction (patchInfo parsed) (patchAnalysis parsed) maybeSource)
   emitWarnings WarningProper (patchWarnings parsed)
 
 ----------------------------------------------------------------------------
 -- Apply
 ----------------------------------------------------------------------------
 
--- | Compose the one-line announcement that 'doApply' emits in both
--- the success and dry-run paths: @"applied 23 records, 1024 bytes
--- total \\u2192 out.bin"@. The verb (@"applied"@ vs. @"would apply"@)
--- is the only thing that differs between the two paths.
-applyAnnouncement :: String -> PatchHeader -> FilePath -> String
-applyAnnouncement announcementVerb displayHeader outputPath =
-  let tally       = headerTally displayHeader
-      countUnit   = headerUnit  displayHeader
-      countPhrase = show (unTally tally) ++ " " ++ renderCountUnit tally countUnit
-      bytesSuffix = case headerBytes displayHeader of
-        Nothing    -> ""
-        Just bytes -> ", " ++ renderByteCount bytes
-  in announcementVerb ++ " " ++ countPhrase ++ bytesSuffix
-     ++ spacePaddedRightwardsArrow ++ outputPath
-
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
   parsed <- readAndParsePatch (applyPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   case applyVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
+    Verbose -> hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
     Quiet   -> pure ()
 
   let verification = patchVerification parsed
@@ -935,12 +917,12 @@ doApply parsedCommand = do
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unTargetFileContents target)
-        putStrLn (applyAnnouncement "applied" (patchHeader parsed) outputPath)
+        putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
     ApplyDryRun -> do
       let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
-      putStrLn (applyAnnouncement "would apply" (patchHeader parsed) reportedPath)
+      putStrLn (renderActionLine "would apply" (patchInfo parsed) reportedPath)
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
@@ -976,7 +958,7 @@ doUndo parsedCommand = do
   parsed <- readAndParsePatch (undoPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
   case undoVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderExplain (patchHeader parsed) (patchAnalysis parsed) Nothing)
+    Verbose -> hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
     Quiet   -> pure ()
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"

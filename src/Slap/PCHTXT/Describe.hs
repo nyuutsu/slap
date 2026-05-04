@@ -7,10 +7,10 @@ module Slap.PCHTXT.Describe
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
-import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..))
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
@@ -65,7 +65,7 @@ makePCHTXTEntry entry = AnalysisRegion
 
 -- | The 'OffsetRange' spanning a non-empty list of enabled PCHTXT
 -- entries, consumed by the cheap display path's
--- 'Slap.Display.PatchHeader' construction. Returns 'Nothing' on an
+-- 'Slap.Display.Info.PatchInfo' construction. Returns 'Nothing' on an
 -- empty list so the display layer suppresses the range line.
 pchtxtEntriesRange :: [PCHTXTEntry] -> Maybe OffsetRange
 pchtxtEntriesRange [] = Nothing

@@ -5,10 +5,10 @@ module Slap.APSGBA.Describe
   ) where
 
 import Slap.APSGBA.Types
-import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Length(..), FileSize(..))
 
 apsGBAMeta :: APSGBAPatch -> [InfoLine]

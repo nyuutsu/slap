@@ -5,13 +5,13 @@ module Slap.DPS.Describe
   ) where
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..))
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Length(..), FileSize(..))
 

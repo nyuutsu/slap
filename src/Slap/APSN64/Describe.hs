@@ -5,10 +5,10 @@ module Slap.APSN64.Describe
   ) where
 
 import Slap.APSN64.Types
-import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 

@@ -6,13 +6,13 @@ module Slap.PMSR.Describe
   ) where
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..)
     )
-import Slap.Display (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
 import Data.Vector (Vector)
@@ -59,7 +59,7 @@ makePMSRRegion record = AnalysisRegion
 ----------------------------------------------------------------------------
 
 -- | The 'OffsetRange' spanning a non-empty PMSR record stream,
--- consumed by the cheap display path's 'Slap.Display.PatchHeader'
+-- consumed by the cheap display path's 'Slap.Display.Info.PatchInfo'
 -- construction. Returns 'Nothing' on an empty stream so the display
 -- layer suppresses the range line.
 pmsrRecordsRange :: Vector PMSRRecord -> Maybe OffsetRange

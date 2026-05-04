@@ -6,9 +6,9 @@ module Slap.PPF4.Describe
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
-import Slap.Explain
+import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
   , AnalysisRegion(..)
@@ -91,7 +91,7 @@ appendRegion displayOffset (PPF4Append payloadBytes) = AnalysisRegion
 
 -- | The 'OffsetRange' spanning a non-empty list of PPF4 'Replace'
 -- records, consumed by the cheap display path's
--- 'Slap.Display.PatchHeader' construction. Append records are
+-- 'Slap.Display.Info.PatchInfo' construction. Append records are
 -- excluded — they have no addressable offset (PPF4 places appended
 -- bytes at the end of the file, with no per-record offset on the
 -- wire). Returns 'Nothing' on an empty list so the display layer

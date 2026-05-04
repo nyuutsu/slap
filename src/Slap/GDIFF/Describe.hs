@@ -5,12 +5,12 @@ module Slap.GDIFF.Describe
   ) where
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString

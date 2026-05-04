@@ -5,13 +5,13 @@ module Slap.UPS.Describe
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import qualified Data.ByteString as ByteString

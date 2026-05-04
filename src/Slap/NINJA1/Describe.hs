@@ -7,11 +7,11 @@ module Slap.NINJA1.Describe
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
                            romTypeName)
-import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
+import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                       AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex)
 import Slap.Measure (Offset(..), Length(..),
@@ -64,7 +64,7 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
 ----------------------------------------------------------------------------
 
 -- | The 'OffsetRange' spanning a non-empty NINJA1 record stream,
--- consumed by the cheap display path's 'Slap.Display.PatchHeader'
+-- consumed by the cheap display path's 'Slap.Display.Info.PatchInfo'
 -- construction. Returns 'Nothing' on an empty stream so the display
 -- layer suppresses the range line.
 ninja1RecordsRange :: [NINJA1Record] -> Maybe OffsetRange

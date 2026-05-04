@@ -5,7 +5,7 @@ module Slap.BSDiff.Describe
   ) where
 
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
-import Slap.Explain
+import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
   , AnalysisRegion(..)
@@ -14,7 +14,7 @@ import Slap.Explain
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 

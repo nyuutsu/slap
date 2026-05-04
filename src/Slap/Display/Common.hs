@@ -1,19 +1,12 @@
--- | Display-layer types for the cheap path: @slap info@ and @slap apply@.
---
--- These are structured carriers populated at parse time without any
--- per-record analytical work — no section-building, no per-record
--- annotation, no payload classification. The expensive analytical
--- carrier is 'Slap.Explain.PatchAnalysis', built only when @slap
--- explain@ needs it.
---
--- The cheap path's contract: every field on 'PatchHeader' is a fact
--- the format helper already knew at parse time and trivially carries
--- across without a fold over the record stream — except for the
--- optional 'headerRange' and the optional total-payload byte count,
--- which are single linear passes over the records and are still
--- cheap relative to the per-record annotation work the explain
--- carrier performs.
-module Slap.Display
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Shared display-layer vocabulary used by both 'Slap.Display.Info'
+-- (cheap-path) and 'Slap.Display.Analysis' (analytical-path). The
+-- types and renderers here have no commitment to one or the other —
+-- 'InfoLine' is a label-value display row regardless of which carrier
+-- produced it; 'Tally', 'CountUnit', 'ByteCount' express counts and
+-- byte-totals identically across both paths.
+module Slap.Display.Common
   ( -- * Display rows
     InfoLine(..)
   , renderInfoLine
@@ -24,15 +17,11 @@ module Slap.Display
   , pluralCountUnit
   , ByteCount(..)
   , renderByteCount
-    -- * Headers
+    -- * Format headers
   , FormatHeader(..)
   , renderFormatHeader
-  , PatchHeader(..)
-  , renderPatchHeader
-    -- * Ranges
+    -- * Range rendering
   , renderOffsetRange
-    -- * Re-exports
-  , OffsetRange(..)
   ) where
 
 import Slap.Format (padHex)
@@ -165,8 +154,8 @@ renderByteCount (TotalPayloadBytes (Length n)) =
 
 -- | Render an 'OffsetRange' for display: @0xLOW - 0xHIGH@ using the
 -- inclusive last byte ('rangeLastByte'). The hex literal is six
--- digits wide, matching the convention used by 'Slap.Explain''s
--- summary range line.
+-- digits wide, matching the convention used by
+-- 'Slap.Display.Analysis''s summary range line.
 renderOffsetRange :: OffsetRange -> String
 renderOffsetRange range =
   "0x" ++ padHex 6 (unOffset (rangeStart range))
@@ -174,7 +163,7 @@ renderOffsetRange range =
   ++ padHex 6 (unOffset (rangeLastByte range))
 
 ----------------------------------------------------------------------------
--- FormatHeader and PatchHeader
+-- FormatHeader
 ----------------------------------------------------------------------------
 
 -- | The format-name part of a display header. The 'FormatLabel' is
@@ -194,42 +183,3 @@ data FormatHeader = FormatHeader
 renderFormatHeader :: FormatHeader -> String
 renderFormatHeader (FormatHeader label extra) =
   formatLabelName label ++ maybe "" id extra
-
--- | The cheap display carrier consumed by 'doInfo' and 'doApply'.
--- Composed of:
---
--- * the format-name with optional elaboration ('headerFormat'),
--- * the format-specific metadata fields ('headerLines') already
---   rendered to display strings,
--- * a 'Tally' of items in the patch with optional 'ByteCount',
--- * an optional 'OffsetRange' surfacing where the patch operates,
---   populated only when computing it is cheap (formats whose records
---   carry sortable absolute offsets).
-data PatchHeader = PatchHeader
-  { headerFormat :: !FormatHeader
-  , headerLines  :: ![InfoLine]
-  , headerTally  :: !Tally
-  , headerUnit   :: !CountUnit
-  , headerBytes  :: !(Maybe ByteCount)
-  , headerRange  :: !(Maybe OffsetRange)
-  } deriving (Eq, Show)
-
--- | Render a 'PatchHeader' as a list of 'InfoLine' rows. The caller
--- ('doInfo') maps 'renderInfoLine' over the result.
-renderPatchHeader :: PatchHeader -> [InfoLine]
-renderPatchHeader header =
-  [ InfoLine "format" (renderFormatHeader (headerFormat header)) ]
-  ++ headerLines header
-  ++ [ countLine ]
-  ++ rangeLineList
-  where
-    tally       = headerTally header
-    countUnit   = headerUnit  header
-    countPhrase = show (unTally tally) ++ " " ++ renderCountUnit tally countUnit
-    countValue = case headerBytes header of
-      Nothing    -> countPhrase
-      Just bytes -> countPhrase ++ ", " ++ renderByteCount bytes
-    countLine = InfoLine (pluralCountUnit countUnit) countValue
-    rangeLineList = case headerRange header of
-      Nothing    -> []
-      Just range -> [InfoLine "range" (renderOffsetRange range)]

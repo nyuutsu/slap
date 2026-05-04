@@ -52,10 +52,11 @@ library slap-internal
     , Slap.BSDiff.Parse
     , Slap.BSDiff.Types
     , Slap.Detect
-    , Slap.Display
+    , Slap.Display.Analysis
+    , Slap.Display.Common
+    , Slap.Display.Info
     , Slap.FileContents
     , Slap.Error
-    , Slap.Explain
     , Slap.GDIFF.Apply
     , Slap.GDIFF.Create
     , Slap.GDIFF.Describe

@@ -7,7 +7,7 @@ module Slap.BPS.Describe
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
@@ -15,7 +15,7 @@ import Slap.Explain
     )
 import Slap.Checksum (showCRC32)
 import Slap.Error (CursorKind(SourceCursor))
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),

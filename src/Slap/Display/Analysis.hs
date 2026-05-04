@@ -1,4 +1,4 @@
-module Slap.Explain
+module Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
   , AnalysisRegion(..)
@@ -9,14 +9,15 @@ module Slap.Explain
   , Annotation(..)
   , OffsetKind(..)
   , AnnotDetail(..)
-  , renderExplain
-  , renderSummary
+  , renderAnalysisFull
+  , renderAnalysisSummary
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Display (InfoLine(..), PatchHeader(..), renderInfoLine,
-                     renderPatchHeader, Tally(..), CountUnit, ByteCount,
-                     renderCountUnit, renderByteCount)
+import Slap.Display.Common (InfoLine(..), renderInfoLine,
+                             Tally(..), CountUnit, ByteCount,
+                             renderCountUnit, renderByteCount)
+import Slap.Display.Info (PatchInfo(..), renderPatchInfo)
 import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
                     spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
@@ -43,8 +44,8 @@ import Data.Word (Word8)
 --
 -- This carrier is consumed by @slap explain@ (both verbosity modes).
 -- It is intentionally NOT consumed by @slap info@ or @slap apply@ —
--- those read 'Slap.Display.PatchHeader' from
--- 'Slap.SomePatch.patchHeader' instead, a cheaper carrier that
+-- those read 'Slap.Display.Info.PatchInfo' from
+-- 'Slap.SomePatch.patchInfo' instead, a cheaper carrier that
 -- doesn't require record-by-record work.
 --
 -- 'PatchAnalysis' lives behind a non-strict field on
@@ -129,15 +130,15 @@ data PayloadCounts = PayloadCounts
 -- Renderer
 ----------------------------------------------------------------------------
 
-renderExplain :: PatchHeader -> PatchAnalysis -> Maybe ByteString -> String
-renderExplain header analysis mSource = unlines $ joinSections
-  [ map renderInfoLine (renderPatchHeader header)
+renderAnalysisFull :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> String
+renderAnalysisFull info analysis mSource = unlines $ joinSections
+  [ map renderInfoLine (renderPatchInfo info)
   , concatMap renderSection (analysisSections analysis)
   , summaryLines (analysisSummary analysis)
   ]
   where
     summaryLines SummaryNone     = []
-    summaryLines (Summary info)  = [renderSummaryLine info]
+    summaryLines (Summary summary)  = [renderSummaryLine summary]
 
     renderSection (SectionRegions regions) =
       zipWith renderRegion [1..] regions
@@ -190,15 +191,15 @@ renderExplain header analysis mSource = unlines $ joinSections
 -- | Stitch a list of section blocks into a single line stream with a
 -- blank line separating each non-empty block. Empty blocks are dropped
 -- so the output never carries adjacent blanks. Defined once here and
--- shared by 'renderExplain' and 'renderSummary' so blank-line semantics
--- live in one named place.
+-- shared by 'renderAnalysisFull' and 'renderAnalysisSummary' so
+-- blank-line semantics live in one named place.
 joinSections :: [[String]] -> [String]
 joinSections = intercalate [""] . filter (not . null)
 
 renderSummaryLine :: SummaryInfo -> String
-renderSummaryLine info =
-  show (unTally (summaryTally info)) ++ " " ++ renderCountUnit (summaryTally info) (summaryUnit info)
-  ++ case summaryBytes info of
+renderSummaryLine summary =
+  show (unTally (summaryTally summary)) ++ " " ++ renderCountUnit (summaryTally summary) (summaryUnit summary)
+  ++ case summaryBytes summary of
        Nothing        -> ""
        Just byteCount -> ", " ++ renderByteCount byteCount
 
@@ -274,9 +275,9 @@ renderCopySource (Just source) region =
 -- Summary renderer
 ----------------------------------------------------------------------------
 
-renderSummary :: PatchHeader -> PatchAnalysis -> Maybe ByteString -> String
-renderSummary header analysis mSource = unlines $ joinSections
-  [ map renderInfoLine (renderPatchHeader header)
+renderAnalysisSummary :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> String
+renderAnalysisSummary info analysis mSource = unlines $ joinSections
+  [ map renderInfoLine (renderPatchInfo info)
   , modifiedLine ++ rangeLine ++ sizeChangeLine
   , regionsBlock ++ recordSizeLine
   , sparkline
@@ -342,7 +343,7 @@ renderSummary header analysis mSource = unlines $ joinSections
       (Just sourceString, _, Just targetString) -> makeSizeLine sourceString targetString
       _ -> []
 
-    lookupHeader key = infoLineValue <$> find (\line -> infoLineLabel line == key) (headerLines header)
+    lookupHeader key = infoLineValue <$> find (\line -> infoLineLabel line == key) (infoLines info)
 
     makeSizeLine sourceString targetString =
       case (parseSize sourceString, parseSize targetString) of
@@ -482,5 +483,3 @@ commaNum number
     insertCommas [] = []
     insertCommas digits = let (group, rest) = splitAt 3 digits
             in group ++ if null rest then "" else "," ++ insertCommas rest
-
-

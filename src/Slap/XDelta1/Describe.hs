@@ -9,14 +9,14 @@ import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
     , XDelta1SourceKind(..), XDelta1OffsetMode(..), fromXDelta1Version
     )
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (MD5Hash(..))
-import Slap.Display (InfoLine(..),
+import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))

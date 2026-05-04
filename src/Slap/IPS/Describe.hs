@@ -2,11 +2,11 @@
 -- ('ipsMeta', 'ebpMeta') and structured 'PatchAnalysis' builders
 -- ('analyzeIPS', 'analyzeEBP'). The analytical builders feed
 -- 'Slap.SomePatch.patchAnalysis' (lazy; only forced by @slap
--- explain@); the 'ipsMeta' / 'ebpMeta' helpers feed @headerLines@
--- on 'Slap.SomePatch.patchHeader', which is what @slap info@ and
+-- explain@); the 'ipsMeta' / 'ebpMeta' helpers feed @infoLines@
+-- on 'Slap.SomePatch.patchInfo', which is what @slap info@ and
 -- @slap apply@ read. Counterparts to 'Slap.BPS.Describe.analyzeBPS'
 -- / 'Slap.BPS.Describe.bpsMeta' and 'Slap.UPS.Describe.analyzeUPS'
--- / 'Slap.UPS.Describe.upsMeta'. Rendering lives in 'Slap.Explain'
+-- / 'Slap.UPS.Describe.upsMeta'. Rendering lives in 'Slap.Display.Analysis'
 -- / @doInfo@ / @doExplain@ in @app/Main.hs@, not here.
 --
 -- Two top-level function families rather than one taking an
@@ -49,7 +49,7 @@ import Slap.IPS.Types
   , recordPayloadLength
   , variantSpec
   )
-import Slap.Explain
+import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
   , AnalysisRegion(..)
@@ -60,7 +60,7 @@ import Slap.Explain
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance)
@@ -136,7 +136,7 @@ ebpMeta patch =
 -- would write to the target.
 --
 -- The record walk stays lazy over the underlying 'Vector' via
--- 'Vector.toList': 'renderExplain' consumes the region list in
+-- 'Vector.toList': 'renderAnalysisFull' consumes the region list in
 -- order, so materialising the whole list is not a
 -- 7000-records-at-once memory hit. The total-bytes computation uses
 -- a strict 'Vector.foldl'' so the traversal is a single pass and
@@ -163,7 +163,7 @@ analyzeIPS patch = PatchAnalysis
 -- 'analyzeIPS' on the underlying base patch — the EBP wrapper adds
 -- only header metadata (a 'metadata' line in 'ebpMeta'), not new
 -- region shape, so the analytical breakdown is identical to plain
--- IPS. The format-name distinction comes from 'patchHeader' on the
+-- IPS. The format-name distinction comes from 'patchInfo' on the
 -- 'Slap.SomePatch.SomePatch' record, not from the analytical
 -- carrier.
 analyzeEBP :: EBPPatch -> PatchAnalysis
@@ -219,7 +219,7 @@ renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
 ----------------------------------------------------------------------------
 
 -- | The 'OffsetRange' spanning a non-empty IPS record stream. Used by
--- the cheap display path's 'Slap.Display.PatchHeader' construction
+-- the cheap display path's 'Slap.Display.Info.PatchInfo' construction
 -- on plain IPS, IPS32, and EBP — all three carry the same record
 -- shape, so a single helper covers them. Returns 'Nothing' on an
 -- empty stream so the display layer suppresses the range line

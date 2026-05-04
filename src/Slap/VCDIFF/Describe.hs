@@ -10,14 +10,14 @@ import Slap.VCDIFF.Types
     , VCDIFFDecodedInstruction(..), VCDIFFVersion(..)
     )
 import Slap.VCDIFF.Apply (decodeWindowInstructions)
-import Slap.Explain
+import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showAdler32)
-import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
 
