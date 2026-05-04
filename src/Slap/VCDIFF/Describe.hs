@@ -13,11 +13,11 @@ import Slap.VCDIFF.Apply (decodeWindowInstructions)
 import Slap.Explain
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
-    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showAdler32)
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
 
@@ -54,8 +54,8 @@ displayVersion VCDIFFXDelta3  = "0x53 (xdelta3)"
 analyzeVCDIFF :: VCDIFFPatch -> PatchAnalysis
 analyzeVCDIFF patch = PatchAnalysis
   { analysisSections = concat windowSections
-  , analysisSummary  = Summary (SummaryInfo totalInstructions "instructions"
-                                  (Just (SummaryByteInfo totalTarget BytesTotalOutput)))
+  , analysisSummary  = Summary (SummaryInfo (Tally totalInstructions) Instructions
+                                  (Just (TotalOutputBytes (FileSize totalTarget))))
   }
   where
     windows = vcdiffWindows patch

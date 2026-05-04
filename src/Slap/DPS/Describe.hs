@@ -9,10 +9,11 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..))
 import Slap.Explain
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
-    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Length(..), FileSize(..))
 
 import Slap.TextEncoding (decodeLocaleField)
@@ -54,7 +55,7 @@ dpsInfo patch = unlines $ filter (not . null) $
 analyzeDPS :: DPSPatch -> PatchAnalysis
 analyzeDPS patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeDPSRegion (dpsRecords patch))]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     recordCount = length (dpsRecords patch)

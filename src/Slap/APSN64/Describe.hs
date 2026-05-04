@@ -8,7 +8,7 @@ import Slap.APSN64.Types
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 
@@ -66,7 +66,7 @@ apsN64Meta (APSN64Patch header _) = concat
 analyzeAPSN64 :: APSN64Patch -> PatchAnalysis
 analyzeAPSN64 (APSN64Patch _header records) = PatchAnalysis
   { analysisSections = [SectionRegions (Vector.toList (Vector.map makeN64Region records))]
-  , analysisSummary  = Summary (SummaryInfo (length records) "records" Nothing)
+  , analysisSummary  = Summary (SummaryInfo (Tally (length records)) Records Nothing)
   }
 
 makeN64Region :: APSN64Record -> AnalysisRegion

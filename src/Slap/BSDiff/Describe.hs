@@ -15,7 +15,8 @@ import Slap.Explain
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
@@ -52,7 +53,7 @@ analyzeBSDiff patch = PatchAnalysis
                   else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffControls patch)))]
   , analysisSummary  = if null (bsdiffControls patch)
                   then SummaryNone
-                  else Summary (SummaryInfo (length (bsdiffControls patch)) "control tuples" Nothing)
+                  else Summary (SummaryInfo (Tally (length (bsdiffControls patch))) ControlTuples Nothing)
   }
 
 makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, AnalysisRegion)

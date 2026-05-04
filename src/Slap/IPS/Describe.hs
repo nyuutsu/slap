@@ -57,13 +57,11 @@ import Slap.Explain
   , AnalysisPayload(..)
   , AnalysisSummary(..)
   , SummaryInfo(..)
-  , SummaryByteInfo(..)
-  , SummaryBytes(..)
   , Annotation(..)
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance)
@@ -150,8 +148,8 @@ analyzeIPS patch = PatchAnalysis
   { analysisSections =
       [ SectionRegions
           (map makeIPSRegion (Vector.toList (ipsRecords patch))) ]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records"
-                                  (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records
+                                  (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     recordVector = ipsRecords patch

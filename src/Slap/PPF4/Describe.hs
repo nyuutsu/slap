@@ -6,7 +6,8 @@ module Slap.PPF4.Describe
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Explain
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
@@ -14,8 +15,6 @@ import Slap.Explain
   , AnalysisPayload(PayloadWrite)
   , AnalysisSummary(Summary)
   , SummaryInfo(..)
-  , SummaryByteInfo(..)
-  , SummaryBytes(BytesTotal)
   , Annotation(AnnotAt)
   , OffsetKind(AtOffset)
   )
@@ -61,8 +60,8 @@ analyzePPF4 patch = PatchAnalysis
   { analysisSections =
       [ SectionRegions (map replaceRegion (ppf4Replaces patch)
                         ++ zipWith appendRegion appendDisplayOffsets (ppf4Appends patch)) ]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records"
-                                  (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records
+                                  (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     recordCount = length (ppf4Replaces patch) + length (ppf4Appends patch)

@@ -6,7 +6,7 @@ module Slap.NINJA2.Describe
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
@@ -67,7 +67,7 @@ ninja2Meta patch = concat
 analyzeNINJA2 :: NINJA2Patch -> PatchAnalysis
 analyzeNINJA2 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeNINJA2Region (ninja2Records patch))]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records" Nothing)
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records Nothing)
   }
   where
     recordCount = length (ninja2Records patch)

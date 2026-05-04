@@ -87,6 +87,7 @@ data CountUnit
   | Commands
   | Instructions
   | Entries
+  | EnabledEntries
   | ControlTuples
   deriving (Eq, Show)
 
@@ -106,10 +107,12 @@ renderCountUnit (Tally 1) Commands      = "command"
 renderCountUnit _         Commands      = "commands"
 renderCountUnit (Tally 1) Instructions  = "instruction"
 renderCountUnit _         Instructions  = "instructions"
-renderCountUnit (Tally 1) Entries       = "entry"
-renderCountUnit _         Entries       = "entries"
-renderCountUnit (Tally 1) ControlTuples = "control tuple"
-renderCountUnit _         ControlTuples = "control tuples"
+renderCountUnit (Tally 1) Entries        = "entry"
+renderCountUnit _         Entries        = "entries"
+renderCountUnit (Tally 1) EnabledEntries = "enabled entry"
+renderCountUnit _         EnabledEntries = "enabled entries"
+renderCountUnit (Tally 1) ControlTuples  = "control tuple"
+renderCountUnit _         ControlTuples  = "control tuples"
 
 -- | The plural form of a 'CountUnit', independent of count. Used
 -- when the unit name appears as a label rather than a count suffix
@@ -122,8 +125,9 @@ pluralCountUnit Blocks        = "blocks"
 pluralCountUnit Windows       = "windows"
 pluralCountUnit Commands      = "commands"
 pluralCountUnit Instructions  = "instructions"
-pluralCountUnit Entries       = "entries"
-pluralCountUnit ControlTuples = "control tuples"
+pluralCountUnit Entries        = "entries"
+pluralCountUnit EnabledEntries = "enabled entries"
+pluralCountUnit ControlTuples  = "control tuples"
 
 ----------------------------------------------------------------------------
 -- ByteCount

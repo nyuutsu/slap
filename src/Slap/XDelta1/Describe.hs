@@ -13,11 +13,12 @@ import Slap.XDelta1.Types
 import Slap.Explain
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
-    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (MD5Hash(..))
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
 
@@ -72,7 +73,7 @@ analyzeXDelta1 patch = PatchAnalysis
   { analysisSections = map makeXDelta1SourceText (zip [0..] (xdelta1Sources patch))
       ++ [SectionText "", SectionText ("instructions: " ++ show instructionCount), SectionText ""]
       ++ [SectionRegions (map makeXDelta1Region (xdelta1Instructions patch))]
-  , analysisSummary  = Summary (SummaryInfo instructionCount "instructions" (Just (SummaryByteInfo (unFileSize (xdelta1TargetLength patch)) BytesTotalOutput)))
+  , analysisSummary  = Summary (SummaryInfo (Tally instructionCount) Instructions (Just (TotalOutputBytes (xdelta1TargetLength patch))))
   }
   where
     instructionCount = length (xdelta1Instructions patch)

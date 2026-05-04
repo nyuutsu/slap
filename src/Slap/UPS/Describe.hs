@@ -11,7 +11,7 @@ import Slap.Explain
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import qualified Data.ByteString as ByteString
@@ -34,7 +34,7 @@ analyzeUPS patch = PatchAnalysis
             in (nextPosition, region : accumulatedRegions)
           (_, reversedRegions) = Vector.foldl' buildRegion (Offset 0, []) (upsBlocks patch)
       in [SectionRegions (reverse reversedRegions)]
-  , analysisSummary  = Summary (SummaryInfo blockCount "blocks" Nothing)
+  , analysisSummary  = Summary (SummaryInfo (Tally blockCount) Blocks Nothing)
   }
   where
     blockCount = Vector.length (upsBlocks patch)

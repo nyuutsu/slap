@@ -6,8 +6,6 @@ module Slap.Explain
   , CopySource(..)
   , AnalysisSummary(..)
   , SummaryInfo(..)
-  , SummaryByteInfo(..)
-  , SummaryBytes(..)
   , Annotation(..)
   , OffsetKind(..)
   , AnnotDetail(..)
@@ -17,7 +15,8 @@ module Slap.Explain
 
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display (InfoLine(..), PatchHeader(..), renderInfoLine,
-                     renderPatchHeader)
+                     renderPatchHeader, Tally(..), CountUnit, ByteCount,
+                     renderCountUnit, renderByteCount)
 import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
                     spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
@@ -86,17 +85,10 @@ data AnalysisSummary
   | Summary !SummaryInfo
 
 data SummaryInfo = SummaryInfo
-  { summaryCount     :: !Int
-  , summaryUnitLabel :: !String
-  , summaryBytes     :: !(Maybe SummaryByteInfo)
+  { summaryTally :: !Tally
+  , summaryUnit  :: !CountUnit
+  , summaryBytes :: !(Maybe ByteCount)
   }
-
-data SummaryByteInfo = SummaryByteInfo
-  { summaryByteCount  :: !Int
-  , summaryByteSuffix :: !SummaryBytes
-  }
-
-data SummaryBytes = BytesTotal | BytesTotalOutput
 
 data Annotation
   = AnnotNone                                    -- no annotation (PCHTXT)
@@ -206,14 +198,10 @@ joinSections = intercalate [""] . filter (not . null)
 renderSummaryLine :: AnalysisSummary -> String
 renderSummaryLine SummaryNone = ""
 renderSummaryLine (Summary info) =
-  show (summaryCount info) ++ " " ++ summaryUnitLabel info
+  show (unTally (summaryTally info)) ++ " " ++ renderCountUnit (summaryTally info) (summaryUnit info)
   ++ case summaryBytes info of
-       Nothing -> ""
-       Just byteInfo -> ", " ++ show (summaryByteCount byteInfo) ++ " " ++ renderBytesSuffix (summaryByteSuffix byteInfo)
-
-renderBytesSuffix :: SummaryBytes -> String
-renderBytesSuffix BytesTotal       = "bytes total"
-renderBytesSuffix BytesTotalOutput = "bytes total output"
+       Nothing        -> ""
+       Just byteCount -> ", " ++ renderByteCount byteCount
 
 renderAnnotation :: Annotation -> String
 renderAnnotation AnnotNone = ""

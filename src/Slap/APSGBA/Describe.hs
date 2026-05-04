@@ -8,7 +8,7 @@ import Slap.APSGBA.Types
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Length(..), FileSize(..))
 
 apsGBAMeta :: APSGBAPatch -> [InfoLine]
@@ -20,7 +20,7 @@ apsGBAMeta (APSGBAPatch header _) =
 analyzeAPSGBA :: APSGBAPatch -> PatchAnalysis
 analyzeAPSGBA (APSGBAPatch _header records) = PatchAnalysis
   { analysisSections = [SectionRegions (map makeGBARegion records)]
-  , analysisSummary  = Summary (SummaryInfo (length records) "blocks" Nothing)
+  , analysisSummary  = Summary (SummaryInfo (Tally (length records)) Blocks Nothing)
   }
 
 makeGBARegion :: APSGBARecord -> AnalysisRegion

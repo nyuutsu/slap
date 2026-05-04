@@ -10,10 +10,10 @@ import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
                            romTypeName, subFormatName)
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                       AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
-                      SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex)
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
@@ -56,7 +56,7 @@ ninja1Info patch = unlines $ filter (not . null) $
 analyzeNINJA1 :: NINJA1Patch -> PatchAnalysis
 analyzeNINJA1 patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makeNINJA1Region (ninja1Records patch))]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     recordCount = length (ninja1Records patch)

@@ -11,7 +11,7 @@ import Slap.Explain
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine)
+import Slap.Display (InfoLine, Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
@@ -41,7 +41,7 @@ gdiffInfo patch = unlines $ filter (not . null)
 analyzeGDIFF :: GDiffPatch -> PatchAnalysis
 analyzeGDIFF patch = PatchAnalysis
   { analysisSections = [SectionRegions (snd (mapAccumL makeGDIFFRegion (Offset 0) (gdiffCommands patch)))]
-  , analysisSummary  = Summary (SummaryInfo commandCount "commands" Nothing)
+  , analysisSummary  = Summary (SummaryInfo (Tally commandCount) Commands Nothing)
   }
   where
     commandCount = length (gdiffCommands patch)

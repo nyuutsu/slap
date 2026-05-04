@@ -10,10 +10,10 @@ import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Explain
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), AnalysisSummary(..)
-    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , SummaryInfo(..)
     , Annotation(..), OffsetKind(..)
     )
-import Slap.Display (InfoLine)
+import Slap.Display (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
 import Data.Vector (Vector)
@@ -67,7 +67,7 @@ pmsrInfo patch = unlines $ filter (not . null)
 analyzePMSR :: PMSRPatch -> PatchAnalysis
 analyzePMSR patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makePMSRRegion (Vector.toList records))]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     records      = pmsrRecords patch

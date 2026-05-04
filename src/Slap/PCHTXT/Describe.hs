@@ -11,8 +11,9 @@ import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.PCHTXT.Create (hexPad)
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
-                     SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
-import Slap.Display (InfoLine(..), renderInfoLine)
+                     Annotation(..))
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
 
@@ -52,7 +53,7 @@ pchtxtInfo patch = unlines $ filter (not . null) $
 analyzePCHTXT :: PCHTXTPatch -> PatchAnalysis
 analyzePCHTXT patch = PatchAnalysis
   { analysisSections = map makePCHTXTBlock (zip [1..] (pchtxtBlocks patch))
-  , analysisSummary  = Summary (SummaryInfo (length enabledEntries) "enabled entries" (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally (length enabledEntries)) EnabledEntries (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     enabledEntries = concatMap pchtxtBlockEntries

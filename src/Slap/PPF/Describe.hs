@@ -9,7 +9,8 @@ import Slap.PPF.Types (PPFPatch(..), PPFRecord(..),
                         validationOffset)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Display (InfoLine(..), renderInfoLine,
+                     Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Explain
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
@@ -17,8 +18,6 @@ import Slap.Explain
   , AnalysisPayload(PayloadWrite)
   , AnalysisSummary(Summary)
   , SummaryInfo(..)
-  , SummaryByteInfo(..)
-  , SummaryBytes(BytesTotal)
   , Annotation(AnnotAt)
   , OffsetKind(AtOffset)
   , AnnotDetail(DetailUndo)
@@ -96,7 +95,7 @@ stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0
 analyzePPF :: PPFPatch -> PatchAnalysis
 analyzePPF patch = PatchAnalysis
   { analysisSections = [SectionRegions (map makePPFRegion (ppfRecords patch))]
-  , analysisSummary  = Summary (SummaryInfo recordCount "records" (Just (SummaryByteInfo totalBytes BytesTotal)))
+  , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
     recordCount = length (ppfRecords patch)

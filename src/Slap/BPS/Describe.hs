@@ -10,12 +10,12 @@ import Slap.BPS.Types (BPSPatch(..), BPSAction(..), BPSMetadata(..))
 import Slap.Explain
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
-    , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
+    , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
 import Slap.Error (CursorKind(SourceCursor))
-import Slap.Display (InfoLine(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),
@@ -54,7 +54,7 @@ analyzeBPS patch = PatchAnalysis
     -- so the toList round-trip here is not in the hot path and the
     -- straightforward expression is preferable to a manual unfold.
   { analysisSections = [SectionRegions (snd (mapAccumL makeBPSRegion initialBPSRegionState (Vector.toList (bpsActions patch))))]
-  , analysisSummary  = Summary (SummaryInfo actionCount "actions" (Just (SummaryByteInfo (unFileSize (bpsTargetSize patch)) BytesTotalOutput)))
+  , analysisSummary  = Summary (SummaryInfo (Tally actionCount) Actions (Just (TotalOutputBytes (bpsTargetSize patch))))
   }
   where
     actionCount = Vector.length (bpsActions patch)
