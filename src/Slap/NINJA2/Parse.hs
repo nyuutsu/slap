@@ -58,7 +58,7 @@ parseNINJA2 (PatchFileContents input)
   | ByteString.take 6 input /= ninja2MagicBytes = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | ByteString.length input < headerSize = Left (InputTooShort LabelNINJA2 (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
   | otherwise = case toPatchEncoding (ByteString.index input 6) of
-      Left unrecognisedByte -> Left (NINJA2UnrecognisedPatchEncoding unrecognisedByte)
+      Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
       Right encoding -> case runGet (parseNINJA2Body encoding) input of
         Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)
         Right patch -> Right (Parsed patch [])

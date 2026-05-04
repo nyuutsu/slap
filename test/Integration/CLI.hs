@@ -88,7 +88,7 @@ cliTests tier = do
     -- Explain-mode tests use dm4y paths but degrade to "no --with"
     -- mode when the base ROM is missing. They register
     -- unconditionally — the test bodies themselves carry the fixture
-    -- check (matching pre-refactor behaviour).
+    -- check (matching pre-refactor behavior).
     let explainMaybes = map WillRun
           (explainModeTests dm4yIps (Just (dm4yBase, dm4yUps, dm4yBps)))
 

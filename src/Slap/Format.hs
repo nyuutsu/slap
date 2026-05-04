@@ -9,7 +9,7 @@ module Slap.Format
     -- * Hex dump
   , hexDump
   , chunksOf
-    -- * Shape-recognised byte display
+    -- * Shape-recognized byte display
   , renderPrintableASCIIOrHex
   , renderUTF8OrByteCount
     -- * Display glyphs
@@ -79,7 +79,7 @@ hexByteString :: ByteString -> String
 hexByteString = concatMap (\byte -> padHex 2 byte) . ByteString.unpack
 
 ----------------------------------------------------------------------------
--- Shape-recognised byte display
+-- Shape-recognized byte display
 ----------------------------------------------------------------------------
 
 -- | Render a byte sequence as ASCII text if every byte is in the

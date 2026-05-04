@@ -84,7 +84,7 @@ fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
 -- | PATCH_ENC: how text fields in the fixed header are encoded.
 -- 0 = system codepage (platform-dependent), 1 = UTF-8 (portable).
--- The NINJA2 spec defines no other values; an unrecognised byte is
+-- The NINJA2 spec defines no other values; an unrecognized byte is
 -- rejected at parse time rather than represented in this type, so
 -- every 'PatchEncoding' value we ever hold has a well-defined meaning
 -- for downstream text decoding.
@@ -93,7 +93,7 @@ data PatchEncoding
   | PatchEncodingSystem
   deriving (Show, Eq)
 
--- | Resolve a raw PATCH_ENC byte. 'Left' carries the unrecognised byte
+-- | Resolve a raw PATCH_ENC byte. 'Left' carries the unrecognized byte
 -- so the parse site can construct a structured rejection from it;
 -- 'Right' carries the resolved encoding for the rest of the parse.
 toPatchEncoding :: Word8 -> Either Word8 PatchEncoding

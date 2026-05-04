@@ -79,7 +79,7 @@ import Data.Word (Word8)
 -- 'Parsed' warnings channel by a 'NoEOFMarker' warning. The error
 -- channel is reserved for inputs that violate the wire format in
 -- ways no shape covers — bad magic, variant-ceiling overrun,
--- zero-count RLE, unrecognised trailing bytes after a valid
+-- zero-count RLE, unrecognized trailing bytes after a valid
 -- @"EOF"@\/@"EEOF"@ marker, and so on.
 --
 -- The variant ('StandardIPS' vs 'IPS32') is decided once, by reading
@@ -110,7 +110,7 @@ parseIPS (PatchFileContents inputBytes)
            Left getErrorMessage ->
              Left (ParseError LabelIPS getErrorMessage)
            Right bodyShape ->
-             finaliseBodyShape variant bodyShape
+             finalizeBodyShape variant bodyShape
 
 ----------------------------------------------------------------------------
 -- Body-level shape — clean EOF vs truncated
@@ -149,10 +149,10 @@ data IPSBodyShape
 -- 'IPSBodyTruncated' additionally carries the long-standing
 -- 'NoEOFMarker' warning at the head of the list; the rest of the
 -- ordering is the same.
-finaliseBodyShape :: IPSVariant
+finalizeBodyShape :: IPSVariant
                   -> IPSBodyShape
                   -> Either SlapError (Parsed IPSParseResult)
-finaliseBodyShape variant bodyShape = case bodyShape of
+finalizeBodyShape variant bodyShape = case bodyShape of
   IPSBodyClean recordList trailingBytes walkerWarnings -> do
     () <- validateRecordList variant recordList
     let recordVector    = Vector.fromList recordList
@@ -185,7 +185,7 @@ finaliseBodyShape variant bodyShape = case bodyShape of
 -- @IPS@, 'IPS32' surfaces as @IPS32@. EBP patches are not a
 -- separate case because their body is structurally a 'StandardIPS'
 -- record stream; the EBP wrapper is decided by the post-@"EOF"@
--- trailer bytes, after the record walk has already labelled its
+-- trailer bytes, after the record walk has already labeled its
 -- warnings.
 labelForIPSVariant :: IPSVariant -> FormatLabel
 labelForIPSVariant StandardIPS = LabelIPS
@@ -569,7 +569,7 @@ stepSweep currentState (IntervalCloses _) = currentState
 -- | Emit a single 'UnsortedRecords' warning naming the first
 -- wire-order record whose offset is lower than the record that
 -- preceded it. The IPS family applies records strictly in wire
--- order, so an unsorted record stream is well-defined behaviour;
+-- order, so an unsorted record stream is well-defined behavior;
 -- it's just unusual enough in well-formed patches to be worth
 -- flagging. Only the first such pair is reported — emitting one
 -- warning per out-of-order record would drown every subsequent
@@ -633,7 +633,7 @@ data IPSCleanResult = IPSCleanResult
 -- trailer-disambiguation warnings the assembly emitted. Only
 -- invoked for the 'IPSBodyClean' body shape — the truncated shape
 -- has no trailer bytes to disambiguate, and is mapped directly to
--- 'IPSParseTruncated' by 'finaliseBodyShape'.
+-- 'IPSParseTruncated' by 'finalizeBodyShape'.
 --
 -- 'StandardIPS' post-@"EOF"@ has four accepted shapes (Q2
 -- resolution from @docs/ips/proposal.md@):

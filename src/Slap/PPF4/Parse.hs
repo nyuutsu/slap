@@ -58,7 +58,7 @@ parsePPF4 (PatchFileContents input)
 minPPF4Length :: Length
 minPPF4Length = ppfPreambleLength
 
--- | Wrap a Get error string into a SlapError, labelled PPF4.
+-- | Wrap a Get error string into a SlapError, labeled PPF4.
 ppf4WrapError :: Either String a -> Either SlapError a
 ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 

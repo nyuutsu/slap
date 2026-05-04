@@ -101,7 +101,7 @@ import qualified Data.Text.Encoding as TextEncoding
 -- two non-EBP cases) or a thin wrapper around 'encodeEBPPatch' (the
 -- two EBP cases).
 --
--- The @optionalTruncation@ argument is honoured only for the
+-- The @optionalTruncation@ argument is honored only for the
 -- 'StandardIPS' variant. For 'IPS32', the truncation marker has
 -- no defined wire shape (no community implementation supports
 -- it), so this encoder drops any truncation passed for IPS32.

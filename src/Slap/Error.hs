@@ -309,7 +309,7 @@ data SlapError
   -- values; slap refuses rather than fabricate a fallback encoding,
   -- because PATCH_ENC governs how every text field in the patch is
   -- decoded and slap has no honest answer for an undefined value.
-  | NINJA2UnrecognisedPatchEncoding !Word8
+  | NINJA2UnrecognizedPatchEncoding !Word8
 
   | MalformedTextField FormatLabel String
   | EntryOutsideBlock FormatLabel String
@@ -464,24 +464,24 @@ data SlapWarning
   | UnsortedRecords FormatLabel ActionIndex
 
   -- | An 'IPS32' patch had trailing bytes past the @"EEOF"@ marker
-  -- that did not match any recognised post-trailer shape. slap drops
+  -- that did not match any recognized post-trailer shape. slap drops
   -- the trailing slice and proceeds. 'StandardIPS' has three
   -- well-attested post-@"EOF"@ shapes (empty, 3-byte post-EOF
   -- truncation marker, EBP JSON blob) and keeps its strict rejection of
   -- garbage trailers; 'IPS32' has none, and a lenient drop is the
-  -- useful choice in the absence of a shape to recognise. The
+  -- useful choice in the absence of a shape to recognize. The
   -- 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
   -- | A 'StandardIPS' patch's post-EOF truncation marker declared a
-  -- target size smaller than the natural size, and slap honoured it.
+  -- target size smaller than the natural size, and slap honored it.
   -- Surfaces the truncation as a deliberate diagnostic even when no
   -- records cross the boundary. Pairs with 'IPSRecordsClippedByMarker'
   -- when records were also clipped.
-  | IPSTruncationMarkerHonoured FormatLabel DeclaredTargetSize NaturalTargetSize
+  | IPSTruncationMarkerHonored FormatLabel DeclaredTargetSize NaturalTargetSize
 
   -- | One or more records' write regions extended past the
-  -- truncation boundary that slap honoured, and were clipped to fit.
+  -- truncation boundary that slap honored, and were clipped to fit.
   -- Aggregate count in the style of 'OverlappingRecords'; per-record
   -- detail omitted to keep a pathological patch from drowning
   -- everything else. Only fires when at least one record crossed the
@@ -500,8 +500,8 @@ data SlapWarning
   -- not one of the documented N64 cartridge ROM region codes. The
   -- byte is preserved verbatim for round-tripping; slap proceeds
   -- normally because the country byte is informational and gates no
-  -- decoding decision. The 'Word8' is the unrecognised byte.
-  | APSN64UnrecognisedCountry !Word8
+  -- decoding decision. The 'Word8' is the unrecognized byte.
+  | APSN64UnrecognizedCountry !Word8
 
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
@@ -620,7 +620,7 @@ noWarnings value = Outcome value []
 newtype OverlapCount = OverlapCount { unOverlapCount :: Int }
   deriving (Eq, Ord, Show)
 
--- | The number of IPS records clipped to fit a honoured truncation
+-- | The number of IPS records clipped to fit a honored truncation
 -- marker. Value-zero is structurally impossible: the warning is
 -- only emitted when at least one record crossed the boundary.
 newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
@@ -635,7 +635,7 @@ newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
   deriving (Eq, Ord, Show)
 
 -- | The total byte length lost across all records clipped by an
--- honoured IPS truncation marker. Sums the per-record overshoots
+-- honored IPS truncation marker. Sums the per-record overshoots
 -- (each record's "bytes beyond effective target"), so a single
 -- record clipped by 100 bytes and ten records each clipped by 10
 -- both report 100. Carried by 'IPSRecordsClippedByMarker' so the
@@ -826,7 +826,7 @@ renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)
   formatLabelName label ++ ": unsupported encoding method: 0x"
   ++ showHex methodByte ""
 
-renderSlapError (NINJA2UnrecognisedPatchEncoding byte) =
+renderSlapError (NINJA2UnrecognizedPatchEncoding byte) =
   "NINJA2 PATCH_ENC byte is 0x" ++ padHex 2 byte
     ++ " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
     ++ "and slap will not guess how to decode text fields under an undefined encoding"
@@ -959,10 +959,10 @@ renderSlapWarning (IPS32TrailingBytes label (Length n)) =
   "note: " ++ formatLabelName label
   ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
 
-renderSlapWarning (IPSTruncationMarkerHonoured label
+renderSlapWarning (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
-  ++ " apply: honoured truncation marker (declared "
+  ++ " apply: honored truncation marker (declared "
   ++ show (unFileSize declared) ++ " bytes, natural "
   ++ show (unFileSize natural) ++ " bytes)"
 
@@ -982,12 +982,12 @@ renderSlapWarning (IPSTruncationMarkerIgnored label
   formatLabelName label
   ++ " apply: ignored truncation marker (declared "
   ++ show (unFileSize declared) ++ " bytes, natural "
-  ++ show (unFileSize natural) ++ " bytes; declared > natural means the marker would grow the output, which slap does not honour)"
+  ++ show (unFileSize natural) ++ " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
 
-renderSlapWarning (APSN64UnrecognisedCountry byte) =
+renderSlapWarning (APSN64UnrecognizedCountry byte) =
   "note: " ++ formatLabelName LabelAPSN64
   ++ ": country code 0x" ++ padHex 2 byte
-  ++ " is not a recognised N64 region code; preserving the byte verbatim"
+  ++ " is not a recognized N64 region code; preserving the byte verbatim"
 
 renderSlapWarning (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue

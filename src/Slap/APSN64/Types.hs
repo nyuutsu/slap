@@ -99,8 +99,8 @@ fromAPSRecordEncoding (APSUnknownRecordEncoding byte) = byte
 -- order). The APS spec describes the byte as "the original image's
 -- country code" without enumerating values locally; the enum is
 -- defined externally by the N64 cartridge ROM header specification.
--- slap recognises the documented values and preserves any
--- unrecognised byte verbatim with an 'APSN64UnrecognisedCountry'
+-- slap recognizes the documented values and preserves any
+-- unrecognized byte verbatim with an 'APSN64UnrecognizedCountry'
 -- warning so round-trip identity is maintained for patches carrying
 -- values slap doesn't know about.
 --
@@ -128,11 +128,11 @@ data APSN64Country
   | APSN64CountryScandinavia     -- 0x57 'W'
   | APSN64CountryEuropeX         -- 0x58 'X' (uncommon European variant)
   | APSN64CountryEuropeY         -- 0x59 'Y' (uncommon European variant)
-  | APSN64CountryUnrecognised !Word8
+  | APSN64CountryUnrecognized !Word8
   deriving (Show, Eq)
 
 -- | Parse a country byte as an 'APSN64Country'. Total: bytes that
--- aren't recognised N64 country codes become 'APSN64CountryUnrecognised'.
+-- aren't recognized N64 country codes become 'APSN64CountryUnrecognized'.
 toAPSN64Country :: Word8 -> APSN64Country
 toAPSN64Country 0x37 = APSN64CountryBeta
 toAPSN64Country 0x41 = APSN64CountryAsian
@@ -154,7 +154,7 @@ toAPSN64Country 0x55 = APSN64CountryAustralia
 toAPSN64Country 0x57 = APSN64CountryScandinavia
 toAPSN64Country 0x58 = APSN64CountryEuropeX
 toAPSN64Country 0x59 = APSN64CountryEuropeY
-toAPSN64Country byte = APSN64CountryUnrecognised byte
+toAPSN64Country byte = APSN64CountryUnrecognized byte
 
 -- | Round-trip inverse of 'toAPSN64Country'.
 fromAPSN64Country :: APSN64Country -> Word8
@@ -178,7 +178,7 @@ fromAPSN64Country APSN64CountryAustralia        = 0x55
 fromAPSN64Country APSN64CountryScandinavia      = 0x57
 fromAPSN64Country APSN64CountryEuropeX          = 0x58
 fromAPSN64Country APSN64CountryEuropeY          = 0x59
-fromAPSN64Country (APSN64CountryUnrecognised b) = b
+fromAPSN64Country (APSN64CountryUnrecognized b) = b
 
 data APSN64Patch = APSN64Patch APSN64Header !(Vector APSN64Record)
   deriving (Show)

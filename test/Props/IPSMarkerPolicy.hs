@@ -1,8 +1,8 @@
--- | Properties for the IPS truncation-marker honour-only-when-shrinking
+-- | Properties for the IPS truncation-marker honor-only-when-shrinking
 -- policy. Three groups: pure tests for 'decideMarkerDisposition'
 -- (totality, per-case correctness, reference agreement), apply-side
 -- unit tests for buffer sizing per disposition, apply-side unit
--- tests for record clipping when 'MarkerHonoured' fires.
+-- tests for record clipping when 'MarkerHonored' fires.
 module Props.IPSMarkerPolicy (ipsMarkerPolicyTests) where
 
 import qualified Slap.IPS.Apply as IPS
@@ -30,21 +30,21 @@ ipsMarkerPolicyTests = testGroup "IPSMarkerPolicy"
   [ testGroup "decideMarkerDisposition"
       [ testProperty "totality"             prop_dispositionTotal
       , testProperty "absent-iff-nothing"   prop_dispositionAbsentIffNothing
-      , testProperty "honoured-iff-shrinks" prop_dispositionHonouredIffShrinks
+      , testProperty "honored-iff-shrinks" prop_dispositionHonoredIffShrinks
       , testProperty "noop-iff-equal"       prop_dispositionNoOpIffEqual
       , testProperty "ignored-iff-grows"    prop_dispositionIgnoredIffGrows
       , testProperty "agrees-with-reference" prop_dispositionReferenceAgreement
       ]
   , testGroup "apply-effective-size"
       [ testCase "absent: natural"          test_applyAbsentSizesNatural
-      , testCase "honoured: declared"       test_applyHonouredSizesDeclared
+      , testCase "honored: declared"       test_applyHonoredSizesDeclared
       , testCase "noop: declared"           test_applyNoOpSizesDeclared
       , testCase "ignored: natural"         test_applyIgnoredSizesNatural
       ]
   , testGroup "apply-clipping"
-      [ testCase "honoured-no-cross-no-clip"    test_honouredNoCrossNoClip
-      , testCase "honoured-records-cross-clip"  test_honouredRecordsCrossClip
-      , testCase "honoured-record-straddles"    test_honouredRecordStraddles
+      [ testCase "honored-no-cross-no-clip"    test_honoredNoCrossNoClip
+      , testCase "honored-records-cross-clip"  test_honoredRecordsCrossClip
+      , testCase "honored-record-straddles"    test_honoredRecordStraddles
       ]
   ]
 
@@ -84,7 +84,7 @@ referenceDisposition (Just declared) natural =
   let declaredValue = unFileSize (unDeclaredTargetSize declared)
       naturalValue  = unFileSize (unNaturalTargetSize  natural)
   in case compare declaredValue naturalValue of
-       LT -> MarkerHonoured declared natural
+       LT -> MarkerHonored declared natural
        EQ -> MarkerNoOp     declared
        GT -> MarkerIgnored  declared natural
 
@@ -95,7 +95,7 @@ prop_dispositionTotal =
   forAll genDispositionInput $ \(marker, natural) ->
     case decideMarkerDisposition marker natural of
       MarkerAbsent   _   -> True
-      MarkerHonoured _ _ -> True
+      MarkerHonored _ _ -> True
       MarkerNoOp     _   -> True
       MarkerIgnored  _ _ -> True
 
@@ -112,19 +112,19 @@ prop_dispositionAbsentIffNothing =
     isNothing Nothing  = True
     isNothing (Just _) = False
 
--- | 'MarkerHonoured' is produced if and only if the marker is
+-- | 'MarkerHonored' is produced if and only if the marker is
 -- present and strictly less than the natural size.
-prop_dispositionHonouredIffShrinks :: Property
-prop_dispositionHonouredIffShrinks =
+prop_dispositionHonoredIffShrinks :: Property
+prop_dispositionHonoredIffShrinks =
   forAll genDispositionInput $ \(marker, natural) ->
-    let isHonoured = case decideMarkerDisposition marker natural of
-                       MarkerHonoured _ _ -> True
+    let isHonored = case decideMarkerDisposition marker natural of
+                       MarkerHonored _ _ -> True
                        _                  -> False
-        shouldHonour = case marker of
+        shouldHonor = case marker of
           Just declared ->
             unDeclaredTargetSize declared < unNaturalTargetSize natural
           Nothing -> False
-    in isHonoured === shouldHonour
+    in isHonored === shouldHonor
 
 -- | 'MarkerNoOp' is produced if and only if the marker is present
 -- and exactly equal to the natural size.
@@ -223,19 +223,19 @@ test_applyAbsentSizesNatural = do
   outcome <- runApplyOrFail source patch
   assertApplyResult "MarkerAbsent" 100 [] outcome
 
--- honoured: source 100, one record at offset 30 length 5 (reaches
+-- honored: source 100, one record at offset 30 length 5 (reaches
 -- 35), declared 80. Expected: 80-byte output, single
--- IPSTruncationMarkerHonoured warning, no clip warning.
-test_applyHonouredSizesDeclared :: Assertion
-test_applyHonouredSizesDeclared = do
+-- IPSTruncationMarkerHonored warning, no clip warning.
+test_applyHonoredSizesDeclared :: Assertion
+test_applyHonoredSizesDeclared = do
   let patch  = makePatch (Just (FileSize 80)) [copyRecordOf 30 5 0xAA]
       source = makeSource 100
       expectedWarning =
-        IPSTruncationMarkerHonoured LabelIPS
+        IPSTruncationMarkerHonored LabelIPS
           (DeclaredTargetSize (FileSize 80))
           (NaturalTargetSize  (FileSize 100))
   outcome <- runApplyOrFail source patch
-  assertApplyResult "MarkerHonoured" 80 [expectedWarning] outcome
+  assertApplyResult "MarkerHonored" 80 [expectedWarning] outcome
 
 -- noop: source 100, one record at offset 30 length 5, declared 100.
 -- Expected: 100-byte output, no warnings.
@@ -260,53 +260,53 @@ test_applyIgnoredSizesNatural = do
   outcome <- runApplyOrFail source patch
   assertApplyResult "MarkerIgnored" 50 [expectedWarning] outcome
 
--- honoured-no-cross-no-clip: same as honoured: declared, asserts no
+-- honored-no-cross-no-clip: same as honored: declared, asserts no
 -- IPSRecordsClippedByMarker warning is appended.
-test_honouredNoCrossNoClip :: Assertion
-test_honouredNoCrossNoClip = do
+test_honoredNoCrossNoClip :: Assertion
+test_honoredNoCrossNoClip = do
   let patch  = makePatch (Just (FileSize 80)) [copyRecordOf 30 5 0xAA]
       source = makeSource 100
       expectedWarning =
-        IPSTruncationMarkerHonoured LabelIPS
+        IPSTruncationMarkerHonored LabelIPS
           (DeclaredTargetSize (FileSize 80))
           (NaturalTargetSize  (FileSize 100))
   outcome <- runApplyOrFail source patch
-  assertApplyResult "MarkerHonoured no-cross" 80 [expectedWarning] outcome
+  assertApplyResult "MarkerHonored no-cross" 80 [expectedWarning] outcome
 
--- honoured-records-cross-clip: source 100, one record at offset 80
+-- honored-records-cross-clip: source 100, one record at offset 80
 -- length 30 (reaches 110), declared 90. Expected: 90-byte output,
--- two warnings (Honoured + Clipped with count 1, first at index 0,
+-- two warnings (Honored + Clipped with count 1, first at index 0,
 -- overshoot 20 bytes — record sits entirely past effective end).
-test_honouredRecordsCrossClip :: Assertion
-test_honouredRecordsCrossClip = do
+test_honoredRecordsCrossClip :: Assertion
+test_honoredRecordsCrossClip = do
   let patch  = makePatch (Just (FileSize 90)) [copyRecordOf 80 30 0xAA]
       source = makeSource 100
-      honouredWarning =
-        IPSTruncationMarkerHonoured LabelIPS
+      honoredWarning =
+        IPSTruncationMarkerHonored LabelIPS
           (DeclaredTargetSize (FileSize 90))
           (NaturalTargetSize  (FileSize 110))
       clippedWarning =
         IPSRecordsClippedByMarker LabelIPS
           (ClippedRecordCount 1) (actionAtPosition 0) (MarkerOvershootBytes (Length 20))
   outcome <- runApplyOrFail source patch
-  assertApplyResult "MarkerHonoured records-cross"
-    90 [honouredWarning, clippedWarning] outcome
+  assertApplyResult "MarkerHonored records-cross"
+    90 [honoredWarning, clippedWarning] outcome
 
--- honoured-record-straddles: source 100, one record at offset 70
+-- honored-record-straddles: source 100, one record at offset 70
 -- length 30 (reaches 100), declared 80. Expected: 80-byte output,
--- two warnings (Honoured + Clipped with count 1, first at index 0,
+-- two warnings (Honored + Clipped with count 1, first at index 0,
 -- overshoot 20 bytes — record straddles, prefix written).
-test_honouredRecordStraddles :: Assertion
-test_honouredRecordStraddles = do
+test_honoredRecordStraddles :: Assertion
+test_honoredRecordStraddles = do
   let patch  = makePatch (Just (FileSize 80)) [copyRecordOf 70 30 0xAA]
       source = makeSource 100
-      honouredWarning =
-        IPSTruncationMarkerHonoured LabelIPS
+      honoredWarning =
+        IPSTruncationMarkerHonored LabelIPS
           (DeclaredTargetSize (FileSize 80))
           (NaturalTargetSize  (FileSize 100))
       clippedWarning =
         IPSRecordsClippedByMarker LabelIPS
           (ClippedRecordCount 1) (actionAtPosition 0) (MarkerOvershootBytes (Length 20))
   outcome <- runApplyOrFail source patch
-  assertApplyResult "MarkerHonoured straddles"
-    80 [honouredWarning, clippedWarning] outcome
+  assertApplyResult "MarkerHonored straddles"
+    80 [honoredWarning, clippedWarning] outcome

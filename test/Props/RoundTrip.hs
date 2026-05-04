@@ -277,7 +277,7 @@ prop_gdiff = forAll genPair $ \(source, target) ->
 -- single COPY command's length field tops out at 'maxSingleCommandLength'
 -- (2^31-1 bytes). 'planCopy' is the encoder's chunking pass: it splits
 -- requests larger than that limit into a run of in-range chunks. These
--- properties pin its behaviour down without ever allocating a multi-
+-- properties pin its behavior down without ever allocating a multi-
 -- gigabyte payload — COPY commands carry only an offset and a length,
 -- so synthetic large inputs cost nothing to test.
 ----------------------------------------------------------------------------

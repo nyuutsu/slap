@@ -165,7 +165,7 @@ specConformanceTests = testGroup "SpecConformance"
       ]
   , testGroup "NINJA2"
       [ testGroup "spec-reject"
-          [ testCase "unrecognised-PATCH_ENC-byte" ninja2RejectsUnrecognisedPatchEncoding
+          [ testCase "unrecognized-PATCH_ENC-byte" ninja2RejectsUnrecognizedPatchEncoding
           ]
       ]
   ]
@@ -865,14 +865,14 @@ upsApplyBlockPastTarget =
 
 -- | A 'StandardIPS' patch whose post-EOF truncation marker declares
 -- a zero-byte target but whose record stream is non-empty. Under the
--- honour-only-when-shrinking policy, declared (0) is strictly less
+-- honor-only-when-shrinking policy, declared (0) is strictly less
 -- than the natural size derived from the lone record (1), so the
--- marker is honoured: the record's payload is entirely past the
+-- marker is honored: the record's payload is entirely past the
 -- effective end and is clipped, producing an empty target plus the
--- pair of warnings 'IPSTruncationMarkerHonoured' and
+-- pair of warnings 'IPSTruncationMarkerHonored' and
 -- 'IPSRecordsClippedByMarker'. Apply does not surface
 -- 'ApplyWritesPastTarget' here — that error path is reserved for the
--- defensive guard on the three non-Honoured dispositions, which is
+-- defensive guard on the three non-Honored dispositions, which is
 -- structurally unreachable.
 ipsApplyZeroTargetWithRecordsClipped :: Assertion
 ipsApplyZeroTargetWithRecordsClipped =
@@ -881,7 +881,7 @@ ipsApplyZeroTargetWithRecordsClipped =
       patch  = IPSPatch { ipsVariant             = StandardIPS
                         , ipsRecords             = Vector.singleton record
                         , ipsTruncatedTargetSize = Just (FileSize 0) }
-      expectedHonoured = IPSTruncationMarkerHonoured LabelIPS
+      expectedHonored = IPSTruncationMarkerHonored LabelIPS
         (DeclaredTargetSize (FileSize 0))
         (NaturalTargetSize  (FileSize 1))
       expectedClipped  = IPSRecordsClippedByMarker LabelIPS
@@ -890,7 +890,7 @@ ipsApplyZeroTargetWithRecordsClipped =
        Right (Outcome (TargetFileContents target) warnings) -> do
          assertEqual "target should be empty" 0 (ByteString.length target)
          assertEqual "warnings"
-           [expectedHonoured, expectedClipped] warnings
+           [expectedHonored, expectedClipped] warnings
        Left slapError -> assertFailure
          ("expected successful clipped apply, got error: "
           ++ renderSlapError slapError)
@@ -1285,23 +1285,23 @@ buildUPSWithCRCs bodyContent sourceCRC targetCRC =
 
 -- | A NINJA2 patch whose PATCH_ENC byte (offset 6 of the fixed header)
 -- is neither 0 (system) nor 1 (UTF-8) must be rejected at parse time
--- with the structured 'NINJA2UnrecognisedPatchEncoding' error carrying
+-- with the structured 'NINJA2UnrecognizedPatchEncoding' error carrying
 -- the offending byte verbatim. The rest of the header is filled with
 -- NULs and the command stream is empty: the encoding rejection fires
 -- before any of that is consulted, so its contents are immaterial to
 -- the test's invariant.
-ninja2RejectsUnrecognisedPatchEncoding :: Assertion
-ninja2RejectsUnrecognisedPatchEncoding =
-  let unrecognisedByte = 0x42 :: Word8
+ninja2RejectsUnrecognizedPatchEncoding :: Assertion
+ninja2RejectsUnrecognizedPatchEncoding =
+  let unrecognizedByte = 0x42 :: Word8
       headerWithBadEncoding =
-        ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, unrecognisedByte]
+        ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, unrecognizedByte]
         <> ByteString.replicate (2048 - 7) 0x00
       patchBytes = PatchFileContents headerWithBadEncoding
   in case NINJA2.parseNINJA2 patchBytes of
-       Left (NINJA2UnrecognisedPatchEncoding actualByte) ->
-         assertEqual "preserved byte" unrecognisedByte actualByte
+       Left (NINJA2UnrecognizedPatchEncoding actualByte) ->
+         assertEqual "preserved byte" unrecognizedByte actualByte
        Left otherError ->
-         assertFailure ("expected NINJA2UnrecognisedPatchEncoding, got: "
+         assertFailure ("expected NINJA2UnrecognizedPatchEncoding, got: "
                         ++ renderSlapError otherError)
        Right _ ->
-         assertFailure "expected parse to reject unrecognised PATCH_ENC, but it succeeded"
+         assertFailure "expected parse to reject unrecognized PATCH_ENC, but it succeeded"

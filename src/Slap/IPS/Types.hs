@@ -59,7 +59,7 @@ import Slap.Measure
 -- 24-bit record offsets, while 'IPS32' uses @IPS32@/@EEOF@ framing
 -- with 32-bit record offsets. EBP is not a distinct variant at this
 -- layer — structurally, an EBP patch is a 'StandardIPS' patch with
--- a trailing JSON metadata blob, modelled as 'EBPPatch' wrapping an
+-- a trailing JSON metadata blob, modeled as 'EBPPatch' wrapping an
 -- 'IPSPatch'.
 data IPSVariant
   = StandardIPS
@@ -241,7 +241,7 @@ data EBPPatch = EBPPatch
 -- validation pass. Parse is still free to return 'Left SlapError'
 -- for inputs that violate the wire format in ways this sum does
 -- not cover — bad magic, ceiling overrun, zero-count RLE,
--- unrecognised trailing bytes after @"EOF"@/@"EEOF"@, and so on.
+-- unrecognized trailing bytes after @"EOF"@/@"EEOF"@, and so on.
 data IPSParseResult
   = IPSParseCleanIPS IPSPatch
     -- ^ A 'StandardIPS' or 'IPS32' patch whose record stream was
@@ -419,7 +419,7 @@ data MarkerDisposition
   -- Effective target = declared. Records past effective are clipped
   -- and counted; an apply-time warning surfaces the truncation, and
   -- a second warning surfaces the clip count if any records crossed.
-  | MarkerHonoured DeclaredTargetSize NaturalTargetSize
+  | MarkerHonored DeclaredTargetSize NaturalTargetSize
   -- | Marker present and exactly matches the natural size
   -- (@declared == natural@). Effective target = declared. Silent —
   -- the marker's assertion agrees with what slap was going to
@@ -440,7 +440,7 @@ decideMarkerDisposition
   :: Maybe DeclaredTargetSize -> NaturalTargetSize -> MarkerDisposition
 decideMarkerDisposition Nothing natural = MarkerAbsent natural
 decideMarkerDisposition (Just declared) natural
-  | declaredFileSize <  naturalFileSize = MarkerHonoured declared natural
+  | declaredFileSize <  naturalFileSize = MarkerHonored declared natural
   | declaredFileSize == naturalFileSize = MarkerNoOp declared
   | otherwise                           = MarkerIgnored declared natural
   where
@@ -451,7 +451,7 @@ decideMarkerDisposition (Just declared) natural
 -- Total over the four constructors.
 effectiveTargetSize :: MarkerDisposition -> FileSize
 effectiveTargetSize (MarkerAbsent   natural)            = unNaturalTargetSize  natural
-effectiveTargetSize (MarkerHonoured declared _natural)  = unDeclaredTargetSize declared
+effectiveTargetSize (MarkerHonored declared _natural)  = unDeclaredTargetSize declared
 effectiveTargetSize (MarkerNoOp     declared)           = unDeclaredTargetSize declared
 effectiveTargetSize (MarkerIgnored  _declared natural)  = unNaturalTargetSize  natural
 

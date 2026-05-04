@@ -27,9 +27,9 @@ import qualified Data.Vector as Vector
 
 -- | What 'parseN64' produces from the inner Get walk: the decoded
 -- patch plus walker-time warnings accumulated during the walk, in
--- wire order. Today only 'APSN64UnrecognisedCountry' is emitted
--- here; future parse-time observations (unrecognised image format,
--- unrecognised record encoding, record-level oddities) accumulate
+-- wire order. Today only 'APSN64UnrecognizedCountry' is emitted
+-- here; future parse-time observations (unrecognized image format,
+-- unrecognized record encoding, record-level oddities) accumulate
 -- through the same channel as APSN64's polish pass lands them.
 data APSN64ParseWalk = APSN64ParseWalk
   { apsN64ParseWalkPatch    :: !APSN64Patch
@@ -78,7 +78,7 @@ parseN64 = do
           countryByte <- getByte
           let parsedCountry   = toAPSN64Country countryByte
               countryWarnings = case parsedCountry of
-                APSN64CountryUnrecognised byte -> [APSN64UnrecognisedCountry byte]
+                APSN64CountryUnrecognized byte -> [APSN64UnrecognizedCountry byte]
                 _                              -> []
           crcBytes  <- N64ChecksumPair <$> getBytes (Length 8)
           skip (Length 5)  -- padding (bytes 69-73)

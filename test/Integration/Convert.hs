@@ -39,7 +39,7 @@ import Slap.Convert
 
 -- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
 -- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
--- so the harness controls which flag strings are recognised.
+-- so the harness controls which flag strings are recognized.
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString

@@ -159,7 +159,7 @@ newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSi
 -- | A target file size declared explicitly by something in the
 -- patch — a header field, a trailer marker, or similar. Distinct
 -- from 'NaturalTargetSize' because some formats compare the two at
--- apply time to decide whether the declaration is honoured (only
+-- apply time to decide whether the declaration is honored (only
 -- IPS does this today, via its optional post-EOF truncation marker).
 -- Bare 'FileSize' arguments at the comparison would let a
 -- transposition silently invert the policy decision.
@@ -251,15 +251,15 @@ newtype TrailerMarker = TrailerMarker { unTrailerMarker :: ByteString }
 newtype ParsedSizeValue = ParsedSizeValue { unParsedSizeValue :: Int }
   deriving (Eq, Ord, Show)
 
--- | A version byte the parser did not recognise.
+-- | A version byte the parser did not recognize.
 newtype FoundVersion = FoundVersion { unFoundVersion :: Word8 }
   deriving (Eq, Ord, Show)
 
--- | A flag byte the parser did not recognise.
+-- | A flag byte the parser did not recognize.
 newtype RawFlagByte = RawFlagByte { unRawFlagByte :: Word8 }
   deriving (Eq, Ord, Show)
 
--- | An encoding-method byte the parser did not recognise.
+-- | An encoding-method byte the parser did not recognize.
 newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 }
   deriving (Eq, Ord, Show)
 

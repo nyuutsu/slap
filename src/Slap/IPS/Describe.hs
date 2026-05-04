@@ -256,7 +256,7 @@ ipsRecordsRange records
       advance (ipsRecordOffset record) (recordPayloadLength record)
 
 ----------------------------------------------------------------------------
--- Shape-recognised byte display
+-- Shape-recognized byte display
 ----------------------------------------------------------------------------
 
 -- | Render a raw marker byte sequence (the variant's magic or EOF
@@ -272,13 +272,13 @@ renderMarkerBytes :: ByteString -> String
 renderMarkerBytes = renderPrintableASCIIOrHex
 
 -- | Render a raw EBP metadata blob for the @metadata:@ header field:
--- the byte count followed by a shape-recognised preview of the
+-- the byte count followed by a shape-recognized preview of the
 -- leading 'metadataPreviewBytes' bytes. EBP metadata is UTF-8 by
 -- convention (per the EBPatcher reference implementation), so the
 -- preview decodes as UTF-8 when valid and falls back to a byte count
 -- description when not. The function deliberately does not parse,
 -- validate, or extract fields from the JSON — that line is drawn in
--- 'Slap.IPS.Parse' and Describe honours it.
+-- 'Slap.IPS.Parse' and Describe honors it.
 renderEBPMetadata :: ByteString -> String
 renderEBPMetadata metadataBytes
   | ByteString.null metadataBytes =

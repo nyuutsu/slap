@@ -751,7 +751,7 @@ encodeDirect contents source target meta limits constraints = case target of
     rejectTruncation LabelIPS32 contents source
     narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- resolveIPSSentinel LabelIPS32 IPS32 narrowed
-    -- IPS32 has no community-recognised truncation marker; encodeIPSPatch
+    -- IPS32 has no community-recognized truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
     -- 'Nothing' explicitly here to make the decision visible at the call
     -- site.

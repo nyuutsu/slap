@@ -60,8 +60,8 @@ apsN64Meta (APSN64Patch header _) = concat
     renderAPSN64Country APSN64CountryScandinavia     = "Scandinavia"
     renderAPSN64Country APSN64CountryEuropeX         = "Europe (X)"
     renderAPSN64Country APSN64CountryEuropeY         = "Europe (Y)"
-    renderAPSN64Country (APSN64CountryUnrecognised byte) =
-      "unrecognised (0x" ++ padHex 2 byte ++ ")"
+    renderAPSN64Country (APSN64CountryUnrecognized byte) =
+      "unrecognized (0x" ++ padHex 2 byte ++ ")"
 
 explainAPSN64 :: APSN64Patch -> ExplainData
 explainAPSN64 patch@(APSN64Patch _header records) = ExplainData

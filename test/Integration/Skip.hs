@@ -174,7 +174,7 @@ renderSkipSummary reasons =
 -- $SLAP_REQUIRE_TOOLS pre-flight check
 ----------------------------------------------------------------------------
 
--- | Honour @SLAP_REQUIRE_TOOLS@. If set to a comma-separated list of
+-- | Honor @SLAP_REQUIRE_TOOLS@. If set to a comma-separated list of
 -- tool names ('externalToolName'), any required tool whose absence
 -- would silently skip a test causes the suite to abort with a non-zero
 -- exit code before @defaultMain@ runs.

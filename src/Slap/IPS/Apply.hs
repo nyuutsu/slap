@@ -48,7 +48,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- truncation marker the patch carries:
 --
 --   * 'MarkerAbsent': effective = natural.
---   * 'MarkerHonoured' (declared < natural): effective = declared.
+--   * 'MarkerHonored' (declared < natural): effective = declared.
 --     Records whose write regions extend past the effective size
 --     are clipped and counted into 'IPSRecordsClippedByMarker'.
 --   * 'MarkerNoOp' (declared == natural): effective = declared.
@@ -65,7 +65,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- named by a record equals either the source byte at that offset
 -- or zero past source end.
 --
--- For 'MarkerHonoured', per-record writes are bounded by the
+-- For 'MarkerHonored', per-record writes are bounded by the
 -- effective size and clip-and-count when records cross. For the
 -- other three dispositions, per-record writes are guarded by a
 -- strict bounds check that raises 'ApplyWritesPastTarget' on
@@ -137,14 +137,14 @@ applyIPS (SourceFileContents source) patch
     dispositionWarnings :: [SlapWarning]
     dispositionWarnings = case disposition of
       MarkerAbsent  _natural          -> []
-      MarkerHonoured declared natural -> [IPSTruncationMarkerHonoured patchLabel declared natural]
+      MarkerHonored declared natural -> [IPSTruncationMarkerHonored patchLabel declared natural]
       MarkerNoOp     _declared        -> []
       MarkerIgnored  declared natural -> [IPSTruncationMarkerIgnored  patchLabel declared natural]
 
     -- | Apply-time warning derived from clip state. Empty list when
     -- no clipping happened (the common case under all four
     -- dispositions); a single 'IPSRecordsClippedByMarker' when
-    -- records were clipped under 'MarkerHonoured'.
+    -- records were clipped under 'MarkerHonored'.
     clipWarnings :: Maybe ClipAccumulator -> [SlapWarning]
     clipWarnings Nothing = []
     clipWarnings (Just clip) =
@@ -213,7 +213,7 @@ applyIPS (SourceFileContents source) patch
                     (unLength runLength)
 
         -- | Write only the leading @prefixLength@ bytes of a
-        -- record's payload. Used by 'handleHonoured' for records
+        -- record's payload. Used by 'handleHonored' for records
         -- that straddle the effective boundary.
         writeRecordPrefix :: IPSRecord -> Length -> IO ()
         writeRecordPrefix IPSRecordCopy { ipsCopyOffset  = writePosition
@@ -239,27 +239,27 @@ applyIPS (SourceFileContents source) patch
               handleRecord recordIndex
                 (Vector.unsafeIndex records (unActionIndex recordIndex))
 
-        -- | Per-record dispatch. Routes 'MarkerHonoured' through
-        -- 'handleHonoured' (clip-and-count) and the other three
+        -- | Per-record dispatch. Routes 'MarkerHonored' through
+        -- 'handleHonored' (clip-and-count) and the other three
         -- dispositions through 'handleStrict' (defensive bounds
         -- check). Explicit four-arm match: a future fifth
         -- disposition fires '-Wincomplete-patterns' here and the
         -- author has to decide which class it belongs to.
         handleRecord :: ActionIndex -> IPSRecord -> IO ()
         handleRecord recordIndex record = case disposition of
-          MarkerHonoured _declared _natural -> handleHonoured recordIndex record
+          MarkerHonored _declared _natural -> handleHonored recordIndex record
           MarkerAbsent   _natural           -> handleStrict   recordIndex record
           MarkerNoOp     _declared          -> handleStrict   recordIndex record
           MarkerIgnored  _declared _natural -> handleStrict   recordIndex record
 
-        -- | Record handler for 'MarkerHonoured'. Three behaviors
+        -- | Record handler for 'MarkerHonored'. Three behaviors
         -- per record: entirely-within-effective writes verbatim;
         -- entirely-past-effective skips and counts the full
         -- payload as overshoot; straddling-effective writes the
         -- fitting prefix and counts the trailing length as
         -- overshoot.
-        handleHonoured :: ActionIndex -> IPSRecord -> IO ()
-        handleHonoured recordIndex record =
+        handleHonored :: ActionIndex -> IPSRecord -> IO ()
+        handleHonored recordIndex record =
           let writePosition = ipsRecordOffset record
               writeLength   = recordPayloadLength record
               writeStart    = unOffset writePosition
@@ -280,7 +280,7 @@ applyIPS (SourceFileContents source) patch
                      recordClip recordIndex overshootLen
                      applyRecordStream (nextAction recordIndex)
 
-        -- | Record handler for the three non-Honoured dispositions.
+        -- | Record handler for the three non-Honored dispositions.
         -- Strict bounds check; 'ApplyWritesPastTarget' on overrun.
         -- Structurally unreachable for these dispositions
         -- (effective >= maxRecordEnd by construction), kept as a
@@ -308,7 +308,7 @@ applyIPS (SourceFileContents source) patch
 
 -- | Aggregated clip statistics across the record walk. Only
 -- populated when at least one record was clipped under
--- 'MarkerHonoured'; 'Nothing' in the surrounding 'IORef' means no
+-- 'MarkerHonored'; 'Nothing' in the surrounding 'IORef' means no
 -- clips happened.
 data ClipAccumulator = ClipAccumulator
   { clipCount      :: !ClippedRecordCount
