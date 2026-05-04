@@ -35,7 +35,7 @@ import Slap.Create (createPatch)
 import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
-import Slap.Binary (crc16, md5, sha1, adler32)
+import Slap.Binary (crc16, md5, sha1, adler32, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..), MD5Hash(..), SHA1Hash(..),
                       ExpectedCRC32(..), ActualCRC32(..), showCRC32)
 import Slap.FFI (rustyCRC32)
@@ -1162,7 +1162,7 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
   forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy SourceSide blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 sourceBytes))
+    warnBlock verificationPolicy SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
     warnPPFBlock verificationPolicy blockOffset expectedData sourceBytes
   forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
@@ -1177,9 +1177,9 @@ verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = 
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash verificationPolicy TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
   forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy TargetSide blockOffset expectedCRC (crc16 (safeSlice (fromIntegral (unOffset blockOffset)) 0x10000 targetBytes))
+    warnBlock verificationPolicy TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
-    checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (safeSlice (fromIntegral (unOffset windowOffset)) (unLength windowLength) targetBytes))
+    checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (viewBytesInRange windowOffset windowLength targetBytes))
 
 checkCRC :: VerificationPolicy -> VerificationSide -> CRC32 -> CRC32 -> IO ()
 checkCRC verificationPolicy side expected actual
@@ -1219,7 +1219,7 @@ warnPPFBlock :: VerificationPolicy -> Offset -> ValidationBlockBytes -> ByteStri
 warnPPFBlock verificationPolicy blockOffset (ValidationBlockBytes expectedData) sourceBytes = case verificationPolicy of
   SkipVerification    -> pure ()
   EnforceVerification ->
-    let actual = safeSlice (fromIntegral (unOffset blockOffset)) (ByteString.length expectedData) sourceBytes
+    let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
     in when (actual /= expectedData) $
          emitWarnings WarningProper [VerificationPPFBlockMismatch blockOffset]
 
@@ -1243,12 +1243,9 @@ warnSourceBytes :: VerificationPolicy -> ByteCheckLabel -> Offset -> ByteString.
 warnSourceBytes verificationPolicy label checkOffset expectedData sourceBytes = case verificationPolicy of
   SkipVerification    -> pure ()
   EnforceVerification ->
-    let actual = safeSlice (unOffset checkOffset) (ByteString.length expectedData) sourceBytes
+    let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
     in when (actual /= expectedData) $
          emitWarnings WarningProper [VerificationSourceBytesMismatch label checkOffset]
-
-safeSlice :: Int -> Int -> ByteString.ByteString -> ByteString.ByteString
-safeSlice offset sliceLength input = ByteString.take sliceLength (ByteString.drop offset input)
 
 formatCRC :: CRC32 -> String
 formatCRC crcValue = "0x" ++ showCRC32 crcValue

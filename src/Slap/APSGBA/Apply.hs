@@ -2,7 +2,6 @@
 
 module Slap.APSGBA.Apply
   ( applyAPSGBA
-  , safeSlice
   ) where
 
 import Slap.APSGBA.Types
@@ -12,7 +11,6 @@ import Slap.Measure (FileSize(..), Offset(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Data.Bits (xor)
@@ -43,8 +41,3 @@ applyAPSGBA (APSGBAPatch header records) (SourceFileContents source) = Right $ T
   where
     sourceLength = ByteString.length source
     targetSize = unFileSize (apsGbaTargetSize header)
-
-safeSlice :: Int -> Int -> ByteString -> ByteString
-safeSlice offset sliceLength input
-  | offset >= ByteString.length input = ByteString.empty
-  | otherwise = ByteString.take sliceLength (ByteString.drop offset input)

@@ -27,6 +27,7 @@ module Slap.Binary
   , copyByteStringRange
   , copyRegion
   , copyInPlace
+  , viewBytesInRange
     -- * Diff
   , diffHunks
     -- * String utilities
@@ -213,6 +214,17 @@ copyRegion destination destinationOffset source sourcePosition regionLength =
       copyBytes (destination `plusPtr` unOffset destinationOffset)
                 (castPtr sourcePointer `plusPtr` unOffset sourcePosition)
                 (unLength regionLength)
+
+-- | The bytes in a given range of a 'ByteString' — the subrange
+-- starting at 'Offset' and continuing for 'Length' bytes. The input
+-- buffer is unchanged; the result is a view (a shared substring in
+-- the 'ByteString' sense, O(1)). Out-of-range arguments are handled
+-- gracefully by the underlying 'ByteString.drop' / 'ByteString.take':
+-- a starting 'Offset' past the end yields an empty result, and a
+-- 'Length' that runs past the end yields the bytes that exist.
+viewBytesInRange :: Offset -> Length -> ByteString -> ByteString
+viewBytesInRange rangeStart rangeLength input =
+  ByteString.take (unLength rangeLength) (ByteString.drop (unOffset rangeStart) input)
 
 -- | Copy @regionLength@ bytes from one position in a buffer to
 -- another position in the SAME buffer. Used by apply workers for

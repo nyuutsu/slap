@@ -5,11 +5,11 @@ module Slap.APSGBA.Create
   , encodeGBABlock
   ) where
 
-import Slap.APSGBA.Apply (safeSlice)
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
-import Slap.Binary (crc16, putWord32LE, putWord16LE)
+import Slap.Binary (crc16, putWord32LE, putWord16LE, viewBytesInRange)
 import Slap.Checksum (CRC16(..))
 import Slap.Error (SlapError, CreateResult(..))
+import Slap.Measure (Offset(..), Length(..))
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
@@ -36,8 +36,8 @@ createAPSGBA (SourceFileContents original) (TargetFileContents modified) =
     changedBlocks = filter hasChanges [0 .. blockCount - 1]
     hasChanges blockIndex =
       let offset = blockIndex * blockSize
-          sourceBlock = padBlock (safeSlice offset blockSize original)
-          targetBlock = padBlock (safeSlice offset blockSize modified)
+          sourceBlock = padBlock (viewBytesInRange (Offset offset) (Length blockSize) original)
+          targetBlock = padBlock (viewBytesInRange (Offset offset) (Length blockSize) modified)
       in sourceBlock /= targetBlock
     padBlock input
       | ByteString.length input >= blockSize = ByteString.take blockSize input
@@ -51,8 +51,8 @@ encodeGBABlock original modified blockIndex =
     <> byteString xorPayload
   where
     offset = blockIndex * apsGbaBlockSize
-    sourceBlock = zeroPadTo apsGbaBlockSize (safeSlice offset apsGbaBlockSize original)
-    targetBlock = zeroPadTo apsGbaBlockSize (safeSlice offset apsGbaBlockSize modified)
+    sourceBlock = zeroPadTo apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) original)
+    targetBlock = zeroPadTo apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) modified)
     xorPayload = ByteString.packZipWith xor sourceBlock targetBlock
     zeroPadTo size input
       | ByteString.length input >= size = ByteString.take size input
