@@ -4,6 +4,7 @@ module Slap.PCHTXT.Describe
   , explainPCHTXT
   , makePCHTXTBlock
   , makePCHTXTEntry
+  , pchtxtEntriesRange
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
@@ -11,20 +12,21 @@ import Slap.PCHTXT.Create (hexPad)
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      SummaryByteInfo(..), SummaryBytes(..), Annotation(..))
-import Slap.Format (MetaField(..), renderField)
-import Slap.Measure (Offset(..), Length(..), advance, byteLength)
+import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Measure (Offset(..), Length(..),
+                     OffsetRange(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 
-pchtxtMeta :: PCHTXTPatch -> [MetaField]
+pchtxtMeta :: PCHTXTPatch -> [InfoLine]
 pchtxtMeta patch = case pchtxtNsobid patch of
-  Just nsobid -> [MetaField "nsobid" nsobid]
+  Just nsobid -> [InfoLine "nsobid" nsobid]
   Nothing     -> []
 
 pchtxtInfo :: PCHTXTPatch -> String
 pchtxtInfo patch = unlines $ filter (not . null) $
   [ "format:      PCHTXT (Nintendo Switch)" ]
-  ++ map renderField (pchtxtMeta patch)
+  ++ map renderInfoLine (pchtxtMeta patch)
   ++ [ "blocks:      " ++ show totalBlocks
        ++ " (" ++ show enabledBlockCount ++ " enabled, "
        ++ show disabledBlockCount ++ " disabled)"
@@ -76,3 +78,24 @@ makePCHTXTEntry entry = ExplainRegion
   , regionPayload    = PayloadWrite (pchtxtData entry)
   , regionAnnotation = AnnotNone
   }
+
+----------------------------------------------------------------------------
+-- Display range
+----------------------------------------------------------------------------
+
+-- | The 'OffsetRange' spanning a non-empty list of enabled PCHTXT
+-- entries, consumed by the cheap display path's
+-- 'Slap.Display.PatchHeader' construction. Returns 'Nothing' on an
+-- empty list so the display layer suppresses the range line.
+pchtxtEntriesRange :: [PCHTXTEntry] -> Maybe OffsetRange
+pchtxtEntriesRange [] = Nothing
+pchtxtEntriesRange entries =
+  let firstAffectedOffset = minimum (map pchtxtOffset entries)
+      endOfLastRecord     = maximum (map entryEndOffset entries)
+  in Just OffsetRange
+      { rangeStart  = firstAffectedOffset
+      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      }
+  where
+    entryEndOffset entry =
+      advance (pchtxtOffset entry) (byteLength (pchtxtData entry))

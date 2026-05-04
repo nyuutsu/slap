@@ -6,7 +6,6 @@ module Main (main) where
 import Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
-  , RecordSummary(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , Verification(..)
@@ -16,6 +15,11 @@ import Slap.SomePatch
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
   , parseSome
+  )
+import Slap.Display
+  ( PatchHeader, headerTally, headerUnit, headerBytes
+  , Tally(..), renderCountUnit, renderByteCount
+  , renderInfoLine, renderPatchHeader
   )
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -43,11 +47,10 @@ import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..)
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    renderSlapError, renderSlapWarning)
-import Slap.Format (MetaField(..), renderField,
-                    rightwardsArrow, checkMark, ballotX, emDash,
+import Slap.Format (rightwardsArrow, checkMark, ballotX, emDash,
                     spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
-import Slap.Explain (ExplainData(..), renderExplain, renderSummary)
+import Slap.Explain (renderExplain, renderSummary)
 
 import qualified Data.ByteString as ByteString
 import Control.Monad (when, forM_)
@@ -871,11 +874,7 @@ resolveConvertMetadata inputs = do
 doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
   parsed <- readAndParsePatch (infoPatch parsedCommand)
-  let explain = patchExplain parsed
-      summary = patchRecordSummary parsed
-  putStrLn $ "format:      " ++ explainFormat explain
-  mapM_ (putStrLn . renderField) (explainHeader explain)
-  putStrLn $ renderField (MetaField (recordUnit summary) (show (recordCount summary)))
+  mapM_ (putStrLn . renderInfoLine) (renderPatchHeader (patchHeader parsed))
   emitWarnings WarningProper (patchWarnings parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
@@ -901,6 +900,21 @@ doExplain parsedCommand = do
 -- Apply
 ----------------------------------------------------------------------------
 
+-- | Compose the one-line announcement that 'doApply' emits in both
+-- the success and dry-run paths: @"applied 23 records, 1024 bytes
+-- total \\u2192 out.bin"@. The verb (@"applied"@ vs. @"would apply"@)
+-- is the only thing that differs between the two paths.
+applyAnnouncement :: String -> PatchHeader -> FilePath -> String
+applyAnnouncement announcementVerb displayHeader outputPath =
+  let tally       = headerTally displayHeader
+      countUnit   = headerUnit  displayHeader
+      countPhrase = show (unTally tally) ++ " " ++ renderCountUnit tally countUnit
+      bytesSuffix = case headerBytes displayHeader of
+        Nothing    -> ""
+        Just bytes -> ", " ++ renderByteCount bytes
+  in announcementVerb ++ " " ++ countPhrase ++ bytesSuffix
+     ++ spacePaddedRightwardsArrow ++ outputPath
+
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
   parsed <- readAndParsePatch (applyPatch parsedCommand)
@@ -921,16 +935,12 @@ doApply parsedCommand = do
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unTargetFileContents target)
-        let appliedSummary = patchRecordSummary parsed
-        putStrLn $ "applied " ++ show (recordCount appliedSummary) ++ " " ++ recordUnit appliedSummary
-                ++ spacePaddedRightwardsArrow ++ outputPath
+        putStrLn (applyAnnouncement "applied" (patchHeader parsed) outputPath)
 
   case applyOutput parsedCommand of
     ApplyDryRun -> do
       let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
-          summary = patchRecordSummary parsed
-      putStrLn $ "would apply " ++ show (recordCount summary) ++ " " ++ recordUnit summary
-              ++ spacePaddedRightwardsArrow ++ reportedPath
+      putStrLn (applyAnnouncement "would apply" (patchHeader parsed) reportedPath)
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)

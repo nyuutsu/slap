@@ -92,6 +92,10 @@ import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
 import Slap.Explain (ExplainData(..))
+import Slap.Display
+  ( PatchHeader(..), FormatHeader(..)
+  , Tally(..), CountUnit(..), ByteCount(..)
+  )
 import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..),
                    Outcome(..), noWarnings)
 import Slap.FormatLabel (FormatLabel(..))
@@ -222,6 +226,10 @@ data SomePatch = SomePatch
   , patchVerification   :: Verification
   , patchWarnings       :: [SlapWarning]
   , patchRecordSummary  :: RecordSummary
+  , patchHeader         :: PatchHeader
+    -- ^ Cheap display carrier consumed by @slap info@ and @slap apply@.
+    -- Populated at parse time without per-record analytical work.
+    -- The expensive analytical carrier is 'patchExplain'.
   , patchContents       :: Maybe PatchContents
   , patchSourceNotes    :: [SlapWarning]
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
@@ -290,6 +298,15 @@ parseSomePatchFromPPF (Parsed patch parseWarnings) =
       , patchWarnings       = parseWarnings
                               ++ [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
       , patchRecordSummary  = RecordSummary (length records) "records"
+      , patchHeader         = PatchHeader
+          { headerFormat = FormatHeader (PPF.ppfVersionLabel (PPF.ppfVersion patch)) Nothing
+          , headerLines  = PPF.ppfMeta patch
+          , headerTally  = Tally (length records)
+          , headerUnit   = Records
+          , headerBytes  = Just (TotalPayloadBytes (Length
+              (sum (map (ByteString.length . PPF.recordData) records))))
+          , headerRange  = PPF.ppfRecordsRange records
+          }
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF.ppfDescription patch))
@@ -347,6 +364,16 @@ parseSomePatchFromPPF4 patchContents = do
       , patchWarnings       = parseWarnings
                               ++ [EmptyPatch LabelPPF4 "records" | totalRecords == 0]
       , patchRecordSummary  = RecordSummary totalRecords "records"
+      , patchHeader         = PatchHeader
+          { headerFormat = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
+          , headerLines  = PPF4.ppf4Meta patch
+          , headerTally  = Tally totalRecords
+          , headerUnit   = Records
+          , headerBytes  = Just (TotalPayloadBytes (Length
+              ( sum (map (ByteString.length . PPF4.replaceData) replaces)
+              + sum (map (ByteString.length . PPF4.appendData) appends) )))
+          , headerRange  = PPF4.ppf4ReplacesRange replaces
+          }
       , patchSourceNotes    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF4.ppf4Description patch))
@@ -386,6 +413,14 @@ parseSomePatchFromIPS variant patchContents = do
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch label "records" | Vector.null records]
         , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+        , patchHeader         = PatchHeader
+            { headerFormat = FormatHeader label Nothing
+            , headerLines  = IPS.ipsMeta ipsPatch
+            , headerTally  = Tally (Vector.length records)
+            , headerUnit   = Records
+            , headerBytes  = Nothing
+            , headerRange  = IPS.ipsRecordsRange records
+            }
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
@@ -415,6 +450,14 @@ parseSomePatchFromIPS variant patchContents = do
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch LabelEBP "records" | Vector.null records]
         , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+        , patchHeader         = PatchHeader
+            { headerFormat = FormatHeader LabelEBP Nothing
+            , headerLines  = IPS.ebpMeta ebpPatch
+            , headerTally  = Tally (Vector.length records)
+            , headerUnit   = Records
+            , headerBytes  = Nothing
+            , headerRange  = IPS.ipsRecordsRange records
+            }
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = extractedMeta
@@ -440,6 +483,14 @@ parseSomePatchFromIPS variant patchContents = do
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch label "records" | Vector.null records]
         , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+        , patchHeader         = PatchHeader
+            { headerFormat = FormatHeader label Nothing
+            , headerLines  = IPS.ipsMeta truncatedPatch
+            , headerTally  = Tally (Vector.length records)
+            , headerUnit   = Records
+            , headerBytes  = Nothing
+            , headerRange  = IPS.ipsRecordsRange records
+            }
         , patchSourceNotes    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
@@ -479,6 +530,14 @@ parseSomePatchFromBPS patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelBPS "actions" | Vector.null actions]
     , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelBPS Nothing
+        , headerLines  = BPS.bpsMeta patch
+        , headerTally  = Tally (Vector.length actions)
+        , headerUnit   = Actions
+        , headerBytes  = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = bpsMetaBlob
     , patchExtractedMeta  = noMetadataRequested { requestedEmbeddedBlob = bpsMetaBlob }
@@ -521,6 +580,14 @@ parseSomePatchFromUPS patchContents = do
                             ++ [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
                             ++ UPS.detectOOBBlocks patch
     , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelUPS Nothing
+        , headerLines  = UPS.upsMeta patch
+        , headerTally  = Tally (Vector.length blocks)
+        , headerUnit   = Blocks
+        , headerBytes  = Just (TotalOutputBytes (UPS.upsTargetSize patch))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -548,6 +615,17 @@ parseSomePatchFromVCDIFF patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelVCDIFF "windows" | null windows]
     , patchRecordSummary  = RecordSummary (length windows) "windows"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelVCDIFF (case VCDIFF.vcdiffVersion (VCDIFF.vcdiffHeader patch) of
+                                                     VCDIFF.VCDIFFXDelta3  -> Just " (xdelta3)"
+                                                     VCDIFF.VCDIFFStandard -> Nothing)
+        , headerLines  = VCDIFF.vcdiffMeta patch
+        , headerTally  = Tally (length windows)
+        , headerUnit   = Windows
+        , headerBytes  = Just (TotalOutputBytes (FileSize
+            (sum (map (unFileSize . VCDIFF.vcdiffTargetLength) windows))))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -583,6 +661,14 @@ parseSomePatchFromAPSN64 patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelAPSN64 "records" | Vector.null records]
     , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelAPSN64 Nothing
+        , headerLines  = APSN64.apsN64Meta patch
+        , headerTally  = Tally (Vector.length records)
+        , headerUnit   = Records
+        , headerBytes  = Just (TotalOutputBytes (APSN64.apsN64DestinationSize header))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
@@ -621,6 +707,14 @@ parseSomePatchFromNINJA2 patchContents = do
                              ++ [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
                              ++ platformWarnings
     , patchRecordSummary  = RecordSummary (length (NINJA2.ninja2Records patch)) "records"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelNINJA2 Nothing
+        , headerLines  = NINJA2.ninja2Meta patch
+        , headerTally  = Tally (length (NINJA2.ninja2Records patch))
+        , headerUnit   = Records
+        , headerBytes  = Nothing
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = let decode = NINJA2.decodeNINJA2Field (NINJA2.ninja2PatchEncoding patch)
@@ -670,6 +764,16 @@ parseSomePatchFromNINJA1 patchContents = do
         }
     , patchWarnings       = warnings
     , patchRecordSummary  = RecordSummary (length records) "records"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelNINJA1
+            (Just (" (" ++ NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) ++ ")"))
+        , headerLines  = NINJA1.ninja1Meta patch
+        , headerTally  = Tally (length records)
+        , headerUnit   = Records
+        , headerBytes  = Just (TotalPayloadBytes (Length
+            (sum (map (ByteString.length . NINJA1.ninja1RecordData) records))))
+        , headerRange  = NINJA1.ninja1RecordsRange records
+        }
     , patchSourceNotes    = sourceNotes
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -697,6 +801,14 @@ parseSomePatchFromBSDiff patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelBSDiff "control tuples" | null (BSDiff.bsdiffControls patch)]
     , patchRecordSummary  = RecordSummary (length (BSDiff.bsdiffControls patch)) "control tuples"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelBSDiff Nothing
+        , headerLines  = BSDiff.bsdiffMeta patch
+        , headerTally  = Tally (length (BSDiff.bsdiffControls patch))
+        , headerUnit   = ControlTuples
+        , headerBytes  = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -717,6 +829,14 @@ parseSomePatchFromGDIFF patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelGDIFF "commands" | null (GDIFF.gdiffCommands patch)]
     , patchRecordSummary  = RecordSummary (length (GDIFF.gdiffCommands patch)) "commands"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelGDIFF Nothing
+        , headerLines  = GDIFF.gdiffMeta patch
+        , headerTally  = Tally (length (GDIFF.gdiffCommands patch))
+        , headerUnit   = Commands
+        , headerBytes  = Nothing
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -744,6 +864,15 @@ parseSomePatchFromXDelta1 patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
     , patchRecordSummary  = RecordSummary (length (XDelta1.xdelta1Instructions patch)) "instructions"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelXDelta1
+            (Just (" v" ++ XDelta1.fromXDelta1Version (XDelta1.xdelta1Version patch)))
+        , headerLines  = XDelta1.xdelta1Meta patch
+        , headerTally  = Tally (length (XDelta1.xdelta1Instructions patch))
+        , headerUnit   = Instructions
+        , headerBytes  = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -765,6 +894,16 @@ parseSomePatchFromPMSR patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelPMSR "records" | Vector.null records]
     , patchRecordSummary  = RecordSummary (Vector.length records) "records"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelPMSR Nothing
+        , headerLines  = PMSR.pmsrMeta patch
+        , headerTally  = Tally (Vector.length records)
+        , headerUnit   = Records
+        , headerBytes  = Just (TotalPayloadBytes (Length
+            (Vector.foldl' (\runningTotal record ->
+                              runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records)))
+        , headerRange  = PMSR.pmsrRecordsRange records
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -793,6 +932,15 @@ parseSomePatchFromPCHTXT patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelPCHTXT "entries" | null entries]
     , patchRecordSummary  = RecordSummary (length entries) "entries"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelPCHTXT Nothing
+        , headerLines  = PCHTXT.pchtxtMeta patch
+        , headerTally  = Tally (length entries)
+        , headerUnit   = Entries
+        , headerBytes  = Just (TotalPayloadBytes (Length
+            (sum (map (ByteString.length . PCHTXT.pchtxtData) entries))))
+        , headerRange  = PCHTXT.pchtxtEntriesRange entries
+        }
     , patchSourceNotes    = sourceNotes
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -820,6 +968,14 @@ parseSomePatchFromAPSGBA patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelAPSGBA "blocks" | null records]
     , patchRecordSummary  = RecordSummary (length records) "blocks"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelAPSGBA Nothing
+        , headerLines  = APSGBA.apsGBAMeta patch
+        , headerTally  = Tally (length records)
+        , headerUnit   = Blocks
+        , headerBytes  = Just (TotalOutputBytes (APSGBA.apsGbaTargetSize header))
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
@@ -842,6 +998,14 @@ parseSomePatchFromDPS patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelDPS "records" | null records]
     , patchRecordSummary  = RecordSummary (length records) "records"
+    , patchHeader         = PatchHeader
+        { headerFormat = FormatHeader LabelDPS Nothing
+        , headerLines  = DPS.dpsMeta patch
+        , headerTally  = Tally (length records)
+        , headerUnit   = Records
+        , headerBytes  = Nothing
+        , headerRange  = Nothing
+        }
     , patchSourceNotes    = []
     , patchContents  = Nothing
     , patchMetadata       = Nothing
@@ -859,12 +1023,20 @@ parseSomePatchFromDPS patchContents = do
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
 -- Decompress the envelope and recurse into parseSome on the inner bytes.
+-- The format suffix @"\/Yay0"@ is appended to both display carriers
+-- ('patchExplain' for the analytical path; 'patchHeader' for the cheap
+-- info\/apply path) so the user can see the envelope at a glance.
 parseSomePatchFromYay0 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromYay0 (PatchFileContents input) = case Yay0.decompressYay0 input of
   Left errorMessage   -> Left (Yay0DecompressionFailed errorMessage)
   Right decompressedBytes -> case parseSome (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
-    Right parsed -> Right parsed
-      { patchExplain = (patchExplain parsed)
-          { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
-      }
+    Right parsed ->
+      let innerHeader = headerFormat (patchHeader parsed)
+          wrappedExtra = Just (maybe "/Yay0" (++ "/Yay0") (formatExtra innerHeader))
+      in Right parsed
+        { patchExplain = (patchExplain parsed)
+            { explainFormat = explainFormat (patchExplain parsed) ++ "/Yay0" }
+        , patchHeader = (patchHeader parsed)
+            { headerFormat = innerHeader { formatExtra = wrappedExtra } }
+        }

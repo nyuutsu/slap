@@ -6,7 +6,8 @@ module Slap.NINJA2.Describe
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Format (MetaField(..), padHex)
+import Slap.Display (InfoLine(..))
+import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
@@ -18,7 +19,7 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-ninja2Meta :: NINJA2Patch -> [MetaField]
+ninja2Meta :: NINJA2Patch -> [InfoLine]
 ninja2Meta patch = concat
   [ optionalField "title"       (ninja2Title (ninja2Header patch))
   , optionalField "author"      (ninja2Author (ninja2Header patch))
@@ -34,29 +35,29 @@ ninja2Meta patch = concat
   where
     encoding = ninja2PatchEncoding patch
     optionalField _ Nothing = []
-    optionalField label (Just value) = [MetaField label (decodeNINJA2Field encoding value)]
+    optionalField label (Just value) = [InfoLine label (decodeNINJA2Field encoding value)]
 
     openNewFileFields = case ninja2OpenNewFile patch of
       Nothing -> []
       Just openNewFile ->
         let romTypeField = case openNewFileRomType openNewFile of
               Ninja2Raw -> []
-              romType   -> [MetaField "ROM type" (ninja2RomTypeName romType)]
+              romType   -> [InfoLine "ROM type" (ninja2RomTypeName romType)]
             sizeFields =
-              [ MetaField "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))
-              , MetaField "target size" (show (unFileSize (openNewFileTargetSize openNewFile)))
+              [ InfoLine "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))
+              , InfoLine "target size" (show (unFileSize (openNewFileTargetSize openNewFile)))
               ]
             sourceMD5Field = md5Field "source MD5" (openNewFileSourceMD5 openNewFile)
             targetMD5Field = md5Field "target MD5" (openNewFileTargetMD5 openNewFile)
         in concat [romTypeField, sizeFields, sourceMD5Field, targetMD5Field]
 
     md5Field label (MD5Hash hash) =
-      [MetaField label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+      [InfoLine label (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
 
     overflowField = case (ninja2OverflowType patch, ninja2Overflow patch) of
-      (Just OverflowAppend,   Just payload) -> [MetaField "overflow" ("append " ++ show (ByteString.length payload) ++ " bytes")]
-      (Just OverflowTruncate, Just payload) -> [MetaField "overflow" ("truncate " ++ show (ByteString.length payload) ++ " bytes")]
-      (_, Just payload)                     -> [MetaField "overflow" (show (ByteString.length payload) ++ " bytes")]
+      (Just OverflowAppend,   Just payload) -> [InfoLine "overflow" ("append " ++ show (ByteString.length payload) ++ " bytes")]
+      (Just OverflowTruncate, Just payload) -> [InfoLine "overflow" ("truncate " ++ show (ByteString.length payload) ++ " bytes")]
+      (_, Just payload)                     -> [InfoLine "overflow" (show (ByteString.length payload) ++ " bytes")]
       _                                     -> []
 
 ----------------------------------------------------------------------------

@@ -3,6 +3,7 @@ module Slap.NINJA1.Describe
   , ninja1Meta
   , explainNINJA1
   , makeNINJA1Region
+  , ninja1RecordsRange
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
@@ -12,8 +13,10 @@ import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                       SummaryByteInfo(..), SummaryBytes(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
-import Slap.Format (MetaField(..), padHex, renderField)
-import Slap.Measure (Length(..))
+import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Format (padHex)
+import Slap.Measure (Offset(..), Length(..),
+                     OffsetRange(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 
@@ -21,24 +24,24 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-ninja1Meta :: NINJA1Patch -> [MetaField]
+ninja1Meta :: NINJA1Patch -> [InfoLine]
 ninja1Meta patch = concat
-  [ [MetaField "ROM type" (romTypeName (ninja1RomType patch))]
+  [ [InfoLine "ROM type" (romTypeName (ninja1RomType patch))]
   , case ninja1SourceCRC patch of
       Nothing  -> []
-      Just crc -> [MetaField "source CRC" ("0x" ++ showCRC32 crc)]
+      Just crc -> [InfoLine "source CRC" ("0x" ++ showCRC32 crc)]
   , case ninja1SourceMD5 patch of
       Nothing              -> []
-      Just (MD5Hash hash)  -> [MetaField "source MD5" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+      Just (MD5Hash hash)  -> [InfoLine "source MD5" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
   , case ninja1SourceSHA1 patch of
       Nothing              -> []
-      Just (SHA1Hash hash) -> [MetaField "source SHA1" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+      Just (SHA1Hash hash) -> [InfoLine "source SHA1" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
   ]
 
 ninja1Info :: NINJA1Patch -> String
 ninja1Info patch = unlines $ filter (not . null) $
   [ "format:      NINJA1 (" ++ subFormatString ++ ")" ]
-  ++ map renderField (ninja1Meta patch)
+  ++ map renderInfoLine (ninja1Meta patch)
   ++ [ "records:     " ++ show (length (ninja1Records patch))
      , "total bytes: " ++ show totalBytes
      ]
@@ -71,3 +74,24 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = ExplainRegion
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotAt AtOffset recordOffset []
   }
+
+----------------------------------------------------------------------------
+-- Display range
+----------------------------------------------------------------------------
+
+-- | The 'OffsetRange' spanning a non-empty NINJA1 record stream,
+-- consumed by the cheap display path's 'Slap.Display.PatchHeader'
+-- construction. Returns 'Nothing' on an empty stream so the display
+-- layer suppresses the range line.
+ninja1RecordsRange :: [NINJA1Record] -> Maybe OffsetRange
+ninja1RecordsRange [] = Nothing
+ninja1RecordsRange records =
+  let firstAffectedOffset = minimum (map ninja1RecordOffset records)
+      endOfLastRecord     = maximum (map recordEndOffset records)
+  in Just OffsetRange
+      { rangeStart  = firstAffectedOffset
+      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      }
+  where
+    recordEndOffset record =
+      advance (ninja1RecordOffset record) (byteLength (ninja1RecordData record))

@@ -17,7 +17,8 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (MD5Hash(..))
-import Slap.Format (MetaField(..), hexByteString, renderField)
+import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Format (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
 
 import Slap.TextEncoding (decodeLocaleField)
@@ -28,28 +29,28 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-xdelta1Meta :: XDelta1Patch -> [MetaField]
+xdelta1Meta :: XDelta1Patch -> [InfoLine]
 xdelta1Meta patch =
-  [ MetaField "version" (fromXDelta1Version (xdelta1Version patch)) ]
-  ++ [ MetaField "from" (decodeLocaleField (xdelta1FromName patch))
-     , MetaField "to" (decodeLocaleField (xdelta1ToName patch))
-     , MetaField "target size" (show (unFileSize (xdelta1TargetLength patch)))
-     , MetaField "target MD5" (hexByteString (unMD5Hash (xdelta1ToMD5 patch)))
-     , MetaField "sources" (show (length sources))
+  [ InfoLine "version" (fromXDelta1Version (xdelta1Version patch)) ]
+  ++ [ InfoLine "from" (decodeLocaleField (xdelta1FromName patch))
+     , InfoLine "to" (decodeLocaleField (xdelta1ToName patch))
+     , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
+     , InfoLine "target MD5" (hexByteString (unMD5Hash (xdelta1ToMD5 patch)))
+     , InfoLine "sources" (show (length sources))
      ]
   ++ sourceMD5s
-  ++ [ MetaField "data seg" (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
+  ++ [ InfoLine "data seg" (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
   where
     sources = xdelta1Sources patch
     sourceMD5s
-      | [entry] <- sources = [MetaField "source MD5" (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))]
-      | otherwise       = [MetaField ("source " ++ show index ++ " MD5") (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))
+      | [entry] <- sources = [InfoLine "source MD5" (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))]
+      | otherwise       = [InfoLine ("source " ++ show index ++ " MD5") (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))
                             | (index, entry) <- zip [(1::Int)..] sources]
 
 xdelta1Info :: XDelta1Patch -> String
 xdelta1Info patch = unlines $ filter (not . null) $
   [ "format:      xdelta1 v" ++ fromXDelta1Version (xdelta1Version patch) ]
-  ++ map renderField (xdelta1Meta patch)
+  ++ map renderInfoLine (xdelta1Meta patch)
   ++ [ sourceLines
      , "instructions:" ++ show (length (xdelta1Instructions patch))
      ]

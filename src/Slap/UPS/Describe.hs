@@ -11,19 +11,19 @@ import Slap.Explain
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Format (MetaField(..))
+import Slap.Display (InfoLine(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-upsMeta :: UPSPatch -> [MetaField]
+upsMeta :: UPSPatch -> [InfoLine]
 upsMeta patch =
-  [ MetaField "source size" (show (unFileSize (upsSourceSize patch)))
-  , MetaField "target size" (show (unFileSize (upsTargetSize patch)))
-  , MetaField "source CRC" (showCRC32 (upsSourceCRC patch))
-  , MetaField "target CRC" (showCRC32 (upsTargetCRC patch))
-  , MetaField "patch CRC" (showCRC32 (upsPatchCRC patch))
+  [ InfoLine "source size" (show (unFileSize (upsSourceSize patch)))
+  , InfoLine "target size" (show (unFileSize (upsTargetSize patch)))
+  , InfoLine "source CRC" (showCRC32 (upsSourceCRC patch))
+  , InfoLine "target CRC" (showCRC32 (upsTargetCRC patch))
+  , InfoLine "patch CRC" (showCRC32 (upsPatchCRC patch))
   ]
 
 explainUPS :: UPSPatch -> ExplainData

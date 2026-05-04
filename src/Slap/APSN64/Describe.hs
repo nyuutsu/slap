@@ -8,37 +8,38 @@ import Slap.APSN64.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (MetaField(..), padHex)
+import Slap.Display (InfoLine(..))
+import Slap.Format (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
-apsN64Meta :: APSN64Patch -> [MetaField]
+apsN64Meta :: APSN64Patch -> [InfoLine]
 apsN64Meta (APSN64Patch header _) = concat
-  [ [MetaField "patch type" (patchTypeName (apsN64PatchType header))]
-  , [MetaField "encoding" (show (fromAPSRecordEncoding (apsN64Encoding header)))
+  [ [InfoLine "patch type" (patchTypeName (apsN64PatchType header))]
+  , [InfoLine "encoding" (show (fromAPSRecordEncoding (apsN64Encoding header)))
     | apsN64Encoding header /= APSDefaultRecordEncoding]
   , descriptionField (apsN64Description header)
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)
   , countryField (apsN64Country header)
-  , [MetaField "dest size" (show (unFileSize (apsN64DestinationSize header)))]
+  , [InfoLine "dest size" (show (unFileSize (apsN64DestinationSize header)))]
   ]
   where
     descriptionField description
       | ByteString.all (\byte -> byte == 0x20 || byte == 0) description = []
-      | otherwise = [MetaField "description" (show (ByteString.takeWhile (/= 0) description))]
+      | otherwise = [InfoLine "description" (show (ByteString.takeWhile (/= 0) description))]
     patchTypeName APSSimple      = "simple"
     patchTypeName APSN64Specific = "N64-specific"
     formatField Nothing                       = []
-    formatField (Just V64Format)              = [MetaField "image" "V64 (byteswapped)"]
-    formatField (Just Z64Format)              = [MetaField "image" "Z64 (big-endian)"]
-    formatField (Just (UnknownImageFormat format)) = [MetaField "image" ("unknown (" ++ show format ++ ")")]
+    formatField (Just V64Format)              = [InfoLine "image" "V64 (byteswapped)"]
+    formatField (Just Z64Format)              = [InfoLine "image" "Z64 (big-endian)"]
+    formatField (Just (UnknownImageFormat format)) = [InfoLine "image" ("unknown (" ++ show format ++ ")")]
     cartField Nothing                   = []
-    cartField (Just (N64CartId cartId)) = [MetaField "cart ID" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack cartId))]
+    cartField (Just (N64CartId cartId)) = [InfoLine "cart ID" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack cartId))]
     countryField Nothing        = []
-    countryField (Just country) = [MetaField "country" (renderAPSN64Country country)]
+    countryField (Just country) = [InfoLine "country" (renderAPSN64Country country)]
     renderAPSN64Country APSN64CountryBeta            = "Beta"
     renderAPSN64Country APSN64CountryAsian           = "Asian (NTSC)"
     renderAPSN64Country APSN64CountryBrazil          = "Brazil"

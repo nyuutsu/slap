@@ -15,7 +15,7 @@ import Slap.Explain
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Format (MetaField(..), renderField)
+import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Measure (Offset(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
@@ -23,18 +23,18 @@ import Data.List (mapAccumL)
 -- Info
 ----------------------------------------------------------------------------
 
-bsdiffMeta :: BSDiffPatch -> [MetaField]
+bsdiffMeta :: BSDiffPatch -> [InfoLine]
 bsdiffMeta patch =
-  [ MetaField "new size" (show (unFileSize (bsdiffTargetSize patch)))
-  , MetaField "ctrl block" (show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
-  , MetaField "diff block" (show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
-  , MetaField "extra block" (show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
+  [ InfoLine "new size" (show (unFileSize (bsdiffTargetSize patch)))
+  , InfoLine "ctrl block" (show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
+  , InfoLine "diff block" (show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
+  , InfoLine "extra block" (show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
   ]
 
 bsdiffInfo :: BSDiffPatch -> String
 bsdiffInfo patch = unlines $ filter (not . null) $
   [ "format:      BSDiff / BDF (BSDIFF40)" ]
-  ++ map renderField (bsdiffMeta patch)
+  ++ map renderInfoLine (bsdiffMeta patch)
   ++ [ controlString ]
   where
     controlString

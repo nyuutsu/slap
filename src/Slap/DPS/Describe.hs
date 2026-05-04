@@ -12,7 +12,7 @@ import Slap.Explain
     , SummaryInfo(..), SummaryByteInfo(..), SummaryBytes(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Format (MetaField(..), renderField)
+import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Measure (Length(..), FileSize(..))
 
 import Slap.TextEncoding (decodeLocaleField)
@@ -23,22 +23,22 @@ import qualified Data.ByteString as ByteString
 -- Info
 ----------------------------------------------------------------------------
 
-dpsMeta :: DPSPatch -> [MetaField]
+dpsMeta :: DPSPatch -> [InfoLine]
 dpsMeta patch = concat
   [ fieldPair "name"    (dpsName patch)
   , fieldPair "author"  (dpsAuthor patch)
   , fieldPair "version" (dpsVersion patch)
-  , [MetaField "orig size" (show (unFileSize (dpsOriginalSize patch)))]
-  , [MetaField "flag" "unstable" | dpsStability patch == DPSUnstable]
+  , [InfoLine "orig size" (show (unFileSize (dpsOriginalSize patch)))]
+  , [InfoLine "flag" "unstable" | dpsStability patch == DPSUnstable]
   ]
   where
     fieldPair _ value | ByteString.null value = []
-    fieldPair label value = [MetaField label (decodeLocaleField value)]
+    fieldPair label value = [InfoLine label (decodeLocaleField value)]
 
 dpsInfo :: DPSPatch -> String
 dpsInfo patch = unlines $ filter (not . null) $
   [ "format:      DPS" ]
-  ++ map renderField (dpsMeta patch)
+  ++ map renderInfoLine (dpsMeta patch)
   ++ [ "records:     " ++ show (length (dpsRecords patch))
      , "  copy:      " ++ show copyCount
      , "  enclosed:  " ++ show enclosedCount

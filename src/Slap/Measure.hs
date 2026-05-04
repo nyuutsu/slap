@@ -39,6 +39,9 @@ module Slap.Measure
   , Hunk(..)
   , UndoHunk(..)
   , EncodedHunk(..)
+  , OffsetRange(..)
+  , rangeEndExclusive
+  , rangeLastByte
     -- * Conversions
   , offsetToInt
   , fileSizeToInt
@@ -279,6 +282,33 @@ data EncodedHunk = EncodedHunk
   { encodedOffset  :: !Offset
   , encodedPayload :: !ByteString
   } deriving (Eq, Show)
+
+-- | A contiguous span of bytes in a target file: a starting 'Offset'
+-- and a 'Length'. Used by the display layer to surface where a patch
+-- operates ("the patch touches bytes 0x000100 through 0x00FFFF") and
+-- by the explain summary as the range over which records cluster.
+--
+-- Held as start-plus-length rather than start-plus-end so the span's
+-- length is a typed 'Length' (cannot be transposed with an offset)
+-- and so an empty range is impossible to construct accidentally — an
+-- absent range is 'Nothing', not a degenerate @start == end@. The
+-- end offset is recovered via 'rangeEndExclusive' when needed.
+data OffsetRange = OffsetRange
+  { rangeStart  :: !Offset
+  , rangeLength :: !Length
+  } deriving (Eq, Show)
+
+-- | The exclusive end of an 'OffsetRange': @start + length@. Suitable
+-- for half-open intervals (read-bound checks, end-pointer arithmetic).
+rangeEndExclusive :: OffsetRange -> Offset
+rangeEndExclusive range = advance (rangeStart range) (rangeLength range)
+
+-- | The last byte 'Offset' inside an 'OffsetRange', i.e.
+-- @rangeEndExclusive - 1@. Suitable for inclusive display
+-- (\"0x000100 \\u2013 0x00FFFF\"). Undefined for an empty range; the
+-- only call sites construct ranges from non-empty record streams.
+rangeLastByte :: OffsetRange -> Offset
+rangeLastByte range = Offset (unOffset (rangeEndExclusive range) - 1)
 
 ----------------------------------------------------------------------------
 -- Instances

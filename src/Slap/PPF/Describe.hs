@@ -1,11 +1,15 @@
-module Slap.PPF.Describe (ppfInfo, ppfMeta, explainPPF) where
+module Slap.PPF.Describe
+  ( ppfInfo, ppfMeta, explainPPF
+  , ppfRecordsRange
+  ) where
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..),
                         PPFVersion(..), PPFValidation(..),
                         ValidationBlockBytes(..), PPFFileId(..),
                         validationOffset)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
-import Slap.Format (MetaField(..), renderField)
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     OffsetRange(..), advance, byteLength)
+import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Explain
   ( ExplainData(..)
   , ExplainSection(SectionRegions)
@@ -28,18 +32,18 @@ import Data.Word (Word64)
 import Numeric (showHex)
 
 -- | All key-value metadata carried by a PPF patch header.
-ppfMeta :: PPFPatch -> [MetaField]
+ppfMeta :: PPFPatch -> [InfoLine]
 ppfMeta patch = concat
   [ let description = decodeLocaleField (stripTrailing (ppfDescription patch))
-    in [MetaField "description" description | not (null description)]
+    in [InfoLine "description" description | not (null description)]
   , case ppfFileSize patch of
       Nothing   -> []
-      Just size -> [MetaField "file size" (show (unFileSize size) ++ " bytes (validation)")]
-  , [MetaField "validation" (validationString (ppfValidation patch))]
-  , [MetaField "undo data" (if ppfHasUndo patch then "yes" else "no")]
+      Just size -> [InfoLine "file size" (show (unFileSize size) ++ " bytes (validation)")]
+  , [InfoLine "validation" (validationString (ppfValidation patch))]
+  , [InfoLine "undo data" (if ppfHasUndo patch then "yes" else "no")]
   , case ppfFileId patch of
       Nothing             -> []
-      Just (PPFFileId content) -> [MetaField "file_id.diz" (show (ByteString.length content) ++ " bytes")]
+      Just (PPFFileId content) -> [InfoLine "file_id.diz" (show (ByteString.length content) ++ " bytes")]
   ]
   where
     validationString Nothing = "none"
@@ -52,7 +56,7 @@ ppfMeta patch = concat
 ppfInfo :: PPFPatch -> String
 ppfInfo patch = unlines $ filter (not . null) $
   [ "format:      PPF" ++ versionString (ppfVersion patch) ]
-  ++ map renderField (ppfMeta patch)
+  ++ map renderInfoLine (ppfMeta patch)
   ++ [ "records:     " ++ show (length (ppfRecords patch))
      , bytesInfo (ppfRecords patch)
      , rangeInfo (ppfRecords patch)
@@ -118,3 +122,24 @@ makePPFRegion record = ExplainRegion
     undoDetail = case recordUndo record of
       Nothing -> []
       Just _  -> [DetailUndo]
+
+----------------------------------------------------------------------------
+-- Display range
+----------------------------------------------------------------------------
+
+-- | The 'OffsetRange' spanning a non-empty PPF record stream,
+-- consumed by the cheap display path's 'Slap.Display.PatchHeader'
+-- construction. Returns 'Nothing' on an empty stream so the display
+-- layer suppresses the range line.
+ppfRecordsRange :: [PPFRecord] -> Maybe OffsetRange
+ppfRecordsRange [] = Nothing
+ppfRecordsRange records =
+  let firstAffectedOffset = minimum (map recordOffset records)
+      endOfLastRecord     = maximum (map recordEndOffset records)
+  in Just OffsetRange
+      { rangeStart  = firstAffectedOffset
+      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      }
+  where
+    recordEndOffset record =
+      advance (recordOffset record) (byteLength (recordData record))

@@ -1,8 +1,12 @@
-module Slap.PPF4.Describe (ppf4Info, ppf4Meta, explainPPF4) where
+module Slap.PPF4.Describe
+  ( ppf4Info, ppf4Meta, explainPPF4
+  , ppf4ReplacesRange
+  ) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
-import Slap.Measure (Offset(..), advance, byteLength)
-import Slap.Format (MetaField(..), renderField)
+import Slap.Measure (Offset(..), Length(..),
+                     OffsetRange(..), advance, byteLength)
+import Slap.Display (InfoLine(..), renderInfoLine)
 import Slap.Explain
   ( ExplainData(..)
   , ExplainSection(SectionRegions)
@@ -24,16 +28,16 @@ import qualified Data.ByteString.Char8 as ByteStringChar
 -- | All key-value metadata carried by a PPF4 patch header. PPF4 has
 -- only a description field; no validation block, no file size, no
 -- undo, no image type, no File_ID.diz.
-ppf4Meta :: PPF4Patch -> [MetaField]
+ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
   let description = decodeLocaleField (stripTrailing (ppf4Description patch))
-  in [MetaField "description" description | not (null description)]
+  in [InfoLine "description" description | not (null description)]
 
 -- | Format a human-readable summary of a parsed PPF4 patch.
 ppf4Info :: PPF4Patch -> String
 ppf4Info patch = unlines $ filter (not . null) $
   [ "format:      PPF4 (Pyriel internal format)" ]
-  ++ map renderField (ppf4Meta patch)
+  ++ map renderInfoLine (ppf4Meta patch)
   ++ [ "records:     " ++ show (length (ppf4Replaces patch) + length (ppf4Appends patch))
      , "total bytes: " ++ show (totalPayloadBytes patch)
      ]
@@ -93,3 +97,27 @@ appendRegion displayOffset (PPF4Append payloadBytes) = ExplainRegion
   , regionPayload    = PayloadWrite payloadBytes
   , regionAnnotation = AnnotAt AtOffset displayOffset []
   }
+
+----------------------------------------------------------------------------
+-- Display range
+----------------------------------------------------------------------------
+
+-- | The 'OffsetRange' spanning a non-empty list of PPF4 'Replace'
+-- records, consumed by the cheap display path's
+-- 'Slap.Display.PatchHeader' construction. Append records are
+-- excluded — they have no addressable offset (PPF4 places appended
+-- bytes at the end of the file, with no per-record offset on the
+-- wire). Returns 'Nothing' on an empty list so the display layer
+-- suppresses the range line.
+ppf4ReplacesRange :: [PPF4Replace] -> Maybe OffsetRange
+ppf4ReplacesRange [] = Nothing
+ppf4ReplacesRange replaces =
+  let firstAffectedOffset = minimum (map replaceOffset replaces)
+      endOfLastRecord     = maximum (map replaceEndOffset replaces)
+  in Just OffsetRange
+      { rangeStart  = firstAffectedOffset
+      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      }
+  where
+    replaceEndOffset replace =
+      advance (replaceOffset replace) (byteLength (replaceData replace))

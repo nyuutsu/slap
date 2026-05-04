@@ -31,6 +31,8 @@ module Slap.IPS.Describe
   , explainEBP
     -- * Region builder
   , makeIPSRegion
+    -- * Display range
+  , ipsRecordsRange
   ) where
 
 import Slap.IPS.Types
@@ -58,9 +60,12 @@ import Slap.Explain
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Format (MetaField(..), padHex,
-                    renderPrintableASCIIOrHex, renderUTF8OrByteCount)
-import Slap.Measure (Offset(..), Length(..), FileSize(..))
+import Slap.Display (InfoLine(..))
+import Slap.Format (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     OffsetRange(..), advance)
+
+import Data.Vector (Vector)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -75,10 +80,10 @@ import qualified Data.Vector as Vector
 -- hardcodes @"PATCH"@ / @"IPS32"@ / @"EOF"@ / @"EEOF"@ strings or
 -- the 24/32-bit offset widths. The truncation line is emitted
 -- only when the parser observed a post-EOF truncation marker.
-ipsMeta :: IPSPatch -> [MetaField]
+ipsMeta :: IPSPatch -> [InfoLine]
 ipsMeta patch =
-  ipsVariantMetaFields (ipsVariant patch)
-  ++ truncationMetaField (ipsTruncatedTargetSize patch)
+  ipsVariantInfoLines (ipsVariant patch)
+  ++ truncationInfoLine (ipsTruncatedTargetSize patch)
 
 -- | The per-variant wire-fact meta fields that both 'ipsMeta' and
 -- 'ebpMeta' emit. Pulled from 'variantSpec' to keep Describe from
@@ -86,23 +91,23 @@ ipsMeta patch =
 -- Shared between the plain and EBP paths because EBP wraps a
 -- 'StandardIPS' record stream and the underlying wire facts are
 -- worth surfacing regardless of wrapper.
-ipsVariantMetaFields :: IPSVariant -> [MetaField]
-ipsVariantMetaFields variant =
+ipsVariantInfoLines :: IPSVariant -> [InfoLine]
+ipsVariantInfoLines variant =
   let spec = variantSpec variant
-  in [ MetaField "magic"      (renderMarkerBytes (ipsVariantMagic spec))
-     , MetaField "offset"     (renderOffsetWidth (ipsVariantOffsetWidth spec))
-     , MetaField "EOF marker" (renderMarkerBytes (ipsVariantEOFMarker spec))
-     , MetaField "max offset" (renderMaxOffset    (ipsVariantMaxAddressableOffset spec))
+  in [ InfoLine "magic"      (renderMarkerBytes (ipsVariantMagic spec))
+     , InfoLine "offset"     (renderOffsetWidth (ipsVariantOffsetWidth spec))
+     , InfoLine "EOF marker" (renderMarkerBytes (ipsVariantEOFMarker spec))
+     , InfoLine "max offset" (renderMaxOffset    (ipsVariantMaxAddressableOffset spec))
      ]
 
 -- | The optional truncation field. @Just n@ renders as a single
 -- @"truncate"@ line stating the post-apply target size; 'Nothing'
 -- emits no line at all (no @"no truncation"@ noise).
-truncationMetaField :: Maybe FileSize -> [MetaField]
-truncationMetaField Nothing =
+truncationInfoLine :: Maybe FileSize -> [InfoLine]
+truncationInfoLine Nothing =
   []
-truncationMetaField (Just truncatedTargetSize) =
-  [MetaField "truncate" (show (unFileSize truncatedTargetSize) ++ " bytes")]
+truncationInfoLine (Just truncatedTargetSize) =
+  [InfoLine "truncate" (show (unFileSize truncatedTargetSize) ++ " bytes")]
 
 ----------------------------------------------------------------------------
 -- ebpMeta — EBP-wrapped IPSPatch
@@ -115,10 +120,10 @@ truncationMetaField (Just truncatedTargetSize) =
 -- raw bytes decoded as ASCII (when every previewed byte is
 -- printable) or a hex dump (when any byte is not). The JSON is
 -- never parsed past that.
-ebpMeta :: EBPPatch -> [MetaField]
+ebpMeta :: EBPPatch -> [InfoLine]
 ebpMeta patch =
   ipsMeta (ebpBasePatch patch)
-  ++ [ MetaField "metadata"
+  ++ [ InfoLine "metadata"
          (renderEBPMetadata (unEBPMetadata (ebpMetadata patch))) ]
 
 ----------------------------------------------------------------------------
@@ -210,7 +215,7 @@ ipsVariantDisplayName StandardIPS = "IPS"
 ipsVariantDisplayName IPS32       = "IPS32"
 
 -- | Human-readable rendering of an 'OffsetWidth'. Used by
--- 'ipsVariantMetaFields' so the reader sees @"24-bit"@ rather than
+-- 'ipsVariantInfoLines' so the reader sees @"24-bit"@ rather than
 -- a bare @3@ byte count. The 3 / 4 byte-count mapping still lives
 -- only in 'Slap.IPS.Types.offsetWidthByteCount'; this helper is a
 -- parallel display mapping that never touches the byte count.
@@ -227,11 +232,35 @@ renderMaxOffset :: Offset -> String
 renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
 
 ----------------------------------------------------------------------------
+-- Display range
+----------------------------------------------------------------------------
+
+-- | The 'OffsetRange' spanning a non-empty IPS record stream. Used by
+-- the cheap display path's 'Slap.Display.PatchHeader' construction
+-- on plain IPS, IPS32, and EBP — all three carry the same record
+-- shape, so a single helper covers them. Returns 'Nothing' on an
+-- empty stream so the display layer suppresses the range line
+-- rather than printing a degenerate @0x0 - 0x0@.
+ipsRecordsRange :: Vector IPSRecord -> Maybe OffsetRange
+ipsRecordsRange records
+  | Vector.null records = Nothing
+  | otherwise =
+      let firstAffectedOffset = Vector.minimum (Vector.map ipsRecordOffset records)
+          endOfLastRecord     = Vector.maximum (Vector.map recordEndOffset records)
+      in Just OffsetRange
+          { rangeStart  = firstAffectedOffset
+          , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+          }
+  where
+    recordEndOffset record =
+      advance (ipsRecordOffset record) (recordPayloadLength record)
+
+----------------------------------------------------------------------------
 -- Shape-recognised byte display
 ----------------------------------------------------------------------------
 
 -- | Render a raw marker byte sequence (the variant's magic or EOF
--- marker, as it appears on the wire) for inclusion in a 'MetaField'.
+-- marker, as it appears on the wire) for inclusion in an 'InfoLine'.
 -- Returns the bytes decoded as ASCII when every byte is in the
 -- printable ASCII range — the common case for every variant slap
 -- supports, since @"PATCH"@, @"IPS32"@, @"EOF"@, and @"EEOF"@ are

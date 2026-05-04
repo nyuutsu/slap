@@ -16,9 +16,11 @@ module Slap.Explain
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Format (MetaField(..), padHex, padNum, padRight, showSigned, hexDump, renderField,
+import Slap.Display (InfoLine(..), renderInfoLine)
+import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
                     spacePaddedEnDash)
-import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset), advance)
+import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
+                     OffsetRange(..), rangeLastByte, advance)
 import Slap.Error (CursorKind, renderCursorKind)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
@@ -35,7 +37,7 @@ import Data.Word (Word8)
 
 data ExplainData = ExplainData
   { explainFormat   :: String              -- "PPF3", "IPS (EBP)", "BPS", etc.
-  , explainHeader   :: [MetaField]         -- key-value metadata
+  , explainHeader   :: [InfoLine]          -- key-value metadata
   , explainSections :: [ExplainSection]    -- grouped content
   , explainSummary  :: ExplainSummary      -- structured summary
   , explainNotes    :: [String]            -- trailing messages
@@ -44,7 +46,7 @@ data ExplainData = ExplainData
 data ExplainSection
   = SectionRegions [ExplainRegion]              -- flat numbered list
   | SectionBlock String [ExplainRegion]         -- labeled block + entries (PCHTXT)
-  | SectionLabeled String [MetaField]            -- labeled block + kv pairs (VCDIFF)
+  | SectionLabeled String [InfoLine]            -- labeled block + kv pairs (VCDIFF)
   | SectionText String                          -- free text line
 
 data ExplainRegion = ExplainRegion
@@ -60,7 +62,7 @@ data ExplainPayload
   | PayloadFill !Word8 !Length         -- fill byte + repeat count
   | PayloadCopy CopySource             -- copy operation
   | PayloadXOR (Maybe ByteString)      -- XOR delta
-  | PayloadMeta ![MetaField]           -- key-value details (BSDiff ctrl)
+  | PayloadMeta ![InfoLine]            -- key-value details (BSDiff ctrl)
 
 data CopySource = FromSource | FromTarget | FromPatch
   deriving (Eq, Show)
@@ -108,13 +110,6 @@ data AnnotDetail
   | DetailCursorUnderflow CursorKind SignedOffset
                                 -- "*** <kind> cursor underflow: -N (patch invalid here) ***"
 
--- | Byte offset range for a non-empty set of regions.
--- 'rangeStart' is the first modified byte; 'rangeEnd' is one past the last.
-data OffsetRange = OffsetRange
-  { rangeStart :: !Offset
-  , rangeEnd   :: !Offset
-  }
-
 -- | Per-payload-type record counts, accumulated across regions.
 data PayloadCounts = PayloadCounts
   { writeCount :: !Int
@@ -131,7 +126,7 @@ data PayloadCounts = PayloadCounts
 renderExplain :: Maybe ByteString -> ExplainData -> String
 renderExplain mSource explainData = unlines $
   [ "format:      " ++ explainFormat explainData ]
-  ++ map renderField (explainHeader explainData)
+  ++ map renderInfoLine (explainHeader explainData)
   ++ [""]
   ++ concatMap renderSection (explainSections explainData)
   ++ notesLines
@@ -150,7 +145,7 @@ renderExplain mSource explainData = unlines $
 
     renderSection (SectionText text) = [text]
 
-    renderLabeledField (MetaField key value) =
+    renderLabeledField (InfoLine key value) =
       "  " ++ key ++ ":" ++ replicate (max 1 (18 - length key - 3)) ' ' ++ value
 
     renderBlockEntry region =
@@ -329,15 +324,18 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     offsetRange :: Maybe OffsetRange
     offsetRange
       | null allRegions = Nothing
-      | otherwise = Just OffsetRange
-          { rangeStart = minimum (map regionOffset allRegions)
-          , rangeEnd   = maximum [ advance (regionOffset region) (regionSize region)
-                                 | region <- allRegions ]
-          }
+      | otherwise =
+          let firstAffectedOffset = minimum (map regionOffset allRegions)
+              endOfLastRecord     = maximum [ advance (regionOffset region) (regionSize region)
+                                            | region <- allRegions ]
+          in Just OffsetRange
+              { rangeStart  = firstAffectedOffset
+              , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+              }
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
       Just range -> ["range:       0x" ++ padHex 6 (unOffset (rangeStart range))
-                     ++ spacePaddedEnDash ++ "0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)]
+                     ++ spacePaddedEnDash ++ "0x" ++ padHex 6 (unOffset (rangeLastByte range))]
 
     -- Size change from header
     sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
@@ -346,7 +344,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       (Just sourceString, _, Just targetString) -> makeSizeLine sourceString targetString
       _ -> []
 
-    lookupHeader key = metaFieldValue <$> find (\field -> metaFieldLabel field == key) (explainHeader explainData)
+    lookupHeader key = infoLineValue <$> find (\field -> infoLineLabel field == key) (explainHeader explainData)
 
     makeSizeLine sourceString targetString =
       case (parseSize sourceString, parseSize targetString) of
@@ -370,7 +368,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
     bucketCount = 56 :: Int  -- terminal sparkline width
 
     bucketWidth :: OffsetRange -> Int
-    bucketWidth range = max 1 (max 1 (unOffset (rangeEnd range) - unOffset (rangeStart range)) `div` bucketCount)
+    bucketWidth range = max 1 (max 1 (unLength (rangeLength range)) `div` bucketCount)
 
     toBucket :: OffsetRange -> ExplainRegion -> [(Int, Int)]
     toBucket range region =
@@ -458,7 +456,7 @@ renderSummary mSource explainData = unlines $ filter (not . null) $
       Just range ->
           let chars = map (\entry -> if entry > 0 then '#' else '.') bucketSums
               leftLabel = "0x" ++ padHex 6 (unOffset (rangeStart range))
-              rightLabel = "0x" ++ padHex 6 (unOffset (rangeEnd range) - 1)
+              rightLabel = "0x" ++ padHex 6 (unOffset (rangeLastByte range))
               barLine = "[" ++ chars ++ "]"
               -- right-align rightLabel to closing bracket
               gap = max 1 (length barLine - length leftLabel - length rightLabel)

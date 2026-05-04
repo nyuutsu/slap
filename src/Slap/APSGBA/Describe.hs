@@ -8,13 +8,13 @@ import Slap.APSGBA.Types
 import Slap.Explain (ExplainData(..), ExplainSection(..), ExplainRegion(..),
                      ExplainPayload(..), ExplainSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Format (MetaField(..))
+import Slap.Display (InfoLine(..))
 import Slap.Measure (Length(..), FileSize(..))
 
-apsGBAMeta :: APSGBAPatch -> [MetaField]
+apsGBAMeta :: APSGBAPatch -> [InfoLine]
 apsGBAMeta (APSGBAPatch header _) =
-  [ MetaField "source size" (show (unFileSize (apsGbaSourceSize header)))
-  , MetaField "target size" (show (unFileSize (apsGbaTargetSize header)))
+  [ InfoLine "source size" (show (unFileSize (apsGbaSourceSize header)))
+  , InfoLine "target size" (show (unFileSize (apsGbaTargetSize header)))
   ]
 
 explainAPSGBA :: APSGBAPatch -> ExplainData
