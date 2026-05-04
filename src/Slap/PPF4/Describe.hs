@@ -1,12 +1,12 @@
 module Slap.PPF4.Describe
-  ( ppf4Info, ppf4Meta, analyzePPF4
+  ( ppf4Meta, analyzePPF4
   , ppf4ReplacesRange
   ) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Explain
   ( PatchAnalysis(..)
@@ -31,15 +31,6 @@ ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
   let description = decodeLocaleField (stripTrailing (ppf4Description patch))
   in [InfoLine "description" description | not (null description)]
-
--- | Format a human-readable summary of a parsed PPF4 patch.
-ppf4Info :: PPF4Patch -> String
-ppf4Info patch = unlines $ filter (not . null) $
-  [ "format:      PPF4 (Pyriel internal format)" ]
-  ++ map renderInfoLine (ppf4Meta patch)
-  ++ [ "records:     " ++ show (length (ppf4Replaces patch) + length (ppf4Appends patch))
-     , "total bytes: " ++ show (totalPayloadBytes patch)
-     ]
 
 totalPayloadBytes :: PPF4Patch -> Int
 totalPayloadBytes patch =

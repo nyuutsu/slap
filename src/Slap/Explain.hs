@@ -136,8 +136,8 @@ renderExplain header analysis mSource = unlines $ joinSections
   , summaryLines (analysisSummary analysis)
   ]
   where
-    summaryLines SummaryNone   = []
-    summaryLines summary       = [renderSummaryLine summary]
+    summaryLines SummaryNone     = []
+    summaryLines (Summary info)  = [renderSummaryLine info]
 
     renderSection (SectionRegions regions) =
       zipWith renderRegion [1..] regions
@@ -195,9 +195,8 @@ renderExplain header analysis mSource = unlines $ joinSections
 joinSections :: [[String]] -> [String]
 joinSections = intercalate [""] . filter (not . null)
 
-renderSummaryLine :: AnalysisSummary -> String
-renderSummaryLine SummaryNone = ""
-renderSummaryLine (Summary info) =
+renderSummaryLine :: SummaryInfo -> String
+renderSummaryLine info =
   show (unTally (summaryTally info)) ++ " " ++ renderCountUnit (summaryTally info) (summaryUnit info)
   ++ case summaryBytes info of
        Nothing        -> ""

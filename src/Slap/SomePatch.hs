@@ -1,7 +1,6 @@
 module Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
-  , RecordSummary(..)
   , ApplyStrategy(..)
   , UndoStrategy(..)
   , Verification(..)
@@ -196,12 +195,6 @@ noVerification = Verification
 newtype UndoStrategy = UndoStrategy
   { runUndo :: TargetFileContents -> Either SlapError (Outcome SourceFileContents) }
 
--- | Record count and unit label for display.
-data RecordSummary = RecordSummary
-  { recordCount :: !Int
-  , recordUnit  :: !String       -- "records", "actions", "commands", etc.
-  } deriving (Show)
-
 -- | How the patch's records relate to the target file.
 --
 -- 'Direct' patches carry replacement bytes that get written into the
@@ -232,7 +225,6 @@ data SomePatch = SomePatch
   , patchUndo           :: Maybe UndoStrategy
   , patchVerification   :: Verification
   , patchWarnings       :: [SlapWarning]
-  , patchRecordSummary  :: RecordSummary
   , patchHeader         :: PatchHeader
     -- ^ Cheap display carrier consumed by @slap info@ and @slap apply@.
     -- Populated at parse time without per-record analytical work.
@@ -304,7 +296,6 @@ parseSomePatchFromPPF (Parsed patch parseWarnings) =
       , patchVerification   = ppfVerification
       , patchWarnings       = parseWarnings
                               ++ [EmptyPatch (PPF.ppfVersionLabel (PPF.ppfVersion patch)) "records" | null records]
-      , patchRecordSummary  = RecordSummary (length records) "records"
       , patchHeader         = PatchHeader
           { headerFormat = FormatHeader (PPF.ppfVersionLabel (PPF.ppfVersion patch)) Nothing
           , headerLines  = PPF.ppfMeta patch
@@ -370,7 +361,6 @@ parseSomePatchFromPPF4 patchContents = do
       , patchVerification   = noVerification
       , patchWarnings       = parseWarnings
                               ++ [EmptyPatch LabelPPF4 "records" | totalRecords == 0]
-      , patchRecordSummary  = RecordSummary totalRecords "records"
       , patchHeader         = PatchHeader
           { headerFormat = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
           , headerLines  = PPF4.ppf4Meta patch
@@ -419,7 +409,6 @@ parseSomePatchFromIPS variant patchContents = do
         , patchVerification   = noVerification
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch label "records" | Vector.null records]
-        , patchRecordSummary  = RecordSummary (Vector.length records) "records"
         , patchHeader         = PatchHeader
             { headerFormat = FormatHeader label Nothing
             , headerLines  = IPS.ipsMeta ipsPatch
@@ -456,7 +445,6 @@ parseSomePatchFromIPS variant patchContents = do
         , patchVerification   = noVerification
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch LabelEBP "records" | Vector.null records]
-        , patchRecordSummary  = RecordSummary (Vector.length records) "records"
         , patchHeader         = PatchHeader
             { headerFormat = FormatHeader LabelEBP Nothing
             , headerLines  = IPS.ebpMeta ebpPatch
@@ -489,7 +477,6 @@ parseSomePatchFromIPS variant patchContents = do
         , patchVerification   = noVerification
         , patchWarnings       = parseWarnings
                                 ++ [EmptyPatch label "records" | Vector.null records]
-        , patchRecordSummary  = RecordSummary (Vector.length records) "records"
         , patchHeader         = PatchHeader
             { headerFormat = FormatHeader label Nothing
             , headerLines  = IPS.ipsMeta truncatedPatch
@@ -536,7 +523,6 @@ parseSomePatchFromBPS patchContents = do
         }
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelBPS "actions" | Vector.null actions]
-    , patchRecordSummary  = RecordSummary (Vector.length actions) "actions"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelBPS Nothing
         , headerLines  = BPS.bpsMeta patch
@@ -586,7 +572,6 @@ parseSomePatchFromUPS patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
                             ++ UPS.detectOOBBlocks patch
-    , patchRecordSummary  = RecordSummary (Vector.length blocks) "blocks"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelUPS Nothing
         , headerLines  = UPS.upsMeta patch
@@ -621,7 +606,6 @@ parseSomePatchFromVCDIFF patchContents = do
     , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelVCDIFF "windows" | null windows]
-    , patchRecordSummary  = RecordSummary (length windows) "windows"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelVCDIFF (case VCDIFF.vcdiffVersion (VCDIFF.vcdiffHeader patch) of
                                                      VCDIFF.VCDIFFXDelta3  -> Just " (xdelta3)"
@@ -667,7 +651,6 @@ parseSomePatchFromAPSN64 patchContents = do
           }
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelAPSN64 "records" | Vector.null records]
-    , patchRecordSummary  = RecordSummary (Vector.length records) "records"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelAPSN64 Nothing
         , headerLines  = APSN64.apsN64Meta patch
@@ -713,7 +696,6 @@ parseSomePatchFromNINJA2 patchContents = do
     , patchWarnings       = parseWarnings
                              ++ [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
                              ++ platformWarnings
-    , patchRecordSummary  = RecordSummary (length (NINJA2.ninja2Records patch)) "records"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelNINJA2 Nothing
         , headerLines  = NINJA2.ninja2Meta patch
@@ -770,7 +752,6 @@ parseSomePatchFromNINJA1 patchContents = do
         , verifySourcePreHash = NINJA1.ninja1HashInput
         }
     , patchWarnings       = warnings
-    , patchRecordSummary  = RecordSummary (length records) "records"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelNINJA1
             (Just (" (" ++ NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) ++ ")"))
@@ -807,7 +788,6 @@ parseSomePatchFromBSDiff patchContents = do
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelBSDiff "control tuples" | null (BSDiff.bsdiffControls patch)]
-    , patchRecordSummary  = RecordSummary (length (BSDiff.bsdiffControls patch)) "control tuples"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelBSDiff Nothing
         , headerLines  = BSDiff.bsdiffMeta patch
@@ -835,7 +815,6 @@ parseSomePatchFromGDIFF patchContents = do
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelGDIFF "commands" | null (GDIFF.gdiffCommands patch)]
-    , patchRecordSummary  = RecordSummary (length (GDIFF.gdiffCommands patch)) "commands"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelGDIFF Nothing
         , headerLines  = GDIFF.gdiffMeta patch
@@ -870,7 +849,6 @@ parseSomePatchFromXDelta1 patchContents = do
     , patchVerification   = xdeltaVerification
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
-    , patchRecordSummary  = RecordSummary (length (XDelta1.xdelta1Instructions patch)) "instructions"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelXDelta1
             (Just (" v" ++ XDelta1.fromXDelta1Version (XDelta1.xdelta1Version patch)))
@@ -900,7 +878,6 @@ parseSomePatchFromPMSR patchContents = do
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelPMSR "records" | Vector.null records]
-    , patchRecordSummary  = RecordSummary (Vector.length records) "records"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelPMSR Nothing
         , headerLines  = PMSR.pmsrMeta patch
@@ -938,7 +915,6 @@ parseSomePatchFromPCHTXT patchContents = do
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelPCHTXT "entries" | null entries]
-    , patchRecordSummary  = RecordSummary (length entries) "entries"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelPCHTXT Nothing
         , headerLines  = PCHTXT.pchtxtMeta patch
@@ -974,7 +950,6 @@ parseSomePatchFromAPSGBA patchContents = do
           }
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelAPSGBA "blocks" | null records]
-    , patchRecordSummary  = RecordSummary (length records) "blocks"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelAPSGBA Nothing
         , headerLines  = APSGBA.apsGBAMeta patch
@@ -1004,7 +979,6 @@ parseSomePatchFromDPS patchContents = do
     , patchUndo           = Nothing
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelDPS "records" | null records]
-    , patchRecordSummary  = RecordSummary (length records) "records"
     , patchHeader         = PatchHeader
         { headerFormat = FormatHeader LabelDPS Nothing
         , headerLines  = DPS.dpsMeta patch

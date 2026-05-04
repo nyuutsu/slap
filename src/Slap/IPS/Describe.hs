@@ -1,14 +1,13 @@
 -- | Describe layer for the IPS family — the per-patch metadata
 -- ('ipsMeta', 'ebpMeta') and structured 'PatchAnalysis' builders
--- ('analyzeIPS', 'analyzeEBP') consumed by slap's @explain@ verb.
--- The analytical builders feed 'patchAnalysis' on the parsed
--- 'Slap.SomePatch.SomePatch' (lazy; only forced by @slap explain@);
--- the 'ipsMeta' / 'ebpMeta' helpers feed @headerLines@ on
--- 'patchHeader' which is what @slap info@ and @slap apply@ read.
--- Rendering lives in 'Slap.Explain' / @doInfo@ / @doExplain@ in
--- @app/Main.hs@, not here.
--- Counterparts to 'Slap.BPS.Describe.analyzeBPS' / 'Slap.BPS.Describe.bpsMeta'
--- and 'Slap.UPS.Describe.analyzeUPS' / 'Slap.UPS.Describe.upsMeta'.
+-- ('analyzeIPS', 'analyzeEBP'). The analytical builders feed
+-- 'Slap.SomePatch.patchAnalysis' (lazy; only forced by @slap
+-- explain@); the 'ipsMeta' / 'ebpMeta' helpers feed @headerLines@
+-- on 'Slap.SomePatch.patchHeader', which is what @slap info@ and
+-- @slap apply@ read. Counterparts to 'Slap.BPS.Describe.analyzeBPS'
+-- / 'Slap.BPS.Describe.bpsMeta' and 'Slap.UPS.Describe.analyzeUPS'
+-- / 'Slap.UPS.Describe.upsMeta'. Rendering lives in 'Slap.Explain'
+-- / @doInfo@ / @doExplain@ in @app/Main.hs@, not here.
 --
 -- Two top-level function families rather than one taking an
 -- @Either IPSPatch EBPPatch@: 'Slap.IPS.Parse' already discriminates

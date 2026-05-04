@@ -1,6 +1,5 @@
 module Slap.DPS.Describe
-  ( dpsInfo
-  , dpsMeta
+  ( dpsMeta
   , analyzeDPS
   , makeDPSRegion
   ) where
@@ -12,7 +11,7 @@ import Slap.Explain
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Length(..), FileSize(..))
 
@@ -31,20 +30,12 @@ dpsMeta patch = concat
   , fieldPair "version" (dpsVersion patch)
   , [InfoLine "orig size" (show (unFileSize (dpsOriginalSize patch)))]
   , [InfoLine "flag" "unstable" | dpsStability patch == DPSUnstable]
+  , [InfoLine "copy" (show copyCount)]
+  , [InfoLine "enclosed" (show enclosedCount)]
   ]
   where
     fieldPair _ value | ByteString.null value = []
     fieldPair label value = [InfoLine label (decodeLocaleField value)]
-
-dpsInfo :: DPSPatch -> String
-dpsInfo patch = unlines $ filter (not . null) $
-  [ "format:      DPS" ]
-  ++ map renderInfoLine (dpsMeta patch)
-  ++ [ "records:     " ++ show (length (dpsRecords patch))
-     , "  copy:      " ++ show copyCount
-     , "  enclosed:  " ++ show enclosedCount
-     ]
-  where
     copyCount = length [() | DPSCopyFromROM {} <- dpsRecords patch]
     enclosedCount = length [() | DPSEnclosedData {} <- dpsRecords patch]
 

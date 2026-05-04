@@ -1,6 +1,5 @@
 module Slap.BSDiff.Describe
-  ( bsdiffInfo
-  , bsdiffMeta
+  ( bsdiffMeta
   , analyzeBSDiff
   , makeBSDiffRegion
   ) where
@@ -15,8 +14,7 @@ import Slap.Explain
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Display (InfoLine(..), renderInfoLine,
-                     Tally(..), CountUnit(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
@@ -31,16 +29,6 @@ bsdiffMeta patch =
   , InfoLine "diff block" (show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
   , InfoLine "extra block" (show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
   ]
-
-bsdiffInfo :: BSDiffPatch -> String
-bsdiffInfo patch = unlines $ filter (not . null) $
-  [ "format:      BSDiff / BDF (BSDIFF40)" ]
-  ++ map renderInfoLine (bsdiffMeta patch)
-  ++ [ controlString ]
-  where
-    controlString
-      | null (bsdiffControls patch) = ""
-      | otherwise = "controls:    " ++ show (length (bsdiffControls patch)) ++ " tuples"
 
 ----------------------------------------------------------------------------
 -- Analyze

@@ -1,15 +1,15 @@
 module Slap.PPF.Describe
-  ( ppfInfo, ppfMeta, analyzePPF
+  ( ppfMeta, analyzePPF
   , ppfRecordsRange
   ) where
 
 import Slap.PPF.Types (PPFPatch(..), PPFRecord(..),
-                        PPFVersion(..), PPFValidation(..),
+                        PPFValidation(..),
                         ValidationBlockBytes(..), PPFFileId(..),
                         validationOffset)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance, byteLength)
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Explain
   ( PatchAnalysis(..)
@@ -50,39 +50,6 @@ ppfMeta patch = concat
       show (validationImageType validation)
       ++ " block at 0x" ++ showHex (fromIntegral (unOffset (validationOffset (validationImageType validation))) :: Word64) ""
       ++ " (" ++ show (ByteString.length (unValidationBlockBytes (validationBlock validation))) ++ " bytes)"
-
--- | Format a human-readable summary of a parsed PPF patch.
-ppfInfo :: PPFPatch -> String
-ppfInfo patch = unlines $ filter (not . null) $
-  [ "format:      PPF" ++ versionString (ppfVersion patch) ]
-  ++ map renderInfoLine (ppfMeta patch)
-  ++ [ "records:     " ++ show (length (ppfRecords patch))
-     , bytesInfo (ppfRecords patch)
-     , rangeInfo (ppfRecords patch)
-     ]
-  ++ fileIdLines (ppfFileId patch)
-
-versionString :: PPFVersion -> String
-versionString PPF1 = "1"
-versionString PPF2 = "2"
-versionString PPF3 = "3"
-
-bytesInfo :: [PPFRecord] -> String
-bytesInfo records =
-  let total = sum (map (ByteString.length . recordData) records)
-  in "total bytes: " ++ show total
-
-rangeInfo :: [PPFRecord] -> String
-rangeInfo [] = "range:       (empty patch)"
-rangeInfo records =
-  let lowest  = minimum (map (unOffset . recordOffset) records)
-      highest = unOffset (maximum (map (\record -> advance (recordOffset record) (byteLength (recordData record))) records))
-  in "range:       0x" ++ showHex (fromIntegral lowest :: Word64) ""
-     ++ " - 0x" ++ showHex (fromIntegral highest :: Word64) ""
-
-fileIdLines :: Maybe PPFFileId -> [String]
-fileIdLines Nothing = []
-fileIdLines (Just (PPFFileId content)) = [decodeLocaleField content]
 
 stripTrailing :: ByteString.ByteString -> ByteString.ByteString
 stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')

@@ -1,6 +1,5 @@
 module Slap.GDIFF.Describe
-  ( gdiffInfo
-  , gdiffMeta
+  ( gdiffMeta
   , analyzeGDIFF
   , makeGDIFFRegion
   ) where
@@ -11,27 +10,20 @@ import Slap.Explain
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display (InfoLine, Tally(..), CountUnit(..))
+import Slap.Display (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
 
--- | GDIFF carries no header metadata; this returns an empty list.
 gdiffMeta :: GDiffPatch -> [InfoLine]
-gdiffMeta _ = []
-
-gdiffInfo :: GDiffPatch -> String
-gdiffInfo patch = unlines $ filter (not . null)
-  [ "format:      GDIFF (W3C)"
-  , "commands:    " ++ show commandCount
-  , "data cmds:   " ++ show dataCount ++ " (" ++ show dataBytes ++ " bytes)"
-  , "copy cmds:   " ++ show copyCount ++ " (" ++ show copyBytes ++ " bytes)"
-  , "output size: " ++ show totalOut
+gdiffMeta patch =
+  [ InfoLine "data cmds"   (show dataCount ++ " (" ++ show dataBytes ++ " bytes)")
+  , InfoLine "copy cmds"   (show copyCount ++ " (" ++ show copyBytes ++ " bytes)")
+  , InfoLine "output size" (show totalOut)
   ]
   where
-    commands = gdiffCommands patch
-    commandCount = length commands
+    commands  = gdiffCommands patch
     dataCount = length [() | GDiffData _ <- commands]
     copyCount = length [() | GDiffCopy{} <- commands]
     dataBytes = sum [ByteString.length payload | GDiffData payload      <- commands]

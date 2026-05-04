@@ -1,6 +1,5 @@
 module Slap.XDelta1.Describe
-  ( xdelta1Info
-  , xdelta1Meta
+  ( xdelta1Meta
   , analyzeXDelta1
   , makeXDelta1Region
   , makeXDelta1SourceText
@@ -17,7 +16,7 @@ import Slap.Explain
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (MD5Hash(..))
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
@@ -47,22 +46,6 @@ xdelta1Meta patch =
       | [entry] <- sources = [InfoLine "source MD5" (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))]
       | otherwise       = [InfoLine ("source " ++ show index ++ " MD5") (hexByteString (unMD5Hash (xdelta1SourceMD5 entry)))
                             | (index, entry) <- zip [(1::Int)..] sources]
-
-xdelta1Info :: XDelta1Patch -> String
-xdelta1Info patch = unlines $ filter (not . null) $
-  [ "format:      xdelta1 v" ++ fromXDelta1Version (xdelta1Version patch) ]
-  ++ map renderInfoLine (xdelta1Meta patch)
-  ++ [ sourceLines
-     , "instructions:" ++ show (length (xdelta1Instructions patch))
-     ]
-  where
-    sourceLines = unlines
-      [ "  [" ++ show index ++ "] " ++ decodeLocaleField (xdelta1SourceName entry)
-        ++ (case xdelta1SourceKind entry of DataSegmentSource -> " (data)"; FileSource -> " (file)")
-        ++ (case xdelta1SourceOffsetMode entry of SequentialOffsets -> " seq"; AbsoluteOffsets -> "")
-        ++ "  " ++ show (unFileSize (xdelta1SourceLength entry)) ++ " bytes"
-        ++ "  MD5:" ++ hexByteString (unMD5Hash (xdelta1SourceMD5 entry))
-      | (index, entry) <- zip [(0::Int)..] (xdelta1Sources patch) ]
 
 ----------------------------------------------------------------------------
 -- Explain

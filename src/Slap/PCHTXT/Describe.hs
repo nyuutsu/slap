@@ -1,6 +1,5 @@
 module Slap.PCHTXT.Describe
-  ( pchtxtInfo
-  , pchtxtMeta
+  ( pchtxtMeta
   , analyzePCHTXT
   , makePCHTXTBlock
   , makePCHTXTEntry
@@ -8,11 +7,10 @@ module Slap.PCHTXT.Describe
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
-import Slap.PCHTXT.Create (hexPad)
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..))
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
@@ -20,35 +18,19 @@ import Slap.Measure (Offset(..), Length(..),
 import qualified Data.ByteString as ByteString
 
 pchtxtMeta :: PCHTXTPatch -> [InfoLine]
-pchtxtMeta patch = case pchtxtNsobid patch of
-  Just nsobid -> [InfoLine "nsobid" nsobid]
-  Nothing     -> []
-
-pchtxtInfo :: PCHTXTPatch -> String
-pchtxtInfo patch = unlines $ filter (not . null) $
-  [ "format:      PCHTXT (Nintendo Switch)" ]
-  ++ map renderInfoLine (pchtxtMeta patch)
-  ++ [ "blocks:      " ++ show totalBlocks
-       ++ " (" ++ show enabledBlockCount ++ " enabled, "
-       ++ show disabledBlockCount ++ " disabled)"
-     , "entries:     " ++ show totalEntries
-     , "total bytes: " ++ show totalBytes
-     , rangeString
-     ]
+pchtxtMeta patch =
+  nsobidLine
+  ++ [InfoLine "blocks" blocksValue]
   where
+    nsobidLine = case pchtxtNsobid patch of
+      Just nsobid -> [InfoLine "nsobid" nsobid]
+      Nothing     -> []
+    blocksValue = show totalBlocks
+      ++ " (" ++ show enabledBlockCount ++ " enabled, "
+      ++ show disabledBlockCount ++ " disabled)"
     totalBlocks = length (pchtxtBlocks patch)
     enabledBlockCount = length (filter pchtxtBlockEnabled (pchtxtBlocks patch))
     disabledBlockCount = totalBlocks - enabledBlockCount
-    enabledEntries = concatMap pchtxtBlockEntries
-                       (filter pchtxtBlockEnabled (pchtxtBlocks patch))
-    totalEntries = length enabledEntries
-    totalBytes = sum (map (ByteString.length . pchtxtData) enabledEntries)
-    rangeString
-      | null enabledEntries = "range:       (empty patch)"
-      | otherwise =
-          let lowestOffset = minimum (map (unOffset . pchtxtOffset) enabledEntries)
-              highestEnd = unOffset (maximum (map (\entry -> advance (pchtxtOffset entry) (byteLength (pchtxtData entry))) enabledEntries))
-          in "range:       0x" ++ hexPad 8 lowestOffset ++ " - 0x" ++ hexPad 8 highestEnd
 
 analyzePCHTXT :: PCHTXTPatch -> PatchAnalysis
 analyzePCHTXT patch = PatchAnalysis

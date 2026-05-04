@@ -1,18 +1,17 @@
 module Slap.NINJA1.Describe
-  ( ninja1Info
-  , ninja1Meta
+  ( ninja1Meta
   , analyzeNINJA1
   , makeNINJA1Region
   , ninja1RecordsRange
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..),
-                           romTypeName, subFormatName)
+                           romTypeName)
 import Slap.Explain (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                       AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                       Annotation(..), OffsetKind(..))
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
-import Slap.Display (InfoLine(..), renderInfoLine,
+import Slap.Display (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Format (padHex)
 import Slap.Measure (Offset(..), Length(..),
@@ -37,17 +36,6 @@ ninja1Meta patch = concat
       Nothing              -> []
       Just (SHA1Hash hash) -> [InfoLine "source SHA1" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
   ]
-
-ninja1Info :: NINJA1Patch -> String
-ninja1Info patch = unlines $ filter (not . null) $
-  [ "format:      NINJA1 (" ++ subFormatString ++ ")" ]
-  ++ map renderInfoLine (ninja1Meta patch)
-  ++ [ "records:     " ++ show (length (ninja1Records patch))
-     , "total bytes: " ++ show totalBytes
-     ]
-  where
-    subFormatString = subFormatName (ninja1SubFormat patch)
-    totalBytes = sum (map (ByteString.length . ninja1RecordData) (ninja1Records patch))
 
 ----------------------------------------------------------------------------
 -- Analyze
