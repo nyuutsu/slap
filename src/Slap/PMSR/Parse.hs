@@ -19,6 +19,7 @@ import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Vector as Vector
 
 -- Format: 4 bytes "PMSR" magic, uint32BE record count,
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
@@ -36,7 +37,7 @@ parsePMSRBody = do
   skip (Length 4)  -- magic
   count <- fromIntegral <$> Get.word32BE
   records  <- parseLoop count []
-  pure (PMSRPatch records)
+  pure (PMSRPatch (Vector.fromList records))
 
 parseLoop :: Int -> [PMSRRecord] -> Get [PMSRRecord]
 parseLoop 0 accumulated = pure (reverse accumulated)

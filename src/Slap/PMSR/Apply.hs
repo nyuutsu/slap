@@ -5,14 +5,17 @@ module Slap.PMSR.Apply
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyByteStringRange)
 import Slap.Error (SlapError)
-import Slap.Measure (offsetToInt)
+import Slap.Measure (offsetToInt,
+                     ActionIndex(unActionIndex),
+                     firstAction, nextAction, streamEndIndex)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
+import qualified Data.Vector as Vector
 import Data.Word (Word8)
-import Control.Monad (forM_, when)
+import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
@@ -22,9 +25,24 @@ applyPMSR patch (SourceFileContents source) = Right $ TargetFileContents $ unsaf
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
-    forM_ (pmsrRecords patch) $ \record ->
-      copyByteStringRange targetPointer (offsetToInt (pmsrOffset record)) (pmsrData record) 0 (ByteString.length (pmsrData record))
+    let applyRecordStream !recordIndex
+          | recordIndex >= recordStreamEnd = pure ()
+          | otherwise = do
+              let record = Vector.unsafeIndex records (unActionIndex recordIndex)
+              copyByteStringRange targetPointer
+                (offsetToInt (pmsrOffset record))
+                (pmsrData record) 0
+                (ByteString.length (pmsrData record))
+              applyRecordStream (nextAction recordIndex)
+    applyRecordStream firstAction
   where
-    sourceLength = ByteString.length source
-    outputSize = foldl' max sourceLength
-      [ offsetToInt (pmsrOffset record) + ByteString.length (pmsrData record) | record <- pmsrRecords patch ]
+    records         = pmsrRecords patch
+    recordStreamEnd = streamEndIndex records
+    sourceLength    = ByteString.length source
+    outputSize      = Vector.foldl' extendOutputBoundary sourceLength records
+
+    extendOutputBoundary boundarySoFar record =
+      max boundarySoFar (recordEndPosition record)
+
+    recordEndPosition record =
+      offsetToInt (pmsrOffset record) + ByteString.length (pmsrData record)

@@ -763,14 +763,16 @@ parseSomePatchFromPMSR patchContents = do
     , patchUndo           = Nothing
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelPMSR "records" | null records]
-    , patchRecordSummary  = RecordSummary (length records) "records"
+                            ++ [EmptyPatch LabelPMSR "records" | Vector.null records]
+    , patchRecordSummary  = RecordSummary (Vector.length records) "records"
     , patchSourceNotes    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     , patchContents  = Just (emptyContents
-        (map (\record -> Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)) records))
+        (map recordToHunk (Vector.toList records)))
     }
+  where
+    recordToHunk record = Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)
 
 parseSomePatchFromPCHTXT :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPCHTXT patchContents = do

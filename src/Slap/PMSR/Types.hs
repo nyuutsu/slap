@@ -9,6 +9,7 @@ module Slap.PMSR.Types
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Vector (Vector)
 import Slap.Measure (Offset(..))
 
 -- | A single PMSR record: offset + data to write.
@@ -19,7 +20,7 @@ data PMSRRecord = PMSRRecord
 
 -- | A parsed PMSR patch.
 data PMSRPatch = PMSRPatch
-  { pmsrRecords :: [PMSRRecord]
+  { pmsrRecords :: Vector PMSRRecord
   } deriving (Show)
 
 -- | PMSR magic bytes (@"PMSR"@) per Star Rod (Paper Mario 64).
