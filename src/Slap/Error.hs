@@ -537,12 +537,14 @@ data SlapWarning
   --
   -- These fire from app/Main.hs's verification helpers. The four
   -- "downgraded fatal" kinds (CRC, hash, Adler32, file-size) emit
-  -- when the user passed --no-verify; the same mismatch promotes to
-  -- 'VerificationFatal' under EnforceVerification. The four
-  -- "advisory" kinds always emit only as warnings; they have no
-  -- fatal counterpart because the underlying check is advisory by
-  -- design (block CRC16, PPF validation block, file-size advisory,
-  -- source-bytes byte-range comparison).
+  -- as warnings when the user passed --no-verify; the same mismatch
+  -- promotes to 'VerificationFatal' under EnforceVerification. The
+  -- four "advisory" kinds always emit as warnings under either
+  -- policy; they have no fatal counterpart because the underlying
+  -- check is advisory by design (block CRC16, PPF validation block,
+  -- file-size advisory, source-bytes byte-range comparison), and
+  -- --no-verify does not silence them — the flag's contract is the
+  -- fatal-vs-warning axis for fatal-class checks only.
   | VerificationCRCMismatch       VerificationSide ExpectedCRC32 ActualCRC32
   | VerificationHashMismatch      VerificationSide HashAlgorithm
   | VerificationAdler32Mismatch   Offset ExpectedAdler32 ActualAdler32

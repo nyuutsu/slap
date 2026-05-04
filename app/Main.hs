@@ -1153,6 +1153,22 @@ refuseOverwrite RefuseOverwrite outputPath = do
 verifySource :: VerificationPolicy -> Verification -> SourceFileContents -> IO ()
 verifySource verificationPolicy verification (SourceFileContents sourceBytes) = do
   let preprocessed = verifySourcePreHash verification sourceBytes
+  -- Advisory-class checks first: per-spec non-fatal diagnostics that
+  -- the format chose to populate. These fire regardless of policy
+  -- because they're structurally non-fatal; --no-verify operates
+  -- only on fatal-class checks below.
+  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+    warnBlock SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
+  forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
+    warnPPFBlock blockOffset expectedData sourceBytes
+  forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
+    warnFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
+  forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
+    warnSourceBytes (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
+  -- Fatal-class checks: under EnforceVerification a mismatch is
+  -- fatal; under SkipVerification (--no-verify) it downgrades to a
+  -- warning. The format's choice to populate these slots expresses
+  -- the spec's "this mismatch invalidates the patch" judgment.
   forM_ (verifySourceCRC32 verification) $ \expected ->
     checkCRC verificationPolicy SourceSide expected (rustyCRC32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
@@ -1161,23 +1177,17 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
     checkHash verificationPolicy SourceSide SHA1 (unSHA1Hash expected) (unSHA1Hash (sha1 preprocessed))
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     checkFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-  forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
-  forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
-    warnPPFBlock verificationPolicy blockOffset expectedData sourceBytes
-  forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
-    warnFileSize verificationPolicy expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
-  forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
-    warnSourceBytes verificationPolicy (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
 
 verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
 verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
+  -- Advisory-class checks first; see verifySource for the discipline.
+  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
+    warnBlock TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))
+  -- Fatal-class checks.
   forM_ (verifyTargetCRC32 verification) $ \expected ->
     checkCRC verificationPolicy TargetSide expected (rustyCRC32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
     checkHash verificationPolicy TargetSide MD5 (unMD5Hash expected) (unMD5Hash (md5 targetBytes))
-  forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
-    warnBlock verificationPolicy TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     checkAdler verificationPolicy windowOffset expectedChecksum (adler32 (viewBytesInRange windowOffset windowLength targetBytes))
 
@@ -1208,27 +1218,21 @@ checkAdler verificationPolicy windowOffset expected actual
            SkipVerification    -> emitWarnings WarningProper [warning]
            EnforceVerification -> bailError (VerificationFatal warning)
 
-warnBlock :: VerificationPolicy -> VerificationSide -> Offset -> CRC16 -> CRC16 -> IO ()
-warnBlock verificationPolicy side blockOffset expected actual = case verificationPolicy of
-  SkipVerification    -> pure ()
-  EnforceVerification
-    | expected == actual -> pure ()
-    | otherwise          -> emitWarnings WarningProper [VerificationBlockCRC16Mismatch side blockOffset]
+warnBlock :: VerificationSide -> Offset -> CRC16 -> CRC16 -> IO ()
+warnBlock side blockOffset expected actual
+  | expected == actual = pure ()
+  | otherwise          = emitWarnings WarningProper [VerificationBlockCRC16Mismatch side blockOffset]
 
-warnPPFBlock :: VerificationPolicy -> Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
-warnPPFBlock verificationPolicy blockOffset (ValidationBlockBytes expectedData) sourceBytes = case verificationPolicy of
-  SkipVerification    -> pure ()
-  EnforceVerification ->
-    let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
-    in when (actual /= expectedData) $
-         emitWarnings WarningProper [VerificationPPFBlockMismatch blockOffset]
+warnPPFBlock :: Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
+warnPPFBlock blockOffset (ValidationBlockBytes expectedData) sourceBytes =
+  let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
+  in when (actual /= expectedData) $
+       emitWarnings WarningProper [VerificationPPFBlockMismatch blockOffset]
 
-warnFileSize :: VerificationPolicy -> FileSize -> FileSize -> IO ()
-warnFileSize verificationPolicy expected actual = case verificationPolicy of
-  SkipVerification    -> pure ()
-  EnforceVerification ->
-    when (expected /= actual) $
-      emitWarnings WarningProper [VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actual)]
+warnFileSize :: FileSize -> FileSize -> IO ()
+warnFileSize expected actual =
+  when (expected /= actual) $
+    emitWarnings WarningProper [VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actual)]
 
 checkFileSize :: VerificationPolicy -> VerificationSide -> FileSize -> FileSize -> IO ()
 checkFileSize verificationPolicy side expected actual
@@ -1239,13 +1243,11 @@ checkFileSize verificationPolicy side expected actual
            SkipVerification    -> emitWarnings WarningProper [warning]
            EnforceVerification -> bailError (VerificationFatal warning)
 
-warnSourceBytes :: VerificationPolicy -> ByteCheckLabel -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
-warnSourceBytes verificationPolicy label checkOffset expectedData sourceBytes = case verificationPolicy of
-  SkipVerification    -> pure ()
-  EnforceVerification ->
-    let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
-    in when (actual /= expectedData) $
-         emitWarnings WarningProper [VerificationSourceBytesMismatch label checkOffset]
+warnSourceBytes :: ByteCheckLabel -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+warnSourceBytes label checkOffset expectedData sourceBytes =
+  let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
+  in when (actual /= expectedData) $
+       emitWarnings WarningProper [VerificationSourceBytesMismatch label checkOffset]
 
 formatCRC :: CRC32 -> String
 formatCRC crcValue = "0x" ++ showCRC32 crcValue

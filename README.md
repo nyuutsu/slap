@@ -42,7 +42,7 @@ Application can be modified in these ways:
 
 `--no-backup`: Don't make the backup copy. This modifies `--in-place`.
 
-`--no-verify`: If the patch contains identity checksums, allow these checksums to fail. More specifically: input, output, and adler32 checksums now emit warnings instead of errors; all other checksums are not even computed. This is for if you think you *know better* than "the process". This will probably result in a nonfunctioning output, but, it might, in principle, allow you to cheaply combine two patches that modify entirely separate regions of the rom.
+`--no-verify`: If the patch contains identity checksums or validation criteria, and these don't match the rom you're trying to apply to, proceed anyway with a warning. This is for if you know better than `slap` 🧠📈.
 
 `--force` or `-f`: Let `slap` overwrite a file that already exists.
 
