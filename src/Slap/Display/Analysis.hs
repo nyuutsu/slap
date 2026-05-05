@@ -21,7 +21,7 @@ import Slap.Display.Info (PatchInfo(..), renderPatchInfo)
 import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
                     spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
-                     OffsetRange(..), rangeLastByte, advance)
+                     OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Error (CursorKind, renderCursorKind)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
@@ -329,7 +329,7 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
                                             | region <- allRegions ]
           in Just OffsetRange
               { rangeStart  = firstAffectedOffset
-              , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+              , rangeLength = distance firstAffectedOffset endOfLastRecord
               }
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
@@ -372,7 +372,7 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
     toBucket :: OffsetRange -> AnalysisRegion -> [(Int, Int)]
     toBucket range region =
       let width = bucketWidth range
-          startBucket = (unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width
+          startBucket = unLength (distance (rangeStart range) (regionOffset region)) `div` width
           endBucket   = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width
       in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
 
@@ -382,7 +382,7 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
       Nothing -> ([], [], [])
       Just range ->
         let width = bucketWidth range
-            regionBucket region = (unOffset (regionOffset region) - unOffset (rangeStart range)) `div` width
+            regionBucket region = unLength (distance (rangeStart range) (regionOffset region)) `div` width
             sums   = elems (accumArray (+) 0 (0, bucketCount - 1) (concatMap (toBucket range) allRegions))
             counts = elems (accumArray (+) 0 (0, bucketCount - 1)
                       [ (bucket, 1 :: Int) | region <- allRegions

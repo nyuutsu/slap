@@ -462,9 +462,14 @@ plusOffset pointer (Offset position) = pointer `plusPtr` position
 -- Arithmetic
 ----------------------------------------------------------------------------
 
+-- | The 'Length' from the start 'Offset' to the end 'Offset':
+-- @end - start@, clamping to zero on underflow (matching the
+-- saturating convention 'subtractLength' and 'remainingFromOffset'
+-- use). The argument order mirrors the typical reading "the distance
+-- /from/ start /to/ end."
 distance :: Offset -> Offset -> Length
 distance (Offset startOffset) (Offset endOffset) =
-  Length (endOffset - startOffset)
+  Length (max 0 (endOffset - startOffset))
 
 fitsWithin :: Offset -> Length -> FileSize -> Bool
 fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
