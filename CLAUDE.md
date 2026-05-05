@@ -4,7 +4,7 @@
 
 slap applies, creates, converts, and inspects ROM patches across a bunch of formats.
 
-It is predominantly an art piece. The user aims for the architecture to be pretty and well thought out, and the same is true of the code. Your job, in general, is to contribute to making it prettier. The person who maintains this project wants to be able to open any file and enjoy reading it.
+It is predominantly an art piece. The user aims for the architecture to be pretty and well thought out, and the same is true of the code. Your job, in general, is to collaborate in making it prettier. The human maintainer wants to be able to open any file and enjoy reading it.
 
 The strongest form of beauty is architectural beauty, which is often made out of selecting newtypes that cause impossible or unwanted states to be unrepresentable.
 
