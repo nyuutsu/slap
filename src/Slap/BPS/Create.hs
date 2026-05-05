@@ -11,7 +11,7 @@ import Slap.Error (SlapError(..), CreateResult(..))
 import Slap.FFI (rustyCRC32, rustyBpsDiff)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (ActualSize(..), MaxAddressableSize(..), FileSize(..))
+import Slap.Measure (ActualSize(..), MaxAddressableSize(..), FileSize(..), byteFileSize)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -25,8 +25,8 @@ import qualified Data.ByteString.Lazy as LazyByteString
 createBPS :: SourceFileContents -> TargetFileContents -> ByteString
           -> Either SlapError CreateResult
 createBPS (SourceFileContents original) (TargetFileContents modified) metadata = do
-  guardAddressable (ByteString.length original)
-  guardAddressable (ByteString.length modified)
+  guardAddressable (byteFileSize original)
+  guardAddressable (byteFileSize modified)
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
       actionBytes = rustyBpsDiff original modified
@@ -46,11 +46,11 @@ createBPS (SourceFileContents original) (TargetFileContents modified) metadata =
 -- | The byuu-varint encoder routes lengths through 'Int64', but slap
 -- reads sizes as 'Int'; on 32-bit 'Int' is 31-bit-addressable and a
 -- file over ~2 GB would silently truncate. Reject at the boundary.
-guardAddressable :: Int -> Either SlapError ()
+guardAddressable :: FileSize -> Either SlapError ()
 guardAddressable size
-  | size <= unFileSize maxAddressable = Right ()
+  | size <= maxAddressable = Right ()
   | otherwise = Left (FileExceedsAddressableRange LabelBPS
-                        (ActualSize (FileSize size))
+                        (ActualSize size)
                         (MaxAddressableSize maxAddressable))
   where
     maxAddressable = FileSize maxBound

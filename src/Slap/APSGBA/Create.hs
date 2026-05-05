@@ -8,8 +8,10 @@ module Slap.APSGBA.Create
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE, viewBytesInRange)
 import Slap.Checksum (CRC16(..))
-import Slap.Error (SlapError, CreateResult(..))
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Error (SlapError(..), CreateResult(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..),
+                     ActualSize(..), MaxAddressableSize(..), byteFileSize)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
@@ -22,8 +24,10 @@ import Data.Word (Word32)
 
 createAPSGBA :: SourceFileContents -> TargetFileContents
              -> Either SlapError CreateResult
-createAPSGBA (SourceFileContents original) (TargetFileContents modified) =
-    Right (CreateResult (PatchFileContents patchBytes) [])
+createAPSGBA (SourceFileContents original) (TargetFileContents modified) = do
+  guardAPSGBASize (byteFileSize original)
+  guardAPSGBASize (byteFileSize modified)
+  Right (CreateResult (PatchFileContents patchBytes) [])
   where
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString apsGbaMagicBytes
@@ -42,6 +46,19 @@ createAPSGBA (SourceFileContents original) (TargetFileContents modified) =
     padBlock input
       | ByteString.length input >= blockSize = ByteString.take blockSize input
       | otherwise = input <> ByteString.replicate (blockSize - ByteString.length input) 0
+
+-- | APS-GBA encodes source and target sizes as little-endian 'Word32'
+-- on the wire, so inputs over 4 GB would silently truncate. Reject at
+-- the boundary. Unreachable in practice — GBA cartridges cap at 32 MB
+-- — but the guard keeps the encoder honest about its wire-format limit.
+guardAPSGBASize :: FileSize -> Either SlapError ()
+guardAPSGBASize size
+  | size <= maxAddressable = Right ()
+  | otherwise = Left (FileExceedsAddressableRange LabelAPSGBA
+                        (ActualSize size)
+                        (MaxAddressableSize maxAddressable))
+  where
+    maxAddressable = FileSize (fromIntegral (maxBound :: Word32))
 
 encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
 encodeGBABlock original modified blockIndex =
