@@ -93,20 +93,13 @@ fromAPSRecordEncoding :: APSRecordEncoding -> Word8
 fromAPSRecordEncoding APSDefaultRecordEncoding        = 0
 fromAPSRecordEncoding (APSUnknownRecordEncoding byte) = byte
 
--- | The country code byte at offset 0x3C of an APS-N64 type-1
--- header, copied verbatim from the source N64 ROM's country byte
--- (offset 0x3E of the cartridge ROM header in canonical Z64 byte
--- order). The APS spec describes the byte as "the original image's
--- country code" without enumerating values locally; the enum is
--- defined externally by the N64 cartridge ROM header specification.
--- slap recognizes the documented values and preserves any
--- unrecognized byte verbatim with an 'APSN64UnrecognizedCountry'
--- warning so round-trip identity is maintained for patches carrying
--- values slap doesn't know about.
---
--- Cross-referenced against the en64 wiki ROM article and
--- mroach/rom64's @rom_info.md@ in April 2026; both list the same
--- 20 codes.
+-- | The country-code byte at offset 0x3C of an APS-N64 type-1 header,
+-- copied verbatim from the source ROM. The APS spec does not enumerate
+-- values; the external sources that do enumerate it disagree with each
+-- other. The constructor names below were stitched together from
+-- those sources before the disagreement was understood — they are
+-- guesses, likely wrong in places, and the whole enum is slated for
+-- replacement once the sources can be reconciled.
 data APSN64Country
   = APSN64CountryBeta            -- 0x37 '7'
   | APSN64CountryAsian           -- 0x41 'A' (Asian NTSC; commonly Japan+US)
