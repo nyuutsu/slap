@@ -662,27 +662,15 @@ fieldNote contents field = case field of
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
     Nothing -> []
-  FieldValidation
-    | isJust (contentsValidation contents) -> [ValidationBlockDropped]
-    | otherwise -> []
+  FieldValidation -> [ValidationBlockDropped | isJust (contentsValidation contents)]
   FieldDestinationSize -> case contentsDestinationSize contents of
     Just targetSize -> [FieldDropped FieldDestinationSize (DroppedSize targetSize)]
     Nothing -> []
-  FieldTruncation
-    | isJust (contentsTruncation contents) -> [FieldDropped FieldTruncation DroppedEmpty]
-    | otherwise -> []
-  FieldEBPMeta
-    | isJust (contentsEBPMeta contents) -> [FieldDropped FieldEBPMeta DroppedEmpty]
-    | otherwise -> []
-  FieldRomType
-    | isJust (contentsRomType contents) -> [FieldDropped FieldRomType DroppedEmpty]
-    | otherwise -> []
-  FieldImageType
-    | isJust (contentsImageType contents) -> [FieldDropped FieldImageType DroppedEmpty]
-    | otherwise -> []
-  FieldFileIdDiz
-    | isJust (contentsFileIdDiz contents) -> [FieldDropped FieldFileIdDiz DroppedEmpty]
-    | otherwise -> []
+  FieldTruncation -> [FieldDropped FieldTruncation DroppedEmpty | isJust (contentsTruncation contents)]
+  FieldEBPMeta -> [FieldDropped FieldEBPMeta DroppedEmpty | isJust (contentsEBPMeta contents)]
+  FieldRomType -> [FieldDropped FieldRomType DroppedEmpty | isJust (contentsRomType contents)]
+  FieldImageType -> [FieldDropped FieldImageType DroppedEmpty | isJust (contentsImageType contents)]
+  FieldFileIdDiz -> [FieldDropped FieldFileIdDiz DroppedEmpty | isJust (contentsFileIdDiz contents)]
   FieldPCHTXTBlocks -> case contentsPCHTXTBlocks contents of
     Just blocks ->
       let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
