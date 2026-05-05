@@ -10,7 +10,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset,
-                     byteLength,
+                     byteLength, byteFileSize,
                      firstAction, nextAction)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -48,7 +48,7 @@ applyDPS patch (SourceFileContents source)
         Nothing       -> Right (TargetFileContents result)
   where
     records    = dpsRecords patch
-    sourceSize = FileSize (ByteString.length source)
+    sourceSize = byteFileSize source
     outputSize = dpsOutputExtent records
 
     runApply :: Ptr Word8 -> IORef (Maybe ApplyError) -> IO ()

@@ -15,12 +15,11 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
                      Cursor(..), fitsWithin, remainingFromOffset,
-                     subtractLength, minLength, byteLength,
+                     subtractLength, minLength, byteLength, byteFileSize,
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
 import Control.Monad (when)
-import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
 import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import qualified Data.Vector as Vector
@@ -114,7 +113,7 @@ applyIPS (SourceFileContents source) patch
                       StandardIPS -> LabelIPS
                       IPS32       -> LabelIPS32
     records       = ipsRecords patch
-    sourceSize    = FileSize (ByteString.length source)
+    sourceSize    = byteFileSize source
     maxRecordEnd  = Vector.foldl' stepMaxEnd (FileSize 0) records
     naturalSize   = NaturalTargetSize
                       (FileSize (max (unFileSize sourceSize)

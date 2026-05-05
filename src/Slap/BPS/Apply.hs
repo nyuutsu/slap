@@ -15,7 +15,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..),
                      Cursor(..), examineSignedOffset, fitsWithin,
-                     remainingFromOffset,
+                     remainingFromOffset, byteFileSize,
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -93,7 +93,7 @@ applyBPS patch (SourceFileContents source)
         Nothing       -> Right (TargetFileContents result)
   where
     targetSize      = bpsTargetSize patch
-    sourceSize      = FileSize (ByteString.length source)
+    sourceSize      = byteFileSize source
     actions         = bpsActions patch
     actionStreamEnd = streamEndIndex actions
 

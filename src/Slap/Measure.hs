@@ -67,6 +67,7 @@ module Slap.Measure
   , distance
   , fitsWithin
   , byteLength
+  , byteFileSize
   , hunkEnd
     -- * Narrowing
   , narrowHunkUnbounded
@@ -500,6 +501,13 @@ fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
 
 byteLength :: ByteString -> Length
 byteLength bytes = Length (ByteString.length bytes)
+
+-- | Measure a 'ByteString' as a 'FileSize'.  Parallels 'byteLength',
+-- which measures a 'ByteString' as a 'Length' (a region size, not a
+-- whole-file size).  Use this for the size of a buffer that
+-- represents a complete source/target/patch file.
+byteFileSize :: ByteString -> FileSize
+byteFileSize bytes = FileSize (ByteString.length bytes)
 
 hunkEnd :: Hunk -> Offset
 hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))

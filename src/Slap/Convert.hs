@@ -68,7 +68,7 @@ import Slap.Measure (FileSize(..), Hunk(..), UndoHunk(..),
                       EncodedHunk(..),
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      narrowHunksUnbounded, splitHunks)
+                      narrowHunksUnbounded, splitHunks, byteFileSize)
 import Slap.Constraint (Constraint(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -820,7 +820,7 @@ encodeDirect contents source target meta limits constraints = case target of
       case contentsTruncation patchContents of
         Just truncatedTargetSize ->
           Left (CannotExpressTargetShrinkage label
-                  (ActualSize (FileSize (ByteString.length sourceBytes)))
+                  (ActualSize (byteFileSize sourceBytes))
                   (ExpectedSize truncatedTargetSize))
         Nothing -> Right ()
     cliDescription   = requestedDescription meta
@@ -920,7 +920,7 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   , contentsSourceMD5   = if needs FieldSourceMD5   then Just (md5 hashSource)   else Nothing
   , contentsSourceSHA1  = if needs FieldSourceSHA1  then Just (sha1 hashSource)  else Nothing
   , contentsDestinationSize    = if needs FieldDestinationSize
-                    then Just (FileSize (ByteString.length target))
+                    then Just (byteFileSize target)
                     else Nothing
   , contentsValidation  = if needs FieldValidation && ByteString.length source > validationOffset + 1024
                     then Just (ValidationBlockBytes (ByteString.take 1024 (ByteString.drop validationOffset source)))
@@ -934,7 +934,7 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   -- set so 'rejectTruncation' in 'encodeDirect' can refuse the encoding
   -- rather than silently produce a non-truncating patch.
   , contentsTruncation  = if ByteString.length target < ByteString.length source
-                    then Just (FileSize (ByteString.length target))
+                    then Just (byteFileSize target)
                     else Nothing
   -- Structural inheritance: preserve format-specific data from the source patch
   , contentsEBPMeta          = sourceContents >>= contentsEBPMeta

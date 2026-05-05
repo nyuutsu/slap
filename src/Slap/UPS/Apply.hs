@@ -11,6 +11,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength,
+                     byteFileSize,
                      firstAction, nextAction,
                      streamEndIndex, actionAtPosition, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -55,7 +56,7 @@ applyUPS patch (SourceFileContents source)
           in runApply outputPointer sourcePointer
   where
     targetSize     = upsTargetSize patch
-    sourceSize     = FileSize (ByteString.length source)
+    sourceSize     = byteFileSize source
     blocks         = upsBlocks patch
     blockStreamEnd = streamEndIndex blocks
 
