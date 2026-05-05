@@ -89,7 +89,20 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- Newtypes
 ----------------------------------------------------------------------------
 
-newtype Offset   = Offset   { unOffset   :: Int } deriving (Eq, Ord, Show)
+-- | A byte position in a zero-indexed buffer. Slap's apply paths
+-- operate on output buffers, source/target ByteStrings, and region
+-- payloads — all zero-indexed by construction — and parsed wire
+-- offsets name positions within those buffers. There is no place in
+-- slap where 'Offset' means a position in a non-zero-indexed buffer;
+-- 'SignedOffset' exists separately to carry the may-be-negative
+-- temporary state across BPS's displace-then-examine pattern.
+--
+-- The conversions 'offsetToFileSize', 'fileSizeToOffset',
+-- 'lengthToOffset', and 'lengthToFileSize' are unconditionally total
+-- because of this invariant — any 'Offset' value corresponds to
+-- exactly one byte count from the start of its buffer, and vice
+-- versa.
+newtype Offset = Offset { unOffset :: Int } deriving (Eq, Ord, Show)
 newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
 newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
 newtype Delta    = Delta    { unDelta    :: Int } deriving (Eq, Ord, Show)
