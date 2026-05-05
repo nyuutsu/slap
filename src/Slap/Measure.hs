@@ -48,7 +48,6 @@ module Slap.Measure
   , lengthToFileSize
   , lengthToOffset
   , offsetToFileSize
-  , fileSizeToOffset
     -- * Seeking
   , seekTo
     -- * Cursor typeclass
@@ -97,11 +96,10 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- 'SignedOffset' exists separately to carry the may-be-negative
 -- temporary state across BPS's displace-then-examine pattern.
 --
--- The conversions 'offsetToFileSize', 'fileSizeToOffset',
--- 'lengthToOffset', and 'lengthToFileSize' are unconditionally total
--- because of this invariant — any 'Offset' value corresponds to
--- exactly one byte count from the start of its buffer, and vice
--- versa.
+-- The conversions 'offsetToFileSize', 'lengthToOffset', and
+-- 'lengthToFileSize' are unconditionally total because of this
+-- invariant — any 'Offset' value corresponds to exactly one byte
+-- count from the start of its buffer, and vice versa.
 newtype Offset = Offset { unOffset :: Int } deriving (Eq, Ord, Show)
 newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
 newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
@@ -360,15 +358,6 @@ lengthToOffset (Length lengthValue) = Offset lengthValue
 -- meets that precondition.
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
-
--- | A 'FileSize' as an 'Offset': the byte position one past the
--- last byte of a buffer of the given size, when the buffer is
--- indexed from 'Offset' @0@. Useful for placing the start of an
--- append region or zero-fill region at the end of a source buffer.
--- The conversion is meaningful only for buffers indexed from zero
--- with no gaps; every current call site meets that precondition.
-fileSizeToOffset :: FileSize -> Offset
-fileSizeToOffset (FileSize size) = Offset size
 
 ----------------------------------------------------------------------------
 -- Seeking

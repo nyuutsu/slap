@@ -7,7 +7,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength, fileSizeToOffset,
+                     advance, byteLength, distance, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
@@ -38,10 +38,10 @@ applyPPF4 patch (SourceFileContents source)
       errorRef <- newIORef Nothing
       result <- create (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
-        when (unFileSize outputFileSize > unFileSize sourceFileSize) $
-          fillBytes (plusOffset outputPointer (fileSizeToOffset sourceFileSize))
+        when (outputEnd > sourceEnd) $
+          fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
-                    (unFileSize outputFileSize - unFileSize sourceFileSize)
+                    (unLength (distance sourceEnd outputEnd))
         appendStartIndex <- applyReplaces outputPointer errorRef firstAction (ppf4Replaces patch)
         -- Skip the Append phase if the Replace phase already errored,
         -- so the first failure wins (an Append-phase failure on a
@@ -59,16 +59,18 @@ applyPPF4 patch (SourceFileContents source)
         Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
         Nothing       -> Right (TargetFileContents result)
   where
-    sourceFileSize    = FileSize (ByteString.length source)
-    outputFileSize    = computeOutputFileSize sourceFileSize patch
+    sourceEnd         = Offset (ByteString.length source)
+    sourceFileSize    = offsetToFileSize sourceEnd
+    outputEnd         = computeOutputEnd sourceEnd patch
+    outputFileSize    = offsetToFileSize outputEnd
     initialCopyLength = minLength
-                          (remainingFromOffset (Offset 0) sourceFileSize)
-                          (remainingFromOffset (Offset 0) outputFileSize)
-    -- The Append phase starts at the original source size. Replaces
-    -- cannot extend past it (enforced in 'applyReplaces'), so this
-    -- offset is the exact final start of the Append region — matching
-    -- the reference applier's TargetFileEnd snapshot semantics.
-    appendStartOffset = fileSizeToOffset sourceFileSize
+                          (distance (Offset 0) sourceEnd)
+                          (distance (Offset 0) outputEnd)
+    -- The Append phase starts at the original source's end, taken
+    -- from the snapshot before any Replace runs. Replaces cannot
+    -- extend past it (enforced in 'applyReplaces'), so this offset
+    -- is the exact final start of the Append region.
+    appendStartOffset = sourceEnd
 
     applyReplaces :: Ptr Word8 -> IORef (Maybe ApplyError)
                   -> ActionIndex -> [PPF4Replace] -> IO ActionIndex
@@ -104,7 +106,7 @@ applyPPF4 patch (SourceFileContents source)
       where
         payloadLength = byteLength payloadBytes
 
-computeOutputFileSize :: FileSize -> PPF4Patch -> FileSize
-computeOutputFileSize sourceSize patch =
-  let appendsTotal = sum (map (unLength . byteLength . appendData) (ppf4Appends patch))
-  in FileSize (unFileSize sourceSize + appendsTotal)
+computeOutputEnd :: Offset -> PPF4Patch -> Offset
+computeOutputEnd sourceBufferEnd patch =
+  let appendsTotal = foldMap (byteLength . appendData) (ppf4Appends patch)
+  in advance sourceBufferEnd appendsTotal

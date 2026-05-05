@@ -7,7 +7,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength, fileSizeToOffset, offsetToFileSize,
+                     advance, byteLength, distance, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -37,10 +37,10 @@ applyPPF patch (SourceFileContents source)
         -- Copy source bytes to output buffer
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         -- Zero-fill any growth past source end
-        when (unFileSize outputFileSize > unFileSize sourceFileSize) $
-          fillBytes (plusOffset outputPointer (fileSizeToOffset sourceFileSize))
+        when (outputEnd > sourceEnd) $
+          fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
-                    (unFileSize outputFileSize - unFileSize sourceFileSize)
+                    (unLength (distance sourceEnd outputEnd))
         -- Apply records with bounds checking
         applyRecordStream outputPointer errorRef firstAction
                           (ppfRecords patch)
@@ -49,20 +49,25 @@ applyPPF patch (SourceFileContents source)
         Just applyErr -> Left (ApplyFailed label applyErr)
         Nothing       -> Right (TargetFileContents result)
   where
-    label          = ppfVersionLabel (ppfVersion patch)
-    sourceFileSize = FileSize (ByteString.length source)
-    outputFileSize = computeOutputFileSize sourceFileSize (ppfRecords patch)
+    label     = ppfVersionLabel (ppfVersion patch)
+    sourceEnd = Offset (ByteString.length source)
+    outputEnd = computeOutputEnd sourceEnd (ppfRecords patch)
+    -- FileSize-typed alias used by 'fitsWithin' and 'remainingFromOffset'
+    -- check sites against records, where the buffer-size role is the
+    -- semantic that matches. Built once via 'offsetToFileSize' at the
+    -- binding rather than ad-hoc at each call site.
+    outputFileSize = offsetToFileSize outputEnd
     initialCopyLength = minLength
-                          (remainingFromOffset (Offset 0) sourceFileSize)
-                          (remainingFromOffset (Offset 0) outputFileSize)
+                          (distance (Offset 0) sourceEnd)
+                          (distance (Offset 0) outputEnd)
 
-    computeOutputFileSize :: FileSize -> [PPFRecord] -> FileSize
-    computeOutputFileSize sourceSize records = foldl' accumulateSize sourceSize records
+    computeOutputEnd :: Offset -> [PPFRecord] -> Offset
+    computeOutputEnd sourceBufferEnd records = foldl' accumulateEnd sourceBufferEnd records
       where
-        accumulateSize :: FileSize -> PPFRecord -> FileSize
-        accumulateSize currentSize record =
+        accumulateEnd :: Offset -> PPFRecord -> Offset
+        accumulateEnd currentEnd record =
           let writeEnd = advance (recordOffset record) (byteLength (recordData record))
-          in max currentSize (offsetToFileSize writeEnd)
+          in max currentEnd writeEnd
 
     applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
                       -> ActionIndex -> [PPFRecord] -> IO ()
