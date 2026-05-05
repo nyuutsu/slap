@@ -46,6 +46,9 @@ import Slap.Measure
   , Length(..)
   , EncodedHunk(..)
   , subtractLength
+  , Cursor(advance)
+  , byteLength
+  , distance
   )
 
 import Control.Monad.ST (ST, runST)
@@ -66,16 +69,21 @@ import Data.Word (Word8)
 -- consumes a list of these as the seed positions at which it is
 -- allowed to consider an RLE record candidate.
 --
--- The half-open convention matches 'ByteString.drop' / 'ByteString.take':
--- @byteRunStart@ is inclusive, @byteRunEnd@ is exclusive, and the
--- run length is @byteRunEnd - byteRunStart@. Both indices are
--- /relative to the diff region/, not absolute file offsets — the
--- DP only re-introduces the absolute offset when it builds the
--- final 'EncodedHunk' values during backtracking.
+-- @byteRunStart@ is /region-relative/, not an absolute file offset —
+-- the DP only re-introduces the absolute offset when it builds the
+-- final 'EncodedHunk' values during backtracking. The start+length
+-- shape mirrors 'Slap.Measure.OffsetRange'; use 'byteRunEndExclusive'
+-- for the half-open end at the call sites that need it.
 data ByteRun = ByteRun
-  { byteRunStart :: !Int
-  , byteRunEnd   :: !Int
+  { byteRunStart  :: !Offset
+  , byteRunLength :: !Length
   } deriving (Eq, Show)
+
+-- | The exclusive end of a 'ByteRun': @byteRunStart + byteRunLength@.
+-- Used by run-membership checks (a position lies in a run iff it is
+-- in @[byteRunStart, byteRunEndExclusive)@).
+byteRunEndExclusive :: ByteRun -> Offset
+byteRunEndExclusive run = advance (byteRunStart run) (byteRunLength run)
 
 ----------------------------------------------------------------------------
 -- Public entry point
@@ -130,11 +138,11 @@ optimalIPSRecords
 -- chew on.
 scanDiffRegions :: ByteString -> ByteString -> [EncodedHunk]
 scanDiffRegions source target =
-  scanFromPosition 0 ++ tailExtension
+  scanFromPosition (Offset 0) ++ tailExtension
   where
-    sourceLength  = ByteString.length source
-    targetLength  = ByteString.length target
-    overlapLength = min sourceLength targetLength
+    sourceLength = ByteString.length source
+    targetLength = ByteString.length target
+    overlapEnd   = Offset (min sourceLength targetLength)
 
     -- Bytes of @target@ past the end of @source@ are by definition
     -- different from anything in source (there's nothing in source
@@ -149,33 +157,33 @@ scanDiffRegions source target =
           ]
       | otherwise = []
 
-    scanFromPosition :: Int -> [EncodedHunk]
+    scanFromPosition :: Offset -> [EncodedHunk]
     scanFromPosition !position
-      | position >= overlapLength = []
-      | ByteString.index source position
-          == ByteString.index target position =
-          scanFromPosition (position + 1)
+      | position >= overlapEnd = []
+      | ByteString.index source (unOffset position)
+          == ByteString.index target (unOffset position) =
+          scanFromPosition (advance position (Length 1))
       | otherwise =
-          let regionEnd     = findRegionEnd (position + 1)
-              regionLength  = regionEnd - position
+          let regionEnd     = findRegionEnd (advance position (Length 1))
+              regionLength  = distance position regionEnd
               regionPayload =
-                ByteString.take regionLength
-                                (ByteString.drop position target)
+                ByteString.take (unLength regionLength)
+                                (ByteString.drop (unOffset position) target)
               region = EncodedHunk
-                { encodedOffset  = Offset position
+                { encodedOffset  = position
                 , encodedPayload = regionPayload
                 }
           in region : scanFromPosition regionEnd
 
     -- | Walk forward while bytes still differ; return the first
-    -- position at which they re-converge (or @overlapLength@ if
+    -- position at which they re-converge (or @overlapEnd@ if
     -- they never do within the shared range).
-    findRegionEnd :: Int -> Int
+    findRegionEnd :: Offset -> Offset
     findRegionEnd !position
-      | position >= overlapLength = overlapLength
-      | ByteString.index source position
-          /= ByteString.index target position =
-          findRegionEnd (position + 1)
+      | position >= overlapEnd = overlapEnd
+      | ByteString.index source (unOffset position)
+          /= ByteString.index target (unOffset position) =
+          findRegionEnd (advance position (Length 1))
       | otherwise = position
 
 ----------------------------------------------------------------------------
@@ -216,28 +224,26 @@ scanDiffRegions source target =
 mergeNarrowGaps :: OffsetWidth -> ByteString -> [EncodedHunk] -> [EncodedHunk]
 mergeNarrowGaps offsetWidth target = mergeStep
   where
-    breakEvenGapBytes = unLength (mergeBreakEvenGapLength offsetWidth)
+    breakEvenGap = mergeBreakEvenGapLength offsetWidth
 
     mergeStep [] = []
     mergeStep [singleRegion] = [singleRegion]
     mergeStep (firstRegion : secondRegion : remainingRegions) =
-      let firstStart =
-            unOffset (encodedOffset firstRegion)
-          firstEnd =
-            firstStart + ByteString.length (encodedPayload firstRegion)
-          secondStart =
-            unOffset (encodedOffset secondRegion)
-          gapBytes = secondStart - firstEnd
-      in if gapBytes <= breakEvenGapBytes
+      let firstStart  = encodedOffset firstRegion
+          firstEnd    = advance firstStart (byteLength (encodedPayload firstRegion))
+          secondStart = encodedOffset secondRegion
+          gap         = distance firstEnd secondStart
+      in if gap <= breakEvenGap
            then
              let mergedEnd =
-                   secondStart
-                   + ByteString.length (encodedPayload secondRegion)
+                   advance secondStart
+                           (byteLength (encodedPayload secondRegion))
+                 mergedLength = distance firstStart mergedEnd
                  mergedPayload =
-                   ByteString.take (mergedEnd - firstStart)
-                                   (ByteString.drop firstStart target)
+                   ByteString.take (unLength mergedLength)
+                                   (ByteString.drop (unOffset firstStart) target)
                  mergedRegion = EncodedHunk
-                   { encodedOffset  = encodedOffset firstRegion
+                   { encodedOffset  = firstStart
                    , encodedPayload = mergedPayload
                    }
              in mergeStep (mergedRegion : remainingRegions)
@@ -283,14 +289,13 @@ partitionDiffRegion offsetWidth _target region
   | ByteString.null regionPayload = []
   | otherwise = runST runPartitionDP
   where
-    regionPayload   = encodedPayload region
-    regionStartByte = unOffset (encodedOffset region)
-    regionLength    = ByteString.length regionPayload
+    regionPayload = encodedPayload region
+    regionStart   = encodedOffset region
+    regionLength  = byteLength regionPayload
 
-    maxRecordPayloadBytes = unLength ipsMaxRecordPayload
-    copyRecordOverhead    = unLength (ipsCopyRecordOverhead offsetWidth)
-    rleRecordOverhead     = unLength (ipsRleRecordOverhead  offsetWidth)
-    rleBreakEvenLength    = rleBreakEvenRunLength offsetWidth
+    copyRecordOverheadBytes = unLength (ipsCopyRecordOverhead offsetWidth)
+    rleRecordOverheadBytes  = unLength (ipsRleRecordOverhead  offsetWidth)
+    rleBreakEvenLength      = rleBreakEvenRunLength offsetWidth
 
     -- Step 3a: every maximal same-byte run inside the region.
     runs :: [ByteRun]
@@ -301,21 +306,21 @@ partitionDiffRegion offsetWidth _target region
     -- of every byte-run (so each run's start and end can be the
     -- boundary of an RLE candidate), then ensureMaxGap fills in any
     -- gap longer than the per-record payload cap.
-    rawSeedPositions :: [Int]
+    rawSeedPositions :: [Offset]
     rawSeedPositions =
       sortAndDeduplicate
-        ( 0
-        : regionLength
-        : concatMap (\run -> [byteRunStart run, byteRunEnd run]) runs
+        ( Offset 0
+        : advance (Offset 0) regionLength
+        : concatMap (\run -> [byteRunStart run, byteRunEndExclusive run]) runs
         )
 
-    seedPositions :: [Int]
-    seedPositions = ensureMaxGap maxRecordPayloadBytes rawSeedPositions
+    seedPositions :: [Offset]
+    seedPositions = ensureMaxGap ipsMaxRecordPayload rawSeedPositions
 
     seedPositionCount :: Int
     seedPositionCount = length seedPositions
 
-    seedPositionArray :: Array Int Int
+    seedPositionArray :: Array Int Offset
     seedPositionArray =
       listArray (0, seedPositionCount - 1) seedPositions
 
@@ -338,7 +343,7 @@ partitionDiffRegion offsetWidth _target region
     -- feasible cost rather than just at it.
     impossiblyExpensiveCost :: Int
     impossiblyExpensiveCost =
-      regionLength * (copyRecordOverhead + 5) + 1
+      unLength regionLength * (copyRecordOverheadBytes + 5) + 1
 
     runPartitionDP :: forall s. ST s [EncodedHunk]
     runPartitionDP = do
@@ -366,17 +371,14 @@ partitionDiffRegion offsetWidth _target region
                     -- Returns @(bestCost, bestPredecessorIndex)@.
                     scanCopyCandidates !bestCost !bestPredecessor !sourceIndex
                       | sourceIndex < 0 = pure (bestCost, bestPredecessor)
-                      | destinationPosition - (seedPositionArray ! sourceIndex)
-                            > maxRecordPayloadBytes =
+                      | recordPayloadLength > ipsMaxRecordPayload =
                           pure (bestCost, bestPredecessor)
                       | otherwise = do
                           predecessorCost <- readArray costArray sourceIndex
-                          let recordPayloadLength =
-                                destinationPosition - (seedPositionArray ! sourceIndex)
-                              candidateCost =
+                          let candidateCost =
                                 predecessorCost
-                                + copyRecordOverhead
-                                + recordPayloadLength
+                                + copyRecordOverheadBytes
+                                + unLength recordPayloadLength
                           if candidateCost < bestCost
                             then scanCopyCandidates candidateCost
                                                     sourceIndex
@@ -384,6 +386,9 @@ partitionDiffRegion offsetWidth _target region
                             else scanCopyCandidates bestCost
                                                     bestPredecessor
                                                     (sourceIndex - 1)
+                      where
+                        recordPayloadLength =
+                          distance (seedPositionArray ! sourceIndex) destinationPosition
 
                 (copyCandidateCost, copyCandidatePredecessor) <-
                   scanCopyCandidates impossiblyExpensiveCost (-1) (destinationIndex - 1)
@@ -397,9 +402,9 @@ partitionDiffRegion offsetWidth _target region
                       rleEligiblePredecessorArray ! destinationIndex
                     rleCandidateRunLength
                       | rleEligiblePredecessor >= 0 =
-                          destinationPosition
-                          - (seedPositionArray ! rleEligiblePredecessor)
-                      | otherwise = 0
+                          distance (seedPositionArray ! rleEligiblePredecessor)
+                                   destinationPosition
+                      | otherwise = mempty
 
                 (winningCost, winningPredecessor) <-
                   if rleEligiblePredecessor >= 0
@@ -408,7 +413,7 @@ partitionDiffRegion offsetWidth _target region
                       rlePredecessorCost <-
                         readArray costArray rleEligiblePredecessor
                       let rleCandidateCost =
-                            rlePredecessorCost + rleRecordOverhead
+                            rlePredecessorCost + rleRecordOverheadBytes
                       if rleCandidateCost < copyCandidateCost
                         then pure (rleCandidateCost, rleEligiblePredecessor)
                         else pure (copyCandidateCost, copyCandidatePredecessor)
@@ -430,13 +435,17 @@ partitionDiffRegion offsetWidth _target region
                 sourceIndex <- readArray predecessorArray destinationIndex
                 let sourcePosition      = seedPositionArray ! sourceIndex
                     destinationPosition = seedPositionArray ! destinationIndex
-                    sliceLength = destinationPosition - sourcePosition
+                    sliceLength         = distance sourcePosition destinationPosition
                     slicePayload =
-                      ByteString.take sliceLength
-                                      (ByteString.drop sourcePosition regionPayload)
+                      ByteString.take (unLength sliceLength)
+                                      (ByteString.drop (unOffset sourcePosition) regionPayload)
+                    -- Region-relative Offset to absolute file Offset by
+                    -- advancing the region's absolute start by the
+                    -- distance from the region-zero origin.
+                    absoluteOffset = advance regionStart
+                                             (distance (Offset 0) sourcePosition)
                     chosenRecord = EncodedHunk
-                      { encodedOffset  =
-                          Offset (regionStartByte + sourcePosition)
+                      { encodedOffset  = absoluteOffset
                       , encodedPayload = slicePayload
                       }
                 backtrackFrom sourceIndex (chosenRecord : accumulatedRecords)
@@ -467,20 +476,17 @@ partitionDiffRegion offsetWidth _target region
 -- The DP's break-even comparison uses the strict @>@ comparator,
 -- so a run of exactly @rleBreakEvenRunLength@ bytes stays as a copy
 -- record (RLE would tie on cost).
-rleBreakEvenRunLength :: OffsetWidth -> Int
+rleBreakEvenRunLength :: OffsetWidth -> Length
 rleBreakEvenRunLength offsetWidth =
-    unLength (ipsRleRecordOverhead  offsetWidth)
-  - unLength (ipsCopyRecordOverhead offsetWidth)
+  subtractLength (ipsRleRecordOverhead  offsetWidth)
+                 (ipsCopyRecordOverhead offsetWidth)
 
 ----------------------------------------------------------------------------
 -- Internal helpers
 ----------------------------------------------------------------------------
 
 -- | Find every maximal same-byte run of length ≥ 4 inside a
--- ByteString, returning the runs in left-to-right order. Each run
--- is reported with @byteRunStart@ inclusive and @byteRunEnd@
--- exclusive — the same half-open convention 'ByteString.drop' /
--- 'ByteString.take' use.
+-- ByteString, returning the runs in left-to-right order.
 findByteRuns :: ByteString -> [ByteRun]
 findByteRuns input
   | ByteString.null input = []
@@ -491,13 +497,15 @@ findByteRuns input
     scanRuns :: Int -> Word8 -> Int -> [ByteRun]
     scanRuns !runStartPosition !runByte !position
       | position >= inputLength =
-          [ ByteRun runStartPosition inputLength
+          [ ByteRun (Offset runStartPosition)
+                    (Length (inputLength - runStartPosition))
           | inputLength - runStartPosition >= 4
           ]
       | ByteString.index input position == runByte =
           scanRuns runStartPosition runByte (position + 1)
       | otherwise =
-          [ ByteRun runStartPosition position
+          [ ByteRun (Offset runStartPosition)
+                    (Length (position - runStartPosition))
           | position - runStartPosition >= 4
           ]
           ++ scanRuns position
@@ -510,17 +518,17 @@ findByteRuns input
 -- transition between two seed positions corresponds to a record
 -- whose payload length equals the gap, and that gap must be at
 -- most 'ipsMaxRecordPayload' bytes long.
-ensureMaxGap :: Int -> [Int] -> [Int]
-ensureMaxGap _ []         = []
+ensureMaxGap :: Length -> [Offset] -> [Offset]
+ensureMaxGap _ []          = []
 ensureMaxGap _ [singleton] = [singleton]
-ensureMaxGap maxGapBytes (firstPosition : secondPosition : remainingPositions)
-  | secondPosition - firstPosition <= maxGapBytes =
+ensureMaxGap maxGap (firstPosition : secondPosition : remainingPositions)
+  | distance firstPosition secondPosition <= maxGap =
       firstPosition
-      : ensureMaxGap maxGapBytes (secondPosition : remainingPositions)
+      : ensureMaxGap maxGap (secondPosition : remainingPositions)
   | otherwise =
       firstPosition
-      : ensureMaxGap maxGapBytes
-          ((firstPosition + maxGapBytes) : secondPosition : remainingPositions)
+      : ensureMaxGap maxGap
+          (advance firstPosition maxGap : secondPosition : remainingPositions)
 
 -- | Sort and remove consecutive duplicates from a list. Used as
 -- the seed-position list preparation for the DP. Library functions
@@ -547,22 +555,22 @@ sortAndDeduplicate = removeConsecutiveDuplicates . sort
 --
 -- The first entry is always @-1@ (position @0@ has no predecessor
 -- of any kind).
-computeRLEEligiblePredecessors :: [Int] -> [ByteRun] -> [Int]
+computeRLEEligiblePredecessors :: [Offset] -> [ByteRun] -> [Int]
 computeRLEEligiblePredecessors seedPositions runs =
   -1 : zipWith
          eligibilityForPair
          [1 ..]
          (zip seedPositions (drop 1 seedPositions))
   where
-    eligibilityForPair :: Int -> (Int, Int) -> Int
+    eligibilityForPair :: Int -> (Offset, Offset) -> Int
     eligibilityForPair currentIndex (previousPosition, currentPosition)
       | positionsLieInSameRun previousPosition currentPosition =
           currentIndex - 1
       | otherwise = -1
 
-    positionsLieInSameRun :: Int -> Int -> Bool
+    positionsLieInSameRun :: Offset -> Offset -> Bool
     positionsLieInSameRun previousPosition currentPosition =
       any (\run ->
              byteRunStart run <= previousPosition
-             && currentPosition <= byteRunEnd run)
+             && currentPosition <= byteRunEndExclusive run)
           runs
