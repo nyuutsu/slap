@@ -7,7 +7,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength,
+                     advance, byteLength, fileSizeToOffset, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -38,7 +38,7 @@ applyPPF patch (SourceFileContents source)
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         -- Zero-fill any growth past source end
         when (unFileSize outputFileSize > unFileSize sourceFileSize) $
-          fillBytes (plusOffset outputPointer (Offset (unFileSize sourceFileSize)))
+          fillBytes (plusOffset outputPointer (fileSizeToOffset sourceFileSize))
                     (0 :: Word8)
                     (unFileSize outputFileSize - unFileSize sourceFileSize)
         -- Apply records with bounds checking
@@ -62,7 +62,7 @@ applyPPF patch (SourceFileContents source)
         accumulateSize :: FileSize -> PPFRecord -> FileSize
         accumulateSize currentSize record =
           let writeEnd = advance (recordOffset record) (byteLength (recordData record))
-          in FileSize (max (unFileSize currentSize) (unOffset writeEnd))
+          in max currentSize (offsetToFileSize writeEnd)
 
     applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
                       -> ActionIndex -> [PPFRecord] -> IO ()

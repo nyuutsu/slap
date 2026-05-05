@@ -7,7 +7,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength,
+                     advance, byteLength, fileSizeToOffset,
                      firstAction, nextAction, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
@@ -39,7 +39,7 @@ applyPPF4 patch (SourceFileContents source)
       result <- create (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (unFileSize outputFileSize > unFileSize sourceFileSize) $
-          fillBytes (plusOffset outputPointer (Offset (unFileSize sourceFileSize)))
+          fillBytes (plusOffset outputPointer (fileSizeToOffset sourceFileSize))
                     (0 :: Word8)
                     (unFileSize outputFileSize - unFileSize sourceFileSize)
         appendStartIndex <- applyReplaces outputPointer errorRef firstAction (ppf4Replaces patch)
@@ -68,7 +68,7 @@ applyPPF4 patch (SourceFileContents source)
     -- cannot extend past it (enforced in 'applyReplaces'), so this
     -- offset is the exact final start of the Append region — matching
     -- the reference applier's TargetFileEnd snapshot semantics.
-    appendStartOffset = Offset (unFileSize sourceFileSize)
+    appendStartOffset = fileSizeToOffset sourceFileSize
 
     applyReplaces :: Ptr Word8 -> IORef (Maybe ApplyError)
                   -> ActionIndex -> [PPF4Replace] -> IO ActionIndex

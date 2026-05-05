@@ -47,6 +47,8 @@ module Slap.Measure
   , fileSizeToInt
   , lengthToFileSize
   , lengthToOffset
+  , offsetToFileSize
+  , fileSizeToOffset
     -- * Seeking
   , seekTo
     -- * Cursor typeclass
@@ -335,6 +337,25 @@ lengthToFileSize (Length lengthValue) = FileSize lengthValue
 
 lengthToOffset :: Length -> Offset
 lengthToOffset (Length lengthValue) = Offset lengthValue
+
+-- | An 'Offset' as a 'FileSize': the byte count of a buffer whose
+-- last written byte sits one position before this 'Offset', when the
+-- buffer is indexed from 'Offset' @0@. Useful at end-of-apply
+-- diagnostics where the cursor's position from the start equals the
+-- number of bytes written. The conversion is meaningful only for
+-- buffers indexed from zero with no gaps; every current call site
+-- meets that precondition.
+offsetToFileSize :: Offset -> FileSize
+offsetToFileSize (Offset position) = FileSize position
+
+-- | A 'FileSize' as an 'Offset': the byte position one past the
+-- last byte of a buffer of the given size, when the buffer is
+-- indexed from 'Offset' @0@. Useful for placing the start of an
+-- append region or zero-fill region at the end of a source buffer.
+-- The conversion is meaningful only for buffers indexed from zero
+-- with no gaps; every current call site meets that precondition.
+fileSizeToOffset :: FileSize -> Offset
+fileSizeToOffset (FileSize size) = Offset size
 
 ----------------------------------------------------------------------------
 -- Seeking
