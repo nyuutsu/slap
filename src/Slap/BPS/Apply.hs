@@ -13,9 +13,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffsetSign(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
-                     ActualSize(..), ExpectedSize(..),
+                     ExpectedSize(..),
                      Cursor(..), examineSignedOffset, fitsWithin,
-                     remainingFromOffset, offsetToFileSize,
+                     remainingFromOffset,
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -128,9 +128,9 @@ applyBPS patch (SourceFileContents source)
               -- before they can happen, so outputPosition > targetSize
               -- is unreachable here.
               unless (remainingFromOffset outputPosition targetSize == Length 0) $
-                let actualWritten = ActualSize (offsetToFileSize outputPosition)
-                    expected = ExpectedSize targetSize
-                in abort (ApplyTargetUnderfilled actualWritten expected)
+                abort (ApplyTargetUnderfilled
+                        (WritePosition outputPosition)
+                        (ExpectedSize targetSize))
           | otherwise = case actionAt actionIndex of
               SourceRead actionLength ->
                 handleSourceRead actionLength

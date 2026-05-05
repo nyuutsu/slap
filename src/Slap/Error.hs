@@ -226,7 +226,7 @@ data ApplyError
   -- over-writes per-action before they can happen; writing past
   -- target is impossible if every action's length is validated
   -- against remaining space before the copy runs.)
-  | ApplyTargetUnderfilled ActualSize ExpectedSize
+  | ApplyTargetUnderfilled WritePosition ExpectedSize
 
   -- | A record's offset is negative. Only possible for formats that
   -- store signed offsets (PPF3 uses signed 64-bit). The Offset is
@@ -735,9 +735,9 @@ renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLe
   ++ " would write past target ("
   ++ show (unLength remainingLength) ++ " bytes remaining)"
 
-renderApplyError (ApplyTargetUnderfilled (ActualSize actualSize) (ExpectedSize expectedSize)) =
+renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize expectedSize)) =
   "target under-filled ("
-  ++ show (unFileSize actualSize) ++ " of "
+  ++ show (unOffset cursor) ++ " of "
   ++ show (unFileSize expectedSize) ++ " bytes written before action stream exhausted)"
 
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
