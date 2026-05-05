@@ -949,19 +949,26 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   where
     encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk hunkOffset hunkPayload
     patchHunks = case format of
-      CreateIPS   -> map encodedToHunk
-                       (IPS.optimalIPSRecords Offset24
+      CreateIPS    -> ipsHunks Offset24
+      CreateIPS32  -> ipsHunks Offset32
+      CreateEBP    -> ipsHunks Offset24
+      CreatePPF3   -> diffHunks source target
+      CreateNINJA1 -> diffHunks source target
+      CreatePMSR   -> diffHunks source target
+      CreatePCHTXT -> diffHunks source target
+      CreateAPSN64 -> diffHunks source target
+    ipsHunks width = map encodedToHunk
+                       (IPS.optimalIPSRecords width
                           (SourceFileContents source) (TargetFileContents target))
-      CreateIPS32 -> map encodedToHunk
-                       (IPS.optimalIPSRecords Offset32
-                          (SourceFileContents source) (TargetFileContents target))
-      CreateEBP   -> map encodedToHunk
-                       (IPS.optimalIPSRecords Offset24
-                          (SourceFileContents source) (TargetFileContents target))
-      _         -> diffHunks source target
     hashSource   = case format of
+      CreateIPS    -> source
+      CreateIPS32  -> source
+      CreateEBP    -> source
+      CreatePPF3   -> source
       CreateNINJA1 -> NINJA1.ninja1HashInput source
-      _          -> source
+      CreatePMSR   -> source
+      CreatePCHTXT -> source
+      CreateAPSN64 -> source
     validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
