@@ -188,7 +188,7 @@ splitComma (char:rest) = case splitComma rest of
 
 -- | The conversion contract layer refuses to drop fields that affect
 -- the output bytes of the apply operation (see
--- 'Slap.PatchField.affectsApplyOutput'). Today 'FTruncation' is the
+-- 'Slap.PatchField.affectsApplyOutput'). Today 'FieldTruncation' is the
 -- only such field; these tests exercise the two targets that would
 -- silently lose it — IPS32 and EBP — and confirm the refusal fires
 -- with a message naming the field and the target format.

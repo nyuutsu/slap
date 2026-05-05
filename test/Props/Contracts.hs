@@ -83,7 +83,7 @@ fullContents = PatchContents
 
 -- | canConvert succeeds for every direct format when all fields it
 -- accepts are present.  Apply-output-affecting fields that the target
--- doesn't accept (today only 'FTruncation' for targets other than IPS)
+-- doesn't accept (today only 'FieldTruncation' for targets other than IPS)
 -- are stripped before the check: their presence would correctly make
 -- 'canConvert' refuse with 'ApplyOutputFieldsDropped', so this test
 -- only covers formats' accepted-field surface.
@@ -98,7 +98,7 @@ prop_canConvertFull = conjoin
       let contract = directConversionContract format IncludeUndoData IncludeValidationBlock
           kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
       in fullContents
-        { contentsTruncation = if FTruncation `Set.member` kept
+        { contentsTruncation = if FieldTruncation `Set.member` kept
                                 then contentsTruncation fullContents
                                 else Nothing
         }
@@ -110,17 +110,17 @@ prop_noSurplusNoNotes = conjoin
       let contract = directConversionContract format IncludeUndoData IncludeValidationBlock
           kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
           trimmed = fullContents
-            { contentsDescription = if FDescription `Set.member` kept then contentsDescription fullContents else Nothing
-            , contentsSourceCRC32 = if FSourceCRC32 `Set.member` kept then contentsSourceCRC32 fullContents else Nothing
-            , contentsSourceMD5   = if FSourceMD5   `Set.member` kept then contentsSourceMD5   fullContents else Nothing
-            , contentsSourceSHA1  = if FSourceSHA1  `Set.member` kept then contentsSourceSHA1  fullContents else Nothing
-            , contentsDestinationSize    = if FDestinationSize    `Set.member` kept then contentsDestinationSize    fullContents else Nothing
-            , contentsValidation  = if FValidation  `Set.member` kept then contentsValidation  fullContents else Nothing
-            , contentsUndoData    = if FUndoData    `Set.member` kept then contentsUndoData    fullContents else Nothing
-            , contentsTruncation  = if FTruncation  `Set.member` kept then contentsTruncation  fullContents else Nothing
-            , contentsEBPMeta     = if FEBPMeta     `Set.member` kept then contentsEBPMeta     fullContents else Nothing
-            , contentsRomType     = if FRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
-            , contentsImageType   = if FImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
+            { contentsDescription = if FieldDescription `Set.member` kept then contentsDescription fullContents else Nothing
+            , contentsSourceCRC32 = if FieldSourceCRC32 `Set.member` kept then contentsSourceCRC32 fullContents else Nothing
+            , contentsSourceMD5   = if FieldSourceMD5   `Set.member` kept then contentsSourceMD5   fullContents else Nothing
+            , contentsSourceSHA1  = if FieldSourceSHA1  `Set.member` kept then contentsSourceSHA1  fullContents else Nothing
+            , contentsDestinationSize    = if FieldDestinationSize    `Set.member` kept then contentsDestinationSize    fullContents else Nothing
+            , contentsValidation  = if FieldValidation  `Set.member` kept then contentsValidation  fullContents else Nothing
+            , contentsUndoData    = if FieldUndoData    `Set.member` kept then contentsUndoData    fullContents else Nothing
+            , contentsTruncation  = if FieldTruncation  `Set.member` kept then contentsTruncation  fullContents else Nothing
+            , contentsEBPMeta     = if FieldEBPMeta     `Set.member` kept then contentsEBPMeta     fullContents else Nothing
+            , contentsRomType     = if FieldRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
+            , contentsImageType   = if FieldImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
           droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format contract noMetadataRequested))
       in droppedNotes === []

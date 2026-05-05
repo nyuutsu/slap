@@ -365,7 +365,7 @@ data SlapError
   -- the target format being refused; the inner list pairs each
   -- offending field with the target formats that do preserve it
   -- (possibly empty), so the renderer can point the user at a
-  -- target that would work. Only 'FTruncation' reaches this error
+  -- target that would work. Only 'FieldTruncation' reaches this error
   -- today; the list shape exists so future apply-output-affecting
   -- fields drop into the same refusal path without new plumbing.
   | ApplyOutputFieldsWouldBeDropped FormatLabel [(PatchField, [FormatLabel])]
@@ -1118,7 +1118,7 @@ renderTrailerMarkerName :: ByteString -> String
 renderTrailerMarkerName = renderPrintableASCIIOrHex
 
 -- | Render the apply-output-field-drop refusal body. The single-drop
--- case (today's only case, 'FTruncation') produces one clean sentence;
+-- case (today's only case, 'FieldTruncation') produces one clean sentence;
 -- the multi-drop case (trivially available if 'affectsApplyOutput'
 -- grows) bullets each field on its own line so nothing gets lost.
 renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> String

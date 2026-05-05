@@ -305,21 +305,21 @@ emptyContents records = PatchContents
   }
 
 provides :: PatchContents -> Set.Set PatchField
-provides contents = Set.fromList $ [FRecords]
-  ++ [FDescription  | isJust (contentsDescription contents)]
-  ++ [FSourceCRC32  | isJust (contentsSourceCRC32 contents)]
-  ++ [FSourceMD5    | isJust (contentsSourceMD5 contents)]
-  ++ [FSourceSHA1   | isJust (contentsSourceSHA1 contents)]
-  ++ [FDestinationSize     | isJust (contentsDestinationSize contents)]
-  ++ [FUndoData     | isJust (contentsUndoData contents)]
-  ++ [FValidation   | isJust (contentsValidation contents)]
-  ++ [FTruncation   | isJust (contentsTruncation contents)]
-  ++ [FEBPMeta      | isJust (contentsEBPMeta contents)]
-  ++ [FRomType      | isJust (contentsRomType contents)]
-  ++ [FImageType    | isJust (contentsImageType contents)]
-  ++ [FFileIdDiz    | isJust (contentsFileIdDiz contents)]
-  ++ [FPCHTXTBlocks | isJust (contentsPCHTXTBlocks contents)]
-  ++ [FMetadata     | isJust (contentsMetadata contents)]
+provides contents = Set.fromList $ [FieldRecords]
+  ++ [FieldDescription  | isJust (contentsDescription contents)]
+  ++ [FieldSourceCRC32  | isJust (contentsSourceCRC32 contents)]
+  ++ [FieldSourceMD5    | isJust (contentsSourceMD5 contents)]
+  ++ [FieldSourceSHA1   | isJust (contentsSourceSHA1 contents)]
+  ++ [FieldDestinationSize     | isJust (contentsDestinationSize contents)]
+  ++ [FieldUndoData     | isJust (contentsUndoData contents)]
+  ++ [FieldValidation   | isJust (contentsValidation contents)]
+  ++ [FieldTruncation   | isJust (contentsTruncation contents)]
+  ++ [FieldEBPMeta      | isJust (contentsEBPMeta contents)]
+  ++ [FieldRomType      | isJust (contentsRomType contents)]
+  ++ [FieldImageType    | isJust (contentsImageType contents)]
+  ++ [FieldFileIdDiz    | isJust (contentsFileIdDiz contents)]
+  ++ [FieldPCHTXTBlocks | isJust (contentsPCHTXTBlocks contents)]
+  ++ [FieldMetadata     | isJust (contentsMetadata contents)]
 
 -- | Which 'UndoInclusion' a 'PatchContents' carries today.  Used on the
 -- conversion path when the user didn't specify: if the source patch
@@ -348,18 +348,18 @@ inferValidationInclusion contents = if isJust (contentsValidation contents)
 -- user asked for undo or validation to be included in the output.
 directConversionContract :: DirectCreate -> UndoInclusion -> ValidationInclusion -> DirectConversionContract
 directConversionContract target undoChoice validationChoice = case target of
-  CreateIPS     -> DirectConversionContract (requiredFields []) (acceptedFields [FTruncation])
+  CreateIPS     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldTruncation])
   CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
-  CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FDescription, FEBPMeta])
-  CreatePPF3    -> DirectConversionContract (requiredFields $ [FUndoData   | undoChoice       == IncludeUndoData]
-                                 ++ [FValidation | validationChoice == IncludeValidationBlock])
-                             (acceptedFields [FDescription, FImageType, FFileIdDiz])
-  CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FSourceCRC32, FSourceMD5, FSourceSHA1, FRomType])
+  CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldEBPMeta])
+  CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData   | undoChoice       == IncludeUndoData]
+                                 ++ [FieldValidation | validationChoice == IncludeValidationBlock])
+                             (acceptedFields [FieldDescription, FieldImageType, FieldFileIdDiz])
+  CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldSourceCRC32, FieldSourceMD5, FieldSourceSHA1, FieldRomType])
   CreatePMSR    -> DirectConversionContract (requiredFields []) (acceptedFields [])
-  CreatePCHTXT  -> DirectConversionContract (requiredFields []) (acceptedFields [FDescription, FPCHTXTBlocks])
-  CreateAPSN64  -> DirectConversionContract (requiredFields [FDestinationSize]) (acceptedFields [FDescription])
+  CreatePCHTXT  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldPCHTXTBlocks])
+  CreateAPSN64  -> DirectConversionContract (requiredFields [FieldDestinationSize]) (acceptedFields [FieldDescription])
   where
-    requiredFields extra = Set.fromList (FRecords : extra)
+    requiredFields extra = Set.fromList (FieldRecords : extra)
     acceptedFields = Set.fromList
 
 ----------------------------------------------------------------------------
@@ -382,19 +382,19 @@ acceptedMetadataFields :: CreateFormat -> Set.Set MetadataField
 acceptedMetadataFields (CreateDirect format) = case format of
   CreateIPS    -> Set.empty
   CreateIPS32  -> Set.empty
-  CreateEBP    -> Set.fromList [MTitle, MAuthor, MDescription]
-  CreatePPF3   -> Set.fromList [MDescription, MImageType, MUndoInclusion, MValidationInclusion]
-  CreateNINJA1 -> Set.fromList [MRomType]
+  CreateEBP    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataDescription]
+  CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataValidationInclusion]
+  CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
-  CreatePCHTXT -> Set.fromList [MDescription]
-  CreateAPSN64 -> Set.fromList [MDescription]
+  CreatePCHTXT -> Set.fromList [MetadataDescription]
+  CreateAPSN64 -> Set.fromList [MetadataDescription]
 acceptedMetadataFields (CreateDiff format) = case format of
-  CreateBPS    -> Set.fromList [MEmbeddedBlob]
+  CreateBPS    -> Set.fromList [MetadataEmbeddedBlob]
   CreateUPS    -> Set.empty
-  CreateDPS    -> Set.fromList [MTitle, MAuthor, MVersion, MStability]
+  CreateDPS    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataVersion, MetadataStability]
   CreateNINJA2 -> Set.fromList
-    [ MTitle, MAuthor, MVersion, MDescription, MGenre, MLanguage
-    , MDate, MWebsite, MRomType, MPatchEncoding ]
+    [ MetadataTitle, MetadataAuthor, MetadataVersion, MetadataDescription, MetadataGenre, MetadataLanguage
+    , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
   CreateAPSGBA -> Set.empty
   CreateGDIFF  -> Set.empty
 
@@ -404,21 +404,21 @@ acceptedMetadataFields (CreateDiff format) = case format of
 -- counts as set when the value differs from 'PatchEncodingUTF8'.
 requestedMetadataFields :: RequestedPatchMetadata -> Set.Set MetadataField
 requestedMetadataFields meta = Set.fromList $ concat
-  [ [MTitle               | isJust (requestedTitle               meta)]
-  , [MAuthor              | isJust (requestedAuthor              meta)]
-  , [MDescription         | isJust (requestedDescription         meta)]
-  , [MVersion             | isJust (requestedVersion             meta)]
-  , [MUndoInclusion       | isJust (requestedUndoInclusion       meta)]
-  , [MValidationInclusion | isJust (requestedValidationInclusion meta)]
-  , [MStability           | isJust (requestedStability           meta)]
-  , [MRomType             | isJust (requestedRomType             meta)]
-  , [MImageType           | isJust (requestedImageType           meta)]
-  , [MGenre               | isJust (requestedGenre               meta)]
-  , [MLanguage            | isJust (requestedLanguage            meta)]
-  , [MDate                | isJust (requestedDate                meta)]
-  , [MWebsite             | isJust (requestedWebsite             meta)]
-  , [MPatchEncoding       | requestedPatchEncoding meta /= PatchEncodingUTF8]
-  , [MEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
+  [ [MetadataTitle               | isJust (requestedTitle               meta)]
+  , [MetadataAuthor              | isJust (requestedAuthor              meta)]
+  , [MetadataDescription         | isJust (requestedDescription         meta)]
+  , [MetadataVersion             | isJust (requestedVersion             meta)]
+  , [MetadataUndoInclusion       | isJust (requestedUndoInclusion       meta)]
+  , [MetadataValidationInclusion | isJust (requestedValidationInclusion meta)]
+  , [MetadataStability           | isJust (requestedStability           meta)]
+  , [MetadataRomType             | isJust (requestedRomType             meta)]
+  , [MetadataImageType           | isJust (requestedImageType           meta)]
+  , [MetadataGenre               | isJust (requestedGenre               meta)]
+  , [MetadataLanguage            | isJust (requestedLanguage            meta)]
+  , [MetadataDate                | isJust (requestedDate                meta)]
+  , [MetadataWebsite             | isJust (requestedWebsite             meta)]
+  , [MetadataPatchEncoding       | requestedPatchEncoding meta /= PatchEncodingUTF8]
+  , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
   ]
 
 -- | Reject any metadata field set by the user that the target format
@@ -589,7 +589,7 @@ conversionNotes :: PatchContents -> DirectCreate -> DirectConversionContract -> 
 conversionNotes contents target contract meta =
   let have = provides contents
       kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
-      dropped = have `Set.difference` kept `Set.difference` Set.singleton FRecords
+      dropped = have `Set.difference` kept `Set.difference` Set.singleton FieldRecords
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
       defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
       hashNotes = ninja1HashNotes contents target
@@ -645,45 +645,46 @@ ninja1HashNotes _ _ = []
 
 fieldNote :: PatchContents -> PatchField -> [SlapWarning]
 fieldNote contents field = case field of
-  FSourceCRC32
-    | Just crc <- contentsSourceCRC32 contents, crc /= CRC32 0 ->
-      [FieldDropped FSourceCRC32 (DroppedCRC crc)]
-  FSourceMD5
-    | Just hash <- contentsSourceMD5 contents, not (ByteString.all (== 0) (unMD5Hash hash)) ->
-      [FieldDropped FSourceMD5 (DroppedMD5 hash)]
-  FSourceSHA1
-    | Just hash <- contentsSourceSHA1 contents, not (ByteString.all (== 0) (unSHA1Hash hash)) ->
-      [FieldDropped FSourceSHA1 (DroppedSHA1 hash)]
-  FDescription
-    | Just description <- contentsDescription contents
-    , not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      [FieldDropped FDescription (DroppedDescription (trimNullSpace (decodeLocaleField description)))]
-  FUndoData
-    | Just undoRecords <- contentsUndoData contents ->
-      [UndoDataDropped (length undoRecords)]
-  FValidation
-    | isJust (contentsValidation contents) ->
-      [ValidationBlockDropped]
-  FDestinationSize
-    | Just targetSize <- contentsDestinationSize contents ->
-      [FieldDropped FDestinationSize (DroppedSize targetSize)]
-  FTruncation
-    | isJust (contentsTruncation contents) ->
-      [FieldDropped FTruncation DroppedEmpty]
-  FEBPMeta
-    | isJust (contentsEBPMeta contents) ->
-      [FieldDropped FEBPMeta DroppedEmpty]
-  FRomType
-    | isJust (contentsRomType contents) ->
-      [FieldDropped FRomType DroppedEmpty]
-  FImageType
-    | isJust (contentsImageType contents) ->
-      [FieldDropped FImageType DroppedEmpty]
-  FFileIdDiz
-    | isJust (contentsFileIdDiz contents) ->
-      [FieldDropped FFileIdDiz DroppedEmpty]
-  FPCHTXTBlocks
-    | Just blocks <- contentsPCHTXTBlocks contents ->
+  FieldRecords -> []
+  FieldSourceCRC32 -> case contentsSourceCRC32 contents of
+    Just crc | crc /= CRC32 0 -> [FieldDropped FieldSourceCRC32 (DroppedCRC crc)]
+    _ -> []
+  FieldSourceMD5 -> case contentsSourceMD5 contents of
+    Just hash | not (ByteString.all (== 0) (unMD5Hash hash)) -> [FieldDropped FieldSourceMD5 (DroppedMD5 hash)]
+    _ -> []
+  FieldSourceSHA1 -> case contentsSourceSHA1 contents of
+    Just hash | not (ByteString.all (== 0) (unSHA1Hash hash)) -> [FieldDropped FieldSourceSHA1 (DroppedSHA1 hash)]
+    _ -> []
+  FieldDescription -> case contentsDescription contents of
+    Just description | not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
+      [FieldDropped FieldDescription (DroppedDescription (trimNullSpace (decodeLocaleField description)))]
+    _ -> []
+  FieldUndoData -> case contentsUndoData contents of
+    Just undoRecords -> [UndoDataDropped (length undoRecords)]
+    Nothing -> []
+  FieldValidation
+    | isJust (contentsValidation contents) -> [ValidationBlockDropped]
+    | otherwise -> []
+  FieldDestinationSize -> case contentsDestinationSize contents of
+    Just targetSize -> [FieldDropped FieldDestinationSize (DroppedSize targetSize)]
+    Nothing -> []
+  FieldTruncation
+    | isJust (contentsTruncation contents) -> [FieldDropped FieldTruncation DroppedEmpty]
+    | otherwise -> []
+  FieldEBPMeta
+    | isJust (contentsEBPMeta contents) -> [FieldDropped FieldEBPMeta DroppedEmpty]
+    | otherwise -> []
+  FieldRomType
+    | isJust (contentsRomType contents) -> [FieldDropped FieldRomType DroppedEmpty]
+    | otherwise -> []
+  FieldImageType
+    | isJust (contentsImageType contents) -> [FieldDropped FieldImageType DroppedEmpty]
+    | otherwise -> []
+  FieldFileIdDiz
+    | isJust (contentsFileIdDiz contents) -> [FieldDropped FieldFileIdDiz DroppedEmpty]
+    | otherwise -> []
+  FieldPCHTXTBlocks -> case contentsPCHTXTBlocks contents of
+    Just blocks ->
       let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
                               (filter (not . PCHTXT.pchtxtBlockEnabled) blocks))
           hasDescriptions = any (isJust . PCHTXT.pchtxtBlockDescription) blocks
@@ -691,10 +692,10 @@ fieldNote contents field = case field of
         [ [DisabledEntriesDropped disabled | disabled > 0]
         , [BlockDescriptionsDropped | hasDescriptions]
         ]
-  FMetadata
-    | Just metadataBlob <- contentsMetadata contents, not (ByteString.null metadataBlob) ->
-      [MetadataDropped (ByteString.length metadataBlob)]
-  _ -> []
+    Nothing -> []
+  FieldMetadata -> case contentsMetadata contents of
+    Just metadataBlob | not (ByteString.null metadataBlob) -> [MetadataDropped (ByteString.length metadataBlob)]
+    _ -> []
 
 ----------------------------------------------------------------------------
 -- Direct conversion (direct → direct)
@@ -814,7 +815,7 @@ encodeDirect contents source target meta limits constraints = case target of
     case contentsDestinationSize contents of
       Just targetSize ->
         Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
-      Nothing -> Left (MissingRequiredField LabelAPSN64 FDestinationSize)
+      Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
   where
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
@@ -927,16 +928,16 @@ buildContents :: DirectCreate -> SourceFileContents -> TargetFileContents
 buildContents format (SourceFileContents source) (TargetFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
-  , contentsSourceCRC32 = if needs FSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
-  , contentsSourceMD5   = if needs FSourceMD5   then Just (md5 hashSource)   else Nothing
-  , contentsSourceSHA1  = if needs FSourceSHA1  then Just (sha1 hashSource)  else Nothing
-  , contentsDestinationSize    = if needs FDestinationSize
+  , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
+  , contentsSourceMD5   = if needs FieldSourceMD5   then Just (md5 hashSource)   else Nothing
+  , contentsSourceSHA1  = if needs FieldSourceSHA1  then Just (sha1 hashSource)  else Nothing
+  , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (FileSize (ByteString.length target))
                     else Nothing
-  , contentsValidation  = if needs FValidation && ByteString.length source > validationOffset + 1024
+  , contentsValidation  = if needs FieldValidation && ByteString.length source > validationOffset + 1024
                     then Just (ValidationBlockBytes (ByteString.take 1024 (ByteString.drop validationOffset source)))
                     else Nothing
-  , contentsUndoData    = if needs FUndoData
+  , contentsUndoData    = if needs FieldUndoData
                     then Just (PPF.computeUndo source patchHunks)
                     else Nothing
   -- Populated whenever the target is smaller than the source regardless

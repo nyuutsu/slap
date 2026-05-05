@@ -12,57 +12,57 @@ module Slap.MetadataField
 -- instance — but they participate in different conversations and are
 -- typed separately so each enum's role stays unambiguous.
 data MetadataField
-  = MTitle
-  | MAuthor
-  | MDescription
-  | MVersion
-  | MUndoInclusion
-  | MValidationInclusion
-  | MStability
-  | MRomType
-  | MImageType
-  | MGenre
-  | MLanguage
-  | MDate
-  | MWebsite
-  | MPatchEncoding
-  | MEmbeddedBlob
+  = MetadataTitle
+  | MetadataAuthor
+  | MetadataDescription
+  | MetadataVersion
+  | MetadataUndoInclusion
+  | MetadataValidationInclusion
+  | MetadataStability
+  | MetadataRomType
+  | MetadataImageType
+  | MetadataGenre
+  | MetadataLanguage
+  | MetadataDate
+  | MetadataWebsite
+  | MetadataPatchEncoding
+  | MetadataEmbeddedBlob
   deriving (Eq, Ord, Show)
 
 -- | Human-readable name for prose contexts in error and help messages.
 metadataFieldName :: MetadataField -> String
-metadataFieldName MTitle               = "title"
-metadataFieldName MAuthor              = "author"
-metadataFieldName MDescription         = "description"
-metadataFieldName MVersion             = "version"
-metadataFieldName MUndoInclusion       = "undo data"
-metadataFieldName MValidationInclusion = "validation block"
-metadataFieldName MStability           = "stability flag"
-metadataFieldName MRomType             = "ROM type"
-metadataFieldName MImageType           = "image type"
-metadataFieldName MGenre               = "genre"
-metadataFieldName MLanguage            = "language"
-metadataFieldName MDate                = "date"
-metadataFieldName MWebsite             = "website"
-metadataFieldName MPatchEncoding       = "patch encoding"
-metadataFieldName MEmbeddedBlob        = "embedded metadata blob"
+metadataFieldName MetadataTitle               = "title"
+metadataFieldName MetadataAuthor              = "author"
+metadataFieldName MetadataDescription         = "description"
+metadataFieldName MetadataVersion             = "version"
+metadataFieldName MetadataUndoInclusion       = "undo data"
+metadataFieldName MetadataValidationInclusion = "validation block"
+metadataFieldName MetadataStability           = "stability flag"
+metadataFieldName MetadataRomType             = "ROM type"
+metadataFieldName MetadataImageType           = "image type"
+metadataFieldName MetadataGenre               = "genre"
+metadataFieldName MetadataLanguage            = "language"
+metadataFieldName MetadataDate                = "date"
+metadataFieldName MetadataWebsite             = "website"
+metadataFieldName MetadataPatchEncoding       = "patch encoding"
+metadataFieldName MetadataEmbeddedBlob        = "embedded metadata blob"
 
 -- | The CLI flag name (without leading dashes) that sets each field.
 -- Used in rejection messages so the user sees the exact flag they
 -- typed in slap's response.
 metadataFieldFlagName :: MetadataField -> String
-metadataFieldFlagName MTitle               = "title"
-metadataFieldFlagName MAuthor              = "author"
-metadataFieldFlagName MDescription         = "description"
-metadataFieldFlagName MVersion             = "version"
-metadataFieldFlagName MUndoInclusion       = "no-undo"
-metadataFieldFlagName MValidationInclusion = "no-validate"
-metadataFieldFlagName MStability           = "unstable"
-metadataFieldFlagName MRomType             = "rom-type"
-metadataFieldFlagName MImageType           = "image-type"
-metadataFieldFlagName MGenre               = "genre"
-metadataFieldFlagName MLanguage            = "language"
-metadataFieldFlagName MDate                = "date"
-metadataFieldFlagName MWebsite             = "website"
-metadataFieldFlagName MPatchEncoding       = "patch-encoding"
-metadataFieldFlagName MEmbeddedBlob        = "metadata"
+metadataFieldFlagName MetadataTitle               = "title"
+metadataFieldFlagName MetadataAuthor              = "author"
+metadataFieldFlagName MetadataDescription         = "description"
+metadataFieldFlagName MetadataVersion             = "version"
+metadataFieldFlagName MetadataUndoInclusion       = "no-undo"
+metadataFieldFlagName MetadataValidationInclusion = "no-validate"
+metadataFieldFlagName MetadataStability           = "unstable"
+metadataFieldFlagName MetadataRomType             = "rom-type"
+metadataFieldFlagName MetadataImageType           = "image-type"
+metadataFieldFlagName MetadataGenre               = "genre"
+metadataFieldFlagName MetadataLanguage            = "language"
+metadataFieldFlagName MetadataDate                = "date"
+metadataFieldFlagName MetadataWebsite             = "website"
+metadataFieldFlagName MetadataPatchEncoding       = "patch-encoding"
+metadataFieldFlagName MetadataEmbeddedBlob        = "metadata"
