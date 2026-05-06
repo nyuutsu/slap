@@ -18,8 +18,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize)
 import Data.ByteString (ByteString)
 
 data GDiffCommand
-  = GDiffData ByteString                             -- literal data to append
-  | GDiffCopy { gdiffCopyOffset :: !Offset, gdiffCopyLength :: !FileSize }  -- offset into source, length
+  = GDiffData ByteString    -- literal data to append
+  | GDiffCopy !Offset !FileSize  -- offset into source, length
   deriving (Show)
 
 data GDiffPatch = GDiffPatch

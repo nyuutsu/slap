@@ -56,7 +56,7 @@ makePCHTXTEntry entry = AnalysisRegion
   , regionSize       = Length (ByteString.length (pchtxtData entry))
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (pchtxtData entry)
-  , regionAnnotation = AnnotNone
+  , regionAnnotation = AnnotationNone
   }
 
 ----------------------------------------------------------------------------

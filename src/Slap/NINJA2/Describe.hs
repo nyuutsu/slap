@@ -78,5 +78,5 @@ makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = AnalysisRegion
   , regionSize       = Length (ByteString.length deltaBytes)
   , regionLabel      = "XOR  "
   , regionPayload    = PayloadXOR (Just deltaBytes)
-  , regionAnnotation = AnnotAt AtOffset recordOffset []
+  , regionAnnotation = AnnotationAt AtOffset recordOffset []
   }

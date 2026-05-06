@@ -29,6 +29,6 @@ makeGBARegion record = AnalysisRegion
   , regionSize       = Length apsGbaBlockSize
   , regionLabel      = "XOR block  "
   , regionPayload    = PayloadXOR (Just (apsGbaXorData record))
-  , regionAnnotation = AnnotAt AtOffset (apsGbaOffset record)
+  , regionAnnotation = AnnotationAt AtOffset (apsGbaOffset record)
       [DetailCRC16 (apsGbaSourceCRC record) (apsGbaTargetCRC record)]
   }

@@ -238,10 +238,10 @@ data NINJA2Metadata = NINJA2Metadata
   , ninja2MetadataPlatform    :: Maybe PlatformType
   } deriving (Show)
 
-data NINJA2Record = NINJA2Record
-  { ninja2RecordOffset :: !Offset
-  , ninja2RecordXor    :: !ByteString
-  } deriving (Show)
+-- | A NINJA2 binary record: an offset followed by the XOR payload
+-- bytes for that offset.
+data NINJA2Record = NINJA2Record !Offset !ByteString
+  deriving (Show)
 
 -- | An XOR record for encoding: offset + XOR'd payload.
 data XorRecord = XorRecord

@@ -19,18 +19,16 @@ import Slap.Measure (Length(..), FileSize(..))
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 
-data UPSBlock = UPSBlock
-  { upsSkip    :: !Length
-    -- ^ Number of bytes to skip (copied verbatim from source) before
-    -- the XOR delta begins.
-  , upsXorData :: !ByteString
-    -- ^ XOR delta bytes for this block. Per the UPS spec these are
-    -- never 0x00 in the encoded stream (a 0x00 byte terminates the
-    -- run); the parser strips the terminator before storing. slap
-    -- does not enforce the no-zero-byte invariant on the in-memory
-    -- representation — it's a property of the encoded form, not a
-    -- slap data invariant.
-  } deriving (Show)
+-- | A single UPS block: a skip count followed by the XOR delta
+-- bytes for this block. The skip count is the number of bytes to
+-- copy verbatim from source before the XOR delta begins. Per the
+-- UPS spec the XOR delta bytes are never 0x00 in the encoded
+-- stream (a 0x00 byte terminates the run); the parser strips the
+-- terminator before storing. slap does not enforce the no-zero-
+-- byte invariant on the in-memory representation — it's a
+-- property of the encoded form, not a slap data invariant.
+data UPSBlock = UPSBlock !Length !ByteString
+  deriving (Show)
 
 data UPSBody = UPSBody
   { upsBodySourceSize :: !FileSize

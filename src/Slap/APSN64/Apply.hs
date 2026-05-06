@@ -30,5 +30,5 @@ applyAPSN64 (APSN64Patch _ records) (SourceFileContents source) = Right $ Target
   where
     sourceLength = ByteString.length source
     recordEnd (APSN64Normal recordOffset recordPayload) = offsetToInt recordOffset + ByteString.length recordPayload
-    recordEnd (APSN64RLE recordOffset _ recordCount) = offsetToInt recordOffset + fromIntegral recordCount
+    recordEnd (APSN64RLE recordOffset _ fillCount) = offsetToInt recordOffset + fromIntegral fillCount
     outputLength = Foldable.foldl' max sourceLength (fmap recordEnd records)

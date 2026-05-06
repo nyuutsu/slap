@@ -111,7 +111,7 @@ parseDPSBody = do
 parseRecords :: Get (Either SlapError [DPSRecord])
 parseRecords = do
   available <- remaining
-  if unLength available < 5 then pure (Right [])
+  if unLength available < dpsRecordHeaderSize then pure (Right [])
   else do
     mode <- getByte
     outputOffset <- Offset . fromIntegral <$> Get.word32LE

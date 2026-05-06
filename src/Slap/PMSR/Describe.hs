@@ -51,7 +51,7 @@ makePMSRRegion record = AnalysisRegion
   , regionSize       = Length (ByteString.length (pmsrData record))
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (pmsrData record)
-  , regionAnnotation = AnnotAt AtOffset (pmsrOffset record) []
+  , regionAnnotation = AnnotationAt AtOffset (pmsrOffset record) []
   }
 
 ----------------------------------------------------------------------------

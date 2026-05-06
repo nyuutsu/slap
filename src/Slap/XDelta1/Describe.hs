@@ -75,6 +75,6 @@ makeXDelta1Region instruction = AnalysisRegion
   , regionSize       = Length (unFileSize (xdelta1InstructionLength instruction))
   , regionLabel      = "Copy  "
   , regionPayload    = PayloadCopy FromSource
-  , regionAnnotation = AnnotAt AtOffset (xdelta1InstructionOffset instruction)
+  , regionAnnotation = AnnotationAt AtOffset (xdelta1InstructionOffset instruction)
       [DetailSourceIndex (xdelta1InstructionIndex instruction)]
   }

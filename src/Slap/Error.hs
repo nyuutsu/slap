@@ -569,12 +569,11 @@ data CreateResult = CreateResult
 -- Parsed
 ----------------------------------------------------------------------------
 
--- | The parse-side companion to 'CreateResult': a successfully parsed
--- payload paired with any warnings the parser accumulated.
-data Parsed value = Parsed
-  { parsedValue    :: !value
-  , parsedWarnings :: ![SlapWarning]
-  } deriving (Show)
+-- | The parse-side companion to 'CreateResult': a successfully
+-- parsed payload paired with any warnings the parser accumulated.
+-- Two fields: the parsed value (parametric) and the warning list.
+data Parsed value = Parsed !value ![SlapWarning]
+  deriving (Show)
 
 ----------------------------------------------------------------------------
 -- Outcome

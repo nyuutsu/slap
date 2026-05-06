@@ -39,9 +39,6 @@ module Slap.IPS.Create
   , optimalIPSRecords
     -- * Encoding limits and narrowing
   , EncodingLimits(..)
-  , ipsLimits
-  , ips32Limits
-  , ebpLimits
   , narrowHunk
   , narrowHunks
   ) where
@@ -345,24 +342,6 @@ data EncodingLimits = EncodingLimits
   { maximumOffset :: !Offset
   , formatLabel   :: !FormatLabel
   } deriving (Show)
-
-ipsLimits :: EncodingLimits
-ipsLimits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFF
-  , formatLabel   = LabelIPS
-  }
-
-ips32Limits :: EncodingLimits
-ips32Limits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFFFF
-  , formatLabel   = LabelIPS32
-  }
-
-ebpLimits :: EncodingLimits
-ebpLimits = EncodingLimits
-  { maximumOffset = Offset 0xFFFFFF
-  , formatLabel   = LabelEBP
-  }
 
 -- | Narrow a 'Hunk' to an 'EncodedHunk' by checking its offset
 -- against the variant's wire-format range. Overflow surfaces as an

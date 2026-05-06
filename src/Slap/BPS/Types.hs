@@ -24,10 +24,10 @@ import Slap.Error (SlapWarning)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
 data BPSAction
-  = SourceRead { sourceReadLength :: !Length }
-  | TargetRead { targetReadPayload :: !ByteString }
-  | SourceCopy { sourceCopyLength :: !Length, sourceCopyDelta :: !Delta }
-  | TargetCopy { targetCopyLength :: !Length, targetCopyDelta :: !Delta }
+  = SourceRead !Length
+  | TargetRead !ByteString
+  | SourceCopy !Length !Delta
+  | TargetCopy !Length !Delta
   deriving (Show)
 
 data BPSBody = BPSBody

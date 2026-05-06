@@ -12,6 +12,7 @@ module Slap.VCDIFF.Apply
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFWindow(..), VCDIFFInstruction(..)
+    , VCDIFFAddressMode(..), VCDIFFNearCacheSize(..), VCDIFFSameCacheSize(..)
     , VCDIFFDecodedInstruction(..), VCDIFFWindowSource(..)
     , CodeEntry(..), sameCacheSlots
     )
@@ -48,12 +49,14 @@ data AddressCache = AddressCache
   , cacheSameSize :: !Int
   }
 
-defaultNearSize, defaultSameSize :: Int
-defaultNearSize = 4
-defaultSameSize = 3
+defaultNearSize :: VCDIFFNearCacheSize
+defaultNearSize = VCDIFFNearCacheSize 4
 
-newAddressCache :: Int -> Int -> IO AddressCache
-newAddressCache nearSize sameSize = do
+defaultSameSize :: VCDIFFSameCacheSize
+defaultSameSize = VCDIFFSameCacheSize 3
+
+newAddressCache :: VCDIFFNearCacheSize -> VCDIFFSameCacheSize -> IO AddressCache
+newAddressCache (VCDIFFNearCacheSize nearSize) (VCDIFFSameCacheSize sameSize) = do
   nearSlots <- mapM (\_ -> newIORef 0) [0..nearSize-1]
   sameSlots <- mapM (\_ -> newIORef 0) [0..sameSize*sameCacheSlots-1]
   nextIndex <- newIORef 0
@@ -77,8 +80,8 @@ updateCache cache address = do
 
 -- | Decode an address given the mode, current "here" position,
 --   an IORef tracking the read position, and the address stream bytes.
-decodeAddress :: AddressCache -> Int -> Int64 -> IORef Int -> ByteString -> IO Int64
-decodeAddress cache mode here addressPositionReference addressBytes
+decodeAddress :: AddressCache -> VCDIFFAddressMode -> Int64 -> IORef Int -> ByteString -> IO Int64
+decodeAddress cache (VCDIFFAddressMode mode) here addressPositionReference addressBytes
   | mode == 0 = do
       -- Self mode
       position <- readIORef addressPositionReference
@@ -145,7 +148,7 @@ applyVCDIFF patch (SourceFileContents source)
     nearSize = vcdiffNearSize patch
     sameSize = vcdiffSameSize patch
 
-applyWindow :: Array Word8 CodeEntry -> Int -> Int
+applyWindow :: Array Word8 CodeEntry -> VCDIFFNearCacheSize -> VCDIFFSameCacheSize
             -> ByteString -> Ptr Word8 -> IORef Int -> Int -> VCDIFFWindow -> IO ()
 applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalTargetLength window = do
   globalOutputOffset <- readIORef globalOutputOffsetRef
@@ -207,7 +210,7 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
 
       executeInstruction :: VCDIFFInstruction -> IO ()
       executeInstruction VcdiffNoop = pure ()
-      executeInstruction (VcdiffAdd rawSize) = do
+      executeInstruction (VcdiffAdd (Length rawSize)) = do
         size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
         windowOffset <- readIORef windowOffsetReference
         addRunPosition <- readIORef addRunPositionReference
@@ -220,7 +223,7 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
         writeIORef addRunPositionReference (addRunPosition + count)
         writeIORef windowOffsetReference (windowOffset + count)
 
-      executeInstruction (VcdiffRun rawSize) = do
+      executeInstruction (VcdiffRun (Length rawSize)) = do
         size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
         windowOffset <- readIORef windowOffsetReference
         addRunPosition <- readIORef addRunPositionReference
@@ -237,7 +240,7 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
         writeIORef addRunPositionReference (addRunPosition + 1)
         writeIORef windowOffsetReference (windowOffset + count)
 
-      executeInstruction (VcdiffCopy rawSize mode) = do
+      executeInstruction (VcdiffCopy (Length rawSize) mode) = do
         size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
         windowOffset <- readIORef windowOffsetReference
         -- "here" = sourceSegmentLength + windowOffset (position in the combined source-window)
@@ -298,9 +301,10 @@ applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetR
 -- | Decode a window's instruction bytecodes into a list of decoded
 --   instructions. Mirrors 'applyWindow' but accumulates results in ST
 --   instead of writing bytes.
-decodeWindowInstructions :: Array Word8 CodeEntry -> Int -> Int
+decodeWindowInstructions :: Array Word8 CodeEntry -> VCDIFFNearCacheSize -> VCDIFFSameCacheSize
                          -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
-decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
+decodeWindowInstructions codeTable (VCDIFFNearCacheSize nearSize) (VCDIFFSameCacheSize sameSize) window =
+  runST decodeBody
   where
     targetLength    = unFileSize (vcdiffTargetLength window)
     sourceSegmentLength = unFileSize (vcdiffSourceLength window)
@@ -333,8 +337,8 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
               let sameIndex = fromIntegral address `mod` (sameSize * sameCacheSlots)
               writeArray sameArray sameIndex address
 
-          decodeAddressST :: Int -> Int64 -> ST s Int64
-          decodeAddressST mode here
+          decodeAddressST :: VCDIFFAddressMode -> Int64 -> ST s Int64
+          decodeAddressST (VCDIFFAddressMode mode) here
             | mode == 0 = do
                 position <- readSTRef addressPositionReference
                 if position >= ByteString.length addressBytes then pure 0
@@ -400,7 +404,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
 
           executeInstruction :: VCDIFFInstruction -> ST s ()
           executeInstruction VcdiffNoop = pure ()
-          executeInstruction (VcdiffAdd rawSize) = do
+          executeInstruction (VcdiffAdd (Length rawSize)) = do
             size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
             windowOffset <- readSTRef windowOffsetReference
             addRunPosition <- readSTRef addRunPositionReference
@@ -413,7 +417,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             writeSTRef addRunPositionReference (addRunPosition + count)
             writeSTRef windowOffsetReference (windowOffset + count)
 
-          executeInstruction (VcdiffRun rawSize) = do
+          executeInstruction (VcdiffRun (Length rawSize)) = do
             size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
             windowOffset <- readSTRef windowOffsetReference
             addRunPosition <- readSTRef addRunPositionReference
@@ -423,7 +427,7 @@ decodeWindowInstructions codeTable nearSize sameSize window = runST decodeBody
             writeSTRef addRunPositionReference (addRunPosition + 1)
             writeSTRef windowOffsetReference (windowOffset + count)
 
-          executeInstruction (VcdiffCopy rawSize mode) = do
+          executeInstruction (VcdiffCopy (Length rawSize) mode) = do
             size <- if rawSize == 0 then fromIntegral <$> readInstructionVarint else pure rawSize
             windowOffset <- readSTRef windowOffsetReference
             let here  = fromIntegral sourceSegmentLength + fromIntegral windowOffset :: Int64

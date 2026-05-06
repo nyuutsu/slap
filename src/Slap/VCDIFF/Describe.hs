@@ -7,6 +7,7 @@ module Slap.VCDIFF.Describe
 
 import Slap.VCDIFF.Types
     ( VCDIFFPatch(..), VCDIFFHeader(..), VCDIFFWindow(..)
+    , VCDIFFNearCacheSize(..), VCDIFFSameCacheSize(..)
     , VCDIFFDecodedInstruction(..), VCDIFFVersion(..)
     )
 import Slap.VCDIFF.Apply (decodeWindowInstructions)
@@ -34,8 +35,8 @@ vcdiffMeta patch = concat
       Nothing -> []
       Just compressor  -> [InfoLine "compressor" (show compressor)]
   , if vcdiffHasCodeTable (vcdiffHeader patch)
-    then [InfoLine "code table" ("custom (near=" ++ show (vcdiffNearSize patch)
-          ++ ", same=" ++ show (vcdiffSameSize patch) ++ ")")]
+    then [InfoLine "code table" ("custom (near=" ++ show (unVCDIFFNearCacheSize (vcdiffNearSize patch))
+          ++ ", same=" ++ show (unVCDIFFSameCacheSize (vcdiffSameSize patch)) ++ ")")]
     else []
   , [InfoLine "target size" (show (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
   , if any ((/= Nothing) . vcdiffAdler32) (vcdiffWindows patch)
@@ -95,28 +96,28 @@ decodedToRegion globalOffset instruction = case instruction of
     , regionSize       = Length (ByteString.length payload)
     , regionLabel      = "Add    "
     , regionPayload    = PayloadWrite payload
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
+    , regionAnnotation = AnnotationAt AtOutput (absoluteOffset windowOffset) []
     }
   DecodedRun windowOffset fillByte count -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = count
     , regionLabel      = "Run  "
     , regionPayload    = PayloadFill fillByte count
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
+    , regionAnnotation = AnnotationAt AtOutput (absoluteOffset windowOffset) [DetailRLE]
     }
   DecodedCopy windowOffset copySize (Just sourceOffset) -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromSource
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) [DetailSource sourceOffset]
+    , regionAnnotation = AnnotationAt AtOutput (absoluteOffset windowOffset) [DetailSource sourceOffset]
     }
   DecodedCopy windowOffset copySize Nothing -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
     , regionSize       = copySize
     , regionLabel      = "Copy   "
     , regionPayload    = PayloadCopy FromTarget
-    , regionAnnotation = AnnotAt AtOutput (absoluteOffset windowOffset) []
+    , regionAnnotation = AnnotationAt AtOutput (absoluteOffset windowOffset) []
     }
   where
     absoluteOffset windowOffset = displace globalOffset (Delta (unOffset windowOffset))

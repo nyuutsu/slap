@@ -341,11 +341,10 @@ putInt64BE value =
 -- Variable-length integer result
 ----------------------------------------------------------------------------
 
--- | Result of decoding a variable-length integer.
-data VarintResult = VarintResult
-  { varintValue    :: !Int64
-  , varintConsumed :: !Int     -- bytes consumed from the input
-  } deriving (Show)
+-- | Result of decoding a variable-length integer: the decoded
+-- value followed by the number of bytes consumed from the input.
+data VarintResult = VarintResult !Int64 !Int
+  deriving (Show)
 
 ----------------------------------------------------------------------------
 -- String utilities

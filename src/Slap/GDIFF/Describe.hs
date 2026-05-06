@@ -44,10 +44,10 @@ makeGDIFFRegion outputPosition command = case command of
     let payloadLength = byteLength payload
     in ( advance outputPosition payloadLength
        , AnalysisRegion outputPosition payloadLength "DATA  " (PayloadWrite payload)
-           (AnnotAt AtOutput outputPosition [])
+           (AnnotationAt AtOutput outputPosition [])
        )
   GDiffCopy sourceOffset copyLength ->
     ( advance outputPosition (Length (unFileSize copyLength))
     , AnalysisRegion outputPosition (Length (unFileSize copyLength)) "COPY  " (PayloadCopy FromSource)
-        (AnnotAt AtOutput outputPosition [DetailSource sourceOffset])
+        (AnnotationAt AtOutput outputPosition [DetailSource sourceOffset])
     )

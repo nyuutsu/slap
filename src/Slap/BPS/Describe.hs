@@ -82,13 +82,13 @@ makeBPSRegion state action = case action of
   SourceRead actionLength ->
     ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
     , AnalysisRegion (regionOutputPosition state) actionLength "SourceRead " (PayloadCopy FromSource)
-        (AnnotAt AtOutput (regionOutputPosition state) [DetailSource (regionOutputPosition state)])
+        (AnnotationAt AtOutput (regionOutputPosition state) [DetailSource (regionOutputPosition state)])
     )
   TargetRead payload ->
     let payloadLength = Length (ByteString.length payload)
     in ( state { regionOutputPosition = advance (regionOutputPosition state) payloadLength }
        , AnalysisRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
-           (AnnotAt AtOutput (regionOutputPosition state) [])
+           (AnnotationAt AtOutput (regionOutputPosition state) [])
        )
   SourceCopy actionLength actionDelta ->
     let nextSourceRelative = displace (regionSourceRelative state) actionDelta
@@ -101,10 +101,10 @@ makeBPSRegion state action = case action of
             [DetailCursorUnderflow SourceCursor underflowedCursor, DetailDelta actionDelta]
     in ( BPSRegionState nextOutputPosition advancedSourceRelative
        , AnalysisRegion (regionOutputPosition state) actionLength "SourceCopy " (PayloadCopy FromSource)
-           (AnnotAt AtOutput (regionOutputPosition state) annotationDetails)
+           (AnnotationAt AtOutput (regionOutputPosition state) annotationDetails)
        )
   TargetCopy actionLength actionDelta ->
     ( state { regionOutputPosition = advance (regionOutputPosition state) actionLength }
     , AnalysisRegion (regionOutputPosition state) actionLength "TargetCopy " (PayloadCopy FromTarget)
-        (AnnotAt AtOutput (regionOutputPosition state) [DetailDelta actionDelta])
+        (AnnotationAt AtOutput (regionOutputPosition state) [DetailDelta actionDelta])
     )

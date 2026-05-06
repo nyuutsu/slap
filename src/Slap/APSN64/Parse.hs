@@ -14,7 +14,8 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            APSN64Country(..),
                            toAPSPatchType, toAPSImageFormat,
                            toAPSRecordEncoding, toAPSN64Country,
-                           apsN64MagicBytes, apsN64DescriptionWidth)
+                           apsN64MagicBytes, apsN64DescriptionWidth,
+                           apsN64RecordHeaderSize)
 import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -38,19 +39,23 @@ data APSN64ParseWalk = APSN64ParseWalk
 
 parseAPSN64 :: PatchFileContents -> Either SlapError (Parsed APSN64Patch)
 parseAPSN64 (PatchFileContents input)
-  | ByteString.length input < 5 =
-      Left (InputTooShort LabelAPSN64 (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 5 input /= apsN64MagicBytes =
-      Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take 5 input)))
+  | ByteString.length input < magicLength =
+      Left (InputTooShort LabelAPSN64
+             (RequiredLength (Length magicLength))
+             (ActualLength (Length (ByteString.length input))))
+  | ByteString.take magicLength input /= apsN64MagicBytes =
+      Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
   | otherwise =
       case runGet parseN64 input of
         Left errorMessage -> Left (ParseError LabelAPSN64 errorMessage)
         Right walk ->
           Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
+  where
+    magicLength = ByteString.length apsN64MagicBytes
 
 parseN64 :: Get APSN64ParseWalk
 parseN64 = do
-  skip (Length 5)  -- "APS10"
+  skip (Length (ByteString.length apsN64MagicBytes))  -- "APS10"
   patchTypeByte <- getByte
   case toAPSPatchType patchTypeByte of
     Left errorMessage -> fail errorMessage
@@ -105,7 +110,7 @@ parseN64Records = walkRecords []
       if done then pure (reverse accumulatedReversed)
       else do
         remainingLength <- remaining
-        if unLength remainingLength < 5
+        if unLength remainingLength < apsN64RecordHeaderSize
           then pure (reverse accumulatedReversed)
           else do
             recordOffset <- Offset . fromIntegral <$> word32LE

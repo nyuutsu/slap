@@ -13,6 +13,7 @@ module Slap.Display.Analysis
   , renderAnalysisSummary
   ) where
 
+import Slap.BSDiff.Types (BSDiffControl(..))
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display.Common (InfoLine(..), renderInfoLine,
                              Tally(..), CountUnit, ByteCount,
@@ -92,17 +93,12 @@ data SummaryInfo = SummaryInfo
   }
 
 data Annotation
-  = AnnotNone                                    -- no annotation (PCHTXT)
-  | AnnotAt
-      { annotOffsetKind :: !OffsetKind
-      , annotOffset     :: !Offset
-      , annotDetails    :: ![AnnotDetail]
-      }
-  | AnnotBSDiff
-      { annotAddSize  :: !Length
-      , annotCopySize :: !Length
-      , annotSeek     :: !Delta
-      }
+  = AnnotationNone                          -- no annotation (PCHTXT)
+  | AnnotationAt { annotationOffsetKind :: !OffsetKind
+                 , annotationOffset     :: !Offset
+                 , annotationDetails    :: ![AnnotDetail]
+                 }
+  | AnnotationBSDiff !BSDiffControl
 
 data OffsetKind = AtOffset | AtOutput
 
@@ -204,12 +200,12 @@ renderSummaryLine summary =
        Just byteCount -> ", " ++ renderByteCount byteCount
 
 renderAnnotation :: Annotation -> String
-renderAnnotation AnnotNone = ""
-renderAnnotation (AnnotBSDiff addSize copySize seekDelta) =
-  "add " ++ padRight 10 (show (unLength addSize) ++ " B")
-  ++ "  copy " ++ padRight 10 (show (unLength copySize) ++ " B")
-  ++ "  seek " ++ showSigned (unDelta seekDelta)
-renderAnnotation (AnnotAt kind offset details) =
+renderAnnotation AnnotationNone = ""
+renderAnnotation (AnnotationBSDiff BSDiffControl { controlAdd, controlCopy, controlSeek }) =
+  "add " ++ padRight 10 (show (unLength controlAdd) ++ " B")
+  ++ "  copy " ++ padRight 10 (show (unLength controlCopy) ++ " B")
+  ++ "  seek " ++ showSigned (unDelta controlSeek)
+renderAnnotation (AnnotationAt kind offset details) =
   sourcePrefix ++ "  " ++ kindString kind ++ "0x" ++ padHex 6 (unOffset offset)
   ++ concatMap renderDetail remaining
   where
@@ -250,7 +246,7 @@ resolveXOR source offset deltaBytes =
   in ByteString.pack (ByteString.zipWith xor padded deltaBytes)
 
 findSourceOffset :: Annotation -> Maybe Offset
-findSourceOffset (AnnotAt _ _ details) = searchDetails details
+findSourceOffset (AnnotationAt _ _ details) = searchDetails details
   where
     searchDetails []                           = Nothing
     searchDetails (DetailSource sourceOffset:_) = Just sourceOffset

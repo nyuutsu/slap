@@ -56,7 +56,7 @@ makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
   , regionSize       = Length (ByteString.length recordPayload)
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite recordPayload
-  , regionAnnotation = AnnotAt AtOffset recordOffset []
+  , regionAnnotation = AnnotationAt AtOffset recordOffset []
   }
 
 ----------------------------------------------------------------------------

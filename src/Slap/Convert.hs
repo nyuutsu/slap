@@ -718,9 +718,13 @@ convertDirect contents (CreateDirect target) meta constraints = do
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
 encodingLimits :: DirectCreate -> Maybe IPS.EncodingLimits
-encodingLimits CreateIPS   = Just IPS.ipsLimits
-encodingLimits CreateIPS32 = Just IPS.ips32Limits
-encodingLimits CreateEBP   = Just IPS.ebpLimits
+encodingLimits CreateIPS   =
+  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelIPS)
+encodingLimits CreateIPS32 =
+  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec IPS32)) LabelIPS32)
+encodingLimits CreateEBP   =
+  -- EBP is structurally StandardIPS with a JSON trailer; shares StandardIPS's offset range.
+  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelEBP)
 encodingLimits _           = Nothing
 
 -- | Encode PatchContents into the target format.

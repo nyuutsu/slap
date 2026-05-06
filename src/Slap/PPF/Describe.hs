@@ -18,7 +18,7 @@ import Slap.Display.Analysis
   , AnalysisPayload(PayloadWrite)
   , AnalysisSummary(Summary)
   , SummaryInfo(..)
-  , Annotation(AnnotAt)
+  , Annotation(AnnotationAt)
   , OffsetKind(AtOffset)
   , AnnotDetail(DetailUndo)
   )
@@ -74,7 +74,7 @@ makePPFRegion record = AnalysisRegion
   , regionSize       = Length (ByteString.length (recordData record))
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (recordData record)
-  , regionAnnotation = AnnotAt AtOffset (recordOffset record) undoDetail
+  , regionAnnotation = AnnotationAt AtOffset (recordOffset record) undoDetail
   }
   where
     undoDetail = case recordUndo record of

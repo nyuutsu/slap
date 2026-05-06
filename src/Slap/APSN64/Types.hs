@@ -24,6 +24,7 @@ module Slap.APSN64.Types
   , apsN64MagicBytes
   , apsN64DescriptionWidth
   , apsN64MaxChunkSize
+  , apsN64RecordHeaderSize
   ) where
 
 import Data.ByteString (ByteString)
@@ -211,3 +212,9 @@ apsN64DescriptionWidth = 50
 -- | Maximum data bytes per APS-N64 record (8-bit length field).
 apsN64MaxChunkSize :: Int
 apsN64MaxChunkSize = 255
+
+-- | Each APSN64 record begins with a 4-byte offset and a 1-byte
+-- length-or-RLE-marker. A walker needs at least this many bytes
+-- remaining to start parsing another record.
+apsN64RecordHeaderSize :: Int
+apsN64RecordHeaderSize = 5

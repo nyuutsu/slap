@@ -54,6 +54,6 @@ makeBSDiffRegion outputPosition control =
        , regionSize       = addLength <> copyLength
        , regionLabel      = ""
        , regionPayload    = PayloadMeta []
-       , regionAnnotation = AnnotBSDiff addLength copyLength (controlSeek control)
+       , regionAnnotation = AnnotationBSDiff control
        }
      )

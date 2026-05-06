@@ -142,30 +142,21 @@ data Verification = Verification
   }
 
 -- | Per-block CRC16 check (APS-GBA).
-data BlockCheck = BlockCheck
-  { blockCheckOffset :: !Offset
-  , blockCheckCRC16  :: !CRC16
-  } deriving (Show)
+data BlockCheck = BlockCheck !Offset !CRC16
+  deriving (Show)
 
 -- | Validation block comparison (PPF).
-data ValidationBlock = ValidationBlock
-  { validationBlockOffset :: !Offset
-  , validationBlockData   :: !PPF.ValidationBlockBytes
-  } deriving (Show)
+data ValidationBlock = ValidationBlock !Offset !PPF.ValidationBlockBytes
+  deriving (Show)
 
 -- | Per-window Adler32 check (VCDIFF).
-data WindowCheck = WindowCheck
-  { windowCheckOffset   :: !Offset
-  , windowCheckLength   :: !Length
-  , windowCheckExpected :: !Adler32
-  } deriving (Show)
+data WindowCheck = WindowCheck !Offset !Length !Adler32
+  deriving (Show)
 
 -- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
-data ByteCheck = ByteCheck
-  { byteCheckOffset   :: !Offset
-  , byteCheckExpected :: !AdvisoryExpectedBytes
-  , byteCheckLabel    :: !String
-  } deriving (Show)
+-- Three fields in order: source-file offset, expected bytes, label.
+data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !String
+  deriving (Show)
 
 -- | The bytes an advisory 'ByteCheck' expects to find at its offset in
 -- the source file.  Advisory, not required: a mismatch emits a warning

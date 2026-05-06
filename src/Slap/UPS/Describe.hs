@@ -46,5 +46,5 @@ makeUPSRegion position (UPSBlock skipLength xorData) =
       nextPosition = advance xorOffset (xorDataLength <> upsTerminatorByteLength)
   in ( nextPosition
      , AnalysisRegion xorOffset xorDataLength "XOR  " (PayloadXOR (Just xorData))
-         (AnnotAt AtOffset xorOffset [DetailSkip skipLength])
+         (AnnotationAt AtOffset xorOffset [DetailSkip skipLength])
      )

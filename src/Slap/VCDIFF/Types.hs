@@ -6,6 +6,9 @@ module Slap.VCDIFF.Types
   , VCDIFFHeader(..)
   , VCDIFFWindow(..)
   , VCDIFFInstruction(..)
+  , VCDIFFAddressMode(..)
+  , VCDIFFNearCacheSize(..)
+  , VCDIFFSameCacheSize(..)
   , VCDIFFDecodedInstruction(..)
   , VCDIFFVersion(..)
   , toVCDIFFVersion
@@ -98,11 +101,26 @@ fromVCDIFFSecondaryCompression compression =
     applyBit bit True  byte = setBit byte bit
     applyBit _   False byte = byte
 
+-- | Addressing mode for COPY instructions (RFC 3284 §5). Modes 0
+-- and 1 are SELF and HERE; modes 2..near+1 index the near cache;
+-- modes near+2..near+same+1 index the same cache.
+newtype VCDIFFAddressMode = VCDIFFAddressMode { unVCDIFFAddressMode :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | Near-cache size (RFC 3284 §5.3). Default is 4.
+newtype VCDIFFNearCacheSize = VCDIFFNearCacheSize { unVCDIFFNearCacheSize :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | Same-cache size (RFC 3284 §5.3). The same cache holds
+-- @samesize × 256@ slots; default samesize is 3.
+newtype VCDIFFSameCacheSize = VCDIFFSameCacheSize { unVCDIFFSameCacheSize :: Int }
+  deriving (Eq, Ord, Show)
+
 data VCDIFFInstruction
   = VcdiffNoop
-  | VcdiffAdd  { vcdiffAddSize  :: !Int }
-  | VcdiffRun  { vcdiffRunSize  :: !Int }
-  | VcdiffCopy { vcdiffCopySize :: !Int, vcdiffCopyMode :: !Int }
+  | VcdiffAdd  { vcdiffAddSize  :: !Length }
+  | VcdiffRun  { vcdiffRunSize  :: !Length }
+  | VcdiffCopy { vcdiffCopySize :: !Length, vcdiffCopyMode :: !VCDIFFAddressMode }
   deriving (Show)
 
 data VCDIFFHeader = VCDIFFHeader
@@ -126,28 +144,23 @@ data VCDIFFWindow = VCDIFFWindow
 data VCDIFFPatch = VCDIFFPatch
   { vcdiffHeader    :: VCDIFFHeader
   , vcdiffWindows   :: [VCDIFFWindow]
-  , vcdiffCodeTable :: Array Word8 CodeEntry  -- default or custom
-  , vcdiffNearSize  :: Int                    -- 4 by default
-  , vcdiffSameSize  :: Int                    -- 3 by default
+  , vcdiffCodeTable :: Array Word8 CodeEntry
+    -- ^ Either the constant 'defaultCodeTable' (when the patch
+    -- had no custom-table flag set) or a custom table parsed via
+    -- 'decodeCustomTable'.
+  , vcdiffNearSize  :: VCDIFFNearCacheSize
+  , vcdiffSameSize  :: VCDIFFSameCacheSize
   } deriving (Show)
 
--- | Decoded instruction for the explain path -- mirrors execute logic but
---   accumulates instructions instead of writing bytes.
+-- | Decoded instruction for the explain path — mirrors execute
+-- logic but accumulates instructions instead of writing bytes.
+-- Three variants: an Add (window offset, payload bytes), a Run
+-- (window offset, fill byte, run count), and a Copy (window
+-- offset, copy size, optional source offset for the read).
 data VCDIFFDecodedInstruction
-  = DecodedAdd
-      { decodedAddWindowOffset :: !Offset
-      , decodedAddPayload      :: !ByteString
-      }
-  | DecodedRun
-      { decodedRunWindowOffset :: !Offset
-      , decodedRunFillByte     :: !Word8
-      , decodedRunCount        :: !Length
-      }
-  | DecodedCopy
-      { decodedCopyWindowOffset :: !Offset
-      , decodedCopySize         :: !Length
-      , decodedCopySourceOffset :: !(Maybe Offset)
-      }
+  = DecodedAdd !Offset !ByteString
+  | DecodedRun !Offset !Word8 !Length
+  | DecodedCopy !Offset !Length !(Maybe Offset)
 
 -- | Slot count per same-cache entry (RFC 3284 §5.3).
 -- Each same-cache entry maps 256 byte values to addresses.
@@ -173,21 +186,21 @@ data CodeEntry = CodeEntry
 defaultCodeTable :: Array Word8 CodeEntry
 defaultCodeTable = listArray (0, 255) $
   -- 0: RUN 0, Noop
-  [CodeEntry (VcdiffRun 0) VcdiffNoop]
+  [CodeEntry (VcdiffRun (Length 0)) VcdiffNoop]
   -- 1-18: ADD size, Noop  (size 0..17)
-  ++ [CodeEntry (VcdiffAdd size) VcdiffNoop | size <- [0..17]]
+  ++ [CodeEntry (VcdiffAdd (Length size)) VcdiffNoop | size <- [0..17]]
   -- 19-162: COPY size mode, Noop
   -- 9 modes (0..8), sizes 0..15 for each mode -> 144 entries
   -- For each mode 0..8:
   --   size 0: COPY 0 mode, Noop
   --   sizes 4..18: COPY s mode, Noop
-  ++ [CodeEntry (VcdiffCopy size mode) VcdiffNoop | mode <- [0..8], size <- 0 : [4..18]]
+  ++ [CodeEntry (VcdiffCopy (Length size) (VCDIFFAddressMode mode)) VcdiffNoop | mode <- [0..8], size <- 0 : [4..18]]
   -- 163-234: ADD 1..4, COPY 4..6, modes 0..5  -> 72 entries
-  ++ [CodeEntry (VcdiffAdd addSize) (VcdiffCopy copySize mode) | mode <- [0..5], addSize <- [1..4], copySize <- [4..6]]
+  ++ [CodeEntry (VcdiffAdd (Length addSize)) (VcdiffCopy (Length copySize) (VCDIFFAddressMode mode)) | mode <- [0..5], addSize <- [1..4], copySize <- [4..6]]
   -- 235-246: ADD 1..4, COPY 4, modes 6..8  -> 12 entries
-  ++ [CodeEntry (VcdiffAdd addSize) (VcdiffCopy 4 mode) | mode <- [6..8], addSize <- [1..4]]
+  ++ [CodeEntry (VcdiffAdd (Length addSize)) (VcdiffCopy (Length 4) (VCDIFFAddressMode mode)) | mode <- [6..8], addSize <- [1..4]]
   -- 247-255: COPY 4, ADD 1, modes 0..8  -> 9 entries
-  ++ [CodeEntry (VcdiffCopy 4 mode) (VcdiffAdd 1) | mode <- [0..8]]
+  ++ [CodeEntry (VcdiffCopy (Length 4) (VCDIFFAddressMode mode)) (VcdiffAdd (Length 1)) | mode <- [0..8]]
 
 ----------------------------------------------------------------------------
 -- Code table serialization (RFC 3284 Section 7)
@@ -201,14 +214,14 @@ instructionType (VcdiffRun _)    = 2
 instructionType (VcdiffCopy _ _) = 3
 
 instructionSize :: VCDIFFInstruction -> Word8
-instructionSize VcdiffNoop       = 0
-instructionSize (VcdiffAdd size)    = fromIntegral size
-instructionSize (VcdiffRun size)    = fromIntegral size
-instructionSize (VcdiffCopy size _) = fromIntegral size
+instructionSize VcdiffNoop                       = 0
+instructionSize (VcdiffAdd  (Length size))       = fromIntegral size
+instructionSize (VcdiffRun  (Length size))       = fromIntegral size
+instructionSize (VcdiffCopy (Length size) _)     = fromIntegral size
 
 instructionMode :: VCDIFFInstruction -> Word8
-instructionMode (VcdiffCopy _ mode) = fromIntegral mode
-instructionMode _                = 0
+instructionMode (VcdiffCopy _ (VCDIFFAddressMode mode)) = fromIntegral mode
+instructionMode _                                       = 0
 
 -- | Serialize the default code table to 1536 bytes (6 x 256):
 --   types1 ++ types2 ++ sizes1 ++ sizes2 ++ modes1 ++ modes2
@@ -233,11 +246,13 @@ deserializeCodeTable tableBytes
                                 <*> makeInstruction (byteAt (256+index)) (byteAt (768+index)) (byteAt (1280+index))
     byteAt = ByteString.index tableBytes
     makeInstruction :: Word8 -> Word8 -> Word8 -> Either SlapError VCDIFFInstruction
-    makeInstruction 0 _ _ = Right VcdiffNoop
-    makeInstruction 1 size _ = Right (VcdiffAdd (fromIntegral size))
-    makeInstruction 2 size _ = Right (VcdiffRun (fromIntegral size))
-    makeInstruction 3 size mode = Right (VcdiffCopy (fromIntegral size) (fromIntegral mode))
-    makeInstruction typeCode _ _ = Left (ParseError LabelVCDIFF ("invalid instruction type in code table: " ++ show typeCode))
+    makeInstruction 0 _    _    = Right VcdiffNoop
+    makeInstruction 1 size _    = Right (VcdiffAdd  (Length (fromIntegral size)))
+    makeInstruction 2 size _    = Right (VcdiffRun  (Length (fromIntegral size)))
+    makeInstruction 3 size mode = Right (VcdiffCopy (Length (fromIntegral size))
+                                                    (VCDIFFAddressMode (fromIntegral mode)))
+    makeInstruction typeCode _ _ = Left (ParseError LabelVCDIFF
+                                           ("invalid instruction type in code table: " ++ show typeCode))
 
 -- | Decode a custom code table from the header's code table data.
 --   Format: near_size (1 byte), same_size (1 byte), then a VCDIFF delta
@@ -249,11 +264,12 @@ deserializeCodeTable tableBytes
 --   what would otherwise be a circular dependency between Types, Parse,
 --   and Apply.
 decodeCustomTable :: (ByteString -> Either SlapError ByteString)
-                  -> ByteString -> Either SlapError (Array Word8 CodeEntry, Int, Int)
+                  -> ByteString
+                  -> Either SlapError (Array Word8 CodeEntry, VCDIFFNearCacheSize, VCDIFFSameCacheSize)
 decodeCustomTable applyInnerDelta input = do
   when (ByteString.length input < 2) $ Left (ParseError LabelVCDIFF "custom code table data too short")
-  let nearSize = fromIntegral (ByteString.index input 0) :: Int
-      sameSize = fromIntegral (ByteString.index input 1) :: Int
+  let nearSize   = VCDIFFNearCacheSize (fromIntegral (ByteString.index input 0))
+      sameSize   = VCDIFFSameCacheSize (fromIntegral (ByteString.index input 1))
       deltaBytes = ByteString.drop 2 input
   customSerialized <- applyInnerDelta deltaBytes
   table <- deserializeCodeTable customSerialized

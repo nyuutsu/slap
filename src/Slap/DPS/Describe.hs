@@ -51,8 +51,8 @@ analyzeDPS patch = PatchAnalysis
   where
     recordCount = length (dpsRecords patch)
     totalBytes = sum (map recordBytes (dpsRecords patch))
-    recordBytes (DPSEnclosedData _ payload)       = ByteString.length payload
-    recordBytes (DPSCopyFromROM _ _ copyLength) = unLength copyLength
+    recordBytes DPSEnclosedData { dpsDataPayload } = ByteString.length dpsDataPayload
+    recordBytes DPSCopyFromROM { dpsCopyLength }   = unLength dpsCopyLength
 
 makeDPSRegion :: DPSRecord -> AnalysisRegion
 makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion
@@ -60,12 +60,12 @@ makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion
   , regionSize       = Length (ByteString.length payload)
   , regionLabel      = "Data   "
   , regionPayload    = PayloadWrite payload
-  , regionAnnotation = AnnotAt AtOffset outputOffset []
+  , regionAnnotation = AnnotationAt AtOffset outputOffset []
   }
 makeDPSRegion (DPSCopyFromROM outputOffset sourceOffset copyLength) = AnalysisRegion
   { regionOffset     = outputOffset
   , regionSize       = copyLength
   , regionLabel      = "Copy   "
   , regionPayload    = PayloadCopy FromSource
-  , regionAnnotation = AnnotAt AtOffset outputOffset [DetailSource sourceOffset]
+  , regionAnnotation = AnnotationAt AtOffset outputOffset [DetailSource sourceOffset]
   }

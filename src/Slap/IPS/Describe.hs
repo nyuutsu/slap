@@ -182,7 +182,7 @@ makeIPSRegion record = AnalysisRegion
   , regionSize       = recordPayloadLength record
   , regionLabel      = regionLabelString
   , regionPayload    = regionPayloadValue
-  , regionAnnotation = AnnotAt AtOffset recordTargetOffset annotationDetails
+  , regionAnnotation = AnnotationAt AtOffset recordTargetOffset annotationDetails
   }
   where
     recordTargetOffset = ipsRecordOffset record
