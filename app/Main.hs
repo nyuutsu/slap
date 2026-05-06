@@ -136,13 +136,36 @@ data BackupBehavior
   | NoBackup
   deriving (Show, Eq)
 
--- | Where undo writes its restored source bytes.
+-- | What to do with an undo's reverted source bytes.
 --
--- 'UndoInPlace' overwrites the (modified) source file.
--- 'UndoToExplicitFile' writes to an operator-chosen path via @-o@.
+-- The four variants correspond to four mutually exclusive CLI lanes; the
+-- parser rejects any command line that mixes distinguishing flags from
+-- more than one lane (see 'undoOutputParser').
+--
+-- 'UndoInPlace' overwrites the modified file with the reverted bytes
+-- (the most invasive option; carries a 'BackupBehavior' to opt into a
+-- @.bak@ copy before writing).  Mutually exclusive with @-o@\/positional
+-- @OUTPUT@ and with @--dry-run@.
+-- 'UndoToExplicitFile' writes to an operator-chosen path.  @-o FILE@ and
+-- the positional @OUTPUT@ are two spellings of this same lane, so using
+-- both in one command is a parse error.  Carries an 'OverwritePolicy' to
+-- opt into clobbering an existing destination via @--force@; the flag is
+-- a sub-flag of this lane (and 'UndoToDerivedFile') because it is
+-- meaningless against an in-place write or a dry run.
+-- 'UndoToDerivedFile' writes to a path derived from the modified file
+-- name (the default when no lane-distinguishing flag is given).  Also
+-- carries an 'OverwritePolicy' for the same reason as
+-- 'UndoToExplicitFile'.
+-- 'UndoDryRun' writes nothing; it only reports what would happen.  The
+-- report names the derived-default destination since dry runs do not
+-- accept lane-modifying flags (no @--in-place@, no @-o@, no @--force@).
+-- Users who want to preview a specific destination should run without
+-- @--dry-run@ against a scratch file.
 data UndoOutput
-  = UndoInPlace
-  | UndoToExplicitFile FilePath
+  = UndoInPlace BackupBehavior
+  | UndoToExplicitFile FilePath OverwritePolicy
+  | UndoToDerivedFile OverwritePolicy
+  | UndoDryRun
   deriving (Show, Eq)
 
 -- | Where convert writes the produced patch bytes.
@@ -495,10 +518,50 @@ undoParser = do
       , undoOutput             = output
       }
 
+-- | Parser for the four mutually exclusive undo output lanes.  Mirror
+-- of 'applyOutputParser'; same 'asum' \/ 'writingLane' shape so the
+-- discipline that prevents bare @--force@ from partially matching the
+-- explicit-file lane carries over.
 undoOutputParser :: Parser UndoOutput
-undoOutputParser = maybe UndoInPlace UndoToExplicitFile
-  <$> optional (option str (long "output" <> short 'o' <> metavar "FILE"
-      <> help "Write restored source to FILE (default: overwrite SOURCE)"))
+undoOutputParser = asum
+  [ dryRunLane
+  , inPlaceLane
+  , writingLane
+  ]
+  where
+    dryRunLane :: Parser UndoOutput
+    dryRunLane = UndoDryRun <$
+      flag' () (long "dry-run" <> help "Show what would happen without writing any files")
+
+    inPlaceLane :: Parser UndoOutput
+    inPlaceLane = UndoInPlace
+      <$> (flag' () (long "in-place" <> short 'i'
+              <> help "Overwrite SOURCE with the reverted bytes (destructive; creates .bak by default)")
+          *> backupBehaviorFlag)
+      where
+        backupBehaviorFlag = flag WriteBackup NoBackup
+          (long "no-backup" <> help "Don't create .bak backup with --in-place")
+
+    writingLane :: Parser UndoOutput
+    writingLane = chooseWritingLane
+      <$> optional outputPathOption
+      <*> overwritePolicyFlag
+      where
+        outputPathOption :: Parser FilePath
+        outputPathOption =
+              option str (long "output" <> short 'o' <> metavar "FILE"
+                <> help "Write reverted output to FILE (alternative: positional OUTPUT)")
+          <|> argument str (metavar "OUTPUT"
+                <> help "Write reverted output to this path (alternative: -o FILE)")
+
+        overwritePolicyFlag :: Parser OverwritePolicy
+        overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
+          (long "force" <> short 'f'
+            <> help "Overwrite existing output files")
+
+        chooseWritingLane :: Maybe FilePath -> OverwritePolicy -> UndoOutput
+        chooseWritingLane Nothing     policy = UndoToDerivedFile policy
+        chooseWritingLane (Just path) policy = UndoToExplicitFile path policy
 
 convertOutputParser :: Parser ConvertOutput
 convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
@@ -962,20 +1025,49 @@ doUndo parsedCommand = do
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"
     Just undo -> do
-      modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
       let verification       = patchVerification parsed
           verificationPolicy = undoVerificationPolicy parsedCommand
-      verifyTarget verificationPolicy verification (TargetFileContents modified)
-      outcome <- orBail (runUndo undo (TargetFileContents modified))
-      emitWarnings WarningProper (outcomeWarnings outcome)
-      let revertedSource = outcomeValue outcome
-      verifySource verificationPolicy verification revertedSource
-      let SourceFileContents result = revertedSource
-          outputPath = case undoOutput parsedCommand of
-            UndoInPlace                 -> undoSource parsedCommand
-            UndoToExplicitFile explicit -> explicit
-      ByteString.writeFile outputPath result
-      putStrLn "reverted"
+
+          undoAndWriteTo outputPath = do
+            modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
+            verifyTarget verificationPolicy verification (TargetFileContents modified)
+            outcome <- orBail (runUndo undo (TargetFileContents modified))
+            emitWarnings WarningProper (outcomeWarnings outcome)
+            let revertedSource = outcomeValue outcome
+            verifySource verificationPolicy verification revertedSource
+            let SourceFileContents result = revertedSource
+            ByteString.writeFile outputPath result
+            putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
+
+      case undoOutput parsedCommand of
+        UndoDryRun -> do
+          let reportedPath = deriveUndoOutput (undoSource parsedCommand)
+          putStrLn (renderActionLine "would revert" (patchInfo parsed) reportedPath)
+          case verifyTargetCRC32 verification of
+            Just expected -> do
+              modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
+              let actual = rustyCRC32 modifiedBytes
+              putStrLn $ "target CRC: " ++ formatCRC actual
+                ++ if actual == expected
+                     then [' ', checkMark]
+                     else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
+            Nothing -> pure ()
+          exitSuccess
+        UndoInPlace backupBehavior -> do
+          case backupBehavior of
+            WriteBackup -> do
+              let backupPath = undoSource parsedCommand ++ ".bak"
+              copyFile (undoSource parsedCommand) backupPath
+              hPutStrLn stderr ("slap: backup: " ++ backupPath)
+            NoBackup -> pure ()
+          undoAndWriteTo (undoSource parsedCommand)
+        UndoToExplicitFile outputPath overwritePolicy -> do
+          refuseOverwrite overwritePolicy outputPath
+          undoAndWriteTo outputPath
+        UndoToDerivedFile overwritePolicy -> do
+          let outputPath = deriveUndoOutput (undoSource parsedCommand)
+          refuseOverwrite overwritePolicy outputPath
+          undoAndWriteTo outputPath
 
 ----------------------------------------------------------------------------
 -- Create
@@ -1143,6 +1235,23 @@ computeBPSDropWarnings parsed targetFormat = case patchMetadata parsed of
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
   dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
+
+-- | Derive an output path for @slap undo@ when no @-i@, @-o@, or
+-- positional @OUTPUT@ is supplied.  Inserts @[reverted]@ at the end
+-- of the modified-file name, before the extension if there is one.
+-- Examples:
+--
+-- > deriveUndoOutput "patched.gba"  == "patched [reverted].gba"
+-- > deriveUndoOutput "patched"      == "patched [reverted]"
+-- > deriveUndoOutput "Pokemon Red [translation].gbc"
+-- >   == "Pokemon Red [translation] [reverted].gbc"
+--
+-- The helper makes no attempt to detect or strip pre-existing
+-- bracketed markers; the input filename is treated as opaque and
+-- the marker is appended unconditionally.
+deriveUndoOutput :: FilePath -> FilePath
+deriveUndoOutput modifiedPath =
+  dropExtension modifiedPath ++ " [reverted]" ++ takeExtension modifiedPath
 
 -- | Abort if the destination already exists and the user did not pass
 -- @--force@.  Used by the two apply lanes that write to a path other
