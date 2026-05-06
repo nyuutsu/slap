@@ -901,9 +901,7 @@ doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
   parsed <- readAndParsePatch (applyPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
-  case applyVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
-    Quiet   -> pure ()
+  emitVerboseAnalysis (applyVerbosity parsedCommand) parsed
 
   let verification = patchVerification parsed
       verificationPolicy = applyVerificationPolicy parsedCommand
@@ -957,9 +955,7 @@ doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
   parsed <- readAndParsePatch (undoPatch parsedCommand)
   emitWarnings WarningProper (patchWarnings parsed)
-  case undoVerbosity parsedCommand of
-    Verbose -> hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
-    Quiet   -> pure ()
+  emitVerboseAnalysis (undoVerbosity parsedCommand) parsed
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"
     Just undo -> do
@@ -1264,6 +1260,15 @@ emitWarnings :: WarningSeverity -> [SlapWarning] -> IO ()
 emitWarnings severity = traverse_ $ \warning ->
   hPutStrLn stderr (severityPrefix severity ++ renderSlapWarning warning)
 
+-- | Render the full per-record analysis to stderr, but only when
+-- verbosity is 'Verbose'. Used by 'doApply' and 'doUndo' to share
+-- the pre-action verbose dump; the caller passes the parsed patch
+-- and the 'Verbosity' value from its own command record.
+emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()
+emitVerboseAnalysis Verbose parsed =
+  hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
+emitVerboseAnalysis Quiet _ = pure ()
+
 bail :: String -> IO a
 bail message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
 
@@ -1276,11 +1281,14 @@ bailError = bail . renderSlapError
 orBail :: Either SlapError a -> IO a
 orBail = either bailError pure
 
--- | Read a patch file, parse it, return the parsed 'SomePatch'.  Terminates
+-- | Read a patch file, parse it, return the parsed 'SomePatch'. Terminates
 -- with a rendered error if the file can't be read or the bytes don't parse.
--- Caller is responsible for calling 'emitWarnings' on the result if parse-time
--- warnings should be surfaced — 'doApply' and 'doUndo' interleave a verbosity
--- check between parse and warning emission, so the helper stays parse-only.
+-- Caller is responsible for calling 'emitWarnings' on the result if parse-
+-- time warnings should be surfaced. Some callers ('doInfo', 'doExplain')
+-- defer warning emission until after their primary stdout output renders,
+-- so the user sees the asked-for content unobstructed; others ('doApply',
+-- 'doUndo', 'doConvert') emit warnings immediately. The helper stays
+-- parse-only to leave that ordering to each caller.
 readAndParsePatch :: FilePath -> IO SomePatch
 readAndParsePatch path = do
   patchBytes <- readUnwrap path
