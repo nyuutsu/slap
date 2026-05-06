@@ -59,8 +59,7 @@ Direct formats carry literal replacement bytes; differential formats carry instr
 
 `Apply`s return `Either SlapError TargetFileContents`.
 
-`Slap.BPS`, `Slap.UPS`, `Slap.IPS`, and `app/Main.hs` are the
-current polish references. `Slap.Display` 
+`Slap.BPS`, `Slap.UPS`, `Slap.IPS`, and `app/Main.hs` are the current polish references. `Slap.Display` is part of the way there.
 
 ## rusty-slap
 

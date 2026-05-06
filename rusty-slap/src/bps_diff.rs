@@ -506,12 +506,15 @@ fn match_byte_cost(action: BpsAction, file_position: usize, state: &EncoderState
 /// `use_match` in `libbps-suf.cpp` — heuristic rather than derived,
 /// hence the trial-and-error shape:
 ///
-/// * `1 + action_byte_cost` covers the action header byte plus the
-///   offset payload (zero for `SourceRead`).
+/// * `action_byte_cost` covers the action header byte plus the
+///   offset payload (zero for `SourceRead`); see [`match_byte_cost`].
 /// * `pending_flush_cost` (0 or 1) pays for the `TargetRead` flush
 ///   varint that emitting would force.
 /// * `single_byte_tiebreaker` (0 or 1) adds one when `length == 1`,
 ///   breaking ties against emitting the smallest possible action.
+/// * The leading `+ 1`, combined with the `>=` comparison, makes
+///   the threshold a strict-improvement margin: we emit only when
+///   the match strictly saves bytes, never when it merely ties.
 fn match_beats_literal(emission: &MatchEmission, state: &EncoderState) -> bool {
     let action_byte_cost = match_byte_cost(emission.action, emission.file_position, state);
     let pending_flush_cost = usize::from(state.pending_target_read_start.is_some());
