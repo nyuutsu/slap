@@ -205,54 +205,28 @@ data EmbeddedBlobIntent
   | DropEmbeddedBlob
   deriving (Show, Eq)
 
--- | The fourteen metadata fields the user can declare on either
--- @create@ or @convert@.  Distinct from 'RequestedPatchMetadata'
--- (the library-facing record) because the embedded-blob concern
--- diverges between the two commands: 'create' asks for an optional
--- file path; 'convert' asks for an 'EmbeddedBlobIntent'.  Those two
--- live in 'CreateMetadataInputs' and 'ConvertMetadataInputs', each
--- of which embeds a 'RequestedMetadataCore' alongside its own
--- blob-shaped field.
-data RequestedMetadataCore = RequestedMetadataCore
-  { coreTitle                :: Maybe String
-  , coreAuthor               :: Maybe String
-  , coreDescription          :: Maybe String
-  , coreVersion              :: Maybe String
-  , coreUndoInclusion        :: Maybe UndoInclusion
-  , coreValidationInclusion  :: Maybe ValidationInclusion
-  , coreStability            :: Maybe PatchStability
-  , coreRomType              :: Maybe PlatformType
-  , coreImageType            :: Maybe PPFImageType
-  , coreGenre                :: Maybe String
-  , coreLanguage             :: Maybe String
-  , coreDate                 :: Maybe String
-  , coreWebsite              :: Maybe String
-  , corePatchEncoding        :: PatchEncoding
-  }
-  deriving (Show, Eq)
-
--- | What @slap create@ accepts on the metadata side: the shared core
--- plus an optional path whose bytes get embedded as the patch's
--- metadata blob.  Only BPS consumes the blob today; on other targets
--- the path triggers the same metadata-rejection check as any other
--- format-incompatible field.
+-- | What @slap create@ accepts on the metadata side: the parsed
+-- metadata fields, with 'requestedEmbeddedBlob' filled by the
+-- resolver from the optional @--metadata FILE@ path below.  Only
+-- BPS consumes the blob today; on other targets the path triggers
+-- the same metadata-rejection check as any other format-incompatible
+-- field.
 data CreateMetadataInputs = CreateMetadataInputs
-  { createMetadataCore     :: RequestedMetadataCore
+  { createParsedMetadata   :: RequestedPatchMetadata
   , createEmbeddedBlobPath :: Maybe FilePath
   }
-  deriving (Show, Eq)
 
--- | What @slap convert@ accepts on the metadata side: the shared core
--- plus an 'EmbeddedBlobIntent' instead of a raw path.  The intent
+-- | What @slap convert@ accepts on the metadata side: the parsed
+-- metadata fields, with 'requestedEmbeddedBlob' filled by the
+-- resolver from the 'EmbeddedBlobIntent' below.  The intent
 -- distinguishes \"override with these bytes\", \"drop the source's
 -- blob\", and the unspecified case (\"inherit if present\") — the
 -- last of which is the convert-default and what every other field
 -- on the inputs record does implicitly.
 data ConvertMetadataInputs = ConvertMetadataInputs
-  { convertMetadataCore       :: RequestedMetadataCore
+  { convertParsedMetadata     :: RequestedPatchMetadata
   , convertEmbeddedBlobIntent :: EmbeddedBlobIntent
   }
-  deriving (Show, Eq)
 
 -- | Whether to refuse writing over an existing output file.
 --
@@ -318,7 +292,6 @@ data ApplyCommand = ApplyCommand
   , applyPatch              :: FilePath
   , applySource             :: FilePath
   }
-  deriving (Show)
 
 data UndoCommand = UndoCommand
   { undoVerificationPolicy :: VerificationPolicy
@@ -328,7 +301,6 @@ data UndoCommand = UndoCommand
   , undoSource             :: FilePath
   , undoOutput             :: UndoOutput
   }
-  deriving (Show)
 
 data CreateCommand = CreateCommand
   { createFormat      :: CreateFormat
@@ -339,7 +311,6 @@ data CreateCommand = CreateCommand
   , createMetadata    :: CreateMetadataInputs
   , createConstraints :: RequestedConstraints
   }
-  deriving (Show)
 
 -- | The 'convertWithSource' field reuses the type name 'ConvertWithSource'
 -- defined above; that's namespace coincidence, not collision — Haskell's
@@ -353,13 +324,11 @@ data ConvertCommand = ConvertCommand
   , convertMetadata    :: ConvertMetadataInputs
   , convertConstraints :: RequestedConstraints
   }
-  deriving (Show)
 
 data InfoCommand = InfoCommand
   { infoPatch           :: FilePath
   , infoExtractMetadata :: Maybe FilePath
   }
-  deriving (Show)
 
 data ExplainCommand = ExplainCommand
   { explainPatch       :: FilePath
@@ -367,7 +336,6 @@ data ExplainCommand = ExplainCommand
   , explainSource      :: Maybe FilePath
   , explainFileReading :: FileReadingOptions
   }
-  deriving (Show)
 
 ----------------------------------------------------------------------------
 -- CLI
@@ -651,12 +619,15 @@ convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
     <> help ("Target format: " ++ intercalate ", " advertisedCreateFormats))
 
--- | Parser for the fourteen metadata fields shared between @create@
--- and @convert@.  The embedded-blob concern lives elsewhere because
--- it diverges between the two commands; see 'createMetadataInputsParser'
--- and 'convertMetadataInputsParser'.
-requestedMetadataCoreParser :: Parser RequestedMetadataCore
-requestedMetadataCoreParser = do
+-- | Parse the 14 metadata flags shared between @slap create@ and
+-- @slap convert@.  Produces a 'RequestedPatchMetadata' with
+-- 'requestedEmbeddedBlob' set to 'Nothing'; the resolvers
+-- 'resolveCreateMetadata' and 'resolveConvertMetadata' fill that
+-- field from each command's command-specific blob source (the
+-- @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for
+-- convert).
+requestedMetadataParser :: Parser RequestedPatchMetadata
+requestedMetadataParser = do
     title             <- optional (option str (long "title" <> metavar "TEXT"
                             <> help "Patch title (EBP/NINJA2)"))
     author            <- optional (option str (long "author" <> metavar "TEXT"
@@ -686,39 +657,42 @@ requestedMetadataCoreParser = do
     patchEncoding     <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
                             <> value PatchEncodingUTF8
                             <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8)")
-    pure RequestedMetadataCore
-      { coreTitle               = title
-      , coreAuthor              = author
-      , coreDescription         = description
-      , coreVersion             = version
-      , coreUndoInclusion       = includeUndo
-      , coreValidationInclusion = includeValidation
-      , coreStability           = unstable
-      , coreRomType             = romType
-      , coreImageType           = imageType
-      , coreGenre               = genre
-      , coreLanguage            = language
-      , coreDate                = date
-      , coreWebsite             = website
-      , corePatchEncoding       = patchEncoding
+    pure RequestedPatchMetadata
+      { requestedTitle               = title
+      , requestedAuthor              = author
+      , requestedDescription         = description
+      , requestedVersion             = version
+      , requestedUndoInclusion       = includeUndo
+      , requestedValidationInclusion = includeValidation
+      , requestedStability           = unstable
+      , requestedRomType             = romType
+      , requestedImageType           = imageType
+      , requestedGenre               = genre
+      , requestedLanguage            = language
+      , requestedDate                = date
+      , requestedWebsite             = website
+      , requestedPatchEncoding       = patchEncoding
+      , requestedEmbeddedBlob        = Nothing
       }
 
--- | Create-side metadata: shared core plus an optional file path
--- whose bytes get embedded as the patch's metadata blob (BPS only;
--- the rejection check refuses the flag against any other target).
+-- | Create-side metadata: the parsed metadata fields plus an optional
+-- @--metadata FILE@ path whose bytes the resolver embeds as the patch's
+-- metadata blob (BPS only; the rejection check refuses the flag
+-- against any other target).
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
-  <$> requestedMetadataCoreParser
+  <$> requestedMetadataParser
   <*> optional (option str (long "metadata" <> metavar "FILE"
         <> help "Embed bytes from FILE as the output patch's metadata (BPS only)"))
 
--- | Convert-side metadata: shared core plus an 'EmbeddedBlobIntent'.
+-- | Convert-side metadata: the parsed metadata fields plus an
+-- 'EmbeddedBlobIntent' that the resolver consults to fill the blob.
 -- The intent parser admits one of @--metadata FILE@, @--drop-metadata@,
 -- or neither — combining the two is rejected at parse time because
 -- @--drop-metadata@'s alternative consumes only itself.
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
 convertMetadataInputsParser = ConvertMetadataInputs
-  <$> requestedMetadataCoreParser
+  <$> requestedMetadataParser
   <*> embeddedBlobIntentParser
 
 -- | Parse the BPS embedded-blob intent for @slap convert@.  The three
@@ -882,38 +856,13 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> ByteString.readFile
 
--- | Lift a 'RequestedMetadataCore' into the library's
--- 'RequestedPatchMetadata' record.  Every core field maps to its
--- 'requested*' counterpart unchanged; 'requestedEmbeddedBlob' is left
--- 'Nothing' so each command's resolver can populate it from its own
--- blob-shaped input.
-coreToRequestedPatchMetadata :: RequestedMetadataCore -> RequestedPatchMetadata
-coreToRequestedPatchMetadata core = RequestedPatchMetadata
-  { requestedTitle               = coreTitle               core
-  , requestedAuthor              = coreAuthor              core
-  , requestedDescription         = coreDescription         core
-  , requestedVersion             = coreVersion             core
-  , requestedUndoInclusion       = coreUndoInclusion       core
-  , requestedValidationInclusion = coreValidationInclusion core
-  , requestedStability           = coreStability           core
-  , requestedRomType             = coreRomType             core
-  , requestedImageType           = coreImageType           core
-  , requestedGenre               = coreGenre               core
-  , requestedLanguage            = coreLanguage            core
-  , requestedDate                = coreDate                core
-  , requestedWebsite             = coreWebsite             core
-  , requestedPatchEncoding       = corePatchEncoding       core
-  , requestedEmbeddedBlob        = Nothing
-  }
-
 -- | Resolve @slap create@'s metadata inputs.  @--metadata FILE@'s
 -- contents (when supplied) become the embedded blob; otherwise the
 -- blob field stays 'Nothing'.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
   embeddedBlob <- traverse ByteString.readFile (createEmbeddedBlobPath inputs)
-  pure (coreToRequestedPatchMetadata (createMetadataCore inputs))
-        { requestedEmbeddedBlob = embeddedBlob }
+  pure (createParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
 
 -- | Resolve @slap convert@'s metadata inputs.  Only 'EmbedFromFile'
 -- triggers IO and produces a 'Just'; 'CarryIfPresent' and
@@ -927,8 +876,7 @@ resolveConvertMetadata inputs = do
     EmbedFromFile path -> Just <$> ByteString.readFile path
     DropEmbeddedBlob   -> pure Nothing
     CarryIfPresent     -> pure Nothing
-  pure (coreToRequestedPatchMetadata (convertMetadataCore inputs))
-        { requestedEmbeddedBlob = embeddedBlob }
+  pure (convertParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
 
 ----------------------------------------------------------------------------
 -- Info & Explain
