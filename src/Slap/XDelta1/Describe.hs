@@ -18,7 +18,7 @@ import Slap.Display.Analysis
 import Slap.Checksum (MD5Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Format (hexByteString)
+import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
 
 import Slap.TextEncoding (decodeLocaleField)

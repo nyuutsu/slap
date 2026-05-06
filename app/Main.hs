@@ -45,8 +45,7 @@ import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..)
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
                    renderSlapError, renderSlapWarning)
-import Slap.Format (rightwardsArrow, checkMark, ballotX, emDash,
-                    spacePaddedRightwardsArrow)
+import Slap.Display.Glyph (rightwardsArrow, checkMark, ballotX, emDash, spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
 
 import qualified Data.ByteString as ByteString

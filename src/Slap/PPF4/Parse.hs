@@ -11,7 +11,7 @@ import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
 import Slap.PPF.Types (ppfPreambleLength, ppfDescriptionLength)
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Offset(..), Length(..),

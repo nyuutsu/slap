@@ -50,7 +50,7 @@ import Slap.FileContents
   , SourceFileContents(..)
   , unPatchFileContents
   )
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types

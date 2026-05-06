@@ -16,7 +16,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString

@@ -38,7 +38,8 @@ library slap-internal
     , Slap.DPS.Describe
     , Slap.DPS.Parse
     , Slap.DPS.Types
-    , Slap.Format
+    , Slap.Display.Primitives
+    , Slap.Display.Glyph
     , Slap.FormatLabel
     , Slap.NINJA1.Apply
     , Slap.NINJA1.Create

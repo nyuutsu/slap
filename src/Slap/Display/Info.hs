@@ -17,7 +17,7 @@ import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit, ByteCount,
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
                              renderByteCount, renderOffsetRange)
-import Slap.Format (spacePaddedRightwardsArrow)
+import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Measure (OffsetRange)
 
 -- | What @slap info@ shows about a patch. Populated cheaply at parse

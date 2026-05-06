@@ -24,7 +24,7 @@ module Slap.Display.Common
   , renderOffsetRange
   ) where
 
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), rangeLastByte)

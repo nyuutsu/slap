@@ -9,7 +9,7 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 
 import qualified Data.ByteString as ByteString

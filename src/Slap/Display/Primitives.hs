@@ -1,25 +1,16 @@
-module Slap.Format
-  ( -- * Hex formatting
-    showCRC
-  , padHex
+module Slap.Display.Primitives
+  ( -- * Width padding
+    padHex
   , padNum
   , padRight
+    -- * Signed-hex rendering
   , showSigned
+    -- * ByteString rendering
   , hexByteString
-    -- * Hex dump
   , hexDump
-  , chunksOf
     -- * Shape-recognized byte display
   , renderPrintableASCIIOrHex
   , renderUTF8OrByteCount
-    -- * Display glyphs
-  , rightwardsArrow
-  , checkMark
-  , ballotX
-  , enDash
-  , emDash
-  , spacePaddedRightwardsArrow
-  , spacePaddedEnDash
   ) where
 
 import Slap.TextEncoding (isValidUtf8, decodeUtf8Field, truncateUtf8)
@@ -27,11 +18,8 @@ import Slap.TextEncoding (isValidUtf8, decodeUtf8Field, truncateUtf8)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
-import Data.Word (Word8, Word32, Word64)
+import Data.Word (Word8, Word64)
 import Numeric (showHex)
-
-showCRC :: Word32 -> String
-showCRC crc = padHex 8 crc
 
 padHex :: (Integral a) => Int -> a -> String
 padHex minWidth value =
@@ -121,45 +109,3 @@ renderUTF8OrByteCount maxPreviewBytes bytes
 -- inclusive).
 isPrintableAscii :: Word8 -> Bool
 isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
-
-----------------------------------------------------------------------------
--- Display glyphs
-----------------------------------------------------------------------------
-
--- The codepoints below are domain symbols in slap's CLI output
--- (output redirection, verification status, range separators,
--- sentence-internal pause).  Naming them once means call sites
--- read as the meaning they carry rather than as a numeric escape.
-
--- | U+2192 (→).  Output redirection in CLI status lines, e.g.
--- @applied 23 records → output.bin@.
-rightwardsArrow :: Char
-rightwardsArrow = '\8594'
-
--- | U+2713 (✓).  Verification success in dry-run output.
-checkMark :: Char
-checkMark = '\10003'
-
--- | U+2717 (✗).  Verification failure in dry-run output, paired
--- with the expected value.
-ballotX :: Char
-ballotX = '\10007'
-
--- | U+2013 (–).  Inclusive range separator in Explain output, e.g.
--- @0x000000 – 0x00FFFF@.
-enDash :: Char
-enDash = '\8211'
-
--- | U+2014 (—).  Sentence-internal pause in error messages.
-emDash :: Char
-emDash = '\8212'
-
--- | 'rightwardsArrow' flanked by single spaces; the recurring shape
--- in CLI status lines like @INPUT → OUTPUT@.
-spacePaddedRightwardsArrow :: String
-spacePaddedRightwardsArrow = [' ', rightwardsArrow, ' ']
-
--- | 'enDash' flanked by single spaces; the recurring shape in
--- Explain range output like @0x000000 – 0x00FFFF@.
-spacePaddedEnDash :: String
-spacePaddedEnDash = [' ', enDash, ' ']

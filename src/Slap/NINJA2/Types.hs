@@ -49,7 +49,7 @@ module Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash)
 import Slap.Get (Get, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.PlatformType (PlatformType)
 
 import Slap.TextEncoding (encodeUtf8Field, encodeLocaleField,

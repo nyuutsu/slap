@@ -61,7 +61,7 @@ import Slap.Display.Analysis
   , AnnotDetail(..)
   )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Format (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
+import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      OffsetRange(..), advance)
 

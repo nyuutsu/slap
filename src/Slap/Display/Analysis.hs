@@ -19,8 +19,8 @@ import Slap.Display.Common (InfoLine(..), renderInfoLine,
                              Tally(..), CountUnit, ByteCount,
                              renderCountUnit, renderByteCount)
 import Slap.Display.Info (PatchInfo(..), renderPatchInfo)
-import Slap.Format (padHex, padNum, padRight, showSigned, hexDump,
-                    spacePaddedEnDash)
+import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
+import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
                      OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Error (CursorKind, renderCursorKind)

@@ -19,7 +19,7 @@ import Slap.Display.Analysis
     )
 import Slap.Checksum (showAdler32)
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
 
 import qualified Data.ByteString as ByteString

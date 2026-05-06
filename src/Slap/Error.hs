@@ -37,7 +37,7 @@ import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Format (hexByteString, padHex, renderPrintableASCIIOrHex)
+import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),

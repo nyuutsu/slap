@@ -7,7 +7,7 @@ module Slap.NINJA2.Describe
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.Measure (Length(..), FileSize(..))
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),

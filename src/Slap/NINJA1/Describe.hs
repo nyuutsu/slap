@@ -13,7 +13,7 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Format (padHex)
+import Slap.Display.Primitives (padHex)
 import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
 
