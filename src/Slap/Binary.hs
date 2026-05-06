@@ -15,6 +15,7 @@ module Slap.Binary
     -- * Builders
   , putWord16BE
   , putWord32LE
+  , word32LEBytes
   , putByuuVarint
     -- * CRC-16 / Adler-32
   , crc16
@@ -165,6 +166,19 @@ putWord32LE value =
   <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
   <> word8 (fromIntegral ((value `shiftR` 24) .&. 0xFF))
+
+-- | Strict-ByteString sister to 'putWord32LE'. Useful when four bytes
+-- need to be appended to an existing 'ByteString' without going through
+-- the Builder machinery — e.g. computing a trailing CRC over a patch
+-- body and appending the CRC bytes directly. See 'createBPS' and
+-- 'createUPS' for callers.
+word32LEBytes :: Word32 -> ByteString
+word32LEBytes value = ByteString.pack
+  [ fromIntegral (value .&. 0xFF)
+  , fromIntegral ((value `shiftR`  8) .&. 0xFF)
+  , fromIntegral ((value `shiftR` 16) .&. 0xFF)
+  , fromIntegral ((value `shiftR` 24) .&. 0xFF)
+  ]
 
 -- | Encode a non-negative Int64 as a byuu-style varint.
 putByuuVarint :: Int64 -> Builder

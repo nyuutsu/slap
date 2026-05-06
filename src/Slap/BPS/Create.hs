@@ -4,7 +4,7 @@ module Slap.BPS.Create
   ( createBPS
   ) where
 
-import Slap.Binary (putWord32LE, putByuuVarint)
+import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), CreateResult(..))
@@ -40,7 +40,7 @@ createBPS (SourceFileContents original) (TargetFileContents modified) metadata =
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-      patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+      patchCRCBytes = word32LEBytes (unCRC32 patchCRC)
   Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
 
 -- | The byuu-varint encoder routes lengths through 'Int64', but slap

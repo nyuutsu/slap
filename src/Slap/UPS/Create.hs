@@ -5,7 +5,7 @@ module Slap.UPS.Create
   ) where
 
 import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
-import Slap.Binary (putWord32LE, putByuuVarint)
+import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (rustyCRC32)
@@ -40,7 +40,7 @@ createUPS (SourceFileContents original) (TargetFileContents modified) = do
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
       patchCRC = rustyCRC32 bodyBytes
-      patchCRCBytes = LazyByteString.toStrict (toLazyByteString (putWord32LE (unCRC32 patchCRC)))
+      patchCRCBytes = word32LEBytes (unCRC32 patchCRC)
   Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
 
 encodeUPSBlock :: UPSBlock -> Builder
