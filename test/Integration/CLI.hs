@@ -71,6 +71,7 @@ cliTests tier = do
       , descriptionTests dm4yBase dm4yBps
       , metadataRejectionTests dm4yBase dm4yBps
       , bpsConvertMetadataTests dm4yBase dm4yBps
+      , undoCliTests dm4yBase dm4yUps
       , onlyAtFull tier (forceTests dm4yBase dm4yUps)
       , onlyAtFull tier (noverifyTests dm4yBase dm4yBps)
       ]
@@ -80,7 +81,7 @@ cliTests tier = do
       requireFixture dm4yBase $ \_ ->
       requireExternalTool Zip $ \_ ->
       requireExternalTool Unzip $ \_ ->
-        pure (map WillRun (archiveTests dm4yBase dm4yIps dm4yBps))
+        pure (map WillRun (archiveTests dm4yBase dm4yIps dm4yBps dm4yUps))
 
     -- Codetable tests are slap-only (no dm4y dependency).
     let codetableMaybes = map WillRun customCodetableTests
@@ -334,8 +335,8 @@ warningTests repo =
 -- | The archive tests assume @zip@ is on @PATH@; the @cliTests@
 -- gating layer ensures that's true before any of these run, so the
 -- subprocess invocations here can call 'runExternal' 'Zip' directly.
-archiveTests :: FilePath -> FilePath -> FilePath -> [TestTree]
-archiveTests base ips bps =
+archiveTests :: FilePath -> FilePath -> FilePath -> FilePath -> [TestTree]
+archiveTests base ips bps ups =
   [ testCase "archive/apply ZIP-wrapped patch" $
       withTempDir "slap-arc" $ \workingDirectory -> do
         let zipFile = workingDirectory </> "patch.zip"
@@ -353,6 +354,24 @@ archiveTests base ips bps =
             zipSha    <- sha1Hex <$> ByteString.readFile result
             directSha <- sha1Hex <$> ByteString.readFile direct
             assertEqual "SHA1 mismatch" directSha zipSha
+
+  , testCase "archive/undo ZIP-wrapped target" $
+      withTempDir "slap-arc" $ \workingDirectory -> do
+        let modifiedFile = workingDirectory </> "modified.bin"
+            zipFile      = workingDirectory </> "modified.zip"
+            revertedFile = workingDirectory </> "reverted.bin"
+        ByteString.readFile base >>= ByteString.writeFile modifiedFile
+        _ <- runExternal SlapBinary
+          ["apply", ups, modifiedFile, "--in-place", "--no-backup"] Nothing ""
+        zipRun <- runExternal Zip ["-j", zipFile, modifiedFile] Nothing ""
+        case externalRunExitCode zipRun of
+          ExitFailure _ -> assertFailure "zip failed (zip not on PATH?)"
+          ExitSuccess   -> do
+            expectOk ["undo", ups, zipFile, "-o", revertedFile]
+              "archive/undo ZIP-wrapped target" "reverted"
+            baseSha     <- sha1Hex <$> ByteString.readFile base
+            revertedSha <- sha1Hex <$> ByteString.readFile revertedFile
+            assertEqual "reverted should match base" baseSha revertedSha
 
   , testCase "archive/info ZIP-wrapped" $
       withTempDir "slap-arc" $ \workingDirectory -> do
@@ -379,6 +398,85 @@ archiveTests base ips bps =
         let multiZip = workingDirectory </> "multi.zip"
         _ <- runExternal Zip ["-j", multiZip, ips, bps] Nothing ""
         expectFail ["info", multiZip] "archive/multi" "candidate"
+  ]
+
+-- | CLI-surface tests for undo's asymmetric paths: the derived-filename
+-- default lane and the dry-run branch (both unique to 'doUndo'),
+-- and the three verification cases (fatal default, --no-verify
+-- downgrade, happy-path round-trip).  The lane plumbing literally
+-- shared with apply's 'writingLane' (plain @-o FILE@ success,
+-- positional @OUTPUT@ alternative, @--force@ against an existing
+-- target) is covered by apply's own 'cliTests' and not duplicated here.
+undoCliTests :: FilePath -> FilePath -> [TestTree]
+undoCliTests base ups =
+  [ testCase "undo/derived path leaves input untouched" $
+      withTempDir "slap-undo" $ \workingDirectory -> do
+        let modifiedFile = workingDirectory </> "patched.bin"
+            derivedPath  = workingDirectory </> "patched [reverted].bin"
+        ByteString.readFile base >>= ByteString.writeFile modifiedFile
+        _ <- runExternal SlapBinary
+          ["apply", ups, modifiedFile, "--in-place", "--no-backup"] Nothing ""
+        modifiedShaBefore <- sha1Hex <$> ByteString.readFile modifiedFile
+        expectOk ["undo", ups, modifiedFile] "undo/derived path" "reverted"
+        derivedExists <- doesFileExist derivedPath
+        assertBool "derived output should exist at expected path" derivedExists
+        modifiedShaAfter <- sha1Hex <$> ByteString.readFile modifiedFile
+        assertEqual "input file should not be clobbered" modifiedShaBefore modifiedShaAfter
+        baseSha    <- sha1Hex <$> ByteString.readFile base
+        derivedSha <- sha1Hex <$> ByteString.readFile derivedPath
+        assertEqual "derived output should match base bytes" baseSha derivedSha
+
+  , testCase "undo/--dry-run prints would-revert and writes nothing" $
+      withTempDir "slap-undo" $ \workingDirectory -> do
+        let modifiedFile = workingDirectory </> "patched.bin"
+            derivedPath  = workingDirectory </> "patched [reverted].bin"
+        ByteString.readFile base >>= ByteString.writeFile modifiedFile
+        _ <- runExternal SlapBinary
+          ["apply", ups, modifiedFile, "--in-place", "--no-backup"] Nothing ""
+        modifiedShaBefore <- sha1Hex <$> ByteString.readFile modifiedFile
+        expectOk ["undo", "--dry-run", ups, modifiedFile]
+          "undo/--dry-run" "would revert"
+        modifiedShaAfter <- sha1Hex <$> ByteString.readFile modifiedFile
+        assertEqual "dry-run should not modify input" modifiedShaBefore modifiedShaAfter
+        derivedExists <- doesFileExist derivedPath
+        assertBool "dry-run should not create derived output" (not derivedExists)
+
+  , testCase "undo/verification refuses mismatched modified file" $
+      withTempDir "slap-undo" $ \workingDirectory -> do
+        let wrongModified = workingDirectory </> "wrong.bin"
+            outFile       = workingDirectory </> "out.bin"
+        ByteString.readFile base >>= ByteString.writeFile wrongModified
+        run <- runExternal SlapBinary
+          ["undo", ups, wrongModified, "-o", outFile] Nothing ""
+        case externalRunExitCode run of
+          ExitFailure _ -> pure ()
+          ExitSuccess   -> assertFailure
+            "undo should refuse target with mismatched CRC under default policy"
+
+  , testCase "undo/--no-verify proceeds with mismatched modified file" $
+      withTempDir "slap-undo" $ \workingDirectory -> do
+        let wrongModified = workingDirectory </> "wrong.bin"
+            outFile       = workingDirectory </> "out.bin"
+        ByteString.readFile base >>= ByteString.writeFile wrongModified
+        run <- runExternal SlapBinary
+          ["undo", "--no-verify", ups, wrongModified, "-o", outFile] Nothing ""
+        case externalRunExitCode run of
+          ExitSuccess   -> pure ()
+          ExitFailure _ -> assertFailure
+            "--no-verify should let undo proceed with mismatched modified file"
+
+  , testCase "undo/happy path round-trips correct bytes" $
+      withTempDir "slap-undo" $ \workingDirectory -> do
+        let modifiedFile = workingDirectory </> "patched.bin"
+            revertedFile = workingDirectory </> "reverted.bin"
+        ByteString.readFile base >>= ByteString.writeFile modifiedFile
+        _ <- runExternal SlapBinary
+          ["apply", ups, modifiedFile, "--in-place", "--no-backup"] Nothing ""
+        expectOk ["undo", ups, modifiedFile, "-o", revertedFile]
+          "undo/happy path" "reverted"
+        baseSha     <- sha1Hex <$> ByteString.readFile base
+        revertedSha <- sha1Hex <$> ByteString.readFile revertedFile
+        assertEqual "reverted should match base bytes" baseSha revertedSha
   ]
 
 ipsTruncateTests :: FilePath -> [TestTree]
