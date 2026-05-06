@@ -29,7 +29,7 @@ import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.SomePatch (parseSome, patchContents)
+import Slap.SomePatch (parseSome, patchKind, PatchKind(..))
 import Slap.Convert
   ( DirectCreate(..)
   , DiffCreate(..)
@@ -575,9 +575,8 @@ smcShapeConstraintTests =
 
   , testCase "smc-shape/source-less convert IPS->IPS refuses bad marker" $ do
       ipsPatch <- buildNonSMCShapedIPS
-      case patchContents ipsPatch of
-        Nothing -> assertFailure "test fixture should expose PatchContents"
-        Just contents ->
+      case patchKind ipsPatch of
+        Direct (Just contents) ->
           case convertDirect contents (CreateDirect CreateIPS)
                  noMetadataRequested smcConstraints of
             Left (TruncationViolatesSMCShape _) -> pure ()
@@ -585,6 +584,7 @@ smcShapeConstraintTests =
               ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
             Right _ -> assertFailure
               "expected refusal at encode gate"
+        _ -> assertFailure "test fixture should expose PatchContents"
   ]
   where
     smcConstraints = noConstraintsRequested
@@ -598,8 +598,8 @@ smcShapeConstraintTests =
     -- Build a parsed IPS patch whose post-EOF truncation marker
     -- declares a non-SMC-shaped target size. Constructed via the
     -- create path with constraints disabled so the produced patch
-    -- carries the marker; then re-parsed so 'patchContents' is
-    -- populated for the source-less convert path.
+    -- carries the marker; then re-parsed so the @'Direct' ('Just' _)@
+    -- bag is populated for the source-less convert path.
     buildNonSMCShapedIPS = do
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF

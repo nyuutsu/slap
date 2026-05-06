@@ -49,7 +49,7 @@ import Slap.Format (padHex, emDash)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
+import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
 import Slap.Create (createPatch)
 
 import Control.Exception (catch, IOException)
@@ -248,6 +248,17 @@ data SourceRequiredReason = SourceRequiredReason
   , sourceRequiredConsequence :: String
   }
 
+-- | Peer copy of @Main.patchContentsOf@: project the optional
+-- 'PatchContents' bag out of a 'SomePatch'.  'Differential' patches
+-- never carry one; 'Direct' patches carry 'Just' when their data fits
+-- the universal-bag representation ('Nothing' for PPF4 with Append
+-- commands).  The peer copy keeps this test module independent of
+-- @Main@'s internal helpers.
+patchContentsOf :: SomePatch -> Maybe PatchContents
+patchContentsOf somePatch = case patchKind somePatch of
+  Direct optionalContents -> optionalContents
+  Differential            -> Nothing
+
 -- | Replicate the convert logic from Main.hs.
 attemptConvert
   :: SomePatch
@@ -261,14 +272,15 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right target ->
-        case createPatch targetFormat (SourceFileContents baseBytes) target meta (patchContents somePatch) noConstraintsRequested of
+        case createPatch targetFormat (SourceFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
-  Nothing -> case patchContents somePatch of
-    Nothing -> pure (Left (needWithMsg somePatch))
-    Just patchContent -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested of
+  Nothing -> case patchKind somePatch of
+    Direct (Just patchContent) -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested of
       Left slapErr -> Left (renderSlapError slapErr)
       Right result -> Right result
+    Direct Nothing             -> pure (Left (needWithMsg somePatch))
+    Differential               -> pure (Left (needWithMsg somePatch))
   where
     needWithMsg thePatch =
       "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
@@ -281,7 +293,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
             { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
             , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
             }
-          Direct -> SourceRequiredReason
+          Direct _ -> SourceRequiredReason
             { sourceRequiredCause       = "can't be converted directly into another patch format"
             , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
             }

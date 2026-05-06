@@ -1015,18 +1015,30 @@ data ConvertDispatch
     -- 'PatchContents' (diff formats without self-contained records).
     -- Terminates via 'needSourceMessage'.
 
--- | Flatten the two Maybe values that decide which convert path runs into
--- the single sum they really express.  The user's @--with SOURCE@ flag
--- commits to apply-and-recreate outright; without it, the parsed patch
--- either carries 'PatchContents' (source-less conversion works) or it
--- doesn't (the user has to supply source or give up).
+-- | Decide which convert path runs from the parsed patch and the CLI
+-- command.  The user's @--with SOURCE@ flag commits to
+-- apply-and-recreate outright; without it the parsed 'PatchKind'
+-- decides — only @'Direct' ('Just' _)@ carries enough structure
+-- ('PatchContents') to re-encode source-lessly. @'Direct' 'Nothing'@
+-- (PPF4 with Append commands) and 'Differential' both need the
+-- source; 'needSourceMessage' renders the user-visible reason.
 chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
 chooseConvertDispatch parsedCommand parsed =
   case convertWithSource parsedCommand of
     Just withSource -> ApplyAndRecreate withSource
-    Nothing -> case patchContents parsed of
-      Just contents -> SourceLessConvert contents
-      Nothing       -> ConvertRequiresSource parsed
+    Nothing -> case patchKind parsed of
+      Direct (Just contents) -> SourceLessConvert contents
+      Direct Nothing         -> ConvertRequiresSource parsed
+      Differential           -> ConvertRequiresSource parsed
+
+-- | Project the optional 'PatchContents' bag out of a 'SomePatch'.
+-- 'Differential' patches never carry one; 'Direct' patches carry
+-- 'Just' when their data fits the universal-bag representation
+-- ('Nothing' for PPF4 with Append commands).
+patchContentsOf :: SomePatch -> Maybe PatchContents
+patchContentsOf parsed = case patchKind parsed of
+  Direct optionalContents -> optionalContents
+  Differential            -> Nothing
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
@@ -1057,7 +1069,7 @@ doConvert parsedCommand = do
       let source = SourceFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContents parsed) (convertConstraints parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
@@ -1102,7 +1114,7 @@ needSourceMessage somePatch =
         { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
         , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
         }
-      Direct -> SourceRequiredReason
+      Direct _ -> SourceRequiredReason
         { sourceRequiredCause       = "can't be converted directly into another patch format"
         , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
         }
