@@ -1028,59 +1028,52 @@ formatName :: CreateFormat -> String
 formatName (CreateDirect format) = directName format
 formatName (CreateDifferential format) = differentialName format
 
-directExtension :: DirectCreate -> String
-directExtension CreateIPS    = ".ips"
-directExtension CreateIPS32  = ".ips"
-directExtension CreateEBP    = ".ebp"
-directExtension CreatePPF3   = ".ppf"
-directExtension CreateNINJA1 = ".rup"
-directExtension CreatePMSR   = ".pmsr"
-directExtension CreatePCHTXT = ".pchtxt"
-directExtension CreateAPSN64 = ".aps"
+-- | Per-format metadata used by 'Slap.Convert's wrapper functions and
+-- by error-construction sites that need to tag errors with the
+-- offending format. Both 'directFormatInfo' and 'differentialFormatInfo'
+-- return this same shape; the type-level distinction between
+-- 'DirectCreate' and 'DifferentialCreate' lives at the input.
+data FormatInfo = FormatInfo
+  { formatInfoExtension :: String
+  , formatInfoName      :: String
+  , formatInfoLabel     :: FormatLabel
+  }
 
-differentialExtension :: DifferentialCreate -> String
-differentialExtension CreateBPS    = ".bps"
-differentialExtension CreateUPS    = ".ups"
-differentialExtension CreateDPS    = ".dps"
-differentialExtension CreateNINJA2 = ".rup"
-differentialExtension CreateAPSGBA = ".aps"
-differentialExtension CreateGDIFF  = ".gdiff"
+directFormatInfo :: DirectCreate -> FormatInfo
+directFormatInfo CreateIPS    = FormatInfo ".ips"    "IPS"       LabelIPS
+directFormatInfo CreateIPS32  = FormatInfo ".ips"    "IPS32"     LabelIPS32
+directFormatInfo CreateEBP    = FormatInfo ".ebp"    "EBP"       LabelEBP
+directFormatInfo CreatePPF3   = FormatInfo ".ppf"    "PPF3"      LabelPPF3
+directFormatInfo CreateNINJA1 = FormatInfo ".rup"    "NINJA1"    LabelNINJA1
+directFormatInfo CreatePMSR   = FormatInfo ".pmsr"   "PMSR"      LabelPMSR
+directFormatInfo CreatePCHTXT = FormatInfo ".pchtxt" "PCHTXT"    LabelPCHTXT
+directFormatInfo CreateAPSN64 = FormatInfo ".aps"    "APS (N64)" LabelAPSN64
+
+differentialFormatInfo :: DifferentialCreate -> FormatInfo
+differentialFormatInfo CreateBPS    = FormatInfo ".bps"   "BPS"       LabelBPS
+differentialFormatInfo CreateUPS    = FormatInfo ".ups"   "UPS"       LabelUPS
+differentialFormatInfo CreateDPS    = FormatInfo ".dps"   "DPS"       LabelDPS
+differentialFormatInfo CreateNINJA2 = FormatInfo ".rup"   "NINJA2"    LabelNINJA2
+differentialFormatInfo CreateAPSGBA = FormatInfo ".aps"   "APS (GBA)" LabelAPSGBA
+differentialFormatInfo CreateGDIFF  = FormatInfo ".gdiff" "GDIFF"     LabelGDIFF
+
+directExtension :: DirectCreate -> String
+directExtension = formatInfoExtension . directFormatInfo
 
 directName :: DirectCreate -> String
-directName CreateIPS    = "IPS"
-directName CreateIPS32  = "IPS32"
-directName CreateEBP    = "EBP"
-directName CreatePPF3   = "PPF3"
-directName CreateNINJA1 = "NINJA1"
-directName CreatePMSR   = "PMSR"
-directName CreatePCHTXT = "PCHTXT"
-directName CreateAPSN64 = "APS (N64)"
-
-differentialName :: DifferentialCreate -> String
-differentialName CreateBPS    = "BPS"
-differentialName CreateUPS    = "UPS"
-differentialName CreateDPS    = "DPS"
-differentialName CreateNINJA2 = "NINJA2"
-differentialName CreateAPSGBA = "APS (GBA)"
-differentialName CreateGDIFF  = "GDIFF"
+directName = formatInfoName . directFormatInfo
 
 directLabel :: DirectCreate -> FormatLabel
-directLabel CreateIPS    = LabelIPS
-directLabel CreateIPS32  = LabelIPS32
-directLabel CreateEBP    = LabelEBP
-directLabel CreatePPF3   = LabelPPF3
-directLabel CreateNINJA1 = LabelNINJA1
-directLabel CreatePMSR   = LabelPMSR
-directLabel CreatePCHTXT = LabelPCHTXT
-directLabel CreateAPSN64 = LabelAPSN64
+directLabel = formatInfoLabel . directFormatInfo
+
+differentialExtension :: DifferentialCreate -> String
+differentialExtension = formatInfoExtension . differentialFormatInfo
+
+differentialName :: DifferentialCreate -> String
+differentialName = formatInfoName . differentialFormatInfo
 
 differentialLabel :: DifferentialCreate -> FormatLabel
-differentialLabel CreateBPS    = LabelBPS
-differentialLabel CreateUPS    = LabelUPS
-differentialLabel CreateDPS    = LabelDPS
-differentialLabel CreateNINJA2 = LabelNINJA2
-differentialLabel CreateAPSGBA = LabelAPSGBA
-differentialLabel CreateGDIFF  = LabelGDIFF
+differentialLabel = formatInfoLabel . differentialFormatInfo
 
 -- | Unified 'FormatLabel' for any 'CreateFormat'.  Fans out across the
 -- direct/differential split so callers needing one label per target
