@@ -914,7 +914,7 @@ renderSlapError (TruncationViolatesSMCShape size) =
   ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
 renderSlapError (VerificationFatal warning) =
-  renderSlapWarning warning ++ "\n  use --no-verify to apply anyway"
+  renderSlapWarning warning ++ "\n  use --no-verify to proceed anyway"
 
 renderSlapError (Yay0DecompressionFailed detail) =
   "Yay0 decompression failed: " ++ detail

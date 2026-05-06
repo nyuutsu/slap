@@ -298,11 +298,12 @@ data ApplyCommand = ApplyCommand
   deriving (Show)
 
 data UndoCommand = UndoCommand
-  { undoVerbosity   :: Verbosity
-  , undoFileReading :: FileReadingOptions
-  , undoPatch       :: FilePath
-  , undoSource      :: FilePath
-  , undoOutput      :: UndoOutput
+  { undoVerificationPolicy :: VerificationPolicy
+  , undoVerbosity          :: Verbosity
+  , undoFileReading        :: FileReadingOptions
+  , undoPatch              :: FilePath
+  , undoSource             :: FilePath
+  , undoOutput             :: UndoOutput
   }
   deriving (Show)
 
@@ -479,17 +480,19 @@ fileReadingOptionsParser = FileReadingOptions <$> archiveHandlingFromSwitch
 
 undoParser :: Parser UndoCommand
 undoParser = do
+    verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
     patch              <- argument str (metavar "PATCH" <> help "Patch file")
     source             <- argument str (metavar "SOURCE" <> help "File to restore")
     output             <- undoOutputParser
     pure UndoCommand
-      { undoVerbosity   = verbosity
-      , undoFileReading = fileReadingOptions
-      , undoPatch       = patch
-      , undoSource      = source
-      , undoOutput      = output
+      { undoVerificationPolicy = verificationPolicy
+      , undoVerbosity          = verbosity
+      , undoFileReading        = fileReadingOptions
+      , undoPatch              = patch
+      , undoSource             = source
+      , undoOutput             = output
       }
 
 undoOutputParser :: Parser UndoOutput
@@ -960,9 +963,14 @@ doUndo parsedCommand = do
     Nothing -> bail "undo not supported for this format"
     Just undo -> do
       modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
+      let verification       = patchVerification parsed
+          verificationPolicy = undoVerificationPolicy parsedCommand
+      verifyTarget verificationPolicy verification (TargetFileContents modified)
       outcome <- orBail (runUndo undo (TargetFileContents modified))
       emitWarnings WarningProper (outcomeWarnings outcome)
-      let SourceFileContents result = outcomeValue outcome
+      let revertedSource = outcomeValue outcome
+      verifySource verificationPolicy verification revertedSource
+      let SourceFileContents result = revertedSource
           outputPath = case undoOutput parsedCommand of
             UndoInPlace                 -> undoSource parsedCommand
             UndoToExplicitFile explicit -> explicit
