@@ -93,7 +93,7 @@ library slap-internal
     , Slap.NINJA2.Types
     , Slap.SomePatch
     , Slap.TextEncoding
-    , Slap.Types
+    , Slap.PatchFormat
     , Slap.UPS.Apply
     , Slap.UPS.Create
     , Slap.UPS.Describe

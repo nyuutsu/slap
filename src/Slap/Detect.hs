@@ -19,7 +19,7 @@ import Slap.NINJA1.Types (ninja1MagicBytes)
 import Slap.NINJA2.Types (ninja2MagicBytes)
 import Slap.PMSR.Types (pmsrMagicBytes)
 import Slap.PPF.Types (ppf1MagicBytes, ppf2MagicBytes, ppf3MagicBytes, ppf4MagicBytes)
-import Slap.Types (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
+import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.UPS.Types (upsMagicBytes)
 import Slap.VCDIFF.Types (vcdiffMagicBytes)
 

@@ -1,4 +1,4 @@
-module Slap.Types
+module Slap.PatchFormat
   ( DirectFormat(..)
   , DifferentialFormat(..)
   , PatchFormat(..)

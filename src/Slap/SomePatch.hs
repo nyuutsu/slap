@@ -14,7 +14,7 @@ module Slap.SomePatch
   ) where
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Types (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
+import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
