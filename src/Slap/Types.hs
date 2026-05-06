@@ -1,6 +1,6 @@
 module Slap.Types
   ( DirectFormat(..)
-  , DiffFormat(..)
+  , DifferentialFormat(..)
   , PatchFormat(..)
   ) where
 
@@ -23,7 +23,7 @@ data DirectFormat
 
 -- | Differential patch format: encodes instructions that transform
 -- source bytes into target bytes.  The source file is required.
-data DiffFormat
+data DifferentialFormat
   = FormatBPS | FormatUPS | FormatVCDIFF | FormatAPSGBA | FormatNINJA2
   | FormatBSDiff | FormatGDIFF | FormatXDelta1 | FormatDPS
   deriving (Show, Eq, Enum, Bounded)
@@ -31,5 +31,5 @@ data DiffFormat
 -- | Detected patch format, classified by its intrinsic nature.
 data PatchFormat
   = PatchDirect DirectFormat
-  | PatchDiff DiffFormat
+  | PatchDifferential DifferentialFormat
   deriving (Show, Eq)

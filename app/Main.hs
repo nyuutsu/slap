@@ -22,7 +22,7 @@ import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ExpectedSize(..), ActualSize(..))
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
+import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      PatchContents,
                      RequestedPatchMetadata(..),
                      RequestedConstraints(..),
@@ -574,7 +574,7 @@ convertWithSourceParser = ConvertWithSource
 -- the user to spell out a format.
 createFormatParser :: Parser CreateFormat
 createFormatParser = option (eitherReader parseCreateFormat)
-  (long "format" <> metavar "FMT" <> value (CreateDiff CreateBPS)
+  (long "format" <> metavar "FMT" <> value (CreateDifferential CreateBPS)
     <> help ("Output format: " ++ intercalate ", " advertisedCreateFormats
               ++ " (default: bps)"))
 
@@ -689,23 +689,23 @@ data TokenVisibility = Canonical | Alias
 -- 'advertisedCreateFormats' derive from this table.
 createFormatTokens :: [(String, CreateFormat, TokenVisibility)]
 createFormatTokens =
-  [ ("bps",     CreateDiff   CreateBPS,    Canonical)
-  , ("ips",     CreateDirect CreateIPS,    Canonical)
-  , ("ips32",   CreateDirect CreateIPS32,  Canonical)
-  , ("ebp",     CreateDirect CreateEBP,    Canonical)
-  , ("ups",     CreateDiff   CreateUPS,    Canonical)
-  , ("ppf3",    CreateDirect CreatePPF3,   Canonical)
-  , ("ppf",     CreateDirect CreatePPF3,   Alias)
-  , ("pmsr",    CreateDirect CreatePMSR,   Canonical)
-  , ("ninja1",  CreateDirect CreateNINJA1, Canonical)
-  , ("dps",     CreateDiff   CreateDPS,    Canonical)
-  , ("ninja2",  CreateDiff   CreateNINJA2, Canonical)
-  , ("aps-n64", CreateDirect CreateAPSN64, Canonical)
-  , ("apsn64",  CreateDirect CreateAPSN64, Alias)
-  , ("aps-gba", CreateDiff   CreateAPSGBA, Canonical)
-  , ("apsgba",  CreateDiff   CreateAPSGBA, Alias)
-  , ("gdiff",   CreateDiff   CreateGDIFF,  Canonical)
-  , ("pchtxt",  CreateDirect CreatePCHTXT, Canonical)
+  [ ("bps",     CreateDifferential CreateBPS,    Canonical)
+  , ("ips",     CreateDirect       CreateIPS,    Canonical)
+  , ("ips32",   CreateDirect       CreateIPS32,  Canonical)
+  , ("ebp",     CreateDirect       CreateEBP,    Canonical)
+  , ("ups",     CreateDifferential CreateUPS,    Canonical)
+  , ("ppf3",    CreateDirect       CreatePPF3,   Canonical)
+  , ("ppf",     CreateDirect       CreatePPF3,   Alias)
+  , ("pmsr",    CreateDirect       CreatePMSR,   Canonical)
+  , ("ninja1",  CreateDirect       CreateNINJA1, Canonical)
+  , ("dps",     CreateDifferential CreateDPS,    Canonical)
+  , ("ninja2",  CreateDifferential CreateNINJA2, Canonical)
+  , ("aps-n64", CreateDirect       CreateAPSN64, Canonical)
+  , ("apsn64",  CreateDirect       CreateAPSN64, Alias)
+  , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
+  , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
+  , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
+  , ("pchtxt",  CreateDirect       CreatePCHTXT, Canonical)
   ]
 
 -- | The canonical create-format tokens 'parseCreateFormat'
@@ -1126,7 +1126,7 @@ needSourceMessage somePatch =
 -- patch that didn't have metadata to begin with.
 computeBPSDropWarnings :: SomePatch -> CreateFormat -> [SlapWarning]
 computeBPSDropWarnings parsed targetFormat = case patchMetadata parsed of
-  Just metaBytes | targetFormat /= CreateDiff CreateBPS ->
+  Just metaBytes | targetFormat /= CreateDifferential CreateBPS ->
     [MetadataDropped (ByteString.length metaBytes)]
   _ -> []
 

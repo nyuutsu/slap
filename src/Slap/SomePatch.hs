@@ -14,7 +14,7 @@ module Slap.SomePatch
   ) where
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
-import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
+import Slap.Types (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
@@ -239,24 +239,24 @@ parseSome patchContents = case detectFormat patchContents of
     | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 patchContents
     | otherwise            -> Left UnrecognizedFormat
 
-  Just (PatchDirect FormatPPF1)           -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF
-  Just (PatchDirect FormatPPF2)           -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF
-  Just (PatchDirect FormatPPF3)           -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
-  Just (PatchDirect FormatPPF4)           -> parseSomePatchFromPPF4 patchContents
-  Just (PatchDirect (FormatIPS variant))  -> parseSomePatchFromIPS variant patchContents
-  Just (PatchDirect FormatAPSN64)         -> parseSomePatchFromAPSN64 patchContents
-  Just (PatchDirect FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
-  Just (PatchDirect FormatPMSR)           -> parseSomePatchFromPMSR patchContents
-  Just (PatchDirect FormatPCHTXT)         -> parseSomePatchFromPCHTXT patchContents
-  Just (PatchDiff   FormatBPS)            -> parseSomePatchFromBPS patchContents
-  Just (PatchDiff   FormatUPS)            -> parseSomePatchFromUPS patchContents
-  Just (PatchDiff   FormatVCDIFF)         -> parseSomePatchFromVCDIFF patchContents
-  Just (PatchDiff   FormatAPSGBA)         -> parseSomePatchFromAPSGBA patchContents
-  Just (PatchDiff   FormatNINJA2)         -> parseSomePatchFromNINJA2 patchContents
-  Just (PatchDiff   FormatBSDiff)         -> parseSomePatchFromBSDiff patchContents
-  Just (PatchDiff   FormatGDIFF)          -> parseSomePatchFromGDIFF patchContents
-  Just (PatchDiff   FormatXDelta1)        -> parseSomePatchFromXDelta1 patchContents
-  Just (PatchDiff   FormatDPS)            -> parseSomePatchFromDPS patchContents
+  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect       FormatPPF2)           -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect       FormatPPF3)           -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF
+  Just (PatchDirect       FormatPPF4)           -> parseSomePatchFromPPF4 patchContents
+  Just (PatchDirect       (FormatIPS variant))  -> parseSomePatchFromIPS variant patchContents
+  Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 patchContents
+  Just (PatchDirect       FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
+  Just (PatchDirect       FormatPMSR)           -> parseSomePatchFromPMSR patchContents
+  Just (PatchDirect       FormatPCHTXT)         -> parseSomePatchFromPCHTXT patchContents
+  Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS patchContents
+  Just (PatchDifferential FormatUPS)            -> parseSomePatchFromUPS patchContents
+  Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF patchContents
+  Just (PatchDifferential FormatAPSGBA)         -> parseSomePatchFromAPSGBA patchContents
+  Just (PatchDifferential FormatNINJA2)         -> parseSomePatchFromNINJA2 patchContents
+  Just (PatchDifferential FormatBSDiff)         -> parseSomePatchFromBSDiff patchContents
+  Just (PatchDifferential FormatGDIFF)          -> parseSomePatchFromGDIFF patchContents
+  Just (PatchDifferential FormatXDelta1)        -> parseSomePatchFromXDelta1 patchContents
+  Just (PatchDifferential FormatDPS)            -> parseSomePatchFromDPS patchContents
   where
     rawBytes = unPatchFileContents patchContents
 

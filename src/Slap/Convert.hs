@@ -1,7 +1,7 @@
 module Slap.Convert
   ( PatchContents(..)
   , DirectCreate(..)
-  , DiffCreate(..)
+  , DifferentialCreate(..)
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
@@ -93,7 +93,7 @@ import qualified Data.Set as Set
 -- 'PatchContents' can be source-lessly converted to the target format
 -- without dropping apply-output-affecting data.
 --
--- Diff targets use a different conversion path (apply-and-recreate via
+-- Differential targets use a different conversion path (apply-and-recreate via
 -- @--with SOURCE@), so this contract only covers direct formats.
 data DirectConversionContract = DirectConversionContract
   { contractRequiredFields :: Set.Set PatchField
@@ -134,9 +134,9 @@ data DirectCreate
   deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
--- create (VCDIFF, BSDiff, XDelta1) belong to DiffFormat (the format
--- taxonomy) but not here (slap's current creation capability).
-data DiffCreate
+-- create (VCDIFF, BSDiff, XDelta1) belong to DifferentialFormat (the
+-- format taxonomy) but not here (slap's current creation capability).
+data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
   | CreateAPSGBA | CreateGDIFF
   deriving (Show, Eq)
@@ -144,7 +144,7 @@ data DiffCreate
 -- | Target format for patch creation or conversion.
 data CreateFormat
   = CreateDirect DirectCreate
-  | CreateDiff DiffCreate
+  | CreateDifferential DifferentialCreate
   deriving (Show, Eq)
 
 -- | User intent about what metadata should end up in an emitted patch.
@@ -169,8 +169,8 @@ data CreateFormat
 -- 'CreateAPSN64' consumes 'requestedDescription' (50-byte header
 -- field).
 --
--- Diff-format consumption is read directly out of 'createPatch'\'s
--- diff arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
+-- Differential-format consumption is read directly out of 'createPatch'\'s
+-- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
 -- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
 -- consumes 'requestedTitle'\/'requestedDescription' (name),
 -- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
@@ -373,8 +373,8 @@ directConversionContract target undoChoice validationChoice = case target of
 -- any IO.
 --
 -- Direct-format entries derive from the per-format reads inside
--- 'buildContents' and 'encodeDirect'; diff-format entries derive from
--- the per-format reads inside 'createPatch'.  An entry here means
+-- 'buildContents' and 'encodeDirect'; differential-format entries
+-- derive from the per-format reads inside 'createPatch'.  An entry here means
 -- "the format-specific encoder reads this field"; absence means
 -- "setting this field on the CLI would do nothing observable for this
 -- format."
@@ -388,7 +388,7 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreatePMSR   -> Set.empty
   CreatePCHTXT -> Set.fromList [MetadataDescription]
   CreateAPSN64 -> Set.fromList [MetadataDescription]
-acceptedMetadataFields (CreateDiff format) = case format of
+acceptedMetadataFields (CreateDifferential format) = case format of
   CreateBPS    -> Set.fromList [MetadataEmbeddedBlob]
   CreateUPS    -> Set.empty
   CreateDPS    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataVersion, MetadataStability]
@@ -468,11 +468,11 @@ requestedConstraints constraints = Set.fromList $ concat
   ]
 
 -- | The 'Constraint's a target format can honor. Pattern-matched
--- exhaustively across both 'CreateDirect' and 'CreateDiff' so that
--- adding a constructor anywhere — a new format, or a new constraint
--- — fires '-Wincomplete-patterns' on every case that needs a
--- decision. This is non-cosmetic: a wildcard would silently reject
--- a half-wired constraint against every format and slap would
+-- exhaustively across both 'CreateDirect' and 'CreateDifferential' so
+-- that adding a constructor anywhere — a new format, or a new
+-- constraint — fires '-Wincomplete-patterns' on every case that
+-- needs a decision. This is non-cosmetic: a wildcard would silently
+-- reject a half-wired constraint against every format and slap would
 -- volunteer no signal.
 acceptedConstraints :: CreateFormat -> Set.Set Constraint
 acceptedConstraints (CreateDirect format) = case format of
@@ -484,7 +484,7 @@ acceptedConstraints (CreateDirect format) = case format of
   CreatePMSR   -> Set.empty
   CreatePCHTXT -> Set.empty
   CreateAPSN64 -> Set.empty
-acceptedConstraints (CreateDiff format) = case format of
+acceptedConstraints (CreateDifferential format) = case format of
   CreateBPS    -> Set.empty
   CreateUPS    -> Set.empty
   CreateDPS    -> Set.empty
@@ -623,7 +623,7 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 createDefaultNotes :: CreateFormat -> RequestedPatchMetadata -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
   ++ undoValidateNotes target meta
-createDefaultNotes (CreateDiff _) _ = []
+createDefaultNotes (CreateDifferential _) _ = []
 
 -- | Warn when undo/validation are included by default (no CLI flag, no
 -- inherited source value).  Same pattern as rom-type defaulting to RAW.
@@ -693,7 +693,7 @@ fieldNote contents field = case field of
 convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> RequestedConstraints
               -> Either SlapError CreateResult
-convertDirect _ (CreateDiff target) _ _ = Left (DiffRequiresSource (diffLabel target))
+convertDirect _ (CreateDifferential target) _ _ = Left (DiffRequiresSource (differentialLabel target))
 convertDirect contents (CreateDirect target) meta constraints = do
   let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
       validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
@@ -856,7 +856,7 @@ encodeDirect contents source target meta limits constraints = case target of
 
 -- | The dynamic create entry point: dispatches on 'CreateFormat' to the
 -- direct pipeline (universal 'PatchContents' assembly, then 'encodeDirect')
--- or to the appropriate per-format diff creator. The optional
+-- or to the appropriate per-format differential creator. The optional
 -- 'PatchContents' carries structural data from the source patch (EBP JSON,
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for inheritance in
 -- the @--with@ conversion path.
@@ -867,16 +867,16 @@ createPatch :: CreateFormat -> SourceFileContents -> TargetFileContents
 createPatch (CreateDirect format) source target meta sourceContents constraints =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format) constraints
-createPatch (CreateDiff format) source target meta sourceContents _constraints = case format of
-  -- The constraints parameter is unused on the diff arm: today no
-  -- diff format honors any constraint ('acceptedConstraints' returns
-  -- 'Set.empty' for every 'CreateDiff' constructor), and any
-  -- user-requested constraint against a diff format is rejected
-  -- upstream by 'rejectIncompatibleConstraints' in 'doCreate' /
-  -- 'doConvert' before this arm runs. The parameter stays in the
+createPatch (CreateDifferential format) source target meta sourceContents _constraints = case format of
+  -- The constraints parameter is unused on the differential arm: today
+  -- no differential format honors any constraint ('acceptedConstraints'
+  -- returns 'Set.empty' for every 'CreateDifferential' constructor),
+  -- and any user-requested constraint against a differential format is
+  -- rejected upstream by 'rejectIncompatibleConstraints' in 'doCreate'
+  -- / 'doConvert' before this arm runs. The parameter stays in the
   -- signature for shape-symmetry with the direct arm; when a future
-  -- constraint becomes diff-honorable, both the matrix entry in
-  -- 'acceptedConstraints' and this arm's plumbing change at once.
+  -- constraint becomes differential-honorable, both the matrix entry
+  -- in 'acceptedConstraints' and this arm's plumbing change at once.
   CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
@@ -1022,11 +1022,11 @@ trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . rev
 
 formatExtension :: CreateFormat -> String
 formatExtension (CreateDirect format) = directExtension format
-formatExtension (CreateDiff format) = diffExtension format
+formatExtension (CreateDifferential format) = differentialExtension format
 
 formatName :: CreateFormat -> String
 formatName (CreateDirect format) = directName format
-formatName (CreateDiff format) = diffName format
+formatName (CreateDifferential format) = differentialName format
 
 directExtension :: DirectCreate -> String
 directExtension CreateIPS    = ".ips"
@@ -1038,13 +1038,13 @@ directExtension CreatePMSR   = ".pmsr"
 directExtension CreatePCHTXT = ".pchtxt"
 directExtension CreateAPSN64 = ".aps"
 
-diffExtension :: DiffCreate -> String
-diffExtension CreateBPS    = ".bps"
-diffExtension CreateUPS    = ".ups"
-diffExtension CreateDPS    = ".dps"
-diffExtension CreateNINJA2    = ".rup"
-diffExtension CreateAPSGBA = ".aps"
-diffExtension CreateGDIFF  = ".gdiff"
+differentialExtension :: DifferentialCreate -> String
+differentialExtension CreateBPS    = ".bps"
+differentialExtension CreateUPS    = ".ups"
+differentialExtension CreateDPS    = ".dps"
+differentialExtension CreateNINJA2 = ".rup"
+differentialExtension CreateAPSGBA = ".aps"
+differentialExtension CreateGDIFF  = ".gdiff"
 
 directName :: DirectCreate -> String
 directName CreateIPS    = "IPS"
@@ -1056,13 +1056,13 @@ directName CreatePMSR   = "PMSR"
 directName CreatePCHTXT = "PCHTXT"
 directName CreateAPSN64 = "APS (N64)"
 
-diffName :: DiffCreate -> String
-diffName CreateBPS    = "BPS"
-diffName CreateUPS    = "UPS"
-diffName CreateDPS    = "DPS"
-diffName CreateNINJA2    = "NINJA2"
-diffName CreateAPSGBA = "APS (GBA)"
-diffName CreateGDIFF  = "GDIFF"
+differentialName :: DifferentialCreate -> String
+differentialName CreateBPS    = "BPS"
+differentialName CreateUPS    = "UPS"
+differentialName CreateDPS    = "DPS"
+differentialName CreateNINJA2 = "NINJA2"
+differentialName CreateAPSGBA = "APS (GBA)"
+differentialName CreateGDIFF  = "GDIFF"
 
 directLabel :: DirectCreate -> FormatLabel
 directLabel CreateIPS    = LabelIPS
@@ -1074,18 +1074,18 @@ directLabel CreatePMSR   = LabelPMSR
 directLabel CreatePCHTXT = LabelPCHTXT
 directLabel CreateAPSN64 = LabelAPSN64
 
-diffLabel :: DiffCreate -> FormatLabel
-diffLabel CreateBPS    = LabelBPS
-diffLabel CreateUPS    = LabelUPS
-diffLabel CreateDPS    = LabelDPS
-diffLabel CreateNINJA2    = LabelNINJA2
-diffLabel CreateAPSGBA = LabelAPSGBA
-diffLabel CreateGDIFF  = LabelGDIFF
+differentialLabel :: DifferentialCreate -> FormatLabel
+differentialLabel CreateBPS    = LabelBPS
+differentialLabel CreateUPS    = LabelUPS
+differentialLabel CreateDPS    = LabelDPS
+differentialLabel CreateNINJA2 = LabelNINJA2
+differentialLabel CreateAPSGBA = LabelAPSGBA
+differentialLabel CreateGDIFF  = LabelGDIFF
 
 -- | Unified 'FormatLabel' for any 'CreateFormat'.  Fans out across the
--- direct/diff split so callers needing one label per target (notably
--- 'rejectIncompatibleMetadata' and its render path) don't have to
--- pattern-match the wrapper themselves.
+-- direct/differential split so callers needing one label per target
+-- (notably 'rejectIncompatibleMetadata' and its render path) don't have
+-- to pattern-match the wrapper themselves.
 createFormatLabel :: CreateFormat -> FormatLabel
-createFormatLabel (CreateDirect format) = directLabel format
-createFormatLabel (CreateDiff format)   = diffLabel format
+createFormatLabel (CreateDirect format)       = directLabel format
+createFormatLabel (CreateDifferential format) = differentialLabel format

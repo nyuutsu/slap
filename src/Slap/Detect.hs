@@ -19,7 +19,7 @@ import Slap.NINJA1.Types (ninja1MagicBytes)
 import Slap.NINJA2.Types (ninja2MagicBytes)
 import Slap.PMSR.Types (pmsrMagicBytes)
 import Slap.PPF.Types (ppf1MagicBytes, ppf2MagicBytes, ppf3MagicBytes, ppf4MagicBytes)
-import Slap.Types (PatchFormat(..), DirectFormat(..), DiffFormat(..))
+import Slap.Types (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.UPS.Types (upsMagicBytes)
 import Slap.VCDIFF.Types (vcdiffMagicBytes)
 
@@ -54,24 +54,24 @@ data FormatProbe = FormatProbe
 -- and are handled as fallbacks in 'detectFormat'.
 magicProbes :: [FormatProbe]
 magicProbes =
-  [ FormatProbe (MagicPrefix bsdiffMagicBytes)  (PatchDiff   FormatBSDiff)
-  , FormatProbe (MagicPrefix "%XDELTA")         (PatchDiff   FormatXDelta1)
-  , FormatProbe (MagicPrefix ninja2MagicBytes)  (PatchDiff   FormatNINJA2)
-  , FormatProbe (MagicPrefix ninja1MagicBytes)  (PatchDirect FormatNINJA1)
-  , FormatProbe (MagicPrefix apsN64MagicBytes)  (PatchDirect FormatAPSN64)
-  , FormatProbe (MagicPrefix ipsMagicBytes)     (PatchDirect (FormatIPS StandardIPS))
-  , FormatProbe (MagicPrefix ips32MagicBytes)   (PatchDirect (FormatIPS IPS32))
-  , FormatProbe (MagicPrefix bpsMagicBytes)     (PatchDiff   FormatBPS)
-  , FormatProbe (MagicPrefix upsMagicBytes)     (PatchDiff   FormatUPS)
-  , FormatProbe (MagicPrefix apsGbaMagicBytes)  (PatchDiff   FormatAPSGBA)
-  , FormatProbe (MagicPrefix "%XDZ")            (PatchDiff   FormatXDelta1)
-  , FormatProbe (MagicPrefix pmsrMagicBytes)    (PatchDirect FormatPMSR)
-  , FormatProbe (MagicPrefix gdiffMagicBytes)   (PatchDiff   FormatGDIFF)
-  , FormatProbe (MagicPrefix ppf1MagicBytes)    (PatchDirect FormatPPF1)
-  , FormatProbe (MagicPrefix ppf2MagicBytes)    (PatchDirect FormatPPF2)
-  , FormatProbe (MagicPrefix ppf3MagicBytes)    (PatchDirect FormatPPF3)
-  , FormatProbe (MagicPrefix ppf4MagicBytes)    (PatchDirect FormatPPF4)
-  , FormatProbe (MagicPrefix vcdiffMagicBytes)  (PatchDiff   FormatVCDIFF)
+  [ FormatProbe (MagicPrefix bsdiffMagicBytes)  (PatchDifferential FormatBSDiff)
+  , FormatProbe (MagicPrefix "%XDELTA")         (PatchDifferential FormatXDelta1)
+  , FormatProbe (MagicPrefix ninja2MagicBytes)  (PatchDifferential FormatNINJA2)
+  , FormatProbe (MagicPrefix ninja1MagicBytes)  (PatchDirect       FormatNINJA1)
+  , FormatProbe (MagicPrefix apsN64MagicBytes)  (PatchDirect       FormatAPSN64)
+  , FormatProbe (MagicPrefix ipsMagicBytes)     (PatchDirect       (FormatIPS StandardIPS))
+  , FormatProbe (MagicPrefix ips32MagicBytes)   (PatchDirect       (FormatIPS IPS32))
+  , FormatProbe (MagicPrefix bpsMagicBytes)     (PatchDifferential FormatBPS)
+  , FormatProbe (MagicPrefix upsMagicBytes)     (PatchDifferential FormatUPS)
+  , FormatProbe (MagicPrefix apsGbaMagicBytes)  (PatchDifferential FormatAPSGBA)
+  , FormatProbe (MagicPrefix "%XDZ")            (PatchDifferential FormatXDelta1)
+  , FormatProbe (MagicPrefix pmsrMagicBytes)    (PatchDirect       FormatPMSR)
+  , FormatProbe (MagicPrefix gdiffMagicBytes)   (PatchDifferential FormatGDIFF)
+  , FormatProbe (MagicPrefix ppf1MagicBytes)    (PatchDirect       FormatPPF1)
+  , FormatProbe (MagicPrefix ppf2MagicBytes)    (PatchDirect       FormatPPF2)
+  , FormatProbe (MagicPrefix ppf3MagicBytes)    (PatchDirect       FormatPPF3)
+  , FormatProbe (MagicPrefix ppf4MagicBytes)    (PatchDirect       FormatPPF4)
+  , FormatProbe (MagicPrefix vcdiffMagicBytes)  (PatchDifferential FormatVCDIFF)
   ]
 
 probeMatches :: PatchFileContents -> FormatProbe -> Bool
@@ -94,7 +94,7 @@ detectFormat patchFile =
     Just probe -> Just (resolveAmbiguity (probeFormat probe))
     Nothing
       | detectPCHTXT fileBytes -> Just (PatchDirect FormatPCHTXT)
-      | DPS.isDPS fileBytes    -> Just (PatchDiff   FormatDPS)
+      | DPS.isDPS fileBytes    -> Just (PatchDifferential FormatDPS)
       | otherwise              -> Nothing
   where
     PatchFileContents fileBytes = patchFile
@@ -108,7 +108,7 @@ detectFormat patchFile =
     -- Other probe results pass through unchanged.
     resolveAmbiguity :: PatchFormat -> PatchFormat
     resolveAmbiguity (PatchDirect FormatAPSN64)
-      | APSGBA.apsGbaStructure fileBytes = PatchDiff FormatAPSGBA
+      | APSGBA.apsGbaStructure fileBytes = PatchDifferential FormatAPSGBA
     resolveAmbiguity format = format
 
 ----------------------------------------------------------------------------

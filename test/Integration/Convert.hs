@@ -28,7 +28,7 @@ import Slap.FileContents
 import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Convert
   ( CreateFormat(..)
-  , DiffCreate(..)
+  , DifferentialCreate(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
   , ValidationInclusion(..)
@@ -77,7 +77,7 @@ planConvertRow repo fields = case fields of
             runnable       = mkConvertTest repo patchPath baseRel targetSha verdict
                                warningsString flagsString targetCreateFormat label
             constructor
-              | targetCreateFormat == CreateDiff CreateBPS
+              | targetCreateFormat == CreateDifferential CreateBPS
               , bpsCreateIsExpensive (FixtureName patchRel) = WillRunHeavy
               | otherwise                                   = WillRun
         in requireFixture patchPath $ \_ ->

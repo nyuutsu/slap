@@ -9,7 +9,7 @@ module Props.Identity (identityTests) where
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Slap.SomePatch (parseSome)
-import Slap.Convert (DirectCreate(..), DiffCreate(..), CreateFormat(..),
+import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createPatch)
 
@@ -27,20 +27,20 @@ identityTests = testGroup "Identity"
 
 allCreateFormats :: [(String, CreateFormat)]
 allCreateFormats =
-  [ ("BPS",     CreateDiff CreateBPS)
-  , ("IPS",     CreateDirect CreateIPS)
-  , ("IPS32",   CreateDirect CreateIPS32)
-  , ("EBP",     CreateDirect CreateEBP)
-  , ("UPS",     CreateDiff CreateUPS)
-  , ("PPF3",    CreateDirect CreatePPF3)
-  , ("PMSR",    CreateDirect CreatePMSR)
-  , ("NINJA1",  CreateDirect CreateNINJA1)
-  , ("DPS",     CreateDiff CreateDPS)
-  , ("NINJA2",  CreateDiff CreateNINJA2)
-  , ("APS-N64", CreateDirect CreateAPSN64)
-  , ("APS-GBA", CreateDiff CreateAPSGBA)
-  , ("GDIFF",   CreateDiff CreateGDIFF)
-  , ("PCHTXT",  CreateDirect CreatePCHTXT)
+  [ ("BPS",     CreateDifferential CreateBPS)
+  , ("IPS",     CreateDirect       CreateIPS)
+  , ("IPS32",   CreateDirect       CreateIPS32)
+  , ("EBP",     CreateDirect       CreateEBP)
+  , ("UPS",     CreateDifferential CreateUPS)
+  , ("PPF3",    CreateDirect       CreatePPF3)
+  , ("PMSR",    CreateDirect       CreatePMSR)
+  , ("NINJA1",  CreateDirect       CreateNINJA1)
+  , ("DPS",     CreateDifferential CreateDPS)
+  , ("NINJA2",  CreateDifferential CreateNINJA2)
+  , ("APS-N64", CreateDirect       CreateAPSN64)
+  , ("APS-GBA", CreateDifferential CreateAPSGBA)
+  , ("GDIFF",   CreateDifferential CreateGDIFF)
+  , ("PCHTXT",  CreateDirect       CreatePCHTXT)
   ]
 
 -- | For any non-empty source, create(src, src) should be an identity patch.

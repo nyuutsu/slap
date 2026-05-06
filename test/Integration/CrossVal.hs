@@ -27,7 +27,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -67,7 +67,7 @@ planCrossValRow getTargets repo fields = case fields of
             runnable = mkCrossValTest getTargets label format tool
                          basePath bootPath targetSha
             constructor
-              | format == CreateDiff CreateBPS
+              | format == CreateDifferential CreateBPS
               , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
               | otherwise                                   = WillRun
         in requireFixture basePath $ \_ ->

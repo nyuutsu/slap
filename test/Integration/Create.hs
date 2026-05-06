@@ -20,7 +20,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DiffCreate(..), noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -57,7 +57,7 @@ planCreateRow getTargets repo fields = case fields of
             runnable     = mkRoundTripTest getTargets label format
                              absoluteBase absoluteBoot targetSha
             constructor
-              | format == CreateDiff CreateBPS
+              | format == CreateDifferential CreateBPS
               , bpsCreateIsExpensive (FixtureName scenario) = WillRunHeavy
               | otherwise                                   = WillRun
         in requireFixture absoluteBase $ \_ ->

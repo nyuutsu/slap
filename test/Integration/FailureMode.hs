@@ -32,7 +32,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch (parseSome, patchKind, PatchKind(..))
 import Slap.Convert
   ( DirectCreate(..)
-  , DiffCreate(..)
+  , DifferentialCreate(..)
   , CreateFormat(..)
   , RequestedConstraints(..)
   , noMetadataRequested
@@ -542,7 +542,7 @@ smcShapeConstraintTests =
       -- 'rejectIncompatibleConstraints' before invoking
       -- 'createPatch'; the constraint never reaches the
       -- per-format encoder. Exercise that check directly.
-      case rejectIncompatibleConstraints (CreateDiff CreateBPS) smcConstraints of
+      case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
         Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
@@ -566,7 +566,7 @@ smcShapeConstraintTests =
       -- 'rejectIncompatibleConstraints' before dispatching, so the
       -- user-facing rejection lands here long before any encoder
       -- runs. Exercise that check directly.
-      case rejectIncompatibleConstraints (CreateDiff CreateBPS) smcConstraints of
+      case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
         Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
