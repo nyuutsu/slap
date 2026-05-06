@@ -959,7 +959,7 @@ doUndo parsedCommand = do
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"
     Just undo -> do
-      modified <- ByteString.readFile (undoSource parsedCommand)
+      modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
       outcome <- orBail (runUndo undo (TargetFileContents modified))
       emitWarnings WarningProper (outcomeWarnings outcome)
       let SourceFileContents result = outcomeValue outcome
