@@ -77,7 +77,6 @@ data CountUnit
   | Instructions
   | Entries
   | EnabledEntries
-  | ControlTuples
   deriving (Eq, Show)
 
 -- | Render a 'CountUnit' inflected by count: 1 returns the singular
@@ -100,8 +99,6 @@ renderCountUnit (Tally 1) Entries        = "entry"
 renderCountUnit _         Entries        = "entries"
 renderCountUnit (Tally 1) EnabledEntries = "enabled entry"
 renderCountUnit _         EnabledEntries = "enabled entries"
-renderCountUnit (Tally 1) ControlTuples  = "control tuple"
-renderCountUnit _         ControlTuples  = "control tuples"
 
 -- | The plural form of a 'CountUnit', independent of count. Used
 -- when the unit name appears as a label rather than a count suffix
@@ -116,7 +113,6 @@ pluralCountUnit Commands      = "commands"
 pluralCountUnit Instructions  = "instructions"
 pluralCountUnit Entries        = "entries"
 pluralCountUnit EnabledEntries = "enabled entries"
-pluralCountUnit ControlTuples  = "control tuples"
 
 ----------------------------------------------------------------------------
 -- ByteCount

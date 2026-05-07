@@ -7,7 +7,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
@@ -24,14 +24,14 @@ applyBSDiff patch _
 applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer ->
     let
       applyLoop
-        :: Offset -> Offset -> SignedOffset -> Offset -> [BSDiffControl] -> IO ()
+        :: Offset -> Offset -> SignedOffset -> Offset -> [BSDiffInstruction] -> IO ()
       applyLoop _diffOffset _extraOffset _originalPosition _outputPosition [] = pure ()
-      applyLoop !diffOffset !extraOffset !originalPosition !outputPosition (control:rest) = do
-        let addLength = min (controlAdd control)
+      applyLoop !diffOffset !extraOffset !originalPosition !outputPosition (instruction:rest) = do
+        let addLength = min (controlAdd instruction)
               (remainingFromOffset outputPosition targetFileSize)
-            copyLength = min (controlCopy control)
+            copyLength = min (controlCopy instruction)
               (remainingFromOffset (advance outputPosition addLength) targetFileSize)
-            seekDelta = controlSeek control
+            seekDelta = controlSeek instruction
         -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
         let totalBytes = unLength addLength
             sourceBase = unSignedOffset originalPosition
@@ -56,7 +56,7 @@ applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ uns
           (displace (advance originalPosition addLength) seekDelta)
           (advance outputPosition (addLength <> copyLength))
           rest
-    in applyLoop (Offset 0) (Offset 0) (SignedOffset 0) (Offset 0) (bsdiffControls patch)
+    in applyLoop (Offset 0) (Offset 0) (SignedOffset 0) (Offset 0) (bsdiffInstructions patch)
   where
     outputSize     = unFileSize (bsdiffTargetSize patch)
     targetFileSize = bsdiffTargetSize patch

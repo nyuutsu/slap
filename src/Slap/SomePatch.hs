@@ -770,12 +770,12 @@ parseSomePatchFromBSDiff patchContents = do
     , patchUndo           = Nothing
     , patchVerification   = noVerification
     , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelBSDiff "control tuples" | null (BSDiff.bsdiffControls patch)]
+                            ++ [EmptyPatch LabelBSDiff "instructions" | null (BSDiff.bsdiffInstructions patch)]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelBSDiff Nothing
         , infoLines  = BSDiff.bsdiffMeta patch
-        , infoTally  = Tally (length (BSDiff.bsdiffControls patch))
-        , infoUnit   = ControlTuples
+        , infoTally  = Tally (length (BSDiff.bsdiffInstructions patch))
+        , infoUnit   = Instructions
         , infoBytes  = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
         , infoRange  = Nothing
         }

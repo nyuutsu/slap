@@ -2,7 +2,7 @@
 
 module Slap.BSDiff.Parse
   ( parseBSDiff
-  , parseControls
+  , parseInstructions
   , getSignMagnitude64
   , safeDecompressBZip
   ) where
@@ -13,8 +13,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl, bsdiffMagicBytes, bsdiffControlRecordSize)
-import qualified Slap.BSDiff.Types as BSDiffTypes
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
 import Slap.Compression.Stream (bz2Decompress)
 import Slap.Error (SlapError(..), DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -61,9 +60,9 @@ parseBSDiff (PatchFileContents input)
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
       extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
-      let controls = parseControls controlData
+      let instructions = parseInstructions controlData
           rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
-      Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) controls diffData extraData) [])
+      Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) instructions diffData extraData) [])
   where
     rawControlSize = getSignMagnitude64 8 input
     rawDiffSize = getSignMagnitude64 16 input
@@ -75,9 +74,12 @@ parseBSDiff (PatchFileContents input)
     diffCompressed  = ByteString.take (fromIntegral rawDiffSize) (ByteString.drop diffOffset input)
     extraCompressed = ByteString.drop extraOffset input
 
-parseControls :: ByteString -> [BSDiffControl]
-parseControls input
-  | ByteString.length input < bsdiffControlRecordSize = []
+parseInstructions :: ByteString -> [BSDiffInstruction]
+parseInstructions input
+  | ByteString.length input < bsdiffInstructionSize = []
   | otherwise =
-      BSDiffTypes.BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (fromIntegral (getSignMagnitude64 16 input)))
-        : parseControls (ByteString.drop bsdiffControlRecordSize input)
+      BSDiffInstruction
+        (Length (fromIntegral (getSignMagnitude64 0  input)))
+        (Length (fromIntegral (getSignMagnitude64 8  input)))
+        (Delta  (fromIntegral (getSignMagnitude64 16 input)))
+        : parseInstructions (ByteString.drop bsdiffInstructionSize input)

@@ -4,7 +4,7 @@ module Slap.BSDiff.Describe
   , makeBSDiffRegion
   ) where
 
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..))
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
 import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
@@ -36,24 +36,24 @@ bsdiffMeta patch =
 
 analyzeBSDiff :: BSDiffPatch -> PatchAnalysis
 analyzeBSDiff patch = PatchAnalysis
-  { analysisSections = if null (bsdiffControls patch)
+  { analysisSections = if null (bsdiffInstructions patch)
                   then [SectionText "(control data not decoded)"]
-                  else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffControls patch)))]
-  , analysisSummary  = if null (bsdiffControls patch)
+                  else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffInstructions patch)))]
+  , analysisSummary  = if null (bsdiffInstructions patch)
                   then SummaryNone
-                  else Summary (SummaryInfo (Tally (length (bsdiffControls patch))) ControlTuples Nothing)
+                  else Summary (SummaryInfo (Tally (length (bsdiffInstructions patch))) Instructions Nothing)
   }
 
-makeBSDiffRegion :: Offset -> BSDiffControl -> (Offset, AnalysisRegion)
-makeBSDiffRegion outputPosition control =
-  let addLength = controlAdd control
-      copyLength = controlCopy control
+makeBSDiffRegion :: Offset -> BSDiffInstruction -> (Offset, AnalysisRegion)
+makeBSDiffRegion outputPosition instruction =
+  let addLength = controlAdd instruction
+      copyLength = controlCopy instruction
   in ( advance outputPosition (addLength <> copyLength)
      , AnalysisRegion
        { regionOffset     = outputPosition
        , regionSize       = addLength <> copyLength
        , regionLabel      = ""
        , regionPayload    = PayloadMeta []
-       , regionAnnotation = AnnotationBSDiff control
+       , regionAnnotation = AnnotationBSDiff instruction
        }
      )

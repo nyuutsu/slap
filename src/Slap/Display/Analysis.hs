@@ -13,7 +13,7 @@ module Slap.Display.Analysis
   , renderAnalysisSummary
   ) where
 
-import Slap.BSDiff.Types (BSDiffControl(..))
+import Slap.BSDiff.Types (BSDiffInstruction(..))
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display.Common (InfoLine(..), renderInfoLine,
                              Tally(..), CountUnit, ByteCount,
@@ -98,7 +98,7 @@ data Annotation
                  , annotationOffset     :: !Offset
                  , annotationDetails    :: ![AnnotDetail]
                  }
-  | AnnotationBSDiff !BSDiffControl
+  | AnnotationBSDiff !BSDiffInstruction
 
 data OffsetKind = AtOffset | AtOutput
 
@@ -201,7 +201,7 @@ renderSummaryLine summary =
 
 renderAnnotation :: Annotation -> String
 renderAnnotation AnnotationNone = ""
-renderAnnotation (AnnotationBSDiff BSDiffControl { controlAdd, controlCopy, controlSeek }) =
+renderAnnotation (AnnotationBSDiff BSDiffInstruction { controlAdd, controlCopy, controlSeek }) =
   "add " ++ padRight 10 (show (unLength controlAdd) ++ " B")
   ++ "  copy " ++ padRight 10 (show (unLength controlCopy) ++ " B")
   ++ "  seek " ++ showSigned (unDelta controlSeek)
