@@ -48,7 +48,7 @@ import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     EncodedHunk(..), Hunk(..), SentinelOffset(..))
+                     Hunk(..), SentinelOffset(..), splitHunks)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
@@ -200,19 +200,19 @@ prop_resolveSentinelCollisions = once $
   in conjoin
     [ -- Record at sentinel is shifted back and the preceding source byte prepended.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
-        [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
-        === Right [EncodedHunk (Offset 4) (ByteString.pack [4, 0xFF])]
+        [Hunk (Offset 5) (ByteString.pack [0xFF])]
+        === Right [Hunk (Offset 4) (ByteString.pack [4, 0xFF])]
     , -- Record NOT at sentinel passes through unchanged.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
-        [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
-        === Right [EncodedHunk (Offset 3) (ByteString.pack [0xAA])]
+        [Hunk (Offset 3) (ByteString.pack [0xAA])]
+        === Right [Hunk (Offset 3) (ByteString.pack [0xAA])]
     , -- Empty source: collision is unfixable, returns a structured error.
       resolveSentinelCollisions LabelIPS sentinelAt5 emptySource
-        [EncodedHunk (Offset 5) (ByteString.pack [0xFF])]
+        [Hunk (Offset 5) (ByteString.pack [0xFF])]
         === Left (SentinelCollisionUnfixable LabelIPS sentinelAt5)
     , -- Sentinel at offset 0: no preceding byte exists, returns a structured error.
       resolveSentinelCollisions LabelIPS sentinelAt0 source
-        [EncodedHunk (Offset 0) (ByteString.pack [0xFF])]
+        [Hunk (Offset 0) (ByteString.pack [0xFF])]
         === Left (SentinelCollisionUnfixable LabelIPS sentinelAt0)
     ]
 
@@ -242,7 +242,7 @@ prop_dpNotLarger :: Property
 prop_dpNotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
         optimalIPSRecords Offset24 (SourceFileContents source) (TargetFileContents target)
-      greedyRecords = splitMax 0xFFFF (diffHunks source target)
+      greedyRecords = splitHunks (Length 0xFFFF) (diffHunks source target)
       dynamicProgrammingSize = ipsEncodedSize 3 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 3 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
@@ -253,7 +253,7 @@ prop_dpIPS32NotLarger :: Property
 prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
         optimalIPSRecords Offset32 (SourceFileContents source) (TargetFileContents target)
-      greedyRecords = splitMax 0xFFFF (diffHunks source target)
+      greedyRecords = splitHunks (Length 0xFFFF) (diffHunks source target)
       dynamicProgrammingSize = ipsEncodedSize 4 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 4 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $

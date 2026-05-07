@@ -37,10 +37,6 @@ module Slap.IPS.Create
   , buildEBPMetadataJSON
     -- * Optimizer pass-through (re-exported for callers and tests)
   , optimalIPSRecords
-    -- * Encoding limits and narrowing
-  , EncodingLimits(..)
-  , narrowHunk
-  , narrowHunks
   ) where
 
 import Slap.Binary (putWord16BE)
@@ -65,13 +61,14 @@ import Slap.Measure
   ( FileSize(..)
   , Delta(..)
   , Cursor(..)
-  , EncodedHunk(..)
   , Hunk(..)
-  , Offset(..)
-  , ActualOffset(..)
-  , MaxOffset(..)
   , SentinelOffset(..)
   , offsetToInt
+  )
+import Slap.Narrow
+  ( EncodedHunk
+  , encodedOffset
+  , encodedPayload
   )
 
 import Data.Bits (shiftR, (.&.))
@@ -185,12 +182,14 @@ encodeEBPPatch records (EBPMetadata metadataBytes) =
 -- preserves byte-identity with patches generated under the same
 -- heuristic by the upstream tool ecosystem (Flips, Lunar IPS).
 encodeIPSRecord :: OffsetWidth -> EncodedHunk -> Builder
-encodeIPSRecord offsetWidth (EncodedHunk recordOffset recordPayload) =
+encodeIPSRecord offsetWidth ehunk =
   encodeOffset offsetWidth (offsetToInt recordOffset)
   <> if shouldEncodeAsRLE recordPayload
        then runLengthEncodedBody
        else literalCopyBody
   where
+    recordOffset  = encodedOffset ehunk
+    recordPayload = encodedPayload ehunk
     payloadLength = ByteString.length recordPayload
 
     -- RLE record body: zero in the size field acts as the RLE
@@ -271,26 +270,26 @@ resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
   -> SourceFileContents
-  -> [EncodedHunk]
-  -> Either SlapError [EncodedHunk]
+  -> [Hunk]
+  -> Either SlapError [Hunk]
 resolveSentinelCollisions label sentinel (SourceFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel
     sourceLength                    = ByteString.length source
 
-    resolveOne record@(EncodedHunk hunkOffset hunkPayload)
-      | hunkOffset /= sentinelPosition = Right record
-      | offsetToInt hunkOffset > 0
-      , offsetToInt hunkOffset - 1 < sourceLength =
-          let precedingByteIndex = offsetToInt hunkOffset - 1
+    resolveOne record@(Hunk recordOffset recordPayload)
+      | recordOffset /= sentinelPosition = Right record
+      | offsetToInt recordOffset > 0
+      , offsetToInt recordOffset - 1 < sourceLength =
+          let precedingByteIndex = offsetToInt recordOffset - 1
               precedingByte      =
                 ByteString.index source precedingByteIndex
               extendedPayload    =
-                ByteString.cons precedingByte hunkPayload
-          in Right EncodedHunk
-               { encodedOffset  = displace hunkOffset (Delta (-1))
-               , encodedPayload = extendedPayload
+                ByteString.cons precedingByte recordPayload
+          in Right Hunk
+               { hunkOffset  = displace recordOffset (Delta (-1))
+               , hunkPayload = extendedPayload
                }
       | otherwise =
           Left (SentinelCollisionUnfixable label sentinel)
@@ -329,38 +328,3 @@ buildEBPMetadataJSON fields =
             ++ escapeJSONString rest
       | otherwise =
           currentChar : escapeJSONString rest
-
-----------------------------------------------------------------------------
--- Encoding limits and narrowing
-----------------------------------------------------------------------------
-
--- | The wire-format range an IPS-family variant can address. Carries
--- the format label alongside the maximum offset so 'narrowHunk' can
--- tag overflow errors with the right format name without taking a
--- separate label parameter.
-data EncodingLimits = EncodingLimits
-  { maximumOffset :: !Offset
-  , formatLabel   :: !FormatLabel
-  } deriving (Show)
-
--- | Narrow a 'Hunk' to an 'EncodedHunk' by checking its offset
--- against the variant's wire-format range. Overflow surfaces as an
--- 'OffsetExceedsRange' tagged with the limits' format label, so the
--- error renders with exactly one format-name prefix.
-narrowHunk :: EncodingLimits -> Hunk -> Either SlapError EncodedHunk
-narrowHunk limits hunk
-  | unOffset offset > unOffset maximum_ =
-      Left (OffsetExceedsRange (formatLabel limits)
-                               (ActualOffset offset)
-                               (MaxOffset maximum_))
-  | otherwise =
-      Right EncodedHunk
-        { encodedOffset  = offset
-        , encodedPayload = hunkPayload hunk
-        }
-  where
-    offset   = hunkOffset hunk
-    maximum_ = maximumOffset limits
-
-narrowHunks :: EncodingLimits -> [Hunk] -> Either SlapError [EncodedHunk]
-narrowHunks limits = traverse (narrowHunk limits)

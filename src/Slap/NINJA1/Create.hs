@@ -10,7 +10,8 @@ module Slap.NINJA1.Create
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Measure (Offset(..), EncodedHunk(..))
+import Slap.Measure (Offset(..))
+import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Compression.Stream (zlibDeflate)
 
 import Slap.FileContents (PatchFileContents(..))
@@ -44,14 +45,16 @@ encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
         <> word8 3 <> byteString "EOF"     -- EOF sentinel
 
 encodeRecordBuilder :: EncodedHunk -> Builder
-encodeRecordBuilder (EncodedHunk hunkOffset hunkPayload) =
-    let offsetEncoded = encodeBigEndian (fromIntegral (unOffset hunkOffset) :: Int64)
-        lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length hunkPayload) :: Int64)
+encodeRecordBuilder ehunk =
+    let recordOffset  = encodedOffset ehunk
+        recordPayload = encodedPayload ehunk
+        offsetEncoded = encodeBigEndian (fromIntegral (unOffset recordOffset) :: Int64)
+        lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length recordPayload) :: Int64)
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded
        <> word8 (fromIntegral (ByteString.length lengthEncoded))
        <> byteString lengthEncoded
-       <> byteString hunkPayload
+       <> byteString recordPayload
 
 -- | Encode an Int64 as minimal big-endian bytes (at least 1 byte).
 encodeBigEndian :: Int64 -> ByteString

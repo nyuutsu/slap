@@ -5,10 +5,14 @@ module Slap.PCHTXT.Types
   , PCHTXTBlock(..)
   , PCHTXTPatch(..)
   , FlagResult(..)
+    -- * Encoding limits
+  , pchtxtLimits
   ) where
 
 import Data.ByteString (ByteString)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..))
+import Slap.Narrow (EncodingLimits(..))
 
 -- | A single PCHTXT patch entry: absolute offset + data to write.
 data PCHTXTEntry = PCHTXTEntry
@@ -31,3 +35,13 @@ data PCHTXTPatch = PCHTXTPatch
   } deriving (Show)
 
 data FlagResult = FlagShift Int | FlagIgnored | FlagError String
+
+-- | PCHTXT's per-entry offset is encoded as 8 hex digits, so offsets
+-- must fit in Word32 range (2^32 bytes). Enforced at narrow time so
+-- 'Slap.PCHTXT.Create.encodeHunkEntry' cannot emit malformed
+-- (>8-digit) hex.
+pchtxtLimits :: EncodingLimits
+pchtxtLimits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelPCHTXT
+  }

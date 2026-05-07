@@ -8,7 +8,8 @@ module Slap.PCHTXT.Create
   ) where
 
 import Slap.PCHTXT.Types (PCHTXTBlock(..), PCHTXTEntry(..))
-import Slap.Measure (Offset(..), EncodedHunk(..))
+import Slap.Measure (Offset(..))
+import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 
 import Slap.FileContents (PatchFileContents(..))
 
@@ -35,7 +36,8 @@ encodePCHTXT records maybeDescription = PatchFileContents $ Text.encodeUtf8 $ Te
                          then ["@nsobid-" ++ text, ""]
                          else ["// " ++ text, ""]
     trimNull = reverse . dropWhile (\character -> character == ' ' || character == '\0') . reverse
-    encodeHunkEntry (EncodedHunk hunkOffset hunkPayload) = hexPad 8 (unOffset hunkOffset) ++ " " ++ hexBytes hunkPayload
+    encodeHunkEntry ehunk =
+      hexPad 8 (unOffset (encodedOffset ehunk)) ++ " " ++ hexBytes (encodedPayload ehunk)
 
 -- | Encode from full block structure, preserving disabled blocks and descriptions.
 encodePCHTXTBlocks :: [PCHTXTBlock] -> Maybe String -> PatchFileContents

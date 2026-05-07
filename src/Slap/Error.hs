@@ -62,6 +62,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      TrailerMarker(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
+import Slap.Narrow (NarrowingFailure(..))
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
@@ -380,7 +381,7 @@ data SlapError
   -- Create / Encode
   | CannotExpressTargetShrinkage FormatLabel ActualSize ExpectedSize
   | UPSUnencodeablePair FormatLabel UnencodeabilityReason
-  | OffsetExceedsRange FormatLabel ActualOffset MaxOffset
+  | NarrowingError !NarrowingFailure
 
   -- | A create-path input (source or target) is larger than the
   -- host platform's addressable range. slap's varint encoders
@@ -909,11 +910,7 @@ renderSlapError (UPSUnencodeablePair label reason) =
   formatLabelName label ++ ": cannot encode pair: "
   ++ renderUnencodeabilityReason reason
 
-renderSlapError (OffsetExceedsRange label (ActualOffset actual) (MaxOffset maxOffset)) =
-  formatLabelName label ++ ": hunk offset 0x"
-  ++ showHex (unOffset actual) ""
-  ++ " exceeds maximum offset 0x"
-  ++ showHex (unOffset maxOffset) ""
+renderSlapError (NarrowingError nf) = renderNarrowingFailure nf
 
 renderSlapError (FileExceedsAddressableRange label (ActualSize actualSize) (MaxAddressableSize maxSize)) =
   formatLabelName label ++ ": input file is "
@@ -1020,6 +1017,17 @@ renderDecompressionFailure failure = case failure of
   where
     render siteName (DecompressionCause msg) =
       siteName ++ ": decompression failed: " ++ msg
+
+----------------------------------------------------------------------------
+-- renderNarrowingFailure
+----------------------------------------------------------------------------
+
+renderNarrowingFailure :: NarrowingFailure -> String
+renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffset maxOffset)) =
+  formatLabelName label ++ ": hunk offset 0x"
+  ++ showHex (unOffset actual) ""
+  ++ " exceeds maximum offset 0x"
+  ++ showHex (unOffset maxOffset) ""
 
 ----------------------------------------------------------------------------
 -- renderSlapWarning

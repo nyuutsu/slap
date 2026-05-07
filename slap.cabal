@@ -72,6 +72,7 @@ library slap-internal
     , Slap.IPS.Parse
     , Slap.IPS.Types
     , Slap.Measure
+    , Slap.Narrow
     , Slap.MetadataField
     , Slap.Constraint
     , Slap.Convert
@@ -161,6 +162,7 @@ test-suite props
                   , Props.Helpers
                   , Props.Identity
                   , Props.IPSMarkerPolicy
+                  , Props.Narrow
                   , Props.ParseWarnings
                   , Props.RoundTrip
                   , Props.SpecConformance

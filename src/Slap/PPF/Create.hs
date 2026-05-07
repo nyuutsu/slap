@@ -5,7 +5,7 @@ module Slap.PPF.Create (encodePPF3, encodeFileIdDiz, computeUndo) where
 import Slap.PPF.Types (PPFImageType(..), PPFFileId(..), ValidationBlockBytes(..),
                        fromImageType, ppfDescriptionLength, ppf3MaxRecordPayload)
 import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
-                     OriginalLength(..), TruncatedLength(..), advance)
+                     OriginalLength(..), TruncatedLength(..), splitHunk)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -84,19 +84,15 @@ encodeFileIdDiz (PPFFileId content) = LazyByteString.toStrict $ toLazyByteString
 -- | Compute undo hunks from source bytes and diff records.
 -- Each record is split at the PPF3 max-payload limit ('ppf3MaxRecordPayload').
 computeUndo :: ByteString -> [Hunk] -> [UndoHunk]
-computeUndo source = concatMap splitUndo
+computeUndo source = concatMap toUndoHunks
   where
     sourceLength = ByteString.length source
-    payloadBytes = unLength ppf3MaxRecordPayload
-    splitUndo (Hunk hunkOffset hunkPayload)
-      | ByteString.null hunkPayload = []
-      | ByteString.length hunkPayload <= payloadBytes =
-          [UndoHunk hunkOffset hunkPayload (oldBytes (unOffset hunkOffset) (ByteString.length hunkPayload))]
-      | otherwise =
-          let chunk = ByteString.take payloadBytes hunkPayload
-              intOffset = unOffset hunkOffset
-          in UndoHunk hunkOffset chunk (oldBytes intOffset payloadBytes)
-             : splitUndo (Hunk (advance hunkOffset ppf3MaxRecordPayload) (ByteString.drop payloadBytes hunkPayload))
+    toUndoHunks h
+      | ByteString.null (hunkPayload h) = []
+      | otherwise = map toUndoHunk (splitHunk ppf3MaxRecordPayload h)
+    toUndoHunk (Hunk recordOffset recordPayload) =
+      UndoHunk recordOffset recordPayload
+               (oldBytes (unOffset recordOffset) (ByteString.length recordPayload))
     oldBytes position chunkLength
       | position >= sourceLength = ByteString.replicate chunkLength 0
       | position + chunkLength > sourceLength =

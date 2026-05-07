@@ -7,9 +7,11 @@
 -- The single exported function takes the variant's offset width
 -- (because the cost-model constants are width-dependent), the
 -- source bytes, and the target bytes, and returns the partitioned
--- record list as 'EncodedHunk' values in offset order. The encoder
--- then turns each hunk into the cheapest record at emission time
--- using the same heuristic the DP itself used (length-≥3 all-same
+-- record list as 'Hunk' values in offset order. The encoder narrows
+-- each to an 'Slap.Narrow.EncodedHunk' before emission, applying
+-- the variant's wire-format offset bound, and then turns each
+-- narrowed hunk into the cheapest record at emission time using
+-- the same heuristic the DP itself used (length-≥3 all-same
 -- payloads → RLE record, everything else → copy record), so the
 -- encoder's choices and the DP's choices stay in lockstep.
 --
@@ -44,7 +46,7 @@ import Slap.IPS.Types
 import Slap.Measure
   ( Offset(..)
   , Length(..)
-  , EncodedHunk(..)
+  , Hunk(..)
   , subtractLength
   , Cursor(advance)
   , byteLength
@@ -71,9 +73,9 @@ import Data.Word (Word8)
 --
 -- @byteRunStart@ is /region-relative/, not an absolute file offset —
 -- the DP only re-introduces the absolute offset when it builds the
--- final 'EncodedHunk' values during backtracking. The start+length
--- shape mirrors 'Slap.Measure.OffsetRange'; use 'byteRunEndExclusive'
--- for the half-open end at the call sites that need it.
+-- final 'Hunk' values during backtracking. The start+length shape
+-- mirrors 'Slap.Measure.OffsetRange'; use 'byteRunEndExclusive' for
+-- the half-open end at the call sites that need it.
 data ByteRun = ByteRun
   { byteRunStart  :: !Offset
   , byteRunLength :: !Length
@@ -110,7 +112,7 @@ optimalIPSRecords
   :: OffsetWidth
   -> SourceFileContents
   -> TargetFileContents
-  -> [EncodedHunk]
+  -> [Hunk]
 optimalIPSRecords
     offsetWidth
     (SourceFileContents source)
@@ -127,7 +129,7 @@ optimalIPSRecords
 -- | Scan source and target in lockstep for contiguous regions where
 -- their bytes differ, plus a final extension region for any tail
 -- of @target@ that has no matching source bytes. Each region is
--- returned as an 'EncodedHunk' carrying the absolute target offset
+-- returned as a 'Hunk' carrying the absolute target offset
 -- and the /target/ bytes for that region — the IPS record format
 -- writes literal target bytes, never source bytes.
 --
@@ -136,7 +138,7 @@ optimalIPSRecords
 -- target into "regions where source agrees" and "regions where it
 -- disagrees" so the cost-aware passes downstream have something to
 -- chew on.
-scanDiffRegions :: ByteString -> ByteString -> [EncodedHunk]
+scanDiffRegions :: ByteString -> ByteString -> [Hunk]
 scanDiffRegions source target =
   scanFromPosition (Offset 0) ++ tailExtension
   where
@@ -150,14 +152,14 @@ scanDiffRegions source target =
     -- their own. Empty when @target@ is no longer than @source@.
     tailExtension
       | targetLength > sourceLength =
-          [ EncodedHunk
-              { encodedOffset  = Offset sourceLength
-              , encodedPayload = ByteString.drop sourceLength target
+          [ Hunk
+              { hunkOffset  = Offset sourceLength
+              , hunkPayload = ByteString.drop sourceLength target
               }
           ]
       | otherwise = []
 
-    scanFromPosition :: Offset -> [EncodedHunk]
+    scanFromPosition :: Offset -> [Hunk]
     scanFromPosition !position
       | position >= overlapEnd = []
       | ByteString.index source (unOffset position)
@@ -169,9 +171,9 @@ scanDiffRegions source target =
               regionPayload =
                 ByteString.take (unLength regionLength)
                                 (ByteString.drop (unOffset position) target)
-              region = EncodedHunk
-                { encodedOffset  = position
-                , encodedPayload = regionPayload
+              region = Hunk
+                { hunkOffset  = position
+                , hunkPayload = regionPayload
                 }
           in region : scanFromPosition regionEnd
 
@@ -221,7 +223,7 @@ scanDiffRegions source target =
 -- 'partitionDiffRegion' step preprocesses its seed positions through
 -- 'ensureMaxGap' so the eventual records still respect the 16-bit
 -- size cap.
-mergeNarrowGaps :: OffsetWidth -> ByteString -> [EncodedHunk] -> [EncodedHunk]
+mergeNarrowGaps :: OffsetWidth -> ByteString -> [Hunk] -> [Hunk]
 mergeNarrowGaps offsetWidth target = mergeStep
   where
     breakEvenGap = mergeBreakEvenGapLength offsetWidth
@@ -229,22 +231,22 @@ mergeNarrowGaps offsetWidth target = mergeStep
     mergeStep [] = []
     mergeStep [singleRegion] = [singleRegion]
     mergeStep (firstRegion : secondRegion : remainingRegions) =
-      let firstStart  = encodedOffset firstRegion
-          firstEnd    = advance firstStart (byteLength (encodedPayload firstRegion))
-          secondStart = encodedOffset secondRegion
+      let firstStart  = hunkOffset firstRegion
+          firstEnd    = advance firstStart (byteLength (hunkPayload firstRegion))
+          secondStart = hunkOffset secondRegion
           gap         = distance firstEnd secondStart
       in if gap <= breakEvenGap
            then
              let mergedEnd =
                    advance secondStart
-                           (byteLength (encodedPayload secondRegion))
+                           (byteLength (hunkPayload secondRegion))
                  mergedLength = distance firstStart mergedEnd
                  mergedPayload =
                    ByteString.take (unLength mergedLength)
                                    (ByteString.drop (unOffset firstStart) target)
-                 mergedRegion = EncodedHunk
-                   { encodedOffset  = firstStart
-                   , encodedPayload = mergedPayload
+                 mergedRegion = Hunk
+                   { hunkOffset  = firstStart
+                   , hunkPayload = mergedPayload
                    }
              in mergeStep (mergedRegion : remainingRegions)
            else
@@ -284,13 +286,13 @@ mergeBreakEvenGapLength offsetWidth =
 -- runs. The DP only considers transitions between seed positions,
 -- so every chosen record boundary coincides with a run endpoint or
 -- the size cap.
-partitionDiffRegion :: OffsetWidth -> ByteString -> EncodedHunk -> [EncodedHunk]
+partitionDiffRegion :: OffsetWidth -> ByteString -> Hunk -> [Hunk]
 partitionDiffRegion offsetWidth _target region
   | ByteString.null regionPayload = []
   | otherwise = runST runPartitionDP
   where
-    regionPayload = encodedPayload region
-    regionStart   = encodedOffset region
+    regionPayload = hunkPayload region
+    regionStart   = hunkOffset region
     regionLength  = byteLength regionPayload
 
     copyRecordOverheadBytes = unLength (ipsCopyRecordOverhead offsetWidth)
@@ -345,7 +347,7 @@ partitionDiffRegion offsetWidth _target region
     impossiblyExpensiveCost =
       unLength regionLength * (copyRecordOverheadBytes + 5) + 1
 
-    runPartitionDP :: forall s. ST s [EncodedHunk]
+    runPartitionDP :: forall s. ST s [Hunk]
     runPartitionDP = do
       costArray <-
         newArray (0, seedPositionCount - 1) impossiblyExpensiveCost
@@ -427,7 +429,7 @@ partitionDiffRegion offsetWidth _target region
       -- Backtrack from the final position, building the record list
       -- in offset order. Each step reads the chosen predecessor of
       -- the current position, slices the corresponding bytes out
-      -- of the region payload, wraps them in an 'EncodedHunk' with
+      -- of the region payload, wraps them in a 'Hunk' with
       -- the absolute file offset, and continues at the predecessor.
       let backtrackFrom !destinationIndex !accumulatedRecords
             | destinationIndex <= 0 = pure accumulatedRecords
@@ -444,9 +446,9 @@ partitionDiffRegion offsetWidth _target region
                     -- distance from the region-zero origin.
                     absoluteOffset = advance regionStart
                                              (distance (Offset 0) sourcePosition)
-                    chosenRecord = EncodedHunk
-                      { encodedOffset  = absoluteOffset
-                      , encodedPayload = slicePayload
+                    chosenRecord = Hunk
+                      { hunkOffset  = absoluteOffset
+                      , hunkPayload = slicePayload
                       }
                 backtrackFrom sourceIndex (chosenRecord : accumulatedRecords)
       backtrackFrom (seedPositionCount - 1) []

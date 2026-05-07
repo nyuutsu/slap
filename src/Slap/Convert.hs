@@ -52,6 +52,7 @@ import Slap.NINJA2.Types (PatchEncoding(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.PMSR.Types as PMSR
 import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
@@ -65,10 +66,11 @@ import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (FileSize(..), Hunk(..), UndoHunk(..),
-                      EncodedHunk(..),
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      narrowHunksUnbounded, splitHunks, byteFileSize)
+                      splitHunks, byteFileSize)
+import Slap.Narrow (EncodedHunk, EncodingLimits(..),
+                    narrowHunks, narrowHunksUnbounded)
 import Slap.Constraint (Constraint(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -79,6 +81,7 @@ import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchF
 import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
 
 import Control.Applicative ((<|>))
+import Data.Bifunctor (first)
 import qualified Data.ByteString as ByteString
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
@@ -717,33 +720,41 @@ convertDirect contents (CreateDirect target) meta constraints = do
         }
 
 -- | Encoding limits for formats with constrained offset ranges and sentinels.
-encodingLimits :: DirectCreate -> Maybe IPS.EncodingLimits
-encodingLimits CreateIPS   =
-  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelIPS)
-encodingLimits CreateIPS32 =
-  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec IPS32)) LabelIPS32)
-encodingLimits CreateEBP   =
+-- NINJA1 falls through to 'Nothing' because its variable-width Int64 offset
+-- encoding has no per-record bound.
+encodingLimits :: DirectCreate -> Maybe EncodingLimits
+encodingLimits CreateIPS     =
+  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelIPS)
+encodingLimits CreateIPS32   =
+  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec IPS32)) LabelIPS32)
+encodingLimits CreateEBP     =
   -- EBP is structurally StandardIPS with a JSON trailer; shares StandardIPS's offset range.
-  Just (IPS.EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelEBP)
-encodingLimits _           = Nothing
+  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelEBP)
+encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
+encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
+encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
+encodingLimits CreatePPF3    = Nothing
+encodingLimits CreateNINJA1  = Nothing
 
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> RequestedPatchMetadata
-             -> Maybe IPS.EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
+             -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints = case target of
   CreateIPS -> do
-    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- resolveIPSSentinel LabelIPS StandardIPS narrowed
+    resolved <- resolveIPSSentinel LabelIPS StandardIPS
+                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow resolved
     rejectNonSMCShapedTruncation constraints contents
     Right (CreateResult
             (IPS.encodeIPSPatch StandardIPS records (contentsTruncation contents))
             [])
   CreateIPS32 -> do
     rejectTruncation LabelIPS32 contents source
-    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- resolveIPSSentinel LabelIPS32 IPS32 narrowed
+    resolved <- resolveIPSSentinel LabelIPS32 IPS32
+                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow resolved
     -- IPS32 has no community-recognized truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
     -- 'Nothing' explicitly here to make the decision visible at the call
@@ -753,8 +764,9 @@ encodeDirect contents source target meta limits constraints = case target of
             [])
   CreateEBP -> do
     rejectTruncation LabelEBP contents source
-    narrowed <- narrow (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- resolveIPSSentinel LabelEBP StandardIPS narrowed
+    resolved <- resolveIPSSentinel LabelEBP StandardIPS
+                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow resolved
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
@@ -803,7 +815,7 @@ encodeDirect contents source target meta limits constraints = case target of
       records <- narrow (contentsRecords contents)
       Right (CreateResult (PCHTXT.encodePCHTXT records pchtxtDescription) [])
   CreateAPSN64 -> do
-    records <- narrow (contentsRecords contents)
+    records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
     case contentsDestinationSize contents of
       Just targetSize ->
         Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
@@ -812,9 +824,9 @@ encodeDirect contents source target meta limits constraints = case target of
     narrow :: [Hunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
       Nothing  -> Right . narrowHunksUnbounded
-      Just lim -> IPS.narrowHunks lim
-    resolveIPSSentinel :: FormatLabel -> IPSVariant -> [EncodedHunk]
-                       -> Either SlapError [EncodedHunk]
+      Just lim -> first NarrowingError . narrowHunks lim
+    resolveIPSSentinel :: FormatLabel -> IPSVariant -> [Hunk]
+                       -> Either SlapError [Hunk]
     resolveIPSSentinel label variant =
       IPS.resolveSentinelCollisions label
         (SentinelOffset (ipsVariantSentinel (variantSpec variant)))
@@ -951,7 +963,6 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
   , contentsPatchEncoding = Nothing
   }
   where
-    encodedToHunk (EncodedHunk hunkOffset hunkPayload) = Hunk hunkOffset hunkPayload
     patchHunks = case format of
       CreateIPS    -> ipsHunks Offset24
       CreateIPS32  -> ipsHunks Offset32
@@ -961,9 +972,8 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
       CreatePMSR   -> diffHunks source target
       CreatePCHTXT -> diffHunks source target
       CreateAPSN64 -> diffHunks source target
-    ipsHunks width = map encodedToHunk
-                       (IPS.optimalIPSRecords width
-                          (SourceFileContents source) (TargetFileContents target))
+    ipsHunks width = IPS.optimalIPSRecords width
+                       (SourceFileContents source) (TargetFileContents target)
     hashSource   = case format of
       CreateIPS    -> source
       CreateIPS32  -> source

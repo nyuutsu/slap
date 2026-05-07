@@ -38,7 +38,6 @@ module Slap.Measure
     -- * Records
   , Hunk(..)
   , UndoHunk(..)
-  , EncodedHunk(..)
   , OffsetRange(..)
   , rangeEndExclusive
   , rangeLastByte
@@ -69,10 +68,8 @@ module Slap.Measure
   , byteLength
   , byteFileSize
   , hunkEnd
-    -- * Narrowing
-  , narrowHunkUnbounded
-  , narrowHunksUnbounded
     -- * Splitting
+  , splitHunk
   , splitHunks
     -- * IPS sentinel values
   , ipsSentinel
@@ -284,18 +281,13 @@ newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 
 data Hunk = Hunk
   { hunkOffset  :: !Offset
   , hunkPayload :: !ByteString
-  } deriving (Show)
+  } deriving (Eq, Show)
 
 data UndoHunk = UndoHunk
   { undoOffset   :: !Offset
   , undoPayload  :: !ByteString
   , undoOriginal :: !ByteString
   } deriving (Show)
-
-data EncodedHunk = EncodedHunk
-  { encodedOffset  :: !Offset
-  , encodedPayload :: !ByteString
-  } deriving (Eq, Show)
 
 -- | A contiguous span of bytes in a target file: a starting 'Offset'
 -- and a 'Length'. Used by the display layer to surface where a patch
@@ -513,33 +505,25 @@ hunkEnd :: Hunk -> Offset
 hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 
 ----------------------------------------------------------------------------
--- Narrowing
-----------------------------------------------------------------------------
-
-narrowHunkUnbounded :: Hunk -> EncodedHunk
-narrowHunkUnbounded hunk = EncodedHunk
-  { encodedOffset  = hunkOffset hunk
-  , encodedPayload = hunkPayload hunk
-  }
-
-narrowHunksUnbounded :: [Hunk] -> [EncodedHunk]
-narrowHunksUnbounded = map narrowHunkUnbounded
-
-----------------------------------------------------------------------------
 -- Splitting
 ----------------------------------------------------------------------------
 
--- | Split hunks so each payload is <= maxPayload bytes.
+-- | Split a 'Hunk' so each emitted hunk's payload is at most @maxLength@
+-- bytes. Offset advances by chunk length between emissions. Empty payloads
+-- pass through as a single empty hunk; callers that want to drop empties
+-- must filter at their own level.
+splitHunk :: Length -> Hunk -> [Hunk]
+splitHunk maxLength (Hunk hunkOffset hunkPayload)
+  | byteLength hunkPayload <= maxLength = [Hunk hunkOffset hunkPayload]
+  | otherwise =
+      let (chunk, remaining) = ByteString.splitAt (unLength maxLength) hunkPayload
+          nextOffset         = advance hunkOffset maxLength
+      in Hunk hunkOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
+
+-- | Split a list of hunks so every emitted hunk's payload is at most
+-- @maxLength@ bytes.
 splitHunks :: Length -> [Hunk] -> [Hunk]
-splitHunks maxPayload = concatMap splitOne
-  where
-    payloadBytes = unLength maxPayload
-    splitOne (Hunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= payloadBytes = [Hunk hunkOffset hunkPayload]
-      | otherwise =
-          let (chunk, remaining) = ByteString.splitAt payloadBytes hunkPayload
-              nextOffset = advance hunkOffset maxPayload
-          in Hunk hunkOffset chunk : splitOne (Hunk nextOffset remaining)
+splitHunks maxLength = concatMap (splitHunk maxLength)
 
 ----------------------------------------------------------------------------
 -- IPS sentinel values

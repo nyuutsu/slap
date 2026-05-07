@@ -12,8 +12,8 @@ module Props.Helpers
   , truncated
   , truncatedFile
     -- * IPS encoding helpers
-  , splitMax
   , ipsEncodedSize
+  , narrowOne
     -- * NINJA2 helpers
   , emptyNINJA2Metadata
     -- * Warning helpers
@@ -26,7 +26,8 @@ module Props.Helpers
 import qualified Slap.NINJA2.Types as NINJA2
 import Slap.Error (SlapError, SlapWarning(..), Outcome(..))
 import Slap.FormatLabel (FormatLabel)
-import Slap.Measure (Offset(..), EncodedHunk(..), Hunk(..))
+import Slap.Measure (Hunk(..), Offset)
+import Slap.Narrow (EncodedHunk, EncodingLimits(..), narrowHunk)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
 
@@ -125,24 +126,23 @@ truncatedFile parseFunction path = ioProperty $ do
 -- IPS encoding helpers
 ----------------------------------------------------------------------------
 
--- | Split hunks at maxSize boundaries.
-splitMax :: Int -> [Hunk] -> [EncodedHunk]
-splitMax maxRecordSize = concatMap splitRecord . map hunkToEncoded
-  where
-    hunkToEncoded (Hunk hunkOffset hunkPayload) = EncodedHunk hunkOffset hunkPayload
-    splitRecord (EncodedHunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= maxRecordSize = [EncodedHunk hunkOffset hunkPayload]
-      | otherwise =
-          let (chunk, remaining) = ByteString.splitAt maxRecordSize hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (Offset (unOffset hunkOffset + fromIntegral maxRecordSize)) remaining)
-
 -- | Total encoded IPS record size (excluding magic/EOF marker).
-ipsEncodedSize :: Int -> [EncodedHunk] -> Int
+ipsEncodedSize :: Int -> [Hunk] -> Int
 ipsEncodedSize offWidth = sum . map recordSize
   where
-    recordSize (EncodedHunk _ payload)
+    recordSize (Hunk _ payload)
       | ByteString.length payload >= 3, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
       | otherwise = offWidth + 2 + ByteString.length payload
+
+-- | Test helper: narrow a single hunk, fail loudly if it overflows.
+-- Used by tests that need 'EncodedHunk' values as inputs to functions
+-- which consume them. Goes through the production narrow path so test
+-- discipline matches production.
+narrowOne :: EncodingLimits -> Offset -> ByteString -> EncodedHunk
+narrowOne limits offset payload =
+  case narrowHunk limits (Hunk offset payload) of
+    Right encoded -> encoded
+    Left failure  -> error ("narrowOne: test setup bug, narrow failed with " ++ show failure)
 
 ----------------------------------------------------------------------------
 -- NINJA2 helpers

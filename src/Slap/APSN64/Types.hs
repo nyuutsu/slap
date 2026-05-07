@@ -25,12 +25,16 @@ module Slap.APSN64.Types
   , apsN64DescriptionWidth
   , apsN64MaxChunkSize
   , apsN64RecordHeaderSize
+    -- * Encoding limits
+  , apsN64Limits
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 import Data.Word (Word8)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize, Length(..), Offset(..))
+import Slap.Narrow (EncodingLimits(..))
 
 -- | The description field of an APS-N64 patch header. Locale-encoded
 -- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
@@ -218,3 +222,13 @@ apsN64MaxChunkSize = Length 255
 -- remaining to start parsing another record.
 apsN64RecordHeaderSize :: Length
 apsN64RecordHeaderSize = Length 5
+
+-- | APS-N64's per-record offset wire field is 4-byte little-endian Word32;
+-- offsets must fit in 2^32 bytes. Practically unreachable on real N64
+-- cartridges (64 MB cap) but enforced at narrow time so silent truncation
+-- in 'Slap.APSN64.Create.encodeAPSN64Record' is structurally impossible.
+apsN64Limits :: EncodingLimits
+apsN64Limits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelAPSN64
+  }
