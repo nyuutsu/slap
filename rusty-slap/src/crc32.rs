@@ -11,7 +11,7 @@
 // corrupt, or not. See docs/bps/questions.md → "Which CRC-32 variant does
 // BPS actually use?" for the long-form reasoning.
 
-/// Compute CRC-32 via crc32fast (which uses hardware acceleration when available).
-pub fn crc32(data: &[u8]) -> u32 {
-    crc32fast::hash(data)
+/// Compute the CRC-32/ISO-HDLC checksum of a byte slice.
+pub fn crc32(input: &[u8]) -> u32 {
+    crc32fast::hash(input)
 }

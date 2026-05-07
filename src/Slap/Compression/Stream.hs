@@ -3,7 +3,7 @@ module Slap.Compression.Stream
   ( zlibInflate
   , zlibDeflate
   , gzipInflate
-  , bz2Decompress
+  , bzip2Decompress
   ) where
 
 import Data.ByteString (ByteString)
@@ -29,7 +29,7 @@ foreign import ccall unsafe "rusty_zlib_inflate"
 
 foreign import ccall unsafe "rusty_zlib_deflate"
   c_zlibDeflate
-    :: Ptr Word8 -> CSize -> CInt
+    :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize     -- success buffer
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
@@ -41,8 +41,8 @@ foreign import ccall unsafe "rusty_gzip_inflate"
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt
 
-foreign import ccall unsafe "rusty_bz2_decompress"
-  c_bz2Decompress
+foreign import ccall unsafe "rusty_bzip2_decompress"
+  c_bzip2Decompress
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
@@ -119,8 +119,11 @@ callRustyDecompress decompress input = unsafeDupablePerformIO $
 zlibInflate :: ByteString -> Either DecompressionCause ByteString
 zlibInflate = callRustyDecompress c_zlibInflate
 
--- | Zlib (RFC 1950) deflate (hardcoded compression level 6).
--- Compression cannot fail for valid input; crashes on internal error.
+-- | Zlib (RFC 1950) deflate at the library's default compression level.
+-- The NINJA1 spec is mute on level — any zlib-deflate output round-trips
+-- through any decoder regardless — so the rusty side pins the default
+-- rather than exposing a knob no caller currently turns. Compression
+-- cannot fail for valid input; crashes on internal error.
 zlibDeflate :: ByteString -> ByteString
 zlibDeflate input
   | ByteString.null input = ByteString.empty
@@ -131,7 +134,7 @@ zlibDeflate input
         alloca $ \errorAddressPointer ->
         alloca $ \errorLengthPointer -> do
           returnCode <- c_zlibDeflate
-            (castPtr dataPointer) (fromIntegral dataLength) 6
+            (castPtr dataPointer) (fromIntegral dataLength)
             resultAddressPointer resultLengthPointer
             errorAddressPointer  errorLengthPointer
           if returnCode /= 0
@@ -153,5 +156,5 @@ gzipInflate :: ByteString -> Either DecompressionCause ByteString
 gzipInflate = callRustyDecompress c_gzipInflate
 
 -- | Bzip2 decompress.
-bz2Decompress :: ByteString -> Either DecompressionCause ByteString
-bz2Decompress = callRustyDecompress c_bz2Decompress
+bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
+bzip2Decompress = callRustyDecompress c_bzip2Decompress

@@ -14,7 +14,7 @@ import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
-import Slap.Compression.Stream (bz2Decompress)
+import Slap.Compression.Stream (bzip2Decompress)
 import Slap.Error (SlapError(..), DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -43,7 +43,7 @@ getSignMagnitude64 offset input =
 
 safeDecompressBZip :: BSDiffSection -> ByteString -> Either SlapError ByteString
 safeDecompressBZip _       compressed | ByteString.null compressed = Right ByteString.empty
-safeDecompressBZip section compressed = case bz2Decompress compressed of
+safeDecompressBZip section compressed = case bzip2Decompress compressed of
   Left cause         -> Left (DecompressionFailed (BSDiffSectionFailed section cause))
   Right decompressed -> Right decompressed
 
