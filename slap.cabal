@@ -31,7 +31,8 @@ library slap-internal
     , Slap.BPS.Describe
     , Slap.BPS.Parse
     , Slap.BPS.Types
-    , Slap.Compress
+    , Slap.Compression.Stream
+    , Slap.Compression.Yay0
     , Slap.FFI
     , Slap.DPS.Apply
     , Slap.DPS.Create
@@ -108,7 +109,6 @@ library slap-internal
     , Slap.XDelta1.Describe
     , Slap.XDelta1.Parse
     , Slap.XDelta1.Types
-    , Slap.Yay0
     , Slap.PPF.Apply
     , Slap.PPF.Common
     , Slap.PPF.Create

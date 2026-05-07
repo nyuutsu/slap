@@ -11,7 +11,7 @@ import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Measure (Offset(..), EncodedHunk(..))
-import Slap.Compress (zlibDeflate)
+import Slap.Compression.Stream (zlibDeflate)
 
 import Slap.FileContents (PatchFileContents(..))
 

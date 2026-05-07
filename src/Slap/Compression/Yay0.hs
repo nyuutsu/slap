@@ -14,7 +14,7 @@
 -- Bit=1: copy literal byte from chunk stream
 -- Bit=0: back-reference via link entry (count + distance)
 
-module Slap.Yay0 (isYay0, decompressYay0) where
+module Slap.Compression.Yay0 (isYay0, decompressYay0) where
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -25,16 +25,18 @@ import Data.Word (Word8)
 import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (poke, peekByteOff, pokeByteOff)
 
+import Slap.Error (DecompressionCause(..))
+
 isYay0 :: ByteString.ByteString -> Bool
 isYay0 input = ByteString.length input >= 16 && ByteString.take 4 input == "Yay0"
 
-decompressYay0 :: ByteString.ByteString -> Either String ByteString.ByteString
+decompressYay0 :: ByteString.ByteString -> Either DecompressionCause ByteString.ByteString
 decompressYay0 input
-  | ByteString.length input < 16 = Left "Yay0: truncated header"
-  | ByteString.take 4 input /= "Yay0" = Left "Yay0: bad magic"
-  | decompressedSize <= 0 = Left ("Yay0: invalid decompressed size: " ++ show decompressedSize)
-  | linkOffset > ByteString.length input = Left ("Yay0: link offset beyond file (offset " ++ show linkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)")
-  | chunkOffset > ByteString.length input = Left ("Yay0: chunk offset beyond file (offset " ++ show chunkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)")
+  | ByteString.length input < 16 = Left (DecompressionCause "truncated header")
+  | ByteString.take 4 input /= "Yay0" = Left (DecompressionCause "bad magic")
+  | decompressedSize <= 0 = Left (DecompressionCause ("invalid decompressed size: " ++ show decompressedSize))
+  | linkOffset > ByteString.length input = Left (DecompressionCause ("link offset beyond file (offset " ++ show linkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)"))
+  | chunkOffset > ByteString.length input = Left (DecompressionCause ("chunk offset beyond file (offset " ++ show chunkOffset ++ ", file " ++ show (ByteString.length input) ++ " bytes)"))
   | otherwise = Right $ unsafeCreate decompressedSize $ \outputPointer -> do
       commandPositionReference <- newIORef (0x10 :: Int)
       commandBitReference <- newIORef (7 :: Int)

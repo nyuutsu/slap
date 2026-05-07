@@ -6,6 +6,14 @@ module Slap.Error
   , ApplyError(..)
   , CursorKind(..)
   , UnencodeabilityReason(..)
+  , DecompressionFailure(..)
+  , BSDiffSection(..)
+  , DecompressionCause(..)
+  , CompressionAlgorithm(..)
+  , decompressionAlgorithm
+  , compressionAlgorithmName
+  , bsDiffSectionName
+  , renderDecompressionFailure
   , DroppedValue(..)
   , CreateResult(..)
   , Parsed(..)
@@ -243,6 +251,51 @@ data ApplyError
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
+-- DecompressionFailure
+----------------------------------------------------------------------------
+
+-- | A decompression failure, modeled in the 'ApplyError' style — its
+-- own narrower vocabulary, lifted into 'SlapError' via a single
+-- constructor.  One constructor per real decompression site slap
+-- knows about; each carries only the axes that actually vary at that
+-- site.  Adding xdelta3 / VCDIFF secondary compression adds a
+-- constructor here parameterized over 'CompressionAlgorithm'.
+data DecompressionFailure
+  = Yay0WrapperFailed                       DecompressionCause
+  | NINJA1Failed                            DecompressionCause
+  | XDelta1Failed                           DecompressionCause
+  | BSDiffSectionFailed   BSDiffSection     DecompressionCause
+  -- When VCDIFF secondary compression is supported (today's parser
+  -- rejects it at 'VCDIFF/Parse.hs:113'), add:
+  -- | VCDIFFSectionFailed VCDIFFSection CompressionAlgorithm DecompressionCause
+  deriving (Show, Eq)
+
+-- | BSDiff's three bzip2-compressed sections.
+data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
+  deriving (Show, Eq)
+
+-- | The decompressor's diagnostic message.  Carried verbatim from
+-- flate2 / bzip2-rs / slap's own Yay0 implementation; slap relays
+-- the underlying library's 'Display' rather than re-classifying.
+-- Across the FFI seam, the bytes are decoded as UTF-8 (see
+-- 'Slap.Compression.Stream.readRustString'), so the 'String' here
+-- carries real Unicode code points, not latin1 byte-Chars.
+newtype DecompressionCause = DecompressionCause { unDecompressionCause :: String }
+  deriving (Show, Eq)
+
+-- | The compression algorithms slap knows about.  Closed and
+-- complete: the four currently in use plus the three the VCDIFF
+-- spec at @docs/rfc-vcdiff/spec.md:108-110@ already names (DJW,
+-- LZMA, FGK).  Today no consumer dispatches on this — both the
+-- renderer and the algorithm-of-failure projection are scaffolding
+-- for the xdelta3 work, where 'VCDIFFSectionFailed' will carry it
+-- as a parameter and 'compressionAlgorithmName' will render it.
+data CompressionAlgorithm
+  = Zlib | Gzip | Bzip2 | Yay0
+  | DJW  | LZMA | FGK
+  deriving (Show, Eq, Ord, Enum, Bounded)
+
+----------------------------------------------------------------------------
 -- SlapError
 ----------------------------------------------------------------------------
 
@@ -259,7 +312,7 @@ data SlapError
   | UnsupportedSubformat FormatLabel String
   | TruncatedRecord FormatLabel Int Length Length
   | NegativeSize FormatLabel FieldName ParsedSizeValue
-  | DecompressionFailed FormatLabel String
+  | DecompressionFailed DecompressionFailure
 
   -- | A parsed record's effective end position lies beyond the
   -- variant's wire-format spec ceiling. The 'ActionIndex' names the
@@ -404,9 +457,6 @@ data SlapError
   -- kinds; the four 'check*' helpers in 'Main' are the only callers
   -- and the audit surface is tractable.
   | VerificationFatal SlapWarning
-
-  -- Container
-  | Yay0DecompressionFailed String
 
   deriving (Show, Eq)
 
@@ -790,8 +840,8 @@ renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
   formatLabelName label ++ ": negative "
   ++ fieldNameLabel name ++ ": " ++ show value
 
-renderSlapError (DecompressionFailed label detail) =
-  formatLabelName label ++ ": decompression failed: " ++ detail
+renderSlapError (DecompressionFailed failure) =
+  renderDecompressionFailure failure
 
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
   formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
@@ -916,8 +966,60 @@ renderSlapError (TruncationViolatesSMCShape size) =
 renderSlapError (VerificationFatal warning) =
   renderSlapWarning warning ++ "\n  use --no-verify to proceed anyway"
 
-renderSlapError (Yay0DecompressionFailed detail) =
-  "Yay0 decompression failed: " ++ detail
+----------------------------------------------------------------------------
+-- renderDecompressionFailure
+----------------------------------------------------------------------------
+
+-- | The compression algorithm in flight at a given failure site.
+-- Implicit per constructor for sites with fixed algorithms; for
+-- VCDIFF (when added), reads the algorithm parameter.  Today's
+-- only consumer is the future 'VCDIFFSectionFailed' arm; the
+-- exhaustive match is the seam that fires '-Wincomplete-patterns'
+-- when a new 'DecompressionFailure' constructor lands.
+decompressionAlgorithm :: DecompressionFailure -> CompressionAlgorithm
+decompressionAlgorithm Yay0WrapperFailed{}        = Yay0
+decompressionAlgorithm NINJA1Failed{}             = Zlib
+decompressionAlgorithm XDelta1Failed{}            = Gzip
+decompressionAlgorithm BSDiffSectionFailed{}      = Bzip2
+
+-- | Display name for a 'CompressionAlgorithm'.  Used by the future
+-- 'VCDIFFSectionFailed' renderer arm; the four fixed-algorithm
+-- arms render the algorithm name as a literal in their site
+-- description.  Exhaustive over 'CompressionAlgorithm' so that
+-- adding a new compression algorithm fires '-Wincomplete-patterns'
+-- here.
+compressionAlgorithmName :: CompressionAlgorithm -> String
+compressionAlgorithmName Zlib  = "zlib"
+compressionAlgorithmName Gzip  = "gzip"
+compressionAlgorithmName Bzip2 = "bzip2"
+compressionAlgorithmName Yay0  = "Yay0"
+compressionAlgorithmName DJW   = "DJW"
+compressionAlgorithmName LZMA  = "LZMA"
+compressionAlgorithmName FGK   = "FGK"
+
+bsDiffSectionName :: BSDiffSection -> String
+bsDiffSectionName BSDiffControl = "control"
+bsDiffSectionName BSDiffDiff    = "diff"
+bsDiffSectionName BSDiffExtra   = "extra"
+
+-- | Render a decompression failure as a user-facing line.  Each arm
+-- supplies its site description as a literal — NINJA1's description
+-- contains the word "zlib" because NINJA1 uses zlib, and that fact
+-- is restated at the renderer rather than threaded through the
+-- 'compressionAlgorithmName' indirection.  When 'VCDIFFSectionFailed'
+-- lands its arm will need 'compressionAlgorithmName' because the
+-- algorithm genuinely varies; today's four arms have fixed
+-- algorithms and read more directly with literals.
+renderDecompressionFailure :: DecompressionFailure -> String
+renderDecompressionFailure failure = case failure of
+  Yay0WrapperFailed       cause -> render "Yay0 wrapper"        cause
+  NINJA1Failed            cause -> render "NINJA1 zlib payload" cause
+  XDelta1Failed           cause -> render "XDelta1 gzip body"   cause
+  BSDiffSectionFailed sec cause -> render
+    ("BSDiff " ++ bsDiffSectionName sec ++ " bzip2 section") cause
+  where
+    render siteName (DecompressionCause msg) =
+      siteName ++ ": decompression failed: " ++ msg
 
 ----------------------------------------------------------------------------
 -- renderSlapWarning

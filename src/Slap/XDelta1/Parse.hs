@@ -18,14 +18,14 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..))
-import Slap.Compress (gzipInflate)
+import Slap.Compression.Stream (gzipInflate)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -84,7 +84,7 @@ parseV11 input expectedMagic version
       | not compressed = Right raw
       | ByteString.null raw    = Right ByteString.empty
       | otherwise      = case gzipInflate raw of
-          Left _  -> Left (DecompressionFailed LabelXDelta1 "gzip")
+          Left cause   -> Left (DecompressionFailed (XDelta1Failed cause))
           Right result -> Right result
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.

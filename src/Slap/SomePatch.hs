@@ -94,10 +94,10 @@ import Slap.Display.Analysis (PatchAnalysis)
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Info (PatchInfo(..))
-import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..),
-                   Outcome(..), noWarnings)
+import Slap.Error (SlapError(..), SlapWarning(..), DecompressionFailure(..),
+                   Parsed(..), Outcome(..), noWarnings)
 import Slap.FormatLabel (FormatLabel(..))
-import qualified Slap.Yay0 as Yay0
+import qualified Slap.Compression.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -987,7 +987,7 @@ parseSomePatchFromDPS patchContents = do
 -- straight off 'patchInfo' now.
 parseSomePatchFromYay0 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromYay0 (PatchFileContents input) = case Yay0.decompressYay0 input of
-  Left errorMessage   -> Left (Yay0DecompressionFailed errorMessage)
+  Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))
   Right decompressedBytes -> case parseSome (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
     Right parsed ->

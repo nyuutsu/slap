@@ -21,13 +21,13 @@ module Slap.NINJA1.Parse
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..))
-import Slap.Compress (zlibInflate)
+import Slap.Compression.Stream (zlibInflate)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 
 import Data.ByteString (ByteString)
@@ -56,7 +56,7 @@ parseNINJA1 (PatchFileContents input)
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
 zlibDecompress :: ByteString -> Either SlapError ByteString
 zlibDecompress compressed = case zlibInflate compressed of
-  Left _  -> Left (DecompressionFailed LabelNINJA1 "zlib")
+  Left cause   -> Left (DecompressionFailed (NINJA1Failed cause))
   Right result -> Right result
 
 ----------------------------------------------------------------------------

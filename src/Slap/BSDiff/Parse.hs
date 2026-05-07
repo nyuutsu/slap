@@ -13,9 +13,10 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
-import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl(..), bsdiffMagicBytes, bsdiffControlRecordSize)
-import Slap.Compress (bz2Decompress)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffControl, bsdiffMagicBytes, bsdiffControlRecordSize)
+import qualified Slap.BSDiff.Types as BSDiffTypes
+import Slap.Compression.Stream (bz2Decompress)
+import Slap.Error (SlapError(..), DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
@@ -41,10 +42,10 @@ getSignMagnitude64 offset input =
 -- Safe decompression
 ----------------------------------------------------------------------------
 
-safeDecompressBZip :: String -> ByteString -> Either SlapError ByteString
-safeDecompressBZip _     compressed | ByteString.null compressed = Right ByteString.empty
-safeDecompressBZip label compressed = case bz2Decompress compressed of
-  Left _  -> Left (DecompressionFailed LabelBSDiff label)
+safeDecompressBZip :: BSDiffSection -> ByteString -> Either SlapError ByteString
+safeDecompressBZip _       compressed | ByteString.null compressed = Right ByteString.empty
+safeDecompressBZip section compressed = case bz2Decompress compressed of
+  Left cause         -> Left (DecompressionFailed (BSDiffSectionFailed section cause))
   Right decompressed -> Right decompressed
 
 ----------------------------------------------------------------------------
@@ -57,9 +58,9 @@ parseBSDiff (PatchFileContents input)
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left (ParseError LabelBSDiff "invalid header (negative size)")
   | otherwise = do
-      controlData  <- safeDecompressBZip "control" controlCompressed
-      diffData  <- safeDecompressBZip "diff" diffCompressed
-      extraData <- safeDecompressBZip "extra" extraCompressed
+      controlData <- safeDecompressBZip BSDiffControl controlCompressed
+      diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
+      extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
       let controls = parseControls controlData
           rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
       Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) controls diffData extraData) [])
@@ -78,5 +79,5 @@ parseControls :: ByteString -> [BSDiffControl]
 parseControls input
   | ByteString.length input < bsdiffControlRecordSize = []
   | otherwise =
-      BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (fromIntegral (getSignMagnitude64 16 input)))
+      BSDiffTypes.BSDiffControl (Length (fromIntegral (getSignMagnitude64 0 input))) (Length (fromIntegral (getSignMagnitude64 8 input))) (Delta (fromIntegral (getSignMagnitude64 16 input)))
         : parseControls (ByteString.drop bsdiffControlRecordSize input)

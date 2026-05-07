@@ -40,7 +40,7 @@ See something: say something. We want to do things correctly and to be kind to o
 
 ## Rust
 
-`rusty-slap/` is a Rust staticlib linked via FFI. It owns the computational primitives that'd be slow in Haskell: CRC-32, suffix array construction, BPS diff, and compression. It is for byte crunching specifically. It'll likely take on more of the byte-manipulation duties over time. The FFI boundary lives in `Slap.FFI` and `Slap.Compress`.
+`rusty-slap/` is a Rust staticlib linked via FFI. It owns the computational primitives that'd be slow in Haskell: CRC-32, suffix array construction, BPS diff, and compression. It is for byte crunching specifically. It'll likely take on more of the byte-manipulation duties over time. The FFI boundary lives in `Slap.FFI` and `Slap.Compression.Stream`.
 
 ## Building
 

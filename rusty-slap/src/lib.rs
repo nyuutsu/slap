@@ -108,17 +108,28 @@ pub unsafe extern "C" fn rusty_adler32(data: *const u8, len: usize) -> u32 {
 /// # Safety
 /// - `src` must point to `src_len` readable bytes.
 /// - `out_ptr` and `out_len` must be valid, aligned, writable pointers.
+/// - `err_ptr` and `err_len` must be valid, aligned, writable pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_zlib_inflate(
     src: *const u8,
     src_len: usize,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
+    err_ptr: *mut *mut u8,
+    err_len: *mut usize,
 ) -> i32 {
     let slice = if src_len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(src, src_len) } };
     match compress::zlib_inflate(slice) {
-        Ok(v) => { unsafe { write_vec_to_ffi(v, out_ptr, out_len) }; 0 }
-        Err(_) => -1,
+        Ok(output_bytes) => {
+            unsafe { write_vec_to_ffi(output_bytes, out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(Vec::new(), err_ptr, err_len) };
+            0
+        }
+        Err(cause_message) => {
+            unsafe { write_vec_to_ffi(Vec::new(), out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(cause_message.into_bytes(), err_ptr, err_len) };
+            -1
+        }
     }
 }
 
@@ -128,6 +139,7 @@ pub unsafe extern "C" fn rusty_zlib_inflate(
 /// # Safety
 /// - `src` must point to `src_len` readable bytes.
 /// - `out_ptr` and `out_len` must be valid, aligned, writable pointers.
+/// - `err_ptr` and `err_len` must be valid, aligned, writable pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_zlib_deflate(
     src: *const u8,
@@ -135,11 +147,21 @@ pub unsafe extern "C" fn rusty_zlib_deflate(
     level: i32,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
+    err_ptr: *mut *mut u8,
+    err_len: *mut usize,
 ) -> i32 {
     let slice = if src_len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(src, src_len) } };
     match compress::zlib_deflate(slice, level as u32) {
-        Ok(v) => { unsafe { write_vec_to_ffi(v, out_ptr, out_len) }; 0 }
-        Err(_) => -1,
+        Ok(output_bytes) => {
+            unsafe { write_vec_to_ffi(output_bytes, out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(Vec::new(), err_ptr, err_len) };
+            0
+        }
+        Err(cause_message) => {
+            unsafe { write_vec_to_ffi(Vec::new(), out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(cause_message.into_bytes(), err_ptr, err_len) };
+            -1
+        }
     }
 }
 
@@ -149,17 +171,28 @@ pub unsafe extern "C" fn rusty_zlib_deflate(
 /// # Safety
 /// - `src` must point to `src_len` readable bytes.
 /// - `out_ptr` and `out_len` must be valid, aligned, writable pointers.
+/// - `err_ptr` and `err_len` must be valid, aligned, writable pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_gzip_inflate(
     src: *const u8,
     src_len: usize,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
+    err_ptr: *mut *mut u8,
+    err_len: *mut usize,
 ) -> i32 {
     let slice = if src_len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(src, src_len) } };
     match compress::gzip_inflate(slice) {
-        Ok(v) => { unsafe { write_vec_to_ffi(v, out_ptr, out_len) }; 0 }
-        Err(_) => -1,
+        Ok(output_bytes) => {
+            unsafe { write_vec_to_ffi(output_bytes, out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(Vec::new(), err_ptr, err_len) };
+            0
+        }
+        Err(cause_message) => {
+            unsafe { write_vec_to_ffi(Vec::new(), out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(cause_message.into_bytes(), err_ptr, err_len) };
+            -1
+        }
     }
 }
 
@@ -169,16 +202,27 @@ pub unsafe extern "C" fn rusty_gzip_inflate(
 /// # Safety
 /// - `src` must point to `src_len` readable bytes.
 /// - `out_ptr` and `out_len` must be valid, aligned, writable pointers.
+/// - `err_ptr` and `err_len` must be valid, aligned, writable pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_bz2_decompress(
     src: *const u8,
     src_len: usize,
     out_ptr: *mut *mut u8,
     out_len: *mut usize,
+    err_ptr: *mut *mut u8,
+    err_len: *mut usize,
 ) -> i32 {
     let slice = if src_len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(src, src_len) } };
     match compress::bz2_decompress(slice) {
-        Ok(v) => { unsafe { write_vec_to_ffi(v, out_ptr, out_len) }; 0 }
-        Err(_) => -1,
+        Ok(output_bytes) => {
+            unsafe { write_vec_to_ffi(output_bytes, out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(Vec::new(), err_ptr, err_len) };
+            0
+        }
+        Err(cause_message) => {
+            unsafe { write_vec_to_ffi(Vec::new(), out_ptr, out_len) };
+            unsafe { write_vec_to_ffi(cause_message.into_bytes(), err_ptr, err_len) };
+            -1
+        }
     }
 }
