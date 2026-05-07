@@ -2,13 +2,11 @@
 
 module Slap.APSN64.Create
   ( encodeAPSN64
-  , splitLong
-  , encodeN64Record
   ) where
 
 import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), APSN64Description(..), apsN64MagicBytes, apsN64DescriptionWidth, apsN64MaxChunkSize)
 import Slap.Binary (putWord32LE)
-import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance,
+import Slap.Measure (Offset(..), Length(..), EncodedHunk(..), advance, byteLength,
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
@@ -39,20 +37,32 @@ encodeAPSN64 records destinationSize description =
             <> word8 (fromAPSRecordEncoding APSDefaultRecordEncoding)
             <> byteString (boundedField bounded)
             <> putWord32LE destinationSize
-            <> foldMap encodeN64Record (splitLong records)
+            <> foldMap encodeHunkAsRecords records
     in CreateResult (PatchFileContents patchBytes) descriptionWarnings
 
-splitLong :: [EncodedHunk] -> [EncodedHunk]
-splitLong = concatMap splitRecord
+-- | Encode a hunk as one or more APS-N64 records. A hunk whose
+-- payload fits in 'apsN64MaxChunkSize' emits a single record;
+-- larger hunks split into back-to-back records, each addressing
+-- the appropriate continuation offset. Adjacency is wire-level
+-- only — the parser sees N independent records, not a logical
+-- group.
+encodeHunkAsRecords :: EncodedHunk -> Builder
+encodeHunkAsRecords (EncodedHunk hunkOffset hunkPayload)
+  | byteLength hunkPayload <= apsN64MaxChunkSize =
+      emitOneRecord hunkOffset hunkPayload
+  | otherwise =
+      let (chunk, leftover) = ByteString.splitAt (unLength apsN64MaxChunkSize) hunkPayload
+          nextOffset        = advance hunkOffset apsN64MaxChunkSize
+      in emitOneRecord hunkOffset chunk
+         <> encodeHunkAsRecords (EncodedHunk nextOffset leftover)
   where
-    splitRecord (EncodedHunk hunkOffset hunkPayload)
-      | ByteString.length hunkPayload <= apsN64MaxChunkSize = [EncodedHunk hunkOffset hunkPayload]
-      | otherwise =
-          let (chunk, rest) = ByteString.splitAt apsN64MaxChunkSize hunkPayload
-          in EncodedHunk hunkOffset chunk : splitRecord (EncodedHunk (advance hunkOffset (Length apsN64MaxChunkSize)) rest)
-
-encodeN64Record :: EncodedHunk -> Builder
-encodeN64Record (EncodedHunk hunkOffset hunkPayload) =
-    putWord32LE (fromIntegral (unOffset hunkOffset) :: Word32)
-    <> word8 (fromIntegral (ByteString.length hunkPayload))
-    <> byteString hunkPayload
+    -- emitOneRecord's recordPayload has byteLength at most
+    -- apsN64MaxChunkSize (= 255) by construction at both call
+    -- sites above: the guard on the small path, and
+    -- ByteString.splitAt's contract on the chunked path. The
+    -- fromIntegral on the payload length below is therefore a
+    -- no-op narrowing rather than a silent truncation.
+    emitOneRecord recordOffset recordPayload =
+        putWord32LE (fromIntegral (unOffset recordOffset) :: Word32)
+        <> word8 (fromIntegral (ByteString.length recordPayload))
+        <> byteString recordPayload

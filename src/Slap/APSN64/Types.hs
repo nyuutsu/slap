@@ -30,7 +30,7 @@ module Slap.APSN64.Types
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 import Data.Word (Word8)
-import Slap.Measure (FileSize, Offset(..))
+import Slap.Measure (FileSize, Length(..), Offset(..))
 
 -- | The description field of an APS-N64 patch header. Locale-encoded
 -- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
@@ -210,11 +210,11 @@ apsN64DescriptionWidth :: Int
 apsN64DescriptionWidth = 50
 
 -- | Maximum data bytes per APS-N64 record (8-bit length field).
-apsN64MaxChunkSize :: Int
-apsN64MaxChunkSize = 255
+apsN64MaxChunkSize :: Length
+apsN64MaxChunkSize = Length 255
 
 -- | Each APSN64 record begins with a 4-byte offset and a 1-byte
 -- length-or-RLE-marker. A walker needs at least this many bytes
 -- remaining to start parsing another record.
-apsN64RecordHeaderSize :: Int
-apsN64RecordHeaderSize = 5
+apsN64RecordHeaderSize :: Length
+apsN64RecordHeaderSize = Length 5

@@ -110,7 +110,7 @@ parseN64Records = walkRecords []
       if done then pure (reverse accumulatedReversed)
       else do
         remainingLength <- remaining
-        if unLength remainingLength < apsN64RecordHeaderSize
+        if remainingLength < apsN64RecordHeaderSize
           then pure (reverse accumulatedReversed)
           else do
             recordOffset <- Offset . fromIntegral <$> word32LE
