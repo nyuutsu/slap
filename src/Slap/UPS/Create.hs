@@ -10,7 +10,7 @@ import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..))
+import Slap.Measure (Length(..), Offset(..), advance, distance, offsetToInt)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
 import Data.Bits (xor)
@@ -57,7 +57,7 @@ diffToBlocks :: ByteString -> ByteString -> Either SlapError [UPSBlock]
 diffToBlocks source target
   | not sourceTailAllZero =
       Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)
-  | otherwise = scan 0 0 []
+  | otherwise = scan (Offset 0) (Length 0) []
   where
     targetLength = ByteString.length target
     sourceTailAllZero = ByteString.all (== 0) (ByteString.drop targetLength source)
@@ -69,25 +69,27 @@ diffToBlocks source target
 
     -- Tail-recursive scan. Accumulates skip count while bytes match;
     -- on diff, collects the run and emits a block.
-    scan :: Int -> Int -> [UPSBlock] -> Either SlapError [UPSBlock]
+    scan :: Offset -> Length -> [UPSBlock] -> Either SlapError [UPSBlock]
     scan !position !skipCount !accumulatedBlocks
-      | position >= targetLength =
+      | offsetToInt position >= targetLength =
           Right (reverse accumulatedBlocks)
-      | byteAt source position == byteAt target position =
-          scan (position + 1) (skipCount + 1) accumulatedBlocks
+      | byteAt source (offsetToInt position) == byteAt target (offsetToInt position) =
+          scan (advance position (Length 1))
+               (skipCount <> Length 1)
+               accumulatedBlocks
       | otherwise = do
           (runBytes, nextPosition) <- collectRun position
-          let block = UPSBlock (Length skipCount) runBytes
-          scan nextPosition 0 (block : accumulatedBlocks)
+          let block = UPSBlock skipCount runBytes
+          scan nextPosition (Length 0) (block : accumulatedBlocks)
 
     -- Scan forward from 'start' while bytes differ, then consume the
     -- terminating matching byte. Returns Left if no match is found
     -- within targetLength (terminator would fall past target end).
-    collectRun :: Int -> Either SlapError (ByteString, Int)
+    collectRun :: Offset -> Either SlapError (ByteString, Offset)
     collectRun start =
       let runEnd = findFirstMatchPosition start
-          runLength = runEnd - start
-      in if runEnd >= targetLength
+          runLength = distance start runEnd
+      in if offsetToInt runEnd >= targetLength
            then Left (UPSUnencodeablePair LabelUPS UPSLastByteDiffers)
            else
              -- unsafeCreate (not create) is safe here because the
@@ -96,25 +98,27 @@ diffToBlocks source target
              -- no IORef, no shared state, deterministic output. The 'unsafe'
              -- refers to allowing the IO action to be duplicated by GHC,
              -- which is fine because duplication produces identical output.
-             let runBytes = unsafeCreate runLength $ \outputPointer ->
+             let runByteCount    = unLength runLength
+                 startByteOffset = offsetToInt start
+                 runBytes = unsafeCreate runByteCount $ \outputPointer ->
                    let writeLoop !byteOffset
-                         | byteOffset >= runLength = pure ()
+                         | byteOffset >= runByteCount = pure ()
                          | otherwise = do
-                             let sourceByte = byteAt source (start + byteOffset)
-                                 targetByte = byteAt target (start + byteOffset)
+                             let sourceByte = byteAt source (startByteOffset + byteOffset)
+                                 targetByte = byteAt target (startByteOffset + byteOffset)
                              pokeByteOff outputPointer byteOffset
                                (sourceByte `xor` targetByte :: Word8)
                              writeLoop (byteOffset + 1)
                    in writeLoop 0
-             in Right (runBytes, runEnd + 1)
+             in Right (runBytes, advance runEnd (Length 1))
 
     -- | Return the first position p in [start, targetLength) where
     -- source[p] == target[p] (with virtual zero-padding past either
     -- end). If no such position exists, returns targetLength as a
     -- sentinel — the caller compares against targetLength to detect
     -- the no-match case.
-    findFirstMatchPosition :: Int -> Int
+    findFirstMatchPosition :: Offset -> Offset
     findFirstMatchPosition !position
-      | position >= targetLength = position
-      | byteAt source position == byteAt target position = position
-      | otherwise = findFirstMatchPosition (position + 1)
+      | offsetToInt position >= targetLength = position
+      | byteAt source (offsetToInt position) == byteAt target (offsetToInt position) = position
+      | otherwise = findFirstMatchPosition (advance position (Length 1))
