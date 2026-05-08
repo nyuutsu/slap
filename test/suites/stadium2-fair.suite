@@ -12,6 +12,7 @@ BPS      | test/data/stadium2/fair-heavy/patch.bps         | synthetic | slap
 IPS32    | test/data/stadium2/fair-heavy/patch.ips32       | synthetic | slap
 UPS      | test/data/stadium2/fair-heavy/patch.ups         | synthetic | slap
 PPF3     | test/data/stadium2/fair-heavy/patch.ppf         | synthetic | slap
+NINJA1   | test/data/stadium2/fair-heavy/patch.ninja1      | synthetic | slap
 NINJA2   | test/data/stadium2/fair-heavy/patch.rup         | synthetic | slap
 APS-N64  | test/data/stadium2/fair-heavy/patch.aps         | synthetic | slap
 GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
@@ -23,8 +24,15 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #   IPS32   sips (create), Atmosphère (apply)*
 #   UPS     Go ups
 #   PPF3    MakePPF3
+#   NINJA1  ninja-1.01php**
 #   NINJA2  RomPatcher.js
 #   APS-N64 RomPatcher.js
 #   GDIFF   javaxdelta
 #
-# * We used their apply algorithm, not the program directly
+# *  We used their apply algorithm, not the program directly
+# ** PHP only encodes {raw, snes, mega, gb} and its >30 MB streaming
+#    encoder has a stale-$pointer bug. We did the four-quadrant cross-
+#    apply in raw mode using a one-line bug-patched tmp/ copy of
+#    ninja.php; the original docs/ tarball is untouched. Slap then
+#    rebuilt the fixture with --rom-type n64 (single-byte diff at
+#    header byte 8: 0x00 → 0x03).

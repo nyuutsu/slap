@@ -800,7 +800,9 @@ encodeDirect contents source target meta limits constraints = case target of
          Just diz -> ppfResult { resultBytes = PatchFileContents
                        (unPatchFileContents (resultBytes ppfResult) <> PPF.encodeFileIdDiz diz) }
   CreateNINJA1 -> do
-    records <- narrow (contentsRecords contents)
+    resolved <- NINJA1.resolveSentinelCollisions LabelNINJA1
+                  NINJA1.ninja1SentinelOffset source (contentsRecords contents)
+    records <- narrow resolved
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)

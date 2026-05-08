@@ -5,16 +5,20 @@ module Slap.NINJA1.Create
   , encodeRecordBuilder
   , encodeBigEndian
   , ninja1HashInput
+  , resolveSentinelCollisions
   ) where
 
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Measure (Offset(..))
+import Slap.Error (SlapError(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Delta(..), Cursor(..), Hunk(..), Offset(..),
+                     SentinelOffset(..), offsetToInt)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Compression.Stream (zlibDeflate)
 
-import Slap.FileContents (PatchFileContents(..))
+import Slap.FileContents (PatchFileContents(..), SourceFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -83,3 +87,69 @@ ninja1HashInput input
           sizeString  = LazyByteString.toStrict (toLazyByteString (intDec (ByteString.length input)))
       in headSample <> tailSample <> sizeString
   | otherwise = input
+
+----------------------------------------------------------------------------
+-- Sentinel-collision resolution
+----------------------------------------------------------------------------
+
+-- | Resolve every record that sits on the NINJA1 binary trailer
+-- sentinel ('ninja1SentinelOffset' = @0x454F46@). NINJA1's footer is a
+-- width prefix of @3@ followed by the bytes @"EOF"@; an offset value of
+-- @0x454F46@ minimally encodes to exactly those three bytes, so its
+-- record header collides with the trailer and the parser stops early,
+-- silently dropping every record after the colliding one.
+--
+-- Two outcomes per record:
+--
+-- * "Fixable": the record's offset equals the sentinel, offset \> 0,
+--   and the source contains the byte at @sentinel - 1@. The record
+--   is rewritten to begin one byte earlier with that preceding byte
+--   prepended to its payload. The prepended byte overwrites itself
+--   (a no-op write) and the original payload lands at the original
+--   offset; the wire bytes no longer trigger the trailer check.
+--
+-- * "Unfixable": the record's offset equals the sentinel but the
+--   source has no byte to prepend — either because the source is
+--   empty (source-less direct conversion), the source is shorter
+--   than @sentinel@, or the sentinel sits at offset @0@ so there is
+--   no preceding position. The whole call returns
+--   'Left' 'SentinelCollisionUnfixable' with the format label and
+--   the colliding offset, and the conversion aborts rather than
+--   emitting bytes a parser could not faithfully round-trip.
+--
+-- Records whose offset is not the sentinel pass through unchanged —
+-- the explicit "not a collision" branch, not a silent catch-all.
+--
+-- This function is a deliberate structural duplicate of
+-- 'Slap.IPS.Create.resolveSentinelCollisions'. The two formats share
+-- exactly this logic but format modules do not import each other; the
+-- copy lives here so NINJA1's pipeline does not depend on IPS, and
+-- the parameterized signature keeps both copies pin-compatible so
+-- future drift is easy to spot.
+resolveSentinelCollisions
+  :: FormatLabel
+  -> SentinelOffset
+  -> SourceFileContents
+  -> [Hunk]
+  -> Either SlapError [Hunk]
+resolveSentinelCollisions label sentinel (SourceFileContents source) =
+  traverse resolveOne
+  where
+    SentinelOffset sentinelPosition = sentinel
+    sourceLength                    = ByteString.length source
+
+    resolveOne record@(Hunk recordOffset recordPayload)
+      | recordOffset /= sentinelPosition = Right record
+      | offsetToInt recordOffset > 0
+      , offsetToInt recordOffset - 1 < sourceLength =
+          let precedingByteIndex = offsetToInt recordOffset - 1
+              precedingByte      =
+                ByteString.index source precedingByteIndex
+              extendedPayload    =
+                ByteString.cons precedingByte recordPayload
+          in Right Hunk
+               { hunkOffset  = displace recordOffset (Delta (-1))
+               , hunkPayload = extendedPayload
+               }
+      | otherwise =
+          Left (SentinelCollisionUnfixable label sentinel)

@@ -15,12 +15,13 @@ module Slap.NINJA1.Types
   , subFormatName
     -- * Named constants
   , ninja1MagicBytes
+  , ninja1SentinelOffset
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Word (Word8)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
-import Slap.Measure (Offset(..))
+import Slap.Measure (Offset(..), SentinelOffset(..))
 
 data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
   deriving (Show, Eq)
@@ -117,6 +118,16 @@ data NINJA1Record = NINJA1Record
 -- binary-compressed, text, text-compressed).
 ninja1MagicBytes :: ByteString
 ninja1MagicBytes = "NINJA1"
+
+-- | The NINJA1 binary format's footer is encoded as a width prefix of 3
+-- followed by the bytes "EOF" (0x45 0x4F 0x46). When a record's offset
+-- minimally encodes to exactly those three bytes — which happens for
+-- offset value 0x454F46 = 4,542,278 — its emitted bytes collide with
+-- the footer. Slap detects this collision at create time and shifts
+-- the record back to offset 0x454F45, prepending the source byte at
+-- 0x454F45 to the payload.
+ninja1SentinelOffset :: SentinelOffset
+ninja1SentinelOffset = SentinelOffset (Offset 0x454F46)
 
 romTypeName :: NINJA1RomType -> String
 romTypeName RomRAW            = "RAW"

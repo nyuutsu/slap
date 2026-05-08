@@ -100,6 +100,8 @@ roundTripTests = testGroup "RoundTrip"
   , testGroup "NINJA1"
       [ testProperty "round-trip" prop_ninja1
       , testProperty "hashes" prop_ninja1Hashes
+      , testProperty "eof-collision" prop_ninja1EofCollision
+      , testProperty "source-less convert rejects sentinel" prop_ninja1SourcelessSentinelRejected
       ]
   , testGroup "DPS"
       [ testProperty "round-trip" prop_dps
@@ -487,6 +489,44 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
          NINJA1.ninja1SourceCRC parsed === Just (rustyCRC32 source) .&&.
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
          NINJA1.ninja1SourceSHA1 parsed === Just (sha1 source)
+
+-- | NINJA1's binary footer is @[0x03][0x45][0x4F][0x46]@ — a width
+-- prefix of 3 followed by the bytes @"EOF"@. A record at offset
+-- @0x454F46@ minimally encodes to those same three bytes; without
+-- 'NINJA1.resolveSentinelCollisions' the parser stops at the
+-- colliding record and silently drops every record after it. This
+-- property exercises the shift-and-prepend fix on the live create
+-- path: source and target differ at exactly the sentinel offset, so
+-- a record there is both inevitable and the only record in the
+-- patch — making any silent drop catastrophic for round-trip.
+prop_ninja1EofCollision :: Property
+prop_ninja1EofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
+  case createPatch (CreateDirect CreateNINJA1) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
+      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Right (Parsed parsed _parseWarnings) ->
+        NINJA1.applyNINJA1 parsed (SourceFileContents source) === Right (TargetFileContents target)
+
+-- | Source-less conversion of a record sitting on the NINJA1 sentinel
+-- offset must raise 'SentinelCollisionUnfixable' rather than silently
+-- passing through or crashing. Mirrors 'prop_sourcelessSentinelRejected'
+-- for IPS; the two formats share the sentinel offset value but their
+-- resolution code paths are deliberately separate.
+prop_ninja1SourcelessSentinelRejected :: Property
+prop_ninja1SourcelessSentinelRejected = once $
+  let ninja1Sentinel = SentinelOffset (Offset 0x454F46)
+      collidingContents =
+        emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
+  in case convertDirect collidingContents (CreateDirect CreateNINJA1) noMetadataRequested noConstraintsRequested of
+       Left (SentinelCollisionUnfixable LabelNINJA1 offset) ->
+         offset === ninja1Sentinel
+       Left other ->
+         counterexample ("unexpected error: " ++ renderSlapError other) $
+           property False
+       Right _ ->
+         counterexample "expected Left SentinelCollisionUnfixable, got Right" $
+           property False
 
 -- DPS: differential, no truncation
 prop_dps :: Property
