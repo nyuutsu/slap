@@ -25,14 +25,25 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #   UPS     Go ups
 #   PPF3    MakePPF3
 #   NINJA1  ninja-1.01php**
-#   NINJA2  RomPatcher.js
+#   NINJA2  ninja-2.0 PHP reference***
 #   APS-N64 RomPatcher.js
 #   GDIFF   javaxdelta
 #
-# *  We used their apply algorithm, not the program directly
-# ** PHP only encodes {raw, snes, mega, gb} and its >30 MB streaming
-#    encoder has a stale-$pointer bug. We did the four-quadrant cross-
-#    apply in raw mode using a one-line bug-patched tmp/ copy of
-#    ninja.php; the original docs/ tarball is untouched. Slap then
-#    rebuilt the fixture with --rom-type n64 (single-byte diff at
-#    header byte 8: 0x00 → 0x03).
+# *   We used their apply algorithm, not the program directly
+# **  PHP only encodes {raw, snes, mega, gb} and its >30 MB streaming
+#     encoder has a stale-$pointer bug. We did the four-quadrant cross-
+#     apply in raw mode using a one-line bug-patched tmp/ copy of
+#     ninja.php; the original docs/ tarball is untouched. Slap then
+#     rebuilt the fixture with --rom-type n64 (single-byte diff at
+#     header byte 8: 0x00 → 0x03).
+# *** Mode 1 (UTF-8 PATCH_ENC), --type n64 on both sides. NINJA2's
+#     n64_read is a no-op pass-through for canonical .z64 input
+#     (magic 80 37 12 40), so both encoders diff the same byte stream
+#     and both write 0x04 directly in the rom-type slot at offset
+#     0x802. The 2006 ninja-2.0 PHP script needs two small fixes to
+#     run on PHP 8: dl()/extension_loaded branch logic was inverted
+#     (the script die()s when GMP/mbstring ARE loaded), and ninja_block
+#     used " " as a single-file-mode filename placeholder that leaked
+#     into later filesize() calls with a trailing space and broke
+#     every type's create path. Both fixed in a tmp/ copy; the
+#     original docs/ tarball is untouched.

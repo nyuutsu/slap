@@ -55,7 +55,12 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
       <> word8 (fromPatchEncoding encoding)   -- text encoding
       <> byteString (encodeFixedHeader encoding info)  -- rest of 2048-byte header
       <> word8 0x01                           -- OPEN_NEW_FILE command
-      <> encodeVariableLengthValue 0          -- filename length (empty)
+      <> word8 0                              -- FILE_N_MUL=0: single-file sentinel
+                                              -- (spec §FILE block: 0 in this slot
+                                              -- signals single-file, with no
+                                              -- FILE_N_LEN/FILE_NAME bytes to
+                                              -- follow — distinct from a length-1
+                                              -- VLV holding the value 0)
       <> word8 (fromNINJA2RomType romType)    -- ROM type byte
       <> encodeVariableLengthValue (fromIntegral (ByteString.length original))   -- source size
       <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))   -- target size

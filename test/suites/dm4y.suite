@@ -7,6 +7,11 @@
 # patch flagged as GBC. Both encoders were run in raw mode for the
 # four-quadrant cross-apply, then slap rebuilt the fixture with
 # --rom-type gbc (single-byte diff at header byte 8: 0x00 → 0x05).
+#
+# NINJA2: wire format cross-validated against ninja-2.0 PHP reference
+# in mode 1 (UTF-8). NINJA2 has no GBC slot — slap maps GBC to raw
+# with a warning, so the rom-type byte stays at 0x00 (raw); cross-
+# validation was run with both encoders in raw mode.
 
 base:   test/data/dm4y/base.gbc
 sha1:   b460119b0fbd80cecba3ded57fa11a16370dd43e

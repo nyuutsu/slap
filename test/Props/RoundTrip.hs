@@ -112,6 +112,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "hashes" prop_ninja2Hashes
       , testCase "encoding-utf8-round-trips"   (ninja2EncodingRoundTrips NINJA2.PatchEncodingUTF8)
       , testCase "encoding-system-round-trips" (ninja2EncodingRoundTrips NINJA2.PatchEncodingSystem)
+      , testCase "single-file sentinel is one zero byte" ninja2SingleFileSentinelIsZero
       ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -574,6 +575,31 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
       Right (Parsed parsed _parseWarnings) ->
         fmap NINJA2.openNewFileSourceMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 source) .&&.
         fmap NINJA2.openNewFileTargetMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 target)
+
+-- | The NINJA2 file spec specifies that the first byte of an
+-- OPEN_NEW_FILE block (FILE_N_MUL) "0 Signals single-file" — meaning a
+-- literal zero byte is the sentinel and FILE_N_LEN/FILE_NAME do not
+-- follow. This is structurally distinct from a length-1 VLV holding the
+-- value 0 (@01 00@), which would mean "filename of length 0" and force
+-- a parser to read zero further bytes — fragile by design. The 2006
+-- ninja-2.0 PHP reference applier crashes on the latter shape with
+-- @fread(): length must be greater than 0@, exposing that a length-1
+-- VLV is not what the spec means.
+--
+-- This test pins slap's encoder to emit the spec-correct sentinel: the
+-- byte at offset 0x801 (immediately after the 0x01 OPEN_NEW_FILE
+-- opcode) must be @0x00@, and the byte that follows must be the ROM
+-- type (0x00 for raw, given an empty metadata bag), not another VLV
+-- length byte.
+ninja2SingleFileSentinelIsZero :: Assertion
+ninja2SingleFileSentinelIsZero =
+  let emptyBytes = ByteString.empty
+  in case createNINJA2 (InputFileContents emptyBytes) (OutputFileContents emptyBytes) emptyNINJA2Metadata of
+       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Right (CreateResult (PatchFileContents bytes) _) -> do
+         assertEqual "OPEN_NEW_FILE opcode at 0x800"  0x01 (ByteString.index bytes 0x800)
+         assertEqual "FILE_N_MUL single-file sentinel at 0x801" 0x00 (ByteString.index bytes 0x801)
+         assertEqual "ROM type byte at 0x802 (raw default)"     0x00 (ByteString.index bytes 0x802)
 
 -- | Both PATCH_ENC values the NINJA2 spec defines must survive a
 -- create-then-parse trip intact: the byte the encoder writes at offset
