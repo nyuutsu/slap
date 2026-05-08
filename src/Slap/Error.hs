@@ -634,8 +634,8 @@ data Parsed value = Parsed !value ![SlapWarning]
 -- Mirrors 'CreateResult' on the create side and 'Parsed' on the parse
 -- side — every value-producing operation in slap pairs its value with
 -- a warning channel. The polymorphic parameter lets a single envelope
--- serve both apply (carrying 'TargetFileContents') and undo (carrying
--- 'SourceFileContents') without duplicating the shape; the 'Functor'
+-- serve both apply (carrying 'OutputFileContents') and undo (carrying
+-- 'InputFileContents') without duplicating the shape; the 'Functor'
 -- instance lets a wrapper function the inner value through 'fmap'
 -- without unpacking the envelope.
 --
@@ -713,16 +713,18 @@ newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
 -- Verification: shared payload types
 ----------------------------------------------------------------------------
 
--- | Which side of the apply (source ROM or target ROM) a verification
+-- | Which side of the apply (input ROM or output ROM) a verification
 -- check fired against. Carried by the verification 'SlapWarning'
--- constructors so the renderer can name "source" vs "target" without
--- callers passing strings.
+-- constructors so the renderer can name \"input\" vs \"output\" without
+-- callers passing strings. The constructor names retain slap's older
+-- source\/target vocabulary; the rendered labels track the CLI's
+-- input\/output vocabulary.
 data VerificationSide = SourceSide | TargetSide
   deriving (Show, Eq)
 
 verificationSideLabel :: VerificationSide -> String
-verificationSideLabel SourceSide = "source"
-verificationSideLabel TargetSide = "target"
+verificationSideLabel SourceSide = "input"
+verificationSideLabel TargetSide = "output"
 
 -- | Which hash algorithm a verification check used. Carried by
 -- 'VerificationHashMismatch' so the renderer can name "MD5" vs "SHA1"
@@ -768,9 +770,9 @@ renderApplyError (ApplyCursorUnderflow cursorKind actionIndex cursor) =
 
 renderApplyError (ApplySourceReadOutOfBounds actionIndex readEndOffset sourceSize) =
   "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": source read would end at offset 0x"
+  ++ ": input read would end at offset 0x"
   ++ showHex (unOffset readEndOffset) ""
-  ++ " but source is " ++ show (unFileSize sourceSize) ++ " bytes"
+  ++ " but input is " ++ show (unFileSize sourceSize) ++ " bytes"
 
 renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (WritePosition writePosition)) =
   "at step #" ++ show (unActionIndex actionIndex)
@@ -782,11 +784,11 @@ renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (
 renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLength) (RemainingLength remainingLength)) =
   "at step #" ++ show (unActionIndex actionIndex)
   ++ ": action of length " ++ show (unLength requestedLength)
-  ++ " would write past target ("
+  ++ " would write past output ("
   ++ show (unLength remainingLength) ++ " bytes remaining)"
 
 renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize expectedSize)) =
-  "target under-filled ("
+  "output under-filled ("
   ++ show (unOffset cursor) ++ " of "
   ++ show (unFileSize expectedSize) ++ " bytes written before action stream exhausted)"
 
@@ -891,7 +893,7 @@ renderSlapError (ParseError label message) =
   formatLabelName label ++ ": " ++ message
 
 renderSlapError (NegativeTargetSize label size) =
-  formatLabelName label ++ ": negative target size: "
+  formatLabelName label ++ ": negative output size: "
   ++ show (unFileSize size)
 
 renderSlapError (ApplyFailed label applyErr) =
@@ -901,9 +903,9 @@ renderSlapError (UndoFailed label applyErr) =
   formatLabelName label ++ " undo: " ++ renderApplyError applyErr
 
 renderSlapError (CannotExpressTargetShrinkage label (ActualSize sourceSize) (ExpectedSize targetSize)) =
-  formatLabelName label ++ ": cannot express a target file smaller than the source"
-  ++ " (source: 0x" ++ showHex (unFileSize sourceSize) ""
-  ++ " bytes, target: 0x" ++ showHex (unFileSize targetSize) ""
+  formatLabelName label ++ ": cannot express an output file smaller than the input"
+  ++ " (input: 0x" ++ showHex (unFileSize sourceSize) ""
+  ++ " bytes, output: 0x" ++ showHex (unFileSize targetSize) ""
   ++ " bytes); this format has no truncation marker"
 
 renderSlapError (UPSUnencodeablePair label reason) =
@@ -942,7 +944,7 @@ renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
 
 renderSlapError (DiffRequiresSource label) =
   formatLabelName label
-  ++ " requires source+target diff data\nuse --with SOURCE"
+  ++ " requires source+target diff data\nuse --with INPUT"
 
 renderSlapError (MetadataFieldRejected field target) =
   "--" ++ metadataFieldFlagName field ++ " is not accepted by "
@@ -956,7 +958,7 @@ renderSlapError (ConstraintNotSupported constraint target) =
 
 renderSlapError (TruncationViolatesSMCShape size) =
   "--" ++ constraintFlagName SMCShapeConstraint
-  ++ ": target size " ++ show (unFileSize size)
+  ++ ": output size " ++ show (unFileSize size)
   ++ " bytes does not satisfy (size & 0xFFF) == 0x200; "
   ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
@@ -1132,7 +1134,7 @@ renderSlapWarning IncludingValidationByDefault =
   "note: including validation block (omit with --no-validate)"
 
 renderSlapWarning (SourceHashesMissing _label) =
-  "note: source verification hashes not available (populate with --with SOURCE)"
+  "note: input verification hashes not available (populate with --with INPUT)"
 
 renderSlapWarning (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
   "note: " ++ formatLabelName label ++ " "
@@ -1157,11 +1159,11 @@ renderSlapWarning (PlatformAmbiguous label combined chosen override) =
 renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
   formatLabelName label ++ " apply: "
   ++ show count ++ plural count " block writes" " blocks write"
-  ++ " past declared target size ("
+  ++ " past declared output size ("
   ++ show (unFileSize declaredSize) ++ " bytes); first at step #"
   ++ show (unActionIndex firstIndex) ++ ", "
   ++ show (unLength overshoot) ++ plural (unLength overshoot) " byte" " bytes"
-  ++ " total overshoot — clipped to target bounds"
+  ++ " total overshoot — clipped to output bounds"
   where plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 renderSlapWarning (SubformatConverted label fromSub toSub) =

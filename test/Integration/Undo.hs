@@ -18,7 +18,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Error (renderSlapError)
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..))
+import Slap.FileContents (PatchFileContents(..), InputFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -62,7 +62,7 @@ mkUndoTest basePath patchPath expectedBaseSha label =
       Left slapError ->
         assertFailure ("parseSome failed: " ++ renderSlapError slapError)
       Right parsed -> do
-        applied <- applyPatch parsed (SourceFileContents baseBytes)
+        applied <- applyPatch parsed (InputFileContents baseBytes)
         case applied of
           Left slapError ->
             assertFailure ("apply failed: " ++ renderSlapError slapError)
@@ -70,5 +70,5 @@ mkUndoTest basePath patchPath expectedBaseSha label =
             undone <- undoPatch parsed target
             case undone of
               Left errorMessage -> assertFailure ("undo failed: " ++ errorMessage)
-              Right (SourceFileContents restoredBytes) ->
+              Right (InputFileContents restoredBytes) ->
                 assertEqual "SHA1 after undo" expectedBaseSha (sha1Hex restoredBytes)

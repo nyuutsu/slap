@@ -21,7 +21,7 @@ import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError)
 import Slap.FFI (rustyCRC32)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
@@ -324,14 +324,14 @@ word32LEBytes = toStrict . putWord32LE
 parseAndApplyBPS :: PatchFileContents -> ByteString -> Either SlapError ByteString
 parseAndApplyBPS patchBytes sourceBytes = do
   Parsed parsed _parseWarnings <- parseBPS patchBytes
-  targetResult <- applyBPS parsed (SourceFileContents sourceBytes)
-  pure (unTargetFileContents targetResult)
+  targetResult <- applyBPS parsed (InputFileContents sourceBytes)
+  pure (unOutputFileContents targetResult)
 
 parseAndApplyUPS :: PatchFileContents -> ByteString -> Either SlapError ByteString
 parseAndApplyUPS patchBytes sourceBytes = do
   Parsed parsed _parseWarnings <- parseUPS patchBytes
-  targetResult <- applyUPS parsed (SourceFileContents sourceBytes)
-  pure (unTargetFileContents targetResult)
+  targetResult <- applyUPS parsed (InputFileContents sourceBytes)
+  pure (unOutputFileContents targetResult)
 
 assertParseApply
   :: (PatchFileContents -> ByteString -> Either SlapError ByteString)
@@ -359,13 +359,13 @@ assertParseRejects parseFunction patchBytes expectedSubstring =
 
 assertApplyError
   :: (PatchFileContents -> Either SlapError (Parsed a))
-  -> (a -> SourceFileContents -> Either SlapError b)
+  -> (a -> InputFileContents -> Either SlapError b)
   -> PatchFileContents -> ByteString -> (SlapError -> Bool) -> String -> Assertion
 assertApplyError parseFunction applyFunction patchBytes sourceBytes errorPredicate errorLabel = do
   case parseFunction patchBytes of
     Left slapError -> assertFailure ("parse failed (expected parse success): " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) ->
-      case applyFunction parsed (SourceFileContents sourceBytes) of
+      case applyFunction parsed (InputFileContents sourceBytes) of
         Left slapError ->
           assertBool (errorLabel ++ ": got " ++ renderSlapError slapError)
                      (errorPredicate slapError)
@@ -854,9 +854,9 @@ upsApplyBlockPastTarget =
   in case parseUPS patch of
        Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
        Right (Parsed parsed _parseWarnings) ->
-         case applyUPS parsed (SourceFileContents source) of
+         case applyUPS parsed (InputFileContents source) of
            Left slapError -> assertFailure ("apply failed (expected success with OOB clipping): " ++ renderSlapError slapError)
-           Right (TargetFileContents result) ->
+           Right (OutputFileContents result) ->
              assertEqual "OOB-clipped output" expectedOutput result
 
 ----------------------------------------------------------------------------
@@ -886,8 +886,8 @@ ipsApplyZeroTargetWithRecordsClipped =
         (NaturalTargetSize  (FileSize 1))
       expectedClipped  = IPSRecordsClippedByMarker LabelIPS
         (ClippedRecordCount 1) (actionAtPosition 0) (MarkerOvershootBytes (Length 1))
-  in case applyIPS (SourceFileContents ByteString.empty) patch of
-       Right (Outcome (TargetFileContents target) warnings) -> do
+  in case applyIPS (InputFileContents ByteString.empty) patch of
+       Right (Outcome (OutputFileContents target) warnings) -> do
          assertEqual "target should be empty" 0 (ByteString.length target)
          assertEqual "warnings"
            [expectedHonored, expectedClipped] warnings
@@ -1021,7 +1021,7 @@ bpsTargetCRCReadLiterally =
 
 -- | 'applyBPS' is a low-level executor: it trusts the caller to have
 -- already verified the source matches the patch's expectations, and
--- just does the mechanical work with whatever 'SourceFileContents' it
+-- just does the mechanical work with whatever 'InputFileContents' it
 -- receives. Size verification happens one layer up, at the
 -- 'Verification' layer consumed by 'Main.verifySource'. This test
 -- pins the apply-layer contract by calling 'applyBPS' directly with
@@ -1143,7 +1143,7 @@ upsTargetCRCReadLiterally =
     Right (Parsed parsed _parseWarnings) -> assertEqual "target CRC field" wrongTargetCRC (upsTargetCRC parsed)
 
 -- | Same apply-layer contract as BPS: 'applyUPS' uses the actual
--- length of the 'SourceFileContents' ByteString, not the declared
+-- length of the 'InputFileContents' ByteString, not the declared
 -- sourceSize in the patch header. Size verification is the
 -- 'Verification' layer's responsibility (see
 -- 'upsVerificationCarriesDeclaredSize' below).

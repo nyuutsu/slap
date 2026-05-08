@@ -9,7 +9,7 @@ import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), CreateResult(..))
 import Slap.FFI (rustyCRC32, rustyBpsDiff)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (ActualSize(..), MaxAddressableSize(..), FileSize(..), byteFileSize)
 
@@ -22,14 +22,14 @@ import qualified Data.ByteString.Lazy as LazyByteString
 -- Rejects inputs larger than the host platform's addressable range,
 -- which matters only on 32-bit where 'Int' is 31-bit; on 64-bit the
 -- guard is effectively dead (cap is ~9 EB).
-createBPS :: SourceFileContents -> TargetFileContents -> ByteString
+createBPS :: InputFileContents -> OutputFileContents -> ByteString
           -> Either SlapError CreateResult
-createBPS sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) metadata = do
+createBPS inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) metadata = do
   guardAddressable (byteFileSize original)
   guardAddressable (byteFileSize modified)
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
-      actionBytes = rustyBpsDiff sourceContents targetContents
+      actionBytes = rustyBpsDiff inputContents outputContents
       body = byteString bpsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))

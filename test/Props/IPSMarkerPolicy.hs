@@ -15,7 +15,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      actionAtPosition,
                      DeclaredTargetSize(..), NaturalTargetSize(..))
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -186,14 +186,14 @@ copyRecordOf recordOffset recordLength fillByte = IPSRecordCopy
 -- | A source ByteString of the given length, all bytes 0xFF. The
 -- exact byte value is irrelevant to every test below — only the
 -- length matters for sizing decisions.
-makeSource :: Int -> SourceFileContents
+makeSource :: Int -> InputFileContents
 makeSource sourceLength =
-  SourceFileContents (ByteString.replicate sourceLength 0xFF)
+  InputFileContents (ByteString.replicate sourceLength 0xFF)
 
 -- | Run apply and return the unwrapped 'Outcome', failing the test
 -- with a rendered 'SlapError' on failure.
 runApplyOrFail
-  :: SourceFileContents -> IPSPatch -> IO (Outcome TargetFileContents)
+  :: InputFileContents -> IPSPatch -> IO (Outcome OutputFileContents)
 runApplyOrFail source patch =
   case IPS.applyIPS source patch of
     Left slapError -> assertFailure ("apply: " ++ renderSlapError slapError)
@@ -205,10 +205,10 @@ assertApplyResult
   :: String                -- ^ test description for failure messages
   -> Int                   -- ^ expected target byte length
   -> [SlapWarning]         -- ^ expected warning list (in order)
-  -> Outcome TargetFileContents
+  -> Outcome OutputFileContents
   -> Assertion
 assertApplyResult description expectedLength expectedWarnings outcome = do
-  let TargetFileContents targetBytes = outcomeValue outcome
+  let OutputFileContents targetBytes = outcomeValue outcome
   assertEqual (description ++ ": target length")
     expectedLength (ByteString.length targetBytes)
   assertEqual (description ++ ": warnings")

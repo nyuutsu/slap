@@ -17,7 +17,7 @@ import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      advance, byteLength, distance, hunkEnd,
                      lengthToOffset, minLength, subtractLength)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -28,15 +28,15 @@ import Data.List (unfoldr)
 import Data.Word (Word8, Word16, Word32)
 
 -- | Unchanged regions become COPY commands; changed regions become DATA commands.
-createGDIFF :: SourceFileContents -> TargetFileContents
+createGDIFF :: InputFileContents -> OutputFileContents
             -> Either SlapError CreateResult
-createGDIFF sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) =
+createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) =
     Right (CreateResult (PatchFileContents patchBytes) [])
   where
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString gdiffMagicBytes       -- magic
       <> word8 4                       -- version
-      <> buildCommands (Offset 0) (diffHunks sourceContents targetContents)
+      <> buildCommands (Offset 0) (diffHunks inputContents outputContents)
       <> word8 0                       -- EOF command
     sharedRegionEnd = lengthToOffset (minLength (byteLength original) (byteLength modified))
     buildCommands position [] =

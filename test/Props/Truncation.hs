@@ -26,7 +26,7 @@ import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.XDelta1.Parse as XDelta1
 
 import Slap.Error (CreateResult(..))
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createPatch)
@@ -60,55 +60,55 @@ truncationTests = testGroup "Truncation"
 
 prop_bpsTrunc :: Property
 prop_bpsTrunc = forAll genPair $ \(source, target) ->
-  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
+  case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated BPS.parseBPS patch
 
 prop_ipsTrunc :: Property
 prop_ipsTrunc = forAll genPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
 prop_ips32Trunc = forAll genPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS32) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS32) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
 prop_ebpTrunc = forAll genPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateEBP) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateEBP) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_upsTrunc :: Property
 prop_upsTrunc = forAll genPair $ \(source, target) ->
-  case createUPS (SourceFileContents source) (TargetFileContents target) of
+  case createUPS (InputFileContents source) (OutputFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) -> truncated UPS.parseUPS patch
 
 prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePPF3) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated PPF3.parsePPF3 patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePMSR) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePMSR) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated PMSR.parsePMSR patch
 
 prop_ninja1Trunc :: Property
 prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateNINJA1) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated NINJA1.parseNINJA1 patch
 
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createDPS (SourceFileContents source) (TargetFileContents target)
+  case createDPS (InputFileContents source) (OutputFileContents target)
          (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
          DPS.DPSStable of
     Left _ -> discard
@@ -116,31 +116,31 @@ prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
-  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated NINJA2.parseNINJA2 patch
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateAPSN64) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateAPSN64) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated APSN64.parseAPSN64 patch
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(source, target) ->
-  case createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+  case createAPSGBA (InputFileContents source) (OutputFileContents target) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated APSGBA.parseAPSGBA patch
 
 prop_gdiffTrunc :: Property
 prop_gdiffTrunc = forAll genPair $ \(source, target) ->
-  case createGDIFF (SourceFileContents source) (TargetFileContents target) of
+  case createGDIFF (InputFileContents source) (OutputFileContents target) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated GDIFF.parseGDIFF patch
 
 prop_pchtxtTrunc :: Property
 prop_pchtxtTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePCHTXT) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePCHTXT) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated PCHTXT.parsePCHTXT patch
 

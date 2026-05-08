@@ -16,7 +16,7 @@ import Slap.VCDIFF.Types
     , vcdiffMagicBytes
     )
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -50,7 +50,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
           let applyInnerDelta deltaBytes = do
                 Parsed inner _innerWarnings <-
                   parseVCDIFFWith False (PatchFileContents deltaBytes)
-                fmap unTargetFileContents (applyVCDIFF inner (SourceFileContents serializedDefaultTable))
+                fmap unOutputFileContents (applyVCDIFF inner (InputFileContents serializedDefaultTable))
           (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
           Right (Parsed (VCDIFFPatch header windows table nearSize sameSize) [])
   where

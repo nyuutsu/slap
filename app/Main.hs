@@ -19,7 +19,7 @@ import Slap.SomePatch
 import Slap.Display.Common (renderInfoLine)
 import Slap.Display.Info (renderPatchInfo, renderActionLine)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ExpectedSize(..), ActualSize(..))
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
@@ -588,7 +588,7 @@ constraintsParser = do
     { requestedSMCShape = smcShape
     }
 
--- | Parser for @--with SOURCE@ plus its sub-flag @--no-verify@.  The
+-- | Parser for @--with INPUT@ plus its sub-flag @--no-verify@.  The
 -- @--with@ option is the distinguishing flag: if absent, the whole parser
 -- fails and the enclosing 'optional' falls back to 'Nothing', which leaves
 -- any stray @--no-verify@ for the top-level parser to reject.  That's how
@@ -596,11 +596,11 @@ constraintsParser = do
 -- alongside @--with@.
 convertWithSourceParser :: Parser ConvertWithSource
 convertWithSourceParser = ConvertWithSource
-  <$> option str (long "with" <> metavar "SOURCE"
-        <> help "Source file: enables apply-and-recreate conversion and source hash verification")
+  <$> option str (long "with" <> metavar "INPUT"
+        <> help "Input file: enables apply-and-recreate conversion and input hash verification")
   <*> flag EnforceVerification SkipVerification
         (long "no-verify"
-          <> help "Skip source hash verification (requires --with SOURCE; mismatches become warnings)")
+          <> help "Skip input hash verification (requires --with INPUT; mismatches become warnings)")
 
 -- | The output-format flag accepted by @slap create@.  Defaults to BPS
 -- so the bare @slap create base mod out@ command works without needing
@@ -921,13 +921,13 @@ doApply parsedCommand = do
 
       applyAndWriteTo outputPath = do
         sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-        let source = SourceFileContents sourceBytes
+        let source = InputFileContents sourceBytes
         verifySource verificationPolicy verification source
         outcome <- orBail =<< runApply (patchApply parsed) source
         emitWarnings WarningProper (outcomeWarnings outcome)
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
-        ByteString.writeFile outputPath (unTargetFileContents target)
+        ByteString.writeFile outputPath (unOutputFileContents target)
         putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
@@ -938,7 +938,7 @@ doApply parsedCommand = do
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
           let actual = rustyCRC32 sourceBytes
-          putStrLn $ "source CRC: " ++ formatCRC actual
+          putStrLn $ "input CRC: " ++ formatCRC actual
             ++ if actual == expected
                  then [' ', checkMark]
                  else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
@@ -977,12 +977,12 @@ doUndo parsedCommand = do
 
           undoAndWriteTo outputPath = do
             modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-            verifyTarget verificationPolicy verification (TargetFileContents modified)
-            outcome <- orBail (runUndo undo (TargetFileContents modified))
+            verifyTarget verificationPolicy verification (OutputFileContents modified)
+            outcome <- orBail (runUndo undo (OutputFileContents modified))
             emitWarnings WarningProper (outcomeWarnings outcome)
             let revertedSource = outcomeValue outcome
             verifySource verificationPolicy verification revertedSource
-            let SourceFileContents result = revertedSource
+            let InputFileContents result = revertedSource
             ByteString.writeFile outputPath result
             putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
 
@@ -994,7 +994,7 @@ doUndo parsedCommand = do
             Just expected -> do
               modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
               let actual = rustyCRC32 modifiedBytes
-              putStrLn $ "target CRC: " ++ formatCRC actual
+              putStrLn $ "output CRC: " ++ formatCRC actual
                 ++ if actual == expected
                      then [' ', checkMark]
                      else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
@@ -1030,8 +1030,8 @@ doCreate parsedCommand = do
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
   result <- orBail (createPatch
                      (createFormat parsedCommand)
-                     (SourceFileContents originalBytes)
-                     (TargetFileContents modifiedBytes)
+                     (InputFileContents originalBytes)
+                     (OutputFileContents modifiedBytes)
                      createMeta
                      Nothing
                      (createConstraints parsedCommand))
@@ -1048,7 +1048,7 @@ doCreate parsedCommand = do
 -- 'chooseConvertDispatch'; pattern-matched once in 'doConvert'.
 data ConvertDispatch
   = ApplyAndRecreate ConvertWithSource
-    -- ^ User supplied @--with SOURCE@; load the source, apply the patch,
+    -- ^ User supplied @--with INPUT@; load the source, apply the patch,
     -- re-encode the target bytes as the target format.
   | SourceLessConvert PatchContents
     -- ^ User didn't supply source, but the parsed patch carries enough
@@ -1059,7 +1059,7 @@ data ConvertDispatch
     -- Terminates via 'needSourceMessage'.
 
 -- | Decide which convert path runs from the parsed patch and the CLI
--- command.  The user's @--with SOURCE@ flag commits to
+-- command.  The user's @--with INPUT@ flag commits to
 -- apply-and-recreate outright; without it the parsed 'PatchKind'
 -- decides — only @'Direct' ('Just' _)@ carries enough structure
 -- ('PatchContents') to re-encode source-lessly. @'Direct' 'Nothing'@
@@ -1109,10 +1109,10 @@ doConvert parsedCommand = do
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
       sourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
-      let source = SourceFileContents sourceBytes
+      let source = InputFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) (SourceFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
@@ -1127,7 +1127,7 @@ doConvert parsedCommand = do
       bail (needSourceMessage somePatch)
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
-applyForConvert :: SomePatch -> SourceFileContents -> IO TargetFileContents
+applyForConvert :: SomePatch -> InputFileContents -> IO OutputFileContents
 applyForConvert somePatch source = do
   outcome <- orBail =<< runApply (patchApply somePatch) source
   emitWarnings WarningProper (outcomeWarnings outcome)
@@ -1147,19 +1147,19 @@ data SourceRequiredReason = SourceRequiredReason
 -- fires '-Wincomplete-patterns' once instead of in two parallel cases.
 needSourceMessage :: SomePatch -> String
 needSourceMessage somePatch =
-  "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
+  "converting from " ++ name ++ " requires the original ROM (--with INPUT)\n"
   ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
   ++ sourceRequiredConsequence reason
   where
     name   = formatLabelName (patchFormat somePatch)
     reason = case patchKind somePatch of
       Differential -> SourceRequiredReason
-        { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+        { sourceRequiredCause       = "tells us what to change in the input ROM, not what the result should be"
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " ++ [emDash] ++ " which is why we need the input."
         }
       Direct _ -> SourceRequiredReason
         { sourceRequiredCause       = "can't be converted directly into another patch format"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the source first and convert the result " ++ [emDash] ++ " which is why we need the source."
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " ++ [emDash] ++ " which is why we need the input."
         }
 
 -- | Warn when the source patch carries embedded BPS metadata bytes and
@@ -1214,8 +1214,8 @@ refuseOverwrite RefuseOverwrite outputPath = do
 -- Verification helpers
 ----------------------------------------------------------------------------
 
-verifySource :: VerificationPolicy -> Verification -> SourceFileContents -> IO ()
-verifySource verificationPolicy verification (SourceFileContents sourceBytes) = do
+verifySource :: VerificationPolicy -> Verification -> InputFileContents -> IO ()
+verifySource verificationPolicy verification (InputFileContents sourceBytes) = do
   let preprocessed = verifySourcePreHash verification sourceBytes
   -- Advisory-class checks first: per-spec non-fatal diagnostics that
   -- the format chose to populate. These fire regardless of policy
@@ -1242,8 +1242,8 @@ verifySource verificationPolicy verification (SourceFileContents sourceBytes) = 
   forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
     enforceFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
 
-verifyTarget :: VerificationPolicy -> Verification -> TargetFileContents -> IO ()
-verifyTarget verificationPolicy verification (TargetFileContents targetBytes) = do
+verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
+verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do
   -- Advisory-class checks first; see verifySource for the discipline.
   forM_ (verifyTargetBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
     noteBlockCRC TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))

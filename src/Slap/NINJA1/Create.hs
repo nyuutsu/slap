@@ -18,7 +18,7 @@ import Slap.Measure (Delta(..), Cursor(..), Hunk(..), Offset(..),
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Compression.Stream (zlibDeflate)
 
-import Slap.FileContents (PatchFileContents(..), SourceFileContents(..))
+import Slap.FileContents (PatchFileContents(..), InputFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -129,10 +129,10 @@ ninja1HashInput input
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
-  -> SourceFileContents
+  -> InputFileContents
   -> [Hunk]
   -> Either SlapError [Hunk]
-resolveSentinelCollisions label sentinel (SourceFileContents source) =
+resolveSentinelCollisions label sentinel (InputFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel

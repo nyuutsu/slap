@@ -18,7 +18,7 @@ import Slap.IPS.Types (IPSParseResult(..))
 
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError, renderSlapWarning)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
                      SentinelOffset(..))
@@ -209,13 +209,13 @@ prop_ipsSentinelWithSource =
   let eofOffset = 0x454F46
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
-  in case createPatch (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  in case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
        Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
          Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-           fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
-             === Right (TargetFileContents target)
+           fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
+             === Right (OutputFileContents target)
          Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
            counterexample "test fixture unexpectedly EBP" $ property False
          Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->

@@ -14,7 +14,7 @@ import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLo
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -25,9 +25,9 @@ import Data.Word (Word32)
 -- as CopyFromROM records. Returns 'Either' for parity with the other
 -- diff-format create entry points; DPS has no current failure modes,
 -- so the result is always 'Right'.
-createDPS :: SourceFileContents -> TargetFileContents -> DPSMetadata -> DPSStability
+createDPS :: InputFileContents -> OutputFileContents -> DPSMetadata -> DPSStability
           -> Either SlapError CreateResult
-createDPS sourceContents@(SourceFileContents original) targetContents metadata stability =
+createDPS inputContents@(InputFileContents original) outputContents metadata stability =
     let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
         (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
         (versionBytes, versionWarnings) = encodeField FieldVersion (dpsMetadataVersion metadata)
@@ -38,7 +38,7 @@ createDPS sourceContents@(SourceFileContents original) targetContents metadata s
             <> word8 (fromDPSStability stability)
             <> word8 (fromDPSFormatVersion DPSVersion1)
             <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
-            <> foldMap encodeRecord (dpsRecordsFromDiff sourceContents targetContents)
+            <> foldMap encodeRecord (dpsRecordsFromDiff inputContents outputContents)
     in Right (CreateResult (PatchFileContents patchBytes)
                            (nameWarnings ++ authorWarnings ++ versionWarnings))
   where
@@ -50,10 +50,10 @@ createDPS sourceContents@(SourceFileContents original) targetContents metadata s
                            (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
       in (boundedField result, warnings)
 
-dpsRecordsFromDiff :: SourceFileContents -> TargetFileContents -> [DPSRecord]
-dpsRecordsFromDiff _sourceContents (TargetFileContents modified) | ByteString.null modified = []
-dpsRecordsFromDiff sourceContents targetContents@(TargetFileContents modified) =
-  buildRecords 0 (diffHunks sourceContents targetContents)
+dpsRecordsFromDiff :: InputFileContents -> OutputFileContents -> [DPSRecord]
+dpsRecordsFromDiff _sourceContents (OutputFileContents modified) | ByteString.null modified = []
+dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
+  buildRecords 0 (diffHunks inputContents outputContents)
   where
     modifiedLength = ByteString.length modified
     trailingCopy position

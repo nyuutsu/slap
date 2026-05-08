@@ -7,7 +7,7 @@ import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -17,8 +17,8 @@ import Control.Monad (forM_, when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
-applyAPSN64 :: APSN64Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyAPSN64 (APSN64Patch _ records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \targetPointer -> do
+applyAPSN64 :: APSN64Patch -> InputFileContents -> Either SlapError OutputFileContents
+applyAPSN64 (APSN64Patch _ records) (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputLength $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)

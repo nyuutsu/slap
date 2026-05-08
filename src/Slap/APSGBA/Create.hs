@@ -13,7 +13,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActualSize(..), MaxAddressableSize(..), byteFileSize)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -21,9 +21,9 @@ import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
 
-createAPSGBA :: SourceFileContents -> TargetFileContents
+createAPSGBA :: InputFileContents -> OutputFileContents
              -> Either SlapError CreateResult
-createAPSGBA sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) = do
+createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) = do
   guardAPSGBASize (byteFileSize original)
   guardAPSGBASize (byteFileSize modified)
   Right (CreateResult (PatchFileContents patchBytes) [])
@@ -32,7 +32,7 @@ createAPSGBA sourceContents@(SourceFileContents original) targetContents@(Target
       byteString apsGbaMagicBytes
       <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
       <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
-      <> foldMap (encodeGBABlock sourceContents targetContents) changedBlocks
+      <> foldMap (encodeGBABlock inputContents outputContents) changedBlocks
     blockSize = apsGbaBlockSize
     blockCount = max (blocksOf original) (blocksOf modified)
     blocksOf input = (ByteString.length input + blockSize - 1) `div` blockSize
@@ -59,8 +59,8 @@ guardAPSGBASize size
   where
     maxAddressable = FileSize (fromIntegral (maxBound :: Word32))
 
-encodeGBABlock :: SourceFileContents -> TargetFileContents -> Int -> Builder
-encodeGBABlock (SourceFileContents original) (TargetFileContents modified) blockIndex =
+encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
+encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockIndex =
     putWord32LE (fromIntegral offset :: Word32)
     <> putWord16LE (unCRC16 (crc16 sourceBlock))
     <> putWord16LE (unCRC16 (crc16 targetBlock))

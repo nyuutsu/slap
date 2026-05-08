@@ -13,7 +13,7 @@ module Slap.SomePatch
   , parseSome
   ) where
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
@@ -115,7 +115,7 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 -- source; differential formats (BPS, UPS, VCDIFF, etc.) compute the
 -- target from source bytes and patch instructions.
 newtype ApplyStrategy = ApplyStrategy
-  { runApply :: SourceFileContents -> IO (Either SlapError (Outcome TargetFileContents)) }
+  { runApply :: InputFileContents -> IO (Either SlapError (Outcome OutputFileContents)) }
 
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
@@ -183,7 +183,7 @@ noVerification = Verification
 -- negative offsets). For self-inverse formats like UPS (XOR-based),
 -- the apply function itself serves as the undo.
 newtype UndoStrategy = UndoStrategy
-  { runUndo :: TargetFileContents -> Either SlapError (Outcome SourceFileContents) }
+  { runUndo :: OutputFileContents -> Either SlapError (Outcome InputFileContents) }
 
 -- | How the patch's records relate to the target file.
 --
@@ -535,13 +535,13 @@ parseSomePatchFromUPS patchContents = do
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (UPS.applyUPS patch source)) }
-    , patchUndo           = Just $ UndoStrategy $ \(TargetFileContents modified) ->
+    , patchUndo           = Just $ UndoStrategy $ \(OutputFileContents modified) ->
         -- UPS is self-inverse (XOR-based): applying the patch to the
         -- target recovers the source. For a well-parsed patch this
         -- reapplication cannot fail.
-        case UPS.applyUPS patch (SourceFileContents modified) of
-          Right (TargetFileContents reverted) ->
-            Right (noWarnings (SourceFileContents reverted))
+        case UPS.applyUPS patch (InputFileContents modified) of
+          Right (OutputFileContents reverted) ->
+            Right (noWarnings (InputFileContents reverted))
           Left slapError -> Left slapError
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)

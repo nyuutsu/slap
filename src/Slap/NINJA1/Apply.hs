@@ -7,7 +7,7 @@ import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -17,8 +17,8 @@ import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
 -- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
-applyNINJA1 :: NINJA1Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyNINJA1 patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
+applyNINJA1 :: NINJA1Patch -> InputFileContents -> Either SlapError OutputFileContents
+applyNINJA1 patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

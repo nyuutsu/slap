@@ -54,7 +54,7 @@ import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (Adler32, CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyAdler32)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      advance, byteLength, distance)
 
@@ -297,8 +297,8 @@ mergeGapThreshold = 5
 -- | Find contiguous regions where two ByteStrings differ.
 -- Merges nearby hunks (gap <= mergeGapThreshold bytes) to reduce record count.
 -- Returns [Hunk] from the target side.
-diffHunks :: SourceFileContents -> TargetFileContents -> [Hunk]
-diffHunks (SourceFileContents original) (TargetFileContents modified) =
+diffHunks :: InputFileContents -> OutputFileContents -> [Hunk]
+diffHunks (InputFileContents original) (OutputFileContents modified) =
   mergeNearby (scanDiffs 0 ++ extension)
   where
     originalLength = ByteString.length original

@@ -43,7 +43,7 @@ import Slap.Binary (putWord16BE)
 import Slap.Error (SlapError(..))
 import Slap.FileContents
   ( PatchFileContents(..)
-  , SourceFileContents(..)
+  , InputFileContents(..)
   , unPatchFileContents
   )
 import Slap.Display.Primitives (padHex)
@@ -261,7 +261,7 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- the explicit "not a collision" branch, not a silent catch-all.
 --
 -- Both 'Slap.Convert.createPatch' (with real source bytes) and
--- 'Slap.Convert.convertDirect' (with an empty 'SourceFileContents')
+-- 'Slap.Convert.convertDirect' (with an empty 'InputFileContents')
 -- call through this function. The shape of the source bytes decides
 -- whether a given collision is fixable; the caller decides whether
 -- to invoke sentinel resolution at all based on whether the format
@@ -269,10 +269,10 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
-  -> SourceFileContents
+  -> InputFileContents
   -> [Hunk]
   -> Either SlapError [Hunk]
-resolveSentinelCollisions label sentinel (SourceFileContents source) =
+resolveSentinelCollisions label sentinel (InputFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel

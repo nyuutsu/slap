@@ -9,7 +9,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength, distance, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
 
 import qualified Data.ByteString as ByteString
@@ -28,12 +28,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- would write past source EOF fail with 'ApplyReplaceGrowsFile').
 -- Append records run second, each writing sequentially starting at
 -- the snapshot of @sourceFileSize@ taken before any Replace runs.
-applyPPF4 :: PPF4Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyPPF4 patch (SourceFileContents source)
+applyPPF4 :: PPF4Patch -> InputFileContents -> Either SlapError OutputFileContents
+applyPPF4 patch (InputFileContents source)
   | unFileSize outputFileSize < 0 =
       Left (NegativeTargetSize LabelPPF4 outputFileSize)
   | unFileSize outputFileSize == 0 =
-      Right (TargetFileContents ByteString.empty)
+      Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize outputFileSize) $ \outputPointer -> do
@@ -57,7 +57,7 @@ applyPPF4 patch (SourceFileContents source)
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
-        Nothing       -> Right (TargetFileContents result)
+        Nothing       -> Right (OutputFileContents result)
   where
     sourceEnd         = Offset (ByteString.length source)
     sourceFileSize    = offsetToFileSize sourceEnd

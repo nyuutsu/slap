@@ -18,7 +18,7 @@ import Integration.Skip
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents
-  (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+  (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert
   ( DirectCreate(..)
@@ -171,7 +171,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
 -- so a 'Left' indicates a test-infrastructure bug rather than an expected path.
 createBPSOrFail :: ByteString.ByteString -> ByteString.ByteString -> ByteString.ByteString -> IO PatchFileContents
 createBPSOrFail source target meta =
-  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata meta) of
+  case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata meta) of
     Left slapError ->
       assertFailure ("createBPS failed: " ++ renderSlapError slapError)
     Right (CreateResult patchBytes _) -> pure patchBytes

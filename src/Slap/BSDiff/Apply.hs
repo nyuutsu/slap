@@ -2,7 +2,7 @@ module Slap.BSDiff.Apply
   ( applyBSDiff
   ) where
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -90,11 +90,11 @@ initialCursors = BSDiffCursors
 -- applyBSDiff
 ----------------------------------------------------------------------------
 
-applyBSDiff :: BSDiffPatch -> SourceFileContents -> Either SlapError TargetFileContents
+applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBSDiff patch _
-  | unFileSize (bsdiffTargetSize patch) == 0 = Right (TargetFileContents ByteString.empty)
+  | unFileSize (bsdiffTargetSize patch) == 0 = Right (OutputFileContents ByteString.empty)
   | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
-applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer ->
+applyBSDiff patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer ->
     let
       applyLoop :: BSDiffCursors -> [BSDiffInstruction] -> IO ()
       applyLoop _cursors [] = pure ()

@@ -17,7 +17,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Cursor(..), fitsWithin, offsetToFileSize, remainingFromOffset,
                      subtractLength, minLength, byteLength, byteFileSize,
                      firstAction, nextAction, streamEndIndex, plusOffset)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Control.Monad (when)
 import Data.ByteString.Internal (create)
@@ -92,8 +92,8 @@ import System.IO.Unsafe (unsafePerformIO)
 -- apply errors and warnings as 'LabelIPS' rather than 'LabelEBP'
 -- — the EBP wrapper has been peeled away by the time this function
 -- runs.
-applyIPS :: SourceFileContents -> IPSPatch -> Either SlapError (Outcome TargetFileContents)
-applyIPS (SourceFileContents source) patch
+applyIPS :: InputFileContents -> IPSPatch -> Either SlapError (Outcome OutputFileContents)
+applyIPS (InputFileContents source) patch
   | unFileSize effectiveSize < 0 =
       Left (NegativeTargetSize patchLabel effectiveSize)
   | otherwise = unsafePerformIO $ do
@@ -106,7 +106,7 @@ applyIPS (SourceFileContents source) patch
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed patchLabel applyErr)
         Nothing       -> Right (Outcome
-          (TargetFileContents result)
+          (OutputFileContents result)
           (dispositionWarnings ++ clipWarnings clipState))
   where
     patchLabel    = case ipsVariant patch of

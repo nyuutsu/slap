@@ -14,7 +14,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      byteFileSize,
                      firstAction, nextAction,
                      streamEndIndex, actionAtPosition, plusOffset)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Control.Monad (when)
 import Data.Bits (xor)
@@ -43,13 +43,13 @@ import System.IO.Unsafe (unsafePerformIO)
 -- source end) and is handled inline by the helper functions, not as
 -- an error. The caller is still responsible for CRC validation
 -- before calling.
-applyUPS :: UPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyUPS patch (SourceFileContents source)
+applyUPS :: UPSPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyUPS patch (InputFileContents source)
   | unFileSize targetSize < 0 =
       Left (NegativeTargetSize LabelUPS targetSize)
   | unFileSize targetSize == 0 =
-      Right (TargetFileContents ByteString.empty)
-  | otherwise = Right $ TargetFileContents $ unsafePerformIO $
+      Right (OutputFileContents ByteString.empty)
+  | otherwise = Right $ OutputFileContents $ unsafePerformIO $
       create (unFileSize targetSize) $ \outputPointer ->
         unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
           let sourcePointer = castPtr sourcePointerCString :: Ptr Word8

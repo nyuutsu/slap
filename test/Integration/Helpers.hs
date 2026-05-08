@@ -49,7 +49,7 @@ import Slap.Display.Primitives (padHex)
 import Slap.Display.Glyph (emDash)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
 import Slap.Create (createPatch)
 
@@ -223,12 +223,12 @@ parseCreateFormat formatString = case map toLower formatString of
 ----------------------------------------------------------------------------
 
 -- | Apply a parsed patch to source bytes.
-applyPatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
+applyPatch :: SomePatch -> InputFileContents -> IO (Either SlapError OutputFileContents)
 applyPatch somePatch source =
   fmap (fmap outcomeValue) (runApply (patchApply somePatch) source)
 
 -- | Undo a parsed patch.
-undoPatch :: SomePatch -> TargetFileContents -> IO (Either String SourceFileContents)
+undoPatch :: SomePatch -> OutputFileContents -> IO (Either String InputFileContents)
 undoPatch somePatch target = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
   Just undo -> case runUndo undo target of
@@ -269,11 +269,11 @@ attemptConvert
   -> IO (Either String CreateResult)
 attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
-    targetResult <- applyPatch somePatch (SourceFileContents baseBytes)
+    targetResult <- applyPatch somePatch (InputFileContents baseBytes)
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right target ->
-        case createPatch targetFormat (SourceFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested of
+        case createPatch targetFormat (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
   Nothing -> case patchKind somePatch of
@@ -284,7 +284,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     Differential               -> pure (Left (needWithMsg somePatch))
   where
     needWithMsg thePatch =
-      "converting from " ++ name ++ " requires the original ROM (--with SOURCE)\n"
+      "converting from " ++ name ++ " requires the original ROM (--with INPUT)\n"
       ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
       ++ sourceRequiredConsequence reason
       where

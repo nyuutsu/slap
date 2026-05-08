@@ -11,7 +11,7 @@ import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (rustyCRC32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), advance, distance, offsetToInt)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.Bits (xor)
 
@@ -26,10 +26,10 @@ import Foreign.Storable (pokeByteOff)
 -- | Create a UPS patch from source and target bytestrings. Returns
 -- 'Left' if the pair is unencodeable per the UPS spec (diff run with
 -- no valid terminator position within target bounds).
-createUPS :: SourceFileContents -> TargetFileContents
+createUPS :: InputFileContents -> OutputFileContents
           -> Either SlapError CreateResult
-createUPS sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) = do
-  blocks <- diffToBlocks sourceContents targetContents
+createUPS inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) = do
+  blocks <- diffToBlocks inputContents outputContents
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
       body = byteString upsMagicBytes
@@ -53,8 +53,8 @@ encodeUPSBlock (UPSBlock skipLength xorData) =
 -- Returns 'Left' if the pair is unencodeable (diff run whose
 -- terminator would fall past target end, or source has non-zero
 -- bytes past target size).
-diffToBlocks :: SourceFileContents -> TargetFileContents -> Either SlapError [UPSBlock]
-diffToBlocks (SourceFileContents source) (TargetFileContents target)
+diffToBlocks :: InputFileContents -> OutputFileContents -> Either SlapError [UPSBlock]
+diffToBlocks (InputFileContents source) (OutputFileContents target)
   | not sourceTailAllZero =
       Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)
   | otherwise = scan (Offset 0) (Length 0) []

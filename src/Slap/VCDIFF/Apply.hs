@@ -21,7 +21,7 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Length(..), advance)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Data.Array (Array, listArray, (!))
 import Data.Array.ST (STArray, newArray, readArray, writeArray)
@@ -134,12 +134,12 @@ decodeAddress cache (VCDIFFAddressMode mode) here addressPositionReference addre
 -- Apply
 ----------------------------------------------------------------------------
 
-applyVCDIFF :: VCDIFFPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyVCDIFF patch (SourceFileContents source)
+applyVCDIFF :: VCDIFFPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyVCDIFF patch (InputFileContents source)
   | totalSize < 0  = Left (NegativeTargetSize LabelVCDIFF (FileSize totalSize))
-  | totalSize == 0 = Right (TargetFileContents ByteString.empty)
+  | totalSize == 0 = Right (OutputFileContents ByteString.empty)
   | otherwise =
-      Right $ TargetFileContents $ unsafeCreate totalSize $ \outputPointer -> do
+      Right $ OutputFileContents $ unsafeCreate totalSize $ \outputPointer -> do
         globalOutputOffsetRef <- newIORef (0 :: Int)
         mapM_ (applyWindow codeTable nearSize sameSize source outputPointer globalOutputOffsetRef totalSize) (vcdiffWindows patch)
   where

@@ -9,7 +9,7 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import Slap.Checksum (CRC32(..), Adler32(..))
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 foreign import ccall unsafe "rusty_crc32"
@@ -39,8 +39,8 @@ rustyAdler32 input = Adler32 $ unsafeDupablePerformIO $
 
 -- | BPS diff via rusty-slap (suffix-array algorithm, after Alcaro's Flips).
 -- Returns the raw encoded action byte stream.
-rustyBpsDiff :: SourceFileContents -> TargetFileContents -> ByteString
-rustyBpsDiff (SourceFileContents source) (TargetFileContents target) = unsafeDupablePerformIO $
+rustyBpsDiff :: InputFileContents -> OutputFileContents -> ByteString
+rustyBpsDiff (InputFileContents source) (OutputFileContents target) = unsafeDupablePerformIO $
   UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, sourceLength) ->
     UnsafeByteString.unsafeUseAsCStringLen target $ \(targetPointer, targetLength) ->
       alloca $ \resultAddressPointer ->

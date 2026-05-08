@@ -9,7 +9,7 @@ import Slap.Binary (copyByteStringRange)
 import Slap.Error (SlapError)
 import Slap.Measure (FileSize(..), Offset(..))
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -20,8 +20,8 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
-applyAPSGBA :: APSGBAPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyAPSGBA (APSGBAPatch header records) (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate targetSize $ \targetPointer -> do
+applyAPSGBA :: APSGBAPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyAPSGBA (APSGBAPatch header records) (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate targetSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
     when (targetSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (targetSize - sourceLength)

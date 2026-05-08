@@ -12,7 +12,7 @@ import Slap.Measure (Offset(..), FileSize(..),
                      advance, fitsWithin, remainingFromOffset,
                      byteLength, byteFileSize,
                      firstAction, nextAction)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
@@ -32,12 +32,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- error if a CopyFromROM record references bytes past the end of the
 -- source or if a record's write region exceeds the computed output
 -- extent.
-applyDPS :: DPSPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyDPS patch (SourceFileContents source)
+applyDPS :: DPSPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyDPS patch (InputFileContents source)
   | unFileSize outputSize < 0 =
       Left (NegativeTargetSize LabelDPS outputSize)
   | unFileSize outputSize == 0 =
-      Right (TargetFileContents ByteString.empty)
+      Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize outputSize) $ \outputPointer ->
@@ -45,7 +45,7 @@ applyDPS patch (SourceFileContents source)
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
-        Nothing       -> Right (TargetFileContents result)
+        Nothing       -> Right (OutputFileContents result)
   where
     records    = dpsRecords patch
     sourceSize = byteFileSize source

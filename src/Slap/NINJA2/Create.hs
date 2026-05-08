@@ -15,7 +15,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Platform (platformToNinja2)
 import Slap.TextEncoding (truncateUtf8, truncateLocale)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -30,9 +30,9 @@ import Data.Bits (xor)
 -- header) and platform warnings (from 'PlatformType' values NINJA2
 -- can't express) are both folded into 'CreateResult.resultWarnings'
 -- so the caller doesn't have to remember to collect them separately.
-createNINJA2 :: SourceFileContents -> TargetFileContents -> NINJA2Metadata
+createNINJA2 :: InputFileContents -> OutputFileContents -> NINJA2Metadata
              -> Either SlapError CreateResult
-createNINJA2 (SourceFileContents original) (TargetFileContents modified) metadata =
+createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata =
     Right (CreateResult (PatchFileContents patchBytes)
                         (ninja2TruncationNotes info ++ platformWarnings))
   where
@@ -70,8 +70,8 @@ createNINJA2 (SourceFileContents original) (TargetFileContents modified) metadat
     targetTrimmed = ByteString.take minimumLength modified
     -- diffHunks finds changed regions; we then XOR old and new at those positions
     xorHunks = map computeXorHunk
-                   (diffHunks (SourceFileContents sourceTrimmed)
-                              (TargetFileContents targetTrimmed))
+                   (diffHunks (InputFileContents sourceTrimmed)
+                              (OutputFileContents targetTrimmed))
     computeXorHunk (Hunk hunkOffset newData) =
       let intOffset = unOffset hunkOffset
           oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)

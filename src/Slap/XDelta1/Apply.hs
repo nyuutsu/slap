@@ -8,7 +8,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Data.Array (listArray, (!), bounds)
 import qualified Data.ByteString as ByteString
@@ -18,11 +18,11 @@ import Data.ByteString.Internal (unsafeCreate)
 -- Apply
 ----------------------------------------------------------------------------
 
-applyXDelta1 :: XDelta1Patch -> SourceFileContents -> Either SlapError TargetFileContents
+applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyXDelta1 patch _
-  | unFileSize (xdelta1TargetLength patch) == 0 = Right (TargetFileContents ByteString.empty)
+  | unFileSize (xdelta1TargetLength patch) == 0 = Right (OutputFileContents ByteString.empty)
   | unFileSize (xdelta1TargetLength patch) < 0  = Left (NegativeTargetSize LabelXDelta1 (xdelta1TargetLength patch))
-applyXDelta1 patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer ->
+applyXDelta1 patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer ->
     let
       applyLoop :: Offset -> [XDelta1Instruction] -> IO ()
       applyLoop _outputPosition [] = pure ()

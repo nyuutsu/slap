@@ -11,7 +11,7 @@ import Slap.Measure
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -30,12 +30,12 @@ import Data.ByteString.Internal (unsafeCreate)
 -- prior commands' effects. Formats with target self-reference
 -- (BPS, IPS, DPS) cannot validate ahead of time and instead validate
 -- inline during the write.
-applyGDIFF :: GDiffPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyGDIFF patch (SourceFileContents source) =
+applyGDIFF :: GDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyGDIFF patch (InputFileContents source) =
   case validateCommands sourceSize commands of
     Left applyError       -> Left (ApplyFailed LabelGDIFF applyError)
-    Right (FileSize 0)    -> Right (TargetFileContents ByteString.empty)
-    Right totalOutputSize -> Right (TargetFileContents (writeOutput totalOutputSize))
+    Right (FileSize 0)    -> Right (OutputFileContents ByteString.empty)
+    Right totalOutputSize -> Right (OutputFileContents (writeOutput totalOutputSize))
   where
     commands   = gdiffCommands patch
     sourceSize = byteFileSize source

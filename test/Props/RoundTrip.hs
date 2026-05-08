@@ -50,7 +50,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..), splitHunks)
 import Slap.FFI (rustyCRC32)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
@@ -139,16 +139,16 @@ roundTripTests = testGroup "RoundTrip"
 
 prop_bps :: Property
 prop_bps = forAll genPair $ \(source, target) ->
-  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
+  case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case BPS.parseBPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+      Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
   forAll genByteString $ \meta ->
-    case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata meta) of
+    case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata meta) of
       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
         Left slapError -> counterexample (renderSlapError slapError) $ property False
@@ -156,24 +156,24 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
 
 prop_ups :: Property
 prop_ups = forAll genPair $ \(source, target) ->
-  case createUPS (SourceFileContents source) (TargetFileContents target) of
+  case createUPS (InputFileContents source) (OutputFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
           counterexample (renderSlapError parseError) $ property False
         Right (Parsed parsed _parseWarnings) ->
-          UPS.applyUPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+          UPS.applyUPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
-          === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
+          === Right (OutputFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -181,13 +181,13 @@ prop_ips = forAll genPair $ \(source, target) ->
 
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
-          === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
+          === Right (OutputFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -195,8 +195,8 @@ prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) -
 
 prop_resolveSentinelCollisions :: Property
 prop_resolveSentinelCollisions = once $
-  let source       = SourceFileContents (ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7])
-      emptySource  = SourceFileContents ByteString.empty
+  let source       = InputFileContents (ByteString.pack [0, 1, 2, 3, 4, 5, 6, 7])
+      emptySource  = InputFileContents ByteString.empty
       sentinelAt5  = SentinelOffset (Offset 5)
       sentinelAt0  = SentinelOffset (Offset 0)
   in conjoin
@@ -243,9 +243,9 @@ prop_sourcelessSentinelRejected = once $
 prop_dpNotLarger :: Property
 prop_dpNotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
-        optimalIPSRecords Offset24 (SourceFileContents source) (TargetFileContents target)
+        optimalIPSRecords Offset24 (InputFileContents source) (OutputFileContents target)
       greedyRecords = splitHunks (Length 0xFFFF)
-                                 (diffHunks (SourceFileContents source) (TargetFileContents target))
+                                 (diffHunks (InputFileContents source) (OutputFileContents target))
       dynamicProgrammingSize = ipsEncodedSize 3 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 3 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
@@ -255,9 +255,9 @@ prop_dpNotLarger = forAll genPair $ \(source, target) ->
 prop_dpIPS32NotLarger :: Property
 prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
-        optimalIPSRecords Offset32 (SourceFileContents source) (TargetFileContents target)
+        optimalIPSRecords Offset32 (InputFileContents source) (OutputFileContents target)
       greedyRecords = splitHunks (Length 0xFFFF)
-                                 (diffHunks (SourceFileContents source) (TargetFileContents target))
+                                 (diffHunks (InputFileContents source) (OutputFileContents target))
       dynamicProgrammingSize = ipsEncodedSize 4 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 4 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
@@ -265,14 +265,14 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
 
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(source, target) ->
-  case createGDIFF (SourceFileContents source) (TargetFileContents target) of
+  case createGDIFF (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        case GDIFF.applyGDIFF parsed (SourceFileContents source) of
+        case GDIFF.applyGDIFF parsed (InputFileContents source) of
           Left applyError       -> counterexample ("apply: " ++ renderSlapError applyError) $ property False
-          Right targetContents  -> targetContents === TargetFileContents target
+          Right outputContents  -> outputContents === OutputFileContents target
 
 ----------------------------------------------------------------------------
 -- GDIFF planCopy properties
@@ -414,12 +414,12 @@ prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
 
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
-  case createAPSGBA (SourceFileContents source) (TargetFileContents target) of
+  case createAPSGBA (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        APSGBA.applyAPSGBA parsed (SourceFileContents source) === Right (TargetFileContents target)
+        APSGBA.applyAPSGBA parsed (InputFileContents source) === Right (OutputFileContents target)
 
 ----------------------------------------------------------------------------
 -- IPS32 / EBP: no truncation marker, target must be >= source
@@ -427,13 +427,13 @@ prop_apsGba = forAll genPair $ \(source, target) ->
 
 prop_ips32 :: Property
 prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS32) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS32) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
-        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) ipsPatch)
-          === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
+          === Right (OutputFileContents target)
       Right (Parsed (IPSParseCleanEBP _ebpPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly EBP" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -441,13 +441,13 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ebp :: Property
 prop_ebp = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateEBP) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateEBP) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed (IPSParseCleanEBP ebpPatch) _parseWarnings) ->
-        fmap outcomeValue (IPS.applyIPS (SourceFileContents source) (ebpBasePatch ebpPatch))
-          === Right (TargetFileContents target)
+        fmap outcomeValue (IPS.applyIPS (InputFileContents source) (ebpBasePatch ebpPatch))
+          === Right (OutputFileContents target)
       Right (Parsed (IPSParseCleanIPS _ipsPatch) _parseWarnings) ->
         counterexample "test fixture unexpectedly plain IPS" $ property False
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
@@ -456,34 +456,34 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
 -- Direct formats: no truncation, target must be >= source
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePPF3) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF.applyPPF parsed (SourceFileContents source) === Right (TargetFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF.applyPPF parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePMSR) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePMSR) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         PMSR.applyPMSR parsed (SourceFileContents source) === Right (TargetFileContents target)
+         PMSR.applyPMSR parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateNINJA1) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         NINJA1.applyNINJA1 parsed (SourceFileContents source) === Right (TargetFileContents target)
+         NINJA1.applyNINJA1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
-  case createPatch (CreateDirect CreateNINJA1) (SourceFileContents source) (TargetFileContents source) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -503,12 +503,12 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- patch — making any silent drop catastrophic for round-trip.
 prop_ninja1EofCollision :: Property
 prop_ninja1EofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateNINJA1) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA1.applyNINJA1 parsed (SourceFileContents source) === Right (TargetFileContents target)
+        NINJA1.applyNINJA1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 -- | Source-less conversion of a record sitting on the NINJA1 sentinel
 -- offset must raise 'SentinelCollisionUnfixable' rather than silently
@@ -533,22 +533,22 @@ prop_ninja1SourcelessSentinelRejected = once $
 -- DPS: differential, no truncation
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
-  case createDPS (SourceFileContents source) (TargetFileContents target)
+  case createDPS (InputFileContents source) (OutputFileContents target)
          (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
          DPS.DPSStable of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case DPS.parseDPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-      Right (Parsed parsed _parseWarnings) -> DPS.applyDPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+      Right (Parsed parsed _parseWarnings) -> DPS.applyDPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
-  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.applyNINJA2 parsed (SourceFileContents source) === Right (TargetFileContents target)
+        NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 -- | Round-trip restricted to the @len(source) > len(target)@ regime,
 -- where the NINJA2 wire carries the discarded source tail as a
@@ -558,16 +558,16 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
 -- by re-applying the truncate overflow gets caught immediately.
 prop_ninja2Truncate :: Property
 prop_ninja2Truncate = forAll genShrinkingPair $ \(source, target) ->
-  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        NINJA2.applyNINJA2 parsed (SourceFileContents source) === Right (TargetFileContents target)
+        NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
-  case createNINJA2 (SourceFileContents source) (TargetFileContents target) emptyNINJA2Metadata of
+  case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -585,7 +585,7 @@ ninja2EncodingRoundTrips :: NINJA2.PatchEncoding -> Assertion
 ninja2EncodingRoundTrips encoding =
   let metadata    = emptyNINJA2Metadata { NINJA2.ninja2MetadataEncoding = encoding }
       emptyBytes  = ByteString.empty
-  in case createNINJA2 (SourceFileContents emptyBytes) (TargetFileContents emptyBytes) metadata of
+  in case createNINJA2 (InputFileContents emptyBytes) (OutputFileContents emptyBytes) metadata of
        Left createError -> assertFailure ("create: " ++ renderSlapError createError)
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
          Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
@@ -595,22 +595,22 @@ ninja2EncodingRoundTrips encoding =
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePCHTXT) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePCHTXT) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         PCHTXT.applyPCHTXT parsed (SourceFileContents source) === Right (TargetFileContents target)
+         PCHTXT.applyPCHTXT parsed (InputFileContents source) === Right (OutputFileContents target)
 
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateAPSN64) (SourceFileContents source) (TargetFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateAPSN64) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         APSN64.applyAPSN64 parsed (SourceFileContents source) === Right (TargetFileContents target)
+         APSN64.applyAPSN64 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 ----------------------------------------------------------------------------
 -- BPS efficiency properties
@@ -628,7 +628,7 @@ prop_bpsBlockMove = once $
       sourceLength = padding2 + blockSize
       source = ByteString.replicate padding1 0 <> block <> ByteString.replicate (sourceLength - padding1 - blockSize) 0
       target = ByteString.replicate padding2 0 <> block
-  in case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
+  in case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
        Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
        Right (CreateResult patch _) ->
          counterexample ("patch size: " ++ show (ByteString.length (unPatchFileContents patch))
@@ -636,7 +636,7 @@ prop_bpsBlockMove = once $
          conjoin
            [ case BPS.parseBPS patch of
                Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-               Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (SourceFileContents source) === Right (TargetFileContents target)
+               Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (InputFileContents source) === Right (OutputFileContents target)
            , property (ByteString.length (unPatchFileContents patch) < 1024)
            ]
 
@@ -645,7 +645,7 @@ prop_bpsBlockMove = once $
 -- (TargetRead for every byte), which costs targetLen + small overhead.
 prop_bpsNoSizeRegression :: Property
 prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
-  case createBPS (SourceFileContents source) (TargetFileContents target) (BPSMetadata ByteString.empty) of
+  case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) ->
       let maxPatchSize = ByteString.length target + 100

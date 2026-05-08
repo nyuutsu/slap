@@ -9,7 +9,7 @@ import Slap.Measure (offsetToInt,
                      ActionIndex(unActionIndex),
                      firstAction, nextAction, streamEndIndex)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -20,8 +20,8 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
-applyPMSR :: PMSRPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyPMSR patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer -> do
+applyPMSR :: PMSRPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyPMSR patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer -> do
     copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

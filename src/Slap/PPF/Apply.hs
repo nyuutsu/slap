@@ -9,7 +9,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      fitsWithin, remainingFromOffset, minLength,
                      advance, byteLength, distance, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (create)
@@ -25,12 +25,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Validates every record write against the output buffer bounds.
 -- Returns 'Left' on malformed patches (negative offsets, writes past
 -- the buffer); returns 'Right' with byte-identical output on success.
-applyPPF :: PPFPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyPPF patch (SourceFileContents source)
+applyPPF :: PPFPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyPPF patch (InputFileContents source)
   | unFileSize outputFileSize < 0 =
       Left (NegativeTargetSize label outputFileSize)
   | unFileSize outputFileSize == 0 =
-      Right (TargetFileContents ByteString.empty)
+      Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create (unFileSize outputFileSize) $ \outputPointer -> do
@@ -47,7 +47,7 @@ applyPPF patch (SourceFileContents source)
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (ApplyFailed label applyErr)
-        Nothing       -> Right (TargetFileContents result)
+        Nothing       -> Right (OutputFileContents result)
   where
     label     = ppfVersionLabel (ppfVersion patch)
     sourceEnd = Offset (ByteString.length source)
@@ -94,10 +94,10 @@ applyPPF patch (SourceFileContents source)
 -- Validates every record write against the input buffer bounds.
 -- Returns 'Left' on malformed undo data (negative offsets, writes past
 -- the buffer); returns 'Right' with byte-identical output on success.
-undoPPF :: PPFPatch -> TargetFileContents -> Either SlapError SourceFileContents
-undoPPF patch (TargetFileContents input)
+undoPPF :: PPFPatch -> OutputFileContents -> Either SlapError InputFileContents
+undoPPF patch (OutputFileContents input)
   | inputLength == 0 =
-      Right (SourceFileContents ByteString.empty)
+      Right (InputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
       errorRef <- newIORef Nothing
       result <- create inputLength $ \outputPointer -> do
@@ -106,7 +106,7 @@ undoPPF patch (TargetFileContents input)
       errorState <- readIORef errorRef
       pure $ case errorState of
         Just applyErr -> Left (UndoFailed label applyErr)
-        Nothing       -> Right (SourceFileContents result)
+        Nothing       -> Right (InputFileContents result)
   where
     label       = ppfVersionLabel (ppfVersion patch)
     inputLength = ByteString.length input

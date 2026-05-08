@@ -136,7 +136,7 @@ dryrunTests base bps =
 
   , testCase "dryrun/shows CRC" $
       expectOk ["apply", bps, base, "--dry-run"]
-        "dryrun/shows CRC" "source CRC"
+        "dryrun/shows CRC" "input CRC"
 
   , testCase "dryrun/rejects conflicting --output" $
       expectFail ["apply", bps, base, "-o", "/tmp/slap-unreachable", "--dry-run"]

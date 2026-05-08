@@ -44,7 +44,7 @@ import Slap.GDIFF.Create (createGDIFF)
 
 import Slap.Convert (createPatch)
 import Slap.Error (SlapError, CreateResult)
-import Slap.FileContents (SourceFileContents, TargetFileContents)
+import Slap.FileContents (InputFileContents, OutputFileContents)
 
 ----------------------------------------------------------------------------
 -- Differential-format porcelain
@@ -55,8 +55,8 @@ import Slap.FileContents (SourceFileContents, TargetFileContents)
 -- bytes are for; the wire-level encoder in "Slap.BPS.Create" still
 -- takes raw bytes and the unwrap happens at this boundary.
 createBPS
-  :: SourceFileContents
-  -> TargetFileContents
+  :: InputFileContents
+  -> OutputFileContents
   -> BPSMetadata
   -> Either SlapError CreateResult
 createBPS source target (BPSMetadata metadataBytes) =
@@ -66,8 +66,8 @@ createBPS source target (BPSMetadata metadataBytes) =
 -- fields (name, author, version) as structured 'String's;
 -- 'DPSStability' names the stable-vs-unstable flag byte.
 createDPS
-  :: SourceFileContents
-  -> TargetFileContents
+  :: InputFileContents
+  -> OutputFileContents
   -> DPSMetadata
   -> DPSStability
   -> Either SlapError CreateResult
@@ -76,8 +76,8 @@ createDPS = DPS.createDPS
 -- | Create a NINJA2 patch. 'NINJA2Metadata' is the large record
 -- covering the fixed-header fields and the platform type.
 createNINJA2
-  :: SourceFileContents
-  -> TargetFileContents
+  :: InputFileContents
+  -> OutputFileContents
   -> NINJA2Metadata
   -> Either SlapError CreateResult
 createNINJA2 = NINJA2.createNINJA2

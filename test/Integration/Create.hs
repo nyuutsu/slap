@@ -23,7 +23,7 @@ import Slap.Convert
   (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import Data.ByteString (ByteString)
@@ -86,8 +86,8 @@ mkRoundTripTest getTargets label format basePath bootPath expectedTargetSha =
 roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
 roundTrip format baseBytes targetBytes expectedSha =
   case createPatch format
-         (SourceFileContents baseBytes)
-         (TargetFileContents targetBytes)
+         (InputFileContents baseBytes)
+         (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested of
     Left slapError ->
       assertFailure ("create failed: " ++ renderSlapError slapError)
@@ -95,9 +95,9 @@ roundTrip format baseBytes targetBytes expectedSha =
       Left slapError ->
         assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do
-        result <- applyPatch parsed (SourceFileContents baseBytes)
+        result <- applyPatch parsed (InputFileContents baseBytes)
         case result of
           Left slapError ->
             assertFailure ("re-apply failed: " ++ renderSlapError slapError)
-          Right (TargetFileContents output) ->
+          Right (OutputFileContents output) ->
             assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

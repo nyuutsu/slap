@@ -20,7 +20,7 @@ import Integration.Skip
   )
 import Slap.Error (renderSlapError)
 import Slap.FileContents
-  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+  (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import qualified Data.ByteString as ByteString
@@ -81,9 +81,9 @@ mkPatchTest repo basePath expectedSha entry =
           Left slapError ->
             assertFailure ("parseSome failed: " ++ renderSlapError slapError)
           Right parsed -> do
-            result <- applyPatch parsed (SourceFileContents baseBytes)
+            result <- applyPatch parsed (InputFileContents baseBytes)
             case result of
               Left slapError ->
                 assertFailure ("apply failed: " ++ renderSlapError slapError)
-              Right (TargetFileContents output) ->
+              Right (OutputFileContents output) ->
                 assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

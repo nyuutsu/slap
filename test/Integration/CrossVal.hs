@@ -31,7 +31,7 @@ import Slap.Convert
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents
-  (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+  (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import System.Directory (copyFile, listDirectory)
@@ -92,8 +92,8 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
     baseBytes        <- mmapRomFile basePath
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
     case createPatch format
-           (SourceFileContents baseBytes)
-           (TargetFileContents targetBytes)
+           (InputFileContents baseBytes)
+           (OutputFileContents targetBytes)
            noMetadataRequested Nothing noConstraintsRequested of
       Left slapError ->
         assertFailure ("create failed: " ++ renderSlapError slapError)

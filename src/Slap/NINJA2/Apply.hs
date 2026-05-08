@@ -7,7 +7,7 @@ import Slap.Error (SlapError)
 import Slap.Measure (FileSize(..), offsetToInt)
 import Slap.Binary (copyByteStringRange)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -19,8 +19,8 @@ import Foreign.Ptr (plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 
 -- | Apply a NINJA2 patch in memory: XOR records + overflow handling.
-applyNINJA2 :: NINJA2Patch -> SourceFileContents -> Either SlapError TargetFileContents
-applyNINJA2 patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputLength $ \outputPointer -> do
+applyNINJA2 :: NINJA2Patch -> InputFileContents -> Either SlapError OutputFileContents
+applyNINJA2 patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputLength $ \outputPointer -> do
     -- Copy source, zero-fill any extension
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
     when (outputLength > sourceLength) $

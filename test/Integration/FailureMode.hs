@@ -27,7 +27,7 @@ import Integration.Skip
   )
 import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
 import Slap.FileContents
-  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+  (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch (parseSome, patchKind, PatchKind(..))
 import Slap.Convert
@@ -342,10 +342,10 @@ crossFormatRoundTripTests base bps =
       case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
+          targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
+            Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- mmapRomFile base
@@ -353,10 +353,10 @@ crossFormatRoundTripTests base bps =
       case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
+          targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
+            Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- mmapRomFile base
@@ -364,10 +364,10 @@ crossFormatRoundTripTests base bps =
       case parseSome (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
-          targetResult <- applyPatch bpsParsed (SourceFileContents baseBytes)
+          targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
             Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
-            Right (TargetFileContents targetBytes) -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
+            Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
     roundTripVia :: ByteString -> ByteString -> String -> String -> String -> IO ()
@@ -375,42 +375,42 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createPatch createFormatA (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormatA (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
           case parseSome patchA of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
-              resultA <- applyPatch parsedA (SourceFileContents baseBytes)
+              resultA <- applyPatch parsedA (InputFileContents baseBytes)
               case resultA of
                 Left slapError -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ renderSlapError slapError)
-                Right (TargetFileContents outputA) -> do
+                Right (OutputFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createPatch createFormatB (SourceFileContents baseBytes) (TargetFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
+                  case createPatch createFormatB (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
                       case parseSome patchB of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
-                          resultB <- applyPatch parsedB (SourceFileContents baseBytes)
+                          resultB <- applyPatch parsedB (InputFileContents baseBytes)
                           case resultB of
                             Left slapError -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ renderSlapError slapError)
-                            Right (TargetFileContents outputB) -> do
+                            Right (OutputFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createPatch createFormatC (SourceFileContents baseBytes) (TargetFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
+                              case createPatch createFormatC (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome patchC of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
-                                      resultC <- applyPatch parsedC (SourceFileContents baseBytes)
+                                      resultC <- applyPatch parsedC (InputFileContents baseBytes)
                                       case resultC of
                                         Left slapError -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ renderSlapError slapError)
-                                        Right (TargetFileContents outputC) ->
+                                        Right (OutputFileContents outputC) ->
                                           assertEqual (formatA ++ " -> " ++ formatB ++ " -> " ++ formatC ++ " output SHA1")
                                             expectedSha (sha1Hex outputC)
 
@@ -469,16 +469,16 @@ createRoundTripTests getTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createPatch createFormat (SourceFileContents baseBytes) (TargetFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormat (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome patchBytes of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
-              result <- applyPatch parsed (SourceFileContents baseBytes)
+              result <- applyPatch parsed (InputFileContents baseBytes)
               case result of
                 Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
-                Right (TargetFileContents output) ->
+                Right (OutputFileContents output) ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
 
 -- | One row in 'createRoundTripTests' — the source ROM, patch path
@@ -555,7 +555,7 @@ smcShapeConstraintTests =
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
       case createPatch (CreateDirect CreateIPS)
-             (SourceFileContents source) (TargetFileContents target)
+             (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure
           ("expected success (no flag), got: " ++ renderSlapError slapError)
@@ -592,7 +592,7 @@ smcShapeConstraintTests =
 
     createWithSMC source target =
       createPatch (CreateDirect CreateIPS)
-        (SourceFileContents source) (TargetFileContents target)
+        (InputFileContents source) (OutputFileContents target)
         noMetadataRequested Nothing smcConstraints
 
     -- Build a parsed IPS patch whose post-EOF truncation marker
@@ -604,7 +604,7 @@ smcShapeConstraintTests =
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
       case createPatch (CreateDirect CreateIPS)
-             (SourceFileContents source) (TargetFileContents target)
+             (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested of
         Left slapError -> assertFailure
           ("setup: create failed: " ++ renderSlapError slapError)

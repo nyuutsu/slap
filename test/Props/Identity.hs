@@ -7,7 +7,7 @@
 module Props.Identity (identityTests) where
 
 import Slap.Error (CreateResult(..), renderSlapError)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested)
@@ -46,12 +46,12 @@ allCreateFormats =
 -- | For any non-empty source, create(src, src) should be an identity patch.
 prop_identity :: CreateFormat -> Property
 prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
-  case createPatch format (SourceFileContents source) (TargetFileContents source) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch format (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case parseSome patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
-        result <- applySomePatch parsed (SourceFileContents source)
+        result <- applySomePatch parsed (InputFileContents source)
         pure $ case result of
           Left slapError -> counterexample ("apply: " ++ renderSlapError slapError) $ property False
-          Right (TargetFileContents out) -> out === source
+          Right (OutputFileContents out) -> out === source

@@ -24,7 +24,7 @@ import Integration.Skip
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents
-  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+  (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
 import Slap.Convert
   ( CreateFormat(..)
@@ -156,11 +156,11 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
                     Left slapError ->
                       assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
-                      applied <- applyPatch convertedParsed (SourceFileContents baseBytes)
+                      applied <- applyPatch convertedParsed (InputFileContents baseBytes)
                       case applied of
                         Left slapError ->
                           assertFailure ("apply converted failed: " ++ renderSlapError slapError)
-                        Right (TargetFileContents output) ->
+                        Right (OutputFileContents output) ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
 -- | Check that each comma-separated expected pattern matches at least one note.
@@ -208,7 +208,7 @@ makeTruncatingIPSPatch =
   let sourceBytes = ByteString.replicate 1024 0x00
       targetBytes = ByteString.replicate 512 0xFF
   in case createPatch (CreateDirect CreateIPS)
-         (SourceFileContents sourceBytes) (TargetFileContents targetBytes)
+         (InputFileContents sourceBytes) (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested of
        Left slapError ->
          error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)

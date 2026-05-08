@@ -76,7 +76,7 @@ import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResul
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
 
@@ -97,7 +97,7 @@ import qualified Data.Set as Set
 -- without dropping apply-output-affecting data.
 --
 -- Differential targets use a different conversion path (apply-and-recreate via
--- @--with SOURCE@), so this contract only covers direct formats.
+-- @--with INPUT@), so this contract only covers direct formats.
 data DirectConversionContract = DirectConversionContract
   { contractRequiredFields :: Set.Set PatchField
   , contractAcceptedFields :: Set.Set PatchField
@@ -527,7 +527,7 @@ rejectNonSMCShapedTruncation constraints contents
 data ConversionFailure
   = -- | The target format lists fields as required that the source
     -- patch doesn't provide. Corrective action: populate the
-    -- missing fields (e.g. hash a source ROM via @--with SOURCE@
+    -- missing fields (e.g. hash a source ROM via @--with INPUT@
     -- for NINJA1) or choose a target that doesn't require them.
     RequirementsMissing (Set.Set PatchField)
 
@@ -709,11 +709,11 @@ convertDirect contents (CreateDirect target) meta constraints = do
               [(field, preservingDirectTargets field) | field <- Set.toList fields])
     Right () -> do
       -- Source-less path: 'encodeDirect' still runs 'resolveSentinelCollisions'
-      -- but with an empty 'SourceFileContents', so any record sitting on the
+      -- but with an empty 'InputFileContents', so any record sitting on the
       -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
       -- than silently passing through.
       let notes = conversionNotes contents target contract meta
-      encoded <- encodeDirect contents (SourceFileContents ByteString.empty) target meta (encodingLimits target) constraints
+      encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints
       Right CreateResult
         { resultBytes    = resultBytes encoded
         , resultWarnings = notes ++ resultWarnings encoded
@@ -739,7 +739,7 @@ encodingLimits CreateNINJA1  = Nothing
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
-encodeDirect :: PatchContents -> SourceFileContents -> DirectCreate -> RequestedPatchMetadata
+encodeDirect :: PatchContents -> InputFileContents -> DirectCreate -> RequestedPatchMetadata
              -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints = case target of
   CreateIPS -> do
@@ -833,8 +833,8 @@ encodeDirect contents source target meta limits constraints = case target of
       IPS.resolveSentinelCollisions label
         (SentinelOffset (ipsVariantSentinel (variantSpec variant)))
         source
-    rejectTruncation :: FormatLabel -> PatchContents -> SourceFileContents -> Either SlapError ()
-    rejectTruncation label patchContents (SourceFileContents sourceBytes) =
+    rejectTruncation :: FormatLabel -> PatchContents -> InputFileContents -> Either SlapError ()
+    rejectTruncation label patchContents (InputFileContents sourceBytes) =
       case contentsTruncation patchContents of
         Just truncatedTargetSize ->
           Left (CannotExpressTargetShrinkage label
@@ -874,7 +874,7 @@ encodeDirect contents source target meta limits constraints = case target of
 -- 'PatchContents' carries structural data from the source patch (EBP JSON,
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for inheritance in
 -- the @--with@ conversion path.
-createPatch :: CreateFormat -> SourceFileContents -> TargetFileContents
+createPatch :: CreateFormat -> InputFileContents -> OutputFileContents
             -> RequestedPatchMetadata -> Maybe PatchContents
             -> RequestedConstraints
             -> Either SlapError CreateResult
@@ -929,9 +929,9 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) from the original
 -- patch for inheritance during @--with@ conversion.
-buildContents :: DirectCreate -> SourceFileContents -> TargetFileContents
+buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
-buildContents format sourceFileContents@(SourceFileContents source) targetFileContents@(TargetFileContents target) meta sourceContents = PatchContents
+buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
   , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
@@ -969,13 +969,13 @@ buildContents format sourceFileContents@(SourceFileContents source) targetFileCo
       CreateIPS    -> ipsHunks Offset24
       CreateIPS32  -> ipsHunks Offset32
       CreateEBP    -> ipsHunks Offset24
-      CreatePPF3   -> diffHunks sourceFileContents targetFileContents
-      CreateNINJA1 -> diffHunks sourceFileContents targetFileContents
-      CreatePMSR   -> diffHunks sourceFileContents targetFileContents
-      CreatePCHTXT -> diffHunks sourceFileContents targetFileContents
-      CreateAPSN64 -> diffHunks sourceFileContents targetFileContents
+      CreatePPF3   -> diffHunks inputFileContents outputFileContents
+      CreateNINJA1 -> diffHunks inputFileContents outputFileContents
+      CreatePMSR   -> diffHunks inputFileContents outputFileContents
+      CreatePCHTXT -> diffHunks inputFileContents outputFileContents
+      CreateAPSN64 -> diffHunks inputFileContents outputFileContents
     ipsHunks width = IPS.optimalIPSRecords width
-                       sourceFileContents targetFileContents
+                       inputFileContents outputFileContents
     hashSource   = case format of
       CreateIPS    -> source
       CreateIPS32  -> source

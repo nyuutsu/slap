@@ -36,7 +36,7 @@ module Slap.IPS.Optimize
   ( optimalIPSRecords
   ) where
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.IPS.Types
   ( OffsetWidth
   , ipsCopyRecordOverhead
@@ -110,16 +110,16 @@ byteRunEndExclusive run = advance (byteRunStart run) (byteRunLength run)
 -- mis-passed at the call site.
 optimalIPSRecords
   :: OffsetWidth
-  -> SourceFileContents
-  -> TargetFileContents
+  -> InputFileContents
+  -> OutputFileContents
   -> [Hunk]
 optimalIPSRecords
     offsetWidth
-    sourceContents
-    targetContents@(TargetFileContents target) =
+    inputContents
+    outputContents@(OutputFileContents target) =
   concatMap (partitionDiffRegion offsetWidth target) gapMergedDiffRegions
   where
-    rawDiffRegions       = scanDiffRegions sourceContents targetContents
+    rawDiffRegions       = scanDiffRegions inputContents outputContents
     gapMergedDiffRegions = mergeNarrowGaps offsetWidth target rawDiffRegions
 
 ----------------------------------------------------------------------------
@@ -138,8 +138,8 @@ optimalIPSRecords
 -- target into "regions where source agrees" and "regions where it
 -- disagrees" so the cost-aware passes downstream have something to
 -- chew on.
-scanDiffRegions :: SourceFileContents -> TargetFileContents -> [Hunk]
-scanDiffRegions (SourceFileContents source) (TargetFileContents target) =
+scanDiffRegions :: InputFileContents -> OutputFileContents -> [Hunk]
+scanDiffRegions (InputFileContents source) (OutputFileContents target) =
   scanFromPosition (Offset 0) ++ tailExtension
   where
     sourceLength = ByteString.length source

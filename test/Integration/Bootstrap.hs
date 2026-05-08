@@ -30,7 +30,7 @@ import Integration.Helpers
   )
 import Slap.Error (renderSlapError)
 import Slap.FileContents
-  (PatchFileContents(..), SourceFileContents(..), TargetFileContents(..))
+  (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 
 import Control.Monad (filterM)
@@ -121,12 +121,12 @@ buildBootstrapTargets tempDir pairs = do
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
                  ++ ": " ++ renderSlapError slapError)
         Right parsed -> do
-          result <- applyPatch parsed (SourceFileContents baseBytes)
+          result <- applyPatch parsed (InputFileContents baseBytes)
           case result of
             Left slapError ->
               error ("bootstrap apply failed for " ++ bootstrapPatch pair
                      ++ ": " ++ renderSlapError slapError)
-            Right (TargetFileContents targetBytes) -> do
+            Right (OutputFileContents targetBytes) -> do
               let targetFile = tempDir </> ("target-" ++ show index ++ ".bin")
               ByteString.writeFile targetFile targetBytes
               mmappedTarget <- mmapRomFile targetFile

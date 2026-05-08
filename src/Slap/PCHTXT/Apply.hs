@@ -7,7 +7,7 @@ import Slap.Binary (copyByteStringRange)
 import Slap.Error (SlapError)
 import Slap.Measure (offsetToInt)
 
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
@@ -17,8 +17,8 @@ import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
 -- | Apply a PCHTXT patch in memory: copy source, then overwrite at offsets.
-applyPCHTXT :: PCHTXTPatch -> SourceFileContents -> Either SlapError TargetFileContents
-applyPCHTXT patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \outputPointer -> do
+applyPCHTXT :: PCHTXTPatch -> InputFileContents -> Either SlapError OutputFileContents
+applyPCHTXT patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyByteStringRange outputPointer 0 source 0 (min sourceLength outputSize)
     when (outputSize > sourceLength) $
       fillBytes (outputPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)

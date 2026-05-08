@@ -28,7 +28,7 @@ import Slap.Error (SlapError, SlapWarning(..), Outcome(..))
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Hunk(..), Offset)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..), narrowHunk)
-import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
+import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
 
 import Data.ByteString (ByteString)
@@ -96,7 +96,7 @@ genEofPair = do
 ----------------------------------------------------------------------------
 
 -- | Apply through the SomePatch closure.
-applySomePatch :: SomePatch -> SourceFileContents -> IO (Either SlapError TargetFileContents)
+applySomePatch :: SomePatch -> InputFileContents -> IO (Either SlapError OutputFileContents)
 applySomePatch somePatch source =
   fmap (fmap outcomeValue) (runApply (patchApply somePatch) source)
 
