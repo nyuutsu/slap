@@ -7,6 +7,11 @@ module Slap.XDelta1.Parse
   , parseSources
   , parseInstructions
   , fixSequentialOffsets
+    -- * Role newtypes for parseControl arguments
+  , XDelta1ControlSegment(..)
+  , XDelta1DataSegment(..)
+  , XDelta1FromName(..)
+  , XDelta1ToName(..)
   ) where
 
 -- Canonical reference: tools/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
@@ -35,14 +40,48 @@ import qualified Data.IntMap.Strict as IntMap
 import qualified Data.IntSet as IntSet
 
 ----------------------------------------------------------------------------
+-- Role newtypes for 'parseControl'
+----------------------------------------------------------------------------
+
+-- | Decompressed control segment of an XDelta1 patch — the EDSIO-
+-- serialized record stream consumed by 'parseControl'. Distinct
+-- from 'XDelta1DataSegment' so the two cannot be transposed at the
+-- 'parseControl' call site.
+newtype XDelta1ControlSegment = XDelta1ControlSegment
+  { unXDelta1ControlSegment :: ByteString
+  } deriving (Eq, Show)
+
+-- | Decompressed data segment of an XDelta1 patch — the
+-- XdeltaData payload referenced by individual instructions in the
+-- control stream.
+newtype XDelta1DataSegment = XDelta1DataSegment
+  { unXDelta1DataSegment :: ByteString
+  } deriving (Eq, Show)
+
+-- | The from-name field parsed out of an XDelta1 patch header:
+-- the name the patch records as the source filename.
+newtype XDelta1FromName = XDelta1FromName
+  { unXDelta1FromName :: ByteString
+  } deriving (Eq, Show)
+
+-- | The to-name field parsed out of an XDelta1 patch header: the
+-- name the patch records as the target filename. Distinct from
+-- 'XDelta1FromName' so a transposition at 'parseControl' would
+-- silently produce a patch with reversed source/target names; the
+-- newtype boundary forces the spec direction at the call site.
+newtype XDelta1ToName = XDelta1ToName
+  { unXDelta1ToName :: ByteString
+  } deriving (Eq, Show)
+
+----------------------------------------------------------------------------
 -- Parsing
 ----------------------------------------------------------------------------
 
 parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
-parseXDelta1 (PatchFileContents input)
+parseXDelta1 patchContents@(PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
-  | magic == "%XDZ004%" = wrapParsed (parseV11 input magic XDelta1v11)
-  | magic == "%XDZ003%" = wrapParsed (parseV11 input magic XDelta1v104)
+  | magic == "%XDZ004%" = wrapParsed (parseV11 patchContents (ExpectedMagic magic) XDelta1v11)
+  | magic == "%XDZ003%" = wrapParsed (parseV11 patchContents (ExpectedMagic magic) XDelta1v104)
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
   | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
@@ -50,14 +89,18 @@ parseXDelta1 (PatchFileContents input)
     magic = ByteString.take 8 input
     wrapParsed = fmap (\patch -> Parsed patch [])
 
-parseV11 :: ByteString -> ByteString -> XDelta1Version -> Either SlapError XDelta1Patch
-parseV11 input expectedMagic version
+parseV11 :: PatchFileContents -> ExpectedMagic -> XDelta1Version -> Either SlapError XDelta1Patch
+parseV11 (PatchFileContents input) expectedMagic version
   | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
-  | trailingMagic /= expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 (ExpectedMagic expectedMagic) (ActualMagic trailingMagic))
+  | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
-      parseControl version decompressedControl decompressedData fromName toName
+      parseControl version
+                   (XDelta1ControlSegment decompressedControl)
+                   (XDelta1DataSegment    decompressedData)
+                   (XDelta1FromName       fromName)
+                   (XDelta1ToName         toName)
   where
     totalLength = ByteString.length input
 
@@ -88,14 +131,23 @@ parseV11 input expectedMagic version
           Right result -> Right result
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
-parseControl :: XDelta1Version -> ByteString -> ByteString -> ByteString -> ByteString
+parseControl :: XDelta1Version
+             -> XDelta1ControlSegment
+             -> XDelta1DataSegment
+             -> XDelta1FromName
+             -> XDelta1ToName
              -> Either SlapError XDelta1Patch
 parseControl version controlSegment dataSegment fromName toName
-  | ByteString.length controlSegment < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlSegment)))
-  | otherwise = case runGet parseControlBody controlSegment of
+  | ByteString.length controlBytes < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
+  | otherwise = case runGet parseControlBody controlBytes of
       Left errorMessage -> Left (ParseError LabelXDelta1 errorMessage)
       Right result -> Right result
   where
+    controlBytes  = unXDelta1ControlSegment controlSegment
+    dataBytes     = unXDelta1DataSegment    dataSegment
+    fromNameBytes = unXDelta1FromName       fromName
+    toNameBytes   = unXDelta1ToName         toName
+
     parseControlBody :: Get XDelta1Patch
     parseControlBody = do
       skip (Length 8)  -- type tag + allocation (deprecated)
@@ -107,7 +159,7 @@ parseControl version controlSegment dataSegment fromName toName
       instructionCount <- fromIntegral <$> edsioVarint
       instructions <- parseInstructions instructionCount
       let fixedInstructions = fixSequentialOffsets sources instructions
-      pure (XDelta1Patch version fromName toName toMD5 (FileSize (fromIntegral targetLength)) sources fixedInstructions dataSegment)
+      pure (XDelta1Patch version fromNameBytes toNameBytes toMD5 (FileSize (fromIntegral targetLength)) sources fixedInstructions dataBytes)
 
 parseSources :: Int -> Get [XDelta1Source]
 parseSources 0 = pure []
