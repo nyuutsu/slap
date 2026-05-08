@@ -17,25 +17,101 @@ import Data.Word (Word8)
 import Foreign.Ptr (plusPtr)
 import Foreign.Storable (pokeByteOff)
 
+----------------------------------------------------------------------------
+-- Apply-time cursors
+----------------------------------------------------------------------------
+
+-- | Read cursor into the diff byte stream. Advances by @addLength@
+-- per instruction.
+newtype DiffStreamReadOffset = DiffStreamReadOffset
+  { unDiffStreamReadOffset :: Offset
+  } deriving (Eq, Ord, Show)
+
+-- | Read cursor into the extra byte stream. Advances by @copyLength@
+-- per instruction.
+newtype ExtraStreamReadOffset = ExtraStreamReadOffset
+  { unExtraStreamReadOffset :: Offset
+  } deriving (Eq, Ord, Show)
+
+-- | Read cursor into the source ROM. Carried as 'SignedOffset'
+-- because BSDiff's Seek delta can take it negative; the apply path
+-- accepts the negative case via 'safeByteAt' \'s zero-fill rather
+-- than raising an error.
+newtype OriginalReadPosition = OriginalReadPosition
+  { unOriginalReadPosition :: SignedOffset
+  } deriving (Eq, Ord, Show)
+
+-- | Write cursor into the output target buffer. Advances by
+-- @addLength <> copyLength@ per instruction.
+newtype OutputWritePosition = OutputWritePosition
+  { unOutputWritePosition :: Offset
+  } deriving (Eq, Ord, Show)
+
+instance Cursor DiffStreamReadOffset where
+  advance  (DiffStreamReadOffset position) stride = DiffStreamReadOffset (advance  position stride)
+  displace (DiffStreamReadOffset position) delta  = DiffStreamReadOffset (displace position delta)
+
+instance Cursor ExtraStreamReadOffset where
+  advance  (ExtraStreamReadOffset position) stride = ExtraStreamReadOffset (advance  position stride)
+  displace (ExtraStreamReadOffset position) delta  = ExtraStreamReadOffset (displace position delta)
+
+instance Cursor OriginalReadPosition where
+  advance  (OriginalReadPosition position) stride = OriginalReadPosition (advance  position stride)
+  displace (OriginalReadPosition position) delta  = OriginalReadPosition (displace position delta)
+
+instance Cursor OutputWritePosition where
+  advance  (OutputWritePosition position) stride = OutputWritePosition (advance  position stride)
+  displace (OutputWritePosition position) delta  = OutputWritePosition (displace position delta)
+
+-- | The four cursors threaded through 'applyLoop': one per stream
+-- (diff, extra, source, output). Lifted into a record so the
+-- recursive call updates fields by name; a future edit cannot
+-- transpose two same-typed cursors at the recursive call site
+-- without the type checker noticing.
+data BSDiffCursors = BSDiffCursors
+  { diffStreamRead  :: !DiffStreamReadOffset
+  , extraStreamRead :: !ExtraStreamReadOffset
+  , originalRead    :: !OriginalReadPosition
+  , outputWrite     :: !OutputWritePosition
+  } deriving (Show)
+
+-- | Cursor record at the start of an apply: every stream reads from
+-- its own offset zero, and the output buffer's write head sits at
+-- offset zero.
+initialCursors :: BSDiffCursors
+initialCursors = BSDiffCursors
+  { diffStreamRead  = DiffStreamReadOffset (Offset 0)
+  , extraStreamRead = ExtraStreamReadOffset (Offset 0)
+  , originalRead    = OriginalReadPosition (SignedOffset 0)
+  , outputWrite     = OutputWritePosition (Offset 0)
+  }
+
+----------------------------------------------------------------------------
+-- applyBSDiff
+----------------------------------------------------------------------------
+
 applyBSDiff :: BSDiffPatch -> SourceFileContents -> Either SlapError TargetFileContents
 applyBSDiff patch _
   | unFileSize (bsdiffTargetSize patch) == 0 = Right (TargetFileContents ByteString.empty)
   | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
 applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ unsafeCreate outputSize $ \targetPointer ->
     let
-      applyLoop
-        :: Offset -> Offset -> SignedOffset -> Offset -> [BSDiffInstruction] -> IO ()
-      applyLoop _diffOffset _extraOffset _originalPosition _outputPosition [] = pure ()
-      applyLoop !diffOffset !extraOffset !originalPosition !outputPosition (instruction:rest) = do
-        let addLength = min (controlAdd instruction)
-              (remainingFromOffset outputPosition targetFileSize)
-            copyLength = min (controlCopy instruction)
-              (remainingFromOffset (advance outputPosition addLength) targetFileSize)
-            seekDelta = controlSeek instruction
+      applyLoop :: BSDiffCursors -> [BSDiffInstruction] -> IO ()
+      applyLoop _cursors [] = pure ()
+      applyLoop !cursors (instruction:rest) = do
+        let outputPosition   = unOutputWritePosition (outputWrite cursors)
+            diffReadOffset   = unDiffStreamReadOffset (diffStreamRead cursors)
+            extraReadOffset  = unExtraStreamReadOffset (extraStreamRead cursors)
+            originalPosition = unOriginalReadPosition (originalRead cursors)
+            addLength        = min (controlAdd instruction)
+                                   (remainingFromOffset outputPosition targetFileSize)
+            copyLength       = min (controlCopy instruction)
+                                   (remainingFromOffset (advance outputPosition addLength) targetFileSize)
+            seekDelta        = controlSeek instruction
         -- Add: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
         let totalBytes = unLength addLength
             sourceBase = unSignedOffset originalPosition
-            diffBase   = unOffset diffOffset
+            diffBase   = unOffset diffReadOffset
             writeBase  = targetPointer `plusPtr` unOffset outputPosition
             addLoop !byteOffset
               | byteOffset >= totalBytes = pure ()
@@ -46,17 +122,19 @@ applyBSDiff patch (SourceFileContents source) = Right $ TargetFileContents $ uns
                   addLoop (byteOffset + 1)
         addLoop 0
         -- Copy: target[outputPosition+addLength..] = extra[extraOffset..]
-        let safeCopyLength = if unOffset extraOffset >= 0 && unOffset extraOffset < extraLength
-                        then min copyLength (Length (extraLength - unOffset extraOffset))
+        let safeCopyLength = if unOffset extraReadOffset >= 0 && unOffset extraReadOffset < extraLength
+                        then min copyLength (Length (extraLength - unOffset extraReadOffset))
                         else Length 0
-        copyRegion targetPointer (advance outputPosition addLength) extraBytes extraOffset safeCopyLength
+        copyRegion targetPointer (advance outputPosition addLength) extraBytes extraReadOffset safeCopyLength
         applyLoop
-          (advance diffOffset addLength)
-          (advance extraOffset copyLength)
-          (displace (advance originalPosition addLength) seekDelta)
-          (advance outputPosition (addLength <> copyLength))
+          cursors
+            { diffStreamRead  = advance (diffStreamRead cursors) addLength
+            , extraStreamRead = advance (extraStreamRead cursors) copyLength
+            , originalRead    = displace (advance (originalRead cursors) addLength) seekDelta
+            , outputWrite     = advance (outputWrite cursors) (addLength <> copyLength)
+            }
           rest
-    in applyLoop (Offset 0) (Offset 0) (SignedOffset 0) (Offset 0) (bsdiffInstructions patch)
+    in applyLoop initialCursors (bsdiffInstructions patch)
   where
     outputSize     = unFileSize (bsdiffTargetSize patch)
     targetFileSize = bsdiffTargetSize patch
