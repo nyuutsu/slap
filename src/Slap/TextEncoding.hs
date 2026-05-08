@@ -15,6 +15,8 @@ module Slap.TextEncoding
   , encodeBoundedLocale
     -- * Validity
   , isValidUtf8
+    -- * Process-wide setup
+  , makeStdoutAndStderrLenient
   ) where
 
 import Slap.Measure (Length(..))
@@ -23,7 +25,8 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified GHC.Foreign as GHC
-import System.IO (localeEncoding)
+import System.IO (TextEncoding, hSetEncoding, localeEncoding,
+                  mkTextEncoding, stderr, stdout)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- | How a field was truncated: original encoded size vs. what fit.
@@ -56,10 +59,45 @@ encodeLocaleField inputText = unsafePerformIO $
 decodeUtf8Field :: ByteString -> String
 decodeUtf8Field = Text.unpack . Text.decodeUtf8Lenient
 
--- | Decode bytes to String using the process's locale encoding.
+-- | Decode bytes to String using the process's locale encoding,
+-- leniently. Invalid byte sequences (e.g. EUC-JP bytes seen by a
+-- UTF-8 reader) become 'U+FFFD' replacement characters rather than
+-- throwing an exception. The strict alternative — 'GHC.peekCStringLen
+-- localeEncoding' — is what NINJA2 mode-0 fields used to go through;
+-- it crashed @slap info@ outright when a foreign-locale patch met a
+-- mismatched reader. The @\/\/TRANSLIT@ suffix routes through the
+-- iconv variant that accepts any input and emits @\\65533@ on
+-- unrepresentable bytes, which is what every modern Unicode tool
+-- does.
 decodeLocaleField :: ByteString -> String
-decodeLocaleField bytes = unsafePerformIO $
-  ByteString.useAsCStringLen bytes (GHC.peekCStringLen localeEncoding)
+decodeLocaleField bytes = unsafePerformIO $ do
+  ByteString.useAsCStringLen bytes (GHC.peekCStringLen lenientLocaleEncoding)
+
+-- | The process's locale encoding with iconv's @\/\/TRANSLIT@ suffix
+-- applied: invalid input bytes decode to 'U+FFFD' and unrepresentable
+-- output characters encode to a substitution placeholder rather than
+-- throwing.  Re-used by 'decodeLocaleField' (input side) and by
+-- 'makeStdoutAndStderrLenient' (output side) so the input and output
+-- ends of slap's terminal interaction are governed by the same
+-- forgiving codec.
+lenientLocaleEncoding :: TextEncoding
+lenientLocaleEncoding = unsafePerformIO $
+  mkTextEncoding (show localeEncoding ++ "//TRANSLIT")
+{-# NOINLINE lenientLocaleEncoding #-}
+
+-- | Re-bind 'stdout' and 'stderr' to the lenient locale encoding so
+-- that printing a 'Char' GHC's strict locale codec couldn't represent
+-- — most often a 'U+FFFD' that 'decodeLocaleField' inserted while
+-- reading a foreign-locale NINJA2 mode-0 metadata field — substitutes
+-- a placeholder byte instead of crashing the program with
+-- @hPutChar: invalid argument (Invalid or incomplete multibyte or
+-- wide character)@.
+--
+-- Called once at slap startup, before any I/O.
+makeStdoutAndStderrLenient :: IO ()
+makeStdoutAndStderrLenient = do
+  hSetEncoding stdout lenientLocaleEncoding
+  hSetEncoding stderr lenientLocaleEncoding
 
 -- | Truncate a UTF-8 ByteString to fit within maxBytes,
 -- cutting at the last complete codepoint boundary.

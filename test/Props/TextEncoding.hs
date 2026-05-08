@@ -50,6 +50,17 @@ textEncodingTests = testGroup "TextEncoding"
       [ testProperty "utf8-round-trip" prop_utf8RoundTrip
       , testProperty "locale-round-trip-ascii" prop_localeRoundTripAscii
       ]
+  , testGroup "encodeUtf8Field byte-shape"
+      [ testCase "ASCII"            test_encodeUtf8FieldAscii
+      , testCase "Japanese 日本語"   test_encodeUtf8FieldJapanese
+      , testCase "emoji 🎮"          test_encodeUtf8FieldEmoji
+      ]
+  , testGroup "decodeLocaleField is lenient"
+      [ testCase "invalid byte sequence does not throw"
+          test_decodeLocaleFieldInvalid
+      , testCase "all-ASCII bytes decode identically regardless of locale rule"
+          test_decodeLocaleFieldAscii
+      ]
   ]
 
 -- truncateUtf8 properties
@@ -183,3 +194,73 @@ prop_localeRoundTripAscii :: Property
 prop_localeRoundTripAscii =
   forAll (listOf (choose ('\x20', '\x7E'))) $ \inputString ->
     decodeLocaleField (encodeLocaleField inputString) === inputString
+
+-- encodeUtf8Field byte-shape pins
+--
+-- 'encodeUtf8Field' is the wire encoder NINJA2 mode-1 fields (and
+-- every other UTF-8 field in slap) go through. The point of mode 1
+-- is that its bytes are independent of the encoder process's locale
+-- — pinning them to fixed sequences here gives a regression net for
+-- any future refactor that accidentally routes mode-1 emission
+-- through a locale-aware path.
+
+test_encodeUtf8FieldAscii :: IO ()
+test_encodeUtf8FieldAscii =
+  assertEqual "ASCII roundtrips byte-for-byte"
+    (ByteString.pack [0x73, 0x6c, 0x61, 0x70])
+    (encodeUtf8Field "slap")
+
+test_encodeUtf8FieldJapanese :: IO ()
+test_encodeUtf8FieldJapanese =
+  -- 日 = U+65E5 = e6 97 a5
+  -- 本 = U+672C = e6 9c ac
+  -- 語 = U+8A9E = e8 aa 9e
+  assertEqual "Japanese encodes as fixed UTF-8"
+    (ByteString.pack [0xe6, 0x97, 0xa5, 0xe6, 0x9c, 0xac, 0xe8, 0xaa, 0x9e])
+    (encodeUtf8Field "\x65E5\x672C\x8A9E")
+
+test_encodeUtf8FieldEmoji :: IO ()
+test_encodeUtf8FieldEmoji =
+  -- 🎮 = U+1F3AE = f0 9f 8e ae
+  assertEqual "supplementary plane encodes as 4-byte UTF-8"
+    (ByteString.pack [0xf0, 0x9f, 0x8e, 0xae])
+    (encodeUtf8Field "\x1F3AE")
+
+-- decodeLocaleField lenience
+--
+-- Before the @\/\/TRANSLIT@ fix, 'decodeLocaleField' threw an
+-- IOException whenever the input bytes weren't well-formed in the
+-- process's locale encoding — which is the everyday case for a
+-- foreign-locale NINJA2 mode-0 metadata field viewed under a
+-- mismatched reader. The new behavior is to substitute U+FFFD for
+-- unrepresentable input, matching every other modern Unicode
+-- pipeline. These tests pin the new behavior so a future regression
+-- to strict decoding fires loudly.
+--
+-- The exact mojibake we get back depends on the test runner's
+-- locale, so the assertions check shape (no exception, output
+-- length is reasonable) rather than exact characters.
+
+test_decodeLocaleFieldInvalid :: IO ()
+test_decodeLocaleFieldInvalid = do
+  -- A byte sequence that is invalid in basically every encoding:
+  -- bare 0xFE, bare 0xFF (forbidden in UTF-8; not standard 2-byte
+  -- lead in EUC-JP either) followed by a few stray continuation
+  -- bytes. The strict decoder used to throw on this; the lenient
+  -- one returns *some* String — we just assert it terminated.
+  let invalidBytes = ByteString.pack [0xfe, 0xff, 0x80, 0x80]
+      result = decodeLocaleField invalidBytes
+  assertBool "decode returns a finite, non-bottom String"
+    (length result >= 0)
+
+test_decodeLocaleFieldAscii :: IO ()
+test_decodeLocaleFieldAscii = do
+  -- Pure-ASCII bytes are valid in every reasonable locale codec, so
+  -- they should decode to the same characters whether the codec is
+  -- UTF-8, EUC-JP, ISO-8859-1, etc. This test pins the
+  -- lenient-decode path's identity behavior on the ASCII subset and
+  -- doubles as proof that the //TRANSLIT routing didn't break the
+  -- happy path.
+  let asciiBytes = ByteString.pack [0x73, 0x6c, 0x61, 0x70]
+  assertEqual "ASCII bytes decode to ASCII chars"
+    "slap" (decodeLocaleField asciiBytes)

@@ -34,6 +34,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
+import Slap.TextEncoding (makeStdoutAndStderrLenient)
 import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
@@ -341,13 +342,21 @@ data ExplainCommand = ExplainCommand
 ----------------------------------------------------------------------------
 
 main :: IO ()
-main = customExecParser (prefs showHelpOnEmpty) options >>= \case
-  Apply   parsedCommand -> doApply   parsedCommand
-  Undo    parsedCommand -> doUndo    parsedCommand
-  Create  parsedCommand -> doCreate  parsedCommand
-  Convert parsedCommand -> doConvert parsedCommand
-  Info    parsedCommand -> doInfo    parsedCommand
-  Explain parsedCommand -> doExplain parsedCommand
+main = do
+  -- Make stdout and stderr forgiving about characters the strict
+  -- locale codec couldn't represent — most often a U+FFFD that
+  -- 'decodeLocaleField' inserted while reading a foreign-locale
+  -- NINJA2 mode-0 metadata field. Without this, printing the
+  -- decoded String would crash with an "invalid argument" iconv
+  -- error, hiding the rest of @slap info@'s output.
+  makeStdoutAndStderrLenient
+  customExecParser (prefs showHelpOnEmpty) options >>= \case
+    Apply   parsedCommand -> doApply   parsedCommand
+    Undo    parsedCommand -> doUndo    parsedCommand
+    Create  parsedCommand -> doCreate  parsedCommand
+    Convert parsedCommand -> doConvert parsedCommand
+    Info    parsedCommand -> doInfo    parsedCommand
+    Explain parsedCommand -> doExplain parsedCommand
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
