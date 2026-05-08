@@ -119,18 +119,20 @@ newtype ActionIndex = ActionIndex { unActionIndex :: Int }
   deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
--- Apply-error role newtypes
+-- Apply-time role newtypes
 ----------------------------------------------------------------------------
 
--- | The offset at which a read was requested. Used in error
--- contexts where a bare 'Offset' would be ambiguous with another
--- offset-valued field.
+-- | The offset at which a read is performed. Used as the working
+-- type in apply paths where a bare 'Offset' would be ambiguous
+-- with another offset-valued field, and carried into error
+-- contexts at the failure site.
 newtype ReadOffset = ReadOffset { unReadOffset :: Offset }
   deriving (Eq, Ord, Show)
 
 -- | The current write position in a buffer being populated. Used
--- in error contexts where a bare 'Offset' would be ambiguous with
--- another offset-valued field.
+-- as the working type in apply paths where a bare 'Offset' would
+-- be ambiguous with another offset-valued field, and carried into
+-- error contexts at the failure site.
 newtype WritePosition = WritePosition { unWritePosition :: Offset }
   deriving (Eq, Ord, Show)
 
@@ -388,6 +390,14 @@ instance Cursor SignedOffset where
     SignedOffset (position + stride)
   displace (SignedOffset position) (Delta displacement) =
     SignedOffset (position + displacement)
+
+instance Cursor ReadOffset where
+  advance  (ReadOffset position) stride = ReadOffset (advance  position stride)
+  displace (ReadOffset position) delta  = ReadOffset (displace position delta)
+
+instance Cursor WritePosition where
+  advance  (WritePosition position) stride = WritePosition (advance  position stride)
+  displace (WritePosition position) delta  = WritePosition (displace position delta)
 
 ----------------------------------------------------------------------------
 -- Cursor helpers

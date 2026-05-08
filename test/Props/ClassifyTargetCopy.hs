@@ -5,7 +5,8 @@
 module Props.ClassifyTargetCopy (classifyTargetCopyTests) where
 
 import Slap.BPS.Apply (TargetCopyStrategy(..), classifyTargetCopy)
-import Slap.Measure (Offset(..), Length(..))
+import Slap.Measure (Offset(..), Length(..),
+                     ReadOffset(..), WritePosition(..))
 
 import Test.Tasty
 import Test.Tasty.QuickCheck
@@ -28,22 +29,26 @@ classifyTargetCopyTests = testGroup "classifyTargetCopy"
 
 -- | Generator for valid (readStart, writePos, copyLength) triples.
 -- Preconditions: writePos >= 1, 0 <= readStart < writePos, copyLength >= 0.
-genValidClassifierInput :: Gen (Offset, Offset, Length)
+genValidClassifierInput :: Gen (ReadOffset, WritePosition, Length)
 genValidClassifierInput = do
-  writePos   <- Offset <$> chooseInt (1, 10000)
-  readStart  <- Offset <$> chooseInt (0, unOffset writePos - 1)
-  copyLength <- Length <$> chooseInt (0, 10000)
-  pure (readStart, writePos, copyLength)
+  writePosInt   <- chooseInt (1, 10000)
+  readStartInt  <- chooseInt (0, writePosInt - 1)
+  copyLengthInt <- chooseInt (0, 10000)
+  pure ( ReadOffset (Offset readStartInt)
+       , WritePosition (Offset writePosInt)
+       , Length copyLengthInt )
 
 -- | Naive reference classifier, kept separate from the production code
 -- so that a refactor of classifyTargetCopy doesn't silently change both.
-referenceClassify :: Offset -> Offset -> Length -> TargetCopyStrategy
+referenceClassify :: ReadOffset -> WritePosition -> Length -> TargetCopyStrategy
 referenceClassify readStart writePos copyLength
-  | readEnd <= writePos                         = TargetCopyNonOverlapping
-  | unOffset readStart == unOffset writePos - 1 = TargetCopySingleByteRun
-  | otherwise                                   = TargetCopyGeneralOverlap
+  | readEndInt <= writePosInt                = TargetCopyNonOverlapping
+  | readStartInt == writePosInt - 1          = TargetCopySingleByteRun
+  | otherwise                                = TargetCopyGeneralOverlap
   where
-    readEnd = Offset (unOffset readStart + unLength copyLength)
+    readStartInt = unOffset (unReadOffset readStart)
+    writePosInt  = unOffset (unWritePosition writePos)
+    readEndInt   = readStartInt + unLength copyLength
 
 -- | Classification is total: every valid input produces one of the
 -- three constructors.
@@ -59,12 +64,14 @@ prop_classifyTargetCopy_total =
 prop_classifyTargetCopy_nonOverlapping :: Property
 prop_classifyTargetCopy_nonOverlapping =
   forAll genValidClassifierInput $ \(readStart, writePos, copyLength) ->
-    let readEnd    = unOffset readStart + unLength copyLength
-        result     = classifyTargetCopy readStart writePos copyLength
+    let readStartInt = unOffset (unReadOffset readStart)
+        writePosInt  = unOffset (unWritePosition writePos)
+        readEnd      = readStartInt + unLength copyLength
+        result       = classifyTargetCopy readStart writePos copyLength
         isNonOverlap = result == TargetCopyNonOverlapping
     in counterexample ("readEnd=" ++ show readEnd
-                        ++ " writePos=" ++ show (unOffset writePos)) $
-       isNonOverlap === (readEnd <= unOffset writePos)
+                        ++ " writePos=" ++ show writePosInt) $
+       isNonOverlap === (readEnd <= writePosInt)
 
 -- | SingleByteRun if and only if readStart == writePos - 1 AND the
 -- copy overlaps (readEnd > writePos). A one-byte copy from writePos-1
@@ -72,13 +79,15 @@ prop_classifyTargetCopy_nonOverlapping =
 prop_classifyTargetCopy_singleByteRun :: Property
 prop_classifyTargetCopy_singleByteRun =
   forAll genValidClassifierInput $ \(readStart, writePos, copyLength) ->
-    let readEnd    = unOffset readStart + unLength copyLength
-        result     = classifyTargetCopy readStart writePos copyLength
+    let readStartInt = unOffset (unReadOffset readStart)
+        writePosInt  = unOffset (unWritePosition writePos)
+        readEnd      = readStartInt + unLength copyLength
+        result       = classifyTargetCopy readStart writePos copyLength
         isSingleByte = result == TargetCopySingleByteRun
-        expected     = unOffset readStart == unOffset writePos - 1
-                       && readEnd > unOffset writePos
-    in counterexample ("readStart=" ++ show (unOffset readStart)
-                        ++ " writePos=" ++ show (unOffset writePos)
+        expected     = readStartInt == writePosInt - 1
+                       && readEnd > writePosInt
+    in counterexample ("readStart=" ++ show readStartInt
+                        ++ " writePos=" ++ show writePosInt
                         ++ " readEnd=" ++ show readEnd) $
        isSingleByte === expected
 
@@ -86,14 +95,16 @@ prop_classifyTargetCopy_singleByteRun =
 prop_classifyTargetCopy_generalOverlap :: Property
 prop_classifyTargetCopy_generalOverlap =
   forAll genValidClassifierInput $ \(readStart, writePos, copyLength) ->
-    let readEnd    = unOffset readStart + unLength copyLength
-        result     = classifyTargetCopy readStart writePos copyLength
-        isGeneral  = result == TargetCopyGeneralOverlap
-        isNonOverlap = readEnd <= unOffset writePos
-        isSingleByte = unOffset readStart == unOffset writePos - 1
-                       && readEnd > unOffset writePos
-    in counterexample ("readStart=" ++ show (unOffset readStart)
-                        ++ " writePos=" ++ show (unOffset writePos)
+    let readStartInt = unOffset (unReadOffset readStart)
+        writePosInt  = unOffset (unWritePosition writePos)
+        readEnd      = readStartInt + unLength copyLength
+        result       = classifyTargetCopy readStart writePos copyLength
+        isGeneral    = result == TargetCopyGeneralOverlap
+        isNonOverlap = readEnd <= writePosInt
+        isSingleByte = readStartInt == writePosInt - 1
+                       && readEnd > writePosInt
+    in counterexample ("readStart=" ++ show readStartInt
+                        ++ " writePos=" ++ show writePosInt
                         ++ " readEnd=" ++ show readEnd) $
        isGeneral === (not isNonOverlap && not isSingleByte)
 
@@ -101,9 +112,10 @@ prop_classifyTargetCopy_generalOverlap =
 -- readEnd = readStart <= writePos (given the precondition readStart < writePos).
 prop_classifyTargetCopy_lengthZero :: Property
 prop_classifyTargetCopy_lengthZero =
-  forAll (do writePos  <- Offset <$> chooseInt (1, 10000)
-             readStart <- Offset <$> chooseInt (0, unOffset writePos - 1)
-             pure (readStart, writePos)) $ \(readStart, writePos) ->
+  forAll (do writePosInt  <- chooseInt (1, 10000)
+             readStartInt <- chooseInt (0, writePosInt - 1)
+             pure ( ReadOffset (Offset readStartInt)
+                  , WritePosition (Offset writePosInt) )) $ \(readStart, writePos) ->
     classifyTargetCopy readStart writePos (Length 0)
       === TargetCopyNonOverlapping
 
