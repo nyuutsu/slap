@@ -17,7 +17,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, int64LE)
 import Slap.Measure (Offset(..), Length(..),
                      RequiredLength(..), ActualLength(..),
-                     RawFlagByte(..))
+                     RawFlagByte(..),
+                     ActionIndex, firstAction, nextAction)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -50,7 +51,7 @@ parsePPF3 (PatchFileContents input)
           headerLength = if ppf3HasBlockCheck header then ppf3MinHeaderLength <> validationSize else ppf3MinHeaderLength
           fileId     = detectFileId getWord16LE 2 input
           recordBody = stripFileId 2 fileId (ByteString.drop (unLength headerLength) input)
-      records <- wrapError LabelPPF3 (runGet (parseRecords64 LabelPPF3 (ppf3HasUndo header) 0) recordBody)
+      records <- wrapError LabelPPF3 (runGet (parseRecords64 LabelPPF3 (ppf3HasUndo header) firstAction) recordBody)
       pure (Parsed
         PPFPatch
           { ppfVersion     = PPF3
@@ -91,7 +92,7 @@ minPPF3Length = ppfPreambleLength
 
 -- | Parse PPF3 records (8-byte offset, 1-byte count, N bytes data,
 -- optional undo).
-parseRecords64 :: FormatLabel -> Bool -> Int -> Get [PPFRecord]
+parseRecords64 :: FormatLabel -> Bool -> ActionIndex -> Get [PPFRecord]
 parseRecords64 label hasUndo recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 9 then pure []
@@ -100,11 +101,13 @@ parseRecords64 label hasUndo recordIndex = do
     count <- fromIntegral <$> getByte
     let need = 9 + count + if hasUndo then count else 0
     if need > unLength remainingBytes
-      then fail (truncatedMessage recordIndex need (unLength remainingBytes))
+      then fail (truncatedMessage recordIndex
+                                  (RequiredLength (Length need))
+                                  (ActualLength remainingBytes))
       else do
         payload <- getBytes (Length count)
         undoData <- if hasUndo
                     then Just <$> getBytes (Length count)
                     else pure Nothing
-        rest <- parseRecords64 label hasUndo (recordIndex + 1)
+        rest <- parseRecords64 label hasUndo (nextAction recordIndex)
         pure (PPFRecord recordOffset payload undoData : rest)

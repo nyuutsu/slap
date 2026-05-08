@@ -19,7 +19,9 @@ import Slap.PPF.Types (PPFRecord(..),
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, getByte, getBytes, remaining, word32LE)
-import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..))
+import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
+                     ActionIndex(unActionIndex), RequiredLength(..), ActualLength(..),
+                     nextAction)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -51,7 +53,7 @@ checkPPF3Encoding input
   where actual = ByteString.index input 5
 
 -- | Parse PPF1/PPF2 records (4-byte offset, 1-byte count, N bytes data).
-parseRecords32 :: FormatLabel -> Int -> Get [PPFRecord]
+parseRecords32 :: FormatLabel -> ActionIndex -> Get [PPFRecord]
 parseRecords32 label recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 5 then pure []
@@ -60,10 +62,12 @@ parseRecords32 label recordIndex = do
     count <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining
     if unLength remainingAfterHeader < count
-      then fail (truncatedMessage recordIndex (5 + count) (unLength remainingBytes))
+      then fail (truncatedMessage recordIndex
+                                  (RequiredLength (Length (5 + count)))
+                                  (ActualLength remainingBytes))
       else do
         payload <- getBytes (Length count)
-        rest <- parseRecords32 label (recordIndex + 1)
+        rest <- parseRecords32 label (nextAction recordIndex)
         pure (PPFRecord recordOffset payload Nothing : rest)
 
 -- | File_ID.diz detection, parameterised by length-field reader and width.
@@ -90,7 +94,9 @@ stripFileId lengthSize (Just (PPFFileId content)) body =
   in ByteString.take (ByteString.length body - trimmed) body
 
 -- | Format a truncated-record error message.
-truncatedMessage :: Int -> Int -> Int -> String
-truncatedMessage recordIndex needed available =
-  "record " ++ show recordIndex
+truncatedMessage :: ActionIndex -> RequiredLength -> ActualLength -> String
+truncatedMessage recordIndex
+                 (RequiredLength (Length needed))
+                 (ActualLength   (Length available)) =
+  "record " ++ show (unActionIndex recordIndex)
   ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"

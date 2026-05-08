@@ -15,7 +15,8 @@ import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Offset(..), Length(..),
-                     RequiredLength(..), ActualLength(..))
+                     RequiredLength(..), ActualLength(..),
+                     ActionIndex(unActionIndex), firstAction, nextAction)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -49,7 +50,7 @@ parsePPF4 (PatchFileContents input)
       skip ppfPreambleLength
       description <- getBytes ppfDescriptionLength
       skip ppf4PostDescriptionLength
-      (replaces, appends) <- parsePPF4Records 0 ReplacePhase [] []
+      (replaces, appends) <- parsePPF4Records firstAction ReplacePhase [] []
       pure (description, replaces, appends)
 
 -- | Minimum bytes required before 'parsePPF4' can index into the
@@ -65,7 +66,7 @@ ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 -- | Parse PPF4 records (1-byte cmd, 4-byte offset, 1-byte count, N
 -- bytes data) while enforcing the two-phase invariant: every Replace
 -- record must precede every Append record.
-parsePPF4Records :: Int -> PPF4ParsePhase
+parsePPF4Records :: ActionIndex -> PPF4ParsePhase
                  -> [PPF4Replace] -> [PPF4Append]
                  -> Get ([PPF4Replace], [PPF4Append])
 parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
@@ -78,7 +79,9 @@ parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
       count       <- fromIntegral <$> getByte
       remainingAfterHeader <- remaining
       if unLength remainingAfterHeader < count
-        then fail (ppf4TruncatedMessage recordIndex (6 + count) (unLength remainingBytes))
+        then fail (ppf4TruncatedMessage recordIndex
+                                        (RequiredLength (Length (6 + count)))
+                                        (ActualLength remainingBytes))
         else do
           payload <- getBytes (Length count)
           case commandByte of
@@ -88,24 +91,26 @@ parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
                       { replaceOffset = Offset (fromIntegral wireOffset)
                       , replaceData   = payload
                       }
-                in parsePPF4Records (recordIndex + 1) ReplacePhase
+                in parsePPF4Records (nextAction recordIndex) ReplacePhase
                      (replace : replacesAcc) appendsAcc
               AppendPhase ->
-                fail ("record " ++ show recordIndex
+                fail ("record " ++ show (unActionIndex recordIndex)
                       ++ ": Replace after Append (PPF4 is two-phase; "
                       ++ "once an Append record appears, every subsequent "
                       ++ "record must also be Append)")
             1 ->
-              parsePPF4Records (recordIndex + 1) AppendPhase
+              parsePPF4Records (nextAction recordIndex) AppendPhase
                 replacesAcc (PPF4Append payload : appendsAcc)
             _ ->
-              fail ("record " ++ show recordIndex
+              fail ("record " ++ show (unActionIndex recordIndex)
                     ++ " has unknown command byte: 0x" ++ padHex 2 commandByte)
 
 -- | Format a truncated-record error message (PPF4 copy; the wording
 -- matches Common's 'truncatedMessage' but lives here so PPF4 does not
 -- import from Slap.PPF.Common).
-ppf4TruncatedMessage :: Int -> Int -> Int -> String
-ppf4TruncatedMessage recordIndex needed available =
-  "record " ++ show recordIndex
+ppf4TruncatedMessage :: ActionIndex -> RequiredLength -> ActualLength -> String
+ppf4TruncatedMessage recordIndex
+                     (RequiredLength (Length needed))
+                     (ActualLength   (Length available)) =
+  "record " ++ show (unActionIndex recordIndex)
   ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"

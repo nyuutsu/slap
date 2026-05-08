@@ -9,7 +9,7 @@ import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip)
-import Slap.Measure (Length(..), RequiredLength(..), ActualLength(..))
+import Slap.Measure (Length(..), RequiredLength(..), ActualLength(..), firstAction)
 
 import qualified Data.ByteString as ByteString
 
@@ -29,7 +29,7 @@ parsePPF1 (PatchFileContents input)
     parsePPF1Body = do
       skip ppfPreambleLength
       description <- getBytes ppfDescriptionLength
-      records <- parseRecords32 LabelPPF1 0
+      records <- parseRecords32 LabelPPF1 firstAction
       pure PPFPatch
         { ppfVersion     = PPF1
         , ppfDescription = description
