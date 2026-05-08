@@ -115,11 +115,11 @@ optimalIPSRecords
   -> [Hunk]
 optimalIPSRecords
     offsetWidth
-    (SourceFileContents source)
-    (TargetFileContents target) =
+    sourceContents
+    targetContents@(TargetFileContents target) =
   concatMap (partitionDiffRegion offsetWidth target) gapMergedDiffRegions
   where
-    rawDiffRegions       = scanDiffRegions source target
+    rawDiffRegions       = scanDiffRegions sourceContents targetContents
     gapMergedDiffRegions = mergeNarrowGaps offsetWidth target rawDiffRegions
 
 ----------------------------------------------------------------------------
@@ -138,8 +138,8 @@ optimalIPSRecords
 -- target into "regions where source agrees" and "regions where it
 -- disagrees" so the cost-aware passes downstream have something to
 -- chew on.
-scanDiffRegions :: ByteString -> ByteString -> [Hunk]
-scanDiffRegions source target =
+scanDiffRegions :: SourceFileContents -> TargetFileContents -> [Hunk]
+scanDiffRegions (SourceFileContents source) (TargetFileContents target) =
   scanFromPosition (Offset 0) ++ tailExtension
   where
     sourceLength = ByteString.length source

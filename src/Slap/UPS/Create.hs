@@ -28,8 +28,8 @@ import Foreign.Storable (pokeByteOff)
 -- no valid terminator position within target bounds).
 createUPS :: SourceFileContents -> TargetFileContents
           -> Either SlapError CreateResult
-createUPS (SourceFileContents original) (TargetFileContents modified) = do
-  blocks <- diffToBlocks original modified
+createUPS sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) = do
+  blocks <- diffToBlocks sourceContents targetContents
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
       body = byteString upsMagicBytes
@@ -53,8 +53,8 @@ encodeUPSBlock (UPSBlock skipLength xorData) =
 -- Returns 'Left' if the pair is unencodeable (diff run whose
 -- terminator would fall past target end, or source has non-zero
 -- bytes past target size).
-diffToBlocks :: ByteString -> ByteString -> Either SlapError [UPSBlock]
-diffToBlocks source target
+diffToBlocks :: SourceFileContents -> TargetFileContents -> Either SlapError [UPSBlock]
+diffToBlocks (SourceFileContents source) (TargetFileContents target)
   | not sourceTailAllZero =
       Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)
   | otherwise = scan (Offset 0) (Length 0) []

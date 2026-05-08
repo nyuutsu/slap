@@ -24,12 +24,12 @@ import qualified Data.ByteString.Lazy as LazyByteString
 -- guard is effectively dead (cap is ~9 EB).
 createBPS :: SourceFileContents -> TargetFileContents -> ByteString
           -> Either SlapError CreateResult
-createBPS (SourceFileContents original) (TargetFileContents modified) metadata = do
+createBPS sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) metadata = do
   guardAddressable (byteFileSize original)
   guardAddressable (byteFileSize modified)
   let sourceCRC = rustyCRC32 original
       targetCRC = rustyCRC32 modified
-      actionBytes = rustyBpsDiff original modified
+      actionBytes = rustyBpsDiff sourceContents targetContents
       body = byteString bpsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))

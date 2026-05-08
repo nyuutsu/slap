@@ -15,7 +15,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..), PatchFileContents(..))
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
@@ -24,7 +23,7 @@ import Data.Word (Word32)
 
 createAPSGBA :: SourceFileContents -> TargetFileContents
              -> Either SlapError CreateResult
-createAPSGBA (SourceFileContents original) (TargetFileContents modified) = do
+createAPSGBA sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) = do
   guardAPSGBASize (byteFileSize original)
   guardAPSGBASize (byteFileSize modified)
   Right (CreateResult (PatchFileContents patchBytes) [])
@@ -33,7 +32,7 @@ createAPSGBA (SourceFileContents original) (TargetFileContents modified) = do
       byteString apsGbaMagicBytes
       <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
       <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
-      <> foldMap (encodeGBABlock original modified) changedBlocks
+      <> foldMap (encodeGBABlock sourceContents targetContents) changedBlocks
     blockSize = apsGbaBlockSize
     blockCount = max (blocksOf original) (blocksOf modified)
     blocksOf input = (ByteString.length input + blockSize - 1) `div` blockSize
@@ -60,8 +59,8 @@ guardAPSGBASize size
   where
     maxAddressable = FileSize (fromIntegral (maxBound :: Word32))
 
-encodeGBABlock :: ByteString -> ByteString -> Int -> Builder
-encodeGBABlock original modified blockIndex =
+encodeGBABlock :: SourceFileContents -> TargetFileContents -> Int -> Builder
+encodeGBABlock (SourceFileContents original) (TargetFileContents modified) blockIndex =
     putWord32LE (fromIntegral offset :: Word32)
     <> putWord16LE (unCRC16 (crc16 sourceBlock))
     <> putWord16LE (unCRC16 (crc16 targetBlock))

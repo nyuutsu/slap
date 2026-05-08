@@ -931,7 +931,7 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
 -- patch for inheritance during @--with@ conversion.
 buildContents :: DirectCreate -> SourceFileContents -> TargetFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
-buildContents format (SourceFileContents source) (TargetFileContents target) meta sourceContents = PatchContents
+buildContents format sourceFileContents@(SourceFileContents source) targetFileContents@(TargetFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
   , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
@@ -969,13 +969,13 @@ buildContents format (SourceFileContents source) (TargetFileContents target) met
       CreateIPS    -> ipsHunks Offset24
       CreateIPS32  -> ipsHunks Offset32
       CreateEBP    -> ipsHunks Offset24
-      CreatePPF3   -> diffHunks source target
-      CreateNINJA1 -> diffHunks source target
-      CreatePMSR   -> diffHunks source target
-      CreatePCHTXT -> diffHunks source target
-      CreateAPSN64 -> diffHunks source target
+      CreatePPF3   -> diffHunks sourceFileContents targetFileContents
+      CreateNINJA1 -> diffHunks sourceFileContents targetFileContents
+      CreatePMSR   -> diffHunks sourceFileContents targetFileContents
+      CreatePCHTXT -> diffHunks sourceFileContents targetFileContents
+      CreateAPSN64 -> diffHunks sourceFileContents targetFileContents
     ipsHunks width = IPS.optimalIPSRecords width
-                       (SourceFileContents source) (TargetFileContents target)
+                       sourceFileContents targetFileContents
     hashSource   = case format of
       CreateIPS    -> source
       CreateIPS32  -> source

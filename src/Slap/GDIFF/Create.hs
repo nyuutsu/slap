@@ -30,13 +30,13 @@ import Data.Word (Word8, Word16, Word32)
 -- | Unchanged regions become COPY commands; changed regions become DATA commands.
 createGDIFF :: SourceFileContents -> TargetFileContents
             -> Either SlapError CreateResult
-createGDIFF (SourceFileContents original) (TargetFileContents modified) =
+createGDIFF sourceContents@(SourceFileContents original) targetContents@(TargetFileContents modified) =
     Right (CreateResult (PatchFileContents patchBytes) [])
   where
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString gdiffMagicBytes       -- magic
       <> word8 4                       -- version
-      <> buildCommands (Offset 0) (diffHunks original modified)
+      <> buildCommands (Offset 0) (diffHunks sourceContents targetContents)
       <> word8 0                       -- EOF command
     sharedRegionEnd = lengthToOffset (minLength (byteLength original) (byteLength modified))
     buildCommands position [] =

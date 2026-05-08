@@ -69,7 +69,9 @@ createNINJA2 (SourceFileContents original) (TargetFileContents modified) metadat
     sourceTrimmed = ByteString.take minimumLength original
     targetTrimmed = ByteString.take minimumLength modified
     -- diffHunks finds changed regions; we then XOR old and new at those positions
-    xorHunks = map computeXorHunk (diffHunks sourceTrimmed targetTrimmed)
+    xorHunks = map computeXorHunk
+                   (diffHunks (SourceFileContents sourceTrimmed)
+                              (TargetFileContents targetTrimmed))
     computeXorHunk (Hunk hunkOffset newData) =
       let intOffset = unOffset hunkOffset
           oldData = ByteString.take (ByteString.length newData) (ByteString.drop intOffset sourceTrimmed)

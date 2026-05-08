@@ -244,7 +244,8 @@ prop_dpNotLarger :: Property
 prop_dpNotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
         optimalIPSRecords Offset24 (SourceFileContents source) (TargetFileContents target)
-      greedyRecords = splitHunks (Length 0xFFFF) (diffHunks source target)
+      greedyRecords = splitHunks (Length 0xFFFF)
+                                 (diffHunks (SourceFileContents source) (TargetFileContents target))
       dynamicProgrammingSize = ipsEncodedSize 3 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 3 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
@@ -255,7 +256,8 @@ prop_dpIPS32NotLarger :: Property
 prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
   let dynamicProgrammingRecords =
         optimalIPSRecords Offset32 (SourceFileContents source) (TargetFileContents target)
-      greedyRecords = splitHunks (Length 0xFFFF) (diffHunks source target)
+      greedyRecords = splitHunks (Length 0xFFFF)
+                                 (diffHunks (SourceFileContents source) (TargetFileContents target))
       dynamicProgrammingSize = ipsEncodedSize 4 dynamicProgrammingRecords
       greedySize = ipsEncodedSize 4 greedyRecords
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
