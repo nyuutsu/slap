@@ -54,7 +54,8 @@ import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (Adler32, CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyAdler32)
-import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..),
+                     advance, byteLength, distance)
 
 ----------------------------------------------------------------------------
 -- Little-endian readers
@@ -317,11 +318,14 @@ diffHunks original modified = mergeNearby (scanDiffs 0 ++ extension)
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
     mergeNearby (Hunk firstOffset firstData : Hunk nextOffset nextData : rest)
-      | unOffset nextOffset - unOffset firstOffset - ByteString.length firstData <= mergeGapThreshold =
-          let merged = ByteString.take (unOffset nextOffset + ByteString.length nextData - unOffset firstOffset)
+      | gapBetween <= Length mergeGapThreshold =
+          let merged = ByteString.take (unLength mergedLength)
                          (ByteString.drop (unOffset firstOffset) modified)
           in mergeNearby (Hunk firstOffset merged : rest)
       | otherwise = Hunk firstOffset firstData : mergeNearby (Hunk nextOffset nextData : rest)
+      where
+        gapBetween   = distance (advance firstOffset (byteLength firstData)) nextOffset
+        mergedLength = distance firstOffset (advance nextOffset (byteLength nextData))
 
 
 ----------------------------------------------------------------------------

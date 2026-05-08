@@ -6,10 +6,10 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
 import Slap.Binary (copyRegion)
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
-                     fitsWithin, remainingFromOffset,
+                     advance, fitsWithin, remainingFromOffset,
                      byteLength, byteFileSize,
                      firstAction, nextAction)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -65,7 +65,7 @@ applyDPS patch (SourceFileContents source)
         handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO ()
 
         handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remaining =
-          let readEnd        = Offset (unOffset sourceOffset + unLength copyLength)
+          let readEnd        = advance sourceOffset copyLength
               writeLength    = copyLength
               remainingSpace = remainingFromOffset outputOffset outputSize
           in if not (fitsWithin sourceOffset copyLength sourceSize)

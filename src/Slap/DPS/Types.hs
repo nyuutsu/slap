@@ -27,11 +27,11 @@ module Slap.DPS.Types
   ) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..),
+                     advance, byteLength, offsetToFileSize)
 
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
@@ -143,8 +143,6 @@ dpsOutputExtent = foldl' stepMaxEnd (FileSize 0)
   where
     stepMaxEnd :: FileSize -> DPSRecord -> FileSize
     stepMaxEnd currentMax (DPSCopyFromROM outputOffset _sourceOffset copyLength) =
-      let recordEnd = unOffset outputOffset + unLength copyLength
-      in FileSize (max (unFileSize currentMax) recordEnd)
+      max currentMax (offsetToFileSize (advance outputOffset copyLength))
     stepMaxEnd currentMax (DPSEnclosedData outputOffset payload) =
-      let recordEnd = unOffset outputOffset + ByteString.length payload
-      in FileSize (max (unFileSize currentMax) recordEnd)
+      max currentMax (offsetToFileSize (advance outputOffset (byteLength payload)))

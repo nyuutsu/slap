@@ -19,7 +19,7 @@ import Slap.VCDIFF.Types
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..), Length(..))
+import Slap.Measure (Offset(..), FileSize(..), Length(..), advance)
 
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
 
@@ -435,7 +435,7 @@ decodeWindowInstructions codeTable (VCDIFFNearCacheSize nearSize) (VCDIFFSameCac
             address <- decodeAddressST mode here
             when (count > 0) $ do
               let maybeSourceOffset = if address < fromIntegral sourceSegmentLength && hasSource
-                            then Just (Offset (unOffset (vcdiffSourcePosition window) + fromIntegral address))
+                            then Just (advance (vcdiffSourcePosition window) (Length (fromIntegral address)))
                             else Nothing
               emit (DecodedCopy (Offset windowOffset) (Length count) maybeSourceOffset)
             writeSTRef windowOffsetReference (windowOffset + count)
@@ -457,6 +457,6 @@ decodeWindowInstructions codeTable (VCDIFFNearCacheSize nearSize) (VCDIFFSameCac
       windowOffset <- readSTRef windowOffsetReference
       when (hasSource && windowOffset < targetLength) $
         emit (DecodedCopy (Offset windowOffset) (Length (targetLength - windowOffset))
-                     (Just (Offset (unOffset (vcdiffSourcePosition window) + windowOffset))))
+                     (Just (advance (vcdiffSourcePosition window) (Length windowOffset))))
 
       reverse <$> readSTRef resultReference

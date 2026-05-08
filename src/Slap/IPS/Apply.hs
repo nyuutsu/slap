@@ -14,7 +14,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      RequestedLength(..), RemainingLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
-                     Cursor(..), fitsWithin, remainingFromOffset,
+                     Cursor(..), fitsWithin, offsetToFileSize, remainingFromOffset,
                      subtractLength, minLength, byteLength, byteFileSize,
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (SourceFileContents(..), TargetFileContents(..))
@@ -126,9 +126,9 @@ applyIPS (SourceFileContents source) patch
     -- upper bound to cover the given record.
     stepMaxEnd :: FileSize -> IPSRecord -> FileSize
     stepMaxEnd currentMax record =
-      let thisRecordEnd = unOffset (ipsRecordOffset record)
-                          + unLength (recordPayloadLength record)
-      in FileSize (max (unFileSize currentMax) thisRecordEnd)
+      max currentMax (offsetToFileSize
+                        (advance (ipsRecordOffset record)
+                                 (recordPayloadLength record)))
 
     -- | Apply-time warnings derived from the disposition alone.
     -- 'MarkerAbsent' and 'MarkerNoOp' are silent; the other two
@@ -261,13 +261,11 @@ applyIPS (SourceFileContents source) patch
         handleHonored recordIndex record =
           let writePosition = ipsRecordOffset record
               writeLength   = recordPayloadLength record
-              writeStart    = unOffset writePosition
-              effectiveEnd  = unFileSize effectiveSize
-          in if writeStart + unLength writeLength <= effectiveEnd
+          in if fitsWithin writePosition writeLength effectiveSize
                then do
                  writeRecord record
                  applyRecordStream (nextAction recordIndex)
-               else if writeStart >= effectiveEnd
+               else if offsetToFileSize writePosition >= effectiveSize
                  then do
                    recordClip recordIndex writeLength
                    applyRecordStream (nextAction recordIndex)

@@ -148,15 +148,15 @@ analyzeIPS patch = PatchAnalysis
       [ SectionRegions
           (map makeIPSRegion (Vector.toList (ipsRecords patch))) ]
   , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records
-                                  (Just (TotalPayloadBytes (Length totalBytes))))
+                                  (Just (TotalPayloadBytes totalBytes)))
   }
   where
     recordVector = ipsRecords patch
     recordCount  = Vector.length recordVector
     totalBytes   = Vector.foldl'
                      (\runningTotal record ->
-                        runningTotal + unLength (recordPayloadLength record))
-                     0
+                        runningTotal <> recordPayloadLength record)
+                     mempty
                      recordVector
 
 -- | Build a 'PatchAnalysis' for an 'EBPPatch'. Delegates entirely to
