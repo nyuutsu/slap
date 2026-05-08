@@ -72,7 +72,10 @@ detectFileId readLength lengthSize input
   | ByteString.length input < 4 + lengthSize = Nothing
   | ByteString.take 4 (ByteString.drop (ByteString.length input - 4 - lengthSize) input) == ".DIZ" =
       let idLength    = fromIntegral (readLength (ByteString.length input - lengthSize) input)
-          trailerSize = unLength fileIdMarkerLength + idLength + unLength fileIdFooterLength + lengthSize
+          trailerSize = unLength (fileIdMarkerLength
+                                  <> Length idLength
+                                  <> fileIdFooterLength
+                                  <> Length lengthSize)
       in Just (PPFFileId (ByteString.take idLength (ByteString.drop (ByteString.length input - trailerSize + unLength fileIdMarkerLength) input)))
   | otherwise = Nothing
 
@@ -80,7 +83,11 @@ detectFileId readLength lengthSize input
 stripFileId :: Int -> Maybe PPFFileId -> ByteString -> ByteString
 stripFileId _ Nothing body = body
 stripFileId lengthSize (Just (PPFFileId content)) body =
-  ByteString.take (ByteString.length body - unLength fileIdMarkerLength - ByteString.length content - unLength fileIdFooterLength - lengthSize) body
+  let trimmed = unLength (fileIdMarkerLength
+                          <> Length (ByteString.length content)
+                          <> fileIdFooterLength
+                          <> Length lengthSize)
+  in ByteString.take (ByteString.length body - trimmed) body
 
 -- | Format a truncated-record error message.
 truncatedMessage :: Int -> Int -> Int -> String
