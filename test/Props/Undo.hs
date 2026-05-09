@@ -9,8 +9,8 @@ module Props.Undo (undoTests) where
 
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Parse as UPS
+import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
-import qualified Slap.PPF.Apply as PPF
 
 import Slap.Error (CreateResult(..), Parsed(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -54,7 +54,7 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right (Parsed parsed _parseWarnings) ->
-        case PPF.applyPPF parsed (InputFileContents source) of
+        case PPF3.applyPPF3 parsed (InputFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False
           Right applied ->
-            PPF.undoPPF parsed applied === Right (InputFileContents source)
+            PPF3.undoPPF3 parsed applied === Right (InputFileContents source)

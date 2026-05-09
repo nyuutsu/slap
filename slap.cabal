@@ -110,14 +110,19 @@ library slap-internal
     , Slap.XDelta1.Describe
     , Slap.XDelta1.Parse
     , Slap.XDelta1.Types
-    , Slap.PPF.Apply
-    , Slap.PPF.Common
-    , Slap.PPF.Create
-    , Slap.PPF.Describe
-    , Slap.PPF.Types
+    , Slap.PPF1.Apply
+    , Slap.PPF1.Describe
     , Slap.PPF1.Parse
+    , Slap.PPF1.Types
+    , Slap.PPF2.Apply
+    , Slap.PPF2.Describe
     , Slap.PPF2.Parse
+    , Slap.PPF2.Types
+    , Slap.PPF3.Apply
+    , Slap.PPF3.Create
+    , Slap.PPF3.Describe
     , Slap.PPF3.Parse
+    , Slap.PPF3.Types
     , Slap.PPF4.Apply
     , Slap.PPF4.Describe
     , Slap.PPF4.Parse

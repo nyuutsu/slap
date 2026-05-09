@@ -4,7 +4,10 @@ module Slap.PPF4.Types
   ( PPF4Patch(..)
   , PPF4Replace(..)
   , PPF4Append(..)
+  , ppf4MagicBytes
   , ppf4HeaderLength
+  , ppf4PreambleLength
+  , ppf4DescriptionLength
   , ppf4PostDescriptionLength
   ) where
 
@@ -21,7 +24,7 @@ import Slap.Measure (Offset, Length(..))
 --
 -- PPF4 has no validation block, no source CRC, no file-size advisory,
 -- no undo data, no image type, no File_ID.diz trailer. Those are
--- PPF1/2/3 facts and live on 'Slap.PPF.Types.PPFPatch'.
+-- PPF1/2/3 facts that live on each format's per-version Patch type.
 data PPF4Patch = PPF4Patch
   { ppf4Description :: !ByteString
   , ppf4Replaces    :: ![PPF4Replace]
@@ -47,9 +50,23 @@ data PPF4Replace = PPF4Replace
 newtype PPF4Append = PPF4Append { appendData :: ByteString }
   deriving (Show)
 
+-- | Wire-format magic prefix: ASCII @"PPF4"@.
+ppf4MagicBytes :: ByteString
+ppf4MagicBytes = "PPF4"
+
 -- | PPF4 header length in bytes.
 ppf4HeaderLength :: Length
 ppf4HeaderLength = Length 60
+
+-- | Length of the header preamble before the description field:
+-- magic (4) + version (1) + encoding (1).
+ppf4PreambleLength :: Length
+ppf4PreambleLength = Length 6
+
+-- | Length of the description field: 50 bytes (matches PPF1/PPF2/PPF3
+-- coincidentally; the PPF4 spec ships the same width independently).
+ppf4DescriptionLength :: Length
+ppf4DescriptionLength = Length 50
 
 -- | Length of the flag/padding bytes after the description field in a
 -- PPF4 header. Per Pyriel's source: image_type (1) + validation_flag (1)

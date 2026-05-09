@@ -34,9 +34,9 @@ module Slap.Convert
   , PatchEncoding(..)
   ) where
 
-import qualified Slap.PPF.Create as PPF
-import Slap.PPF.Types (PPFImageType(..), PPFFileId, ValidationBlockBytes(..),
-                       ppf3MaxRecordPayload)
+import qualified Slap.PPF3.Create as PPF3
+import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
+                        PPF3FileId(..), ppf3MaxRecordPayload)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
@@ -111,13 +111,18 @@ data PatchContents = PatchContents
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
   , contentsDestinationSize    :: Maybe FileSize
-  , contentsValidation  :: Maybe ValidationBlockBytes
+  , contentsValidation  :: Maybe ByteString.ByteString
+    -- ^ Raw 1024-byte validation-block bytes (PPF2/PPF3). Cross-cutting,
+    -- so plain bytes; per-format role newtypes wrap on emit.
   , contentsUndoData    :: Maybe [UndoHunk]
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
   , contentsRomType     :: Maybe PlatformType
-  , contentsImageType   :: Maybe PPFImageType
-  , contentsFileIdDiz   :: Maybe PPFFileId
+  , contentsImageType   :: Maybe PPF3ImageType
+  , contentsFileIdDiz   :: Maybe ByteString.ByteString
+    -- ^ Raw FILE_ID.DIZ bytes (PPF2/PPF3). Per-format wire trailers
+    -- differ in length-field width; the bytes themselves are the same
+    -- across formats.
   , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
@@ -193,7 +198,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNinja1, platformToNinja2) handles lossy mappings.
-  , requestedImageType            :: Maybe PPFImageType
+  , requestedImageType            :: Maybe PPF3ImageType
   , requestedGenre                :: Maybe String
   , requestedLanguage             :: Maybe String
   , requestedDate                 :: Maybe String
@@ -611,7 +616,7 @@ encodingGapNotes contents target = case contentsPatchEncoding contents of
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> RequestedPatchMetadata -> Maybe PlatformType -> Maybe PPFImageType -> [SlapWarning]
+defaultAssumptionNotes :: DirectCreate -> RequestedPatchMetadata -> Maybe PlatformType -> Maybe PPF3ImageType -> [SlapWarning]
 defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
   [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
@@ -793,12 +798,14 @@ encodeDirect contents source target meta limits constraints = case target of
             [])
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
-    let ppfResult = PPF.encodePPF3 (splitHunks ppf3MaxRecordPayload (contentsRecords contents)) description
-                      (contentsUndoData contents) (contentsValidation contents) imageType
+    let ppfResult = PPF3.encodePPF3 (splitHunks ppf3MaxRecordPayload (contentsRecords contents)) description
+                      (contentsUndoData contents)
+                      (fmap PPF3ValidationBlock (contentsValidation contents))
+                      imageType
     in Right $ case contentsFileIdDiz contents of
          Nothing  -> ppfResult
          Just diz -> ppfResult { resultBytes = PatchFileContents
-                       (unPatchFileContents (resultBytes ppfResult) <> PPF.encodeFileIdDiz diz) }
+                       (unPatchFileContents (resultBytes ppfResult) <> PPF3.encodeFileIdDiz (PPF3FileId diz)) }
   CreateNINJA1 -> do
     resolved <- NINJA1.resolveSentinelCollisions LabelNINJA1
                   NINJA1.ninja1SentinelOffset source (contentsRecords contents)
@@ -941,10 +948,10 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
                     then Just (byteFileSize target)
                     else Nothing
   , contentsValidation  = if needs FieldValidation && ByteString.length source > validationOffset + 1024
-                    then Just (ValidationBlockBytes (ByteString.take 1024 (ByteString.drop validationOffset source)))
+                    then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing
   , contentsUndoData    = if needs FieldUndoData
-                    then Just (PPF.computeUndo source patchHunks)
+                    then Just (PPF3.computeUndo source patchHunks)
                     else Nothing
   -- Populated whenever the target is smaller than the source regardless
   -- of whether the target format carries a truncation marker: formats

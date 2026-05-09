@@ -38,8 +38,8 @@ import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
+import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
-import qualified Slap.PPF.Apply as PPF
 import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
@@ -461,7 +461,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF.applyPPF parsed (InputFileContents source) === Right (OutputFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->

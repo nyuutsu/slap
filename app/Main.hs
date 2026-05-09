@@ -35,7 +35,7 @@ import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
 import Slap.TextEncoding (makeStdoutAndStderrLenient)
-import Slap.PPF.Types (PPFImageType(..), ValidationBlockBytes(..))
+import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, adler32, viewBytesInRange)
@@ -822,7 +822,7 @@ parseRomType input =
     Nothing           -> Left ("unknown ROM type: " ++ input
                             ++ "\n  expected: " ++ intercalate ", " advertisedRomTypes)
 
-parseImageType :: String -> Either String PPFImageType
+parseImageType :: String -> Either String PPF3ImageType
 parseImageType typeString = case map toLower typeString of
   "bin" -> Right BIN
   "gi"  -> Right GI
@@ -1307,8 +1307,8 @@ noteBlockCRC side blockOffset expected actual
   | expected == actual = pure ()
   | otherwise          = noteMismatch (VerificationBlockCRC16Mismatch side blockOffset)
 
-notePPFBlock :: Offset -> ValidationBlockBytes -> ByteString.ByteString -> IO ()
-notePPFBlock blockOffset (ValidationBlockBytes expectedData) sourceBytes =
+notePPFBlock :: Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+notePPFBlock blockOffset expectedData sourceBytes =
   let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
   in when (actual /= expectedData) $
        noteMismatch (VerificationPPFBlockMismatch blockOffset)

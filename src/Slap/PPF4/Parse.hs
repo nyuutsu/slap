@@ -7,8 +7,8 @@ module Slap.PPF4.Parse (parsePPF4) where
 -- Pyriel's patcher.lua and ppfmaker.cpp.
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
+                        ppf4PreambleLength, ppf4DescriptionLength,
                         ppf4PostDescriptionLength)
-import Slap.PPF.Types (ppfPreambleLength, ppfDescriptionLength)
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Display.Primitives (padHex)
@@ -47,8 +47,8 @@ parsePPF4 (PatchFileContents input)
   where
     parsePPF4Body :: Get (ByteString, [PPF4Replace], [PPF4Append])
     parsePPF4Body = do
-      skip ppfPreambleLength
-      description <- getBytes ppfDescriptionLength
+      skip ppf4PreambleLength
+      description <- getBytes ppf4DescriptionLength
       skip ppf4PostDescriptionLength
       (replaces, appends) <- parsePPF4Records firstAction ReplacePhase [] []
       pure (description, replaces, appends)
@@ -57,7 +57,7 @@ parsePPF4 (PatchFileContents input)
 -- input. PPF4 has no encoding-byte check, but the body still skips
 -- the 6-byte preamble before reading anything.
 minPPF4Length :: Length
-minPPF4Length = ppfPreambleLength
+minPPF4Length = ppf4PreambleLength
 
 -- | Wrap a Get error string into a SlapError, labeled PPF4.
 ppf4WrapError :: Either String a -> Either SlapError a
