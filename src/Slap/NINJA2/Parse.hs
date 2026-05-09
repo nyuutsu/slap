@@ -15,7 +15,8 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 import Slap.Display.Primitives (padHex)
 
 import Data.ByteString (ByteString)
@@ -27,22 +28,27 @@ import qualified Data.ByteString as ByteString
 -- PATCH_ENC (1B text encoding at offset 6) is stored in ninja2PatchEncoding.
 ----------------------------------------------------------------------------
 
--- | Parse the fixed header region.  Field offsets per ninja2-filespec20.txt §2.
+-- | Parse the fixed header region. Field offsets/widths per
+-- ninja2-filespec20.txt §2; the eight named constants in
+-- 'Slap.NINJA2.Types' are the single source of truth.
 parseFixedHeader :: ByteString -> NINJA2Info
 parseFixedHeader input = NINJA2Info
-  { ninja2Author      = extractField 0x007 ninja2AuthorWidth
-  , ninja2Version     = extractField 0x05B ninja2VersionWidth
-  , ninja2Title       = extractField 0x066 ninja2TitleWidth
-  , ninja2Genre       = extractField 0x166 ninja2GenreWidth
-  , ninja2Language    = extractField 0x196 ninja2LanguageWidth
-  , ninja2Date        = extractField 0x1C6 ninja2DateWidth
-  , ninja2Website     = extractField 0x1CE ninja2WebsiteWidth
-  , ninja2Description = extractField 0x3CE ninja2DescriptionWidth
+  { ninja2Author      = extractField ninja2AuthorOffset      ninja2AuthorWidth
+  , ninja2Version     = extractField ninja2VersionOffset     ninja2VersionWidth
+  , ninja2Title       = extractField ninja2TitleOffset       ninja2TitleWidth
+  , ninja2Genre       = extractField ninja2GenreOffset       ninja2GenreWidth
+  , ninja2Language    = extractField ninja2LanguageOffset    ninja2LanguageWidth
+  , ninja2Date        = extractField ninja2DateOffset        ninja2DateWidth
+  , ninja2Website     = extractField ninja2WebsiteOffset     ninja2WebsiteWidth
+  , ninja2Description = extractField ninja2DescriptionOffset ninja2DescriptionWidth
   }
   where
-    extractField fieldOffset fieldLength =
-      let field = ByteString.take fieldLength (ByteString.drop fieldOffset input)
-          trimmed = ByteString.takeWhile (/= 0) field
+    extractField :: Offset -> Length -> Maybe ByteString
+    extractField fieldOffset fieldWidth =
+      let dropCount = unOffset fieldOffset
+          takeCount = unLength fieldWidth
+          field     = ByteString.take takeCount (ByteString.drop dropCount input)
+          trimmed   = ByteString.takeWhile (/= 0) field
       in if ByteString.null trimmed then Nothing else Just trimmed
 
 ----------------------------------------------------------------------------
@@ -54,9 +60,12 @@ parseFixedHeader input = NINJA2Info
 
 parseNINJA2 :: PatchFileContents -> Either SlapError (Parsed NINJA2Patch)
 parseNINJA2 (PatchFileContents input)
-  | ByteString.length input < 7 = Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (Length (ByteString.length input))))
-  | ByteString.take 6 input /= ninja2MagicBytes = Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
-  | ByteString.length input < headerSize = Left (InputTooShort LabelNINJA2 (RequiredLength (Length headerSize)) (ActualLength (Length (ByteString.length input))))
+  | byteLength input < Length 7 =
+      Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (byteLength input)))
+  | ByteString.take 6 input /= ninja2MagicBytes =
+      Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
+  | byteLength input < headerSize =
+      Left (InputTooShort LabelNINJA2 (RequiredLength headerSize) (ActualLength (byteLength input)))
   | otherwise = case toPatchEncoding (ByteString.index input 6) of
       Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
       Right encoding -> case runGet (parseNINJA2Body encoding) input of
@@ -65,7 +74,7 @@ parseNINJA2 (PatchFileContents input)
   where
     parseNINJA2Body :: PatchEncoding -> Get NINJA2Patch
     parseNINJA2Body encoding = do
-      headerBytes <- getBytes (Length headerSize)
+      headerBytes <- getBytes headerSize
       let meta = parseFixedHeader headerBytes
       patch <- parseCommands (emptyPatch meta encoding)
       pure patch { ninja2Records = reverse (ninja2Records patch) }

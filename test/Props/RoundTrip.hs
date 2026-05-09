@@ -49,10 +49,13 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError)
+import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
+                   SlapWarning(..), FieldName(..), renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     Hunk(..), SentinelOffset(..), splitHunks)
+                     Hunk(..), SentinelOffset(..),
+                     OriginalLength(..), TruncatedLength(..),
+                     byteLength, splitHunks)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
@@ -123,6 +126,8 @@ roundTripTests = testGroup "RoundTrip"
       , testCase "encoding-utf8-round-trips"   (ninja2EncodingRoundTrips NINJA2.PatchEncodingUTF8)
       , testCase "encoding-system-round-trips" (ninja2EncodingRoundTrips NINJA2.PatchEncodingSystem)
       , testCase "single-file sentinel is one zero byte" ninja2SingleFileSentinelIsZero
+      , testCase "field-truncation-warning-reports-actual-stored-length"
+          ninja2FieldTruncationWarningReportsActualStoredLength
       ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -632,13 +637,12 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
 -- length byte.
 ninja2SingleFileSentinelIsZero :: Assertion
 ninja2SingleFileSentinelIsZero =
-  let emptyBytes = ByteString.empty
-  in case createNINJA2 (InputFileContents emptyBytes) (OutputFileContents emptyBytes) emptyNINJA2Metadata of
-       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
-       Right (CreateResult (PatchFileContents bytes) _) -> do
-         assertEqual "OPEN_NEW_FILE opcode at 0x800"  0x01 (ByteString.index bytes 0x800)
-         assertEqual "FILE_N_MUL single-file sentinel at 0x801" 0x00 (ByteString.index bytes 0x801)
-         assertEqual "ROM type byte at 0x802 (raw default)"     0x00 (ByteString.index bytes 0x802)
+  case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) emptyNINJA2Metadata of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult (PatchFileContents bytes) _) -> do
+      assertEqual "OPEN_NEW_FILE opcode at 0x800"  0x01 (ByteString.index bytes 0x800)
+      assertEqual "FILE_N_MUL single-file sentinel at 0x801" 0x00 (ByteString.index bytes 0x801)
+      assertEqual "ROM type byte at 0x802 (raw default)"     0x00 (ByteString.index bytes 0x802)
 
 -- | Both PATCH_ENC values the NINJA2 spec defines must survive a
 -- create-then-parse trip intact: the byte the encoder writes at offset
@@ -648,14 +652,59 @@ ninja2SingleFileSentinelIsZero =
 -- about; the round-trip body is exercised exhaustively by 'prop_ninja2'.
 ninja2EncodingRoundTrips :: NINJA2.PatchEncoding -> Assertion
 ninja2EncodingRoundTrips encoding =
-  let metadata    = emptyNINJA2Metadata { NINJA2.ninja2MetadataEncoding = encoding }
-      emptyBytes  = ByteString.empty
-  in case createNINJA2 (InputFileContents emptyBytes) (OutputFileContents emptyBytes) metadata of
+  let metadata = emptyNINJA2Metadata { NINJA2.ninja2MetadataEncoding = encoding }
+  in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailure ("create: " ++ renderSlapError createError)
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
          Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
          Right (Parsed parsed _parseWarnings) ->
            assertEqual "PATCH_ENC round-trip" encoding (NINJA2.ninja2PatchEncoding parsed)
+
+-- | A NINJA2 description whose UTF-8 encoding ends with a 4-byte
+-- codepoint placed exactly one byte past the field's wire width
+-- forces 'truncateUtf8' to drop the entire codepoint at the
+-- codepoint boundary, leaving stored bytes 3 shorter than the field
+-- width. The warning the create path emits reports the
+-- actually-stored byte count in 'TruncatedLength', not the field
+-- width — matching DPS, APSN64, and PPF3, and matching what the
+-- parser will read back from the same patch. Pre-fix, the warning
+-- carried 'fieldLength' as the truncated value, which silently
+-- diverged from the bytes actually stored.
+ninja2FieldTruncationWarningReportsActualStoredLength :: Assertion
+ninja2FieldTruncationWarningReportsActualStoredLength =
+  let asciiPrefixLength       = unLength NINJA2.ninja2DescriptionWidth - 3
+      asciiPrefix             = replicate asciiPrefixLength 'a'
+      fourByteCodepoint       = '\x1F3AE'   -- 🎮 (U+1F3AE), encodes to 4 UTF-8 bytes
+      description             = asciiPrefix ++ [fourByteCodepoint]
+      expectedOriginalLength  = Length (asciiPrefixLength + 4)
+      expectedStoredLength    = Length asciiPrefixLength
+      metadata                = emptyNINJA2Metadata
+        { NINJA2.ninja2MetadataDescription = Just description
+        , NINJA2.ninja2MetadataEncoding    = NINJA2.PatchEncodingUTF8
+        }
+  in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
+       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Right (CreateResult patch warnings) -> do
+         (reportedOriginalLength, reportedTruncatedLength) <-
+           case [(originalLen, truncatedLen)
+                | FieldTruncated LabelNINJA2 FieldDescription originalLen truncatedLen
+                    <- warnings] of
+             [singletonPair] -> pure singletonPair
+             []              -> assertFailure "expected exactly one FieldTruncated warning for description"
+             multiplePairs   -> assertFailure ("expected one warning, got " ++ show (length multiplePairs))
+         let OriginalLength reportedOriginal = reportedOriginalLength
+             TruncatedLength reportedTruncated = reportedTruncatedLength
+         assertEqual "warning's OriginalLength == full encoded byte count"
+           expectedOriginalLength reportedOriginal
+         assertEqual "warning's TruncatedLength == actual stored byte count"
+           expectedStoredLength reportedTruncated
+         case NINJA2.parseNINJA2 patch of
+           Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+           Right (Parsed parsed _) -> case NINJA2.ninja2Description (NINJA2.ninja2Header parsed) of
+             Nothing -> assertFailure "parsed description was Nothing; expected the truncated bytes"
+             Just storedBytes ->
+               assertEqual "parsed-back stored byte count matches the warning"
+                 (byteLength storedBytes) reportedTruncated
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
