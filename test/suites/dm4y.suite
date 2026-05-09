@@ -1,5 +1,5 @@
 # Yu-Gi-Oh! Duel Monsters 4: Yuugi Deck (Japan) — dm4-hacking translation
-# 4 MB GBC ROM. Primary small-ROM test fixture: 14 format patches,
+# 4 MB GBC ROM. Primary small-ROM test fixture: 15 format patches,
 # exercises CLI behavior, failure modes, and format coverage.
 #
 # NINJA1: wire format cross-validated against ninja-1.01php. PHP's
@@ -17,16 +17,20 @@
 # The 1999 C source needs `-m32` to match the spec's 4-byte LE offset field;
 # the unmodified source uses `long`, which on 64-bit Linux silently emits 8-byte offsets.
 # Both apply paths produce the canonical target SHA.
+#
+# PPF2: slap-encoded; cross-validated against Make-PPF v2.0 and Apply-PPF v2.0 by Icarus/Paradox, run via DOSBox.
+# slap and the reference binaries can each encode and apply, and every create × apply combination produces the canonical target.
 
 base:   test/data/dm4y/base.gbc
 sha1:   b460119b0fbd80cecba3ded57fa11a16370dd43e
-desc:   dm4y translation (4 MB GBC, 14 formats)
+desc:   dm4y translation (4 MB GBC, 15 formats)
 
 BPS      | test/data/dm4y/patch.bps       | converted | slap
 IPS      | test/data/dm4y/patch.ips       | converted | slap
 IPS32    | test/data/dm4y/patch.ips32     | converted | slap
 UPS      | test/data/dm4y/patch.ups       | converted | slap
 PPF1     | test/data/dm4y/patch.ppf1      | converted | slap
+PPF2     | test/data/dm4y/patch.ppf2      | converted | slap
 PPF3     | test/data/dm4y/patch.ppf       | converted | slap
 EBP      | test/data/dm4y/patch.ebp       | converted | slap
 APS-N64  | test/data/dm4y/patch.aps       | converted | slap

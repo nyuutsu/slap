@@ -403,6 +403,15 @@ data SlapError
   -- that this error is the failure mode of.
   | SentinelCollisionUnfixable FormatLabel SentinelOffset
 
+  -- | The PPF2 wire format mandates a 1024-byte block sampled from
+  -- source offset 0x9320, so any source file shorter than 0x9720
+  -- (= 0x9320 + 0x400) bytes can't supply one. The reference DOS
+  -- @MakePPF.exe@ crashes with a Borland Pascal "runtime error 205"
+  -- (FP overflow) on undersized inputs; slap refuses with this
+  -- structured error instead. The 'ActualSize' is the source's size,
+  -- the 'ExpectedSize' is the @0x9720@-byte minimum.
+  | SourceTooSmallForPPF2Validation FormatLabel ActualSize ExpectedSize
+
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
   | EncodingFailure FormatLabel FieldName String
 
@@ -924,6 +933,15 @@ renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
   ++ showHex (unOffset sentinel) ""
   ++ " collides with trailer sentinel and cannot be shifted"
   ++ " (no preceding source byte available to prepend)"
+
+renderSlapError (SourceTooSmallForPPF2Validation label
+                                                 (ActualSize sourceSize)
+                                                 (ExpectedSize minimumSize)) =
+  formatLabelName label ++ ": source file is "
+  ++ show (unFileSize sourceSize) ++ " bytes; PPF2 requires at least "
+  ++ show (unFileSize minimumSize) ++ " bytes ("
+  ++ "the validation block samples 1024 bytes from offset 0x9320,"
+  ++ " so anything below 0x9720 has no block to embed)"
 
 renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLength maxLength)) =
   formatLabelName label ++ ": " ++ fieldNameLabel name

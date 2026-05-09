@@ -12,6 +12,7 @@ BPS      | test/data/stadium2/fair-heavy/patch.bps         | synthetic | slap
 IPS32    | test/data/stadium2/fair-heavy/patch.ips32       | synthetic | slap
 UPS      | test/data/stadium2/fair-heavy/patch.ups         | synthetic | slap
 PPF1     | test/data/stadium2/fair-heavy/patch.ppf1        | synthetic | slap
+PPF2     | test/data/stadium2/fair-heavy/patch.ppf2        | synthetic | slap
 PPF3     | test/data/stadium2/fair-heavy/patch.ppf         | synthetic | slap
 NINJA1   | test/data/stadium2/fair-heavy/patch.ninja1      | synthetic | slap
 NINJA2   | test/data/stadium2/fair-heavy/patch.rup         | synthetic | slap
@@ -25,6 +26,7 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #   IPS32   sips (create), Atmosphère (apply)*
 #   UPS     Go ups
 #   PPF1    ApplyPPF Version 1.0 by Icarus/Paradox (1999 C, -m32)****
+#   PPF2    Make-PPF v2.0 + Apply-PPF v2.0 by Icarus/Paradox (DOSBox)*****
 #   PPF3    MakePPF3
 #   NINJA1  ninja-1.01php**
 #   NINJA2  ninja-2.0 PHP reference***
@@ -42,6 +44,8 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #     On 64-bit Linux that emits 8-byte offsets; the spec mandates 4.
 #     Compiling with `-m32` matches what the original 1999 DOS/Windows targets produced.
 #     Slap encodes spec-correct 4-byte offsets directly.
+# *****Cross-validated against Make-PPF v2.0 and Apply-PPF v2.0 by Icarus/Paradox, run via DOSBox.
+#     slap and the reference binaries can each encode and apply; all four create × apply combinations produce the canonical target SHA.
 #
 # *** Mode 1 (UTF-8 PATCH_ENC), --type n64 on both sides. NINJA2's
 #     n64_read is a no-op pass-through for canonical .z64 input

@@ -17,6 +17,7 @@ module Slap.PPF2.Types
   , ppf2HeaderLength
   , ppf2ValidationOffset
   , ppf2ValidationSize
+  , ppf2MaxRecordPayload
   , ppf2FileIdLengthFieldWidth
   , ppf2FileIdMarkerLength
   , ppf2FileIdFooterLength
@@ -81,6 +82,12 @@ ppf2ValidationOffset = Offset 0x9320
 -- | Size of the validation block, in bytes.
 ppf2ValidationSize :: Length
 ppf2ValidationSize = Length 1024
+
+-- | Maximum payload bytes a single PPF2 record can carry. The record
+-- format uses a single-byte count field (literal mode), capping
+-- payload at @0xFF = 255@.
+ppf2MaxRecordPayload :: Length
+ppf2MaxRecordPayload = Length 255
 
 -- | Width of the FILE_ID.DIZ length field at the very end of the
 -- patch: 4 bytes (LE) in PPF2. PPF3 uses 2 bytes for the same

@@ -40,6 +40,8 @@ import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Parse as PPF1
+import qualified Slap.PPF2.Apply as PPF2
+import qualified Slap.PPF2.Parse as PPF2
 import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PCHTXT.Parse as PCHTXT
@@ -95,6 +97,9 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
+      ]
+  , testGroup "PPF2"
+      [ testProperty "round-trip" prop_ppf2
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
@@ -467,6 +472,27 @@ prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
     Right (CreateResult patch _) -> case PPF1.parsePPF1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | PPF2 needs the source ROM to be at least 'ppf2ValidationOffset +
+-- ppf2ValidationSize' = 0x9720 bytes for the validation block. Use a
+-- generator that always produces sources past that threshold.
+prop_ppf2 :: Property
+prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
+  case createPatch (CreateDirect CreatePPF2) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (OutputFileContents target)
+  where
+    -- 0x9720 is the absolute minimum; bump to 0xA000 so QuickCheck-shrunk
+    -- examples still fit, with a few KB of records-target headroom.
+    minimumPPF2Source = 0xA000
+    genPPF2SizedPair = do
+      sourceLen <- choose (minimumPPF2Source, minimumPPF2Source + 8192)
+      growth    <- choose (0, 1024)
+      src <- ByteString.pack <$> vectorOf sourceLen arbitrary
+      tgt <- ByteString.pack <$> vectorOf (sourceLen + growth) arbitrary
+      pure (src, tgt)
 
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
