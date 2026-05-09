@@ -30,6 +30,12 @@ import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch (parseSome, patchKind, PatchKind(..))
+import Slap.XDelta1.Parse
+  ( parseControl
+  , XDelta1ControlSegment(..), XDelta1DataSegment(..)
+  , XDelta1FromName(..), XDelta1ToName(..)
+  )
+import Slap.XDelta1.Types (XDelta1Version(..), XDelta1SourceKind(..))
 import Slap.Convert
   ( DirectCreate(..)
   , DifferentialCreate(..)
@@ -72,6 +78,7 @@ failureModeTests tier getTargets = do
       stadium2Bps  = repo </> "test/data/stadium2/fair-heavy/patch.bps"
 
   let smcMaybes = map WillRun smcShapeConstraintTests
+      xdelta1ShapeMaybes = map WillRun xdelta1ShapeRejectionTests
 
   corruptCrcMaybes <- requireFixture dm4yBps $ \_ ->
                       requireFixture dm4yUps $ \_ ->
@@ -101,7 +108,8 @@ failureModeTests tier getTargets = do
                                      stadium2Base stadium2Bps)
     ]
 
-  pure (namedGroup "failure-mode" (smcMaybes ++ corruptCrcMaybes ++ heavyMaybes))
+  pure (namedGroup "failure-mode"
+          (smcMaybes ++ xdelta1ShapeMaybes ++ corruptCrcMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -615,3 +623,129 @@ smcShapeConstraintTests =
               ("setup: parse failed: " ++ renderSlapError slapError)
               >> error "unreachable"
             Right parsed -> pure parsed
+
+----------------------------------------------------------------------------
+-- xdelta1 source-shape rejection
+--
+-- The format admits exactly four source-list shapes:
+--   []                  XDelta1NoSources
+--   [data]              XDelta1DataOnly
+--   [file]              XDelta1FileOnly
+--   [data, file]        XDelta1DataAndFile
+-- per the canonical tool ('xdelta-1.1.4/xdmain.c:1741-1768') and the
+-- xdelta.1 manpage (MacDonald 2001). The wire format's structural
+-- capacity for arbitrary-length source lists is EDSIO serialization
+-- plumbing, not format intent. Slap rejects off-spec shapes at parse
+-- time with 'UnsupportedXDelta1Shape' (count or ordering) or
+-- 'XDelta1InstructionIndexOutOfRange' (instruction names a position
+-- the declared shape does not contain).
+----------------------------------------------------------------------------
+
+xdelta1ShapeRejectionTests :: [TestTree]
+xdelta1ShapeRejectionTests =
+  [ testCase "xdelta1-shape/rejects three sources" $
+      let controlBytes = buildXDelta1Control
+            [DataSegmentSource, FileSource, FileSource]
+            []
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for three-source xdelta1 patch"
+        Left rendered -> do
+          assertBool ("expected 'unsupported source-list shape': " ++ rendered)
+            (ciContains "unsupported source-list shape" rendered)
+          assertBool ("expected '3 sources' in: " ++ rendered)
+            (ciContains "3 sources" rendered)
+
+  , testCase "xdelta1-shape/rejects [file, data] ordering" $
+      let controlBytes = buildXDelta1Control [FileSource, DataSegmentSource] []
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for [file, data] ordering"
+        Left rendered -> do
+          assertBool ("expected 'unsupported source-list shape': " ++ rendered)
+            (ciContains "unsupported source-list shape" rendered)
+          assertBool ("expected '[file, data]' in: " ++ rendered)
+            (ciContains "[file, data]" rendered)
+
+  , testCase "xdelta1-shape/rejects out-of-range instruction index" $
+      let controlBytes = buildXDelta1Control
+            [DataSegmentSource]
+            [(1, 0, 0)]   -- index 1 cannot exist in [data] shape
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for out-of-range instruction"
+        Left rendered -> do
+          assertBool ("expected 'instruction index 1' in: " ++ rendered)
+            (ciContains "instruction index 1" rendered)
+          assertBool ("expected '[data]' shape name in: " ++ rendered)
+            (ciContains "[data]" rendered)
+  ]
+  where
+    parseControlBytes controlBytes =
+      case parseControl XDelta1v11
+                        (XDelta1ControlSegment controlBytes)
+                        (XDelta1DataSegment ByteString.empty)
+                        (XDelta1FromName ByteString.empty)
+                        (XDelta1ToName ByteString.empty) of
+        Left slapError -> Left (renderSlapError slapError)
+        Right patch    -> Right patch
+
+-- | Build a hand-crafted xdelta1 control segment carrying the given
+-- source-kind list and instruction list. Each source has empty name,
+-- zero MD5, zero length, and absolute-offset mode; each instruction
+-- carries (index, offset, length). The returned bytes are the
+-- decompressed control segment (no gzip wrapper) suitable for
+-- 'parseControl' directly.
+--
+-- Layout (all integers EDSIO varints unless noted):
+--
+-- > 8 bytes : type tag + allocation (zeros, skipped by parser)
+-- > 16 bytes: target MD5 (zeros)
+-- > varint  : target length (0)
+-- > 1 byte  : has_data flag (0, ignored)
+-- > varint  : source count
+-- > [per source]
+-- >   varint    : name length (0)
+-- >   16 bytes  : source MD5 (zeros)
+-- >   varint    : source length (0)
+-- >   1 byte    : kind (1 = data segment, 0 = file)
+-- >   1 byte    : offset mode (0 = absolute)
+-- > varint  : instruction count
+-- > [per instruction] index, offset, length (varints)
+buildXDelta1Control
+  :: [XDelta1SourceKind]
+  -> [(Int, Int, Int)]      -- ^ (instruction index, offset, length) tuples
+  -> ByteString
+buildXDelta1Control sourceKinds instructions = ByteString.concat
+  [ ByteString.replicate 8  0x00          -- type tag + allocation
+  , ByteString.replicate 16 0x00          -- target MD5
+  , edsioVarintByte 0                     -- target length
+  , ByteString.singleton 0x00             -- has_data
+  , edsioVarintByte (length sourceKinds)
+  , ByteString.concat (map encodeSource sourceKinds)
+  , edsioVarintByte (length instructions)
+  , ByteString.concat (map encodeInstruction instructions)
+  ]
+  where
+    encodeSource :: XDelta1SourceKind -> ByteString
+    encodeSource kind = ByteString.concat
+      [ edsioVarintByte 0                 -- name length
+      , ByteString.replicate 16 0x00      -- source MD5
+      , edsioVarintByte 0                 -- source length
+      , ByteString.singleton (case kind of
+          DataSegmentSource -> 0x01       -- nonzero = data segment
+          FileSource        -> 0x00)
+      , ByteString.singleton 0x00         -- absolute offsets
+      ]
+
+    encodeInstruction :: (Int, Int, Int) -> ByteString
+    encodeInstruction (idx, off, len) = ByteString.concat
+      [ edsioVarintByte idx
+      , edsioVarintByte off
+      , edsioVarintByte len
+      ]
+
+    -- | EDSIO varint encoding for non-negative values that fit in a
+    -- single byte (i.e. < 128). All hand-crafted test values stay
+    -- small; this helper does not need a multi-byte path.
+    edsioVarintByte :: Int -> ByteString
+    edsioVarintByte n
+      | n < 0 || n >= 128 = error ("edsioVarintByte: out of single-byte range: " ++ show n)
+      | otherwise         = ByteString.singleton (fromIntegral n)

@@ -938,11 +938,9 @@ parseSomePatchFromGDIFF patchContents = do
 parseSomePatchFromXDelta1 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromXDelta1 patchContents = do
   Parsed patch parseWarnings <- XDelta1.parseXDelta1 patchContents
-  let fileSources = filter (\entry -> XDelta1.xdelta1SourceKind entry == XDelta1.FileSource) (XDelta1.xdelta1Sources patch)
-      xdeltaVerification = noVerification
-        { verifySourceMD5 = case fileSources of
-            (entry:_) -> Just (XDelta1.xdelta1SourceMD5 entry)
-            []        -> Nothing
+  let xdeltaVerification = noVerification
+        { verifySourceMD5 = XDelta1.xdelta1SourceMD5
+            <$> XDelta1.xdelta1FileSourceOf (XDelta1.xdelta1SourceShape patch)
         , verifyTargetMD5 = Just (XDelta1.xdelta1ToMD5 patch)
         }
   Right SomePatch
