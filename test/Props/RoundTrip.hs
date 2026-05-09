@@ -38,6 +38,8 @@ import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
+import qualified Slap.PPF1.Apply as PPF1
+import qualified Slap.PPF1.Parse as PPF1
 import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PCHTXT.Parse as PCHTXT
@@ -90,6 +92,9 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "UPS"
       [ testProperty "round-trip" prop_ups
+      ]
+  , testGroup "PPF1"
+      [ testProperty "round-trip" prop_ppf1
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
@@ -455,6 +460,14 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
         counterexample "round-tripped EBP unexpectedly truncated" $ property False
 
 -- Direct formats: no truncation, target must be >= source
+prop_ppf1 :: Property
+prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
+  case createPatch (CreateDirect CreatePPF1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Right (CreateResult patch _) -> case PPF1.parsePPF1 patch of
+       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
+
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of

@@ -111,6 +111,7 @@ library slap-internal
     , Slap.XDelta1.Parse
     , Slap.XDelta1.Types
     , Slap.PPF1.Apply
+    , Slap.PPF1.Create
     , Slap.PPF1.Describe
     , Slap.PPF1.Parse
     , Slap.PPF1.Types

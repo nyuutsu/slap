@@ -742,6 +742,7 @@ createFormatTokens =
   , ("ips32",   CreateDirect       CreateIPS32,  Canonical)
   , ("ebp",     CreateDirect       CreateEBP,    Canonical)
   , ("ups",     CreateDifferential CreateUPS,    Canonical)
+  , ("ppf1",    CreateDirect       CreatePPF1,   Canonical)
   , ("ppf3",    CreateDirect       CreatePPF3,   Canonical)
   , ("ppf",     CreateDirect       CreatePPF3,   Alias)
   , ("pmsr",    CreateDirect       CreatePMSR,   Canonical)

@@ -11,6 +11,7 @@ desc:   stadium2 fair-heavy (64 MB N64, ~7% changed, realistic shapes)
 BPS      | test/data/stadium2/fair-heavy/patch.bps         | synthetic | slap
 IPS32    | test/data/stadium2/fair-heavy/patch.ips32       | synthetic | slap
 UPS      | test/data/stadium2/fair-heavy/patch.ups         | synthetic | slap
+PPF1     | test/data/stadium2/fair-heavy/patch.ppf1        | synthetic | slap
 PPF3     | test/data/stadium2/fair-heavy/patch.ppf         | synthetic | slap
 NINJA1   | test/data/stadium2/fair-heavy/patch.ninja1      | synthetic | slap
 NINJA2   | test/data/stadium2/fair-heavy/patch.rup         | synthetic | slap
@@ -23,6 +24,7 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #
 #   IPS32   sips (create), Atmosphère (apply)*
 #   UPS     Go ups
+#   PPF1    ApplyPPF Version 1.0 by Icarus/Paradox (1999 C, -m32)****
 #   PPF3    MakePPF3
 #   NINJA1  ninja-1.01php**
 #   NINJA2  ninja-2.0 PHP reference***
@@ -36,6 +38,11 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #     ninja.php; the original docs/ tarball is untouched. Slap then
 #     rebuilt the fixture with --rom-type n64 (single-byte diff at
 #     header byte 8: 0x00 → 0x03).
+# **** The reference Version 1.0 C source declares its record-offset variables as `long` and writes `sizeof(long)` bytes.
+#     On 64-bit Linux that emits 8-byte offsets; the spec mandates 4.
+#     Compiling with `-m32` matches what the original 1999 DOS/Windows targets produced.
+#     Slap encodes spec-correct 4-byte offsets directly.
+#
 # *** Mode 1 (UTF-8 PATCH_ENC), --type n64 on both sides. NINJA2's
 #     n64_read is a no-op pass-through for canonical .z64 input
 #     (magic 80 37 12 40), so both encoders diff the same byte stream

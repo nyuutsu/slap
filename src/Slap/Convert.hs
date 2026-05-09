@@ -34,6 +34,8 @@ module Slap.Convert
   , PatchEncoding(..)
   ) where
 
+import qualified Slap.PPF1.Create as PPF1
+import Slap.PPF1.Types (ppf1MaxRecordPayload)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         PPF3FileId(..), ppf3MaxRecordPayload)
@@ -137,7 +139,7 @@ data PatchContents = PatchContents
 -- variants: IPS has three (IPS, IPS32, EBP) distinguished by offset width
 -- and metadata; PPF exposes only version 3.
 data DirectCreate
-  = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF3
+  = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF3
   | CreateNINJA1 | CreatePMSR | CreatePCHTXT | CreateAPSN64
   deriving (Show, Eq, Enum, Bounded)
 
@@ -359,6 +361,7 @@ directConversionContract target undoChoice validationChoice = case target of
   CreateIPS     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldTruncation])
   CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldEBPMeta])
+  CreatePPF1    -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription])
   CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData   | undoChoice       == IncludeUndoData]
                                  ++ [FieldValidation | validationChoice == IncludeValidationBlock])
                              (acceptedFields [FieldDescription, FieldImageType, FieldFileIdDiz])
@@ -391,6 +394,7 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreateIPS    -> Set.empty
   CreateIPS32  -> Set.empty
   CreateEBP    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataDescription]
+  CreatePPF1   -> Set.fromList [MetadataDescription]
   CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataValidationInclusion]
   CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
@@ -487,6 +491,7 @@ acceptedConstraints (CreateDirect format) = case format of
   CreateIPS    -> Set.singleton SMCShapeConstraint
   CreateIPS32  -> Set.empty
   CreateEBP    -> Set.empty
+  CreatePPF1   -> Set.empty
   CreatePPF3   -> Set.empty
   CreateNINJA1 -> Set.empty
   CreatePMSR   -> Set.empty
@@ -738,6 +743,9 @@ encodingLimits CreateEBP     =
 encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
 encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
 encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
+encodingLimits CreatePPF1    = Nothing
+  -- 4-byte LE offset (max 2^32-1 ≈ 4 GB) and 1-byte payload count are
+  -- enforced by the encoder/splitter directly; no narrowing needed.
 encodingLimits CreatePPF3    = Nothing
 encodingLimits CreateNINJA1  = Nothing
 
@@ -796,6 +804,11 @@ encodeDirect contents source target meta limits constraints = case target of
     Right (CreateResult
             (IPS.encodeEBPPatch records (EBPMetadata ebpMetadataBytes))
             [])
+  CreatePPF1 -> do
+    rejectTruncation LabelPPF1 contents source
+    Right (PPF1.encodePPF1
+             (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
+             description)
   CreatePPF3 ->
     -- PPF3 has no encoding limits and takes [Hunk] directly.
     let ppfResult = PPF3.encodePPF3 (splitHunks ppf3MaxRecordPayload (contentsRecords contents)) description
@@ -976,6 +989,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreateIPS    -> ipsHunks Offset24
       CreateIPS32  -> ipsHunks Offset32
       CreateEBP    -> ipsHunks Offset24
+      CreatePPF1   -> diffHunks inputFileContents outputFileContents
       CreatePPF3   -> diffHunks inputFileContents outputFileContents
       CreateNINJA1 -> diffHunks inputFileContents outputFileContents
       CreatePMSR   -> diffHunks inputFileContents outputFileContents
@@ -987,6 +1001,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreateIPS    -> source
       CreateIPS32  -> source
       CreateEBP    -> source
+      CreatePPF1   -> source
       CreatePPF3   -> source
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       CreatePMSR   -> source
@@ -1062,6 +1077,7 @@ directFormatInfo :: DirectCreate -> FormatInfo
 directFormatInfo CreateIPS    = FormatInfo ".ips"    "IPS"       LabelIPS
 directFormatInfo CreateIPS32  = FormatInfo ".ips"    "IPS32"     LabelIPS32
 directFormatInfo CreateEBP    = FormatInfo ".ebp"    "EBP"       LabelEBP
+directFormatInfo CreatePPF1   = FormatInfo ".ppf"    "PPF1"      LabelPPF1
 directFormatInfo CreatePPF3   = FormatInfo ".ppf"    "PPF3"      LabelPPF3
 directFormatInfo CreateNINJA1 = FormatInfo ".rup"    "NINJA1"    LabelNINJA1
 directFormatInfo CreatePMSR   = FormatInfo ".pmsr"   "PMSR"      LabelPMSR

@@ -14,6 +14,7 @@ module Slap.PPF1.Types
   , ppf1MagicBytes
   , ppf1DescriptionLength
   , ppf1HeaderLength
+  , ppf1MaxRecordPayload
   ) where
 
 import Data.ByteString (ByteString)
@@ -45,3 +46,9 @@ ppf1DescriptionLength = Length 50
 -- | Total PPF1 header length: 4 magic + 1 version + 1 encoding + 50 description = 56.
 ppf1HeaderLength :: Length
 ppf1HeaderLength = Length 56
+
+-- | Maximum payload bytes a single PPF1 record can carry. The record
+-- format uses a single-byte count field (literal mode), capping
+-- payload at @0xFF = 255@.
+ppf1MaxRecordPayload :: Length
+ppf1MaxRecordPayload = Length 255
