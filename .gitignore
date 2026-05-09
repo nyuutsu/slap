@@ -6,6 +6,11 @@ rusty-slap/target/
 *.dyn_hi
 *.dyn_o
 
+# Per-machine cabal override (e.g. extra-lib-dirs for the local
+# rusty-slap path); cabal.project ships a single canonical path and
+# cabal.project.local overlays per-host changes on top of it.
+cabal.project.local
+
 # Claude Code local config
 .claude/
 
