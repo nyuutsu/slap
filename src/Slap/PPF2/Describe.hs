@@ -10,9 +10,11 @@ module Slap.PPF2.Describe
   ) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
-                        PPF2ValidationBlock(..), PPF2FileId(..),
+                        PPF2ValidationBlock(..),
+                        unPPF2FileId,
+                        unPPF2SourceSize,
                         ppf2ValidationOffset)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..),
                      OffsetRange(..), advance, byteLength)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
@@ -38,11 +40,11 @@ ppf2Meta :: PPF2Patch -> [InfoLine]
 ppf2Meta patch = concat
   [ let description = decodeLocaleField (stripTrailing (ppf2Description patch))
     in [InfoLine "description" description | not (null description)]
-  , [InfoLine "file size" (show (unFileSize (ppf2SourceFileSize patch)) ++ " bytes (validation)")]
+  , [InfoLine "file size" (show (unPPF2SourceSize (ppf2SourceFileSize patch)) ++ " bytes (validation)")]
   , [InfoLine "validation" validationLine]
   , case ppf2FileId patch of
-      Nothing                    -> []
-      Just (PPF2FileId content)  -> [InfoLine "file_id.diz" (show (ByteString.length content) ++ " bytes")]
+      Nothing  -> []
+      Just fid -> [InfoLine "file_id.diz" (show (ByteString.length (unPPF2FileId fid)) ++ " bytes")]
   ]
   where
     validationBlockBytes = unPPF2ValidationBlock (ppf2ValidationBlock patch)

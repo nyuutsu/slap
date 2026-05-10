@@ -10,7 +10,14 @@ module Slap.PPF2.Types
   ( PPF2Patch(..)
   , PPF2Record(..)
   , PPF2ValidationBlock(..)
-  , PPF2FileId(..)
+  , PPF2FileId
+  , unPPF2FileId
+  , narrowPPF2FileId
+  , ppf2FileIdFromParsed
+  , PPF2SourceSize
+  , unPPF2SourceSize
+  , narrowPPF2SourceSize
+  , ppf2SourceSizeFromParsed
     -- * Named constants
   , ppf2MagicBytes
   , ppf2DescriptionLength
@@ -26,9 +33,13 @@ module Slap.PPF2.Types
   ) where
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
+import Data.Word (Word32)
+import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..), FileSize)
-import Slap.Narrow (EncodingLimits(..))
+import Slap.Measure (Length(..), Offset(..), FileSize(..))
+import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 
 -- | A PPF2 record. Same wire shape as PPF1: a target-file offset
 -- and the bytes to write. The wire-level RLE encoding (count=0
@@ -50,15 +61,48 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
 -- | FILE_ID.DIZ content optionally appended after the record
 -- stream. The wire trailer is
 -- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <4-byte LE length>@;
--- this newtype carries only the inner @<content>@ bytes.
-newtype PPF2FileId = PPF2FileId
-  { unPPF2FileId :: ByteString }
-  deriving (Show)
+-- this newtype carries only the inner @<content>@ bytes whose
+-- length has been validated against PPF2's 4-byte LE length
+-- field. Constructor private; values come from one of two named
+-- producers:
+--
+-- * 'narrowPPF2FileId' — runtime check, refuses with
+--   'Slap.Narrow.FieldValueExceedsBound' if the bytestring's length
+--   exceeds @0xFFFFFFFF@.
+-- * 'ppf2FileIdFromParsed' — parse-time, trusts the wire format's
+--   4-byte length field has already constrained the bytestring.
+newtype PPF2FileId = PPF2FileId { unPPF2FileId :: ByteString }
+  deriving (Show, Eq)
+
+narrowPPF2FileId :: ByteString -> Either SlapError PPF2FileId
+narrowPPF2FileId bs = case narrowToWord32 LabelPPF2 FieldFileIdDizLength
+                            (ByteString.length bs) of
+  Left  failure -> Left (NarrowingError failure)
+  Right _       -> Right (PPF2FileId bs)
+
+ppf2FileIdFromParsed :: ByteString -> PPF2FileId
+ppf2FileIdFromParsed = PPF2FileId
+
+-- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a
+-- runtime 'FileSize'. Constructor private; values come from
+-- 'narrowPPF2SourceSize' (runtime check) or 'ppf2SourceSizeFromParsed'
+-- (parse-time trust).
+newtype PPF2SourceSize = PPF2SourceSize { unPPF2SourceSize :: Word32 }
+  deriving (Show, Eq)
+
+narrowPPF2SourceSize :: FileSize -> Either SlapError PPF2SourceSize
+narrowPPF2SourceSize size =
+  case narrowToWord32 LabelPPF2 FieldSourceSize (unFileSize size) of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (PPF2SourceSize word)
+
+ppf2SourceSizeFromParsed :: Word32 -> PPF2SourceSize
+ppf2SourceSizeFromParsed = PPF2SourceSize
 
 -- | A fully parsed PPF2 patch.
 data PPF2Patch = PPF2Patch
-  { ppf2Description     :: !ByteString  -- ^ 50-byte description (space- or null-padded raw bytes)
-  , ppf2SourceFileSize  :: !FileSize    -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
+  { ppf2Description     :: !ByteString       -- ^ 50-byte description (space- or null-padded raw bytes)
+  , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
   , ppf2ValidationBlock :: !PPF2ValidationBlock
   , ppf2Records         :: ![PPF2Record]
   , ppf2FileId          :: !(Maybe PPF2FileId)

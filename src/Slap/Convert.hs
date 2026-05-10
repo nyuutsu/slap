@@ -42,12 +42,13 @@ module Slap.Convert
 import qualified Slap.PPF1.Create as PPF1
 import Slap.PPF1.Types (PPF1Origin(..), ppf1Limits, ppf1MaxRecordPayload)
 import qualified Slap.PPF2.Create as PPF2
-import Slap.PPF2.Types (PPF2ValidationBlock(..), PPF2FileId(..),
+import Slap.PPF2.Types (PPF2ValidationBlock(..),
+                        narrowPPF2FileId, narrowPPF2SourceSize,
                         ppf2Limits, ppf2MaxRecordPayload,
                         ppf2ValidationOffset, ppf2ValidationSize)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
-                        PPF3FileId(..), ppf3MaxRecordPayload)
+                        narrowPPF3FileId, ppf3MaxRecordPayload)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
@@ -65,7 +66,7 @@ import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.PMSR.Types as PMSR
-import Slap.PMSR.Types (pmsrMaxRecordPayload)
+import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload)
 import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
@@ -916,23 +917,25 @@ encodeDirect contents source target meta limits constraints dialects = case targ
                          (ExpectedSize (FileSize (unOffset ppf2ValidationOffset
                                                 + unLength ppf2ValidationSize))))
       Just validationBytes -> do
+        sourceSize <- narrowPPF2SourceSize $
+          if ByteString.null (unInputFileContents source)
+            -- Source-less convert: 'contentsDestinationSize' carries the
+            -- size value the parsed source patch had in its header.
+            then fromMaybe (FileSize 0) (contentsDestinationSize contents)
+            else byteFileSize (unInputFileContents source)
         records <- narrow (splitHunks ppf2MaxRecordPayload (contentsRecords contents))
-        let sourceFileSize
-              | ByteString.null (unInputFileContents source) =
-                  -- Source-less convert: 'contentsDestinationSize' carries the
-                  -- size value the parsed source patch had in its header.
-                  fromMaybe (FileSize 0) (contentsDestinationSize contents)
-              | otherwise = byteFileSize (unInputFileContents source)
-            ppf2Result = PPF2.encodePPF2
+        let ppf2Result = PPF2.encodePPF2
                            records
                            description
-                           sourceFileSize
+                           sourceSize
                            (PPF2ValidationBlock validationBytes)
-        Right $ case contentsFileIdDiz contents of
-          Nothing  -> ppf2Result
-          Just diz -> ppf2Result { resultBytes = PatchFileContents
-                        (unPatchFileContents (resultBytes ppf2Result)
-                         <> PPF2.encodeFileIdDiz (PPF2FileId diz)) }
+        case contentsFileIdDiz contents of
+          Nothing  -> Right ppf2Result
+          Just diz -> do
+            fid <- narrowPPF2FileId diz
+            Right ppf2Result { resultBytes = PatchFileContents
+                          (unPatchFileContents (resultBytes ppf2Result)
+                           <> PPF2.encodeFileIdDiz fid) }
   CreatePPF3 -> do
     -- PPF3's offset is Int64-shaped on the wire; the offset bound is
     -- 'Nothing' in 'encodingLimits', so 'narrow' here delegates to
@@ -945,10 +948,13 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         ppfResult   = PPF3.encodePPF3 records description undoEncoded
                         (fmap PPF3ValidationBlock (contentsValidation contents))
                         imageType
-    Right $ case contentsFileIdDiz contents of
-      Nothing  -> ppfResult
-      Just diz -> ppfResult { resultBytes = PatchFileContents
-                    (unPatchFileContents (resultBytes ppfResult) <> PPF3.encodeFileIdDiz (PPF3FileId diz)) }
+    case contentsFileIdDiz contents of
+      Nothing  -> Right ppfResult
+      Just diz -> do
+        fid <- narrowPPF3FileId diz
+        Right ppfResult { resultBytes = PatchFileContents
+                      (unPatchFileContents (resultBytes ppfResult)
+                       <> PPF3.encodeFileIdDiz fid) }
   CreateNINJA1 -> do
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
@@ -963,8 +969,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
              (fromMaybe False (contentsNINJA1Compressed contents))) platformWarnings)
   CreatePMSR -> do
+    count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
-    Right (CreateResult (PMSR.encodePMSR records) [])
+    Right (CreateResult (PMSR.encodePMSR count records) [])
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
     Just blocks -> Right (CreateResult (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription) [])
     Nothing -> do

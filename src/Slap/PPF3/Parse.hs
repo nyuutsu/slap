@@ -8,13 +8,14 @@ module Slap.PPF3.Parse (parsePPF3, parsePPF3Records) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ImageType(..), PPF3ValidationBlock(..),
-                        PPF3FileId(..),
+                        PPF3FileId, unPPF3FileId, ppf3FileIdFromParsed,
                         ppf3DescriptionLength, ppf3MinHeaderLength,
                         ppf3ValidationSize,
                         ppf3FileIdLengthFieldWidth,
                         ppf3FileIdMarkerLength, ppf3FileIdFooterLength)
 import Slap.Binary (getWord16LE)
-import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
+import Slap.Error (SlapError(..), Parsed(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, int64LE)
@@ -147,7 +148,7 @@ detectFileId input
           dizContentEnd    = ByteString.length input - lengthFieldSize - markerSize
           dizContentStart  = dizContentEnd - dizContentLength
       in if dizContentStart < 0 then Nothing
-         else Just (PPF3FileId (ByteString.take dizContentLength
+         else Just (ppf3FileIdFromParsed (ByteString.take dizContentLength
                                   (ByteString.drop dizContentStart input)))
   where
     markerSize       = unLength ppf3FileIdFooterLength
@@ -157,8 +158,9 @@ detectFileId input
 
 stripFileId :: Maybe PPF3FileId -> ByteString -> ByteString
 stripFileId Nothing body = body
-stripFileId (Just (PPF3FileId content)) body =
-  let trailerSize = unLength ppf3FileIdMarkerLength
+stripFileId (Just fid) body =
+  let content = unPPF3FileId fid
+      trailerSize = unLength ppf3FileIdMarkerLength
                   + ByteString.length content
                   + unLength ppf3FileIdFooterLength
                   + unLength ppf3FileIdLengthFieldWidth

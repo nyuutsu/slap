@@ -44,6 +44,8 @@ import qualified Slap.PPF1.Parse as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
 import qualified Slap.PPF2.Apply as PPF2
 import qualified Slap.PPF2.Parse as PPF2
+import Slap.PPF2.Types (narrowPPF2SourceSize)
+import Slap.Narrow (NarrowingFailure(..))
 import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PCHTXT.Parse as PCHTXT
@@ -52,7 +54,8 @@ import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
-                   SlapWarning(..), FieldName(..), renderSlapError)
+                   SlapWarning(..), renderSlapError)
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
@@ -108,6 +111,8 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF2"
       [ testProperty "round-trip" prop_ppf2
+      , testCase     "rejects header source size > 0xFFFFFFFF"
+                     ppf2SourceSizeAdversarial
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
@@ -556,6 +561,23 @@ prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
       src <- ByteString.pack <$> vectorOf sourceLen arbitrary
       tgt <- ByteString.pack <$> vectorOf (sourceLen + growth) arbitrary
       pure (src, tgt)
+
+-- | A 'FileSize' one byte past the 'Word32' wire-field ceiling
+-- ('0x100000000') is what the convert pipeline would have silently
+-- truncated before 'narrowPPF2SourceSize' became the only entry point
+-- to 'PPF2SourceSize'. The test exercises the narrowing function
+-- directly rather than building a 4 GiB 'ByteString' to drive the
+-- pipeline; the convert arm's only behavior on overflow is to bubble
+-- this 'NarrowingError' up unchanged.
+ppf2SourceSizeAdversarial :: Assertion
+ppf2SourceSizeAdversarial =
+  case narrowPPF2SourceSize (FileSize 0x100000000) of
+    Left (NarrowingError (FieldValueExceedsBound LabelPPF2 FieldSourceSize
+                            actual maxValue)) -> do
+      assertEqual "actual"  0x100000000 actual
+      assertEqual "maximum" 0xFFFFFFFF  maxValue
+    other -> assertFailure
+               ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
 
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->

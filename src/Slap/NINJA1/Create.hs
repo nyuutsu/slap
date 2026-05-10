@@ -56,6 +56,9 @@ encodeRecordBuilder ehunk =
         recordPayload = encodedPayload ehunk
         offsetEncoded = encodeBigEndian (fromIntegral (unOffset recordOffset) :: Int64)
         lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length recordPayload) :: Int64)
+    -- The two 'word8 (fromIntegral (ByteString.length ...))' calls are
+    -- safe-by-construction: 'encodeBigEndian' of an 'Int64' produces at
+    -- most 8 bytes, fitting 'Word8'.
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded
        <> word8 (fromIntegral (ByteString.length lengthEncoded))

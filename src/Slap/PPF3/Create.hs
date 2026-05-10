@@ -10,7 +10,8 @@ module Slap.PPF3.Create
   , encodeFileIdDiz
   ) where
 
-import Slap.PPF3.Types (PPF3ImageType(..), PPF3FileId(..),
+import Slap.PPF3.Types (PPF3ImageType(..),
+                        PPF3FileId, unPPF3FileId,
                         PPF3ValidationBlock(..),
                         fromImageType,
                         ppf3DescriptionLength)
@@ -20,7 +21,8 @@ import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
+import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
 
@@ -94,8 +96,11 @@ encodePPF3 records description undoHunks validationBlock imageType =
 
 -- | Encode a FILE_ID.DIZ trailer in PPF3 format (2-byte LE length).
 encodeFileIdDiz :: PPF3FileId -> ByteString
-encodeFileIdDiz (PPF3FileId content) = LazyByteString.toStrict $ toLazyByteString $
+encodeFileIdDiz fid = LazyByteString.toStrict $ toLazyByteString $
   byteString "@BEGIN_FILE_ID.DIZ"
   <> byteString content
   <> byteString "@END_FILE_ID.DIZ"
+  -- 'fromIntegral' here is safe-by-construction: 'narrowPPF3FileId'
+  -- has validated 'ByteString.length content' fits 'Word16'.
   <> word16LE (fromIntegral (ByteString.length content))
+  where content = unPPF3FileId fid

@@ -9,7 +9,9 @@
 module Slap.PPF2.Parse (parsePPF2, parsePPF2Records) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
-                        PPF2ValidationBlock(..), PPF2FileId(..),
+                        PPF2ValidationBlock(..),
+                        PPF2FileId, unPPF2FileId, ppf2FileIdFromParsed,
+                        PPF2SourceSize, ppf2SourceSizeFromParsed,
                         ppf2DescriptionLength, ppf2HeaderLength,
                         ppf2ValidationSize,
                         ppf2FileIdLengthFieldWidth,
@@ -19,7 +21,7 @@ import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..),
                      EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
@@ -54,11 +56,11 @@ parsePPF2 (PatchFileContents input)
           }
         [])
   where
-    parsePPF2Header :: Get (ByteString, FileSize, PPF2ValidationBlock)
+    parsePPF2Header :: Get (ByteString, PPF2SourceSize, PPF2ValidationBlock)
     parsePPF2Header = do
       skip (Length 6)
       description <- getBytes ppf2DescriptionLength
-      fileSize <- FileSize . fromIntegral <$> word32LE
+      fileSize <- ppf2SourceSizeFromParsed <$> word32LE
       validationBlock <- PPF2ValidationBlock <$> getBytes ppf2ValidationSize
       pure (description, fileSize, validationBlock)
 
@@ -147,7 +149,7 @@ detectFileId input
           dizContentEnd    = ByteString.length input - lengthFieldSize - markerSize
           dizContentStart  = dizContentEnd - dizContentLength
       in if dizContentStart < 0 then Nothing
-         else Just (PPF2FileId (ByteString.take dizContentLength
+         else Just (ppf2FileIdFromParsed (ByteString.take dizContentLength
                                   (ByteString.drop dizContentStart input)))
   where
     markerSize        = unLength ppf2FileIdFooterLength
@@ -159,8 +161,9 @@ detectFileId input
 -- detected. Leaves the body unchanged otherwise.
 stripFileId :: Maybe PPF2FileId -> ByteString -> ByteString
 stripFileId Nothing body = body
-stripFileId (Just (PPF2FileId content)) body =
-  let trailerSize = unLength ppf2FileIdMarkerLength
+stripFileId (Just fid) body =
+  let content = unPPF2FileId fid
+      trailerSize = unLength ppf2FileIdMarkerLength
                   + ByteString.length content
                   + unLength ppf2FileIdFooterLength
                   + unLength ppf2FileIdLengthFieldWidth

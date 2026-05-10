@@ -15,7 +15,8 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
-import Slap.Error (SlapError(..), FieldName(..), Parsed(..))
+import Slap.Error (SlapError(..), Parsed(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)

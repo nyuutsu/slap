@@ -42,6 +42,7 @@ library slap-internal
     , Slap.Display.Primitives
     , Slap.Display.Glyph
     , Slap.FormatLabel
+    , Slap.FieldName
     , Slap.NINJA1.Apply
     , Slap.NINJA1.Create
     , Slap.NINJA1.Describe

@@ -25,13 +25,16 @@ module Slap.PPF2.Create
   , encodeFileIdDiz
   ) where
 
-import Slap.PPF2.Types (PPF2ValidationBlock(..), PPF2FileId(..),
+import Slap.PPF2.Types (PPF2ValidationBlock(..),
+                        PPF2FileId, unPPF2FileId,
+                        PPF2SourceSize, unPPF2SourceSize,
                         ppf2DescriptionLength)
-import Slap.Measure (Length(..), Offset(..), FileSize(..),
+import Slap.Measure (Length(..), Offset(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
+import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
 
@@ -50,12 +53,12 @@ import qualified Data.ByteString.Lazy as LazyByteString
 encodePPF2
   :: [EncodedHunk]         -- ^ pre-split, pre-narrowed records
   -> String                -- ^ description (truncated and space-padded to 50 bytes)
-  -> FileSize              -- ^ source ROM size (written into the header for verification)
+  -> PPF2SourceSize        -- ^ source ROM size (written into the header for verification)
   -> PPF2ValidationBlock   -- ^ 1024-byte block sampled from source[0x9320]
   -> CreateResult
-encodePPF2 records description sourceFileSize (PPF2ValidationBlock validationBytes) =
+encodePPF2 records description sourceSize (PPF2ValidationBlock validationBytes) =
   let (descriptionBytes, descriptionWarnings) = padDescription description
-      header = buildHeader descriptionBytes sourceFileSize validationBytes
+      header = buildHeader descriptionBytes sourceSize validationBytes
       body   = foldMap encodeRecord records
   in CreateResult
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
@@ -78,12 +81,12 @@ padDescription text =
                    else []
   in (padded, warnings)
 
-buildHeader :: ByteString -> FileSize -> ByteString -> Builder
-buildHeader description (FileSize sourceSize) validationBytes =
+buildHeader :: ByteString -> PPF2SourceSize -> ByteString -> Builder
+buildHeader description sourceSize validationBytes =
   byteString "PPF20"                            -- 5-byte magic
   <> word8 0x01                                  -- encoding method 1 (PPF2)
   <> byteString description                      -- 50-byte padded description
-  <> word32LE (fromIntegral sourceSize)          -- 4-byte LE source-file size
+  <> word32LE (unPPF2SourceSize sourceSize)      -- 4-byte LE source-file size
   <> byteString validationBytes                  -- 1024-byte validation block
 
 encodeRecord :: EncodedHunk -> Builder
@@ -100,8 +103,11 @@ encodeRecord ehunk =
 -- Differs from PPF3's trailer only in the length field width
 -- (PPF2: 4 bytes; PPF3: 2 bytes).
 encodeFileIdDiz :: PPF2FileId -> ByteString
-encodeFileIdDiz (PPF2FileId content) = LazyByteString.toStrict $ toLazyByteString $
+encodeFileIdDiz fid = LazyByteString.toStrict $ toLazyByteString $
   byteString "@BEGIN_FILE_ID.DIZ"
   <> byteString content
   <> byteString "@END_FILE_ID.DIZ"
+  -- 'fromIntegral' here is safe-by-construction: 'narrowPPF2FileId'
+  -- has validated 'ByteString.length content' fits 'Word32'.
   <> word32LE (fromIntegral (ByteString.length content))
+  where content = unPPF2FileId fid

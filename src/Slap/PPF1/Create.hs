@@ -21,7 +21,8 @@ import Slap.Measure (Length(..), Offset(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
+import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
 

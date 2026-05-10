@@ -13,7 +13,10 @@ module Slap.PPF3.Types
   , PPF3Record(..)
   , PPF3ValidationBlock(..)
   , PPF3ImageType(..)
-  , PPF3FileId(..)
+  , PPF3FileId
+  , unPPF3FileId
+  , narrowPPF3FileId
+  , ppf3FileIdFromParsed
   , fromImageType
     -- * Named constants
   , ppf3MagicBytes
@@ -28,8 +31,13 @@ module Slap.PPF3.Types
   ) where
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
+import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..))
+import Slap.Narrow (narrowToWord16)
 
 -- | The image-type byte at PPF3 header offset 56. Drives where
 -- in the source ROM the 1024-byte validation block is sampled
@@ -64,10 +72,27 @@ newtype PPF3ValidationBlock = PPF3ValidationBlock
 
 -- | FILE_ID.DIZ content optionally appended after the record
 -- stream. PPF3's wire trailer uses a 2-byte LE length suffix
--- (vs PPF2's 4-byte). Carries only the inner content bytes.
-newtype PPF3FileId = PPF3FileId
-  { unPPF3FileId :: ByteString }
-  deriving (Show)
+-- (vs PPF2's 4-byte). Carries only the inner content bytes whose
+-- length has been validated against PPF3's 2-byte LE length
+-- field. Constructor private; values come from one of two named
+-- producers:
+--
+-- * 'narrowPPF3FileId' — runtime check, refuses with
+--   'Slap.Narrow.FieldValueExceedsBound' if the bytestring's length
+--   exceeds @0xFFFF@.
+-- * 'ppf3FileIdFromParsed' — parse-time, trusts the wire format's
+--   2-byte length field has already constrained the bytestring.
+newtype PPF3FileId = PPF3FileId { unPPF3FileId :: ByteString }
+  deriving (Show, Eq)
+
+narrowPPF3FileId :: ByteString -> Either SlapError PPF3FileId
+narrowPPF3FileId bs = case narrowToWord16 LabelPPF3 FieldFileIdDizLength
+                            (ByteString.length bs) of
+  Left  failure -> Left (NarrowingError failure)
+  Right _       -> Right (PPF3FileId bs)
+
+ppf3FileIdFromParsed :: ByteString -> PPF3FileId
+ppf3FileIdFromParsed = PPF3FileId
 
 -- | A fully parsed PPF3 patch.
 data PPF3Patch = PPF3Patch

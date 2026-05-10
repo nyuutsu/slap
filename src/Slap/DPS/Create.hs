@@ -11,7 +11,8 @@ import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapError, SlapWarning(..), CreateResult(..), FieldName(..))
+import Slap.Error (SlapError, SlapWarning(..), CreateResult(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))

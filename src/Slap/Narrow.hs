@@ -18,6 +18,14 @@
 -- only way to obtain an 'EncodedHunk' or 'EncodedUndoHunk' is to
 -- start with the corresponding split type, which itself can only be
 -- obtained from one of the @split*@ functions in "Slap.Measure".
+--
+-- 'NarrowingFailure' covers two axes: 'OffsetExceedsBound' for
+-- per-record offset overflows (raised by 'narrowHunk' against
+-- 'EncodingLimits') and 'FieldValueExceedsBound' for header/trailer
+-- field value overflows (raised by 'narrowToWord32' / 'narrowToWord16'
+-- on behalf of per-format @narrow*@ smart constructors). The
+-- application wraps both as 'Slap.Error.NarrowingError' at the
+-- boundary where they leave this module.
 module Slap.Narrow
   ( EncodedHunk
   , encodedOffset
@@ -36,10 +44,14 @@ module Slap.Narrow
   , narrowUndoHunks
   , narrowUndoHunkUnbounded
   , narrowUndoHunksUnbounded
+  , narrowToWord32
+  , narrowToWord16
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Word (Word16, Word32)
 
+import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Offset(..), SplitHunk, splitOffset, splitPayload,
                      SplitUndoHunk, splitUndoOffset, splitUndoPayload,
@@ -71,14 +83,45 @@ data EncodingLimits = EncodingLimits
   , formatLabel   :: !FormatLabel
   } deriving (Show)
 
--- | The failure space of 'narrowHunk'. A small dedicated sum kept
--- separate from the application-wide 'Slap.Error.SlapError' so this
--- module has no dependency on 'Slap.Error'. The application wraps
--- narrowing failures as 'Slap.Error.NarrowingError' at the boundary
--- where they leave 'Slap.Narrow'.
+-- | The failure space of the narrowing layer. A small dedicated sum
+-- kept separate from the application-wide 'Slap.Error.SlapError' so
+-- this module has no dependency on 'Slap.Error'. The application
+-- wraps narrowing failures as 'Slap.Error.NarrowingError' at the
+-- boundary where they leave 'Slap.Narrow'.
 data NarrowingFailure
   = OffsetExceedsBound !FormatLabel !ActualOffset !MaxOffset
+  | FieldValueExceedsBound !FormatLabel !FieldName !Integer !Integer
+    -- ^ A header or trailer field's runtime value exceeded the
+    -- wire-format width of the field. The two 'Integer's are the
+    -- actual value and the field's maximum (kept as 'Integer' so any
+    -- 'Word' width fits without further wrapping).
   deriving (Show, Eq)
+
+-- | Narrow an 'Int' to 'Word32', producing 'FieldValueExceedsBound'
+-- if the value is negative or exceeds @0xFFFFFFFF@. Used by per-format
+-- @narrow*@ smart constructors that wire a runtime integer (file size,
+-- list length, bytestring length) into a typed wrapper whose
+-- constructor is private.
+narrowToWord32 :: FormatLabel -> FieldName -> Int -> Either NarrowingFailure Word32
+narrowToWord32 label field value
+  | value < 0 || toInteger value > toInteger maxValue =
+      Left (FieldValueExceedsBound label field
+              (toInteger value) (toInteger maxValue))
+  | otherwise = Right (fromIntegral value)
+  where
+    maxValue :: Word32
+    maxValue = maxBound
+
+-- | 'Word16' counterpart, ceiling @0xFFFF@.
+narrowToWord16 :: FormatLabel -> FieldName -> Int -> Either NarrowingFailure Word16
+narrowToWord16 label field value
+  | value < 0 || toInteger value > toInteger maxValue =
+      Left (FieldValueExceedsBound label field
+              (toInteger value) (toInteger maxValue))
+  | otherwise = Right (fromIntegral value)
+  where
+    maxValue :: Word16
+    maxValue = maxBound
 
 -- | Narrow a 'SplitHunk' to an 'EncodedHunk' by checking its offset
 -- against the format's wire-format range. Overflow surfaces as

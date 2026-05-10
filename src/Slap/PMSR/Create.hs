@@ -6,17 +6,17 @@ module Slap.PMSR.Create
 
 import Slap.Measure (Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
-import Slap.PMSR.Types (pmsrMagicBytes)
+import Slap.PMSR.Types (PMSRRecordCount, unPMSRRecordCount, pmsrMagicBytes)
 import Slap.FileContents (PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 
-encodePMSR :: [EncodedHunk] -> PatchFileContents
-encodePMSR records = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
+encodePMSR :: PMSRRecordCount -> [EncodedHunk] -> PatchFileContents
+encodePMSR recordCount records = PatchFileContents $ LazyByteString.toStrict $ toLazyByteString $
     byteString pmsrMagicBytes
-    <> word32BE (fromIntegral (length records))
+    <> word32BE (unPMSRRecordCount recordCount)
     <> foldMap encodeOneRecord records
   where
     encodeOneRecord ehunk =

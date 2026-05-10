@@ -13,7 +13,7 @@ module Slap.PPF3.Describe
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ValidationBlock(..),
-                        PPF3FileId(..),
+                        unPPF3FileId,
                         ppf3ValidationOffset)
 import Slap.Measure (Offset(..), Length(..), OffsetRange(..),
                      advance, byteLength)
@@ -45,8 +45,8 @@ ppf3Meta patch = concat
   , [InfoLine "validation" validationLine]
   , [InfoLine "undo data" (if ppf3HasUndo patch then "yes" else "no")]
   , case ppf3FileId patch of
-      Nothing                    -> []
-      Just (PPF3FileId content)  -> [InfoLine "file_id.diz" (show (ByteString.length content) ++ " bytes")]
+      Nothing  -> []
+      Just fid -> [InfoLine "file_id.diz" (show (ByteString.length (unPPF3FileId fid)) ++ " bytes")]
   ]
   where
     validationLine = case ppf3ValidationBlock patch of

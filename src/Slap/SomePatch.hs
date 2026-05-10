@@ -334,9 +334,10 @@ parseSomePatchFromPPF2 :: Parsed PPF2.PPF2Patch -> Either SlapError SomePatch
 parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
   let records = PPF2.ppf2Records patch
       validationBytes = PPF2.unPPF2ValidationBlock (PPF2.ppf2ValidationBlock patch)
+      sourceFileSize = FileSize (fromIntegral (PPF2.unPPF2SourceSize (PPF2.ppf2SourceFileSize patch)))
       ppfVerification = noVerification
           { verifyPPFBlock = Just (ValidationBlock PPF2.ppf2ValidationOffset validationBytes)
-          , verifyFileSizeAdvisory = Just (PPF2.ppf2SourceFileSize patch)
+          , verifyFileSizeAdvisory = Just sourceFileSize
           }
   in Right SomePatch
       { patchFormat         = LabelPPF2
@@ -347,7 +348,7 @@ parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
           , contentsSourceCRC32 = Nothing
           , contentsSourceMD5   = Nothing
           , contentsSourceSHA1  = Nothing
-          , contentsDestinationSize    = Just (PPF2.ppf2SourceFileSize patch)
+          , contentsDestinationSize    = Just sourceFileSize
           , contentsValidation  = Just validationBytes
           , contentsUndoData    = Nothing
           , contentsTruncation  = Nothing

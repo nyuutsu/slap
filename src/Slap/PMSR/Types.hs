@@ -4,6 +4,9 @@
 module Slap.PMSR.Types
   ( PMSRRecord(..)
   , PMSRPatch(..)
+  , PMSRRecordCount
+  , unPMSRRecordCount
+  , narrowPMSRRecordCount
     -- * Named constants
   , pmsrMagicBytes
   , pmsrMaxRecordPayload
@@ -13,9 +16,12 @@ module Slap.PMSR.Types
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
+import Data.Word (Word32)
+import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..))
-import Slap.Narrow (EncodingLimits(..))
+import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 
 -- | A single PMSR record: offset + data to write.
 data PMSRRecord = PMSRRecord
@@ -27,6 +33,20 @@ data PMSRRecord = PMSRRecord
 data PMSRPatch = PMSRPatch
   { pmsrRecords :: Vector PMSRRecord
   } deriving (Show)
+
+-- | PMSR's 4-byte BE record-count header field, narrowed from a
+-- runtime 'Int' list length. Constructor private; values come from
+-- 'narrowPMSRRecordCount'. PMSR's parser doesn't store the count
+-- separately — it's derived from 'pmsrRecords' — so no parser-side
+-- exit is needed.
+newtype PMSRRecordCount = PMSRRecordCount { unPMSRRecordCount :: Word32 }
+  deriving (Show, Eq)
+
+narrowPMSRRecordCount :: Int -> Either SlapError PMSRRecordCount
+narrowPMSRRecordCount n =
+  case narrowToWord32 LabelPMSR FieldRecordCount n of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (PMSRRecordCount word)
 
 -- | PMSR magic bytes (@"PMSR"@) per Star Rod (Paper Mario 64).
 pmsrMagicBytes :: ByteString

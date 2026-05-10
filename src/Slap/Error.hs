@@ -19,7 +19,6 @@ module Slap.Error
   , Parsed(..)
   , Outcome(..)
   , noWarnings
-  , FieldName(..)
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
@@ -32,7 +31,6 @@ module Slap.Error
   , ByteCheckLabel(..)
   , verificationSideLabel
   , hashAlgorithmLabel
-  , fieldNameLabel
   , renderSlapError
   , renderApplyError
   , renderCursorKind
@@ -63,6 +61,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ParsedSizeValue(..), FoundVersion(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.Narrow (NarrowingFailure(..))
+import Slap.FieldName (FieldName(..), fieldNameLabel)
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.Dialect (Dialect, dialectFlagName, dialectName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
@@ -74,72 +73,6 @@ import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word8)
-
-----------------------------------------------------------------------------
--- FieldName
-----------------------------------------------------------------------------
-
-data FieldName
-  -- Metadata fields
-  = FieldTitle
-  | FieldAuthor
-  | FieldDescription
-  | FieldVersion
-  | FieldPatchName
-  | FieldGenre
-  | FieldLanguage
-  | FieldDate
-  | FieldWebsite
-  -- Header fields
-  | FieldRomType
-  | FieldImageType
-  | FieldPatchEncoding
-  | FieldStability
-  | FieldPatchType
-  | FieldImageFormat
-  | FieldCartId
-  | FieldCountry
-  | FieldEncodingMethod
-  -- Sizes
-  | FieldSourceSize
-  | FieldTargetSize
-  | FieldDestinationSize
-  -- Checksums
-  | FieldSourceCRC
-  | FieldTargetCRC
-  | FieldPatchCRC
-  -- Record fields
-  | FieldRLERunLength
-  | FieldRecordMode
-  deriving (Show, Eq, Enum, Bounded)
-
-fieldNameLabel :: FieldName -> String
-fieldNameLabel FieldTitle           = "title"
-fieldNameLabel FieldAuthor          = "author"
-fieldNameLabel FieldDescription     = "description"
-fieldNameLabel FieldVersion         = "version"
-fieldNameLabel FieldPatchName       = "name"
-fieldNameLabel FieldGenre           = "genre"
-fieldNameLabel FieldLanguage        = "language"
-fieldNameLabel FieldDate            = "date"
-fieldNameLabel FieldWebsite         = "website"
-fieldNameLabel FieldRomType         = "ROM type"
-fieldNameLabel FieldImageType       = "image type"
-fieldNameLabel FieldPatchEncoding   = "patch encoding"
-fieldNameLabel FieldStability       = "stability flag"
-fieldNameLabel FieldPatchType       = "patch type"
-fieldNameLabel FieldImageFormat     = "image format"
-fieldNameLabel FieldCartId          = "cart ID"
-fieldNameLabel FieldCountry         = "country"
-fieldNameLabel FieldEncodingMethod  = "encoding method"
-fieldNameLabel FieldSourceSize      = "source size"
-fieldNameLabel FieldTargetSize      = "target size"
-fieldNameLabel FieldDestinationSize = "destination size"
-fieldNameLabel FieldSourceCRC       = "source CRC"
-fieldNameLabel FieldTargetCRC       = "target CRC"
-fieldNameLabel FieldPatchCRC        = "patch CRC"
-fieldNameLabel FieldRLERunLength    = "RLE run length"
-fieldNameLabel FieldRecordMode      = "record mode"
 
 ----------------------------------------------------------------------------
 -- DroppedValue
@@ -1122,6 +1055,11 @@ renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffse
   ++ showHex (unOffset actual) ""
   ++ " exceeds maximum offset 0x"
   ++ showHex (unOffset maxOffset) ""
+renderNarrowingFailure (FieldValueExceedsBound label field actual maxValue) =
+  formatLabelName label
+  ++ " " ++ fieldNameLabel field
+  ++ " field value " ++ show actual
+  ++ " exceeds the wire-format maximum of " ++ show maxValue
 
 ----------------------------------------------------------------------------
 -- renderSlapWarning
