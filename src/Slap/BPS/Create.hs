@@ -1,5 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | BPS patch creation. The diff itself is computed by the Rust
+-- suffix-array engine; this module assembles the wire format around
+-- the action stream.
+--
+-- Wire-format integer safety: the 'fromIntegral' calls in this
+-- module convert 'Int' to 'Int64' as required by 'putByuuVarint'.
+-- @Int → Int64@ is widening on 32-bit hosts and a no-op on 64-bit
+-- (where GHC's 'Int' is 'Int64'); the conversion never shrinks, so
+-- no truncation hazard exists at any of these sites. The
+-- 'guardAddressable' boundary check above the encoder handles the
+-- separate concern of inputs that exceed the host's 'Int' range
+-- before they reach 'fromIntegral'.
 module Slap.BPS.Create
   ( createBPS
   ) where

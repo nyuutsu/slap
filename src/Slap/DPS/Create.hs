@@ -6,10 +6,15 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSMetadata(..), DPSStability, fromDPSStability, DPSFormatVersion(..), fromDPSFormatVersion, DPSRecord(..), dpsFieldWidth)
+import Slap.DPS.Types (DPSMetadata(..), DPSStability, fromDPSStability,
+                       DPSFormatVersion(..), fromDPSFormatVersion,
+                       DPSRecord(..), EncodedDPSRecord(..),
+                       narrowDPSRecords, narrowDPSSourceSize,
+                       unDPSSourceSize, dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
-                     OriginalLength(..), TruncatedLength(..))
+                     OriginalLength(..), TruncatedLength(..),
+                     byteFileSize)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
@@ -20,28 +25,30 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFi
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
-import Data.Word (Word32)
 
 -- Encodes changed regions as EnclosedData records and unchanged regions
--- as CopyFromROM records. Returns 'Either' for parity with the other
--- diff-format create entry points; DPS has no current failure modes,
--- so the result is always 'Right'.
+-- as CopyFromROM records. The source size and the record list are run
+-- through the per-format narrowing layer first; downstream the encoder
+-- consumes 'EncodedDPSRecord' values whose 'Word32' offsets and lengths
+-- have already been validated against the wire-format width.
 createDPS :: InputFileContents -> OutputFileContents -> DPSMetadata -> DPSStability
           -> Either SlapError CreateResult
-createDPS inputContents@(InputFileContents original) outputContents metadata stability =
-    let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
-        (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
-        (versionBytes, versionWarnings) = encodeField FieldVersion (dpsMetadataVersion metadata)
-        patchBytes = LazyByteString.toStrict $ toLazyByteString $
-            byteString nameBytes
-            <> byteString authorBytes
-            <> byteString versionBytes
-            <> word8 (fromDPSStability stability)
-            <> word8 (fromDPSFormatVersion DPSVersion1)
-            <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
-            <> foldMap encodeRecord (dpsRecordsFromDiff inputContents outputContents)
-    in Right (CreateResult (PatchFileContents patchBytes)
-                           (nameWarnings ++ authorWarnings ++ versionWarnings))
+createDPS inputContents@(InputFileContents original) outputContents metadata stability = do
+  sourceSize <- narrowDPSSourceSize (byteFileSize original)
+  records    <- narrowDPSRecords (dpsRecordsFromDiff inputContents outputContents)
+  let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
+      (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
+      (versionBytes, versionWarnings) = encodeField FieldVersion (dpsMetadataVersion metadata)
+      patchBytes = LazyByteString.toStrict $ toLazyByteString $
+          byteString nameBytes
+          <> byteString authorBytes
+          <> byteString versionBytes
+          <> word8 (fromDPSStability stability)
+          <> word8 (fromDPSFormatVersion DPSVersion1)
+          <> putWord32LE (unDPSSourceSize sourceSize)
+          <> foldMap encodeRecord records
+  Right (CreateResult (PatchFileContents patchBytes)
+                      (nameWarnings ++ authorWarnings ++ versionWarnings))
   where
     encodeField fieldName fieldString =
       let result = encodeBoundedLocale dpsFieldWidth fieldString
@@ -73,14 +80,20 @@ dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
          else DPSEnclosedData rawOffset rawData
               : buildRecords (intOffset + ByteString.length rawData) rest
 
-encodeRecord :: DPSRecord -> Builder
-encodeRecord (DPSCopyFromROM outputOffset sourceOffset copyLength) =
+-- | Serialise an 'EncodedDPSRecord' to wire bytes. The 'Word32'
+-- selectors carry values 'narrowDPSRecord' has already validated
+-- against the 4-byte LE wire fields, so the only surviving
+-- 'fromIntegral' (the payload length on the 'EnclosedData' arm) is
+-- safe-by-construction — the smart constructor checked the same
+-- bytestring's length on the way in.
+encodeRecord :: EncodedDPSRecord -> Builder
+encodeRecord (EncodedDPSCopyFromROM outputOffset sourceOffset copyLength) =
     word8 0
-    <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
-    <> putWord32LE (fromIntegral (unOffset sourceOffset) :: Word32)
-    <> putWord32LE (fromIntegral (unLength copyLength) :: Word32)
-encodeRecord (DPSEnclosedData outputOffset payload) =
+    <> putWord32LE outputOffset
+    <> putWord32LE sourceOffset
+    <> putWord32LE copyLength
+encodeRecord (EncodedDPSEnclosedData outputOffset payload) =
     word8 1
-    <> putWord32LE (fromIntegral (unOffset outputOffset) :: Word32)
-    <> putWord32LE (fromIntegral (ByteString.length payload) :: Word32)
+    <> putWord32LE outputOffset
+    <> putWord32LE (fromIntegral (ByteString.length payload))
     <> byteString payload

@@ -57,6 +57,12 @@ createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFil
 -- are split into multiple DATA 248 commands. The W3C GDIFF spec defines int
 -- as signed 32-bit, so a single DATA command can carry at most
 -- @unLength maxSingleCommandLength@ bytes.
+--
+-- Each branch's 'fromIntegral' is safe-by-construction: the guard
+-- immediately to the left establishes the bound, and the wire-format
+-- encoder ('word8' / 'putWord16BE' / 'putWord32BE') matches it.
+-- Reading a branch top-to-bottom, guard → fromIntegral → encoder, the
+-- safety chain is local to the branch.
 encodeData :: ByteString -> Builder
 encodeData payload
   | ByteString.null payload                          = mempty
@@ -73,6 +79,9 @@ splitData :: ByteString -> Builder
 splitData remaining
   | ByteString.null remaining = mempty
   | otherwise =
+      -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength'
+      -- (the lower of the two arguments to 'min'); the 'fromIntegral'
+      -- below therefore fits 'Word32' by construction.
       let chunkLength    = min (unLength maxSingleCommandLength) (ByteString.length remaining)
           (chunk, leftover) = ByteString.splitAt chunkLength remaining
       in word8 248 <> putWord32BE (fromIntegral chunkLength) <> byteString chunk
@@ -124,22 +133,28 @@ planCopy initialOffset initialLength = unfoldr peelChunk (initialOffset, initial
 -- 'maxSingleCommandLength'; outside that range, 'planCopy' enforces the
 -- precondition by chunking before each call. Reads top-to-bottom as the
 -- W3C GDIFF spec's COPY table — same order as 'CopyEncoding'.
+--
+-- Each branch's 'fromIntegral' calls are safe-by-construction: the
+-- guard immediately to the left establishes the bound, and the
+-- 'CopyEncoding' constructor's argument types match it. Reading a
+-- branch top-to-bottom — guard, constructor, fromIntegrals — the
+-- safety chain is local to the branch, no where-block to consult.
 selectCopy :: Offset -> Length -> CopyEncoding
 selectCopy offset copyLength
-  | offset <= maximumTwoByteOffset  && copyLength <= maximumOneByteLength = Copy249 offsetAsTwoBytes  lengthAsOneByte
-  | offset <= maximumTwoByteOffset  && copyLength <= maximumTwoByteLength = Copy250 offsetAsTwoBytes  lengthAsTwoBytes
-  | offset <= maximumTwoByteOffset                                        = Copy251 offsetAsTwoBytes  lengthAsFourBytes
-  | offset <= maximumFourByteOffset && copyLength <= maximumOneByteLength = Copy252 offsetAsFourBytes lengthAsOneByte
-  | offset <= maximumFourByteOffset && copyLength <= maximumTwoByteLength = Copy253 offsetAsFourBytes lengthAsTwoBytes
-  | offset <= maximumFourByteOffset                                       = Copy254 offsetAsFourBytes lengthAsFourBytes
-  | otherwise                                                             = Copy255 offsetAsEightBytes lengthAsFourBytes
-  where
-    offsetAsTwoBytes   = fromIntegral (unOffset offset)
-    offsetAsFourBytes  = fromIntegral (unOffset offset)
-    offsetAsEightBytes = fromIntegral (unOffset offset)
-    lengthAsOneByte    = fromIntegral (unLength copyLength)
-    lengthAsTwoBytes   = fromIntegral (unLength copyLength)
-    lengthAsFourBytes  = fromIntegral (unLength copyLength)
+  | offset <= maximumTwoByteOffset  && copyLength <= maximumOneByteLength =
+      Copy249 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | offset <= maximumTwoByteOffset  && copyLength <= maximumTwoByteLength =
+      Copy250 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | offset <= maximumTwoByteOffset                                        =
+      Copy251 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | offset <= maximumFourByteOffset && copyLength <= maximumOneByteLength =
+      Copy252 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | offset <= maximumFourByteOffset && copyLength <= maximumTwoByteLength =
+      Copy253 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | offset <= maximumFourByteOffset                                       =
+      Copy254 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
+  | otherwise                                                             =
+      Copy255 (fromIntegral (unOffset offset)) (fromIntegral (unLength copyLength))
 
 -- | Serialise a single 'CopyEncoding' to the wire — one line per opcode,
 -- structured as a wire-format reference card.

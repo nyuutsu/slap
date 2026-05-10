@@ -28,6 +28,7 @@ import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Apply as DPS
+import Slap.DPS.Types (DPSRecord(..), narrowDPSRecord, narrowDPSSourceSize)
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.NINJA2.Apply as NINJA2
@@ -35,6 +36,7 @@ import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.APSGBA.Apply as APSGBA
+import Slap.APSGBA.Types (narrowAPSGBASourceSize)
 import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.GDIFF.Parse as GDIFF
@@ -128,6 +130,10 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "DPS"
       [ testProperty "round-trip" prop_dps
+      , testCase     "rejects header source size > 0xFFFFFFFF"
+                     dpsSourceSizeAdversarial
+      , testCase     "rejects per-record offset > 0xFFFFFFFF"
+                     dpsRecordOffsetAdversarial
       ]
   , testGroup "NINJA2"
       [ testProperty "round-trip" prop_ninja2
@@ -144,6 +150,8 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "APS-GBA"
       [ testProperty "round-trip" prop_apsGba
+      , testCase     "rejects header source size > 0xFFFFFFFF"
+                     apsGbaSourceSizeAdversarial
       ]
   , testGroup "GDIFF"
       [ testProperty "round-trip"                                    prop_gdiff
@@ -573,6 +581,49 @@ ppf2SourceSizeAdversarial :: Assertion
 ppf2SourceSizeAdversarial =
   case narrowPPF2SourceSize (FileSize 0x100000000) of
     Left (NarrowingError (FieldValueExceedsBound LabelPPF2 FieldSourceSize
+                            actual maxValue)) -> do
+      assertEqual "actual"  0x100000000 actual
+      assertEqual "maximum" 0xFFFFFFFF  maxValue
+    other -> assertFailure
+               ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
+
+-- | Parallel to 'ppf2SourceSizeAdversarial': an oversize source ROM
+-- has to bottom out as 'NarrowingError' rather than silently truncate
+-- through the DPS header's 4-byte LE source-size field. Driving the
+-- narrowing function directly avoids a 4 GiB 'ByteString'.
+dpsSourceSizeAdversarial :: Assertion
+dpsSourceSizeAdversarial =
+  case narrowDPSSourceSize (FileSize 0x100000000) of
+    Left (NarrowingError (FieldValueExceedsBound LabelDPS FieldSourceSize
+                            actual maxValue)) -> do
+      assertEqual "actual"  0x100000000 actual
+      assertEqual "maximum" 0xFFFFFFFF  maxValue
+    other -> assertFailure
+               ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
+
+-- | Parallel to 'dpsSourceSizeAdversarial' for the per-record
+-- offset: a 'DPSRecord' carrying an offset above 'Word32' max has
+-- to bottom out as 'NarrowingError' rather than silently truncate
+-- through the record's 4-byte LE output-offset field.
+dpsRecordOffsetAdversarial :: Assertion
+dpsRecordOffsetAdversarial =
+  let oversize = Offset 0x100000000
+      record   = DPSCopyFromROM oversize (Offset 0) (Length 0)
+  in case narrowDPSRecord record of
+       Left (NarrowingError (FieldValueExceedsBound LabelDPS FieldDestinationSize
+                               actual maxValue)) -> do
+         assertEqual "actual"  0x100000000 actual
+         assertEqual "maximum" 0xFFFFFFFF  maxValue
+       other -> assertFailure
+                  ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
+
+-- | Parallel to 'ppf2SourceSizeAdversarial' for APS-GBA. APS-GBA
+-- has no parser-side roundtrip through 'APSGBASourceSize', so this
+-- exercises the narrow function directly.
+apsGbaSourceSizeAdversarial :: Assertion
+apsGbaSourceSizeAdversarial =
+  case narrowAPSGBASourceSize (FileSize 0x100000000) of
+    Left (NarrowingError (FieldValueExceedsBound LabelAPSGBA FieldSourceSize
                             actual maxValue)) -> do
       assertEqual "actual"  0x100000000 actual
       assertEqual "maximum" 0xFFFFFFFF  maxValue

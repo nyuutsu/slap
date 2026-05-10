@@ -5,13 +5,13 @@ module Slap.APSGBA.Create
   , encodeGBABlock
   ) where
 
-import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize)
+import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize,
+                           narrowAPSGBASourceSize, narrowAPSGBATargetSize,
+                           unAPSGBASourceSize, unAPSGBATargetSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE, viewBytesInRange)
 import Slap.Checksum (CRC16(..))
-import Slap.Error (SlapError(..), CreateResult(..))
-import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ActualSize(..), MaxAddressableSize(..), byteFileSize)
+import Slap.Error (SlapError, CreateResult(..))
+import Slap.Measure (Offset(..), Length(..), byteFileSize)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -24,14 +24,14 @@ import Data.Word (Word32)
 createAPSGBA :: InputFileContents -> OutputFileContents
              -> Either SlapError CreateResult
 createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) = do
-  guardAPSGBASize (byteFileSize original)
-  guardAPSGBASize (byteFileSize modified)
-  Right (CreateResult (PatchFileContents patchBytes) [])
+  sourceSize <- narrowAPSGBASourceSize (byteFileSize original)
+  targetSize <- narrowAPSGBATargetSize (byteFileSize modified)
+  Right (CreateResult (PatchFileContents (patchBytes sourceSize targetSize)) [])
   where
-    patchBytes = LazyByteString.toStrict $ toLazyByteString $
+    patchBytes sourceSize targetSize = LazyByteString.toStrict $ toLazyByteString $
       byteString apsGbaMagicBytes
-      <> putWord32LE (fromIntegral (ByteString.length original) :: Word32)
-      <> putWord32LE (fromIntegral (ByteString.length modified) :: Word32)
+      <> putWord32LE (unAPSGBASourceSize sourceSize)
+      <> putWord32LE (unAPSGBATargetSize targetSize)
       <> foldMap (encodeGBABlock inputContents outputContents) changedBlocks
     blockSize = apsGbaBlockSize
     blockCount = max (blocksOf original) (blocksOf modified)
@@ -46,21 +46,14 @@ createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFi
       | ByteString.length input >= blockSize = ByteString.take blockSize input
       | otherwise = input <> ByteString.replicate (blockSize - ByteString.length input) 0
 
--- | APS-GBA encodes source and target sizes as little-endian 'Word32'
--- on the wire, so inputs over 4 GB would silently truncate. Reject at
--- the boundary. Unreachable in practice — GBA cartridges cap at 32 MB
--- — but the guard keeps the encoder honest about its wire-format limit.
-guardAPSGBASize :: FileSize -> Either SlapError ()
-guardAPSGBASize size
-  | size <= maxAddressable = Right ()
-  | otherwise = Left (FileExceedsAddressableRange LabelAPSGBA
-                        (ActualSize size)
-                        (MaxAddressableSize maxAddressable))
-  where
-    maxAddressable = FileSize (fromIntegral (maxBound :: Word32))
-
 encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
 encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockIndex =
+    -- Safe-by-construction: 'createAPSGBA' has narrowed both
+    -- 'sourceSize' and 'targetSize' to 'Word32', and any reachable
+    -- 'blockIndex' lies in @[0 .. blockCount)@ where
+    -- @blockCount * apsGbaBlockSize@ does not exceed the larger of
+    -- those two narrowed sizes. The @blockIndex * apsGbaBlockSize@
+    -- product therefore fits 'Word32' without truncation.
     putWord32LE (fromIntegral offset :: Word32)
     <> putWord16LE (unCRC16 (crc16 sourceBlock))
     <> putWord16LE (unCRC16 (crc16 targetBlock))

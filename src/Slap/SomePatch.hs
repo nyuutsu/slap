@@ -1079,7 +1079,7 @@ parseSomePatchFromDPS patchContents = do
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (DPS.applyDPS patch source)) }
     , patchVerification   = noVerification
-          { verifyFileSizeRequired = Just (DPS.dpsOriginalSize patch) }
+          { verifyFileSizeRequired = Just (DPS.dpsSourceSizeAsFileSize (DPS.dpsOriginalSize patch)) }
     , patchUndo           = Nothing
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelDPS "records" | null records]

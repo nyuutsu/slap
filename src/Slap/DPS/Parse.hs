@@ -10,6 +10,7 @@ module Slap.DPS.Parse
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         toDPSStability, toDPSFormatVersion,
+                        dpsSourceSizeFromParsed,
                         dpsFieldWidth, dpsMinimumFileSize,
                         dpsVersionOffset, dpsStabilityOffset,
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
@@ -21,7 +22,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import qualified Slap.Get as Get
-import Slap.Measure (Length(..), Offset(..), FileSize(..),
+import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      RawFlagByte(..))
 
@@ -95,7 +96,7 @@ parseDPSBody = do
     Left errorMessage -> fail errorMessage
     Right stability -> do
       _ <- getByte  -- version byte (validated by parseDPS guard)
-      originalSize  <- FileSize . fromIntegral <$> Get.word32LE
+      originalSize  <- dpsSourceSizeFromParsed <$> Get.word32LE
       recordsResult <- parseRecords
       pure $ case recordsResult of
         Left slapError -> Left slapError

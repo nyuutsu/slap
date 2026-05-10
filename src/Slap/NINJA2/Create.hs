@@ -1,6 +1,15 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | NINJA2 patch creation. XOR-based records, packed-integer (VLV)
+-- header sizes and per-record lengths.
+--
+-- Wire-format integer safety: the 'fromIntegral' calls in this
+-- module convert 'Int' to 'Int64' as required by
+-- 'encodeVariableLengthValue'. @Int → Int64@ is widening on 32-bit
+-- hosts and a no-op on 64-bit (where GHC's 'Int' is 'Int64'); the
+-- conversion never shrinks, so no truncation hazard exists at any
+-- of these sites.
 module Slap.NINJA2.Create
   ( createNINJA2
   , encodeXorRecord

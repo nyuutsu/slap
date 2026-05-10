@@ -5,6 +5,13 @@ module Slap.APSGBA.Types
   ( APSGBAPatch(..)
   , APSGBAHeader(..)
   , APSGBARecord(..)
+    -- * Wire-format wrappers
+  , APSGBASourceSize
+  , unAPSGBASourceSize
+  , narrowAPSGBASourceSize
+  , APSGBATargetSize
+  , unAPSGBATargetSize
+  , narrowAPSGBATargetSize
     -- * Named constants
   , apsGbaMagicBytes
   , apsGbaHeaderSize
@@ -13,8 +20,13 @@ module Slap.APSGBA.Types
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Word (Word32)
 import Slap.Checksum (CRC16)
-import Slap.Measure (FileSize, Offset)
+import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (FileSize(..), Offset)
+import Slap.Narrow (narrowToWord32)
 
 data APSGBAPatch = APSGBAPatch APSGBAHeader [APSGBARecord]
   deriving (Show)
@@ -30,6 +42,40 @@ data APSGBARecord = APSGBARecord
   , apsGbaTargetCRC :: CRC16
   , apsGbaXorData   :: ByteString  -- apsGbaBlockSize bytes
   } deriving (Show)
+
+----------------------------------------------------------------------------
+-- Wire-format wrappers
+----------------------------------------------------------------------------
+
+-- | APS-GBA's 4-byte LE source-ROM-size header field, narrowed from a
+-- runtime 'FileSize'. Constructor private; values come from
+-- 'narrowAPSGBASourceSize'. APS-GBA has no parser-side exit because
+-- the parser does not roundtrip through 'APSGBASourceSize' — its
+-- 'APSGBAHeader' carries the raw 'FileSize' instead, since the apply
+-- side needs the file-size currency directly.
+newtype APSGBASourceSize = APSGBASourceSize { unAPSGBASourceSize :: Word32 }
+  deriving (Show, Eq)
+
+narrowAPSGBASourceSize :: FileSize -> Either SlapError APSGBASourceSize
+narrowAPSGBASourceSize size =
+  case narrowToWord32 LabelAPSGBA FieldSourceSize (unFileSize size) of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (APSGBASourceSize word)
+
+-- | APS-GBA's 4-byte LE target-ROM-size header field; sibling to
+-- 'APSGBASourceSize'.
+newtype APSGBATargetSize = APSGBATargetSize { unAPSGBATargetSize :: Word32 }
+  deriving (Show, Eq)
+
+narrowAPSGBATargetSize :: FileSize -> Either SlapError APSGBATargetSize
+narrowAPSGBATargetSize size =
+  case narrowToWord32 LabelAPSGBA FieldTargetSize (unFileSize size) of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (APSGBATargetSize word)
+
+----------------------------------------------------------------------------
+-- Named constants
+----------------------------------------------------------------------------
 
 -- | APS-GBA magic bytes (@"APS1"@). Shared prefix with APS-N64
 -- (@"APS10"@) — detection must check the longer probe first.

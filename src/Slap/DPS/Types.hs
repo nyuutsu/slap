@@ -10,6 +10,15 @@ module Slap.DPS.Types
   , fromDPSStability
   , toDPSFormatVersion
   , fromDPSFormatVersion
+    -- * Wire-format wrappers
+  , DPSSourceSize
+  , unDPSSourceSize
+  , narrowDPSSourceSize
+  , dpsSourceSizeFromParsed
+  , dpsSourceSizeAsFileSize
+  , EncodedDPSRecord(..)
+  , narrowDPSRecord
+  , narrowDPSRecords
     -- * Named constants
   , dpsFieldWidth
   , dpsFieldCount
@@ -27,11 +36,14 @@ module Slap.DPS.Types
   ) where
 
 import Data.ByteString (ByteString)
-import Data.Word (Word8)
+import qualified Data.ByteString as ByteString
+import Data.Word (Word8, Word32)
 import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..),
                      advance, byteLength, offsetToFileSize)
+import Slap.Narrow (narrowToWord32)
 
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
@@ -70,7 +82,7 @@ data DPSPatch = DPSPatch
   , dpsVersion    :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
   , dpsStability       :: DPSStability
   , dpsFormatVersion :: DPSFormatVersion
-  , dpsOriginalSize   :: !FileSize    -- original ROM size
+  , dpsOriginalSize   :: !DPSSourceSize  -- original ROM size, narrowed to the wire field's 4-byte LE Word32
   , dpsRecords    :: [DPSRecord]
   } deriving (Show)
 
@@ -85,6 +97,80 @@ data DPSRecord
       , dpsDataPayload      :: !ByteString
       }
   deriving (Show)
+
+----------------------------------------------------------------------------
+-- Wire-format wrappers
+----------------------------------------------------------------------------
+
+-- | DPS's 4-byte LE source-ROM-size header field, narrowed from a
+-- runtime 'FileSize'. Constructor private; values come from
+-- 'narrowDPSSourceSize' (runtime check) or 'dpsSourceSizeFromParsed'
+-- (parse-time trust, since the field's wire shape constrains the
+-- bytestring before it reaches the constructor).
+newtype DPSSourceSize = DPSSourceSize { unDPSSourceSize :: Word32 }
+  deriving (Show, Eq)
+
+narrowDPSSourceSize :: FileSize -> Either SlapError DPSSourceSize
+narrowDPSSourceSize size =
+  case narrowToWord32 LabelDPS FieldSourceSize (unFileSize size) of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (DPSSourceSize word)
+
+dpsSourceSizeFromParsed :: Word32 -> DPSSourceSize
+dpsSourceSizeFromParsed = DPSSourceSize
+
+-- | Lift a 'DPSSourceSize' back to a 'FileSize' for callers that work
+-- in the application's general size currency ("Slap.SomePatch"'s
+-- file-size verification gate, "Slap.DPS.Describe"'s info line).
+-- Word32 → Int is widening on every host slap supports (GHC's 'Int'
+-- is always at least 30 bits and is 64 bits on 64-bit hosts), so the
+-- conversion never truncates.
+dpsSourceSizeAsFileSize :: DPSSourceSize -> FileSize
+dpsSourceSizeAsFileSize (DPSSourceSize word) = FileSize (fromIntegral word)
+
+-- | A 'DPSRecord' whose offsets and lengths have been validated
+-- against the 4-byte LE wire fields. Constructor private; values
+-- come from 'narrowDPSRecord' / 'narrowDPSRecords'. Encoders consume
+-- this type and access the validated 'Word32' fields directly via
+-- the selectors.
+data EncodedDPSRecord
+  = EncodedDPSCopyFromROM
+      { encodedDPSCopyOutputOffset :: !Word32
+      , encodedDPSCopySourceOffset :: !Word32
+      , encodedDPSCopyLength       :: !Word32
+      }
+  | EncodedDPSEnclosedData
+      { encodedDPSDataOutputOffset :: !Word32
+      , encodedDPSDataPayload      :: !ByteString
+      }
+  deriving (Show, Eq)
+
+-- | Validate a 'DPSRecord''s offsets and lengths against the
+-- record's 4-byte LE wire fields. The 'EnclosedData' arm also
+-- validates the payload's bytestring length, since the wire format
+-- writes that count alongside the bytes themselves.
+narrowDPSRecord :: DPSRecord -> Either SlapError EncodedDPSRecord
+narrowDPSRecord (DPSCopyFromROM outputOffset sourceOffset copyLength) = do
+  outputW <- narrowDPSField FieldDestinationSize (unOffset outputOffset)
+  sourceW <- narrowDPSField FieldSourceSize      (unOffset sourceOffset)
+  lengthW <- narrowDPSField FieldTargetSize      (unLength copyLength)
+  pure (EncodedDPSCopyFromROM outputW sourceW lengthW)
+narrowDPSRecord (DPSEnclosedData outputOffset payload) = do
+  outputW <- narrowDPSField FieldDestinationSize (unOffset outputOffset)
+  -- The wire-format size field for the payload is 4 bytes LE; once
+  -- this narrow succeeds, the encoder's 'fromIntegral' on the same
+  -- bytestring's length is safe-by-construction.
+  _       <- narrowDPSField FieldTargetSize (ByteString.length payload)
+  pure (EncodedDPSEnclosedData outputW payload)
+
+narrowDPSField :: FieldName -> Int -> Either SlapError Word32
+narrowDPSField field value =
+  case narrowToWord32 LabelDPS field value of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right word
+
+narrowDPSRecords :: [DPSRecord] -> Either SlapError [EncodedDPSRecord]
+narrowDPSRecords = traverse narrowDPSRecord
 
 ----------------------------------------------------------------------------
 -- Named constants

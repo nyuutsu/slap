@@ -1,5 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | UPS patch creation. Builds an XOR-block stream over the
+-- byuu-varint header/skip widths.
+--
+-- Wire-format integer safety: the 'fromIntegral' calls in this
+-- module convert 'Int' to 'Int64' as required by 'putByuuVarint'.
+-- @Int → Int64@ is widening on 32-bit hosts and a no-op on 64-bit
+-- (where GHC's 'Int' is 'Int64'); the conversion never shrinks, so
+-- no truncation hazard exists at any of these sites.
 module Slap.UPS.Create
   ( createUPS
   ) where

@@ -4,7 +4,8 @@ module Slap.DPS.Describe
   , makeDPSRegion
   ) where
 
-import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..))
+import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSStability(..),
+                       dpsSourceSizeAsFileSize)
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
@@ -28,7 +29,7 @@ dpsMeta patch = concat
   [ fieldPair "name"    (dpsName patch)
   , fieldPair "author"  (dpsAuthor patch)
   , fieldPair "version" (dpsVersion patch)
-  , [InfoLine "orig size" (show (unFileSize (dpsOriginalSize patch)))]
+  , [InfoLine "orig size" (show (unFileSize (dpsSourceSizeAsFileSize (dpsOriginalSize patch))))]
   , [InfoLine "flag" "unstable" | dpsStability patch == DPSUnstable]
   , [InfoLine "copy" (show copyCount)]
   , [InfoLine "enclosed" (show enclosedCount)]
