@@ -42,6 +42,9 @@ data FieldName
   -- Record fields
   | FieldRLERunLength
   | FieldRecordMode
+  | FieldRecordOutputOffset
+  | FieldRecordSourceOffset
+  | FieldRecordLength
   -- Trailer / count fields
   | FieldFileIdDizLength
   | FieldRecordCount
@@ -74,5 +77,8 @@ fieldNameLabel FieldTargetCRC        = "target CRC"
 fieldNameLabel FieldPatchCRC         = "patch CRC"
 fieldNameLabel FieldRLERunLength     = "RLE run length"
 fieldNameLabel FieldRecordMode       = "record mode"
+fieldNameLabel FieldRecordOutputOffset = "record output offset"
+fieldNameLabel FieldRecordSourceOffset = "record source offset"
+fieldNameLabel FieldRecordLength       = "record length"
 fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"

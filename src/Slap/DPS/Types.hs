@@ -151,16 +151,16 @@ data EncodedDPSRecord
 -- writes that count alongside the bytes themselves.
 narrowDPSRecord :: DPSRecord -> Either SlapError EncodedDPSRecord
 narrowDPSRecord (DPSCopyFromROM outputOffset sourceOffset copyLength) = do
-  outputW <- narrowDPSField FieldDestinationSize (unOffset outputOffset)
-  sourceW <- narrowDPSField FieldSourceSize      (unOffset sourceOffset)
-  lengthW <- narrowDPSField FieldTargetSize      (unLength copyLength)
+  outputW <- narrowDPSField FieldRecordOutputOffset (unOffset outputOffset)
+  sourceW <- narrowDPSField FieldRecordSourceOffset (unOffset sourceOffset)
+  lengthW <- narrowDPSField FieldRecordLength       (unLength copyLength)
   pure (EncodedDPSCopyFromROM outputW sourceW lengthW)
 narrowDPSRecord (DPSEnclosedData outputOffset payload) = do
-  outputW <- narrowDPSField FieldDestinationSize (unOffset outputOffset)
+  outputW <- narrowDPSField FieldRecordOutputOffset (unOffset outputOffset)
   -- The wire-format size field for the payload is 4 bytes LE; once
   -- this narrow succeeds, the encoder's 'fromIntegral' on the same
   -- bytestring's length is safe-by-construction.
-  _       <- narrowDPSField FieldTargetSize (ByteString.length payload)
+  _       <- narrowDPSField FieldRecordLength (ByteString.length payload)
   pure (EncodedDPSEnclosedData outputW payload)
 
 narrowDPSField :: FieldName -> Int -> Either SlapError Word32

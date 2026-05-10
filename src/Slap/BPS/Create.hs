@@ -6,12 +6,18 @@
 --
 -- Wire-format integer safety: the 'fromIntegral' calls in this
 -- module convert 'Int' to 'Int64' as required by 'putByuuVarint'.
--- @Int → Int64@ is widening on 32-bit hosts and a no-op on 64-bit
--- (where GHC's 'Int' is 'Int64'); the conversion never shrinks, so
--- no truncation hazard exists at any of these sites. The
--- 'guardAddressable' boundary check above the encoder handles the
--- separate concern of inputs that exceed the host's 'Int' range
--- before they reach 'fromIntegral'.
+-- @Int → Int64@ is a no-op on 64-bit hosts (where GHC's 'Int' is
+-- 'Int64') and lossless widening on 32-bit; never shrinks.
+--
+-- 'guardAddressable' is a separate concern, and a spec-fidelity one:
+-- the BPS spec permits varints of arbitrary width, naming 128-bit
+-- and beyond explicitly. Slap caps both varint values and cursor
+-- state at host 'Int' (63-bit signed on 64-bit) — a deliberate
+-- slap-side deviation, not a property of the spec. The guard
+-- refuses inputs that would require values past the cap, surfacing
+-- the deviation at the boundary instead of letting it corrupt
+-- later. See @bps/questions.md@ in the slap-format-documentation
+-- repository for the deviation rationale.
 module Slap.BPS.Create
   ( createBPS
   ) where

@@ -610,7 +610,7 @@ dpsRecordOffsetAdversarial =
   let oversize = Offset 0x100000000
       record   = DPSCopyFromROM oversize (Offset 0) (Length 0)
   in case narrowDPSRecord record of
-       Left (NarrowingError (FieldValueExceedsBound LabelDPS FieldDestinationSize
+       Left (NarrowingError (FieldValueExceedsBound LabelDPS FieldRecordOutputOffset
                                actual maxValue)) -> do
          assertEqual "actual"  0x100000000 actual
          assertEqual "maximum" 0xFFFFFFFF  maxValue
