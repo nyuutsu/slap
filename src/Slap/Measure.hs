@@ -78,7 +78,6 @@ module Slap.Measure
   , splitHunk
   , splitHunks
   , splitHunksUnbounded
-  , splitHunkPostResolve
   , splitUndoHunks
   , splitUndoHunkFromParsed
     -- * IPS sentinel values
@@ -313,7 +312,7 @@ data SplitHunk = SplitHunk
 
 -- | A PPF3-style undo record whose payload has been validated against
 -- the format's per-record payload bound. Constructor private; values
--- come from one of three named producers in this module:
+-- come from one of two named producers in this module:
 --
 -- * 'splitUndoHunks'       — create-time, splits a 'Hunk' list against
 --                            the payload bound and computes per-piece
@@ -322,13 +321,6 @@ data SplitHunk = SplitHunk
 --                               wire-format record (the parser's
 --                               1-byte length field guarantees the
 --                               bound).
--- * 'splitUndoHunkPostResolve' — not present today; the @postResolve@
---                                exit is reserved for future passes
---                                that may need to publish a
---                                'SplitUndoHunk' after a payload-
---                                altering transformation, parallel to
---                                'splitHunkPostResolve'. Add when a
---                                use materialises.
 --
 -- Every encoder that emits a PPF3 undo record consumes 'EncodedUndoHunk'
 -- (in 'Slap.Narrow'), which can only be produced by narrowing a
@@ -597,20 +589,6 @@ splitHunks maxLength = concatMap (splitHunk maxLength)
 splitHunksUnbounded :: [Hunk] -> [SplitHunk]
 splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
 
--- | Re-form a 'SplitHunk' after a payload-altering pass that operates
--- on already-split records. The post-resolve sentinel-collision
--- shift in 'Slap.IPS.Create.resolveSentinelCollisions' and
--- 'Slap.NINJA1.Create.resolveSentinelCollisions' uses this to
--- propagate a byte-prepend on an already-validated 'SplitHunk' — the
--- prepend may push payload one byte past the original 'splitHunks'
--- cap, a documented fragility shared by today's pipeline. Keeping
--- the construction path named (rather than exporting the 'SplitHunk'
--- constructor) preserves the property that every 'SplitHunk' has a
--- discoverable provenance: 'splitHunks', 'splitHunksUnbounded', or
--- this post-resolve exit.
-splitHunkPostResolve :: Offset -> ByteString -> SplitHunk
-splitHunkPostResolve = SplitHunk
-
 -- | Split a list of 'Hunk's against the format's per-record payload
 -- bound and pair each split piece with the corresponding bytes from
 -- @source@ (the original-bytes field every PPF3 undo record carries).
@@ -642,8 +620,7 @@ splitUndoHunks maxLength source = concatMap pieces
 -- trusting the parser's payload-bound guarantee. PPF3's wire format
 -- prefixes the undo payload with a single byte naming its length,
 -- so any 'SplitUndoHunk' constructed here is provably ≤ 255 bytes by
--- the parser's contract. Documented opt-out parallel to
--- 'splitHunkPostResolve'; the named exit preserves the property that
+-- the parser's contract. The named exit preserves the property that
 -- every 'SplitUndoHunk' has a discoverable provenance.
 splitUndoHunkFromParsed :: Offset -> ByteString -> ByteString -> SplitUndoHunk
 splitUndoHunkFromParsed = SplitUndoHunk

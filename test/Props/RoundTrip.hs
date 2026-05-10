@@ -90,6 +90,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "eof-collision" prop_ipsEofCollision
       , testProperty "resolveSentinelCollisions" prop_resolveSentinelCollisions
       , testProperty "source-less convert rejects sentinel" prop_sourcelessSentinelRejected
+      , testCase     "max-payload at sentinel round-trips" ipsSentinelMaxPayloadRoundTrips
       , testProperty "dp-not-larger" prop_dpNotLarger
       ]
   , testGroup "IPS32"
@@ -229,11 +230,11 @@ prop_resolveSentinelCollisions = once $
     [ -- Record at sentinel is shifted back and the preceding source byte prepended.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
         (asSplit [Hunk (Offset 5) (ByteString.pack [0xFF])])
-        === Right (asSplit [Hunk (Offset 4) (ByteString.pack [4, 0xFF])])
+        === Right [Hunk (Offset 4) (ByteString.pack [4, 0xFF])]
     , -- Record NOT at sentinel passes through unchanged.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
         (asSplit [Hunk (Offset 3) (ByteString.pack [0xAA])])
-        === Right (asSplit [Hunk (Offset 3) (ByteString.pack [0xAA])])
+        === Right [Hunk (Offset 3) (ByteString.pack [0xAA])]
     , -- Empty source: collision is unfixable, returns a structured error.
       resolveSentinelCollisions LabelIPS sentinelAt5 emptySource
         (asSplit [Hunk (Offset 5) (ByteString.pack [0xFF])])
@@ -264,6 +265,45 @@ prop_sourcelessSentinelRejected = once $
        Right _ ->
          counterexample "expected Left SentinelCollisionUnfixable, got Right" $
            property False
+
+-- | Corner case for the post-resolve payload bound. When the input
+-- record sits on the sentinel offset and carries exactly
+-- 'ipsMaxRecordPayload' (@0xFFFF@) bytes, the byte-prepend dodge in
+-- 'resolveSentinelCollisions' grows the payload to @0x10000@ bytes —
+-- one over IPS's 16-bit length field. Without the second 'splitHunks'
+-- pass that the convert pipeline runs after sentinel resolution, the
+-- wire encoder's @putWord16BE (fromIntegral payloadLength)@ would
+-- truncate to @0x0000@ (the RLE record sentinel) and emit a
+-- structurally different record from the one intended. With the
+-- second pass, the over-cap payload re-splits into pieces that fit
+-- the wire format, and the patch round-trips.
+ipsSentinelMaxPayloadRoundTrips :: Assertion
+ipsSentinelMaxPayloadRoundTrips =
+  let eofOffset       = 0x454F46
+      maxPayloadCount = 0xFFFF
+      source = ByteString.replicate (eofOffset + 1) 0
+      target = ByteString.replicate eofOffset 0
+            <> ByteString.replicate maxPayloadCount 0xAB
+  in case createPatch (CreateDirect CreateIPS)
+                      (InputFileContents source) (OutputFileContents target)
+                      noMetadataRequested Nothing
+                      noConstraintsRequested noDialectsRequested of
+       Left slapError ->
+         assertFailure ("create: " ++ renderSlapError slapError)
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
+         Left slapError ->
+           assertFailure ("parse: " ++ renderSlapError slapError)
+         Right (Parsed (IPSParseCleanIPS ipsPatch) _) ->
+           case IPS.applyIPS (InputFileContents source) ipsPatch of
+             Right outcome ->
+               assertEqual "round-trip"
+                 (OutputFileContents target) (outcomeValue outcome)
+             Left slapError ->
+               assertFailure ("apply: " ++ renderSlapError slapError)
+         Right (Parsed (IPSParseCleanEBP _) _) ->
+           assertFailure "unexpectedly parsed as EBP"
+         Right (Parsed (IPSParseTruncated _ _) _) ->
+           assertFailure "unexpectedly parsed as truncated"
 
 -- | DP patch size must not exceed greedy patch size for IPS (offWidth=3).
 prop_dpNotLarger :: Property

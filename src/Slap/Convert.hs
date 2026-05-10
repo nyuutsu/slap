@@ -850,18 +850,18 @@ encodeDirect :: PatchContents -> InputFileContents -> DirectCreate -> RequestedP
              -> Either SlapError CreateResult
 encodeDirect contents source target meta limits constraints dialects = case target of
   CreateIPS -> do
-    resolved <- resolveIPSSentinel LabelIPS StandardIPS
-                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- narrow resolved
+    resolvedRaw <- resolveIPSSentinel LabelIPS StandardIPS
+                     (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
     rejectNonSMCShapedTruncation constraints contents
     Right (CreateResult
             (IPS.encodeIPSPatch StandardIPS records (contentsTruncation contents))
             [])
   CreateIPS32 -> do
     rejectTruncation LabelIPS32 contents source
-    resolved <- resolveIPSSentinel LabelIPS32 IPS32
-                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- narrow resolved
+    resolvedRaw <- resolveIPSSentinel LabelIPS32 IPS32
+                     (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
     -- IPS32 has no community-recognized truncation marker; encodeIPSPatch
     -- silently drops the truncation argument for IPS32, but we pass
     -- 'Nothing' explicitly here to make the decision visible at the call
@@ -871,9 +871,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             [])
   CreateEBP -> do
     rejectTruncation LabelEBP contents source
-    resolved <- resolveIPSSentinel LabelEBP StandardIPS
-                  (splitHunks ipsMaxRecordPayload (contentsRecords contents))
-    records <- narrow resolved
+    resolvedRaw <- resolveIPSSentinel LabelEBP StandardIPS
+                     (splitHunks ipsMaxRecordPayload (contentsRecords contents))
+    records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
@@ -953,10 +953,10 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       Just diz -> ppfResult { resultBytes = PatchFileContents
                     (unPatchFileContents (resultBytes ppfResult) <> PPF3.encodeFileIdDiz (PPF3FileId diz)) }
   CreateNINJA1 -> do
-    resolved <- NINJA1.resolveSentinelCollisions LabelNINJA1
-                  NINJA1.ninja1SentinelOffset source
-                  (splitHunksUnbounded (contentsRecords contents))
-    records <- narrow resolved
+    resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
+                     NINJA1.ninja1SentinelOffset source
+                     (splitHunksUnbounded (contentsRecords contents))
+    records <- narrow (splitHunksUnbounded resolvedRaw)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)
@@ -984,7 +984,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       Nothing  -> Right . narrowHunksUnbounded
       Just lim -> first NarrowingError . narrowHunks lim
     resolveIPSSentinel :: FormatLabel -> IPSVariant -> [SplitHunk]
-                       -> Either SlapError [SplitHunk]
+                       -> Either SlapError [Hunk]
     resolveIPSSentinel label variant =
       IPS.resolveSentinelCollisions label
         (SentinelOffset (ipsVariantSentinel (variantSpec variant)))
