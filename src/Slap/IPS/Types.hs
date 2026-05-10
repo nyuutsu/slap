@@ -38,6 +38,7 @@ module Slap.IPS.Types
     -- * Encoding limits
   , ipsLimits
   , ips32Limits
+  , ebpLimits
   ) where
 
 import Data.Bits ((.&.))
@@ -429,6 +430,14 @@ ips32Limits = EncodingLimits
   { maximumOffset = ipsVariantMaxAddressableOffset (variantSpec IPS32)
   , formatLabel   = LabelIPS32
   }
+
+-- | EBP's wire-format offset cap. Structurally a 'StandardIPS' patch
+-- with a JSON metadata trailer, so EBP shares 'ipsLimits''s offset
+-- range; only the error-tag 'FormatLabel' differs. Defined here as a
+-- record-update on 'ipsLimits' so the shared field stays in lockstep
+-- with 'StandardIPS'.
+ebpLimits :: EncodingLimits
+ebpLimits = ipsLimits { formatLabel = LabelEBP }
 
 ----------------------------------------------------------------------------
 -- Truncation-marker disposition

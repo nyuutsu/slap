@@ -53,7 +53,7 @@ import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec,
-                       ipsLimits, ips32Limits)
+                       ipsLimits, ips32Limits, ebpLimits)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -830,10 +830,7 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
 encodingLimits CreateIPS     = Just ipsLimits
 encodingLimits CreateIPS32   = Just ips32Limits
-encodingLimits CreateEBP     =
-  -- EBP is structurally StandardIPS with a JSON trailer; shares
-  -- StandardIPS's offset range but error-tags as 'LabelEBP'.
-  Just ipsLimits { formatLabel = LabelEBP }
+encodingLimits CreateEBP     = Just ebpLimits
 encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
 encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
 encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
@@ -956,6 +953,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
                      (splitHunksUnbounded (contentsRecords contents))
+    -- Second pass is a no-op for NINJA1 (no per-record cap); kept for
+    -- type uniformity with the IPS arms above, where it closes a real
+    -- overflow hazard.
     records <- narrow (splitHunksUnbounded resolvedRaw)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)

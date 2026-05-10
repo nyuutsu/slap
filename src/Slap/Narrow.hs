@@ -61,11 +61,11 @@ data EncodedHunk = EncodedHunk
 -- | The wire-format offset range an encoder can address, paired with
 -- the format label used to tag overflow errors. Each format with a
 -- bounded per-record offset width defines an 'EncodingLimits' value
--- in its @Types@ module (see 'Slap.APSN64.Types.apsN64Limits',
+-- in its @Types@ module: 'Slap.APSN64.Types.apsN64Limits',
 -- 'Slap.PCHTXT.Types.pchtxtLimits', 'Slap.PMSR.Types.pmsrLimits',
--- 'Slap.PPF1.Types.ppf1Limits', 'Slap.PPF2.Types.ppf2Limits' for the
--- direct family; 'Slap.IPS.Types.variantSpec' threads through to one
--- of these for each IPS variant).
+-- 'Slap.PPF1.Types.ppf1Limits', 'Slap.PPF2.Types.ppf2Limits',
+-- 'Slap.IPS.Types.ipsLimits', 'Slap.IPS.Types.ips32Limits',
+-- 'Slap.IPS.Types.ebpLimits'.
 data EncodingLimits = EncodingLimits
   { maximumOffset :: !Offset
   , formatLabel   :: !FormatLabel

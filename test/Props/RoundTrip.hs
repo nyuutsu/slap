@@ -224,7 +224,10 @@ prop_resolveSentinelCollisions = once $
       -- way to obtain those from this layer is to run 'splitHunks'.
       -- Use an ample cap so the split pass passes inputs through
       -- unchanged and the test is exercising the resolver, not
-      -- splitting.
+      -- splitting. Outputs are raw '[Hunk]' because the resolver drops
+      -- the proof on output — the byte-prepend dodge can push a payload
+      -- one byte past the original cap, so the convert pipeline re-runs
+      -- 'splitHunks' afterward to restore the bound.
       asSplit = splitHunks ipsMaxRecordPayload
   in conjoin
     [ -- Record at sentinel is shifted back and the preceding source byte prepended.

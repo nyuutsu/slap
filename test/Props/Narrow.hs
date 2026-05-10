@@ -19,7 +19,8 @@ import Slap.PPF1.Types    (ppf1Limits)
 import Slap.PPF2.Types    (ppf2Limits)
 import Slap.PPF3.Types    (ppf3MaxRecordPayload)
 import Slap.FormatLabel   (FormatLabel(..))
-import Slap.Measure       (Offset(..), Length(..), Hunk(..), MaxOffset(..),
+import Slap.Measure       (Offset(..), Length(..), Hunk(..),
+                           ActualOffset(..), MaxOffset(..),
                            splitHunks, splitHunksUnbounded, splitOffset,
                            splitPayload, splitUndoHunks, splitUndoOffset,
                            splitUndoPayload, splitUndoOriginal)
@@ -49,31 +50,41 @@ overflowingHunk = [Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)]
 apsN64RejectsOverflow :: Assertion
 apsN64RejectsOverflow =
   case narrowHunks apsN64Limits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelAPSN64 _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelAPSN64
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected APSN64 OffsetExceedsBound, got " ++ show other)
 
 pchtxtRejectsOverflow :: Assertion
 pchtxtRejectsOverflow =
   case narrowHunks pchtxtLimits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelPCHTXT _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelPCHTXT
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PCHTXT OffsetExceedsBound, got " ++ show other)
 
 pmsrRejectsOverflow :: Assertion
 pmsrRejectsOverflow =
   case narrowHunks pmsrLimits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelPMSR _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelPMSR
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PMSR OffsetExceedsBound, got " ++ show other)
 
 ppf1RejectsOverflow :: Assertion
 ppf1RejectsOverflow =
   case narrowHunks ppf1Limits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelPPF1 _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelPPF1
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PPF1 OffsetExceedsBound, got " ++ show other)
 
 ppf2RejectsOverflow :: Assertion
 ppf2RejectsOverflow =
   case narrowHunks ppf2Limits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelPPF2 _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelPPF2
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PPF2 OffsetExceedsBound, got " ++ show other)
 
 -- | IPS's 24-bit offset cap is two orders of magnitude tighter than
@@ -84,13 +95,17 @@ ipsRejectsOverflow :: Assertion
 ipsRejectsOverflow =
   let oneByteOver = [Hunk (Offset 0x1000000) (ByteString.singleton 0xFF)]
   in case narrowHunks ipsLimits (splitHunksUnbounded oneByteOver) of
-    Left (OffsetExceedsBound LabelIPS _ (MaxOffset (Offset 0xFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelIPS
+            (ActualOffset (Offset 0x1000000))
+            (MaxOffset    (Offset 0xFFFFFF))) -> pure ()
     other -> assertFailure ("expected IPS OffsetExceedsBound, got " ++ show other)
 
 ips32RejectsOverflow :: Assertion
 ips32RejectsOverflow =
   case narrowHunks ips32Limits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelIPS32 _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
+    Left (OffsetExceedsBound LabelIPS32
+            (ActualOffset (Offset 0x100000000))
+            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected IPS32 OffsetExceedsBound, got " ++ show other)
 
 -- | A 600-byte payload at offset 100 split at a cap of 255 produces
@@ -101,16 +116,19 @@ ips32RejectsOverflow =
 -- length-field truncation safety.
 splitHunksAtCap :: Assertion
 splitHunksAtCap =
-  let payload = ByteString.replicate 600 0xAB
+  let payload = ByteString.pack [fromIntegral (i `mod` 256) | i <- [0 .. 599 :: Int]]
       pieces  = splitHunks (Length 255) [Hunk (Offset 100) payload]
   in case pieces of
     [piece1, piece2, piece3] -> do
-      assertEqual "piece1 offset"        (Offset 100) (splitOffset piece1)
-      assertEqual "piece2 offset"        (Offset 355) (splitOffset piece2)
-      assertEqual "piece3 offset"        (Offset 610) (splitOffset piece3)
-      assertEqual "piece1 payload size"  255 (ByteString.length (splitPayload piece1))
-      assertEqual "piece2 payload size"  255 (ByteString.length (splitPayload piece2))
-      assertEqual "piece3 payload size"   90 (ByteString.length (splitPayload piece3))
+      assertEqual "piece1 offset"  (Offset 100) (splitOffset piece1)
+      assertEqual "piece2 offset"  (Offset 355) (splitOffset piece2)
+      assertEqual "piece3 offset"  (Offset 610) (splitOffset piece3)
+      assertEqual "piece1 payload" (ByteString.take 255 payload)
+                                    (splitPayload piece1)
+      assertEqual "piece2 payload" (ByteString.take 255 (ByteString.drop 255 payload))
+                                    (splitPayload piece2)
+      assertEqual "piece3 payload" (ByteString.drop 510 payload)
+                                    (splitPayload piece3)
     other -> assertFailure ("expected 3 pieces, got " ++ show (length other))
 
 -- | A 600-byte payload at offset 100 against a 500-byte source ROM
