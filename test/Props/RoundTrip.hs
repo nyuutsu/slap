@@ -40,6 +40,7 @@ import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Parse as PPF1
+import Slap.PPF1.Types (PPF1Origin(..))
 import qualified Slap.PPF2.Apply as PPF2
 import qualified Slap.PPF2.Parse as PPF2
 import qualified Slap.PPF3.Apply as PPF3
@@ -59,7 +60,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
-                     noMetadataRequested, noConstraintsRequested, convertDirect, emptyContents)
+                     noMetadataRequested, noConstraintsRequested, noDialectsRequested,
+                     RequestedDialects(..),
+                     convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createPatch)
 
@@ -183,7 +186,7 @@ prop_ups = forAll genPair $ \(source, target) ->
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -197,7 +200,7 @@ prop_ips = forAll genPair $ \(source, target) ->
 
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -245,7 +248,7 @@ prop_sourcelessSentinelRejected = once $
   let ipsSentinelOffset = SentinelOffset (Offset 0x454F46)
       collidingContents =
         emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
-  in case convertDirect collidingContents (CreateDirect CreateIPS) noMetadataRequested noConstraintsRequested of
+  in case convertDirect collidingContents (CreateDirect CreateIPS) noMetadataRequested noConstraintsRequested noDialectsRequested of
        Left (SentinelCollisionUnfixable LabelIPS offset) ->
          offset === ipsSentinelOffset
        Left other ->
@@ -443,7 +446,7 @@ prop_apsGba = forAll genPair $ \(source, target) ->
 
 prop_ips32 :: Property
 prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateIPS32) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateIPS32) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -457,7 +460,7 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ebp :: Property
 prop_ebp = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateEBP) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateEBP) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -469,21 +472,26 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
       Right (Parsed (IPSParseTruncated _ _) _parseWarnings) ->
         counterexample "round-tripped EBP unexpectedly truncated" $ property False
 
--- Direct formats: no truncation, target must be >= source
+-- Direct formats: no truncation, target must be >= source.
+-- PPF1's offset endianness is a dialect axis; the round-trip must hold
+-- under both PC-origin (LE) and Amiga-origin (BE) settings, with the
+-- same origin used on both sides of the round-trip.
 prop_ppf1 :: Property
 prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePPF1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (CreateResult patch _) -> case PPF1.parsePPF1 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
+  forAll (elements [PPF1OriginPC, PPF1OriginAmiga]) $ \origin ->
+    let dialects = noDialectsRequested { requestedPPF1Origin = origin }
+    in case createPatch (CreateDirect CreatePPF1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested dialects of
+         Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+         Right (CreateResult patch _) -> case PPF1.parsePPF1 origin patch of
+            Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+            Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 -- | PPF2 needs the source ROM to be at least 'ppf2ValidationOffset +
 -- ppf2ValidationSize' = 0x9720 bytes for the validation block. Use a
 -- generator that always produces sources past that threshold.
 prop_ppf2 :: Property
 prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
-  case createPatch (CreateDirect CreatePPF2) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePPF2) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -501,7 +509,7 @@ prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
 
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -509,7 +517,7 @@ prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePMSR) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePMSR) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -518,7 +526,7 @@ prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -528,7 +536,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
 prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
-  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -548,7 +556,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 -- patch — making any silent drop catastrophic for round-trip.
 prop_ninja1EofCollision :: Property
 prop_ninja1EofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
-  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateNINJA1) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -565,7 +573,7 @@ prop_ninja1SourcelessSentinelRejected = once $
   let ninja1Sentinel = SentinelOffset (Offset 0x454F46)
       collidingContents =
         emptyContents [Hunk (Offset 0x454F46) (ByteString.pack [0xFF])]
-  in case convertDirect collidingContents (CreateDirect CreateNINJA1) noMetadataRequested noConstraintsRequested of
+  in case convertDirect collidingContents (CreateDirect CreateNINJA1) noMetadataRequested noConstraintsRequested noDialectsRequested of
        Left (SentinelCollisionUnfixable LabelNINJA1 offset) ->
          offset === ninja1Sentinel
        Left other ->
@@ -709,7 +717,7 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property
 prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePCHTXT) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePCHTXT) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
@@ -719,7 +727,7 @@ prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreateAPSN64) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreateAPSN64) (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

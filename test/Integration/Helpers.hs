@@ -50,7 +50,7 @@ import Slap.Display.Glyph (emDash)
 import Slap.FormatLabel (formatLabelName)
 import Slap.SomePatch (SomePatch(..), PatchKind(..), ApplyStrategy(..), UndoStrategy(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, noConstraintsRequested)
+import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..), PatchContents, RequestedPatchMetadata(..), convertDirect, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 
 import Control.Exception (catch, IOException)
@@ -273,11 +273,11 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right target ->
-        case createPatch targetFormat (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested of
+        case createPatch targetFormat (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested noDialectsRequested of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
   Nothing -> case patchKind somePatch of
-    Direct (Just patchContent) -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested of
+    Direct (Just patchContent) -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested noDialectsRequested of
       Left slapErr -> Left (renderSlapError slapErr)
       Right result -> Right result
     Direct Nothing             -> pure (Left (needWithMsg somePatch))

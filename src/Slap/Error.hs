@@ -64,12 +64,15 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RawFlagByte(..), EncodingMethodByte(..))
 import Slap.Narrow (NarrowingFailure(..))
 import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
+import Slap.Dialect (Dialect, dialectFlagName, dialectName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
 import Slap.XDelta1.Types (XDelta1SourceShape(..))
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -458,19 +461,26 @@ data SlapError
 
   | DiffRequiresSource FormatLabel
 
-  -- | The user set a metadata field via a CLI flag that the target
-  -- format doesn't consume.  Surfaced before any IO so the user
-  -- learns what went wrong before their files are touched.  The
-  -- 'MetadataField' names which concept the user expressed; the
-  -- 'FormatLabel' names the target format that would silently drop
-  -- it.  Rendering names both the offending CLI flag and the target,
-  -- so the message points the user at the exact thing to fix.
-  | MetadataFieldRejected MetadataField FormatLabel
+  -- | The user set one or more metadata fields via CLI flags that
+  -- the target format doesn't consume.  Surfaced before any IO so
+  -- the user learns what went wrong before their files are touched.
+  -- The 'NonEmpty MetadataField' names every concept the user
+  -- expressed; the 'FormatLabel' names the target format that would
+  -- silently drop them. Rendering enumerates each offending CLI flag
+  -- and the target, so the message points the user at every thing
+  -- to fix in one read.
+  | MetadataFieldRejected (NonEmpty MetadataField) FormatLabel
 
-  -- | The user opted into a 'Constraint' the target format cannot
-  -- honor. Surfaced by 'Slap.Convert.rejectIncompatibleConstraints'
-  -- before any encoding work begins.
-  | ConstraintNotSupported Constraint FormatLabel
+  -- | The user opted into one or more 'Constraint's the target
+  -- format cannot honor. Same shape and rationale as
+  -- 'MetadataFieldRejected'.
+  | ConstraintNotSupported (NonEmpty Constraint) FormatLabel
+
+  -- | The user toggled one or more dialect axes via CLI flags that
+  -- the target (or, for convert, neither side of the chain) admits.
+  -- Surfaced by 'Slap.Convert.rejectIncompatibleDialects' before any
+  -- parsing or encoding work begins.
+  | DialectNotSupported (NonEmpty Dialect) FormatLabel
 
   -- | The IPS create gate refused a truncation marker whose declared
   -- target size doesn't satisfy SNESTool's
@@ -998,15 +1008,45 @@ renderSlapError (DiffRequiresSource label) =
   formatLabelName label
   ++ " requires source+target diff data\nuse --with INPUT"
 
-renderSlapError (MetadataFieldRejected field target) =
-  "--" ++ metadataFieldFlagName field ++ " is not accepted by "
-  ++ formatLabelName target
-  ++ " (the " ++ metadataFieldName field ++ " field is not part of this format)"
+renderSlapError (MetadataFieldRejected fields target) =
+  let renderOne field =
+        "--" ++ metadataFieldFlagName field
+        ++ " (" ++ metadataFieldName field ++ ")"
+  in case NonEmpty.toList fields of
+       [single] ->
+         "--" ++ metadataFieldFlagName single ++ " is not accepted by "
+         ++ formatLabelName target
+         ++ " (the " ++ metadataFieldName single ++ " field is not part of this format)"
+       many ->
+         formatLabelName target
+         ++ " does not accept these flags:"
+         ++ concatMap (\field -> "\n  - " ++ renderOne field) many
 
-renderSlapError (ConstraintNotSupported constraint target) =
-  "the " ++ formatLabelName target
-  ++ " format does not support --" ++ constraintFlagName constraint
-  ++ " (" ++ constraintName constraint ++ ")"
+renderSlapError (ConstraintNotSupported constraints target) =
+  let renderOne c =
+        "--" ++ constraintFlagName c ++ " (" ++ constraintName c ++ ")"
+  in case NonEmpty.toList constraints of
+       [single] ->
+         "the " ++ formatLabelName target
+         ++ " format does not support --" ++ constraintFlagName single
+         ++ " (" ++ constraintName single ++ ")"
+       many ->
+         "the " ++ formatLabelName target
+         ++ " format does not support these constraints:"
+         ++ concatMap (\c -> "\n  - " ++ renderOne c) many
+
+renderSlapError (DialectNotSupported axes target) =
+  let renderOne d =
+        "--" ++ dialectFlagName d ++ " (" ++ dialectName d ++ ")"
+  in case NonEmpty.toList axes of
+       [single] ->
+         "the " ++ formatLabelName target
+         ++ " format does not have a " ++ dialectName single
+         ++ " axis (--" ++ dialectFlagName single ++ ")"
+       many ->
+         "the " ++ formatLabelName target
+         ++ " format does not have these dialect axes:"
+         ++ concatMap (\d -> "\n  - " ++ renderOne d) many
 
 renderSlapError (TruncationViolatesSMCShape size) =
   "--" ++ constraintFlagName SMCShapeConstraint

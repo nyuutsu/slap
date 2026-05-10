@@ -20,6 +20,7 @@ import Integration.Skip
 import Slap.Error (renderSlapError)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Convert (noDialectsRequested)
 
 import qualified Data.ByteString as ByteString
 import System.FilePath ((</>))
@@ -58,7 +59,7 @@ mkUndoTest basePath patchPath expectedBaseSha label =
   testCase label $ do
     baseBytes  <- mmapRomFile basePath
     patchBytes <- ByteString.readFile patchPath
-    case parseSome (PatchFileContents patchBytes) of
+    case parseSome noDialectsRequested (PatchFileContents patchBytes) of
       Left slapError ->
         assertFailure ("parseSome failed: " ++ renderSlapError slapError)
       Right parsed -> do

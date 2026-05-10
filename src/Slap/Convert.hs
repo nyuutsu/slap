@@ -13,6 +13,11 @@ module Slap.Convert
   , requestedConstraints
   , acceptedConstraints
   , rejectIncompatibleConstraints
+  , RequestedDialects(..)
+  , noDialectsRequested
+  , requestedDialects
+  , acceptedDialects
+  , rejectIncompatibleDialects
   , DirectConversionContract(..)
   , ConversionFailure(..)
   , emptyContents
@@ -35,7 +40,7 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
-import Slap.PPF1.Types (ppf1MaxRecordPayload)
+import Slap.PPF1.Types (PPF1Origin(..), ppf1MaxRecordPayload)
 import qualified Slap.PPF2.Create as PPF2
 import Slap.PPF2.Types (PPF2ValidationBlock(..), PPF2FileId(..),
                         ppf2MaxRecordPayload, ppf2ValidationOffset,
@@ -78,6 +83,7 @@ import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..), UndoHunk(..
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowHunksUnbounded)
 import Slap.Constraint (Constraint(..))
+import Slap.Dialect (Dialect(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
@@ -89,6 +95,7 @@ import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
 import Control.Applicative ((<|>))
 import Data.Bifunctor (first)
 import qualified Data.ByteString as ByteString
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
 
@@ -209,7 +216,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedLanguage             :: Maybe String
   , requestedDate                 :: Maybe String
   , requestedWebsite              :: Maybe String
-  , requestedPatchEncoding        :: PatchEncoding
+  , requestedPatchEncoding        :: Maybe PatchEncoding
   , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
     -- ^ Contents of the user's @--metadata FILE@ flag.  Today only BPS
     -- consumes this; the name keeps the concept ("a raw blob to embed")
@@ -267,13 +274,12 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedLanguage            = Nothing
   , requestedDate                = Nothing
   , requestedWebsite             = Nothing
-  , requestedPatchEncoding       = PatchEncodingUTF8
+  , requestedPatchEncoding       = Nothing
   , requestedEmbeddedBlob        = Nothing
   }
 
 -- | Merge two metadata records: first (CLI) wins for each field, then
--- second (source patch).  For non-'Maybe' fields like
--- 'requestedPatchEncoding', the first argument always wins.
+-- second (source patch).
 mergeRequestedMetadata :: RequestedPatchMetadata -> RequestedPatchMetadata -> RequestedPatchMetadata
 mergeRequestedMetadata cli source = RequestedPatchMetadata
   { requestedTitle               = requestedTitle cli               <|> requestedTitle source
@@ -289,7 +295,7 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedLanguage            = requestedLanguage cli            <|> requestedLanguage source
   , requestedDate                = requestedDate cli                <|> requestedDate source
   , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
-  , requestedPatchEncoding       = requestedPatchEncoding cli
+  , requestedPatchEncoding       = requestedPatchEncoding cli       <|> requestedPatchEncoding source
   , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
   }
 
@@ -418,9 +424,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateGDIFF  -> Set.empty
 
 -- | The 'MetadataField's the user explicitly set on a
--- 'RequestedPatchMetadata'.  A 'Maybe' field counts as set when
--- 'Just'; 'requestedPatchEncoding' (non-'Maybe', defaults to UTF-8)
--- counts as set when the value differs from 'PatchEncodingUTF8'.
+-- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
 requestedMetadataFields :: RequestedPatchMetadata -> Set.Set MetadataField
 requestedMetadataFields meta = Set.fromList $ concat
   [ [MetadataTitle               | isJust (requestedTitle               meta)]
@@ -436,22 +440,21 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataLanguage            | isJust (requestedLanguage            meta)]
   , [MetadataDate                | isJust (requestedDate                meta)]
   , [MetadataWebsite             | isJust (requestedWebsite             meta)]
-  , [MetadataPatchEncoding       | requestedPatchEncoding meta /= PatchEncodingUTF8]
+  , [MetadataPatchEncoding       | isJust (requestedPatchEncoding       meta)]
   , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
   ]
 
 -- | Reject any metadata field set by the user that the target format
--- doesn't consume.  Returns the first incompatible field; users
--- running into multiple flag mistakes see them sequentially across
--- runs.
+-- doesn't consume. Reports every offending field in one error so users
+-- see all flag mistakes in a single run.
 rejectIncompatibleMetadata
   :: CreateFormat
   -> RequestedPatchMetadata
   -> Either SlapError ()
 rejectIncompatibleMetadata format meta =
-  case Set.toList (requestedMetadataFields meta `Set.difference` acceptedMetadataFields format) of
-    []        -> Right ()
-    (field:_) -> Left (MetadataFieldRejected field (createFormatLabel format))
+  case NonEmpty.nonEmpty (Set.toList (requestedMetadataFields meta `Set.difference` acceptedMetadataFields format)) of
+    Nothing      -> Right ()
+    Just rejects -> Left (MetadataFieldRejected rejects (createFormatLabel format))
 
 ----------------------------------------------------------------------------
 -- Constraints (CLI rejection / encoder gates)
@@ -479,8 +482,7 @@ noConstraintsRequested = RequestedConstraints
   }
 
 -- | The 'Constraint's the user explicitly opted into.
--- 'AllowAnyTruncationShape' is the not-specified state, mirroring how
--- 'requestedPatchEncoding' treats 'PatchEncodingUTF8'.
+-- 'AllowAnyTruncationShape' is the not-specified state.
 requestedConstraints :: RequestedConstraints -> Set.Set Constraint
 requestedConstraints constraints = Set.fromList $ concat
   [ [SMCShapeConstraint | requestedSMCShape constraints == RequireSMCShapedTruncation]
@@ -518,9 +520,9 @@ acceptedConstraints (CreateDifferential format) = case format of
 rejectIncompatibleConstraints
   :: CreateFormat -> RequestedConstraints -> Either SlapError ()
 rejectIncompatibleConstraints format constraints =
-  case Set.toList (requestedConstraints constraints `Set.difference` acceptedConstraints format) of
-    []      -> Right ()
-    (c : _) -> Left (ConstraintNotSupported c (createFormatLabel format))
+  case NonEmpty.nonEmpty (Set.toList (requestedConstraints constraints `Set.difference` acceptedConstraints format)) of
+    Nothing      -> Right ()
+    Just rejects -> Left (ConstraintNotSupported rejects (createFormatLabel format))
 
 -- | Refuse to emit an IPS truncation marker whose declared size
 -- doesn't satisfy SNESTool's shape filter, when the user has opted
@@ -534,6 +536,81 @@ rejectNonSMCShapedTruncation constraints contents
       Nothing                          -> Right ()
       Just size | isSMCShapedSize size -> Right ()
                 | otherwise            -> Left (TruncationViolatesSMCShape size)
+
+----------------------------------------------------------------------------
+-- Dialects (parser/encoder wire-format configuration)
+----------------------------------------------------------------------------
+
+-- | The dialect bag the user assembled from CLI flags, parallel to
+-- 'RequestedConstraints' but for parser/encoder wire-format configuration
+-- rather than refuse-gates. 'requestedPPF1Origin' is the only field
+-- today; future dialect axes land here.
+--
+-- Like 'RequestedConstraints' and unlike 'RequestedPatchMetadata',
+-- dialects carry no source-patch inheritance step — they're an
+-- entirely CLI-set concept. A source patch can't tell us how to
+-- decode itself: if it could, the dialect axis wouldn't exist.
+data RequestedDialects = RequestedDialects
+  { requestedPPF1Origin :: PPF1Origin
+  }
+  deriving (Show, Eq)
+
+noDialectsRequested :: RequestedDialects
+noDialectsRequested = RequestedDialects
+  { requestedPPF1Origin = PPF1OriginPC
+  }
+
+-- | The 'Dialect' axes the user explicitly toggled away from default.
+-- 'PPF1OriginPC' is the not-specified state, mirroring how
+-- 'RequestedConstraints' treats 'AllowAnyTruncationShape'.
+requestedDialects :: RequestedDialects -> Set.Set Dialect
+requestedDialects dialects = Set.fromList $ concat
+  [ [PPF1OriginAxis | requestedPPF1Origin dialects /= PPF1OriginPC]
+  ]
+
+-- | The 'Dialect' axes a 'FormatLabel' admits. Unlike the
+-- create-only matrices ('acceptedMetadataFields', 'acceptedConstraints')
+-- this is keyed on 'FormatLabel' rather than 'CreateFormat': dialects
+-- are relevant on both parse and create paths, and the union of two
+-- labels' dialect sets defines what a 'convert' chain can honor end
+-- to end. Pattern-matched exhaustively across all 'FormatLabel'
+-- constructors so adding a label or a dialect axis fires
+-- '-Wincomplete-patterns' on every case that needs a decision.
+acceptedDialects :: FormatLabel -> Set.Set Dialect
+acceptedDialects LabelPPF1    = Set.singleton PPF1OriginAxis
+acceptedDialects LabelIPS     = Set.empty
+acceptedDialects LabelIPS32   = Set.empty
+acceptedDialects LabelEBP     = Set.empty
+acceptedDialects LabelBPS     = Set.empty
+acceptedDialects LabelUPS     = Set.empty
+acceptedDialects LabelPPF2    = Set.empty
+acceptedDialects LabelPPF3    = Set.empty
+acceptedDialects LabelPPF4    = Set.empty
+acceptedDialects LabelVCDIFF  = Set.empty
+acceptedDialects LabelBSDiff  = Set.empty
+acceptedDialects LabelAPSN64  = Set.empty
+acceptedDialects LabelAPSGBA  = Set.empty
+acceptedDialects LabelNINJA1  = Set.empty
+acceptedDialects LabelNINJA2  = Set.empty
+acceptedDialects LabelGDIFF   = Set.empty
+acceptedDialects LabelXDelta1 = Set.empty
+acceptedDialects LabelDPS     = Set.empty
+acceptedDialects LabelPMSR    = Set.empty
+acceptedDialects LabelPCHTXT  = Set.empty
+
+-- | Reject any dialect axis the user toggled that the given accepted
+-- set doesn't admit. Caller computes the accepted set: a single label's
+-- 'acceptedDialects' for apply/undo/info/explain/create, the union of
+-- input-and-output labels' sets for convert. The 'FormatLabel' arm
+-- names the format reported in the error message; for convert this is
+-- conventionally the @--to@ target.
+rejectIncompatibleDialects
+  :: Set.Set Dialect -> FormatLabel -> RequestedDialects
+  -> Either SlapError ()
+rejectIncompatibleDialects accepted reportedLabel dialects =
+  case NonEmpty.nonEmpty (Set.toList (requestedDialects dialects `Set.difference` accepted)) of
+    Nothing      -> Right ()
+    Just rejects -> Left (DialectNotSupported rejects reportedLabel)
 
 ----------------------------------------------------------------------------
 -- Contract checking
@@ -713,9 +790,10 @@ fieldNote contents field = case field of
 -- | Convert parsed patch contents to a target format without the source ROM.
 convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> RequestedConstraints
+              -> RequestedDialects
               -> Either SlapError CreateResult
-convertDirect _ (CreateDifferential target) _ _ = Left (DiffRequiresSource (differentialLabel target))
-convertDirect contents (CreateDirect target) meta constraints = do
+convertDirect _ (CreateDifferential target) _ _ _ = Left (DiffRequiresSource (differentialLabel target))
+convertDirect contents (CreateDirect target) meta constraints dialects = do
   let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
       validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
       contract         = directConversionContract target undoChoice validationChoice
@@ -731,7 +809,7 @@ convertDirect contents (CreateDirect target) meta constraints = do
       -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
       -- than silently passing through.
       let notes = conversionNotes contents target contract meta
-      encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints
+      encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints dialects
       Right CreateResult
         { resultBytes    = resultBytes encoded
         , resultWarnings = notes ++ resultWarnings encoded
@@ -762,8 +840,9 @@ encodingLimits CreateNINJA1  = Nothing
 -- Validation (offset range, sentinel collision) runs after format-specific
 -- splitting, so split-induced sentinel collisions are caught.
 encodeDirect :: PatchContents -> InputFileContents -> DirectCreate -> RequestedPatchMetadata
-             -> Maybe EncodingLimits -> RequestedConstraints -> Either SlapError CreateResult
-encodeDirect contents source target meta limits constraints = case target of
+             -> Maybe EncodingLimits -> RequestedConstraints -> RequestedDialects
+             -> Either SlapError CreateResult
+encodeDirect contents source target meta limits constraints dialects = case target of
   CreateIPS -> do
     resolved <- resolveIPSSentinel LabelIPS StandardIPS
                   (splitHunks ipsMaxRecordPayload (contentsRecords contents))
@@ -816,6 +895,7 @@ encodeDirect contents source target meta limits constraints = case target of
   CreatePPF1 -> do
     rejectTruncation LabelPPF1 contents source
     Right (PPF1.encodePPF1
+             (requestedPPF1Origin dialects)
              (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
              description)
   CreatePPF2 -> do
@@ -938,12 +1018,12 @@ encodeDirect contents source target meta limits constraints = case target of
 -- the @--with@ conversion path.
 createPatch :: CreateFormat -> InputFileContents -> OutputFileContents
             -> RequestedPatchMetadata -> Maybe PatchContents
-            -> RequestedConstraints
+            -> RequestedConstraints -> RequestedDialects
             -> Either SlapError CreateResult
-createPatch (CreateDirect format) source target meta sourceContents constraints =
+createPatch (CreateDirect format) source target meta sourceContents constraints dialects =
   let contents = buildContents format source target meta sourceContents
-  in encodeDirect contents source format meta (encodingLimits format) constraints
-createPatch (CreateDifferential format) source target meta sourceContents _constraints = case format of
+  in encodeDirect contents source format meta (encodingLimits format) constraints dialects
+createPatch (CreateDifferential format) source target meta sourceContents _constraints _dialects = case format of
   -- The constraints parameter is unused on the differential arm: today
   -- no differential format honors any constraint ('acceptedConstraints'
   -- returns 'Set.empty' for every 'CreateDifferential' constructor),
@@ -970,7 +1050,7 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
           Just patchEncoding -> patchEncoding
           Nothing  -> case sourceContents >>= contentsDescription of
             Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
-            _ -> requestedPatchEncoding meta
+            _ -> fromMaybe PatchEncodingUTF8 (requestedPatchEncoding meta)
         ninja2Meta = NINJA2.NINJA2Metadata
           { NINJA2.ninja2MetadataAuthor      = requestedAuthor meta
           , NINJA2.ninja2MetadataVersion     = requestedVersion meta

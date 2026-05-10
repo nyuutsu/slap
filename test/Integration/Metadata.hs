@@ -27,6 +27,7 @@ import Slap.Convert
   , UndoInclusion(..)
   , ValidationInclusion(..)
   , noMetadataRequested
+  , noDialectsRequested
   )
 import Slap.Create (createBPS)
 import Slap.BPS.Types (BPSMetadata(..))
@@ -80,7 +81,7 @@ planMetadataCase repo (formatString, relPath, fieldNames) =
 mkFieldTest :: FilePath -> CreateFormat -> String -> TestTree
 mkFieldTest patchPath format fieldName = testCase fieldName $ do
   patchBytes <- ByteString.readFile patchPath
-  case parseSome (PatchFileContents patchBytes) of
+  case parseSome noDialectsRequested (PatchFileContents patchBytes) of
     Left slapError -> assertFailure ("parseSome original failed: " ++ renderSlapError slapError)
     Right original -> do
       -- Self-convert: convert to same format
@@ -93,7 +94,7 @@ mkFieldTest patchPath format fieldName = testCase fieldName $ do
       convResult <- attemptConvert original format Nothing meta
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
-        Right (CreateResult convertedBytes _) -> case parseSome convertedBytes of
+        Right (CreateResult convertedBytes _) -> case parseSome noDialectsRequested convertedBytes of
           Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
           Right converted -> do
             let originalInfo = renderAnalysisSummary (patchInfo original) (patchAnalysis original) Nothing
@@ -131,7 +132,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "<patch><title>Test</title></patch>"
       patchBytes <- createBPSOrFail source target meta
-      case parseSome patchBytes of
+      case parseSome noDialectsRequested patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
 
@@ -139,7 +140,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..15]
           target = ByteString.pack [16..31]
       patchBytes <- createBPSOrFail source target ByteString.empty
-      case parseSome patchBytes of
+      case parseSome noDialectsRequested patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
@@ -148,7 +149,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "hello-world-metadata"
       patchBytes <- createBPSOrFail source target meta
-      case parseSome patchBytes of
+      case parseSome noDialectsRequested patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> do
           let info = renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing
@@ -161,7 +162,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
       patchBytes <- createBPSOrFail source target ByteString.empty
-      case parseSome patchBytes of
+      case parseSome noDialectsRequested patchBytes of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed ->
           assertBool "info shows (none)" ("(none)" `isInfixOf` renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)

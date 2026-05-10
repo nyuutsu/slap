@@ -20,7 +20,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -88,10 +88,10 @@ roundTrip format baseBytes targetBytes expectedSha =
   case createPatch format
          (InputFileContents baseBytes)
          (OutputFileContents targetBytes)
-         noMetadataRequested Nothing noConstraintsRequested of
+         noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError ->
       assertFailure ("create failed: " ++ renderSlapError slapError)
-    Right (CreateResult patchBytes _) -> case parseSome patchBytes of
+    Right (CreateResult patchBytes _) -> case parseSome noDialectsRequested patchBytes of
       Left slapError ->
         assertFailure ("re-parse failed: " ++ renderSlapError slapError)
       Right parsed -> do

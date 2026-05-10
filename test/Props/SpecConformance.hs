@@ -29,6 +29,7 @@ import Slap.Measure (FileSize(..), Offset(..), Length(..), actionAtPosition,
                      DeclaredTargetSize(..), NaturalTargetSize(..))
 import qualified Slap.NINJA2.Parse as NINJA2
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
+import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
 import Slap.UPS.Types (UPSPatch(..))
@@ -1089,7 +1090,7 @@ bpsVerificationCarriesDeclaredSize =
                 <> byteString target
       body = bpsBody 4 4 ByteString.empty actions
       patch = buildBPS body source target
-  in case parseSome patch of
+  in case parseSome noDialectsRequested patch of
     Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
@@ -1173,7 +1174,7 @@ upsVerificationCarriesDeclaredSize =
       target = ByteString.pack [0x11, 0x22, 0x33, 0x44]
       body = upsBody 4 4 mempty
       patch = buildUPS body source target
-  in case parseSome patch of
+  in case parseSome noDialectsRequested patch of
     Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))

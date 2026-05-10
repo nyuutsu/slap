@@ -16,7 +16,7 @@ module Slap.PPF1.Create
   ( encodePPF1
   ) where
 
-import Slap.PPF1.Types (ppf1DescriptionLength)
+import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength)
 import Slap.Measure (Length(..), Offset(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
@@ -28,16 +28,20 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Word (Word32)
 
 -- | Encode a PPF1 patch from pre-split records.
 -- @records@ payloads must each be ≤ 'Slap.PPF1.Types.ppf1MaxRecordPayload'
 -- bytes; the convert-layer pipeline calls @splitHunks@ before reaching
 -- here.
-encodePPF1 :: [Hunk] -> String -> CreateResult
-encodePPF1 records description =
-  let (descriptionBytes, descriptionWarnings) = padDescription description
+encodePPF1 :: PPF1Origin -> [Hunk] -> String -> CreateResult
+encodePPF1 origin records description =
+  let writeOffsetWord = case origin of
+        PPF1OriginPC    -> word32LE
+        PPF1OriginAmiga -> word32BE
+      (descriptionBytes, descriptionWarnings) = padDescription description
       header = buildHeader descriptionBytes
-      body   = foldMap encodeRecord records
+      body   = foldMap (encodeRecord writeOffsetWord) records
   in CreateResult
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
        descriptionWarnings
@@ -68,8 +72,8 @@ buildHeader description =
   <> word8 0x00                -- encoding method
   <> byteString description    -- 50-byte padded description
 
-encodeRecord :: Hunk -> Builder
-encodeRecord (Hunk recordOffset recordPayload) =
-  word32LE (fromIntegral (unOffset recordOffset))
+encodeRecord :: (Word32 -> Builder) -> Hunk -> Builder
+encodeRecord writeOffsetWord (Hunk recordOffset recordPayload) =
+  writeOffsetWord (fromIntegral (unOffset recordOffset))
   <> word8 (fromIntegral (ByteString.length recordPayload))
   <> byteString recordPayload

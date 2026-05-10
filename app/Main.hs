@@ -27,11 +27,17 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedPatchMetadata(..),
                      RequestedConstraints(..),
                      rejectIncompatibleConstraints,
+                     RequestedDialects(..),
+                     acceptedDialects,
+                     rejectIncompatibleDialects,
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
+                     createFormatLabel,
                      formatExtension, formatName)
 import Slap.Constraint (Constraint(..), constraintFlagName)
+import Slap.Dialect (Dialect(..), dialectFlagName)
+import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
 import Slap.TextEncoding (makeStdoutAndStderrLenient)
@@ -50,6 +56,7 @@ import Slap.Display.Glyph (rightwardsArrow, checkMark, ballotX, emDash, spacePad
 import Slap.FormatLabel (formatLabelName)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Set as Set
 import Control.Monad (when, forM_)
 import Data.Foldable (traverse_)
 import Data.Char (toLower)
@@ -291,6 +298,7 @@ data ApplyCommand = ApplyCommand
   , applyFileReading        :: FileReadingOptions
   , applyPatch              :: FilePath
   , applySource             :: FilePath
+  , applyDialects           :: RequestedDialects
   }
 
 data UndoCommand = UndoCommand
@@ -300,6 +308,7 @@ data UndoCommand = UndoCommand
   , undoPatch              :: FilePath
   , undoSource             :: FilePath
   , undoOutput             :: UndoOutput
+  , undoDialects           :: RequestedDialects
   }
 
 data CreateCommand = CreateCommand
@@ -310,6 +319,7 @@ data CreateCommand = CreateCommand
   , createOutput      :: FilePath
   , createMetadata    :: CreateMetadataInputs
   , createConstraints :: RequestedConstraints
+  , createDialects    :: RequestedDialects
   }
 
 -- | The 'convertWithSource' field reuses the type name 'ConvertWithSource'
@@ -323,11 +333,13 @@ data ConvertCommand = ConvertCommand
   , convertFileReading :: FileReadingOptions
   , convertMetadata    :: ConvertMetadataInputs
   , convertConstraints :: RequestedConstraints
+  , convertDialects    :: RequestedDialects
   }
 
 data InfoCommand = InfoCommand
   { infoPatch           :: FilePath
   , infoExtractMetadata :: Maybe FilePath
+  , infoDialects        :: RequestedDialects
   }
 
 data ExplainCommand = ExplainCommand
@@ -335,6 +347,7 @@ data ExplainCommand = ExplainCommand
   , explainVerbosity   :: ExplainVerbosity
   , explainSource      :: Maybe FilePath
   , explainFileReading :: FileReadingOptions
+  , explainDialects    :: RequestedDialects
   }
 
 ----------------------------------------------------------------------------
@@ -385,11 +398,13 @@ explainParser = do
     maybeWithPath      <- optional (option str (long "with" <> metavar "SOURCE"
                             <> help "Source file (resolves delta/copy operations in output)"))
     fileReadingOptions <- fileReadingOptionsParser
+    dialects           <- dialectsParser
     pure ExplainCommand
       { explainPatch       = patchFile
       , explainVerbosity   = verbosity
       , explainSource      = maybeWithPath
       , explainFileReading = fileReadingOptions
+      , explainDialects    = dialects
       }
 
 applyParser :: Parser ApplyCommand
@@ -400,6 +415,7 @@ applyParser = do
     patch              <- argument str (metavar "PATCH" <> help "Patch file")
     source             <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     output             <- applyOutputParser
+    dialects           <- dialectsParser
     pure ApplyCommand
       { applyVerificationPolicy = verificationPolicy
       , applyVerbosity          = verbosity
@@ -407,6 +423,7 @@ applyParser = do
       , applyFileReading        = fileReadingOptions
       , applyPatch              = patch
       , applySource             = source
+      , applyDialects           = dialects
       }
 
 verificationPolicyParser :: Parser VerificationPolicy
@@ -485,6 +502,7 @@ undoParser = do
     patch              <- argument str (metavar "PATCH" <> help "Patch file")
     source             <- argument str (metavar "SOURCE" <> help "File to restore")
     output             <- undoOutputParser
+    dialects           <- dialectsParser
     pure UndoCommand
       { undoVerificationPolicy = verificationPolicy
       , undoVerbosity          = verbosity
@@ -492,6 +510,7 @@ undoParser = do
       , undoPatch              = patch
       , undoSource             = source
       , undoOutput             = output
+      , undoDialects           = dialects
       }
 
 -- | Parser for the four mutually exclusive undo output lanes.  Mirror
@@ -553,6 +572,7 @@ createParser = do
     outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- createMetadataInputsParser
     constraints        <- constraintsParser
+    dialects           <- dialectsParser
     pure CreateCommand
       { createFormat      = format
       , createFileReading = fileReadingOptions
@@ -561,6 +581,7 @@ createParser = do
       , createOutput      = outputFile
       , createMetadata    = metadataInputs
       , createConstraints = constraints
+      , createDialects    = dialects
       }
 
 convertParser :: Parser ConvertCommand
@@ -572,6 +593,7 @@ convertParser = do
     fileReadingOptions <- fileReadingOptionsParser
     metadataInputs     <- convertMetadataInputsParser
     constraints        <- constraintsParser
+    dialects           <- dialectsParser
     pure ConvertCommand
       { convertPatch       = patchFile
       , convertTo          = targetFormat
@@ -580,6 +602,7 @@ convertParser = do
       , convertFileReading = fileReadingOptions
       , convertMetadata    = metadataInputs
       , convertConstraints = constraints
+      , convertDialects    = dialects
       }
 
 -- | Parser for the 'RequestedConstraints' bag, shared between
@@ -595,6 +618,24 @@ constraintsParser = do
     )
   pure RequestedConstraints
     { requestedSMCShape = smcShape
+    }
+
+-- | Parser for the 'RequestedDialects' bag, shared between every
+-- subcommand that reads or writes a patch (i.e., all six). Each
+-- dialect axis contributes one flag; 'dialectFlagName' is the single
+-- source of truth for the spelling.
+dialectsParser :: Parser RequestedDialects
+dialectsParser = do
+  ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
+    ( long (dialectFlagName PPF1OriginAxis)
+   <> help ("Decode (apply/undo/info/explain/convert) or encode (create/convert)"
+         ++ " PPF1 offsets as big-endian rather than little-endian. PPF1 has no"
+         ++ " on-disk endianness marker; the reference applier reads offsets in"
+         ++ " host-native byte order, making PC and Amiga PPF1 patches mutually"
+         ++ " incompatible. The default (LE) is correct for every PC-origin patch.")
+    )
+  pure RequestedDialects
+    { requestedPPF1Origin = ppf1Origin
     }
 
 -- | Parser for @--with INPUT@ plus its sub-flag @--no-verify@.  The
@@ -662,9 +703,8 @@ requestedMetadataParser = do
                             <> help "Date (NINJA2)"))
     website           <- optional (option str (long "website" <> metavar "URL"
                             <> help "Website (NINJA2)"))
-    patchEncoding     <- option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
-                            <> value PatchEncodingUTF8
-                            <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8)")
+    patchEncoding     <- optional (option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
+                            <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8 unless source patch declares otherwise)"))
     pure RequestedPatchMetadata
       { requestedTitle               = title
       , requestedAuthor              = author
@@ -835,9 +875,11 @@ patchInfoParser = do
     patchFile <- argument str (metavar "PATCH" <> help "Patch file to inspect")
     extractMetadataPath <- optional (option str (long "extract-metadata" <> metavar "FILE"
         <> help "Write embedded metadata to FILE (BPS)"))
+    dialects <- dialectsParser
     pure InfoCommand
       { infoPatch           = patchFile
       , infoExtractMetadata = extractMetadataPath
+      , infoDialects        = dialects
       }
 
 ----------------------------------------------------------------------------
@@ -894,7 +936,11 @@ resolveConvertMetadata inputs = do
 
 doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
-  parsed <- readAndParsePatch (infoPatch parsedCommand)
+  parsed <- readAndParsePatch (infoDialects parsedCommand) (infoPatch parsedCommand)
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (patchFormat parsed))
+            (patchFormat parsed)
+            (infoDialects parsedCommand))
   mapM_ (putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
   emitWarnings WarningProper (patchWarnings parsed)
   case infoExtractMetadata parsedCommand of
@@ -907,7 +953,11 @@ doInfo parsedCommand = do
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
-  parsed <- readAndParsePatch (explainPatch parsedCommand)
+  parsed <- readAndParsePatch (explainDialects parsedCommand) (explainPatch parsedCommand)
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (patchFormat parsed))
+            (patchFormat parsed)
+            (explainDialects parsedCommand))
   maybeSource <- case explainSource parsedCommand of
     Nothing   -> pure Nothing
     Just path -> Just <$> readMaybeUnwrap (explainFileReading parsedCommand) path
@@ -923,7 +973,11 @@ doExplain parsedCommand = do
 
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
-  parsed <- readAndParsePatch (applyPatch parsedCommand)
+  parsed <- readAndParsePatch (applyDialects parsedCommand) (applyPatch parsedCommand)
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (patchFormat parsed))
+            (patchFormat parsed)
+            (applyDialects parsedCommand))
   emitWarnings WarningProper (patchWarnings parsed)
   emitVerboseAnalysis (applyVerbosity parsedCommand) parsed
 
@@ -977,7 +1031,11 @@ doApply parsedCommand = do
 
 doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
-  parsed <- readAndParsePatch (undoPatch parsedCommand)
+  parsed <- readAndParsePatch (undoDialects parsedCommand) (undoPatch parsedCommand)
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (patchFormat parsed))
+            (patchFormat parsed)
+            (undoDialects parsedCommand))
   emitWarnings WarningProper (patchWarnings parsed)
   emitVerboseAnalysis (undoVerbosity parsedCommand) parsed
   case patchUndo parsed of
@@ -1036,6 +1094,10 @@ doCreate parsedCommand = do
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (createFormatLabel (createFormat parsedCommand)))
+            (createFormatLabel (createFormat parsedCommand))
+            (createDialects parsedCommand))
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
@@ -1045,7 +1107,8 @@ doCreate parsedCommand = do
                      (OutputFileContents modifiedBytes)
                      createMeta
                      Nothing
-                     (createConstraints parsedCommand))
+                     (createConstraints parsedCommand)
+                     (createDialects parsedCommand))
   emitWarnings InformationalNote (resultWarnings result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   putStrLn ("wrote " ++ createOutput parsedCommand)
@@ -1099,7 +1162,12 @@ doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
-  parsed <- readAndParsePatch (convertPatch parsedCommand)
+  parsed <- readAndParsePatch (convertDialects parsedCommand) (convertPatch parsedCommand)
+  let targetLabel = createFormatLabel (convertTo parsedCommand)
+      acceptedForChain = acceptedDialects (patchFormat parsed)
+                  `Set.union` acceptedDialects targetLabel
+  orBail (rejectIncompatibleDialects acceptedForChain targetLabel
+                                     (convertDialects parsedCommand))
   emitWarnings WarningProper (patchWarnings parsed)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
@@ -1123,14 +1191,14 @@ doConvert parsedCommand = do
       let source = InputFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) (convertDialects parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
-      convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand))
+      convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) (convertDialects parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ resultWarnings convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
@@ -1366,7 +1434,7 @@ orBail = either bailError pure
 -- so the user sees the asked-for content unobstructed; others ('doApply',
 -- 'doUndo', 'doConvert') emit warnings immediately. The helper stays
 -- parse-only to leave that ordering to each caller.
-readAndParsePatch :: FilePath -> IO SomePatch
-readAndParsePatch path = do
+readAndParsePatch :: RequestedDialects -> FilePath -> IO SomePatch
+readAndParsePatch dialects path = do
   patchBytes <- readUnwrap path
-  orBail (parseSome (PatchFileContents patchBytes))
+  orBail (parseSome dialects (PatchFileContents patchBytes))

@@ -18,6 +18,7 @@ import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(.
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
+                     RequestedDialects(..),
                      noMetadataRequested, trimNullSpace)
 import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
 import Slap.JSON (jsonPairs, jsonFieldCI)
@@ -241,13 +242,13 @@ data SomePatch = SomePatch
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
-parseSome :: PatchFileContents -> Either SlapError SomePatch
-parseSome patchContents = case detectFormat patchContents of
+parseSome :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
+parseSome dialects patchContents = case detectFormat patchContents of
   Nothing
-    | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 patchContents
+    | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 dialects patchContents
     | otherwise            -> Left UnrecognizedFormat
 
-  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 patchContents >>= parseSomePatchFromPPF1
+  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 (requestedPPF1Origin dialects) patchContents >>= parseSomePatchFromPPF1
   Just (PatchDirect       FormatPPF2)           -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF2
   Just (PatchDirect       FormatPPF3)           -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF3
   Just (PatchDirect       FormatPPF4)           -> parseSomePatchFromPPF4 patchContents
@@ -1108,10 +1109,10 @@ parseSomePatchFromDPS patchContents = do
 -- 'patchAnalysis' no longer carries a format-name field, since
 -- 'renderAnalysisFull' and 'renderAnalysisSummary' read the format-name
 -- straight off 'patchInfo' now.
-parseSomePatchFromYay0 :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromYay0 (PatchFileContents input) = case Yay0.decompressYay0 input of
+parseSomePatchFromYay0 :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromYay0 dialects (PatchFileContents input) = case Yay0.decompressYay0 input of
   Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))
-  Right decompressedBytes -> case parseSome (PatchFileContents decompressedBytes) of
+  Right decompressedBytes -> case parseSome dialects (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
     Right parsed ->
       let innerHeader = infoFormat (patchInfo parsed)

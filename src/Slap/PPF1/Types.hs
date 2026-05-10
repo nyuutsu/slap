@@ -10,6 +10,7 @@
 module Slap.PPF1.Types
   ( PPF1Patch(..)
   , PPF1Record(..)
+  , PPF1Origin(..)
     -- * Named constants
   , ppf1MagicBytes
   , ppf1DescriptionLength
@@ -34,6 +35,19 @@ data PPF1Patch = PPF1Patch
   { ppf1Description :: !ByteString  -- ^ 50-byte description, raw on-wire bytes (space- or null-padded)
   , ppf1Records     :: ![PPF1Record]
   } deriving (Show)
+
+-- | Whether a PPF1 patch's offset fields are PC-origin (little-endian)
+-- or Amiga-origin (big-endian). The on-wire format does not encode
+-- which: the producer's host platform decides at create time, and the
+-- reader has to know out-of-band. Slap defaults to 'PPF1OriginPC';
+-- the @--is-amiga-patch@ CLI flag selects 'PPF1OriginAmiga'.
+--
+-- Threaded into 'Slap.PPF1.Parse.parsePPF1' (controlling the @word32LE@
+-- vs @word32BE@ branch on offset reads) and 'Slap.PPF1.Create.encodePPF1'
+-- (the symmetric branch on offset writes). Apply consumes 'PPF1Patch''s
+-- canonical 'Offset' values and is dialect-blind.
+data PPF1Origin = PPF1OriginPC | PPF1OriginAmiga
+  deriving (Show, Eq)
 
 -- | Wire-format magic prefix: ASCII @"PPF1"@.
 ppf1MagicBytes :: ByteString

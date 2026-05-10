@@ -6,12 +6,12 @@
 -- @docs/ppf/upstream/pdx-ppf1/sources/applyppf.c@.
 module Slap.PPF1.Parse (parsePPF1, parsePPF1Records) where
 
-import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..),
+import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..), PPF1Origin(..),
                         ppf1DescriptionLength)
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE)
+import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE, word32BE)
 import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
@@ -21,8 +21,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bifunctor (first)
 
-parsePPF1 :: PatchFileContents -> Either SlapError (Parsed PPF1Patch)
-parsePPF1 (PatchFileContents input)
+parsePPF1 :: PPF1Origin -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
+parsePPF1 origin (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF1ParseLength =
       Left (InputTooShort LabelPPF1
               (RequiredLength minimumPPF1ParseLength)
@@ -36,7 +36,7 @@ parsePPF1 (PatchFileContents input)
     parsePPF1Body = do
       skip (Length 6)                            -- magic + version + encoding byte
       description <- getBytes ppf1DescriptionLength
-      records <- parsePPF1Records firstAction
+      records <- parsePPF1Records origin firstAction
       pure PPF1Patch
         { ppf1Description = description
         , ppf1Records     = records
@@ -66,20 +66,24 @@ checkEncodingByte input
 -- The reference applier (@applyppf.c@, fillout-mode branch)
 -- implements this; the reference creator (@makeppf.c@) never emits
 -- it. Other PPF1 producers can.
-parsePPF1Records :: ActionIndex -> Get [PPF1Record]
-parsePPF1Records recordIndex = do
-  remainingBytes <- remaining
-  if unLength remainingBytes < 5 then pure []
-  else do
-    recordOffset <- Offset . fromIntegral <$> word32LE
-    countByte <- fromIntegral <$> getByte
-    remainingAfterHeader <- remaining
-    record <- if countByte == 0
-      then parseRleBody recordIndex remainingAfterHeader recordOffset
-      else parseLiteralBody recordIndex remainingAfterHeader recordOffset countByte
-    rest <- parsePPF1Records (nextAction recordIndex)
-    pure (record : rest)
+parsePPF1Records :: PPF1Origin -> ActionIndex -> Get [PPF1Record]
+parsePPF1Records origin = goRecords
   where
+    readOffsetWord = case origin of
+      PPF1OriginPC    -> word32LE
+      PPF1OriginAmiga -> word32BE
+    goRecords recordIndex = do
+      remainingBytes <- remaining
+      if unLength remainingBytes < 5 then pure []
+      else do
+        recordOffset <- Offset . fromIntegral <$> readOffsetWord
+        countByte <- fromIntegral <$> getByte
+        remainingAfterHeader <- remaining
+        record <- if countByte == 0
+          then parseRleBody recordIndex remainingAfterHeader recordOffset
+          else parseLiteralBody recordIndex remainingAfterHeader recordOffset countByte
+        rest <- goRecords (nextAction recordIndex)
+        pure (record : rest)
     parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> Get PPF1Record
     parseLiteralBody index remainingAfterHeader writeOffset payloadLength
       | unLength remainingAfterHeader < payloadLength =

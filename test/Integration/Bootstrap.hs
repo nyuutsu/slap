@@ -32,6 +32,7 @@ import Slap.Error (renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Convert (noDialectsRequested)
 
 import Control.Monad (filterM)
 import Data.ByteString (ByteString)
@@ -116,7 +117,7 @@ buildBootstrapTargets tempDir pairs = do
     bootstrap (index, pair) = do
       baseBytes  <- mmapRomFile (bootstrapBase pair)
       patchBytes <- ByteString.readFile (bootstrapPatch pair)
-      case parseSome (PatchFileContents patchBytes) of
+      case parseSome noDialectsRequested (PatchFileContents patchBytes) of
         Left slapError ->
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
                  ++ ": " ++ renderSlapError slapError)

@@ -27,7 +27,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested)
+  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents
@@ -94,7 +94,7 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
     case createPatch format
            (InputFileContents baseBytes)
            (OutputFileContents targetBytes)
-           noMetadataRequested Nothing noConstraintsRequested of
+           noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
       Left slapError ->
         assertFailure ("create failed: " ++ renderSlapError slapError)
       Right (CreateResult patchBytes _) ->

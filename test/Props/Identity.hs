@@ -10,7 +10,7 @@ import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
-                     noMetadataRequested, noConstraintsRequested)
+                     noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 
 import qualified Data.ByteString as ByteString
@@ -46,9 +46,9 @@ allCreateFormats =
 -- | For any non-empty source, create(src, src) should be an identity patch.
 prop_identity :: CreateFormat -> Property
 prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
-  case createPatch format (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested of
+  case createPatch format (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> case parseSome patch of
+    Right (CreateResult patch _) -> case parseSome noDialectsRequested patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
       Right parsed -> ioProperty $ do
         result <- applySomePatch parsed (InputFileContents source)

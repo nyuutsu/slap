@@ -15,7 +15,7 @@ import qualified Slap.PPF3.Parse as PPF3
 import Slap.Error (CreateResult(..), Parsed(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), RequestedPatchMetadata(..),
-                     UndoInclusion(..), noMetadataRequested, noConstraintsRequested)
+                     UndoInclusion(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createUPS, createPatch)
 
 import qualified Data.ByteString as ByteString
@@ -49,7 +49,7 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
 -- truncate the file, so growth is irreversible.
 prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
-  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested of
+  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

@@ -35,6 +35,7 @@ import Slap.Convert
   , DirectCreate(..)
   , noMetadataRequested
   , noConstraintsRequested
+  , noDialectsRequested
   )
 
 -- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
@@ -107,7 +108,7 @@ runConvertTest
   -> String -> String -> CreateFormat -> IO ()
 runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
-  case parseSome (PatchFileContents patchBytes) of
+  case parseSome noDialectsRequested (PatchFileContents patchBytes) of
     Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
     Right parsed -> do
       let flags = words flagsString
@@ -152,7 +153,7 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
                   baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
-                  case parseSome convertedBytes of
+                  case parseSome noDialectsRequested convertedBytes of
                     Left slapError ->
                       assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
                     Right convertedParsed -> do
@@ -209,10 +210,10 @@ makeTruncatingIPSPatch =
       targetBytes = ByteString.replicate 512 0xFF
   in case createPatch (CreateDirect CreateIPS)
          (InputFileContents sourceBytes) (OutputFileContents targetBytes)
-         noMetadataRequested Nothing noConstraintsRequested of
+         noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError ->
          error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)
-       Right createResult -> case parseSome (resultBytes createResult) of
+       Right createResult -> case parseSome noDialectsRequested (resultBytes createResult) of
          Left slapError ->
            error ("setup: parse truncating IPS failed: " ++ renderSlapError slapError)
          Right parsed -> pure parsed

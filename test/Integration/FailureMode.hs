@@ -29,7 +29,7 @@ import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.SomePatch (parseSome, patchKind, PatchKind(..))
+import Slap.SomePatch (parseSome, patchKind, patchFormat, PatchKind(..))
 import Slap.XDelta1.Parse
   ( parseControl
   , XDelta1ControlSegment(..), XDelta1DataSegment(..)
@@ -41,16 +41,25 @@ import Slap.Convert
   , DifferentialCreate(..)
   , CreateFormat(..)
   , RequestedConstraints(..)
+  , RequestedDialects(..)
   , noMetadataRequested
   , noConstraintsRequested
+  , noDialectsRequested
+  , acceptedDialects
   , rejectIncompatibleConstraints
+  , rejectIncompatibleDialects
+  , createFormatLabel
   , convertDirect
   )
 import Slap.Constraint (Constraint(..))
+import Slap.Dialect (Dialect(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
+import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.Create (createPatch)
+import qualified Data.Set as Set
 
 import Data.Bits (xor)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import System.Exit (ExitCode(..))
@@ -79,6 +88,7 @@ failureModeTests tier getTargets = do
 
   let smcMaybes = map WillRun smcShapeConstraintTests
       xdelta1ShapeMaybes = map WillRun xdelta1ShapeRejectionTests
+      dialectMaybes = map WillRun dialectAxisRejectionTests
 
   corruptCrcMaybes <- requireFixture dm4yBps $ \_ ->
                       requireFixture dm4yUps $ \_ ->
@@ -109,7 +119,8 @@ failureModeTests tier getTargets = do
     ]
 
   pure (namedGroup "failure-mode"
-          (smcMaybes ++ xdelta1ShapeMaybes ++ corruptCrcMaybes ++ heavyMaybes))
+          (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
+            ++ corruptCrcMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -253,7 +264,7 @@ corruptPatchCRCTests bps ups =
       patchBytes <- ByteString.readFile bps
       -- Flip byte 10 (somewhere in the body, well before the footer)
       let corrupted = flipByte 10 patchBytes
-      case parseSome (PatchFileContents corrupted) of
+      case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
@@ -261,7 +272,7 @@ corruptPatchCRCTests bps ups =
   , testCase "corrupt-crc/UPS flipped byte" $ do
       patchBytes <- ByteString.readFile ups
       let corrupted = flipByte 10 patchBytes
-      case parseSome (PatchFileContents corrupted) of
+      case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
@@ -271,7 +282,7 @@ corruptPatchCRCTests bps ups =
       -- Flip a byte just before the 12-byte footer (srcCRC + tgtCRC + patchCRC)
       let position = ByteString.length patchBytes - 13
       let corrupted = flipByte position patchBytes
-      case parseSome (PatchFileContents corrupted) of
+      case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
           (ciContains "patch CRC mismatch" (renderSlapError slapError))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
@@ -347,7 +358,7 @@ crossFormatRoundTripTests base bps =
   [ testCase "round-trip/IPS -> EBP -> IPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome (PatchFileContents bpsBytes) of
+      case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
@@ -358,7 +369,7 @@ crossFormatRoundTripTests base bps =
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome (PatchFileContents bpsBytes) of
+      case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
@@ -369,7 +380,7 @@ crossFormatRoundTripTests base bps =
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
-      case parseSome (PatchFileContents bpsBytes) of
+      case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
         Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
@@ -383,11 +394,11 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createPatch createFormatA (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormatA (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
-          case parseSome patchA of
+          case parseSome noDialectsRequested patchA of
             Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
             Right parsedA -> do
               resultA <- applyPatch parsedA (InputFileContents baseBytes)
@@ -396,11 +407,11 @@ crossFormatRoundTripTests base bps =
                 Right (OutputFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createPatch createFormatB (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested of
+                  case createPatch createFormatB (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
-                      case parseSome patchB of
+                      case parseSome noDialectsRequested patchB of
                         Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                         Right parsedB -> do
                           resultB <- applyPatch parsedB (InputFileContents baseBytes)
@@ -409,10 +420,10 @@ crossFormatRoundTripTests base bps =
                             Right (OutputFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createPatch createFormatC (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested of
+                              case createPatch createFormatC (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
-                                  case parseSome patchC of
+                                  case parseSome noDialectsRequested patchC of
                                     Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                     Right parsedC -> do
                                       resultC <- applyPatch parsedC (InputFileContents baseBytes)
@@ -477,10 +488,10 @@ createRoundTripTests getTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createPatch createFormat (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested of
+      case createPatch createFormat (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
-          case parseSome patchBytes of
+          case parseSome noDialectsRequested patchBytes of
             Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
             Right parsed -> do
               result <- applyPatch parsed (InputFileContents baseBytes)
@@ -520,7 +531,7 @@ smcShapeConstraintTests =
         Left slapError -> assertFailure
           ("expected success, got: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
-          case parseSome patchBytes of
+          case parseSome noDialectsRequested patchBytes of
             Left slapError -> assertFailure
               ("re-parse: " ++ renderSlapError slapError)
             Right _ -> pure ()
@@ -551,7 +562,7 @@ smcShapeConstraintTests =
       -- 'createPatch'; the constraint never reaches the
       -- per-format encoder. Exercise that check directly.
       case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
-        Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
+        Left (ConstraintNotSupported (SMCShapeConstraint :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
         Right () -> assertFailure
@@ -564,7 +575,7 @@ smcShapeConstraintTests =
           target = ByteString.replicate 4000 0xFF
       case createPatch (CreateDirect CreateIPS)
              (InputFileContents source) (OutputFileContents target)
-             noMetadataRequested Nothing noConstraintsRequested of
+             noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
           ("expected success (no flag), got: " ++ renderSlapError slapError)
         Right _ -> pure ()
@@ -575,7 +586,7 @@ smcShapeConstraintTests =
       -- user-facing rejection lands here long before any encoder
       -- runs. Exercise that check directly.
       case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
-        Left (ConstraintNotSupported SMCShapeConstraint LabelBPS) -> pure ()
+        Left (ConstraintNotSupported (SMCShapeConstraint :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
           ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
         Right () -> assertFailure
@@ -586,7 +597,7 @@ smcShapeConstraintTests =
       case patchKind ipsPatch of
         Direct (Just contents) ->
           case convertDirect contents (CreateDirect CreateIPS)
-                 noMetadataRequested smcConstraints of
+                 noMetadataRequested smcConstraints noDialectsRequested of
             Left (TruncationViolatesSMCShape _) -> pure ()
             Left other -> assertFailure
               ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
@@ -601,7 +612,7 @@ smcShapeConstraintTests =
     createWithSMC source target =
       createPatch (CreateDirect CreateIPS)
         (InputFileContents source) (OutputFileContents target)
-        noMetadataRequested Nothing smcConstraints
+        noMetadataRequested Nothing smcConstraints noDialectsRequested
 
     -- Build a parsed IPS patch whose post-EOF truncation marker
     -- declares a non-SMC-shaped target size. Constructed via the
@@ -613,12 +624,12 @@ smcShapeConstraintTests =
           target = ByteString.replicate 4000 0xFF
       case createPatch (CreateDirect CreateIPS)
              (InputFileContents source) (OutputFileContents target)
-             noMetadataRequested Nothing noConstraintsRequested of
+             noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
           ("setup: create failed: " ++ renderSlapError slapError)
           >> error "unreachable"
         Right (CreateResult patchBytes _) ->
-          case parseSome patchBytes of
+          case parseSome noDialectsRequested patchBytes of
             Left slapError -> assertFailure
               ("setup: parse failed: " ++ renderSlapError slapError)
               >> error "unreachable"
@@ -749,3 +760,73 @@ buildXDelta1Control sourceKinds instructions = ByteString.concat
     edsioVarintByte n
       | n < 0 || n >= 128 = error ("edsioVarintByte: out of single-byte range: " ++ show n)
       | otherwise         = ByteString.singleton (fromIntegral n)
+
+----------------------------------------------------------------------------
+-- 9. Dialect-axis rejection (in-process)
+----------------------------------------------------------------------------
+
+-- | The PPF1-origin dialect axis must be refused by formats that don't
+-- have it (apply/undo/info/explain/create paths) and honored on the
+-- convert path when /either/ side of the chain admits it.
+dialectAxisRejectionTests :: [TestTree]
+dialectAxisRejectionTests =
+  [ testCase "dialects/--is-amiga-patch on BPS apply rejects" $
+      -- Apply-side: 'rejectIncompatibleDialects' run against the
+      -- parsed patch's 'patchFormat' must refuse, because BPS has no
+      -- PPF1-origin axis. Exercise the check directly.
+      case rejectIncompatibleDialects
+             (acceptedDialects LabelBPS) LabelBPS amigaDialects of
+        Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
+        Left other -> assertFailure
+          ("expected DialectNotSupported, got: " ++ renderSlapError other)
+        Right () -> assertFailure
+          "expected refusal at apply entry"
+
+  , testCase "dialects/create --to bps rejects --is-amiga-patch" $
+      -- Create-side: 'rejectIncompatibleDialects' is run with the
+      -- target 'createFormatLabel' before any IO. BPS doesn't carry a
+      -- PPF1-origin axis, so the flag is refused.
+      case rejectIncompatibleDialects
+             (acceptedDialects (createFormatLabel (CreateDifferential CreateBPS)))
+             (createFormatLabel (CreateDifferential CreateBPS))
+             amigaDialects of
+        Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
+        Left other -> assertFailure
+          ("expected DialectNotSupported, got: " ++ renderSlapError other)
+        Right () -> assertFailure
+          "expected refusal at create entry"
+
+  , testCase "dialects/convert PPF1->BPS honors --is-amiga-patch on input" $ do
+      -- Convert-side union check: with PPF1 on the input and BPS on
+      -- the output, the chain admits PPF1OriginAxis (PPF1 admits it,
+      -- BPS doesn't, but the union covers it). Build an Amiga-origin
+      -- PPF1 patch by encoding with PPF1OriginAmiga, then re-parse
+      -- with the same origin and round-trip via apply.
+      let source = ByteString.replicate 64 0x11
+          target = ByteString.pack [if i == 10 then 0xAA else 0x11 | i <- [0..63 :: Int]]
+      case createPatch (CreateDirect CreatePPF1)
+             (InputFileContents source) (OutputFileContents target)
+             noMetadataRequested Nothing noConstraintsRequested amigaDialects of
+        Left slapError -> assertFailure
+          ("amiga create failed: " ++ renderSlapError slapError)
+        Right (CreateResult patchBytes _) ->
+          case parseSome amigaDialects patchBytes of
+            Left slapError -> assertFailure
+              ("amiga parse failed: " ++ renderSlapError slapError)
+            Right parsed ->
+              case patchKind parsed of
+                Direct (Just _) ->
+                  -- Sanity-check the union check would accept.
+                  case rejectIncompatibleDialects
+                         (acceptedDialects (patchFormat parsed)
+                            `Set.union`
+                          acceptedDialects LabelBPS)
+                         LabelBPS amigaDialects of
+                    Right () -> pure ()
+                    Left slapError -> assertFailure
+                      ("union check rejected: " ++ renderSlapError slapError)
+                _ -> assertFailure "expected Direct (Just _) for PPF1 patch"
+  ]
+  where
+    amigaDialects = noDialectsRequested
+      { requestedPPF1Origin = PPF1OriginAmiga }
