@@ -8,7 +8,6 @@ module Slap.XDelta1.Describe
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
     , XDelta1SourceKind(..), XDelta1OffsetMode(..), XDelta1SourceShape(..)
-    , fromXDelta1Version
     )
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
@@ -32,13 +31,12 @@ import qualified Data.ByteString as ByteString
 
 xdelta1Meta :: XDelta1Patch -> [InfoLine]
 xdelta1Meta patch =
-  [ InfoLine "version" (fromXDelta1Version (xdelta1Version patch)) ]
-  ++ [ InfoLine "from" (decodeLocaleField (xdelta1FromName patch))
-     , InfoLine "to" (decodeLocaleField (xdelta1ToName patch))
-     , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
-     , InfoLine "target MD5" (hexByteString (unMD5Hash (xdelta1ToMD5 patch)))
-     , InfoLine "sources" (show (length indexedSources))
-     ]
+  [ InfoLine "from" (decodeLocaleField (xdelta1FromName patch))
+  , InfoLine "to" (decodeLocaleField (xdelta1ToName patch))
+  , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
+  , InfoLine "target MD5" (hexByteString (unMD5Hash (xdelta1ToMD5 patch)))
+  , InfoLine "sources" (show (length indexedSources))
+  ]
   ++ sourceMD5s
   ++ [ InfoLine "data seg" (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
   where

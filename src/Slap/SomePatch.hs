@@ -958,8 +958,7 @@ parseSomePatchFromXDelta1 patchContents = do
     , patchWarnings       = parseWarnings
                             ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelXDelta1
-            (Just (" v" ++ XDelta1.fromXDelta1Version (XDelta1.xdelta1Version patch)))
+        { infoFormat = FormatHeader LabelXDelta1 Nothing
         , infoLines  = XDelta1.xdelta1Meta patch
         , infoTally  = Tally (length (XDelta1.xdelta1Instructions patch))
         , infoUnit   = Instructions

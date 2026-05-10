@@ -6,8 +6,6 @@ module Slap.XDelta1.Types
   , XDelta1SourceShape(..)
   , xdelta1FileSourceOf
   , XDelta1Instruction(..)
-  , XDelta1Version(..)
-  , fromXDelta1Version
   , XDelta1SourceKind(..)
   , XDelta1OffsetMode(..)
     -- * Named constants
@@ -19,13 +17,6 @@ import Data.Int (Int64)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
-data XDelta1Version = XDelta1v104 | XDelta1v11
-  deriving (Show, Eq)
-
-fromXDelta1Version :: XDelta1Version -> String
-fromXDelta1Version XDelta1v104 = "1.0.4"
-fromXDelta1Version XDelta1v11  = "1.1"
-
 data XDelta1SourceKind = FileSource | DataSegmentSource
   deriving (Show, Eq)
 
@@ -33,8 +24,7 @@ data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
   deriving (Show, Eq)
 
 data XDelta1Patch = XDelta1Patch
-  { xdelta1Version      :: XDelta1Version
-  , xdelta1FromName     :: ByteString
+  { xdelta1FromName     :: ByteString
   , xdelta1ToName       :: ByteString
   , xdelta1ToMD5        :: MD5Hash
   , xdelta1TargetLength :: FileSize

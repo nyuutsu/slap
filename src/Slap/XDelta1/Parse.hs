@@ -2,7 +2,7 @@
 
 module Slap.XDelta1.Parse
   ( parseXDelta1
-  , parseV11
+  , parseVersion1Point1
   , parseControl
   , parseOneSource
   , parseInstructions
@@ -20,7 +20,7 @@ module Slap.XDelta1.Parse
 
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
-    , XDelta1Version(..), XDelta1SourceKind(..), XDelta1OffsetMode(..)
+    , XDelta1SourceKind(..), XDelta1OffsetMode(..)
     , XDelta1SourceShape(..)
     , xdelta1TrailerSize
     )
@@ -82,24 +82,27 @@ newtype XDelta1ToName = XDelta1ToName
 parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 patchContents@(PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
-  | magic == "%XDZ004%" = wrapParsed (parseV11 patchContents (ExpectedMagic magic) XDelta1v11)
-  | magic == "%XDZ003%" = wrapParsed (parseV11 patchContents (ExpectedMagic magic) XDelta1v104)
-  | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "v1.0")
-  | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "v0.14")
+  | magic == "%XDZ004%" = wrapParsed (parseVersion1Point1 patchContents (ExpectedMagic magic))
+  | magic == "%XDZ003%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0.4")
+  | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0")
+  | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "version 0.14")
   | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
   where
     magic = ByteString.take 8 input
     wrapParsed = fmap (\patch -> Parsed patch [])
 
-parseV11 :: PatchFileContents -> ExpectedMagic -> XDelta1Version -> Either SlapError XDelta1Patch
-parseV11 (PatchFileContents input) expectedMagic version
+-- | Body parser for @%XDZ004%@ (xdelta 1.1.x), the only xdelta1 era
+-- slap currently supports. Sibling body parsers for other eras
+-- (1.0.4 under @%XDZ003%@, 1.0.x under @%XDZ002%@) would live
+-- alongside this one and be dispatched to by 'parseXDelta1'.
+parseVersion1Point1 :: PatchFileContents -> ExpectedMagic -> Either SlapError XDelta1Patch
+parseVersion1Point1 (PatchFileContents input) expectedMagic
   | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
   | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
-      parseControl version
-                   (XDelta1ControlSegment decompressedControl)
+      parseControl (XDelta1ControlSegment decompressedControl)
                    (XDelta1DataSegment    decompressedData)
                    (XDelta1FromName       fromName)
                    (XDelta1ToName         toName)
@@ -140,13 +143,12 @@ parseV11 (PatchFileContents input) expectedMagic version
 -- the shape's index range with 'validateInstructionIndices'. Only after
 -- both checks pass do sequential offsets get resolved and the
 -- 'XDelta1Patch' record assembled.
-parseControl :: XDelta1Version
-             -> XDelta1ControlSegment
+parseControl :: XDelta1ControlSegment
              -> XDelta1DataSegment
              -> XDelta1FromName
              -> XDelta1ToName
              -> Either SlapError XDelta1Patch
-parseControl version controlSegment dataSegment fromName toName
+parseControl controlSegment dataSegment fromName toName
   | ByteString.length controlBytes < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
   | otherwise = do
       (toMD5, targetLength, rawSources, rawInstructions) <-
@@ -156,7 +158,7 @@ parseControl version controlSegment dataSegment fromName toName
       sourceShape <- classifyXDelta1Shape rawSources
       validateInstructionIndices sourceShape rawInstructions
       let fixedInstructions = fixSequentialOffsets sourceShape rawInstructions
-      Right (XDelta1Patch version fromNameBytes toNameBytes
+      Right (XDelta1Patch fromNameBytes toNameBytes
                           toMD5 targetLength sourceShape
                           fixedInstructions dataBytes)
   where

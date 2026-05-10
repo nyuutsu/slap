@@ -35,7 +35,7 @@ import Slap.XDelta1.Parse
   , XDelta1ControlSegment(..), XDelta1DataSegment(..)
   , XDelta1FromName(..), XDelta1ToName(..)
   )
-import Slap.XDelta1.Types (XDelta1Version(..), XDelta1SourceKind(..))
+import Slap.XDelta1.Types (XDelta1SourceKind(..))
 import Slap.Convert
   ( DirectCreate(..)
   , DifferentialCreate(..)
@@ -690,8 +690,7 @@ xdelta1ShapeRejectionTests =
   ]
   where
     parseControlBytes controlBytes =
-      case parseControl XDelta1v11
-                        (XDelta1ControlSegment controlBytes)
+      case parseControl (XDelta1ControlSegment controlBytes)
                         (XDelta1DataSegment ByteString.empty)
                         (XDelta1FromName ByteString.empty)
                         (XDelta1ToName ByteString.empty) of
