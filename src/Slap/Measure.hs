@@ -37,10 +37,13 @@ module Slap.Measure
   , EncodingMethodByte(..)
     -- * Records
   , Hunk(..)
-  , UndoHunk(..)
   , SplitHunk
   , splitOffset
   , splitPayload
+  , SplitUndoHunk
+  , splitUndoOffset
+  , splitUndoPayload
+  , splitUndoOriginal
   , OffsetRange(..)
   , rangeEndExclusive
   , rangeLastByte
@@ -76,6 +79,8 @@ module Slap.Measure
   , splitHunks
   , splitHunksUnbounded
   , splitHunkPostResolve
+  , splitUndoHunks
+  , splitUndoHunkFromParsed
     -- * IPS sentinel values
   , ipsSentinel
   , ips32Sentinel
@@ -290,12 +295,6 @@ data Hunk = Hunk
   , hunkPayload :: !ByteString
   } deriving (Eq, Show)
 
-data UndoHunk = UndoHunk
-  { undoOffset   :: !Offset
-  , undoPayload  :: !ByteString
-  , undoOriginal :: !ByteString
-  } deriving (Show)
-
 -- | A 'Hunk' whose payload has been validated against a format's
 -- per-record payload bound, or had that validation explicitly waived
 -- for a format whose wire encoding has no per-record cap (see
@@ -310,6 +309,35 @@ data UndoHunk = UndoHunk
 data SplitHunk = SplitHunk
   { splitOffset  :: !Offset
   , splitPayload :: !ByteString
+  } deriving (Eq, Show)
+
+-- | A PPF3-style undo record whose payload has been validated against
+-- the format's per-record payload bound. Constructor private; values
+-- come from one of three named producers in this module:
+--
+-- * 'splitUndoHunks'       — create-time, splits a 'Hunk' list against
+--                            the payload bound and computes per-piece
+--                            original-bytes from the source ROM.
+-- * 'splitUndoHunkFromParsed' — parse-time, lifts an already-validated
+--                               wire-format record (the parser's
+--                               1-byte length field guarantees the
+--                               bound).
+-- * 'splitUndoHunkPostResolve' — not present today; the @postResolve@
+--                                exit is reserved for future passes
+--                                that may need to publish a
+--                                'SplitUndoHunk' after a payload-
+--                                altering transformation, parallel to
+--                                'splitHunkPostResolve'. Add when a
+--                                use materialises.
+--
+-- Every encoder that emits a PPF3 undo record consumes 'EncodedUndoHunk'
+-- (in 'Slap.Narrow'), which can only be produced by narrowing a
+-- 'SplitUndoHunk'. The pipeline is type-enforced; the only way to
+-- emit a record is through both passes.
+data SplitUndoHunk = SplitUndoHunk
+  { splitUndoOffset   :: !Offset
+  , splitUndoPayload  :: !ByteString
+  , splitUndoOriginal :: !ByteString
   } deriving (Eq, Show)
 
 -- | A contiguous span of bytes in a target file: a starting 'Offset'
@@ -582,6 +610,43 @@ splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
 -- this post-resolve exit.
 splitHunkPostResolve :: Offset -> ByteString -> SplitHunk
 splitHunkPostResolve = SplitHunk
+
+-- | Split a list of 'Hunk's against the format's per-record payload
+-- bound and pair each split piece with the corresponding bytes from
+-- @source@ (the original-bytes field every PPF3 undo record carries).
+-- Empty payloads produce no output. When a piece extends past the
+-- source's end, the missing tail bytes are zero-padded — the same
+-- convention the previous @Slap.PPF3.Create.computeUndo@ used.
+splitUndoHunks :: Length -> ByteString -> [Hunk] -> [SplitUndoHunk]
+splitUndoHunks maxLength source = concatMap pieces
+  where
+    sourceLength = ByteString.length source
+    pieces h
+      | ByteString.null (hunkPayload h) = []
+      | otherwise = map perPiece (splitHunk maxLength h)
+    perPiece piece =
+      SplitUndoHunk
+        (splitOffset piece)
+        (splitPayload piece)
+        (originalAt (unOffset (splitOffset piece))
+                    (ByteString.length (splitPayload piece)))
+    originalAt position chunkLength
+      | position >= sourceLength = ByteString.replicate chunkLength 0
+      | position + chunkLength > sourceLength =
+          ByteString.take (sourceLength - position) (ByteString.drop position source)
+          <> ByteString.replicate (chunkLength - (sourceLength - position)) 0
+      | otherwise =
+          ByteString.take chunkLength (ByteString.drop position source)
+
+-- | Lift a parsed wire-format undo record to a 'SplitUndoHunk',
+-- trusting the parser's payload-bound guarantee. PPF3's wire format
+-- prefixes the undo payload with a single byte naming its length,
+-- so any 'SplitUndoHunk' constructed here is provably ≤ 255 bytes by
+-- the parser's contract. Documented opt-out parallel to
+-- 'splitHunkPostResolve'; the named exit preserves the property that
+-- every 'SplitUndoHunk' has a discoverable provenance.
+splitUndoHunkFromParsed :: Offset -> ByteString -> ByteString -> SplitUndoHunk
+splitUndoHunkFromParsed = SplitUndoHunk
 
 ----------------------------------------------------------------------------
 -- IPS sentinel values

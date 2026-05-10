@@ -20,7 +20,8 @@ import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError, renderSlapWarning)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..), Hunk(..), UndoHunk(..),
+import Slap.Measure (Offset(..), FileSize(..), Hunk(..),
+                     splitUndoHunkFromParsed,
                      SentinelOffset(..))
 import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       DirectConversionContract(..), UndoInclusion(..), ValidationInclusion(..),
@@ -69,7 +70,7 @@ fullContents = PatchContents
   , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))
   , contentsDestinationSize    = Just (FileSize 1024)
   , contentsValidation  = Just (ByteString.replicate 1024 0)
-  , contentsUndoData    = Just [UndoHunk (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
+  , contentsUndoData    = Just [splitUndoHunkFromParsed (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
   , contentsTruncation  = Just (FileSize 512)
   , contentsEBPMeta     = Just (ByteString.pack [0x7B, 0x7D])
   , contentsRomType     = Just PlatformRaw

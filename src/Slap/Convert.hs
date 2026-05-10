@@ -77,13 +77,15 @@ import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
-import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..), UndoHunk(..),
-                      SplitHunk,
+import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
+                      SplitHunk, SplitUndoHunk,
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      splitHunks, splitHunksUnbounded, byteFileSize)
+                      splitHunks, splitHunksUnbounded, splitUndoHunks,
+                      byteFileSize)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
-                    narrowHunks, narrowHunksUnbounded)
+                    narrowHunks, narrowHunksUnbounded,
+                    narrowUndoHunksUnbounded)
 import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
@@ -129,7 +131,7 @@ data PatchContents = PatchContents
   , contentsValidation  :: Maybe ByteString.ByteString
     -- ^ Raw 1024-byte validation-block bytes (PPF2/PPF3). Cross-cutting,
     -- so plain bytes; per-format role newtypes wrap on emit.
-  , contentsUndoData    :: Maybe [UndoHunk]
+  , contentsUndoData    :: Maybe [SplitUndoHunk]
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMeta     :: Maybe ByteString.ByteString
   , contentsRomType     :: Maybe PlatformType
@@ -938,12 +940,14 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- PPF3's offset is Int64-shaped on the wire; the offset bound is
     -- 'Nothing' in 'encodingLimits', so 'narrow' here delegates to
     -- 'narrowHunksUnbounded'. Payload is still capped at
-    -- 'ppf3MaxRecordPayload'.
+    -- 'ppf3MaxRecordPayload'. The parallel undo pipeline shares that
+    -- "no offset cap" property, so the undo hunks narrow via
+    -- 'narrowUndoHunksUnbounded'.
     records <- narrow (splitHunks ppf3MaxRecordPayload (contentsRecords contents))
-    let ppfResult = PPF3.encodePPF3 records description
-                      (contentsUndoData contents)
-                      (fmap PPF3ValidationBlock (contentsValidation contents))
-                      imageType
+    let undoEncoded = fmap narrowUndoHunksUnbounded (contentsUndoData contents)
+        ppfResult   = PPF3.encodePPF3 records description undoEncoded
+                        (fmap PPF3ValidationBlock (contentsValidation contents))
+                        imageType
     Right $ case contentsFileIdDiz contents of
       Nothing  -> ppfResult
       Just diz -> ppfResult { resultBytes = PatchFileContents
@@ -1096,7 +1100,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing
   , contentsUndoData    = if needs FieldUndoData
-                    then Just (PPF3.computeUndo source patchHunks)
+                    then Just (splitUndoHunks ppf3MaxRecordPayload source patchHunks)
                     else Nothing
   -- Populated whenever the target is smaller than the source regardless
   -- of whether the target format carries a truncation marker: formats

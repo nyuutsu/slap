@@ -22,7 +22,8 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      noMetadataRequested, trimNullSpace)
 import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
 import Slap.JSON (jsonPairs, jsonFieldCI)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..), UndoHunk(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
+                     splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Describe as PPF1
 import qualified Slap.PPF1.Parse as PPF1
@@ -412,9 +413,10 @@ parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
           , contentsDestinationSize    = Nothing
           , contentsValidation  = validationBlockBytes
           , contentsUndoData    = if PPF3.ppf3HasUndo patch
-                            then Just [ UndoHunk (PPF3.ppf3RecordOffset record)
-                                                 (PPF3.ppf3RecordPayload record)
-                                                 (fromMaybe ByteString.empty (PPF3.ppf3RecordUndo record))
+                            then Just [ splitUndoHunkFromParsed
+                                          (PPF3.ppf3RecordOffset record)
+                                          (PPF3.ppf3RecordPayload record)
+                                          (fromMaybe ByteString.empty (PPF3.ppf3RecordUndo record))
                                       | record <- records ]
                             else Nothing
           , contentsTruncation  = Nothing

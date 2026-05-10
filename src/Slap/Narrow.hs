@@ -1,37 +1,49 @@
 {-# LANGUAGE StrictData #-}
 
--- | The narrowing layer: validate that 'SplitHunk's fit a format's
--- wire-format offset bound, producing 'EncodedHunk's that downstream
--- encoders can write without silent truncation.
+-- | The narrowing layer: validate 'SplitHunk's and 'SplitUndoHunk's
+-- against per-format offset bounds, producing 'EncodedHunk's and
+-- 'EncodedUndoHunk's respectively that downstream encoders can write
+-- without silent truncation. Both pipelines compose: a write record
+-- passes through 'Slap.Measure.splitHunks' → 'narrowHunks' to reach
+-- 'EncodedHunk'; a PPF3 undo record passes through
+-- 'Slap.Measure.splitUndoHunks' → 'narrowUndoHunks' to reach
+-- 'EncodedUndoHunk'. The discipline is type-enforced — removing
+-- either pass from any direct-format pipeline produces a type error.
 --
--- 'EncodedHunk' is the post-narrow phase of a 'SplitHunk'. Its
--- constructor is private to this module — every 'EncodedHunk' value
--- in slap was produced by 'narrowHunk', 'narrowHunks',
--- 'narrowHunkUnbounded', or 'narrowHunksUnbounded'. Encoders consume
--- 'EncodedHunk' through the exported selectors; they cannot
--- construct one. The discipline "every encoded record went through
--- both split (or 'splitHunksUnbounded') and narrow (or
--- 'narrowHunksUnbounded')" is type-enforced rather than
--- conventional: the only way to obtain an 'EncodedHunk' is to start
--- with a 'SplitHunk', which itself can only be obtained from one of
--- the @split*@ functions in "Slap.Measure". Removing either pass
--- from any direct-format pipeline produces a type error.
+-- 'EncodedHunk' and 'EncodedUndoHunk' are the post-narrow phases of
+-- 'SplitHunk' and 'SplitUndoHunk'. Their constructors are private to
+-- this module — every encoded value in slap was produced by one of
+-- the @narrow*@ functions here. Encoders consume the encoded types
+-- through the exported selectors; they cannot construct one. The
+-- only way to obtain an 'EncodedHunk' or 'EncodedUndoHunk' is to
+-- start with the corresponding split type, which itself can only be
+-- obtained from one of the @split*@ functions in "Slap.Measure".
 module Slap.Narrow
   ( EncodedHunk
   , encodedOffset
   , encodedPayload
+  , EncodedUndoHunk
+  , encodedUndoOffset
+  , encodedUndoPayload
+  , encodedUndoOriginal
   , EncodingLimits(..)
   , NarrowingFailure(..)
   , narrowHunk
   , narrowHunks
   , narrowHunkUnbounded
   , narrowHunksUnbounded
+  , narrowUndoHunk
+  , narrowUndoHunks
+  , narrowUndoHunkUnbounded
+  , narrowUndoHunksUnbounded
   ) where
 
 import Data.ByteString (ByteString)
 
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Offset(..), SplitHunk, splitOffset, splitPayload,
+                     SplitUndoHunk, splitUndoOffset, splitUndoPayload,
+                     splitUndoOriginal,
                      ActualOffset(..), MaxOffset(..))
 
 -- | A 'SplitHunk' that has been validated against a format's
@@ -102,3 +114,51 @@ narrowHunkUnbounded hunk = EncodedHunk
 
 narrowHunksUnbounded :: [SplitHunk] -> [EncodedHunk]
 narrowHunksUnbounded = map narrowHunkUnbounded
+
+-- | A 'SplitUndoHunk' that has been validated against a format's
+-- wire-format offset range (or had that validation explicitly waived
+-- via 'narrowUndoHunkUnbounded'). Constructor private; the only way
+-- to obtain one is to narrow a 'SplitUndoHunk', which itself can
+-- only be obtained from one of the @split*@ functions in
+-- "Slap.Measure". Parallel to 'EncodedHunk' for undo records.
+data EncodedUndoHunk = EncodedUndoHunk
+  { encodedUndoOffset   :: !Offset
+  , encodedUndoPayload  :: !ByteString
+  , encodedUndoOriginal :: !ByteString
+  } deriving (Eq, Show)
+
+-- | Narrow a 'SplitUndoHunk' to an 'EncodedUndoHunk' by checking its
+-- offset against the format's wire-format range. Overflow surfaces
+-- as 'OffsetExceedsBound' tagged with the limits' format label.
+narrowUndoHunk :: EncodingLimits -> SplitUndoHunk -> Either NarrowingFailure EncodedUndoHunk
+narrowUndoHunk limits hunk
+  | unOffset offset > unOffset maximum_ =
+      Left (OffsetExceedsBound (formatLabel limits)
+                               (ActualOffset offset)
+                               (MaxOffset maximum_))
+  | otherwise =
+      Right EncodedUndoHunk
+        { encodedUndoOffset   = offset
+        , encodedUndoPayload  = splitUndoPayload hunk
+        , encodedUndoOriginal = splitUndoOriginal hunk
+        }
+  where
+    offset   = splitUndoOffset hunk
+    maximum_ = maximumOffset limits
+
+narrowUndoHunks :: EncodingLimits -> [SplitUndoHunk] -> Either NarrowingFailure [EncodedUndoHunk]
+narrowUndoHunks limits = traverse (narrowUndoHunk limits)
+
+-- | Lift a 'SplitUndoHunk' to an 'EncodedUndoHunk' without
+-- validation. Only legitimate for formats whose wire encoding
+-- imposes no per-record offset bound — currently PPF3 alone, whose
+-- Int64-shaped offset on the wire fits any 'Offset' on a 64-bit host.
+narrowUndoHunkUnbounded :: SplitUndoHunk -> EncodedUndoHunk
+narrowUndoHunkUnbounded hunk = EncodedUndoHunk
+  { encodedUndoOffset   = splitUndoOffset hunk
+  , encodedUndoPayload  = splitUndoPayload hunk
+  , encodedUndoOriginal = splitUndoOriginal hunk
+  }
+
+narrowUndoHunksUnbounded :: [SplitUndoHunk] -> [EncodedUndoHunk]
+narrowUndoHunksUnbounded = map narrowUndoHunkUnbounded
