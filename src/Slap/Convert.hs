@@ -52,7 +52,8 @@ import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        EBPMetadataFields(..), IPSVariantSpec(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
-                       ipsMaxRecordPayload, variantSpec)
+                       ipsMaxRecordPayload, variantSpec,
+                       ipsLimits, ips32Limits)
 import Slap.JSON (jsonPairs, jsonFieldCI)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
@@ -827,13 +828,12 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
 -- offset cap; their arms in 'encodeDirect' route through
 -- 'narrowHunksUnbounded' instead.
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
-encodingLimits CreateIPS     =
-  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelIPS)
-encodingLimits CreateIPS32   =
-  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec IPS32)) LabelIPS32)
+encodingLimits CreateIPS     = Just ipsLimits
+encodingLimits CreateIPS32   = Just ips32Limits
 encodingLimits CreateEBP     =
-  -- EBP is structurally StandardIPS with a JSON trailer; shares StandardIPS's offset range.
-  Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelEBP)
+  -- EBP is structurally StandardIPS with a JSON trailer; shares
+  -- StandardIPS's offset range but error-tags as 'LabelEBP'.
+  Just ipsLimits { formatLabel = LabelEBP }
 encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
 encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
 encodingLimits CreatePMSR    = Just PMSR.pmsrLimits

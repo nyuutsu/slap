@@ -35,6 +35,9 @@ module Slap.IPS.Types
     -- * Per-variant dispatch
   , variantSpec
   , ipsVariantMaxRecordEnd
+    -- * Encoding limits
+  , ipsLimits
+  , ips32Limits
   ) where
 
 import Data.Bits ((.&.))
@@ -42,6 +45,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Vector (Vector)
 import Data.Word (Word8)
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Narrow (EncodingLimits(..))
 import Slap.Measure
   ( Offset(..)
   , Length(..)
@@ -400,6 +405,30 @@ ipsVariantMaxRecordEnd :: IPSVariant -> Offset
 ipsVariantMaxRecordEnd variant =
   advance (ipsVariantMaxAddressableOffset (variantSpec variant))
           ipsMaxRecordPayload
+
+----------------------------------------------------------------------------
+-- Encoding limits
+----------------------------------------------------------------------------
+
+-- | 'StandardIPS''s wire-format offset cap, paired with 'LabelIPS' for
+-- error tagging. Consumed by 'Slap.Convert.encodingLimits' and by the
+-- narrow-layer rejection tests; sibling to 'apsN64Limits',
+-- 'pchtxtLimits', 'pmsrLimits', 'ppf1Limits', 'ppf2Limits' — every
+-- direct format with a per-record offset bound exports its
+-- 'EncodingLimits' from its own @Types@ module.
+ipsLimits :: EncodingLimits
+ipsLimits = EncodingLimits
+  { maximumOffset = ipsVariantMaxAddressableOffset (variantSpec StandardIPS)
+  , formatLabel   = LabelIPS
+  }
+
+-- | 'IPS32''s wire-format offset cap, paired with 'LabelIPS32' for
+-- error tagging. The 32-bit-offset sibling to 'ipsLimits'.
+ips32Limits :: EncodingLimits
+ips32Limits = EncodingLimits
+  { maximumOffset = ipsVariantMaxAddressableOffset (variantSpec IPS32)
+  , formatLabel   = LabelIPS32
+  }
 
 ----------------------------------------------------------------------------
 -- Truncation-marker disposition
