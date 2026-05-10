@@ -17,8 +17,9 @@ module Slap.PPF1.Create
   ) where
 
 import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength)
-import Slap.Measure (Length(..), Offset(..), Hunk(..),
+import Slap.Measure (Length(..), Offset(..),
                      OriginalLength(..), TruncatedLength(..))
+import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -30,11 +31,15 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Word (Word32)
 
--- | Encode a PPF1 patch from pre-split records.
--- @records@ payloads must each be ≤ 'Slap.PPF1.Types.ppf1MaxRecordPayload'
--- bytes; the convert-layer pipeline calls @splitHunks@ before reaching
--- here.
-encodePPF1 :: PPF1Origin -> [Hunk] -> String -> CreateResult
+-- | Encode a PPF1 patch from pre-split, pre-narrowed records.
+-- 'EncodedHunk' is the typed proof that each record's offset fits the
+-- 4-byte field ('Slap.PPF1.Types.ppf1Limits') and each payload fits
+-- the single-byte count field ('Slap.PPF1.Types.ppf1MaxRecordPayload')
+-- — the convert-layer pipeline runs @splitHunks ppf1MaxRecordPayload@
+-- and @narrowHunks ppf1Limits@ before reaching this encoder, so the
+-- @fromIntegral@ casts at the offset and length sites are
+-- safe-by-construction.
+encodePPF1 :: PPF1Origin -> [EncodedHunk] -> String -> CreateResult
 encodePPF1 origin records description =
   let writeOffsetWord = case origin of
         PPF1OriginPC    -> word32LE
@@ -72,8 +77,8 @@ buildHeader description =
   <> word8 0x00                -- encoding method
   <> byteString description    -- 50-byte padded description
 
-encodeRecord :: (Word32 -> Builder) -> Hunk -> Builder
-encodeRecord writeOffsetWord (Hunk recordOffset recordPayload) =
-  writeOffsetWord (fromIntegral (unOffset recordOffset))
-  <> word8 (fromIntegral (ByteString.length recordPayload))
-  <> byteString recordPayload
+encodeRecord :: (Word32 -> Builder) -> EncodedHunk -> Builder
+encodeRecord writeOffsetWord ehunk =
+  writeOffsetWord (fromIntegral (unOffset (encodedOffset ehunk)))
+  <> word8 (fromIntegral (ByteString.length (encodedPayload ehunk)))
+  <> byteString (encodedPayload ehunk)

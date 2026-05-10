@@ -26,8 +26,8 @@ module Props.Helpers
 import qualified Slap.NINJA2.Types as NINJA2
 import Slap.Error (SlapError, SlapWarning(..), Outcome(..))
 import Slap.FormatLabel (FormatLabel)
-import Slap.Measure (Hunk(..), Offset)
-import Slap.Narrow (EncodedHunk, EncodingLimits(..), narrowHunk)
+import Slap.Measure (Hunk(..), Offset, splitHunksUnbounded)
+import Slap.Narrow (EncodedHunk, EncodingLimits(..), narrowHunks)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
 
@@ -127,22 +127,27 @@ truncatedFile parseFunction path = ioProperty $ do
 ----------------------------------------------------------------------------
 
 -- | Total encoded IPS record size (excluding magic/EOF marker).
-ipsEncodedSize :: Int -> [Hunk] -> Int
+-- Operates on raw payload bytes so the helper is indifferent to
+-- whether the caller has a list of 'Hunk' or 'SplitHunk' or anything
+-- else — only the payload shape matters for the cost model.
+ipsEncodedSize :: Int -> [ByteString] -> Int
 ipsEncodedSize offWidth = sum . map recordSize
   where
-    recordSize (Hunk _ payload)
+    recordSize payload
       | ByteString.length payload >= 3, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
       | otherwise = offWidth + 2 + ByteString.length payload
 
 -- | Test helper: narrow a single hunk, fail loudly if it overflows.
 -- Used by tests that need 'EncodedHunk' values as inputs to functions
--- which consume them. Goes through the production narrow path so test
--- discipline matches production.
+-- which consume them. Routes through 'splitHunksUnbounded' so the
+-- single-step constructor stays short — these tests are exercising
+-- the narrow side, not the split cap.
 narrowOne :: EncodingLimits -> Offset -> ByteString -> EncodedHunk
 narrowOne limits offset payload =
-  case narrowHunk limits (Hunk offset payload) of
-    Right encoded -> encoded
-    Left failure  -> error ("narrowOne: test setup bug, narrow failed with " ++ show failure)
+  case narrowHunks limits (splitHunksUnbounded [Hunk offset payload]) of
+    Right [encoded] -> encoded
+    Right other     -> error ("narrowOne: unexpected list shape " ++ show (length other))
+    Left failure    -> error ("narrowOne: test setup bug, narrow failed with " ++ show failure)
 
 ----------------------------------------------------------------------------
 -- NINJA2 helpers

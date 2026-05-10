@@ -6,6 +6,7 @@ module Slap.PMSR.Types
   , PMSRPatch(..)
     -- * Named constants
   , pmsrMagicBytes
+  , pmsrMaxRecordPayload
     -- * Encoding limits
   , pmsrLimits
   ) where
@@ -13,7 +14,7 @@ module Slap.PMSR.Types
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..))
+import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (EncodingLimits(..))
 
 -- | A single PMSR record: offset + data to write.
@@ -39,3 +40,10 @@ pmsrLimits = EncodingLimits
   { maximumOffset = Offset 0xFFFFFFFF
   , formatLabel   = LabelPMSR
   }
+
+-- | PMSR's wire-format payload cap. The record format's length field
+-- is 4 bytes BE, so payloads ≥ 2^32 bytes cannot be expressed without
+-- truncation. Enforced at split time so 'Slap.PMSR.Create.encodePMSR'
+-- cannot silently emit a truncated length.
+pmsrMaxRecordPayload :: Length
+pmsrMaxRecordPayload = Length 0xFFFFFFFF

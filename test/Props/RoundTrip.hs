@@ -16,7 +16,8 @@ import Slap.BPS.Types (BPSMetadata(..))
 import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
-import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSParseResult(..))
+import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSParseResult(..),
+                       ipsMaxRecordPayload)
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PMSR.Parse as PMSR
@@ -56,7 +57,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
-                     byteLength, splitHunks)
+                     byteLength, splitHunks, splitPayload)
 import Slap.FFI (rustyCRC32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
@@ -218,22 +219,28 @@ prop_resolveSentinelCollisions = once $
       emptySource  = InputFileContents ByteString.empty
       sentinelAt5  = SentinelOffset (Offset 5)
       sentinelAt0  = SentinelOffset (Offset 0)
+      -- 'resolveSentinelCollisions' consumes 'SplitHunk's; the only
+      -- way to obtain those from this layer is to run 'splitHunks'.
+      -- Use an ample cap so the split pass passes inputs through
+      -- unchanged and the test is exercising the resolver, not
+      -- splitting.
+      asSplit = splitHunks ipsMaxRecordPayload
   in conjoin
     [ -- Record at sentinel is shifted back and the preceding source byte prepended.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
-        [Hunk (Offset 5) (ByteString.pack [0xFF])]
-        === Right [Hunk (Offset 4) (ByteString.pack [4, 0xFF])]
+        (asSplit [Hunk (Offset 5) (ByteString.pack [0xFF])])
+        === Right (asSplit [Hunk (Offset 4) (ByteString.pack [4, 0xFF])])
     , -- Record NOT at sentinel passes through unchanged.
       resolveSentinelCollisions LabelIPS sentinelAt5 source
-        [Hunk (Offset 3) (ByteString.pack [0xAA])]
-        === Right [Hunk (Offset 3) (ByteString.pack [0xAA])]
+        (asSplit [Hunk (Offset 3) (ByteString.pack [0xAA])])
+        === Right (asSplit [Hunk (Offset 3) (ByteString.pack [0xAA])])
     , -- Empty source: collision is unfixable, returns a structured error.
       resolveSentinelCollisions LabelIPS sentinelAt5 emptySource
-        [Hunk (Offset 5) (ByteString.pack [0xFF])]
+        (asSplit [Hunk (Offset 5) (ByteString.pack [0xFF])])
         === Left (SentinelCollisionUnfixable LabelIPS sentinelAt5)
     , -- Sentinel at offset 0: no preceding byte exists, returns a structured error.
       resolveSentinelCollisions LabelIPS sentinelAt0 source
-        [Hunk (Offset 0) (ByteString.pack [0xFF])]
+        (asSplit [Hunk (Offset 0) (ByteString.pack [0xFF])])
         === Left (SentinelCollisionUnfixable LabelIPS sentinelAt0)
     ]
 
@@ -265,8 +272,8 @@ prop_dpNotLarger = forAll genPair $ \(source, target) ->
         optimalIPSRecords Offset24 (InputFileContents source) (OutputFileContents target)
       greedyRecords = splitHunks (Length 0xFFFF)
                                  (diffHunks (InputFileContents source) (OutputFileContents target))
-      dynamicProgrammingSize = ipsEncodedSize 3 dynamicProgrammingRecords
-      greedySize = ipsEncodedSize 3 greedyRecords
+      dynamicProgrammingSize = ipsEncodedSize 3 (map hunkPayload dynamicProgrammingRecords)
+      greedySize = ipsEncodedSize 3 (map splitPayload greedyRecords)
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
      dynamicProgrammingSize <= greedySize
 
@@ -277,8 +284,8 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
         optimalIPSRecords Offset32 (InputFileContents source) (OutputFileContents target)
       greedyRecords = splitHunks (Length 0xFFFF)
                                  (diffHunks (InputFileContents source) (OutputFileContents target))
-      dynamicProgrammingSize = ipsEncodedSize 4 dynamicProgrammingRecords
-      greedySize = ipsEncodedSize 4 greedyRecords
+      dynamicProgrammingSize = ipsEncodedSize 4 (map hunkPayload dynamicProgrammingRecords)
+      greedySize = ipsEncodedSize 4 (map splitPayload greedyRecords)
   in counterexample ("DP: " ++ show dynamicProgrammingSize ++ ", greedy: " ++ show greedySize) $
      dynamicProgrammingSize <= greedySize
 

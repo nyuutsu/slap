@@ -28,8 +28,8 @@ module Slap.PPF2.Create
 import Slap.PPF2.Types (PPF2ValidationBlock(..), PPF2FileId(..),
                         ppf2DescriptionLength)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
-                     Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
+import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -40,9 +40,15 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 
--- | Encode a PPF2 patch.
+-- | Encode a PPF2 patch from pre-split, pre-narrowed records.
+-- 'EncodedHunk' is the typed proof that each record's offset fits the
+-- 4-byte LE field ('Slap.PPF2.Types.ppf2Limits') and each payload
+-- fits the single-byte count field
+-- ('Slap.PPF2.Types.ppf2MaxRecordPayload') — the convert-layer
+-- pipeline runs @splitHunks ppf2MaxRecordPayload@ and
+-- @narrowHunks ppf2Limits@ before reaching this encoder.
 encodePPF2
-  :: [Hunk]                -- ^ records, each payload ≤ 'ppf2MaxRecordPayload'
+  :: [EncodedHunk]         -- ^ pre-split, pre-narrowed records
   -> String                -- ^ description (truncated and space-padded to 50 bytes)
   -> FileSize              -- ^ source ROM size (written into the header for verification)
   -> PPF2ValidationBlock   -- ^ 1024-byte block sampled from source[0x9320]
@@ -80,11 +86,11 @@ buildHeader description (FileSize sourceSize) validationBytes =
   <> word32LE (fromIntegral sourceSize)          -- 4-byte LE source-file size
   <> byteString validationBytes                  -- 1024-byte validation block
 
-encodeRecord :: Hunk -> Builder
-encodeRecord (Hunk recordOffset recordPayload) =
-  word32LE (fromIntegral (unOffset recordOffset))
-  <> word8 (fromIntegral (ByteString.length recordPayload))
-  <> byteString recordPayload
+encodeRecord :: EncodedHunk -> Builder
+encodeRecord ehunk =
+  word32LE (fromIntegral (unOffset (encodedOffset ehunk)))
+  <> word8 (fromIntegral (ByteString.length (encodedPayload ehunk)))
+  <> byteString (encodedPayload ehunk)
 
 -- | Encode a FILE_ID.DIZ trailer in PPF2 format (4-byte LE length).
 -- The PPF2 trailer wire shape is:

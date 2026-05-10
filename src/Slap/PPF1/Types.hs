@@ -16,10 +16,14 @@ module Slap.PPF1.Types
   , ppf1DescriptionLength
   , ppf1HeaderLength
   , ppf1MaxRecordPayload
+    -- * Encoding limits
+  , ppf1Limits
   ) where
 
 import Data.ByteString (ByteString)
-import Slap.Measure (Length(..), Offset)
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Length(..), Offset(..))
+import Slap.Narrow (EncodingLimits(..))
 
 -- | A single PPF1 record. Both literal and RLE forms expand to the
 -- same in-memory shape: a target-file offset and the bytes to write
@@ -66,3 +70,14 @@ ppf1HeaderLength = Length 56
 -- payload at @0xFF = 255@.
 ppf1MaxRecordPayload :: Length
 ppf1MaxRecordPayload = Length 255
+
+-- | PPF1's wire-format offset cap. The record format's offset field
+-- is 4 bytes (LE for the PC dialect, BE for the Amiga dialect), so
+-- offsets ≥ 2^32 cannot be expressed without truncation. Enforced at
+-- narrow time so 'Slap.PPF1.Create.encodePPF1' cannot silently emit a
+-- truncated offset.
+ppf1Limits :: EncodingLimits
+ppf1Limits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelPPF1
+  }

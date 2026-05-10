@@ -16,7 +16,9 @@ import Slap.PPF3.Types (PPF3ImageType(..), PPF3FileId(..),
                         fromImageType,
                         ppf3DescriptionLength, ppf3MaxRecordPayload)
 import Slap.Measure (Length(..), Offset(..), Hunk(..), UndoHunk(..),
-                     OriginalLength(..), TruncatedLength(..), splitHunk)
+                     OriginalLength(..), TruncatedLength(..),
+                     splitHunk, splitOffset, splitPayload)
+import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..), FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -56,16 +58,18 @@ encodeUndoRecord hasUndo (UndoHunk hunkOffset hunkPayload hunkOriginal) =
   <> byteString hunkPayload
   <> if hasUndo then byteString hunkOriginal else mempty
 
-encodeWriteRecord :: Hunk -> Builder
-encodeWriteRecord (Hunk hunkOffset hunkPayload) =
-  int64LE (fromIntegral (unOffset hunkOffset))
-  <> word8 (fromIntegral (ByteString.length hunkPayload))
-  <> byteString hunkPayload
+encodeWriteRecord :: EncodedHunk -> Builder
+encodeWriteRecord ehunk =
+  int64LE (fromIntegral (unOffset (encodedOffset ehunk)))
+  <> word8 (fromIntegral (ByteString.length (encodedPayload ehunk)))
+  <> byteString (encodedPayload ehunk)
 
--- | Encode a PPF3 patch from pre-split records.
--- Records: @[Hunk]@, each payload ≤ 'ppf3MaxRecordPayload'.
+-- | Encode a PPF3 patch from pre-split, pre-narrowed records.
+-- Write records: @[EncodedHunk]@, each payload ≤ 'ppf3MaxRecordPayload'
+-- (offset is unbounded — Int64-shaped on the wire — so the convert
+-- pipeline narrows via 'narrowHunksUnbounded').
 -- Undo hunks (if provided): @[UndoHunk]@, each ≤ 'ppf3MaxRecordPayload'.
-encodePPF3 :: [Hunk]
+encodePPF3 :: [EncodedHunk]
            -> String
            -> Maybe [UndoHunk]
            -> Maybe PPF3ValidationBlock
@@ -94,7 +98,9 @@ encodeFileIdDiz (PPF3FileId content) = LazyByteString.toStrict $ toLazyByteStrin
   <> word16LE (fromIntegral (ByteString.length content))
 
 -- | Compute undo hunks from source bytes and diff records.
--- Each record is split at 'ppf3MaxRecordPayload'.
+-- Each record is split at 'ppf3MaxRecordPayload'; the split's typed
+-- output ('SplitHunk') flows through this helper as a payload-bound
+-- proof, then materialises into 'UndoHunk's.
 computeUndo :: ByteString -> [Hunk] -> [UndoHunk]
 computeUndo source = concatMap toUndoHunks
   where
@@ -102,9 +108,11 @@ computeUndo source = concatMap toUndoHunks
     toUndoHunks h
       | ByteString.null (hunkPayload h) = []
       | otherwise = map toUndoHunk (splitHunk ppf3MaxRecordPayload h)
-    toUndoHunk (Hunk recordOffset recordPayload) =
-      UndoHunk recordOffset recordPayload
-               (oldBytes (unOffset recordOffset) (ByteString.length recordPayload))
+    toUndoHunk piece =
+      let recordOffset  = splitOffset piece
+          recordPayload = splitPayload piece
+      in UndoHunk recordOffset recordPayload
+                  (oldBytes (unOffset recordOffset) (ByteString.length recordPayload))
     oldBytes position chunkLength
       | position >= sourceLength = ByteString.replicate chunkLength 0
       | position + chunkLength > sourceLength =

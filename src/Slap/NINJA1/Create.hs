@@ -13,7 +13,9 @@ import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Delta(..), Cursor(..), Hunk(..), Offset(..),
+import Slap.Measure (Delta(..), Cursor(..), Offset(..),
+                     SplitHunk, splitOffset, splitPayload,
+                     splitHunkPostResolve,
                      SentinelOffset(..), offsetToInt)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.Compression.Stream (zlibDeflate)
@@ -126,19 +128,26 @@ ninja1HashInput input
 -- copy lives here so NINJA1's pipeline does not depend on IPS, and
 -- the parameterized signature keeps both copies pin-compatible so
 -- future drift is easy to spot.
+--
+-- Like 'Slap.IPS.Create.resolveSentinelCollisions', this operates on
+-- already-split records ('SplitHunk') and returns them in the same
+-- shape; the byte-prepend on a fixable collision may push payload
+-- one byte past the original 'splitHunksUnbounded' shape, but
+-- NINJA1's length field is a variable-width length-of-length and has
+-- no per-record cap to violate.
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
   -> InputFileContents
-  -> [Hunk]
-  -> Either SlapError [Hunk]
+  -> [SplitHunk]
+  -> Either SlapError [SplitHunk]
 resolveSentinelCollisions label sentinel (InputFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel
     sourceLength                    = ByteString.length source
 
-    resolveOne record@(Hunk recordOffset recordPayload)
+    resolveOne record
       | recordOffset /= sentinelPosition = Right record
       | offsetToInt recordOffset > 0
       , offsetToInt recordOffset - 1 < sourceLength =
@@ -147,9 +156,11 @@ resolveSentinelCollisions label sentinel (InputFileContents source) =
                 ByteString.index source precedingByteIndex
               extendedPayload    =
                 ByteString.cons precedingByte recordPayload
-          in Right Hunk
-               { hunkOffset  = displace recordOffset (Delta (-1))
-               , hunkPayload = extendedPayload
-               }
+          in Right (splitHunkPostResolve
+                      (displace recordOffset (Delta (-1)))
+                      extendedPayload)
       | otherwise =
           Left (SentinelCollisionUnfixable label sentinel)
+      where
+        recordOffset  = splitOffset record
+        recordPayload = splitPayload record

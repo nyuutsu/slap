@@ -40,11 +40,11 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
-import Slap.PPF1.Types (PPF1Origin(..), ppf1MaxRecordPayload)
+import Slap.PPF1.Types (PPF1Origin(..), ppf1Limits, ppf1MaxRecordPayload)
 import qualified Slap.PPF2.Create as PPF2
 import Slap.PPF2.Types (PPF2ValidationBlock(..), PPF2FileId(..),
-                        ppf2MaxRecordPayload, ppf2ValidationOffset,
-                        ppf2ValidationSize)
+                        ppf2Limits, ppf2MaxRecordPayload,
+                        ppf2ValidationOffset, ppf2ValidationSize)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         PPF3FileId(..), ppf3MaxRecordPayload)
@@ -64,6 +64,7 @@ import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.PMSR.Types as PMSR
+import Slap.PMSR.Types (pmsrMaxRecordPayload)
 import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
@@ -77,9 +78,10 @@ import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (rustyCRC32)
 import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..), UndoHunk(..),
+                      SplitHunk,
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
-                      splitHunks, byteFileSize)
+                      splitHunks, splitHunksUnbounded, byteFileSize)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowHunksUnbounded)
 import Slap.Constraint (Constraint(..))
@@ -815,9 +817,13 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
         , resultWarnings = notes ++ resultWarnings encoded
         }
 
--- | Encoding limits for formats with constrained offset ranges and sentinels.
--- NINJA1 falls through to 'Nothing' because its variable-width Int64 offset
--- encoding has no per-record bound.
+-- | Per-format wire-format offset bound, consulted by the @narrow@
+-- helper inside 'encodeDirect'. Each 'Just' entry pairs the format's
+-- maximum addressable offset with its 'FormatLabel' so an overflow
+-- surfaces as 'NarrowingError' tagged with the right format. The
+-- 'Nothing' entries name formats whose wire encoding has no per-record
+-- offset cap; their arms in 'encodeDirect' route through
+-- 'narrowHunksUnbounded' instead.
 encodingLimits :: DirectCreate -> Maybe EncodingLimits
 encodingLimits CreateIPS     =
   Just (EncodingLimits (ipsVariantMaxAddressableOffset (variantSpec StandardIPS)) LabelIPS)
@@ -829,12 +835,10 @@ encodingLimits CreateEBP     =
 encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
 encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
 encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
-encodingLimits CreatePPF1    = Nothing
-  -- 4-byte LE offset (max 2^32-1 ≈ 4 GB) and 1-byte payload count are
-  -- enforced by the encoder/splitter directly; no narrowing needed.
-encodingLimits CreatePPF2    = Nothing
-encodingLimits CreatePPF3    = Nothing
-encodingLimits CreateNINJA1  = Nothing
+encodingLimits CreatePPF1    = Just ppf1Limits
+encodingLimits CreatePPF2    = Just ppf2Limits
+encodingLimits CreatePPF3    = Nothing  -- Int64-shaped offset, no per-record cap
+encodingLimits CreateNINJA1  = Nothing  -- variable-width length-of-offset, no per-record cap
 
 -- | Encode PatchContents into the target format.
 -- Validation (offset range, sentinel collision) runs after format-specific
@@ -894,10 +898,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             [])
   CreatePPF1 -> do
     rejectTruncation LabelPPF1 contents source
-    Right (PPF1.encodePPF1
-             (requestedPPF1Origin dialects)
-             (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
-             description)
+    records <- narrow (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
+    Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records description)
   CreatePPF2 -> do
     rejectTruncation LabelPPF2 contents source
     -- The validation block lives on 'contentsValidation' regardless
@@ -914,7 +916,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
                          (ActualSize (byteFileSize (unInputFileContents source)))
                          (ExpectedSize (FileSize (unOffset ppf2ValidationOffset
                                                 + unLength ppf2ValidationSize))))
-      Just validationBytes ->
+      Just validationBytes -> do
+        records <- narrow (splitHunks ppf2MaxRecordPayload (contentsRecords contents))
         let sourceFileSize
               | ByteString.null (unInputFileContents source) =
                   -- Source-less convert: 'contentsDestinationSize' carries the
@@ -922,28 +925,33 @@ encodeDirect contents source target meta limits constraints dialects = case targ
                   fromMaybe (FileSize 0) (contentsDestinationSize contents)
               | otherwise = byteFileSize (unInputFileContents source)
             ppf2Result = PPF2.encodePPF2
-                           (splitHunks ppf2MaxRecordPayload (contentsRecords contents))
+                           records
                            description
                            sourceFileSize
                            (PPF2ValidationBlock validationBytes)
-        in Right $ case contentsFileIdDiz contents of
-             Nothing  -> ppf2Result
-             Just diz -> ppf2Result { resultBytes = PatchFileContents
-                           (unPatchFileContents (resultBytes ppf2Result)
-                            <> PPF2.encodeFileIdDiz (PPF2FileId diz)) }
-  CreatePPF3 ->
-    -- PPF3 has no encoding limits and takes [Hunk] directly.
-    let ppfResult = PPF3.encodePPF3 (splitHunks ppf3MaxRecordPayload (contentsRecords contents)) description
+        Right $ case contentsFileIdDiz contents of
+          Nothing  -> ppf2Result
+          Just diz -> ppf2Result { resultBytes = PatchFileContents
+                        (unPatchFileContents (resultBytes ppf2Result)
+                         <> PPF2.encodeFileIdDiz (PPF2FileId diz)) }
+  CreatePPF3 -> do
+    -- PPF3's offset is Int64-shaped on the wire; the offset bound is
+    -- 'Nothing' in 'encodingLimits', so 'narrow' here delegates to
+    -- 'narrowHunksUnbounded'. Payload is still capped at
+    -- 'ppf3MaxRecordPayload'.
+    records <- narrow (splitHunks ppf3MaxRecordPayload (contentsRecords contents))
+    let ppfResult = PPF3.encodePPF3 records description
                       (contentsUndoData contents)
                       (fmap PPF3ValidationBlock (contentsValidation contents))
                       imageType
-    in Right $ case contentsFileIdDiz contents of
-         Nothing  -> ppfResult
-         Just diz -> ppfResult { resultBytes = PatchFileContents
-                       (unPatchFileContents (resultBytes ppfResult) <> PPF3.encodeFileIdDiz (PPF3FileId diz)) }
+    Right $ case contentsFileIdDiz contents of
+      Nothing  -> ppfResult
+      Just diz -> ppfResult { resultBytes = PatchFileContents
+                    (unPatchFileContents (resultBytes ppfResult) <> PPF3.encodeFileIdDiz (PPF3FileId diz)) }
   CreateNINJA1 -> do
     resolved <- NINJA1.resolveSentinelCollisions LabelNINJA1
-                  NINJA1.ninja1SentinelOffset source (contentsRecords contents)
+                  NINJA1.ninja1SentinelOffset source
+                  (splitHunksUnbounded (contentsRecords contents))
     records <- narrow resolved
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
@@ -951,12 +959,14 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
              (fromMaybe False (contentsNINJA1Compressed contents))) platformWarnings)
   CreatePMSR -> do
-    records <- narrow (contentsRecords contents)
+    records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
     Right (CreateResult (PMSR.encodePMSR records) [])
   CreatePCHTXT -> case contentsPCHTXTBlocks contents of
     Just blocks -> Right (CreateResult (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription) [])
     Nothing -> do
-      records <- narrow (contentsRecords contents)
+      -- PCHTXT is text with no per-record length field; payloads
+      -- have no wire-format cap, so split is the unbounded opt-out.
+      records <- narrow (splitHunksUnbounded (contentsRecords contents))
       Right (CreateResult (PCHTXT.encodePCHTXT records pchtxtDescription) [])
   CreateAPSN64 -> do
     records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
@@ -965,12 +975,12 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
       Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
   where
-    narrow :: [Hunk] -> Either SlapError [EncodedHunk]
+    narrow :: [SplitHunk] -> Either SlapError [EncodedHunk]
     narrow = case limits of
       Nothing  -> Right . narrowHunksUnbounded
       Just lim -> first NarrowingError . narrowHunks lim
-    resolveIPSSentinel :: FormatLabel -> IPSVariant -> [Hunk]
-                       -> Either SlapError [Hunk]
+    resolveIPSSentinel :: FormatLabel -> IPSVariant -> [SplitHunk]
+                       -> Either SlapError [SplitHunk]
     resolveIPSSentinel label variant =
       IPS.resolveSentinelCollisions label
         (SentinelOffset (ipsVariantSentinel (variantSpec variant)))

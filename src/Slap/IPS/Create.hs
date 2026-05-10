@@ -61,7 +61,10 @@ import Slap.Measure
   ( FileSize(..)
   , Delta(..)
   , Cursor(..)
-  , Hunk(..)
+  , SplitHunk
+  , splitOffset
+  , splitPayload
+  , splitHunkPostResolve
   , SentinelOffset(..)
   , offsetToInt
   )
@@ -115,7 +118,8 @@ import qualified Data.Text.Encoding as TextEncoding
 -- shifted or rejected by 'resolveSentinelCollisions'. The optimizer
 -- guarantees the range precondition by construction, and the
 -- convert-path pipeline in 'Slap.Convert.encodeDirect' runs
--- 'narrowHunks' and 'resolveSentinelCollisions' before calling here.
+-- @splitHunks@, 'resolveSentinelCollisions', and 'narrowHunks'
+-- before calling here.
 encodeIPSPatch
   :: IPSVariant
   -> [EncodedHunk]
@@ -266,19 +270,28 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- whether a given collision is fixable; the caller decides whether
 -- to invoke sentinel resolution at all based on whether the format
 -- has a sentinel (IPS, IPS32, EBP do; nothing else does).
+--
+-- The function operates on already-split records ('SplitHunk') and
+-- returns them in the same shape: the byte-prepend on a fixable
+-- collision may push a record's payload one byte past the original
+-- 'splitHunks' cap, but the IPS variant's payload field is two bytes
+-- wide (so the +1 is harmless on the wire); the typed pipeline does
+-- not re-validate the post-resolve payload, a fragility shared by
+-- today's pipeline and noted as a follow-up to tighten with a
+-- split-then-resolve-then-re-split pass.
 resolveSentinelCollisions
   :: FormatLabel
   -> SentinelOffset
   -> InputFileContents
-  -> [Hunk]
-  -> Either SlapError [Hunk]
+  -> [SplitHunk]
+  -> Either SlapError [SplitHunk]
 resolveSentinelCollisions label sentinel (InputFileContents source) =
   traverse resolveOne
   where
     SentinelOffset sentinelPosition = sentinel
     sourceLength                    = ByteString.length source
 
-    resolveOne record@(Hunk recordOffset recordPayload)
+    resolveOne record
       | recordOffset /= sentinelPosition = Right record
       | offsetToInt recordOffset > 0
       , offsetToInt recordOffset - 1 < sourceLength =
@@ -287,12 +300,14 @@ resolveSentinelCollisions label sentinel (InputFileContents source) =
                 ByteString.index source precedingByteIndex
               extendedPayload    =
                 ByteString.cons precedingByte recordPayload
-          in Right Hunk
-               { hunkOffset  = displace recordOffset (Delta (-1))
-               , hunkPayload = extendedPayload
-               }
+          in Right (splitHunkPostResolve
+                      (displace recordOffset (Delta (-1)))
+                      extendedPayload)
       | otherwise =
           Left (SentinelCollisionUnfixable label sentinel)
+      where
+        recordOffset  = splitOffset record
+        recordPayload = splitPayload record
 
 -- | Build the EBP-style JSON metadata blob from CLI-supplied
 -- title / author / description fields. The four-key shape

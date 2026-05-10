@@ -21,10 +21,14 @@ module Slap.PPF2.Types
   , ppf2FileIdLengthFieldWidth
   , ppf2FileIdMarkerLength
   , ppf2FileIdFooterLength
+    -- * Encoding limits
+  , ppf2Limits
   ) where
 
 import Data.ByteString (ByteString)
+import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize)
+import Slap.Narrow (EncodingLimits(..))
 
 -- | A PPF2 record. Same wire shape as PPF1: a target-file offset
 -- and the bytes to write. The wire-level RLE encoding (count=0
@@ -102,3 +106,14 @@ ppf2FileIdMarkerLength = Length 18
 -- | Length of the @\"\@END_FILE_ID.DIZ\"@ marker following the content.
 ppf2FileIdFooterLength :: Length
 ppf2FileIdFooterLength = Length 16
+
+-- | PPF2's wire-format offset cap. The record format's offset field
+-- is 4 bytes LE (same shape as PPF1), so offsets ≥ 2^32 cannot be
+-- expressed without truncation. Enforced at narrow time so
+-- 'Slap.PPF2.Create.encodePPF2' cannot silently emit a truncated
+-- offset.
+ppf2Limits :: EncodingLimits
+ppf2Limits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelPPF2
+  }

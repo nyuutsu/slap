@@ -11,8 +11,9 @@ import Slap.APSN64.Types  (apsN64Limits)
 import Slap.PCHTXT.Types  (pchtxtLimits)
 import Slap.PMSR.Types    (pmsrLimits)
 import Slap.FormatLabel   (FormatLabel(..))
-import Slap.Measure       (Offset(..), Hunk(..), MaxOffset(..))
-import Slap.Narrow        (NarrowingFailure(..), narrowHunk)
+import Slap.Measure       (Offset(..), Hunk(..), MaxOffset(..),
+                           splitHunksUnbounded)
+import Slap.Narrow        (NarrowingFailure(..), narrowHunks)
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -24,20 +25,23 @@ narrowTests = testGroup "Slap.Narrow rejection cases"
   , testCase "PMSR rejects offset 2^32"    pmsrRejectsOverflow
   ]
 
+overflowingHunk :: [Hunk]
+overflowingHunk = [Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)]
+
 apsN64RejectsOverflow :: Assertion
 apsN64RejectsOverflow =
-  case narrowHunk apsN64Limits (Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)) of
+  case narrowHunks apsN64Limits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelAPSN64 _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected APSN64 OffsetExceedsBound, got " ++ show other)
 
 pchtxtRejectsOverflow :: Assertion
 pchtxtRejectsOverflow =
-  case narrowHunk pchtxtLimits (Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)) of
+  case narrowHunks pchtxtLimits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelPCHTXT _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PCHTXT OffsetExceedsBound, got " ++ show other)
 
 pmsrRejectsOverflow :: Assertion
 pmsrRejectsOverflow =
-  case narrowHunk pmsrLimits (Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)) of
+  case narrowHunks pmsrLimits (splitHunksUnbounded overflowingHunk) of
     Left (OffsetExceedsBound LabelPMSR _ (MaxOffset (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected PMSR OffsetExceedsBound, got " ++ show other)

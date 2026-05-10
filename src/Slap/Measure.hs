@@ -38,6 +38,9 @@ module Slap.Measure
     -- * Records
   , Hunk(..)
   , UndoHunk(..)
+  , SplitHunk
+  , splitOffset
+  , splitPayload
   , OffsetRange(..)
   , rangeEndExclusive
   , rangeLastByte
@@ -71,6 +74,8 @@ module Slap.Measure
     -- * Splitting
   , splitHunk
   , splitHunks
+  , splitHunksUnbounded
+  , splitHunkPostResolve
     -- * IPS sentinel values
   , ipsSentinel
   , ips32Sentinel
@@ -290,6 +295,22 @@ data UndoHunk = UndoHunk
   , undoPayload  :: !ByteString
   , undoOriginal :: !ByteString
   } deriving (Show)
+
+-- | A 'Hunk' whose payload has been validated against a format's
+-- per-record payload bound, or had that validation explicitly waived
+-- for a format whose wire encoding has no per-record cap (see
+-- 'splitHunksUnbounded'). The constructor is intentionally not
+-- exported: every 'SplitHunk' that exists in slap came from one of
+-- the @split*@ functions in this module. Encoders that would
+-- otherwise risk a silent @fromIntegral length :: Word8/Word32@
+-- truncation receive their input through the typed pipeline
+-- @[Hunk] -> [SplitHunk] -> [EncodedHunk]@; the only way to obtain
+-- an 'EncodedHunk' is for both passes to have completed
+-- successfully.
+data SplitHunk = SplitHunk
+  { splitOffset  :: !Offset
+  , splitPayload :: !ByteString
+  } deriving (Eq, Show)
 
 -- | A contiguous span of bytes in a target file: a starting 'Offset'
 -- and a 'Length'. Used by the display layer to surface where a patch
@@ -518,22 +539,49 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 -- Splitting
 ----------------------------------------------------------------------------
 
--- | Split a 'Hunk' so each emitted hunk's payload is at most @maxLength@
--- bytes. Offset advances by chunk length between emissions. Empty payloads
--- pass through as a single empty hunk; callers that want to drop empties
--- must filter at their own level.
-splitHunk :: Length -> Hunk -> [Hunk]
+-- | Split a 'Hunk' into 'SplitHunk's whose payloads are each at most
+-- @maxLength@ bytes. Offset advances by chunk length between
+-- emissions. Empty payloads pass through as a single empty
+-- 'SplitHunk'; callers that want to drop empties must filter at their
+-- own level. A 'SplitHunk' is the type-level proof that the
+-- payload-bound check happened — every direct-format encoder consumes
+-- 'EncodedHunk', which can only be produced by narrowing a 'SplitHunk'
+-- in 'Slap.Narrow'.
+splitHunk :: Length -> Hunk -> [SplitHunk]
 splitHunk maxLength (Hunk hunkOffset hunkPayload)
-  | byteLength hunkPayload <= maxLength = [Hunk hunkOffset hunkPayload]
+  | byteLength hunkPayload <= maxLength = [SplitHunk hunkOffset hunkPayload]
   | otherwise =
       let (chunk, remaining) = ByteString.splitAt (unLength maxLength) hunkPayload
           nextOffset         = advance hunkOffset maxLength
-      in Hunk hunkOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
+      in SplitHunk hunkOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
 
--- | Split a list of hunks so every emitted hunk's payload is at most
--- @maxLength@ bytes.
-splitHunks :: Length -> [Hunk] -> [Hunk]
+-- | Split a list of hunks so every emitted 'SplitHunk' carries a
+-- payload of at most @maxLength@ bytes.
+splitHunks :: Length -> [Hunk] -> [SplitHunk]
 splitHunks maxLength = concatMap (splitHunk maxLength)
+
+-- | Lift a list of 'Hunk's to 'SplitHunk's without payload-bound
+-- validation. Only legitimate for formats whose wire encoding
+-- imposes no per-record payload cap — currently NINJA1 (variable-
+-- width length-of-length, structurally unbounded) and PCHTXT
+-- (text format with no length field; payload runs to end of line).
+-- Documented opt-out parallel to 'Slap.Narrow.narrowHunksUnbounded'.
+splitHunksUnbounded :: [Hunk] -> [SplitHunk]
+splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
+
+-- | Re-form a 'SplitHunk' after a payload-altering pass that operates
+-- on already-split records. The post-resolve sentinel-collision
+-- shift in 'Slap.IPS.Create.resolveSentinelCollisions' and
+-- 'Slap.NINJA1.Create.resolveSentinelCollisions' uses this to
+-- propagate a byte-prepend on an already-validated 'SplitHunk' — the
+-- prepend may push payload one byte past the original 'splitHunks'
+-- cap, a documented fragility shared by today's pipeline. Keeping
+-- the construction path named (rather than exporting the 'SplitHunk'
+-- constructor) preserves the property that every 'SplitHunk' has a
+-- discoverable provenance: 'splitHunks', 'splitHunksUnbounded', or
+-- this post-resolve exit.
+splitHunkPostResolve :: Offset -> ByteString -> SplitHunk
+splitHunkPostResolve = SplitHunk
 
 ----------------------------------------------------------------------------
 -- IPS sentinel values
