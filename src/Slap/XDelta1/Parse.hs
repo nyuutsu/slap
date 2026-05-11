@@ -25,6 +25,7 @@ import Slap.XDelta1.Types
     , XDelta1SourceShape(..)
     , XDelta1VerificationPosture(..)
     , xdelta1TrailerSize
+    , xdelta1EmptyInputMD5Sentinel
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
@@ -80,11 +81,14 @@ newtype XDelta1ToName = XDelta1ToName
 -- | Whether bit 0 (@FLAG_NO_VERIFY@) of the patch header's flags
 -- word was set. Threaded from 'parseVersion1Point1' (where the
 -- flags word is read) into 'parseControl' (which decides how to
--- wrap parsed MD5 values: under the flag-set case, target MD5 goes
--- into 'CreatorOptedOutOfVerification' and per-source MD5s become
--- 'Nothing'; under the flag-clear case, target MD5 goes into
--- 'VerifyAgainstStoredMD5s' and per-source MD5s become 'Just').
-newtype XDelta1NoVerifyFlag = XDelta1NoVerifyFlag Bool
+-- wrap parsed MD5 values: under 'NoVerifyFlagSet', target MD5
+-- goes into 'CreatorOptedOutOfVerification' and per-source MD5s
+-- become 'Nothing'; under 'NoVerifyFlagClear', target MD5 goes
+-- into 'VerifyAgainstStoredMD5s' and per-source MD5s become
+-- 'Just').
+data XDelta1NoVerifyFlag
+  = NoVerifyFlagClear
+  | NoVerifyFlagSet
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -94,24 +98,19 @@ newtype XDelta1NoVerifyFlag = XDelta1NoVerifyFlag Bool
 parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 patchContents@(PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
-  | magic == "%XDZ004%" = wrapParsed (parseVersion1Point1 patchContents (ExpectedMagic magic))
+  | magic == "%XDZ004%" = parseVersion1Point1 patchContents (ExpectedMagic magic)
   | magic == "%XDZ003%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0.4")
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0")
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "version 0.14")
   | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
   where
     magic = ByteString.take 8 input
-    wrapParsed = fmap (\patch -> Parsed patch (warningsForPosture patch))
-
-    warningsForPosture patch = case xdelta1Verification patch of
-      VerifyAgainstStoredMD5s _      -> []
-      CreatorOptedOutOfVerification  -> [VerificationOptedOutByCreator LabelXDelta1]
 
 -- | Body parser for @%XDZ004%@ (xdelta 1.1.x), the only xdelta1 era
 -- slap currently supports. Sibling body parsers for other eras
 -- (1.0.4 under @%XDZ003%@, 1.0.x under @%XDZ002%@) would live
 -- alongside this one and be dispatched to by 'parseXDelta1'.
-parseVersion1Point1 :: PatchFileContents -> ExpectedMagic -> Either SlapError XDelta1Patch
+parseVersion1Point1 :: PatchFileContents -> ExpectedMagic -> Either SlapError (Parsed XDelta1Patch)
 parseVersion1Point1 (PatchFileContents input) expectedMagic
   | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
   | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
@@ -142,7 +141,7 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
 
     -- Decompress segments if FLAG_PATCH_COMPRESSED (bit 3)
     compressed   = testBit flags 3
-    noVerifyFlag = XDelta1NoVerifyFlag (testBit flags 0)
+    noVerifyFlag = if testBit flags 0 then NoVerifyFlagSet else NoVerifyFlagClear
     dataSegmentRaw = ByteString.take (controlOffset - headerOffset) (ByteString.drop headerOffset input)
     controlSegmentRaw = ByteString.take (trailerOffset - controlOffset) (ByteString.drop controlOffset input)
 
@@ -153,6 +152,24 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
           Left cause   -> Left (DecompressionFailed (XDelta1Failed cause))
           Right result -> Right result
 
+-- | An xdelta1 source record as parsed from the wire, before the
+-- patch-level verification posture has been folded into its MD5
+-- representation. 'parseControl' assembles the final 'XDelta1Source'
+-- from this and the posture (via 'assembleSourceRecord'): under
+-- 'VerifyAgainstStoredMD5s', 'parsedSourceMD5' becomes the source's
+-- @Just@ MD5; under 'CreatorOptedOutOfVerification', it is discarded
+-- and the source's MD5 field is @Nothing@. The raw MD5 is also
+-- consulted (still as 'MD5Hash', not 'Maybe MD5Hash') for the
+-- 'XDelta1NoVerifyWithDivergentSentinel' curio comparison under
+-- 'NoVerifyFlagSet'. Internal to the parser; not exported.
+data ParsedSourceRecord = ParsedSourceRecord
+  { parsedSourceName       :: !ByteString
+  , parsedSourceMD5        :: !MD5Hash
+  , parsedSourceLength     :: !FileSize
+  , parsedSourceKind       :: !XDelta1SourceKind
+  , parsedSourceOffsetMode :: !XDelta1OffsetMode
+  } deriving (Show, Eq)
+
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
 -- Source list is parsed raw and then classified into one of the four
 -- spec-permitted shapes by 'classifyXDelta1Shape'; any off-spec count
@@ -161,41 +178,65 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
 -- the shape's index range with 'validateInstructionIndices'. Only after
 -- both checks pass do sequential offsets get resolved and the
 -- 'XDelta1Patch' record assembled.
+--
+-- All xdelta1 parse warnings are emitted here: the family
+-- 'VerificationOptedOutByCreator' under 'NoVerifyFlagSet', and the
+-- 'XDelta1NoVerifyWithDivergentSentinel' curio when the flag is set
+-- but the stored MD5 slots do not match 'xdelta1EmptyInputMD5Sentinel'.
 parseControl :: XDelta1NoVerifyFlag
              -> XDelta1ControlSegment
              -> XDelta1DataSegment
              -> XDelta1FromName
              -> XDelta1ToName
-             -> Either SlapError XDelta1Patch
-parseControl (XDelta1NoVerifyFlag noVerify) controlSegment dataSegment fromName toName
-  | ByteString.length controlBytes < 28 = Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
+             -> Either SlapError (Parsed XDelta1Patch)
+parseControl noVerifyFlag controlSegment dataSegment fromName toName
+  | ByteString.length controlBytes < 28 =
+      Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
   | otherwise = do
-      (toMD5, targetLength, rawSources, rawInstructions) <-
+      (toMD5, targetLength, parsedSources, rawInstructions) <-
         case runGet parseControlBody controlBytes of
           Left errorMessage -> Left (ParseError LabelXDelta1 errorMessage)
           Right result      -> Right result
-      let verificationPosture
-            | noVerify  = CreatorOptedOutOfVerification
-            | otherwise = VerifyAgainstStoredMD5s toMD5
-          postureMappedSources = map (applyPostureToSource verificationPosture) rawSources
-      sourceShape <- classifyXDelta1Shape postureMappedSources
+      let verificationPosture = case noVerifyFlag of
+            NoVerifyFlagSet   -> CreatorOptedOutOfVerification
+            NoVerifyFlagClear -> VerifyAgainstStoredMD5s toMD5
+          assembledSources = map (assembleSourceRecord verificationPosture) parsedSources
+      sourceShape <- classifyXDelta1Shape assembledSources
       validateInstructionIndices sourceShape rawInstructions
       let fixedInstructions = fixSequentialOffsets sourceShape rawInstructions
-      Right (XDelta1Patch fromNameBytes toNameBytes
-                          verificationPosture targetLength sourceShape
-                          fixedInstructions dataBytes)
+          patch = XDelta1Patch fromNameBytes toNameBytes
+                               verificationPosture targetLength sourceShape
+                               fixedInstructions dataBytes
+          postureWarnings = case verificationPosture of
+            VerifyAgainstStoredMD5s _      -> []
+            CreatorOptedOutOfVerification  -> [VerificationOptedOutByCreator LabelXDelta1]
+          curioWarnings = case noVerifyFlag of
+            NoVerifyFlagClear -> []
+            NoVerifyFlagSet
+              | all (== xdelta1EmptyInputMD5Sentinel)
+                    (toMD5 : map parsedSourceMD5 parsedSources)
+                  -> []
+              | otherwise
+                  -> [XDelta1NoVerifyWithDivergentSentinel]
+      Right (Parsed patch (postureWarnings ++ curioWarnings))
   where
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment
     fromNameBytes = unXDelta1FromName       fromName
     toNameBytes   = unXDelta1ToName         toName
 
-    applyPostureToSource :: XDelta1VerificationPosture -> XDelta1Source -> XDelta1Source
-    applyPostureToSource posture source = case posture of
-      VerifyAgainstStoredMD5s _      -> source
-      CreatorOptedOutOfVerification  -> source { xdelta1SourceMD5 = Nothing }
+    assembleSourceRecord :: XDelta1VerificationPosture -> ParsedSourceRecord -> XDelta1Source
+    assembleSourceRecord posture rec = XDelta1Source
+      { xdelta1SourceName       = parsedSourceName rec
+      , xdelta1SourceMD5        = case posture of
+          VerifyAgainstStoredMD5s _      -> Just (parsedSourceMD5 rec)
+          CreatorOptedOutOfVerification  -> Nothing
+      , xdelta1SourceLength     = parsedSourceLength rec
+      , xdelta1SourceKind       = parsedSourceKind rec
+      , xdelta1SourceOffsetMode = parsedSourceOffsetMode rec
+      }
 
-    parseControlBody :: Get (MD5Hash, FileSize, [XDelta1Source], [XDelta1Instruction])
+    parseControlBody :: Get (MD5Hash, FileSize, [ParsedSourceRecord], [XDelta1Instruction])
     parseControlBody = do
       skip (Length 8)  -- type tag + allocation (deprecated)
       toMD5 <- MD5Hash <$> getBytes (Length 16)
@@ -211,11 +252,11 @@ parseControl (XDelta1NoVerifyFlag noVerify) controlSegment dataSegment fromName 
            , instructions
            )
 
--- | Parse a single EDSIO-serialized 'XDelta1Source' record. The
--- parsed MD5 is always wrapped in 'Just' here; 'parseControl'
--- strips it to 'Nothing' afterwards when the patch-level posture is
--- 'CreatorOptedOutOfVerification'.
-parseOneSource :: Get XDelta1Source
+-- | Parse a single EDSIO-serialized source record. Returns the raw
+-- fields before posture folding; 'parseControl' assembles the final
+-- 'XDelta1Source' via 'assembleSourceRecord' after the posture is
+-- known.
+parseOneSource :: Get ParsedSourceRecord
 parseOneSource = do
   nameLength <- fromIntegral <$> edsioVarint
   sourceName <- getBytes (Length nameLength)
@@ -225,14 +266,20 @@ parseOneSource = do
   offsetModeByte <- getByte
   let sourceKind = if sourceKindByte /= 0 then DataSegmentSource else FileSource
       offsetMode = if offsetModeByte /= 0 then SequentialOffsets else AbsoluteOffsets
-  pure (XDelta1Source sourceName (Just md5Bytes) (FileSize (fromIntegral sourceLength)) sourceKind offsetMode)
+  pure ParsedSourceRecord
+    { parsedSourceName       = sourceName
+    , parsedSourceMD5        = md5Bytes
+    , parsedSourceLength     = FileSize (fromIntegral sourceLength)
+    , parsedSourceKind       = sourceKind
+    , parsedSourceOffsetMode = offsetMode
+    }
 
 -- | Parse @count@ source records as a flat list. Shape validation
 -- happens afterwards in 'classifyXDelta1Shape'; this function is
 -- intentionally permissive over the wire so that off-spec shapes
 -- can be reported with structured 'UnsupportedXDelta1Shape' rather
 -- than as bare Get-monad failures.
-parseSourceList :: Int -> Get [XDelta1Source]
+parseSourceList :: Int -> Get [ParsedSourceRecord]
 parseSourceList 0 = pure []
 parseSourceList count = do
   source <- parseOneSource

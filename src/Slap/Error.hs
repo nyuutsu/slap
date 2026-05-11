@@ -529,6 +529,23 @@ data SlapWarning
   -- decoding decision. The 'Word8' is the unrecognized byte.
   | APSN64UnrecognizedCountry !Word8
 
+  -- | An xdelta 1.1.x patch had bit 0 (@FLAG_NO_VERIFY@) of the
+  -- header's flags word set, but at least one of its stored MD5
+  -- slots (target MD5 in the control structure, or any source MD5
+  -- in the source-info records) did not equal
+  -- 'Slap.XDelta1.Types.xdelta1EmptyInputMD5Sentinel'. Canonical
+  -- xdelta writes the empty-input MD5 into every slot under
+  -- @--noverify@ (the bytes are forced by the algorithm:
+  -- @edsio_md5_init@ + 0x @_update@ + @_final@ produces exactly that
+  -- value); divergent bytes mean a non-canonical producer or transit
+  -- corruption that left @FLAG_NO_VERIFY@ intact. Slap's behavior is
+  -- unaffected — the flag is honored regardless of slot contents,
+  -- 'VerificationOptedOutByCreator' fires as usual. The curio is
+  -- purely informational, naming the structural oddity so a reader
+  -- wondering about the patch's provenance learns it wasn't produced
+  -- by canonical xdelta.
+  | XDelta1NoVerifyWithDivergentSentinel
+
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped Int
@@ -1142,6 +1159,9 @@ renderSlapWarning (APSN64UnrecognizedCountry byte) =
   "note: " ++ formatLabelName LabelAPSN64
   ++ ": country code 0x" ++ padHex 2 byte
   ++ " is not a recognized N64 region code; preserving the byte verbatim"
+
+renderSlapWarning XDelta1NoVerifyWithDivergentSentinel =
+  "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
 
 renderSlapWarning (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue

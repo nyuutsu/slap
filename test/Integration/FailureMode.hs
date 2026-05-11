@@ -701,13 +701,13 @@ xdelta1ShapeRejectionTests =
   ]
   where
     parseControlBytes controlBytes =
-      case parseControl (XDelta1NoVerifyFlag False)
+      case parseControl NoVerifyFlagClear
                         (XDelta1ControlSegment controlBytes)
                         (XDelta1DataSegment ByteString.empty)
                         (XDelta1FromName ByteString.empty)
                         (XDelta1ToName ByteString.empty) of
-        Left slapError -> Left (renderSlapError slapError)
-        Right patch    -> Right patch
+        Left slapError         -> Left (renderSlapError slapError)
+        Right (Parsed patch _) -> Right patch
 
 ----------------------------------------------------------------------------
 -- xdelta1 FLAG_NO_VERIFY: parse-side posture honored
@@ -737,6 +737,8 @@ xdelta1NoVerifyTests fixturePath =
             CreatorOptedOutOfVerification (xdelta1Verification patch)
           assertBool "VerificationOptedOutByCreator LabelXDelta1 warning is present"
             (VerificationOptedOutByCreator LabelXDelta1 `elem` warnings)
+          assertBool "XDelta1NoVerifyWithDivergentSentinel warning is present"
+            (XDelta1NoVerifyWithDivergentSentinel `elem` warnings)
 
   , testCase "xdelta1/FLAG_NO_VERIFY zeroes SomePatch verification fields" $ do
       originalBytes <- ByteString.readFile fixturePath
@@ -749,6 +751,8 @@ xdelta1NoVerifyTests fixturePath =
           assertEqual "verifyTargetMD5 is Nothing" Nothing (verifyTargetMD5 verification)
           assertBool "VerificationOptedOutByCreator LabelXDelta1 reaches patchWarnings"
             (VerificationOptedOutByCreator LabelXDelta1 `elem` patchWarnings somePatch)
+          assertBool "XDelta1NoVerifyWithDivergentSentinel reaches patchWarnings"
+            (XDelta1NoVerifyWithDivergentSentinel `elem` patchWarnings somePatch)
 
   , testCase "xdelta1/unflipped fixture parses with VerifyAgainstStoredMD5s" $ do
       originalBytes <- ByteString.readFile fixturePath
@@ -760,7 +764,9 @@ xdelta1NoVerifyTests fixturePath =
             CreatorOptedOutOfVerification ->
               assertFailure "expected VerifyAgainstStoredMD5s posture on unflipped fixture"
           assertBool "no VerificationOptedOutByCreator warning on unflipped fixture"
-            (not (VerificationOptedOutByCreator LabelXDelta1 `elem` warnings))
+            (VerificationOptedOutByCreator LabelXDelta1 `notElem` warnings)
+          assertBool "no XDelta1NoVerifyWithDivergentSentinel on unflipped fixture"
+            (XDelta1NoVerifyWithDivergentSentinel `notElem` warnings)
   ]
   where
     -- | Set bit 0 of byte 11 (the LSB of the BE flags word at offset 8).
