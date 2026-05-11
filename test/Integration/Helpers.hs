@@ -215,6 +215,8 @@ parseCreateFormat formatString = case map toLower formatString of
   "aps-gba" -> Just (CreateDifferential CreateAPSGBA)
   "apsgba"  -> Just (CreateDifferential CreateAPSGBA)
   "gdiff"   -> Just (CreateDifferential CreateGDIFF)
+  "xdelta1" -> Just (CreateDifferential CreateXDelta1)
+  "xdelta"  -> Just (CreateDifferential CreateXDelta1)
   "pchtxt"  -> Just (CreateDirect       CreatePCHTXT)
   _         -> Nothing
 

@@ -805,6 +805,8 @@ createFormatTokens =
   , ("aps-gba", CreateDifferential CreateAPSGBA, Canonical)
   , ("apsgba",  CreateDifferential CreateAPSGBA, Alias)
   , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
+  , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
+  , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
   , ("pchtxt",  CreateDirect       CreatePCHTXT, Canonical)
   ]
 

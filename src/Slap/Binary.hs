@@ -36,6 +36,7 @@ module Slap.Binary
     -- * Additional builders
   , putWord16LE
   , putWord32BE
+  , word32BEBytes
   , putInt64BE
   ) where
 
@@ -345,6 +346,20 @@ putWord32BE value =
   <> word8 (fromIntegral ((value `shiftR` 16) .&. 0xFF))
   <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (value .&. 0xFF))
+
+-- | Strict-ByteString sister to 'putWord32BE'. The big-endian
+-- counterpart to 'word32LEBytes'. Useful when four bytes need to be
+-- appended to an existing 'ByteString' without going through the
+-- 'Builder' machinery — e.g. writing an xdelta1 control-offset
+-- pointer into the patch's trailer. See 'Slap.XDelta1.Create.encodeXDelta1'
+-- for a caller.
+word32BEBytes :: Word32 -> ByteString
+word32BEBytes value = ByteString.pack
+  [ fromIntegral ((value `shiftR` 24) .&. 0xFF)
+  , fromIntegral ((value `shiftR` 16) .&. 0xFF)
+  , fromIntegral ((value `shiftR`  8) .&. 0xFF)
+  , fromIntegral (value .&. 0xFF)
+  ]
 
 putInt64BE :: Int64 -> Builder
 putInt64BE value =

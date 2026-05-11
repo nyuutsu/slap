@@ -65,6 +65,7 @@ import Slap.NINJA2.Types (PatchEncoding(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.XDelta1.Create as XDelta1
 import qualified Slap.PMSR.Types as PMSR
 import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload)
 import qualified Slap.PMSR.Create as PMSR
@@ -161,11 +162,11 @@ data DirectCreate
   deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
--- create (VCDIFF, BSDiff, XDelta1) belong to DifferentialFormat (the
+-- create (VCDIFF, BSDiff) belong to DifferentialFormat (the
 -- format taxonomy) but not here (slap's current creation capability).
 data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
-  | CreateAPSGBA | CreateGDIFF
+  | CreateAPSGBA | CreateGDIFF | CreateXDelta1
   deriving (Show, Eq)
 
 -- | Target format for patch creation or conversion.
@@ -198,7 +199,7 @@ data CreateFormat
 --
 -- Differential-format consumption is read directly out of 'createPatch'\'s
 -- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
--- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
+-- 'CreateAPSGBA', 'CreateGDIFF', and 'CreateXDelta1' consume nothing; 'CreateDPS'
 -- consumes 'requestedTitle'\/'requestedDescription' (name),
 -- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
 -- 'CreateNINJA2' consumes the full title\/author\/version\/description
@@ -420,14 +421,15 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreatePCHTXT -> Set.fromList [MetadataDescription]
   CreateAPSN64 -> Set.fromList [MetadataDescription]
 acceptedMetadataFields (CreateDifferential format) = case format of
-  CreateBPS    -> Set.fromList [MetadataEmbeddedBlob]
-  CreateUPS    -> Set.empty
-  CreateDPS    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataVersion, MetadataStability]
-  CreateNINJA2 -> Set.fromList
+  CreateBPS     -> Set.fromList [MetadataEmbeddedBlob]
+  CreateUPS     -> Set.empty
+  CreateDPS     -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataVersion, MetadataStability]
+  CreateNINJA2  -> Set.fromList
     [ MetadataTitle, MetadataAuthor, MetadataVersion, MetadataDescription, MetadataGenre, MetadataLanguage
     , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
-  CreateAPSGBA -> Set.empty
-  CreateGDIFF  -> Set.empty
+  CreateAPSGBA  -> Set.empty
+  CreateGDIFF   -> Set.empty
+  CreateXDelta1 -> Set.empty
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -514,12 +516,13 @@ acceptedConstraints (CreateDirect format) = case format of
   CreatePCHTXT -> Set.empty
   CreateAPSN64 -> Set.empty
 acceptedConstraints (CreateDifferential format) = case format of
-  CreateBPS    -> Set.empty
-  CreateUPS    -> Set.empty
-  CreateDPS    -> Set.empty
-  CreateNINJA2 -> Set.empty
-  CreateAPSGBA -> Set.empty
-  CreateGDIFF  -> Set.empty
+  CreateBPS     -> Set.empty
+  CreateUPS     -> Set.empty
+  CreateDPS     -> Set.empty
+  CreateNINJA2  -> Set.empty
+  CreateAPSGBA  -> Set.empty
+  CreateGDIFF   -> Set.empty
+  CreateXDelta1 -> Set.empty
 
 -- | Reject any constraint the user opted into that the target format
 -- doesn't honor. Same shape as 'rejectIncompatibleMetadata'.
@@ -1085,8 +1088,9 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
           , NINJA2.ninja2MetadataPlatform    = requestedRomType meta
           }
     NINJA2.createNINJA2 source target ninja2Meta
-  CreateAPSGBA -> APSGBA.createAPSGBA source target
-  CreateGDIFF  -> GDIFF.createGDIFF source target
+  CreateAPSGBA  -> APSGBA.createAPSGBA source target
+  CreateGDIFF   -> GDIFF.createGDIFF source target
+  CreateXDelta1 -> XDelta1.createXDelta1 source target
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
@@ -1231,12 +1235,13 @@ directFormatInfo CreatePCHTXT = FormatInfo ".pchtxt" "PCHTXT"    LabelPCHTXT
 directFormatInfo CreateAPSN64 = FormatInfo ".aps"    "APS (N64)" LabelAPSN64
 
 differentialFormatInfo :: DifferentialCreate -> FormatInfo
-differentialFormatInfo CreateBPS    = FormatInfo ".bps"   "BPS"       LabelBPS
-differentialFormatInfo CreateUPS    = FormatInfo ".ups"   "UPS"       LabelUPS
-differentialFormatInfo CreateDPS    = FormatInfo ".dps"   "DPS"       LabelDPS
-differentialFormatInfo CreateNINJA2 = FormatInfo ".rup"   "NINJA2"    LabelNINJA2
-differentialFormatInfo CreateAPSGBA = FormatInfo ".aps"   "APS (GBA)" LabelAPSGBA
-differentialFormatInfo CreateGDIFF  = FormatInfo ".gdiff" "GDIFF"     LabelGDIFF
+differentialFormatInfo CreateBPS     = FormatInfo ".bps"     "BPS"       LabelBPS
+differentialFormatInfo CreateUPS     = FormatInfo ".ups"     "UPS"       LabelUPS
+differentialFormatInfo CreateDPS     = FormatInfo ".dps"     "DPS"       LabelDPS
+differentialFormatInfo CreateNINJA2  = FormatInfo ".rup"     "NINJA2"    LabelNINJA2
+differentialFormatInfo CreateAPSGBA  = FormatInfo ".aps"     "APS (GBA)" LabelAPSGBA
+differentialFormatInfo CreateGDIFF   = FormatInfo ".gdiff"   "GDIFF"     LabelGDIFF
+differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXDelta1
 
 directExtension :: DirectCreate -> String
 directExtension = formatInfoExtension . directFormatInfo

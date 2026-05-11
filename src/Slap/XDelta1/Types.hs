@@ -7,6 +7,7 @@ module Slap.XDelta1.Types
   , XDelta1Instruction(..)
   , XDelta1InstructionTarget(..)
   , XDelta1OffsetMode(..)
+  , XDelta1SourceWireKind(..)
   , XDelta1VerificationPosture(..)
     -- * Named constants
   , xdelta1TrailerSize
@@ -18,6 +19,19 @@ import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
 data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
+  deriving (Show, Eq)
+
+-- | The two values the wire format's source-kind byte can carry,
+-- named at the type level. Used by "Slap.XDelta1.Parse" to
+-- classify the byte during parse and by "Slap.XDelta1.Create" to
+-- write the byte during create. The wire convention is byte @1@
+-- for 'WireKindData' and byte @0@ for 'WireKindFile' — canonical
+-- xdelta's @xdelta.c:246@ writes the data source at index 0 with
+-- kind byte 1, and @xdmain.c:1539-1542@ adds the from-file source
+-- at index 1 with kind byte 0.
+data XDelta1SourceWireKind
+  = WireKindData
+  | WireKindFile
   deriving (Show, Eq)
 
 data XDelta1Patch = XDelta1Patch

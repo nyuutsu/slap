@@ -25,6 +25,7 @@ import Slap.XDelta1.Types
     , XDelta1Sources(..)
     , XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
+    , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
@@ -164,18 +165,9 @@ data ParsedSourceRecord = ParsedSourceRecord
   { parsedSourceName       :: !ByteString
   , parsedSourceMD5        :: !MD5Hash
   , parsedSourceLength     :: !FileSize
-  , parsedSourceWireKind   :: !ParsedSourceWireKind
+  , parsedSourceWireKind   :: !XDelta1SourceWireKind
   , parsedSourceOffsetMode :: !XDelta1OffsetMode
   } deriving (Show, Eq)
-
--- | The two source-kind values the wire format can carry, named
--- inside the parser. 'requireDataAndFileRecords' consults this to
--- verify the canonical ordering (data at index 0, file at index 1)
--- and refuses otherwise. Internal to the parser; not exported.
-data ParsedSourceWireKind
-  = WireKindData
-  | WireKindFile
-  deriving (Show, Eq)
 
 -- | The two records that survive shape validation, in canonical
 -- @[data, file]@ order. Carries the pre-posture-folding records so

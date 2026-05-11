@@ -28,6 +28,7 @@ module Slap.Create
   , createNINJA2
   , createAPSGBA
   , createGDIFF
+  , createXDelta1
     -- * Dynamic entry point (re-export)
   , createPatch
   ) where
@@ -41,6 +42,7 @@ import qualified Slap.NINJA2.Create as NINJA2
 import Slap.NINJA2.Types (NINJA2Metadata)
 import Slap.APSGBA.Create (createAPSGBA)
 import Slap.GDIFF.Create (createGDIFF)
+import qualified Slap.XDelta1.Create as XDelta1
 
 import Slap.Convert (createPatch)
 import Slap.Error (SlapError, CreateResult)
@@ -81,3 +83,21 @@ createNINJA2
   -> NINJA2Metadata
   -> Either SlapError CreateResult
 createNINJA2 = NINJA2.createNINJA2
+
+-- | Create an xdelta1 patch. The current differ is a placeholder
+-- (entire target inline as data segment, one instruction copies
+-- it); the file source's MD5 and length are recorded so apply
+-- verifies correctly. The wire encoder produces canonical-shape
+-- @%XDZ004%@ patches with @FLAG_PATCH_COMPRESSED = 0@ and
+-- @FLAG_NO_VERIFY = 0@; gzip compression and the create-side
+-- @--no-verify@ flag are deferred to follow-up commits.
+--
+-- No metadata wrapper type today: xdelta1 carries @from@\/@to@
+-- name fields, but slap fills them with literal-string
+-- placeholders today. When the CLI lands @--from-name@\/@--to-name@,
+-- this signature gains a metadata record.
+createXDelta1
+  :: InputFileContents
+  -> OutputFileContents
+  -> Either SlapError CreateResult
+createXDelta1 = XDelta1.createXDelta1

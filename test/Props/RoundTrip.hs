@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Create-parse-apply round-trip tests for every format that supports
 -- creation. The single property every format satisfies:
 --
@@ -41,6 +43,9 @@ import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
+import qualified Slap.XDelta1.Apply as XDelta1
+import qualified Slap.XDelta1.Parse as XDelta1
+import qualified Slap.XDelta1.Types as XDelta1
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Parse as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -70,7 +75,7 @@ import Slap.Convert (DirectCreate(..), CreateFormat(..),
                      RequestedDialects(..),
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
-                    createAPSGBA, createGDIFF, createPatch)
+                    createAPSGBA, createGDIFF, createXDelta1, createPatch)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -164,6 +169,13 @@ roundTripTests = testGroup "RoundTrip"
       [ testProperty "round-trip" prop_pchtxt
       , testCase "parse-escapes" parsePchtxtEscapes
       , testCase "parse-sphinx" parsePchtxtSphinx
+      ]
+  , testGroup "XDelta1"
+      [ testProperty "round-trip"               prop_xdelta1RoundTrips
+      , testProperty "create produces Verify"   prop_xdelta1CreateProducesVerifyPosture
+      , testCase     "empty target round-trips"     xdelta1EmptyTarget
+      , testCase     "single-byte target round-trips" xdelta1SingleByteTarget
+      , testCase     "target equals source"        xdelta1TargetEqualsSource
       ]
   ]
 
@@ -921,3 +933,54 @@ parsePchtxtSphinx = do
       case PCHTXT.pchtxtBlocks parsed of
         [block] -> assertEqual "block should be disabled" False (PCHTXT.pchtxtBlockEnabled block)
         blocks  -> assertEqual ("expected 1 block, got " ++ show (length blocks)) 1 (length blocks)
+
+----------------------------------------------------------------------------
+-- XDelta1 round-trip
+--
+-- The differ is a placeholder today (entire target inline as data
+-- segment, one instruction copies it); these tests pin the
+-- create→parse→apply round-trip under that shape. When the real
+-- differ lands later, these properties stay green — only the size
+-- of the produced patch changes.
+----------------------------------------------------------------------------
+
+prop_xdelta1RoundTrips :: Property
+prop_xdelta1RoundTrips = forAll genPair $ \(sourceBytes, targetBytes) ->
+  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+        Left applyError    -> counterexample ("apply: " ++ renderSlapError applyError) (property False)
+        Right outputBytes  -> outputBytes === OutputFileContents targetBytes
+
+prop_xdelta1CreateProducesVerifyPosture :: Property
+prop_xdelta1CreateProducesVerifyPosture = forAll genPair $ \(sourceBytes, targetBytes) ->
+  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Right (Parsed parsed _) -> case XDelta1.xdelta1Verification parsed of
+        XDelta1.VerifyAgainstStoredMD5s _     -> property True
+        XDelta1.CreatorOptedOutOfVerification ->
+          counterexample "expected VerifyAgainstStoredMD5s from create" (property False)
+
+xdelta1EmptyTarget :: Assertion
+xdelta1EmptyTarget = xdelta1RoundTripCase "hello world" ByteString.empty
+
+xdelta1SingleByteTarget :: Assertion
+xdelta1SingleByteTarget = xdelta1RoundTripCase "hello world" (ByteString.singleton 0x42)
+
+xdelta1TargetEqualsSource :: Assertion
+xdelta1TargetEqualsSource = xdelta1RoundTripCase payload payload
+  where payload = "the source and target are identical"
+
+xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assertion
+xdelta1RoundTripCase sourceBytes targetBytes =
+  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+      Left parseError -> assertFailure ("parse: " ++ renderSlapError parseError)
+      Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+        Left applyError -> assertFailure ("apply: " ++ renderSlapError applyError)
+        Right outputBytes -> assertEqual "round-trip target" (OutputFileContents targetBytes) outputBytes

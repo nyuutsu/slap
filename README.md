@@ -67,7 +67,7 @@ slap create --format ips original.gba modified.gba patch.ips
 
 Without `--format`, slap makes a `BPS` patch.
 
-`--format`: Specify the patch format to be any of: `bps`, `ips`, `ips32`, `ebp`, `ups`, `ppf3`, `pmsr`, `ninja1`, `ninja2`, `dps`, `aps-n64`, `aps-gba`, `gdiff`, `pchtxt`.
+`--format`: Specify the patch format to be any of: `bps`, `ips`, `ips32`, `ebp`, `ups`, `ppf1`, `ppf2`, `ppf3`, `pmsr`, `ninja1`, `ninja2`, `xdelta1`, `dps`, `aps-n64`, `aps-gba`, `gdiff`, `pchtxt`.
 
 `--raw`: This suppresses archive detection and unwrapping. This is the cousin of `slap apply`'s `--raw`. Its purpose is "My rom (concerningly!!!) starts with the zip magic bytes. Treat it like the rom it is anyway." You probably do not need this. You could, and shouldn't, use this to produce diffs of zip files.
 
@@ -226,7 +226,7 @@ make test
 
 [^CONVERTS]: Conversion is *pretty close to being* a special case, or "sugar" for "use the apply mode to apply `example.patch` to `input.rom`, yielding `output.rom`, then use create mode, `input.rom`, and `output.rom` to create a patch in the new format". It probably is not directly useful to most users but was extremely helpful as a whetstone for the program's design. Also it isn't *quite* the same, in that if there is a metadata field that's in both the input and output formats, it is safely transplanted into the new patch, and so doesn't need to be specified via a flag.
 
-[^UNDERSTANDS]: By "understands" I mean it "can apply". The following formats are not yet able to be created or converted-to: `PPF4`, `VCDIFF`, `xdelta3`, `BSDIFF`, `xdelta1`.
+[^UNDERSTANDS]: By "understands" I mean it "can apply". The following formats are not yet able to be created or converted-to: `PPF4`, `VCDIFF`, `xdelta3`, `BSDIFF`.
 
 [^PPF4]: [Pyriel](https://www.romhacking.net/community/1288/) distributes their patches in files that have the extension `.ppf`, but is entirely distinct from the standard PPF1, PPF2, or PPF3. Said patches have the magic `PPF4`, so we're calling the format `ppf4`. Apologies to Mr./Ms./Mx. Pyriel if you prefer it be called something else.
 
