@@ -580,6 +580,19 @@ data SlapWarning
   | VerificationFileSizeAdvisory  ExpectedSize ActualSize
   | VerificationSourceBytesMismatch ByteCheckLabel Offset
 
+  -- | The patch declares no verification data at the format level
+  -- (e.g. xdelta1's @FLAG_NO_VERIFY@ header bit, set by canonical's
+  -- @--noverify@; PPF3's absent validation block, when @--no-validate@
+  -- is retired in favor of @--no-verify@). Slap honors the
+  -- declaration by skipping verification entirely; the warning
+  -- reports that slap cannot attest the output matches the creator's
+  -- intent. Family sibling of 'VerificationCRCMismatch' and the
+  -- other verification warnings: same category from the user's seat
+  -- ("a thing about whether the integrity check worked"), different
+  -- mechanism (the patch said not to check, vs. the check ran and
+  -- failed).
+  | VerificationOptedOutByCreator !FormatLabel
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -1236,6 +1249,10 @@ renderSlapWarning (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (Act
 
 renderSlapWarning (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
   label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset)
+
+renderSlapWarning (VerificationOptedOutByCreator label) =
+  formatLabelName label
+    ++ ": creator opted out of verification (--no-verify); slap cannot attest the output matches the creator's intent"
 
 ----------------------------------------------------------------------------
 -- Helpers

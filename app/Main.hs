@@ -248,13 +248,23 @@ data OverwritePolicy
   | ForceOverwrite
   deriving (Show, Eq)
 
--- | Whether apply and convert should verify the source file's hash
--- against the patch's declared source checksum before applying.
+-- | The user's runtime posture toward verification mismatches.
+-- @EnforceVerification@ (default) fails with a readable error on
+-- hash mismatch; @SkipVerification@ (set by @--no-verify@)
+-- downgrades the mismatch to a warning and applies anyway.
+-- Formats without source checksums are unaffected either way.
 --
--- @EnforceVerification@ (default) fails with a readable error on hash
--- mismatch; @SkipVerification@ (set by @--no-verify@) downgrades
--- mismatches to warnings and proceeds.  Formats without source
--- checksums are unaffected either way.
+-- This is the apply-side member of slap's @--no-verify@ family.
+-- Family siblings:
+--
+-- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-side
+--   member; what the patch declares about its verification data.
+-- * 'Slap.Error.VerificationOptedOutByCreator' — the warning
+--   emitted when the parse-side posture indicates an opt-out.
+--
+-- When @slap create --no-verify@ lands, it will be the create-side
+-- member of the same family, producing a posture value the encoder
+-- consumes.
 data VerificationPolicy
   = EnforceVerification
   | SkipVerification

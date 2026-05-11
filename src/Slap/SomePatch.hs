@@ -942,11 +942,13 @@ parseSomePatchFromGDIFF patchContents = do
 parseSomePatchFromXDelta1 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromXDelta1 patchContents = do
   Parsed patch parseWarnings <- XDelta1.parseXDelta1 patchContents
-  let xdeltaVerification = noVerification
-        { verifySourceMD5 = XDelta1.xdelta1SourceMD5
-            <$> XDelta1.xdelta1FileSourceOf (XDelta1.xdelta1SourceShape patch)
-        , verifyTargetMD5 = Just (XDelta1.xdelta1ToMD5 patch)
-        }
+  let xdeltaVerification = case XDelta1.xdelta1Verification patch of
+        XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
+          { verifySourceMD5 = XDelta1.xdelta1FileSourceOf (XDelta1.xdelta1SourceShape patch)
+              >>= XDelta1.xdelta1SourceMD5
+          , verifyTargetMD5 = Just targetMD5
+          }
+        XDelta1.CreatorOptedOutOfVerification -> noVerification
   Right SomePatch
     { patchFormat         = LabelXDelta1
     , patchAnalysis       = XDelta1.analyzeXDelta1 patch

@@ -25,17 +25,24 @@ import Integration.Skip
   , requireFixture
   , requireSlapBinary
   )
-import Slap.Error (CreateResult(..), SlapError(..), renderSlapError)
+import Slap.Error
+  (CreateResult(..), SlapError(..), SlapWarning(..), Parsed(..), renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.SomePatch (parseSome, patchKind, patchFormat, PatchKind(..))
+import Slap.SomePatch
+  (parseSome, patchKind, patchFormat, patchWarnings
+  , patchVerification, verifySourceMD5, verifyTargetMD5, PatchKind(..))
 import Slap.XDelta1.Parse
   ( parseControl
+  , parseXDelta1
   , XDelta1ControlSegment(..), XDelta1DataSegment(..)
   , XDelta1FromName(..), XDelta1ToName(..)
+  , XDelta1NoVerifyFlag(..)
   )
-import Slap.XDelta1.Types (XDelta1SourceKind(..))
+import Slap.XDelta1.Types
+  (XDelta1SourceKind(..), XDelta1VerificationPosture(..)
+  , xdelta1Verification)
 import Slap.Convert
   ( DirectCreate(..)
   , DifferentialCreate(..)
@@ -58,7 +65,7 @@ import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.Create (createPatch)
 import qualified Data.Set as Set
 
-import Data.Bits (xor)
+import Data.Bits (xor, (.|.))
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -83,12 +90,16 @@ failureModeTests tier getTargets = do
       dm4yVcdiff   = repo </> "test/data/dm4y/patch.vcdiff"
       fftaBase     = repo </> "test/data/ffta/base.gba"
       fftaAps      = repo </> "test/data/ffta/ffta-x.aps"
-      stadium2Base = repo </> "test/data/stadium2/base.z64"
-      stadium2Bps  = repo </> "test/data/stadium2/fair-heavy/patch.bps"
+      stadium2Base       = repo </> "test/data/stadium2/base.z64"
+      stadium2Bps        = repo </> "test/data/stadium2/fair-heavy/patch.bps"
+      stadium2SizeChange = repo </> "test/data/stadium2/size-change/patch.xdelta1"
 
   let smcMaybes = map WillRun smcShapeConstraintTests
       xdelta1ShapeMaybes = map WillRun xdelta1ShapeRejectionTests
       dialectMaybes = map WillRun dialectAxisRejectionTests
+
+  xdelta1NoVerifyMaybes <- requireFixture stadium2SizeChange $ \_ ->
+                             pure (map WillRun (xdelta1NoVerifyTests stadium2SizeChange))
 
   corruptCrcMaybes <- requireFixture dm4yBps $ \_ ->
                       requireFixture dm4yUps $ \_ ->
@@ -120,7 +131,7 @@ failureModeTests tier getTargets = do
 
   pure (namedGroup "failure-mode"
           (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
-            ++ corruptCrcMaybes ++ heavyMaybes))
+            ++ xdelta1NoVerifyMaybes ++ corruptCrcMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -690,12 +701,75 @@ xdelta1ShapeRejectionTests =
   ]
   where
     parseControlBytes controlBytes =
-      case parseControl (XDelta1ControlSegment controlBytes)
+      case parseControl (XDelta1NoVerifyFlag False)
+                        (XDelta1ControlSegment controlBytes)
                         (XDelta1DataSegment ByteString.empty)
                         (XDelta1FromName ByteString.empty)
                         (XDelta1ToName ByteString.empty) of
         Left slapError -> Left (renderSlapError slapError)
         Right patch    -> Right patch
+
+----------------------------------------------------------------------------
+-- xdelta1 FLAG_NO_VERIFY: parse-side posture honored
+----------------------------------------------------------------------------
+
+-- | Three tests covering the parse-time encoding of xdelta1's
+-- @FLAG_NO_VERIFY@ (bit 0 of the header's flags word) as the
+-- 'XDelta1VerificationPosture' sum:
+--
+--   1. With the bit flipped on in an in-memory copy of a real
+--      patch, 'parseXDelta1' produces 'CreatorOptedOutOfVerification'
+--      and emits 'VerificationOptedOutByCreator LabelXDelta1'.
+--   2. With the bit flipped on, 'parseSome' wires both
+--      'verifySourceMD5' and 'verifyTargetMD5' to 'Nothing' and
+--      passes the warning through 'patchWarnings'.
+--   3. Regression: the unflipped fixture parses with
+--      'VerifyAgainstStoredMD5s' posture, no opt-out warning fires.
+xdelta1NoVerifyTests :: FilePath -> [TestTree]
+xdelta1NoVerifyTests fixturePath =
+  [ testCase "xdelta1/FLAG_NO_VERIFY honored at parse" $ do
+      originalBytes <- ByteString.readFile fixturePath
+      let flippedBytes = flipNoVerifyBit originalBytes
+      case parseXDelta1 (PatchFileContents flippedBytes) of
+        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Right (Parsed patch warnings) -> do
+          assertEqual "posture is CreatorOptedOutOfVerification"
+            CreatorOptedOutOfVerification (xdelta1Verification patch)
+          assertBool "VerificationOptedOutByCreator LabelXDelta1 warning is present"
+            (VerificationOptedOutByCreator LabelXDelta1 `elem` warnings)
+
+  , testCase "xdelta1/FLAG_NO_VERIFY zeroes SomePatch verification fields" $ do
+      originalBytes <- ByteString.readFile fixturePath
+      let flippedBytes = flipNoVerifyBit originalBytes
+      case parseSome noDialectsRequested (PatchFileContents flippedBytes) of
+        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Right somePatch -> do
+          let verification = patchVerification somePatch
+          assertEqual "verifySourceMD5 is Nothing" Nothing (verifySourceMD5 verification)
+          assertEqual "verifyTargetMD5 is Nothing" Nothing (verifyTargetMD5 verification)
+          assertBool "VerificationOptedOutByCreator LabelXDelta1 reaches patchWarnings"
+            (VerificationOptedOutByCreator LabelXDelta1 `elem` patchWarnings somePatch)
+
+  , testCase "xdelta1/unflipped fixture parses with VerifyAgainstStoredMD5s" $ do
+      originalBytes <- ByteString.readFile fixturePath
+      case parseXDelta1 (PatchFileContents originalBytes) of
+        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Right (Parsed patch warnings) -> do
+          case xdelta1Verification patch of
+            VerifyAgainstStoredMD5s _      -> pure ()
+            CreatorOptedOutOfVerification ->
+              assertFailure "expected VerifyAgainstStoredMD5s posture on unflipped fixture"
+          assertBool "no VerificationOptedOutByCreator warning on unflipped fixture"
+            (not (VerificationOptedOutByCreator LabelXDelta1 `elem` warnings))
+  ]
+  where
+    -- | Set bit 0 of byte 11 (the LSB of the BE flags word at offset 8).
+    flipNoVerifyBit :: ByteString -> ByteString
+    flipNoVerifyBit bytes = ByteString.concat
+      [ ByteString.take 11 bytes
+      , ByteString.singleton (ByteString.index bytes 11 .|. 0x01)
+      , ByteString.drop 12 bytes
+      ]
 
 -- | Build a hand-crafted xdelta1 control segment carrying the given
 -- source-kind list and instruction list. Each source has empty name,
