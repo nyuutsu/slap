@@ -41,7 +41,7 @@ import Slap.XDelta1.Parse
   , XDelta1NoVerifyFlag(..)
   )
 import Slap.XDelta1.Types
-  (XDelta1SourceKind(..), XDelta1VerificationPosture(..)
+  (XDelta1VerificationPosture(..)
   , xdelta1Verification)
 import Slap.Convert
   ( DirectCreate(..)
@@ -649,55 +649,77 @@ smcShapeConstraintTests =
 ----------------------------------------------------------------------------
 -- xdelta1 source-shape rejection
 --
--- The format admits exactly four source-list shapes:
---   []                  XDelta1NoSources
---   [data]              XDelta1DataOnly
---   [file]              XDelta1FileOnly
---   [data, file]        XDelta1DataAndFile
--- per the canonical tool ('xdelta-1.1.4/xdmain.c:1741-1768') and the
--- xdelta.1 manpage (MacDonald 2001). The wire format's structural
--- capacity for arbitrary-length source lists is EDSIO serialization
--- plumbing, not format intent. Slap rejects off-spec shapes at parse
--- time with 'UnsupportedXDelta1Shape' (count or ordering) or
--- 'XDelta1InstructionIndexOutOfRange' (instruction names a position
--- the declared shape does not contain).
+-- The format-in-practice admits exactly one source-list shape:
+-- @[data segment, file source]@ in that order, per canonical xdelta
+-- ('xdelta-1.1.4/xdelta.c:241-251' adds the data source,
+-- 'xdmain.c:1539-1542' adds the from-file source — both unconditional)
+-- and the xdelta.1 manpage (MacDonald 2001). The wire format's
+-- structural capacity for arbitrary-length source lists is EDSIO
+-- serialization plumbing, not format intent. Slap rejects off-spec
+-- shapes at parse time with 'UnsupportedXDelta1Shape' (count or
+-- ordering) or 'XDelta1UnknownInstructionTarget' (instruction names
+-- a source index outside @{0, 1}@).
 ----------------------------------------------------------------------------
 
 xdelta1ShapeRejectionTests :: [TestTree]
 xdelta1ShapeRejectionTests =
   [ testCase "xdelta1-shape/rejects three sources" $
       let controlBytes = buildXDelta1Control
-            [DataSegmentSource, FileSource, FileSource]
+            [TestDataKind, TestFileKind, TestFileKind]
             []
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for three-source xdelta1 patch"
         Left rendered -> do
-          assertBool ("expected 'unsupported source-list shape': " ++ rendered)
-            (ciContains "unsupported source-list shape" rendered)
+          assertBool ("expected 'source list is not canonical': " ++ rendered)
+            (ciContains "source list is not canonical" rendered)
           assertBool ("expected '3 sources' in: " ++ rendered)
             (ciContains "3 sources" rendered)
 
   , testCase "xdelta1-shape/rejects [file, data] ordering" $
-      let controlBytes = buildXDelta1Control [FileSource, DataSegmentSource] []
+      let controlBytes = buildXDelta1Control [TestFileKind, TestDataKind] []
       in case parseControlBytes controlBytes of
         Right _ -> assertFailure "expected parse failure for [file, data] ordering"
         Left rendered -> do
-          assertBool ("expected 'unsupported source-list shape': " ++ rendered)
-            (ciContains "unsupported source-list shape" rendered)
+          assertBool ("expected 'source list is not canonical': " ++ rendered)
+            (ciContains "source list is not canonical" rendered)
           assertBool ("expected '[file, data]' in: " ++ rendered)
             (ciContains "[file, data]" rendered)
 
-  , testCase "xdelta1-shape/rejects out-of-range instruction index" $
-      let controlBytes = buildXDelta1Control
-            [DataSegmentSource]
-            [(1, 0, 0)]   -- index 1 cannot exist in [data] shape
+  , testCase "xdelta1-shape/rejects empty source list" $
+      let controlBytes = buildXDelta1Control [] []
       in case parseControlBytes controlBytes of
-        Right _ -> assertFailure "expected parse failure for out-of-range instruction"
+        Right _ -> assertFailure "expected parse failure for empty source list"
+        Left rendered ->
+          assertBool ("expected '0 sources' in: " ++ rendered)
+            (ciContains "0 sources" rendered)
+
+  , testCase "xdelta1-shape/rejects single data source" $
+      let controlBytes = buildXDelta1Control [TestDataKind] []
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for single-data source list"
+        Left rendered ->
+          assertBool ("expected '1 source: data' in: " ++ rendered)
+            (ciContains "1 source: data" rendered)
+
+  , testCase "xdelta1-shape/rejects single file source" $
+      let controlBytes = buildXDelta1Control [TestFileKind] []
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for single-file source list"
+        Left rendered ->
+          assertBool ("expected '1 source: file' in: " ++ rendered)
+            (ciContains "1 source: file" rendered)
+
+  , testCase "xdelta1-shape/rejects instruction targeting unknown source index" $
+      let controlBytes = buildXDelta1Control
+            [TestDataKind, TestFileKind]   -- canonical shape
+            [(2, 0, 0)]                    -- index 2 is unknown
+      in case parseControlBytes controlBytes of
+        Right _ -> assertFailure "expected parse failure for unknown instruction target"
         Left rendered -> do
-          assertBool ("expected 'instruction index 1' in: " ++ rendered)
-            (ciContains "instruction index 1" rendered)
-          assertBool ("expected '[data]' shape name in: " ++ rendered)
-            (ciContains "[data]" rendered)
+          assertBool ("expected 'instruction references source index 2' in: " ++ rendered)
+            (ciContains "instruction references source index 2" rendered)
+          assertBool ("expected '0 (data segment) or 1 (file source)' in: " ++ rendered)
+            (ciContains "0 (data segment) or 1 (file source)" rendered)
   ]
   where
     parseControlBytes controlBytes =
@@ -777,6 +799,15 @@ xdelta1NoVerifyTests fixturePath =
       , ByteString.drop 12 bytes
       ]
 
+-- | Test-local source-kind vocabulary for 'buildXDelta1Control'.
+-- The parser's wire-kind enum is intentionally not exported (it is
+-- internal to 'Slap.XDelta1.Parse'); the hand-crafted-bytes tests
+-- need /some/ representation of "what byte goes in this slot" so
+-- they can build off-canonical control segments. Defined locally so
+-- the parser-internal vocabulary stays unexported and the test
+-- bodies read with kind names that match the wire ordering.
+data TestSourceKind = TestDataKind | TestFileKind
+
 -- | Build a hand-crafted xdelta1 control segment carrying the given
 -- source-kind list and instruction list. Each source has empty name,
 -- zero MD5, zero length, and absolute-offset mode; each instruction
@@ -800,7 +831,7 @@ xdelta1NoVerifyTests fixturePath =
 -- > varint  : instruction count
 -- > [per instruction] index, offset, length (varints)
 buildXDelta1Control
-  :: [XDelta1SourceKind]
+  :: [TestSourceKind]
   -> [(Int, Int, Int)]      -- ^ (instruction index, offset, length) tuples
   -> ByteString
 buildXDelta1Control sourceKinds instructions = ByteString.concat
@@ -814,14 +845,14 @@ buildXDelta1Control sourceKinds instructions = ByteString.concat
   , ByteString.concat (map encodeInstruction instructions)
   ]
   where
-    encodeSource :: XDelta1SourceKind -> ByteString
+    encodeSource :: TestSourceKind -> ByteString
     encodeSource kind = ByteString.concat
       [ edsioVarintByte 0                 -- name length
       , ByteString.replicate 16 0x00      -- source MD5
       , edsioVarintByte 0                 -- source length
       , ByteString.singleton (case kind of
-          DataSegmentSource -> 0x01       -- nonzero = data segment
-          FileSource        -> 0x00)
+          TestDataKind -> 0x01            -- nonzero = data segment
+          TestFileKind -> 0x00)
       , ByteString.singleton 0x00         -- absolute offsets
       ]
 

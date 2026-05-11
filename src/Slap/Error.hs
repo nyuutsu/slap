@@ -66,7 +66,6 @@ import Slap.Constraint (Constraint(..), constraintFlagName, constraintName)
 import Slap.Dialect (Dialect, dialectFlagName, dialectName)
 import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldName)
 import Slap.PatchField (PatchField, fieldName)
-import Slap.XDelta1.Types (XDelta1SourceShape(..))
 
 import Data.ByteString (ByteString)
 import Data.Int (Int64)
@@ -309,26 +308,26 @@ data SlapError
   -- Parse: generic Get monad failures
   | ParseError FormatLabel String
 
-  -- | The xdelta1 parser rejected a source-list shape outside the
-  -- four spec-permitted configurations (@[]@, @[data]@, @[file]@,
-  -- @[data, file]@). The 'String' carries a human-readable
-  -- description of what was found ("3 sources", "[file, data]",
-  -- "[file, file]", etc.) for diagnostic clarity. The wire encodes
-  -- the source list as an EDSIO length-prefixed sequence, so any
-  -- count parses structurally; both author-produced authorities —
-  -- the canonical tool ('xdmain.c:1741-1768',
-  -- 'EC_XdIncompatibleDelta') and the xdelta.1 manpage
-  -- (MacDonald 2001) — agree on at-most-one-file-source.
+  -- | The xdelta1 parser rejected a source-list configuration that
+  -- was not the canonical @[data segment, file source]@ pair. The
+  -- 'String' carries a human-readable description of what was found
+  -- ("3 sources", "[file, data]", "[file, file]", "1 source: data",
+  -- "0 sources", etc.) for diagnostic clarity. The wire encodes the
+  -- source list as an EDSIO length-prefixed sequence, so any count
+  -- parses structurally; canonical xdelta unconditionally emits
+  -- exactly two sources in @[data, file]@ order
+  -- ('xdelta-1.1.4/xdelta.c:241-251' adds the data source,
+  -- 'xdmain.c:1539-1542' adds the from-file source), and slap
+  -- refuses anything else as off-spec.
   | UnsupportedXDelta1Shape String
 
-  -- | An xdelta1 instruction referenced a source index that does
-  -- not exist in the patch's declared 'XDelta1SourceShape'. Caught
-  -- at parse time so an off-spec apply can never fire. The 'Int64'
-  -- carries the offending index as it appeared on the wire; the
-  -- 'XDelta1SourceShape' is the patch's parsed shape, included so
-  -- the renderer can name both the bad index and the (small) set of
-  -- indices that would have been valid.
-  | XDelta1InstructionIndexOutOfRange Int64 XDelta1SourceShape
+  -- | An xdelta1 patch's instruction referenced a source index that
+  -- is not 0 (the data source) or 1 (the file source). Canonical
+  -- xdelta emits only those two indices and slap rejects anything
+  -- else at parse time so 'Slap.XDelta1.Apply.applyXDelta1' can
+  -- dispatch on a total two-arm pattern. The 'Int64' is the
+  -- offending wire-level index.
+  | XDelta1UnknownInstructionTarget !Int64
 
   -- Apply
   | NegativeTargetSize FormatLabel FileSize
@@ -899,14 +898,15 @@ renderSlapError (ParseError label message) =
 
 renderSlapError (UnsupportedXDelta1Shape description) =
   formatLabelName LabelXDelta1
-  ++ ": unsupported source-list shape: " ++ description
-  ++ " (xdelta1 admits []/[data]/[file]/[data, file] per"
-  ++ " xdelta-1.1.4/xdmain.c:1741-1768 and the xdelta.1 manpage)"
+  ++ ": source list is not canonical [data segment, file source]: " ++ description
+  ++ " (xdelta1 patches carry exactly two sources in that order;"
+  ++ " any other count or ordering is off-spec)"
 
-renderSlapError (XDelta1InstructionIndexOutOfRange index shape) =
+renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   formatLabelName LabelXDelta1
-  ++ ": instruction index " ++ show index
-  ++ " out of range for source shape " ++ renderXDelta1ShapeName shape
+  ++ ": instruction references source index " ++ show wireIndex
+  ++ "; xdelta1 patches carry exactly two sources, so valid indices are"
+  ++ " 0 (data segment) or 1 (file source)"
 
 renderSlapError (NegativeTargetSize label size) =
   formatLabelName label ++ ": negative output size: "
@@ -1277,17 +1277,6 @@ renderSlapWarning (VerificationOptedOutByCreator label) =
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
-
--- | Render the bracketed shape name for an 'XDelta1SourceShape'.
--- Used by 'XDelta1InstructionIndexOutOfRange' so the renderer can
--- name the (small) shape the bad index was found in. Matches the
--- vocabulary used by 'UnsupportedXDelta1Shape' so a reader who sees
--- both errors gets the same names for the same shapes.
-renderXDelta1ShapeName :: XDelta1SourceShape -> String
-renderXDelta1ShapeName XDelta1NoSources       = "[]"
-renderXDelta1ShapeName (XDelta1DataOnly _)    = "[data]"
-renderXDelta1ShapeName (XDelta1FileOnly _)    = "[file]"
-renderXDelta1ShapeName XDelta1DataAndFile{}   = "[data, file]"
 
 renderUnencodeabilityReason :: UnencodeabilityReason -> String
 renderUnencodeabilityReason UPSLastByteDiffers =
