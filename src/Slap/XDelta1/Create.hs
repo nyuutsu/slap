@@ -49,7 +49,7 @@ import Slap.XDelta1.Types
     , XDelta1VerificationPosture(..)
     , xdelta1EmptyInputMD5Sentinel
     )
-import Slap.Binary (md5, word32BEBytes)
+import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError, CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
@@ -60,7 +60,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString, word8)
 import qualified Data.ByteString.Lazy as LazyByteString
-import Data.Bits (shiftL, shiftR, (.&.), (.|.))
+import Data.Bits (shiftL, (.|.))
 import Data.Word (Word8, Word32, Word64)
 
 ----------------------------------------------------------------------------
@@ -262,45 +262,3 @@ offsetModeByte AbsoluteOffsets   = 0
 instructionTargetWireIndex :: XDelta1InstructionTarget -> Word64
 instructionTargetWireIndex FromDataSource = 0
 instructionTargetWireIndex FromFileSource = 1
-
-----------------------------------------------------------------------------
--- EDSIO varint encoder
-----------------------------------------------------------------------------
-
--- | Payload bits carried per byte.
-edsioVarintBitsPerByte :: Int
-edsioVarintBitsPerByte = 7
-
--- | Mask isolating the payload bits.
-edsioVarintPayloadMask :: Word8
-edsioVarintPayloadMask = 0x7F
-
--- | The continuation flag — high bit set when more bytes follow.
-edsioVarintContinuationFlag :: Word8
-edsioVarintContinuationFlag = 0x80
-
--- | Highest payload value that fits in a single byte's seven
--- payload bits. The number is the same as
--- 'edsioVarintPayloadMask', expressed at 'Word64' for use as a
--- threshold against the encoder's accumulator rather than as a
--- bit mask against a byte.
-edsioVarintMaxSingleByteValue :: Word64
-edsioVarintMaxSingleByteValue = fromIntegral edsioVarintPayloadMask
-
--- | Encode a non-negative integer as an EDSIO-style varint:
--- 7 payload bits per byte, LSB first, high bit set on every byte
--- except the last. Inverse of 'Slap.Get.edsioVarint'. Takes
--- 'Word64' under the same convention as 'Slap.Binary.putByuuVarint'
--- (caller's domain says non-negative; encoder doesn't redo the
--- check).
-putEdsioVarint :: Word64 -> Builder
-putEdsioVarint = writePayload
-  where
-    writePayload remainingBits
-      | remainingBits <= edsioVarintMaxSingleByteValue =
-          word8 (fromIntegral remainingBits)
-      | otherwise =
-          let thisBytePayload   = fromIntegral (remainingBits .&. fromIntegral edsioVarintPayloadMask) :: Word8
-              thisByteWithFlag  = thisBytePayload .|. edsioVarintContinuationFlag
-              bitsAfterThisByte = remainingBits `shiftR` edsioVarintBitsPerByte
-          in word8 thisByteWithFlag <> writePayload bitsAfterThisByte

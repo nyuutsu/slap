@@ -180,6 +180,7 @@ test-suite props
                   , Props.TextEncoding
                   , Props.Truncation
                   , Props.Undo
+                  , Props.XDelta1Conformance
   hs-source-dirs:   test
   default-language: GHC2024
   ghc-options:      -Wall -Werror -threaded -rtsopts "-with-rtsopts=-N"

@@ -17,6 +17,7 @@ module Slap.Binary
   , putWord32LE
   , word32LEBytes
   , putByuuVarint
+  , putEdsioVarint
     -- * CRC-16 / Adler-32
   , crc16
   , adler32  -- re-exported from Slap.FFI
@@ -48,7 +49,7 @@ import Data.ByteString.Builder (Builder, word8)
 import Data.Array (Array, listArray, (!))
 import Data.Bits (shiftL, shiftR, xor, (.&.), (.|.), testBit)
 import Data.Int (Int64)
-import Data.Word (Word8, Word16, Word32)
+import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.Marshal.Utils (copyBytes, moveBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
@@ -193,6 +194,44 @@ putByuuVarint = encode
           let lowBits = fromIntegral (value .&. 0x7F) :: Word8
               remaining = (value `shiftR` 7) - 1
           in word8 lowBits <> encode remaining
+
+-- | Payload bits carried per byte.
+edsioVarintBitsPerByte :: Int
+edsioVarintBitsPerByte = 7
+
+-- | Mask isolating the payload bits.
+edsioVarintPayloadMask :: Word8
+edsioVarintPayloadMask = 0x7F
+
+-- | The continuation flag — high bit set when more bytes follow.
+edsioVarintContinuationFlag :: Word8
+edsioVarintContinuationFlag = 0x80
+
+-- | Highest payload value that fits in a single byte's seven
+-- payload bits. The number is the same as
+-- 'edsioVarintPayloadMask', expressed at 'Word64' for use as a
+-- threshold against the encoder's accumulator rather than as a
+-- bit mask against a byte.
+edsioVarintMaxSingleByteValue :: Word64
+edsioVarintMaxSingleByteValue = fromIntegral edsioVarintPayloadMask
+
+-- | Encode a non-negative integer as an EDSIO-style varint:
+-- 7 payload bits per byte, LSB first, high bit set on every byte
+-- except the last. Inverse of 'Slap.Get.edsioVarint'. Takes
+-- 'Word64' under the same convention as 'putByuuVarint'
+-- (caller's domain says non-negative; encoder doesn't redo the
+-- check).
+putEdsioVarint :: Word64 -> Builder
+putEdsioVarint = writePayload
+  where
+    writePayload remainingBits
+      | remainingBits <= edsioVarintMaxSingleByteValue =
+          word8 (fromIntegral remainingBits)
+      | otherwise =
+          let thisBytePayload   = fromIntegral (remainingBits .&. fromIntegral edsioVarintPayloadMask) :: Word8
+              thisByteWithFlag  = thisBytePayload .|. edsioVarintContinuationFlag
+              bitsAfterThisByte = remainingBits `shiftR` edsioVarintBitsPerByte
+          in word8 thisByteWithFlag <> writePayload bitsAfterThisByte
 
 ----------------------------------------------------------------------------
 -- Cryptographic hashes

@@ -39,6 +39,7 @@ import qualified Props.SpecConformance as SpecConformance
 import qualified Props.TextEncoding as TextEncoding
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
+import qualified Props.XDelta1Conformance as XDelta1Conformance
 
 import Test.Tasty
 
@@ -56,4 +57,5 @@ main = defaultMain $ testGroup "Properties"
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
   , Narrow.narrowTests
+  , XDelta1Conformance.xdelta1ConformanceTests
   ]
