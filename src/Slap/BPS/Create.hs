@@ -26,8 +26,8 @@ import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), CreateResult(..))
-import Slap.BPS.FFI (rustyBpsDiff)
-import Slap.FFI (rustyCRC32)
+import Slap.BPS.FFI (bpsDiff)
+import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (ActualSize(..), MaxAddressableSize(..), FileSize(..), byteFileSize)
@@ -46,9 +46,9 @@ createBPS :: InputFileContents -> OutputFileContents -> ByteString
 createBPS inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) metadata = do
   guardAddressable (byteFileSize original)
   guardAddressable (byteFileSize modified)
-  let sourceCRC = rustyCRC32 original
-      targetCRC = rustyCRC32 modified
-      actionBytes = rustyBpsDiff inputContents outputContents
+  let sourceCRC = crc32 original
+      targetCRC = crc32 modified
+      actionBytes = bpsDiff inputContents outputContents
       body = byteString bpsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
@@ -58,7 +58,7 @@ createBPS inputContents@(InputFileContents original) outputContents@(OutputFileC
              <> putWord32LE (unCRC32 sourceCRC)
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
-      patchCRC = rustyCRC32 bodyBytes
+      patchCRC = crc32 bodyBytes
       patchCRCBytes = word32LEBytes (unCRC32 patchCRC)
   Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
 

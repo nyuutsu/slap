@@ -44,10 +44,10 @@ import Slap.TextEncoding (makeStdoutAndStderrLenient)
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
-import Slap.Binary (crc16, md5, sha1, adler32, viewBytesInRange)
+import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
                       ExpectedCRC32(..), ActualCRC32(..), showCRC32)
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32, adler32)
 import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..),
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
@@ -1017,7 +1017,7 @@ doApply parsedCommand = do
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-          let actual = rustyCRC32 sourceBytes
+          let actual = crc32 sourceBytes
           putStrLn $ "input CRC: " ++ formatCRC actual
             ++ if actual == expected
                  then [' ', checkMark]
@@ -1077,7 +1077,7 @@ doUndo parsedCommand = do
           case verifyTargetCRC32 verification of
             Just expected -> do
               modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-              let actual = rustyCRC32 modifiedBytes
+              let actual = crc32 modifiedBytes
               putStrLn $ "output CRC: " ++ formatCRC actual
                 ++ if actual == expected
                      then [' ', checkMark]
@@ -1328,7 +1328,7 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
   -- warning. The format's choice to populate these slots expresses
   -- the spec's "this mismatch invalidates the patch" judgment.
   forM_ (verifySourceCRC32 verification) $ \expected ->
-    enforceCRC verificationPolicy SourceSide expected (rustyCRC32 preprocessed)
+    enforceCRC verificationPolicy SourceSide expected (crc32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
     enforceHash verificationPolicy SourceSide MD5 expected (md5 preprocessed)
   forM_ (verifySourceSHA1 verification) $ \expected ->
@@ -1343,7 +1343,7 @@ verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = 
     noteBlockCRC TargetSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) targetBytes))
   -- Fatal-class checks.
   forM_ (verifyTargetCRC32 verification) $ \expected ->
-    enforceCRC verificationPolicy TargetSide expected (rustyCRC32 targetBytes)
+    enforceCRC verificationPolicy TargetSide expected (crc32 targetBytes)
   forM_ (verifyTargetMD5 verification) $ \expected ->
     enforceHash verificationPolicy TargetSide MD5 expected (md5 targetBytes)
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->

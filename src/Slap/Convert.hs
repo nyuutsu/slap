@@ -79,7 +79,7 @@ import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       SplitHunk, SplitUndoHunk,
                       ActualSize(..), ExpectedSize(..),
@@ -1090,7 +1090,7 @@ buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
 buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents
   { contentsRecords     = patchHunks
   , contentsDescription = Nothing
-  , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (rustyCRC32 hashSource) else Nothing
+  , contentsSourceCRC32 = if needs FieldSourceCRC32 then Just (crc32 hashSource) else Nothing
   , contentsSourceMD5   = if needs FieldSourceMD5   then Just (md5 hashSource)   else Nothing
   , contentsSourceSHA1  = if needs FieldSourceSHA1  then Just (sha1 hashSource)  else Nothing
   , contentsDestinationSize    = if needs FieldDestinationSize

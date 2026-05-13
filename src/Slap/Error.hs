@@ -262,7 +262,7 @@ data SlapError
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
 
-  -- | The xdelta1 differ ('Slap.XDelta1.FFI.rustyXDelta1Diff')
+  -- | The xdelta1 differ ('Slap.XDelta1.FFI.xdelta1Diff')
   -- refused an input. Carries the underlying Rust-side cause
   -- verbatim — at minimum, allocation refusals when building the
   -- source index on memory-constrained hosts; also catches internal-

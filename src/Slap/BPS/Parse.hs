@@ -13,7 +13,7 @@ import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
@@ -41,7 +41,7 @@ parseBPS (PatchFileContents input)
           overheadLength = unLength bpsOverheadLength
           magicLength    = unLength bpsMagicLength
           storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (inputLength - crcLength) input)
+          actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelBPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()

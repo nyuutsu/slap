@@ -18,9 +18,8 @@ module Slap.Binary
   , word32LEBytes
   , putByuuVarint
   , putEdsioVarint
-    -- * CRC-16 / Adler-32
+    -- * CRC-16
   , crc16
-  , adler32  -- re-exported from Slap.FFI
     -- * Cryptographic hashes
   , md5
   , sha1
@@ -54,8 +53,7 @@ import Foreign.Marshal.Utils (copyBytes, moveBytes)
 import Foreign.Ptr (Ptr, plusPtr, castPtr)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
-import Slap.Checksum (Adler32, CRC16(..), MD5Hash(..), SHA1Hash(..))
-import Slap.FFI (rustyAdler32)
+import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      advance, byteLength, distance)
@@ -318,13 +316,6 @@ crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
     reflect checksum
       | testBit checksum 0 = (checksum `shiftR` 1) `xor` 0xA001
       | otherwise           = checksum `shiftR` 1
-
-----------------------------------------------------------------------------
--- Adler-32 (RFC 1950) — via rusty-slap
-----------------------------------------------------------------------------
-
-adler32 :: ByteString -> Adler32
-adler32 = rustyAdler32
 
 ----------------------------------------------------------------------------
 -- Diff

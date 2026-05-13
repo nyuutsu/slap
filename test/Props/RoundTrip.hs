@@ -68,7 +68,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
                      byteLength, splitHunks, splitPayload)
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
@@ -681,7 +681,7 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
        Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
        Right (Parsed parsed _parseWarnings) ->
-         NINJA1.ninja1SourceCRC parsed === Just (rustyCRC32 source) .&&.
+         NINJA1.ninja1SourceCRC parsed === Just (crc32 source) .&&.
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
          NINJA1.ninja1SourceSHA1 parsed === Just (sha1 source)
 

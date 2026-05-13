@@ -20,7 +20,7 @@ import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError)
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
@@ -242,14 +242,14 @@ varintRejectsCase inputBytes =
 -- | Build a syntactically valid BPS patch with correct CRCs.
 buildBPS :: ByteString -> ByteString -> ByteString -> PatchFileContents
 buildBPS bodyContent sourceBytes targetBytes =
-  let sourceCRC = rustyCRC32 sourceBytes
-      targetCRC = rustyCRC32 targetBytes
+  let sourceCRC = crc32 sourceBytes
+      targetCRC = crc32 targetBytes
       withoutPatchCRC = toStrict $
         byteString "BPS1"
         <> byteString bodyContent
         <> putWord32LE (unCRC32 sourceCRC)
         <> putWord32LE (unCRC32 targetCRC)
-      patchCRC = rustyCRC32 withoutPatchCRC
+      patchCRC = crc32 withoutPatchCRC
       complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
   in PatchFileContents complete
 
@@ -287,14 +287,14 @@ bpsTargetCopyCode = 3
 -- | Build a syntactically valid UPS patch with correct CRCs.
 buildUPS :: ByteString -> ByteString -> ByteString -> PatchFileContents
 buildUPS bodyContent sourceBytes targetBytes =
-  let sourceCRC = rustyCRC32 sourceBytes
-      targetCRC = rustyCRC32 targetBytes
+  let sourceCRC = crc32 sourceBytes
+      targetCRC = crc32 targetBytes
       withoutPatchCRC = toStrict $
         byteString "UPS1"
         <> byteString bodyContent
         <> putWord32LE (unCRC32 sourceCRC)
         <> putWord32LE (unCRC32 targetCRC)
-      patchCRC = rustyCRC32 withoutPatchCRC
+      patchCRC = crc32 withoutPatchCRC
       complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
   in PatchFileContents complete
 
@@ -533,9 +533,9 @@ bpsWrongMagic =
       withoutPatchCRC = toStrict $
         byteString "BPS2"  -- wrong!
         <> byteString body
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-      patchCRC = rustyCRC32 withoutPatchCRC
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+      patchCRC = crc32 withoutPatchCRC
       patch = PatchFileContents (withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC))
   in assertParseRejects parseBPS patch ""
 
@@ -545,8 +545,8 @@ bpsWrongPatchCRC =
       withoutPatchCRC = toStrict $
         byteString "BPS1"
         <> byteString body
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
       -- Deliberately wrong CRC
       patch = PatchFileContents (withoutPatchCRC <> ByteString.pack [0xDE, 0xAD, 0xBE, 0xEF])
   in assertParseRejects parseBPS patch "CRC"
@@ -812,9 +812,9 @@ upsWrongMagic =
       withoutPatchCRC = toStrict $
         byteString "UPS2"
         <> byteString body
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-      patchCRC = rustyCRC32 withoutPatchCRC
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+      patchCRC = crc32 withoutPatchCRC
       patch = PatchFileContents (withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC))
   in assertParseRejects parseUPS patch ""
 
@@ -824,8 +824,8 @@ upsWrongPatchCRC =
       withoutPatchCRC = toStrict $
         byteString "UPS1"
         <> byteString body
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
-        <> putWord32LE (unCRC32 (rustyCRC32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
+        <> putWord32LE (unCRC32 (crc32 ByteString.empty))
       patch = PatchFileContents (withoutPatchCRC <> ByteString.pack [0xDE, 0xAD, 0xBE, 0xEF])
   in assertParseRejects parseUPS patch "CRC"
 
@@ -1004,7 +1004,7 @@ bpsSourceCRCReadLiterally =
       actions = bpsActionVarint bpsTargetReadCode 1 <> word8 0xFF
       body = bpsBody 1 1 ByteString.empty actions
       wrongSourceCRC = CRC32 0xDEADBEEF
-      patch = buildBPSWithCRCs body wrongSourceCRC (rustyCRC32 target)
+      patch = buildBPSWithCRCs body wrongSourceCRC (crc32 target)
   in case parseBPS patch of
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "source CRC field" wrongSourceCRC (bpsSourceCRC parsed)
@@ -1015,7 +1015,7 @@ bpsTargetCRCReadLiterally =
       actions = bpsActionVarint bpsTargetReadCode 1 <> word8 0xFF
       body = bpsBody 1 1 ByteString.empty actions
       wrongTargetCRC = CRC32 0xCAFEBABE
-      patch = buildBPSWithCRCs body (rustyCRC32 source) wrongTargetCRC
+      patch = buildBPSWithCRCs body (crc32 source) wrongTargetCRC
   in case parseBPS patch of
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "target CRC field" wrongTargetCRC (bpsTargetCRC parsed)
@@ -1128,7 +1128,7 @@ upsSourceCRCReadLiterally =
   let target = ByteString.pack [0x11, 0x22]
       body = upsBody 2 2 mempty
       wrongSourceCRC = CRC32 0xDEADBEEF
-      patch = buildUPSWithCRCs body wrongSourceCRC (rustyCRC32 target)
+      patch = buildUPSWithCRCs body wrongSourceCRC (crc32 target)
   in case parseUPS patch of
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "source CRC field" wrongSourceCRC (upsSourceCRC parsed)
@@ -1138,7 +1138,7 @@ upsTargetCRCReadLiterally =
   let source = ByteString.pack [0x11, 0x22]
       body = upsBody 2 2 mempty
       wrongTargetCRC = CRC32 0xCAFEBABE
-      patch = buildUPSWithCRCs body (rustyCRC32 source) wrongTargetCRC
+      patch = buildUPSWithCRCs body (crc32 source) wrongTargetCRC
   in case parseUPS patch of
     Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "target CRC field" wrongTargetCRC (upsTargetCRC parsed)
@@ -1265,7 +1265,7 @@ buildBPSWithCRCs bodyContent sourceCRC targetCRC =
         <> byteString bodyContent
         <> putWord32LE (unCRC32 sourceCRC)
         <> putWord32LE (unCRC32 targetCRC)
-      patchCRC = rustyCRC32 withoutPatchCRC
+      patchCRC = crc32 withoutPatchCRC
       complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
   in PatchFileContents complete
 
@@ -1276,7 +1276,7 @@ buildUPSWithCRCs bodyContent sourceCRC targetCRC =
         <> byteString bodyContent
         <> putWord32LE (unCRC32 sourceCRC)
         <> putWord32LE (unCRC32 targetCRC)
-      patchCRC = rustyCRC32 withoutPatchCRC
+      patchCRC = crc32 withoutPatchCRC
       complete = withoutPatchCRC <> word32LEBytes (unCRC32 patchCRC)
   in PatchFileContents complete
 

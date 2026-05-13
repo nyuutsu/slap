@@ -12,24 +12,23 @@
 -- rather than being threaded further out.
 module Slap.XDelta1.FFI
   ( XDelta1DiffOutput(..)
-  , rustyXDelta1Diff
+  , xdelta1Diff
   ) where
 
 import Data.Bits ((.|.), shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word8, Word64)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr)
 import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import Slap.Display.Primitives (padHex)
 import Slap.Error (SlapError(..), XDelta1DiffCause(..))
+import Slap.FFI (readByteString, readString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..))
 import Slap.XDelta1.Types
@@ -50,7 +49,7 @@ data XDelta1DiffOutput = XDelta1DiffOutput
   deriving (Show, Eq)
 
 foreign import ccall unsafe "rusty_xdelta1_diff"
-  c_rustyXDelta1Diff
+  rustyXDelta1Diff
     :: Ptr Word8 -> CSize -> Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_targets
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_source_offsets
@@ -61,17 +60,14 @@ foreign import ccall unsafe "rusty_xdelta1_diff"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- error_cause
     -> IO CInt
 
-foreign import ccall unsafe "rusty_free"
-  c_free :: Ptr Word8 -> CSize -> IO ()
-
 -- | Invoke the Rust xdelta1 differ. Marshals the parallel-array FFI
 -- output back into typed Haskell; lifts the Rust-side cause into
 -- 'SlapError' via 'XDelta1DiffFailed' at this seam.
-rustyXDelta1Diff
+xdelta1Diff
   :: InputFileContents
   -> OutputFileContents
   -> Either SlapError XDelta1DiffOutput
-rustyXDelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
+xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
   unsafeDupablePerformIO $
     UnsafeByteString.unsafeUseAsCStringLen sourceBytes $ \(sourcePointer, sourceLength) ->
     UnsafeByteString.unsafeUseAsCStringLen targetBytes $ \(targetPointer, targetLength) ->
@@ -87,7 +83,7 @@ rustyXDelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes
     alloca $ \fileSourceFlagPointer        ->
     alloca $ \errorCauseAddressPointer     ->
     alloca $ \errorCauseLengthPointer      -> do
-      returnCode <- c_rustyXDelta1Diff
+      returnCode <- rustyXDelta1Diff
         (castPtr sourcePointer) (fromIntegral sourceLength)
         (castPtr targetPointer) (fromIntegral targetLength)
         targetsAddressPointer       targetsLengthPointer
@@ -99,19 +95,19 @@ rustyXDelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes
         errorCauseAddressPointer    errorCauseLengthPointer
       if returnCode /= 0
         then do
-          rustMessage <- readRustString errorCauseAddressPointer errorCauseLengthPointer
+          rustMessage <- readString errorCauseAddressPointer errorCauseLengthPointer
           pure $ Left (XDelta1DiffFailed (XDelta1DiffCause rustMessage))
         else do
-          targetTagBytes      <- takeAndFreeBuffer targetsAddressPointer       targetsLengthPointer
-          sourceOffsetBytes   <- takeAndFreeBuffer sourceOffsetsAddressPointer sourceOffsetsLengthPointer
-          lengthBytes         <- takeAndFreeBuffer lengthsAddressPointer       lengthsLengthPointer
-          dataSegmentBytes    <- takeAndFreeBuffer dataSegmentAddressPointer   dataSegmentLengthPointer
+          targetTagBytes      <- readByteString targetsAddressPointer       targetsLengthPointer
+          sourceOffsetBytes   <- readByteString sourceOffsetsAddressPointer sourceOffsetsLengthPointer
+          lengthBytes         <- readByteString lengthsAddressPointer       lengthsLengthPointer
+          dataSegmentBytes    <- readByteString dataSegmentAddressPointer   dataSegmentLengthPointer
           dataSourceFlagByte  <- peek dataSourceFlagPointer
           fileSourceFlagByte  <- peek fileSourceFlagPointer
           -- The success path's error_cause is canonically the empty
           -- buffer (null pointer, zero length). Free defensively in
           -- case a future Rust-side change starts writing one.
-          _                   <- takeAndFreeBuffer errorCauseAddressPointer    errorCauseLengthPointer
+          _                   <- readByteString errorCauseAddressPointer    errorCauseLengthPointer
           case parseParallelInstructions targetTagBytes sourceOffsetBytes lengthBytes of
             Left slapError ->
               pure (Left slapError)
@@ -122,30 +118,6 @@ rustyXDelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes
                 , xdelta1DiffDataSourceIsSequential = dataSourceFlagByte /= 0
                 , xdelta1DiffFileSourceIsSequential = fileSourceFlagByte /= 0
                 }
-
--- | Pack a Rust-surfaced buffer into a 'ByteString', freeing the
--- underlying allocation. Mirrors
--- 'Slap.Compression.Stream.readRustString' but for byte payloads
--- rather than diagnostic text — no UTF-8 decoding step.
-takeAndFreeBuffer :: Ptr (Ptr Word8) -> Ptr CSize -> IO ByteString
-takeAndFreeBuffer addressPointer lengthPointer = do
-  bufferPointer <- peek addressPointer
-  bufferLength  <- peek lengthPointer
-  if bufferPointer == nullPtr
-    then pure ByteString.empty
-    else do
-      bytes <- ByteString.packCStringLen (castPtr bufferPointer, fromIntegral bufferLength)
-      c_free bufferPointer bufferLength
-      pure bytes
-
--- | Pack a Rust-surfaced 'String' diagnostic buffer, freeing the
--- underlying allocation. Decoded UTF-8-leniently to match
--- 'Slap.Compression.Stream.readRustString' — a corrupt-bytes-from-
--- FFI event cannot throw during rendering of an unrelated error.
-readRustString :: Ptr (Ptr Word8) -> Ptr CSize -> IO String
-readRustString addressPointer lengthPointer = do
-  messageBytes <- takeAndFreeBuffer addressPointer lengthPointer
-  pure (Text.unpack (TextEncoding.decodeUtf8Lenient messageBytes))
 
 -- | Reconstruct '[XDelta1Instruction]' from the three parallel
 -- buffers the Rust side surfaces (one byte per target tag; eight LE

@@ -16,7 +16,7 @@ import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
 import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.Checksum (CRC32(..))
 import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), advance, distance, offsetToInt)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -38,8 +38,8 @@ createUPS :: InputFileContents -> OutputFileContents
           -> Either SlapError CreateResult
 createUPS inputContents@(InputFileContents original) outputContents@(OutputFileContents modified) = do
   blocks <- diffToBlocks inputContents outputContents
-  let sourceCRC = rustyCRC32 original
-      targetCRC = rustyCRC32 modified
+  let sourceCRC = crc32 original
+      targetCRC = crc32 modified
       body = byteString upsMagicBytes
              <> putByuuVarint (fromIntegral (ByteString.length original))
              <> putByuuVarint (fromIntegral (ByteString.length modified))
@@ -47,7 +47,7 @@ createUPS inputContents@(InputFileContents original) outputContents@(OutputFileC
              <> putWord32LE (unCRC32 sourceCRC)
              <> putWord32LE (unCRC32 targetCRC)
       bodyBytes = LazyByteString.toStrict (toLazyByteString body)
-      patchCRC = rustyCRC32 bodyBytes
+      patchCRC = crc32 bodyBytes
       patchCRCBytes = word32LEBytes (unCRC32 patchCRC)
   Right (CreateResult (PatchFileContents (bodyBytes <> patchCRCBytes)) [])
 

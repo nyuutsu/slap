@@ -40,7 +40,7 @@ module Slap.XDelta1.Create
 import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.XDelta1.FFI
     ( XDelta1DiffOutput(..)
-    , rustyXDelta1Diff
+    , xdelta1Diff
     )
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Sources(..)
@@ -69,7 +69,7 @@ import Data.Word (Word8, Word32, Word64)
 ----------------------------------------------------------------------------
 
 -- | Create an xdelta1 patch from source and target bytes. The differ
--- ('Slap.XDelta1.FFI.rustyXDelta1Diff') produces the instruction
+-- ('Slap.XDelta1.FFI.xdelta1Diff') produces the instruction
 -- stream and the data segment; this function wraps them in an
 -- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
 -- per source) and runs the wire encoder.
@@ -85,7 +85,7 @@ import Data.Word (Word8, Word32, Word64)
 createXDelta1 :: VerificationInclusion -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
 createXDelta1 inclusion inputContents outputContents =
-  case rustyXDelta1Diff inputContents outputContents of
+  case xdelta1Diff inputContents outputContents of
     Left slapError -> Left slapError
     Right diff ->
       let sourceBytes = unInputFileContents inputContents

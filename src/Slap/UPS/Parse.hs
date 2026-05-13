@@ -14,7 +14,7 @@ import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Error (SlapError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
-import Slap.FFI (rustyCRC32)
+import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
@@ -40,7 +40,7 @@ parseUPS (PatchFileContents input)
           overheadLength = unLength upsOverheadLength
           magicLength    = unLength upsMagicLength
           storedPatchCRC = CRC32 (getWord32LE (inputLength - crcLength) input)
-          actualPatchCRC = rustyCRC32 (ByteString.take (inputLength - crcLength) input)
+          actualPatchCRC = crc32 (ByteString.take (inputLength - crcLength) input)
       if storedPatchCRC /= actualPatchCRC
         then Left (PatchCRCMismatch LabelUPS (ExpectedCRC32 storedPatchCRC) (ActualCRC32 actualPatchCRC))
         else pure ()

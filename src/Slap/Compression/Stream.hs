@@ -9,85 +9,58 @@ module Slap.Compression.Stream
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
-import Foreign.Storable (peek)
+import Foreign.Ptr (Ptr, castPtr)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import Slap.Error (DecompressionCause(..))
+import Slap.FFI (readByteString, readString)
 
 foreign import ccall unsafe "rusty_zlib_inflate"
-  c_zlibInflate
+  rustyZlibInflate
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize     -- success buffer
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
 
 foreign import ccall unsafe "rusty_zlib_deflate"
-  c_zlibDeflate
+  rustyZlibDeflate
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize     -- success buffer
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
 
 foreign import ccall unsafe "rusty_gzip_inflate"
-  c_gzipInflate
+  rustyGzipInflate
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt
 
 foreign import ccall unsafe "rusty_bzip2_decompress"
-  c_bzip2Decompress
+  rustyBzip2Decompress
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt
 
-foreign import ccall unsafe "rusty_free"
-  c_free :: Ptr Word8 -> CSize -> IO ()
-
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Pack the bytes at @(addressPointer, lengthPointer)@ into a 'String',
--- freeing the underlying buffer.  Returns @""@ if the pointer is null.
---
--- The bytes are guaranteed to be valid UTF-8 (Rust's 'String' is UTF-8
--- by construction at the type level, so every diagnostic that reaches
--- this helper is well-formed).  Decoded leniently nonetheless — any
--- structurally-invalid byte sequence is replaced with U+FFFD rather
--- than raising — so a corrupt-bytes-from-FFI event cannot throw during
--- the rendering of an unrelated error.  The resulting 'String' carries
--- real Unicode code points: an em-dash arrives as 'Char' U+2014, not
--- three garbage 'Char's.
-readRustString :: Ptr (Ptr Word8) -> Ptr CSize -> IO String
-readRustString addressPointer lengthPointer = do
-  bufferPointer <- peek addressPointer
-  bufferLength  <- peek lengthPointer
-  if bufferPointer == nullPtr
-    then pure ""
-    else do
-      messageBytes <- ByteString.packCStringLen (castPtr bufferPointer, fromIntegral bufferLength)
-      c_free bufferPointer bufferLength
-      pure (Text.unpack (TextEncoding.decodeUtf8Lenient messageBytes))
-
 -- | Call a Rust decompression function that allocates its own output buffer.
 -- Returns Left on error, Right on success.  Empty input → empty output.
-{-# INLINE callRustyDecompress #-}
-callRustyDecompress
+{-# INLINE callDecompressor #-}
+callDecompressor
   :: ( Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt )
   -> ByteString -> Either DecompressionCause ByteString
-callRustyDecompress _          input | ByteString.null input = Right ByteString.empty
-callRustyDecompress decompress input = unsafeDupablePerformIO $
+callDecompressor _          input | ByteString.null input = Right ByteString.empty
+callDecompressor decompress input = unsafeDupablePerformIO $
   UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
@@ -99,17 +72,10 @@ callRustyDecompress decompress input = unsafeDupablePerformIO $
         errorAddressPointer  errorLengthPointer
       if returnCode /= 0
         then do
-          rustMessage <- readRustString errorAddressPointer errorLengthPointer
+          rustMessage <- readString errorAddressPointer errorLengthPointer
           pure $ Left (DecompressionCause rustMessage)
-        else do
-          resultPointer <- peek resultAddressPointer
-          resultLength  <- peek resultLengthPointer
-          if resultPointer == nullPtr
-            then pure $ Right ByteString.empty
-            else do
-              result <- ByteString.packCStringLen (castPtr resultPointer, fromIntegral resultLength)
-              c_free resultPointer resultLength
-              pure $ Right result
+        else
+          Right <$> readByteString resultAddressPointer resultLengthPointer
 
 ----------------------------------------------------------------------------
 -- Public API
@@ -117,7 +83,7 @@ callRustyDecompress decompress input = unsafeDupablePerformIO $
 
 -- | Zlib (RFC 1950) inflate.
 zlibInflate :: ByteString -> Either DecompressionCause ByteString
-zlibInflate = callRustyDecompress c_zlibInflate
+zlibInflate = callDecompressor rustyZlibInflate
 
 -- | Zlib (RFC 1950) deflate at the library's default compression level.
 -- The NINJA1 spec is mute on level — any zlib-deflate output round-trips
@@ -133,28 +99,21 @@ zlibDeflate input
         alloca $ \resultLengthPointer ->
         alloca $ \errorAddressPointer ->
         alloca $ \errorLengthPointer -> do
-          returnCode <- c_zlibDeflate
+          returnCode <- rustyZlibDeflate
             (castPtr dataPointer) (fromIntegral dataLength)
             resultAddressPointer resultLengthPointer
             errorAddressPointer  errorLengthPointer
           if returnCode /= 0
             then do
-              rustMessage <- readRustString errorAddressPointer errorLengthPointer
+              rustMessage <- readString errorAddressPointer errorLengthPointer
               error ("zlibDeflate: internal error: " ++ rustMessage)
-            else do
-              resultPointer <- peek resultAddressPointer
-              resultLength  <- peek resultLengthPointer
-              if resultPointer == nullPtr
-                then pure ByteString.empty
-                else do
-                  result <- ByteString.packCStringLen (castPtr resultPointer, fromIntegral resultLength)
-                  c_free resultPointer resultLength
-                  pure result
+            else
+              readByteString resultAddressPointer resultLengthPointer
 
 -- | Gzip (RFC 1952) inflate.
 gzipInflate :: ByteString -> Either DecompressionCause ByteString
-gzipInflate = callRustyDecompress c_gzipInflate
+gzipInflate = callDecompressor rustyGzipInflate
 
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
-bzip2Decompress = callRustyDecompress c_bzip2Decompress
+bzip2Decompress = callDecompressor rustyBzip2Decompress
