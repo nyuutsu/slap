@@ -11,6 +11,7 @@ import Slap.XDelta1.Types
     , XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
     , XDelta1VerificationPosture(..)
+    , XDelta1FileAtDeltaTime(..)
     )
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
@@ -38,7 +39,7 @@ xdelta1Meta patch =
   [ InfoLine "from"        (decodeLocaleField (xdelta1FromName patch))
   , InfoLine "to"          (decodeLocaleField (xdelta1ToName patch))
   , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
-  ] ++ verificationLines ++
+  ] ++ verificationLines ++ inputsLines ++
   [ InfoLine "sources"     "2"
   ] ++ sourceMD5Lines ++
   [ InfoLine "data seg"    (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
@@ -50,6 +51,20 @@ xdelta1Meta patch =
         -> [InfoLine "target MD5"   (hexByteString (unMD5Hash targetMD5))]
       CreatorOptedOutOfVerification
         -> [InfoLine "verification" "opted out by creator (--no-verify)"]
+
+    -- Bits 1 and 2 of the header's flags word. Common case (both
+    -- raw bytes) shows nothing — info stays uncluttered. When at
+    -- least one side is a gzip stream, surface a single descriptive
+    -- line naming the affected side(s) and the relevant flag bit(s),
+    -- and remind the reader that apply will refuse on this patch.
+    inputsLines = case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of
+      (FileWasRawBytes,   FileWasRawBytes)   -> []
+      (FileWasGzipStream, FileWasRawBytes)
+        -> [InfoLine "inputs" "from-file expected gzipped at apply time (FROM_COMPRESSED set; slap refuses apply)"]
+      (FileWasRawBytes,   FileWasGzipStream)
+        -> [InfoLine "inputs" "to-file expected gzipped at apply time (TO_COMPRESSED set; slap refuses apply)"]
+      (FileWasGzipStream, FileWasGzipStream)
+        -> [InfoLine "inputs" "both expected gzipped at apply time (FROM_COMPRESSED+TO_COMPRESSED set; slap refuses apply)"]
 
     sourceMD5Lines = case xdelta1Verification patch of
       CreatorOptedOutOfVerification -> []

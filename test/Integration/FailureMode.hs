@@ -26,7 +26,10 @@ import Integration.Skip
   , requireSlapBinary
   )
 import Slap.Error
-  (CreateResult(..), SlapError(..), SlapWarning(..), Parsed(..), renderSlapError)
+  ( CreateResult(..), SlapError(..), SlapWarning(..), Parsed(..)
+  , XDelta1GzipStreamInputs(..)
+  , renderSlapError
+  )
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -40,10 +43,20 @@ import Slap.XDelta1.Parse
   , XDelta1FromName(..), XDelta1ToName(..)
   , XDelta1NoVerifyFlag(..)
   )
+import qualified Slap.XDelta1.Apply as XDelta1
 import Slap.XDelta1.Types
-  (XDelta1VerificationPosture(..)
+  ( XDelta1Patch(..)
+  , XDelta1Source(..)
+  , XDelta1Sources(..)
+  , XDelta1OffsetMode(..)
+  , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
-  , xdelta1Verification)
+  , XDelta1FileAtDeltaTime(..)
+  , xdelta1Verification
+  , xdelta1FromAtDeltaTime
+  , xdelta1ToAtDeltaTime
+  )
+import Slap.Measure (FileSize(..))
 import Slap.Convert
   ( DirectCreate(..)
   , DifferentialCreate(..)
@@ -67,6 +80,7 @@ import Slap.Create (createPatch)
 import qualified Data.Set as Set
 
 import Data.Bits (xor, (.|.))
+import Data.Word (Word8)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -102,6 +116,10 @@ failureModeTests tier getTargets = do
   xdelta1NoVerifyMaybes <- requireFixture stadium2SizeChange $ \_ ->
                              pure (map WillRun (xdelta1NoVerifyTests stadium2SizeChange))
 
+  xdelta1InputPreCompressionMaybes <-
+    requireFixture stadium2SizeChange $ \_ ->
+      pure (map WillRun (xdelta1InputPreCompressionTests stadium2SizeChange))
+
   corruptCrcMaybes <- requireFixture dm4yBps $ \_ ->
                       requireFixture dm4yUps $ \_ ->
                         pure (map WillRun (corruptPatchCRCTests dm4yBps dm4yUps))
@@ -132,7 +150,8 @@ failureModeTests tier getTargets = do
 
   pure (namedGroup "failure-mode"
           (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
-            ++ xdelta1NoVerifyMaybes ++ corruptCrcMaybes ++ heavyMaybes))
+            ++ xdelta1NoVerifyMaybes ++ xdelta1InputPreCompressionMaybes
+            ++ corruptCrcMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -797,6 +816,105 @@ xdelta1NoVerifyTests fixturePath =
     flipNoVerifyBit bytes = ByteString.concat
       [ ByteString.take 11 bytes
       , ByteString.singleton (ByteString.index bytes 11 .|. 0x01)
+      , ByteString.drop 12 bytes
+      ]
+
+----------------------------------------------------------------------------
+-- xdelta1 FLAG_FROM_COMPRESSED / FLAG_TO_COMPRESSED: apply refuses
+--
+-- Bits 1 and 2 of the header's flags word record that canonical
+-- xdelta-1.x detected gzip-magic on the from- or to-file at delta
+-- time and transparently decompressed it before computing the delta.
+-- Slap does not implement that apply-time transparency, so it
+-- refuses to proceed against the user's literal source bytes when
+-- either bit is set. These three cases (FROM only, TO only, both)
+-- exhaust the non-trivial corners of 'XDelta1FileAtDeltaTime' ×
+-- 'XDelta1FileAtDeltaTime'; the (raw, raw) case is the success path
+-- covered by the existing apply round-trip tests.
+----------------------------------------------------------------------------
+
+xdelta1InputPreCompressionTests :: FilePath -> [TestTree]
+xdelta1InputPreCompressionTests fixturePath =
+  [ inputPreCompressionCase
+      "xdelta1/FROM_COMPRESSED parses as gzip stream and refuses apply"
+      0x02
+      (FileWasGzipStream, FileWasRawBytes)
+      OnlyFromFileWasGzipStream
+  , inputPreCompressionCase
+      "xdelta1/TO_COMPRESSED parses as gzip stream and refuses apply"
+      0x04
+      (FileWasRawBytes, FileWasGzipStream)
+      OnlyToFileWasGzipStream
+  , inputPreCompressionCase
+      "xdelta1/FROM_COMPRESSED+TO_COMPRESSED parse as gzip streams and refuse apply"
+      0x06
+      (FileWasGzipStream, FileWasGzipStream)
+      BothFilesWereGzipStreams
+
+  -- The previous three cases exercise the gate via wire-byte
+  -- fiddling on a real fixture. This fourth case pins a degenerate
+  -- corner that wire fiddling can't reach cheaply: 'xdelta1TargetLength'
+  -- lives inside the EDSIO control segment (past gzip decompression),
+  -- so constructing a target_length=0 flagged patch from on-disk
+  -- bytes would mean rebuilding the control segment by hand.
+  -- Constructing the 'XDelta1Patch' value directly is the right tool
+  -- — the question being asked is whether 'applyXDelta1''s gate fires
+  -- before its target-length guards, which is independent of the
+  -- parse pipeline.
+  , testCase "xdelta1/empty target with FROM_COMPRESSED refuses apply" $ do
+      let emptySource = XDelta1Source
+            { xdelta1SourceName       = ByteString.empty
+            , xdelta1SourceMD5        = Nothing
+            , xdelta1SourceLength     = FileSize 0
+            , xdelta1SourceOffsetMode = AbsoluteOffsets
+            }
+          patch = XDelta1Patch
+            { xdelta1FromName         = ByteString.empty
+            , xdelta1ToName           = ByteString.empty
+            , xdelta1Verification     = CreatorOptedOutOfVerification
+            , xdelta1PatchCompression = UncompressedPatch
+            , xdelta1FromAtDeltaTime  = FileWasGzipStream
+            , xdelta1ToAtDeltaTime    = FileWasRawBytes
+            , xdelta1TargetLength     = FileSize 0
+            , xdelta1Sources          = XDelta1Sources emptySource emptySource
+            , xdelta1Instructions     = []
+            , xdelta1DataSegment      = ByteString.empty
+            }
+      case XDelta1.applyXDelta1 patch (InputFileContents ByteString.empty) of
+        Left (XDelta1InputPreCompressionUnsupported OnlyFromFileWasGzipStream) -> pure ()
+        Left other -> assertFailure
+          ("expected XDelta1InputPreCompressionUnsupported OnlyFromFileWasGzipStream, got: "
+           ++ renderSlapError other)
+        Right _ -> assertFailure
+          "expected apply refusal even at target_length=0; got successful apply"
+  ]
+  where
+    inputPreCompressionCase label flagBits expectedFields expectedSides =
+      testCase label $ do
+        originalBytes <- ByteString.readFile fixturePath
+        let flippedBytes = setFlagBits flagBits originalBytes
+        case parseXDelta1 (PatchFileContents flippedBytes) of
+          Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+          Right (Parsed patch _) -> do
+            assertEqual "(xdelta1FromAtDeltaTime, xdelta1ToAtDeltaTime) match the flipped bits"
+              expectedFields
+              (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch)
+            case XDelta1.applyXDelta1 patch (InputFileContents ByteString.empty) of
+              Left (XDelta1InputPreCompressionUnsupported sides) ->
+                assertEqual "apply refuses with the expected XDelta1GzipStreamInputs"
+                  expectedSides sides
+              Left other -> assertFailure
+                ("expected XDelta1InputPreCompressionUnsupported, got: " ++ renderSlapError other)
+              Right _ -> assertFailure
+                "expected apply refusal, got successful apply"
+
+    -- | OR @bits@ into byte 11 of the patch (the LSB of the BE flags
+    -- word at offset 8). Existing bits — @FLAG_NO_VERIFY@ /
+    -- @FLAG_PATCH_COMPRESSED@ — are preserved.
+    setFlagBits :: Word8 -> ByteString -> ByteString
+    setFlagBits bits bytes = ByteString.concat
+      [ ByteString.take 11 bytes
+      , ByteString.singleton (ByteString.index bytes 11 .|. bits)
       , ByteString.drop 12 bytes
       ]
 

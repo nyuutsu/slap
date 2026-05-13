@@ -28,9 +28,12 @@ import Slap.XDelta1.Types
     , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
+    , XDelta1FileAtDeltaTime(..)
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
     , xdelta1FlagNoVerify
+    , xdelta1FlagFromCompressed
+    , xdelta1FlagToCompressed
     , xdelta1FlagPatchCompressed
     )
 import Slap.Binary (getWord32BE)
@@ -122,13 +125,32 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
-      parseControl noVerifyFlag
-                   compressionPosture
-                   (XDelta1ControlSegment decompressedControl)
-                   (XDelta1DataSegment    decompressedData)
-                   (XDelta1FromName       fromName)
-                   (XDelta1ToName         toName)
+      Parsed patch warnings <-
+        parseControl noVerifyFlag
+                     compressionPosture
+                     (XDelta1ControlSegment decompressedControl)
+                     (XDelta1DataSegment    decompressedData)
+                     (XDelta1FromName       fromName)
+                     (XDelta1ToName         toName)
+      Right (Parsed (recordInputPreCompression patch) warnings)
   where
+    -- | Bits 1 and 2 of the flags word record whether the canonical
+    -- tool transparently decompressed gzip-magic input files at
+    -- delta time. They're header-derived, not control-derived, so
+    -- 'parseControl' (which is scoped to the control segment) is
+    -- not the right home for them — we set them on the patch after
+    -- the control parse returns.
+    recordInputPreCompression patch = patch
+      { xdelta1FromAtDeltaTime = fromAtDeltaTime
+      , xdelta1ToAtDeltaTime   = toAtDeltaTime
+      }
+    fromAtDeltaTime = if flags .&. xdelta1FlagFromCompressed /= 0
+                        then FileWasGzipStream
+                        else FileWasRawBytes
+    toAtDeltaTime   = if flags .&. xdelta1FlagToCompressed /= 0
+                        then FileWasGzipStream
+                        else FileWasRawBytes
+
     totalLength = ByteString.length input
 
     -- Header: 6 x uint32 BE at offset 8
@@ -233,10 +255,23 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
           sources = applyPostureToSources verificationPosture sourcePair
       translatedInstructions <- traverse translateInstruction parsedInstrs
       let fixedInstructions = fixSequentialOffsets sources translatedInstructions
-          patch = XDelta1Patch fromNameBytes toNameBytes
-                               verificationPosture compressionPosture
-                               targetLength sources
-                               fixedInstructions dataBytes
+          patch = XDelta1Patch
+            { xdelta1FromName         = fromNameBytes
+            , xdelta1ToName           = toNameBytes
+            , xdelta1Verification     = verificationPosture
+            , xdelta1PatchCompression = compressionPosture
+              -- 'parseControl' is scoped to the control segment;
+              -- bits 1/2 of the header flags word are not in scope
+              -- here. 'parseVersion1Point1' overrides both fields
+              -- after the parse returns. Tests that drive
+              -- 'parseControl' directly see the defaults.
+            , xdelta1FromAtDeltaTime  = FileWasRawBytes
+            , xdelta1ToAtDeltaTime    = FileWasRawBytes
+            , xdelta1TargetLength     = targetLength
+            , xdelta1Sources          = sources
+            , xdelta1Instructions     = fixedInstructions
+            , xdelta1DataSegment      = dataBytes
+            }
           postureWarnings = case verificationPosture of
             VerifyAgainstStoredMD5s _      -> []
             CreatorOptedOutOfVerification  -> [VerificationOptedOutByCreator LabelXDelta1]

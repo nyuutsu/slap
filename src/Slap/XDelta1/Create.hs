@@ -52,8 +52,11 @@ import Slap.XDelta1.Types
     , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
+    , XDelta1FileAtDeltaTime(..)
     , xdelta1EmptyInputMD5Sentinel
     , xdelta1FlagNoVerify
+    , xdelta1FlagFromCompressed
+    , xdelta1FlagToCompressed
     , xdelta1FlagPatchCompressed
     )
 import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
@@ -124,6 +127,12 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
   , xdelta1ToName           = "target"
   , xdelta1Verification     = verificationPosture
   , xdelta1PatchCompression = compression
+    -- Slap doesn't detect gzip-magic on inputs at create time, so
+    -- both inputs are recorded as raw bytes. The encoder still
+    -- handles either case because slap convert round-trips parsed
+    -- xdelta1 patches that may have these bits set.
+  , xdelta1FromAtDeltaTime  = FileWasRawBytes
+  , xdelta1ToAtDeltaTime    = FileWasRawBytes
   , xdelta1TargetLength     = byteFileSize targetBytes
   , xdelta1Sources          = XDelta1Sources
       { xdelta1DataSource = XDelta1Source
@@ -204,15 +213,23 @@ encodeXDelta1 patch = ByteString.concat
     toNameLength   = ByteString.length (xdelta1ToName patch)
 
     -- Flags word: @FLAG_NO_VERIFY@ (bit 0) tracks the patch's
-    -- verification posture; @FLAG_PATCH_COMPRESSED@ (bit 3) tracks
-    -- the patch's compression posture. Bits 1 and 2 (input pre-
-    -- compression — FROM_COMPRESSED / TO_COMPRESSED) stay clear:
-    -- slap doesn't declare pre-compressed inputs.
-    flagsWord = noVerifyBit .|. compressionBit
+    -- verification posture; @FLAG_FROM_COMPRESSED@ (bit 1) and
+    -- @FLAG_TO_COMPRESSED@ (bit 2) track whether the from- or
+    -- to-file was a gzip stream at delta time (round-trip honest —
+    -- slap doesn't emit these bits from create, but preserves
+    -- them from parsed patches under convert); @FLAG_PATCH_COMPRESSED@
+    -- (bit 3) tracks the patch's compression posture.
+    flagsWord = noVerifyBit .|. fromCompressedBit .|. toCompressedBit .|. compressionBit
       where
         noVerifyBit = case xdelta1Verification patch of
           VerifyAgainstStoredMD5s _     -> 0
           CreatorOptedOutOfVerification -> xdelta1FlagNoVerify
+        fromCompressedBit = case xdelta1FromAtDeltaTime patch of
+          FileWasRawBytes   -> 0
+          FileWasGzipStream -> xdelta1FlagFromCompressed
+        toCompressedBit = case xdelta1ToAtDeltaTime patch of
+          FileWasRawBytes   -> 0
+          FileWasGzipStream -> xdelta1FlagToCompressed
         compressionBit = case xdelta1PatchCompression patch of
           UncompressedPatch -> 0
           CompressedPatch   -> xdelta1FlagPatchCompressed

@@ -10,10 +10,13 @@ module Slap.XDelta1.Types
   , XDelta1SourceWireKind(..)
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
+  , XDelta1FileAtDeltaTime(..)
     -- * Named constants
   , xdelta1TrailerSize
   , xdelta1EmptyInputMD5Sentinel
   , xdelta1FlagNoVerify
+  , xdelta1FlagFromCompressed
+  , xdelta1FlagToCompressed
   , xdelta1FlagPatchCompressed
   ) where
 
@@ -43,6 +46,8 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1ToName           :: ByteString
   , xdelta1Verification     :: XDelta1VerificationPosture
   , xdelta1PatchCompression :: XDelta1PatchCompression
+  , xdelta1FromAtDeltaTime  :: XDelta1FileAtDeltaTime
+  , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
   , xdelta1Sources          :: XDelta1Sources
   , xdelta1Instructions     :: [XDelta1Instruction]
@@ -118,6 +123,21 @@ data XDelta1PatchCompression
   | UncompressedPatch
   deriving (Show, Eq)
 
+-- | Whether one of the two files involved in delta computation was
+-- a gzip stream at the time the patch was created. Canonical xdelta
+-- detects gzip-magic input and transparently decompresses it before
+-- computing the delta; the matching flag bit
+-- ('xdelta1FlagFromCompressed' bit 1, 'xdelta1FlagToCompressed'
+-- bit 2) tells the apply tool to do the inverse transparency on
+-- its side. Slap doesn't implement that transparency today; apply
+-- refuses with 'Slap.Error.XDelta1InputPreCompressionUnsupported'
+-- when either side is 'FileWasGzipStream', rather than silently
+-- producing wrong output against the user's literal source bytes.
+data XDelta1FileAtDeltaTime
+  = FileWasRawBytes
+  | FileWasGzipStream
+  deriving (Show, Eq)
+
 -- | Which of the patch's two sources an instruction copies from.
 -- The wire format encodes this as an integer index (0 for the data
 -- source, 1 for the file source); the parser translates the wire
@@ -158,6 +178,20 @@ xdelta1EmptyInputMD5Sentinel = MD5Hash
 -- what canonical xdelta's @--noverify@ writes).
 xdelta1FlagNoVerify :: Word32
 xdelta1FlagNoVerify = 1
+
+-- | Bit 1 of the xdelta1 header's flags word. Set when the from-
+-- file was detected as a gzip stream at delta time by the canonical
+-- tool, which decompressed it transparently before computing the
+-- delta (and expects the apply tool to do the same on its side).
+xdelta1FlagFromCompressed :: Word32
+xdelta1FlagFromCompressed = 2
+
+-- | Bit 2 of the xdelta1 header's flags word. Set when the to-
+-- file was detected as a gzip stream at delta time by the canonical
+-- tool, which decompressed it transparently before computing the
+-- delta (and expects the apply tool to re-compress the output).
+xdelta1FlagToCompressed :: Word32
+xdelta1FlagToCompressed = 4
 
 -- | Bit 3 of the xdelta1 header's flags word. Set when the patch's
 -- data and control segments are gzip-deflated in the wire bytes

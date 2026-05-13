@@ -10,6 +10,7 @@ module Slap.Error
   , BSDiffSection(..)
   , DecompressionCause(..)
   , XDelta1DiffCause(..)
+  , XDelta1GzipStreamInputs(..)
   , CompressionAlgorithm(..)
   , decompressionAlgorithm
   , compressionAlgorithmName
@@ -231,6 +232,17 @@ newtype DecompressionCause = DecompressionCause { unDecompressionCause :: String
 newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: String }
   deriving (Show, Eq)
 
+-- | Which input file(s) the patch expected to be gzip streams at
+-- apply time. Carried by 'XDelta1InputPreCompressionUnsupported' so
+-- the renderer can name the affected side(s) precisely without
+-- recomputing them from raw flag bits. The "neither" case is not
+-- representable — that's the success path, not a failure shape.
+data XDelta1GzipStreamInputs
+  = OnlyFromFileWasGzipStream
+  | OnlyToFileWasGzipStream
+  | BothFilesWereGzipStreams
+  deriving (Show, Eq)
+
 -- | The compression algorithms slap knows about.  Closed and
 -- complete: the four currently in use plus the three the VCDIFF
 -- spec at @docs/rfc-vcdiff/spec.md:108-110@ already names (DJW,
@@ -346,6 +358,16 @@ data SlapError
   -- dispatch on a total two-arm pattern. The 'Int64' is the
   -- offending wire-level index.
   | XDelta1UnknownInstructionTarget !Int64
+
+  -- | An xdelta1 patch expected one or both input files to be gzip
+  -- streams at apply time (@FLAG_FROM_COMPRESSED@ bit 1 and\/or
+  -- @FLAG_TO_COMPRESSED@ bit 2 set in the wire header). Canonical
+  -- xdelta-1.x transparently decompresses gzip-magic inputs before
+  -- computing the delta and re-compresses after apply; slap doesn't
+  -- implement that transparency, so apply refuses rather than
+  -- silently producing wrong output against the user's literal
+  -- source bytes. The payload names which side(s) are affected.
+  | XDelta1InputPreCompressionUnsupported XDelta1GzipStreamInputs
 
   -- Apply
   | NegativeTargetSize FormatLabel FileSize
@@ -928,6 +950,19 @@ renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   ++ ": instruction references source index " ++ show wireIndex
   ++ "; xdelta1 patches carry exactly two sources, so valid indices are"
   ++ " 0 (data segment) or 1 (file source)"
+
+renderSlapError (XDelta1InputPreCompressionUnsupported sides) =
+  formatLabelName LabelXDelta1
+  ++ ": apply refused — patch expects " ++ describeSides sides
+  ++ " to be a gzip stream at apply time, which slap doesn't currently"
+  ++ " implement (canonical xdelta-1.x decompresses gzip-magic inputs"
+  ++ " transparently before delta and recompresses after apply; this"
+  ++ " patch's FROM_COMPRESSED / TO_COMPRESSED header bits record"
+  ++ " that the original delta did so)"
+  where
+    describeSides OnlyFromFileWasGzipStream = "the source (from) file"
+    describeSides OnlyToFileWasGzipStream   = "the target (to) file"
+    describeSides BothFilesWereGzipStreams  = "both the source (from) and target (to) files"
 
 renderSlapError (NegativeTargetSize label size) =
   formatLabelName label ++ ": negative output size: "
