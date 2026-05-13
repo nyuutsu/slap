@@ -147,17 +147,16 @@ encodeIPSPatch variant records optionalTruncation =
 -- with a trailing JSON metadata blob). EBP has no IPS32 analogue,
 -- so the variant is fixed.
 --
--- The truncation marker is intentionally not supported here. The
--- IPS_AUDIT brief found no reference implementation that emits
--- truncation-then-JSON inside an EBP patch, and 'Slap.IPS.Parse'
--- only accepts EBP trailers that begin with the JSON opening byte
--- @{@. Emitting a truncation marker before the JSON would produce
--- bytes neither this parser nor any third-party EBP parser would
--- round-trip cleanly. The contract layer in
--- 'Slap.Convert.canConvert' refuses conversions that would land
--- truncation here, so the absence of a truncation parameter is
--- enforced upstream rather than silently dropped at this call
--- site.
+-- The truncation marker is intentionally not supported here. No
+-- known EBP reference implementation emits truncation-then-JSON,
+-- and 'Slap.IPS.Parse' only accepts EBP trailers that begin with
+-- the JSON opening byte @{@. Emitting a truncation marker before
+-- the JSON would produce bytes neither this parser nor any
+-- third-party EBP parser would round-trip cleanly. The contract
+-- layer in 'Slap.Convert.canConvert' refuses conversions that
+-- would land truncation here, so the absence of a truncation
+-- parameter is enforced upstream rather than silently dropped at
+-- this call site.
 encodeEBPPatch
   :: [EncodedHunk]
   -> EBPMetadata
