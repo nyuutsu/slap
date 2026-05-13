@@ -9,6 +9,7 @@ mod bps_diff;
 mod compress;
 mod crc32;
 mod suffix_sort;
+mod xdelta1_diff;
 
 // ── Boundary helpers ──────────────────────────────────────────────────
 
@@ -156,6 +157,95 @@ pub unsafe extern "C" fn rusty_bps_diff(
     let action_stream = bps_diff::bps_diff(source, target);
     unsafe { surface_buffer_to_caller(action_stream, output_address_pointer, output_length_pointer) };
     0
+}
+
+// ── xdelta1 diff FFI ──────────────────────────────────────────────────
+
+/// Compute an xdelta1 diff. Returns 0 on success (all six output
+/// buffers + two flag bytes populated; `error_cause` null). Returns
+/// -1 on failure (all output buffers null; `error_cause` carries the
+/// cause string). All caller-owned buffers must be freed via
+/// [`rusty_free`].
+///
+/// The instruction stream is returned as three parallel homogeneous
+/// arrays — one byte per `instruction_target` (0 = data source, 1 =
+/// file source); one `u64` LE per `instruction_source_offset`; one
+/// `u64` LE per `instruction_length`. The three arrays share length
+/// N (= the instruction count); the byte counts on the offset and
+/// length buffers are 8N.
+///
+/// # Safety
+/// All buffer pointers follow rusty-slap's existing convention (see
+/// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_xdelta1_diff(
+    source_address:                              *const u8,
+    source_length:                               usize,
+    target_address:                              *const u8,
+    target_length:                               usize,
+    instruction_targets_address_pointer:         *mut *mut u8,
+    instruction_targets_length_pointer:          *mut usize,
+    instruction_source_offsets_address_pointer:  *mut *mut u8,
+    instruction_source_offsets_length_pointer:   *mut usize,
+    instruction_lengths_address_pointer:         *mut *mut u8,
+    instruction_lengths_length_pointer:          *mut usize,
+    data_segment_address_pointer:                *mut *mut u8,
+    data_segment_length_pointer:                 *mut usize,
+    data_source_is_sequential_pointer:           *mut u8,
+    file_source_is_sequential_pointer:           *mut u8,
+    error_cause_address_pointer:                 *mut *mut u8,
+    error_cause_length_pointer:                  *mut usize,
+) -> i32 {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    match xdelta1_diff::xdelta1_diff(source, target) {
+        Ok(diff) => {
+            let (targets, source_offsets, lengths) = split_to_parallel_arrays(&diff.instructions);
+            unsafe {
+                surface_buffer_to_caller(targets,           instruction_targets_address_pointer,        instruction_targets_length_pointer);
+                surface_buffer_to_caller(source_offsets,    instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
+                surface_buffer_to_caller(lengths,           instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
+                surface_buffer_to_caller(diff.data_segment, data_segment_address_pointer,               data_segment_length_pointer);
+                *data_source_is_sequential_pointer = u8::from(diff.data_source_is_sequential);
+                *file_source_is_sequential_pointer = u8::from(diff.file_source_is_sequential);
+                surface_buffer_to_caller(Vec::new(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            0
+        }
+        Err(cause_message) => {
+            unsafe {
+                surface_buffer_to_caller(Vec::new(), instruction_targets_address_pointer,        instruction_targets_length_pointer);
+                surface_buffer_to_caller(Vec::new(), instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
+                surface_buffer_to_caller(Vec::new(), instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
+                surface_buffer_to_caller(Vec::new(), data_segment_address_pointer,               data_segment_length_pointer);
+                *data_source_is_sequential_pointer = 0;
+                *file_source_is_sequential_pointer = 0;
+                surface_buffer_to_caller(cause_message.into_bytes(), error_cause_address_pointer, error_cause_length_pointer);
+            }
+            -1
+        }
+    }
+}
+
+/// Project an [`xdelta1_diff::XDelta1DiffOutput`]'s instruction vec
+/// into three parallel homogeneous byte buffers — one per field. The
+/// inverse split happens on the Haskell side in `Slap.XDelta1.FFI`.
+fn split_to_parallel_arrays(
+    instructions: &[xdelta1_diff::Instruction],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let instruction_count    = instructions.len();
+    let mut targets          = Vec::with_capacity(instruction_count);
+    let mut source_offsets   = Vec::with_capacity(instruction_count * 8);
+    let mut lengths          = Vec::with_capacity(instruction_count * 8);
+    for instruction in instructions {
+        targets.push(match instruction.target {
+            xdelta1_diff::InstructionTarget::DataSource => 0,
+            xdelta1_diff::InstructionTarget::FileSource => 1,
+        });
+        source_offsets.extend_from_slice(&instruction.source_offset.to_le_bytes());
+        lengths.extend_from_slice(&instruction.length.to_le_bytes());
+    }
+    (targets, source_offsets, lengths)
 }
 
 // ── Free ──────────────────────────────────────────────────────────────

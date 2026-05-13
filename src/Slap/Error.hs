@@ -9,6 +9,7 @@ module Slap.Error
   , DecompressionFailure(..)
   , BSDiffSection(..)
   , DecompressionCause(..)
+  , XDelta1DiffCause(..)
   , CompressionAlgorithm(..)
   , decompressionAlgorithm
   , compressionAlgorithmName
@@ -221,6 +222,15 @@ data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
 newtype DecompressionCause = DecompressionCause { unDecompressionCause :: String }
   deriving (Show, Eq)
 
+-- | The cause of an xdelta1 differ failure, carried verbatim from
+-- the Rust side. Mirror of 'DecompressionCause' — slap relays the
+-- underlying diagnostic rather than re-classifying. Lives at this
+-- seam so consumers of 'SlapError' don't have to know about FFI;
+-- raised by "Slap.XDelta1.FFI" and lifted into 'SlapError' via
+-- 'XDelta1DiffFailed'.
+newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: String }
+  deriving (Show, Eq)
+
 -- | The compression algorithms slap knows about.  Closed and
 -- complete: the four currently in use plus the three the VCDIFF
 -- spec at @docs/rfc-vcdiff/spec.md:108-110@ already names (DJW,
@@ -251,6 +261,14 @@ data SlapError
   | TruncatedRecord FormatLabel Int Length Length
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
+
+  -- | The xdelta1 differ ('Slap.XDelta1.FFI.rustyXDelta1Diff')
+  -- refused an input. Carries the underlying Rust-side cause
+  -- verbatim — at minimum, allocation refusals when building the
+  -- source index on memory-constrained hosts; also catches internal-
+  -- invariant violations (cumulative emit length \/= target length
+  -- at end, etc.) the differ surfaces rather than panicking.
+  | XDelta1DiffFailed XDelta1DiffCause
 
   -- | A parsed record's effective end position lies beyond the
   -- variant's wire-format spec ceiling. The 'ActionIndex' names the
@@ -849,6 +867,9 @@ renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
 
 renderSlapError (DecompressionFailed failure) =
   renderDecompressionFailure failure
+
+renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
+  "xdelta1 differ failed: " ++ causeMessage
 
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
   formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)

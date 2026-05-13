@@ -29,6 +29,7 @@ library slap-internal
     , Slap.BPS.Apply
     , Slap.BPS.Create
     , Slap.BPS.Describe
+    , Slap.BPS.FFI
     , Slap.BPS.Parse
     , Slap.BPS.Types
     , Slap.Compression.Stream
@@ -112,6 +113,7 @@ library slap-internal
     , Slap.XDelta1.Apply
     , Slap.XDelta1.Create
     , Slap.XDelta1.Describe
+    , Slap.XDelta1.FFI
     , Slap.XDelta1.Parse
     , Slap.XDelta1.Types
     , Slap.PPF1.Apply

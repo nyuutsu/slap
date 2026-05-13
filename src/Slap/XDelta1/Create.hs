@@ -7,22 +7,12 @@
 -- 'Slap.XDelta1.Parse.parseVersion1Point1': given an 'XDelta1Patch'
 -- value, it produces wire bytes that 'Slap.XDelta1.Parse.parseXDelta1'
 -- reads back to an equal patch (modulo gzip compression, which is
--- wire-optional). The 'createXDelta1' entry point chains a
--- (currently placeholder) differ that builds the patch value from
--- source and target bytes onto the encoder.
---
--- == Placeholder differ
---
--- The differ currently does the minimum work: the entire target
--- file becomes the data segment, and a single instruction tells
--- apply to copy the data segment into the output in one span.
--- The file source's MD5 + length are written to the patch's
--- control structure (canonical 'XDelta1DataAndFile' shape) but
--- the instruction stream never references it. The resulting
--- patch is wire-valid and applicable, just inefficient (roughly
--- target-sized). A future commit replaces the differ body with a
--- real algorithm that emits instructions referencing the file
--- source; the encoder below doesn't change.
+-- wire-optional). 'createXDelta1' chains the rsync-style differ in
+-- "Slap.XDelta1.FFI" (kernel in @rusty-slap\/src\/xdelta1_diff.rs@)
+-- onto the encoder: the differ owns the rolling-checksum index over
+-- source, the byte-by-byte target walk, and the per-source
+-- sequential-mode tracking; this module owns the MD5s, the
+-- 'VerificationInclusion' wiring, and 'XDelta1Patch' assembly.
 --
 -- == @FLAG_PATCH_COMPRESSED@
 --
@@ -48,6 +38,10 @@ module Slap.XDelta1.Create
   ) where
 
 import Slap.MetadataInclusion (VerificationInclusion(..))
+import Slap.XDelta1.FFI
+    ( XDelta1DiffOutput(..)
+    , rustyXDelta1Diff
+    )
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Sources(..)
     , XDelta1Instruction(..), XDelta1InstructionTarget(..)
@@ -74,12 +68,11 @@ import Data.Word (Word8, Word32, Word64)
 -- Top-level entry
 ----------------------------------------------------------------------------
 
--- | Create an xdelta1 patch from source and target bytes. Today
--- the differ is a placeholder: the entire target is stored inline
--- in the data segment, and a single instruction reconstructs the
--- output from it. The file source's MD5 and length are recorded
--- when the user opted in to verification; the file source bytes
--- aren't referenced by instructions until the real differ lands.
+-- | Create an xdelta1 patch from source and target bytes. The differ
+-- ('Slap.XDelta1.FFI.rustyXDelta1Diff') produces the instruction
+-- stream and the data segment; this function wraps them in an
+-- 'XDelta1Patch' value (computing MD5s and choosing the offset mode
+-- per source) and runs the wire encoder.
 --
 -- The 'VerificationInclusion' choice (set by @slap create
 -- --no-verify@ at the porcelain) gates two paired wire effects:
@@ -91,61 +84,65 @@ import Data.Word (Word8, Word32, Word64)
 -- the bit is clear.
 createXDelta1 :: VerificationInclusion -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta1 inclusion (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
-  Right (CreateResult (PatchFileContents wireBytes) [])
-  where
-    patch     = buildPlaceholderPatch inclusion sourceBytes targetBytes
-    wireBytes = encodeXDelta1 patch
+createXDelta1 inclusion inputContents outputContents =
+  case rustyXDelta1Diff inputContents outputContents of
+    Left slapError -> Left slapError
+    Right diff ->
+      let sourceBytes = unInputFileContents inputContents
+          targetBytes = unOutputFileContents outputContents
+          patch       = assemblePatch inclusion sourceBytes targetBytes diff
+          wireBytes   = encodeXDelta1 patch
+      in  Right (CreateResult (PatchFileContents wireBytes) [])
 
 ----------------------------------------------------------------------------
--- Placeholder differ
+-- Differ output → XDelta1Patch
 ----------------------------------------------------------------------------
 
--- | Construct an 'XDelta1Patch' value from source and target bytes
--- using the placeholder differ: the data segment IS the target,
--- one instruction copies it.
-buildPlaceholderPatch :: VerificationInclusion -> ByteString -> ByteString -> XDelta1Patch
-buildPlaceholderPatch inclusion sourceBytes targetBytes = XDelta1Patch
+-- | Wrap a 'XDelta1DiffOutput' (instructions + data segment + the
+-- per-source sequential-mode flags) into an 'XDelta1Patch' ready
+-- for the wire encoder. The MD5s and 'VerificationInclusion' wiring
+-- live here; the differ doesn't know about them.
+assemblePatch
+  :: VerificationInclusion -> ByteString -> ByteString
+  -> XDelta1DiffOutput -> XDelta1Patch
+assemblePatch inclusion sourceBytes targetBytes diff = XDelta1Patch
   { xdelta1FromName     = "source"
   , xdelta1ToName       = "target"
-  , xdelta1Verification = posture
-  , xdelta1TargetLength = targetFileSize
+  , xdelta1Verification = verificationPosture
+  , xdelta1TargetLength = byteFileSize targetBytes
   , xdelta1Sources      = XDelta1Sources
       { xdelta1DataSource = XDelta1Source
           { xdelta1SourceName       = "(patch data)"
           , xdelta1SourceMD5        = perSourceMD5 dataSegmentMD5
-          , xdelta1SourceLength     = targetFileSize
-          , xdelta1SourceOffsetMode = AbsoluteOffsets
+          , xdelta1SourceLength     = byteFileSize dataSegmentBytes
+          , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffDataSourceIsSequential diff)
           }
       , xdelta1FileSource = XDelta1Source
           { xdelta1SourceName       = "source"
           , xdelta1SourceMD5        = perSourceMD5 sourceMD5
           , xdelta1SourceLength     = byteFileSize sourceBytes
-          , xdelta1SourceOffsetMode = AbsoluteOffsets
+          , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffFileSourceIsSequential diff)
           }
       }
-  , xdelta1Instructions = [placeholderInstruction]
-  , xdelta1DataSegment  = targetBytes
+  , xdelta1Instructions = xdelta1DiffInstructions diff
+  , xdelta1DataSegment  = dataSegmentBytes
   }
   where
-    targetFileSize = byteFileSize targetBytes
-    targetMD5      = md5 targetBytes
-    dataSegmentMD5 = targetMD5
-    sourceMD5      = md5 sourceBytes
+    dataSegmentBytes = xdelta1DiffDataSegment diff
+    targetMD5        = md5 targetBytes
+    sourceMD5        = md5 sourceBytes
+    dataSegmentMD5   = md5 dataSegmentBytes
 
-    posture = case inclusion of
+    verificationPosture = case inclusion of
       IncludeVerification -> VerifyAgainstStoredMD5s targetMD5
       OmitVerification    -> CreatorOptedOutOfVerification
 
-    perSourceMD5 computed = case inclusion of
-      IncludeVerification -> Just computed
+    perSourceMD5 computedMD5 = case inclusion of
+      IncludeVerification -> Just computedMD5
       OmitVerification    -> Nothing
 
-    placeholderInstruction = XDelta1Instruction
-      { xdelta1InstructionTarget = FromDataSource
-      , xdelta1InstructionOffset = Offset 0
-      , xdelta1InstructionLength = targetFileSize
-      }
+    offsetMode True  = SequentialOffsets
+    offsetMode False = AbsoluteOffsets
 
 ----------------------------------------------------------------------------
 -- Wire encoder
@@ -186,7 +183,8 @@ encodeXDelta1 patch = ByteString.concat
 
     -- @FLAG_NO_VERIFY@ tracks the patch's verification posture;
     -- the other three flag bits (1/2/3 — input pre-compression and
-    -- gzip-of-patch) stay clear under the placeholder differ.
+    -- gzip-of-patch) stay clear: slap doesn't deflate or declare
+    -- the inputs were pre-compressed.
     flagsWord = case xdelta1Verification patch of
       VerifyAgainstStoredMD5s _     -> 0
       CreatorOptedOutOfVerification -> xdelta1FlagNoVerify
