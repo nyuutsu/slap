@@ -66,6 +66,7 @@ import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.XDelta1.Create as XDelta1
+import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import qualified Slap.PMSR.Types as PMSR
 import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload)
 import qualified Slap.PMSR.Create as PMSR
@@ -202,7 +203,9 @@ data CreateFormat
 -- Differential-format consumption is read directly out of 'createPatch'\'s
 -- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob';
 -- 'CreateXDelta1' consumes 'requestedVerificationInclusion' (gates
--- @FLAG_NO_VERIFY@ and the per-source MD5 fields); 'CreateUPS',
+-- @FLAG_NO_VERIFY@ and the per-source MD5 fields) and
+-- 'requestedPatchCompression' (gates @FLAG_PATCH_COMPRESSED@ and
+-- gzip-deflation of the data and control segments); 'CreateUPS',
 -- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
 -- consumes 'requestedTitle'\/'requestedDescription' (name),
 -- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
@@ -216,6 +219,10 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedVersion              :: Maybe String
   , requestedUndoInclusion        :: Maybe UndoInclusion
   , requestedVerificationInclusion :: Maybe VerificationInclusion
+  , requestedPatchCompression     :: Maybe XDelta1PatchCompression
+    -- ^ xdelta1 only: 'Just' 'UncompressedPatch' means the user
+    -- asked for @--no-compress@; absent means \"let the format pick
+    -- its default,\" which for xdelta1 is 'CompressedPatch'.
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
     -- ^ Shared platform type: NINJA1 and NINJA2 define different
@@ -256,6 +263,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedVersion             = Nothing
   , requestedUndoInclusion        = Nothing
   , requestedVerificationInclusion = Nothing
+  , requestedPatchCompression     = Nothing
   , requestedStability           = Nothing
   , requestedRomType             = Nothing
   , requestedImageType           = Nothing
@@ -277,6 +285,7 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedVersion             = requestedVersion cli             <|> requestedVersion source
   , requestedUndoInclusion        = requestedUndoInclusion cli        <|> requestedUndoInclusion source
   , requestedVerificationInclusion = requestedVerificationInclusion cli <|> requestedVerificationInclusion source
+  , requestedPatchCompression     = requestedPatchCompression cli     <|> requestedPatchCompression source
   , requestedStability           = requestedStability cli           <|> requestedStability source
   , requestedRomType             = requestedRomType cli             <|> requestedRomType source
   , requestedImageType           = requestedImageType cli           <|> requestedImageType source
@@ -415,7 +424,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
     , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
-  CreateXDelta1 -> Set.singleton MetadataVerificationInclusion
+  CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -427,6 +436,7 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataVersion              | isJust (requestedVersion              meta)]
   , [MetadataUndoInclusion        | isJust (requestedUndoInclusion        meta)]
   , [MetadataVerificationInclusion | isJust (requestedVerificationInclusion meta)]
+  , [MetadataPatchCompression     | isJust (requestedPatchCompression     meta)]
   , [MetadataStability           | isJust (requestedStability           meta)]
   , [MetadataRomType             | isJust (requestedRomType             meta)]
   , [MetadataImageType           | isJust (requestedImageType           meta)]
@@ -1077,9 +1087,10 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
-  CreateXDelta1 -> XDelta1.createXDelta1 verificationChoice source target
+  CreateXDelta1 -> XDelta1.createXDelta1 verificationChoice compressionChoice source target
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
+      compressionChoice  = fromMaybe CompressedPatch     (requestedPatchCompression     meta)
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,

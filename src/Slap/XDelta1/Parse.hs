@@ -27,8 +27,11 @@ import Slap.XDelta1.Types
     , XDelta1OffsetMode(..)
     , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
+    , XDelta1PatchCompression(..)
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
+    , xdelta1FlagNoVerify
+    , xdelta1FlagPatchCompressed
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
@@ -43,7 +46,7 @@ import Slap.Compression.Stream (gzipInflate)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.Bits ((.&.), shiftR, testBit)
+import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
 
 ----------------------------------------------------------------------------
@@ -120,6 +123,7 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
       parseControl noVerifyFlag
+                   compressionPosture
                    (XDelta1ControlSegment decompressedControl)
                    (XDelta1DataSegment    decompressedData)
                    (XDelta1FromName       fromName)
@@ -142,8 +146,11 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
     trailingMagic = ByteString.take 8 (ByteString.drop (totalLength - 8) input)
 
     -- Decompress segments if FLAG_PATCH_COMPRESSED (bit 3)
-    compressed   = testBit flags 3
-    noVerifyFlag = if testBit flags 0 then NoVerifyFlagSet else NoVerifyFlagClear
+    compressed   = flags .&. xdelta1FlagPatchCompressed /= 0
+    compressionPosture = if compressed then CompressedPatch else UncompressedPatch
+    noVerifyFlag = if flags .&. xdelta1FlagNoVerify /= 0
+                     then NoVerifyFlagSet
+                     else NoVerifyFlagClear
     dataSegmentRaw = ByteString.take (controlOffset - headerOffset) (ByteString.drop headerOffset input)
     controlSegmentRaw = ByteString.take (trailerOffset - controlOffset) (ByteString.drop controlOffset input)
 
@@ -205,12 +212,13 @@ data ParsedInstruction = ParsedInstruction
 -- 'XDelta1NoVerifyWithDivergentSentinel' curio when the flag is set
 -- but the stored MD5 slots do not match 'xdelta1EmptyInputMD5Sentinel'.
 parseControl :: XDelta1NoVerifyFlag
+             -> XDelta1PatchCompression
              -> XDelta1ControlSegment
              -> XDelta1DataSegment
              -> XDelta1FromName
              -> XDelta1ToName
              -> Either SlapError (Parsed XDelta1Patch)
-parseControl noVerifyFlag controlSegment dataSegment fromName toName
+parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName toName
   | ByteString.length controlBytes < 28 =
       Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
   | otherwise = do
@@ -226,7 +234,8 @@ parseControl noVerifyFlag controlSegment dataSegment fromName toName
       translatedInstructions <- traverse translateInstruction parsedInstrs
       let fixedInstructions = fixSequentialOffsets sources translatedInstructions
           patch = XDelta1Patch fromNameBytes toNameBytes
-                               verificationPosture targetLength sources
+                               verificationPosture compressionPosture
+                               targetLength sources
                                fixedInstructions dataBytes
           postureWarnings = case verificationPosture of
             VerifyAgainstStoredMD5s _      -> []

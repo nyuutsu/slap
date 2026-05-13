@@ -6,37 +6,40 @@
 -- 'Slap.XDelta1.Parse.parseControl' /
 -- 'Slap.XDelta1.Parse.parseVersion1Point1': given an 'XDelta1Patch'
 -- value, it produces wire bytes that 'Slap.XDelta1.Parse.parseXDelta1'
--- reads back to an equal patch (modulo gzip compression, which is
--- wire-optional). 'createXDelta1' chains the rsync-style differ in
--- "Slap.XDelta1.FFI" (kernel in @rusty-slap\/src\/xdelta1_diff.rs@)
--- onto the encoder: the differ owns the rolling-checksum index over
--- source, the byte-by-byte target walk, and the per-source
--- sequential-mode tracking; this module owns the MD5s, the
--- 'VerificationInclusion' wiring, and 'XDelta1Patch' assembly.
+-- reads back to an equal patch. 'createXDelta1' chains the rsync-
+-- style differ in "Slap.XDelta1.FFI" (kernel in
+-- @rusty-slap\/src\/xdelta1_diff.rs@) onto the encoder: the differ
+-- owns the rolling-checksum index over source, the byte-by-byte
+-- target walk, and the per-source sequential-mode tracking; this
+-- module owns the MD5s, the 'VerificationInclusion' wiring, the
+-- 'XDelta1PatchCompression' wiring, and 'XDelta1Patch' assembly.
 --
 -- == @FLAG_PATCH_COMPRESSED@
 --
--- The flag bit stays clear today. Slap has 'gzipInflate' (Rust
--- FFI) but no 'gzipDeflate'; uncompressed @%XDZ004%@ patches are
--- spec-conformant. A future commit adds 'gzipDeflate' to
--- "Slap.Compression.Stream" and gates the bit on user request.
+-- Gated by 'Slap.XDelta1.Types.XDelta1PatchCompression', threaded
+-- in from the porcelain. Under 'CompressedPatch' (default) the bit
+-- is set and the data and control segments are gzip-deflated
+-- independently before placement. Under 'UncompressedPatch' (set
+-- by @slap create --no-compress@) the bit stays clear and the
+-- segments are emitted raw. Both shapes are spec-conformant;
+-- canonical xdelta-1.x emits compressed by default.
 --
 -- == @FLAG_NO_VERIFY@
 --
--- Gated by 'Slap.Convert.VerificationInclusion', threaded in from
--- the porcelain. Under 'IncludeVerification' (default) the bit
--- stays clear, real MD5s are computed and written for the target,
--- the data source, and the file source. Under 'OmitVerification'
--- (set by @slap create --no-verify@) the bit is set, the patch's
--- verification posture is 'CreatorOptedOutOfVerification', and the
--- sentinel ('xdelta1EmptyInputMD5Sentinel') is written into every
--- MD5 slot — matching what canonical xdelta's @--noverify@
--- produces.
+-- Gated by 'Slap.MetadataInclusion.VerificationInclusion', threaded
+-- in from the porcelain. Under 'IncludeVerification' (default) the
+-- bit stays clear, real MD5s are computed and written for the
+-- target, the data source, and the file source. Under
+-- 'OmitVerification' (set by @slap create --no-verify@) the bit is
+-- set, the patch's verification posture is
+-- 'CreatorOptedOutOfVerification', and the sentinel
+-- ('xdelta1EmptyInputMD5Sentinel') is written into every MD5 slot
+-- — matching what canonical xdelta's @--noverify@ produces.
 module Slap.XDelta1.Create
   ( createXDelta1
-  , xdelta1FlagNoVerify
   ) where
 
+import Slap.Compression.Stream (gzipDeflate)
 import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.XDelta1.FFI
     ( XDelta1DiffOutput(..)
@@ -48,7 +51,10 @@ import Slap.XDelta1.Types
     , XDelta1OffsetMode(..)
     , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
+    , XDelta1PatchCompression(..)
     , xdelta1EmptyInputMD5Sentinel
+    , xdelta1FlagNoVerify
+    , xdelta1FlagPatchCompressed
     )
 import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
@@ -82,15 +88,21 @@ import Data.Word (Word8, Word32, Word64)
 -- 'xdelta1EmptyInputMD5Sentinel'; under 'IncludeVerification' the
 -- posture is 'VerifyAgainstStoredMD5s' with computed hashes and
 -- the bit is clear.
-createXDelta1 :: VerificationInclusion -> InputFileContents -> OutputFileContents
+--
+-- The 'XDelta1PatchCompression' choice (set by @slap create
+-- --no-compress@ at the porcelain) decides whether the data and
+-- control segments are gzip-deflated independently before placement
+-- and whether @FLAG_PATCH_COMPRESSED@ is set.
+createXDelta1 :: VerificationInclusion -> XDelta1PatchCompression
+              -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta1 inclusion inputContents outputContents =
+createXDelta1 inclusion compression inputContents outputContents =
   case xdelta1Diff inputContents outputContents of
     Left slapError -> Left slapError
     Right diff ->
       let sourceBytes = unInputFileContents inputContents
           targetBytes = unOutputFileContents outputContents
-          patch       = assemblePatch inclusion sourceBytes targetBytes diff
+          patch       = assemblePatch inclusion compression sourceBytes targetBytes diff
           wireBytes   = encodeXDelta1 patch
       in  Right (CreateResult (PatchFileContents wireBytes) [])
 
@@ -100,17 +112,20 @@ createXDelta1 inclusion inputContents outputContents =
 
 -- | Wrap a 'XDelta1DiffOutput' (instructions + data segment + the
 -- per-source sequential-mode flags) into an 'XDelta1Patch' ready
--- for the wire encoder. The MD5s and 'VerificationInclusion' wiring
--- live here; the differ doesn't know about them.
+-- for the wire encoder. The MD5s, the 'VerificationInclusion'
+-- wiring, and the 'XDelta1PatchCompression' wiring live here; the
+-- differ doesn't know about them.
 assemblePatch
-  :: VerificationInclusion -> ByteString -> ByteString
+  :: VerificationInclusion -> XDelta1PatchCompression
+  -> ByteString -> ByteString
   -> XDelta1DiffOutput -> XDelta1Patch
-assemblePatch inclusion sourceBytes targetBytes diff = XDelta1Patch
-  { xdelta1FromName     = "source"
-  , xdelta1ToName       = "target"
-  , xdelta1Verification = verificationPosture
-  , xdelta1TargetLength = byteFileSize targetBytes
-  , xdelta1Sources      = XDelta1Sources
+assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
+  { xdelta1FromName         = "source"
+  , xdelta1ToName           = "target"
+  , xdelta1Verification     = verificationPosture
+  , xdelta1PatchCompression = compression
+  , xdelta1TargetLength     = byteFileSize targetBytes
+  , xdelta1Sources          = XDelta1Sources
       { xdelta1DataSource = XDelta1Source
           { xdelta1SourceName       = "(patch data)"
           , xdelta1SourceMD5        = perSourceMD5 dataSegmentMD5
@@ -124,8 +139,8 @@ assemblePatch inclusion sourceBytes targetBytes diff = XDelta1Patch
           , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffFileSourceIsSequential diff)
           }
       }
-  , xdelta1Instructions = xdelta1DiffInstructions diff
-  , xdelta1DataSegment  = dataSegmentBytes
+  , xdelta1Instructions     = xdelta1DiffInstructions diff
+  , xdelta1DataSegment      = dataSegmentBytes
   }
   where
     dataSegmentBytes = xdelta1DiffDataSegment diff
@@ -149,10 +164,11 @@ assemblePatch inclusion sourceBytes targetBytes diff = XDelta1Patch
 ----------------------------------------------------------------------------
 
 -- | Encode an 'XDelta1Patch' value to wire bytes. Mirror image of
--- 'Slap.XDelta1.Parse.parseVersion1Point1' for the
--- 'Slap.XDelta1.Parse.NoVerifyFlagClear' / uncompressed case:
--- produces a @%XDZ004%@ patch that
--- 'Slap.XDelta1.Parse.parseXDelta1' reads back to an equal patch.
+-- 'Slap.XDelta1.Parse.parseVersion1Point1' across the @%XDZ004%@
+-- (xdelta 1.1.x) shape: produces wire bytes that
+-- 'Slap.XDelta1.Parse.parseXDelta1' reads back to an equal patch
+-- under either verification posture and either compression
+-- posture.
 --
 -- Layout:
 --
@@ -161,8 +177,14 @@ assemblePatch inclusion sourceBytes targetBytes diff = XDelta1Patch
 --                           4 reserved zero words)
 --   3. From-name bytes
 --   4. To-name bytes
---   5. Data segment         (uncompressed, no @FLAG_PATCH_COMPRESSED@)
---   6. Control segment      (EDSIO-serialized @XdeltaControl@)
+--   5. Data segment         (compressed when the patch's
+--                           'xdelta1PatchCompression' is
+--                           'CompressedPatch'; gated on the
+--                           @FLAG_PATCH_COMPRESSED@ bit)
+--   6. Control segment      (EDSIO-serialized @XdeltaControl@,
+--                           same compression gating as the data
+--                           segment — each segment is its own
+--                           gzip stream)
 --   7. Control offset:      uint32 BE (file offset where segment 6 begins)
 --   8. Trailing magic:      @%XDZ004%@ (8 bytes)
 encodeXDelta1 :: XDelta1Patch -> ByteString
@@ -181,13 +203,19 @@ encodeXDelta1 patch = ByteString.concat
     fromNameLength = ByteString.length (xdelta1FromName patch)
     toNameLength   = ByteString.length (xdelta1ToName patch)
 
-    -- @FLAG_NO_VERIFY@ tracks the patch's verification posture;
-    -- the other three flag bits (1/2/3 — input pre-compression and
-    -- gzip-of-patch) stay clear: slap doesn't deflate or declare
-    -- the inputs were pre-compressed.
-    flagsWord = case xdelta1Verification patch of
-      VerifyAgainstStoredMD5s _     -> 0
-      CreatorOptedOutOfVerification -> xdelta1FlagNoVerify
+    -- Flags word: @FLAG_NO_VERIFY@ (bit 0) tracks the patch's
+    -- verification posture; @FLAG_PATCH_COMPRESSED@ (bit 3) tracks
+    -- the patch's compression posture. Bits 1 and 2 (input pre-
+    -- compression — FROM_COMPRESSED / TO_COMPRESSED) stay clear:
+    -- slap doesn't declare pre-compressed inputs.
+    flagsWord = noVerifyBit .|. compressionBit
+      where
+        noVerifyBit = case xdelta1Verification patch of
+          VerifyAgainstStoredMD5s _     -> 0
+          CreatorOptedOutOfVerification -> xdelta1FlagNoVerify
+        compressionBit = case xdelta1PatchCompression patch of
+          UncompressedPatch -> 0
+          CompressedPatch   -> xdelta1FlagPatchCompressed
     nameLengthsWord = fromIntegral (fromNameLength `shiftL` 16 .|. toNameLength) :: Word32
     reservedWord    = 0 :: Word32
     headerBytes = ByteString.concat
@@ -199,8 +227,17 @@ encodeXDelta1 patch = ByteString.concat
       , word32BEBytes reservedWord
       ]
 
-    dataSegment    = xdelta1DataSegment patch
-    controlSegment = encodeControl patch
+    -- Each segment is gzip-deflated independently under
+    -- 'CompressedPatch' (the parser inflates each independently);
+    -- under 'UncompressedPatch' they're emitted raw. The
+    -- 'controlOffset' arithmetic reads 'ByteString.length
+    -- dataSegment' below, so it's automatically correct under
+    -- either posture.
+    applyCompression bytes = case xdelta1PatchCompression patch of
+      CompressedPatch   -> gzipDeflate bytes
+      UncompressedPatch -> bytes
+    dataSegment    = applyCompression (xdelta1DataSegment patch)
+    controlSegment = applyCompression (encodeControl patch)
 
     -- File offset where the control segment begins.
     controlOffset :: Word32
@@ -263,12 +300,6 @@ encodeInstruction instruction =
   putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))
   <> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
-
--- | Wire flag-bit value for @FLAG_NO_VERIFY@ (bit 0 of the
--- xdelta1 header's first 32-bit flag word). Set when the patch
--- declares 'CreatorOptedOutOfVerification'.
-xdelta1FlagNoVerify :: Word32
-xdelta1FlagNoVerify = 1
 
 -- | Wire byte for the source-kind slot of an EDSIO source record.
 -- Inverse of the parser's @sourceKindByte \/= 0@ test

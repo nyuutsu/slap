@@ -18,17 +18,16 @@ module Slap.XDelta1.FFI
 import Data.Bits ((.|.), shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8, Word64)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import Slap.Display.Primitives (padHex)
 import Slap.Error (SlapError(..), XDelta1DiffCause(..))
-import Slap.FFI (readByteString, readString)
+import Slap.FFI (readByteString, readString, withByteString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..))
 import Slap.XDelta1.Types
@@ -69,8 +68,8 @@ xdelta1Diff
   -> Either SlapError XDelta1DiffOutput
 xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
   unsafeDupablePerformIO $
-    UnsafeByteString.unsafeUseAsCStringLen sourceBytes $ \(sourcePointer, sourceLength) ->
-    UnsafeByteString.unsafeUseAsCStringLen targetBytes $ \(targetPointer, targetLength) ->
+    withByteString sourceBytes $ \sourcePointer sourceLength ->
+    withByteString targetBytes $ \targetPointer targetLength ->
     alloca $ \targetsAddressPointer        ->
     alloca $ \targetsLengthPointer         ->
     alloca $ \sourceOffsetsAddressPointer  ->
@@ -84,8 +83,8 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
     alloca $ \errorCauseAddressPointer     ->
     alloca $ \errorCauseLengthPointer      -> do
       returnCode <- rustyXDelta1Diff
-        (castPtr sourcePointer) (fromIntegral sourceLength)
-        (castPtr targetPointer) (fromIntegral targetLength)
+        sourcePointer sourceLength
+        targetPointer targetLength
         targetsAddressPointer       targetsLengthPointer
         sourceOffsetsAddressPointer sourceOffsetsLengthPointer
         lengthsAddressPointer       lengthsLengthPointer

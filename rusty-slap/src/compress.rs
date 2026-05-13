@@ -8,10 +8,10 @@
 //! section, etc.), so a Rust-side prefix would only double-label the
 //! rendered message.
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use flate2::read::{GzDecoder, ZlibDecoder, ZlibEncoder};
-use flate2::Compression;
+use flate2::{Compression, GzBuilder};
 
 /// Drain a `Read` to a fresh `Vec<u8>`, surfacing any I/O failure as the
 /// underlying library's diagnostic verbatim. The four streaming entry
@@ -41,6 +41,21 @@ pub fn zlib_deflate(input: &[u8]) -> Result<Vec<u8>, String> {
 /// Gzip (RFC 1952) inflate.
 pub fn gzip_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
     drain_to_vec(GzDecoder::new(input))
+}
+
+/// Gzip (RFC 1952) deflate at the library's default compression level
+/// with `mtime = 0` pinned in the gzip header — locks output
+/// determinism so the same input bytes produce the same compressed
+/// bytes. In-memory deflate is total at the algorithm level; the
+/// `expect`s below document that the only fail-shaped event is
+/// allocation failure, which Rust's default allocator handles by
+/// aborting before any error value reaches the caller.
+pub fn gzip_deflate(input: &[u8]) -> Vec<u8> {
+    let mut encoder = GzBuilder::new()
+        .mtime(0)
+        .write(Vec::new(), Compression::default());
+    encoder.write_all(input).expect("in-memory gzip deflate cannot fail");
+    encoder.finish().expect("in-memory gzip deflate cannot fail")
 }
 
 /// Bzip2 decompress.

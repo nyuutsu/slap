@@ -9,12 +9,16 @@ module Slap.XDelta1.Types
   , XDelta1OffsetMode(..)
   , XDelta1SourceWireKind(..)
   , XDelta1VerificationPosture(..)
+  , XDelta1PatchCompression(..)
     -- * Named constants
   , xdelta1TrailerSize
   , xdelta1EmptyInputMD5Sentinel
+  , xdelta1FlagNoVerify
+  , xdelta1FlagPatchCompressed
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
@@ -35,13 +39,14 @@ data XDelta1SourceWireKind
   deriving (Show, Eq)
 
 data XDelta1Patch = XDelta1Patch
-  { xdelta1FromName      :: ByteString
-  , xdelta1ToName        :: ByteString
-  , xdelta1Verification  :: XDelta1VerificationPosture
-  , xdelta1TargetLength  :: FileSize
-  , xdelta1Sources       :: XDelta1Sources
-  , xdelta1Instructions  :: [XDelta1Instruction]
-  , xdelta1DataSegment   :: ByteString  -- decompressed literal data
+  { xdelta1FromName         :: ByteString
+  , xdelta1ToName           :: ByteString
+  , xdelta1Verification     :: XDelta1VerificationPosture
+  , xdelta1PatchCompression :: XDelta1PatchCompression
+  , xdelta1TargetLength     :: FileSize
+  , xdelta1Sources          :: XDelta1Sources
+  , xdelta1Instructions     :: [XDelta1Instruction]
+  , xdelta1DataSegment      :: ByteString  -- decompressed literal data
   } deriving (Show, Eq)
 
 -- | An xdelta1 source record. The 'xdelta1SourceMD5' is 'Just' when
@@ -101,6 +106,18 @@ data XDelta1VerificationPosture
   | CreatorOptedOutOfVerification
   deriving (Show, Eq)
 
+-- | Whether an xdelta1 patch's data and control segments are gzip-
+-- compressed in the wire bytes. Bit 3 ('xdelta1FlagPatchCompressed')
+-- of the header's flags word; the parser inflates each segment
+-- independently when the bit is set. Uncompressed @%XDZ004%@
+-- patches are spec-conformant; canonical xdelta-1.x emits
+-- compressed by default. Slap follows that default on create and
+-- gates the choice on @slap create --no-compress@.
+data XDelta1PatchCompression
+  = CompressedPatch
+  | UncompressedPatch
+  deriving (Show, Eq)
+
 -- | Which of the patch's two sources an instruction copies from.
 -- The wire format encodes this as an integer index (0 for the data
 -- source, 1 for the file source); the parser translates the wire
@@ -135,3 +152,15 @@ xdelta1TrailerSize = 12
 xdelta1EmptyInputMD5Sentinel :: MD5Hash
 xdelta1EmptyInputMD5Sentinel = MD5Hash
   "\xd4\x1d\x8c\xd9\x8f\x00\xb2\x04\xe9\x80\x09\x98\xec\xf8\x42\x7e"
+
+-- | Bit 0 of the xdelta1 header's flags word. Set when the patch's
+-- verification posture is 'CreatorOptedOutOfVerification' (matching
+-- what canonical xdelta's @--noverify@ writes).
+xdelta1FlagNoVerify :: Word32
+xdelta1FlagNoVerify = 1
+
+-- | Bit 3 of the xdelta1 header's flags word. Set when the patch's
+-- data and control segments are gzip-deflated in the wire bytes
+-- (each segment is its own gzip stream).
+xdelta1FlagPatchCompressed :: Word32
+xdelta1FlagPatchCompressed = 8

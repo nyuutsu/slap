@@ -6,12 +6,11 @@
 module Slap.BPS.FFI (bpsDiff) where
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8)
 import Foreign.C.Types (CSize(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr)
-import Slap.FFI (readByteString)
+import Foreign.Ptr (Ptr)
+import Slap.FFI (readByteString, withByteString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -23,11 +22,11 @@ foreign import ccall unsafe "rusty_bps_diff"
 -- Returns the raw encoded action byte stream.
 bpsDiff :: InputFileContents -> OutputFileContents -> ByteString
 bpsDiff (InputFileContents source) (OutputFileContents target) = unsafeDupablePerformIO $
-  UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, sourceLength) ->
-    UnsafeByteString.unsafeUseAsCStringLen target $ \(targetPointer, targetLength) ->
-      alloca $ \resultAddressPointer ->
-        alloca $ \resultLengthPointer -> do
-          rustyBpsDiff (castPtr sourcePointer) (fromIntegral sourceLength)
-                       (castPtr targetPointer) (fromIntegral targetLength)
-                       resultAddressPointer resultLengthPointer
-          readByteString resultAddressPointer resultLengthPointer
+  withByteString source $ \sourcePointer sourceLength ->
+  withByteString target $ \targetPointer targetLength ->
+  alloca $ \resultAddressPointer ->
+  alloca $ \resultLengthPointer -> do
+    rustyBpsDiff sourcePointer sourceLength
+                 targetPointer targetLength
+                 resultAddressPointer resultLengthPointer
+    readByteString resultAddressPointer resultLengthPointer

@@ -42,6 +42,7 @@ import Slap.XDelta1.Parse
   )
 import Slap.XDelta1.Types
   (XDelta1VerificationPosture(..)
+  , XDelta1PatchCompression(..)
   , xdelta1Verification)
 import Slap.Convert
   ( DirectCreate(..)
@@ -723,7 +724,7 @@ xdelta1ShapeRejectionTests =
   ]
   where
     parseControlBytes controlBytes =
-      case parseControl NoVerifyFlagClear
+      case parseControl NoVerifyFlagClear UncompressedPatch
                         (XDelta1ControlSegment controlBytes)
                         (XDelta1DataSegment ByteString.empty)
                         (XDelta1FromName ByteString.empty)

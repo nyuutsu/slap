@@ -46,6 +46,7 @@ import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
 import qualified Slap.XDelta1.Types as XDelta1
+import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Parse as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
@@ -174,6 +175,7 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "XDelta1"
       [ testProperty "round-trip"                       prop_xdelta1RoundTrips
+      , testProperty "compression posture round-trips"  prop_xdelta1CompressionPostureRoundTrips
       , testProperty "create produces Verify"           prop_xdelta1CreateProducesVerifyPosture
       , testProperty "no-verify round-trips and warns"  prop_xdelta1NoVerifyRoundTrip
       , testCase     "empty target round-trips"         xdelta1EmptyTarget
@@ -950,8 +952,10 @@ parsePchtxtSphinx = do
 ----------------------------------------------------------------------------
 
 prop_xdelta1RoundTrips :: Property
-prop_xdelta1RoundTrips = forAll genPair $ \(sourceBytes, targetBytes) ->
-  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+prop_xdelta1RoundTrips =
+  forAll genPair $ \(sourceBytes, targetBytes) ->
+  forAll genCompression $ \compression ->
+  case createXDelta1 IncludeVerification compression (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
@@ -959,9 +963,23 @@ prop_xdelta1RoundTrips = forAll genPair $ \(sourceBytes, targetBytes) ->
         Left applyError    -> counterexample ("apply: " ++ renderSlapError applyError) (property False)
         Right outputBytes  -> outputBytes === OutputFileContents targetBytes
 
+-- | The compression posture round-trips: parsing a created patch back
+-- recovers the 'XDelta1PatchCompression' it was emitted under.
+prop_xdelta1CompressionPostureRoundTrips :: Property
+prop_xdelta1CompressionPostureRoundTrips =
+  forAll genPair $ \(sourceBytes, targetBytes) ->
+  forAll genCompression $ \compression ->
+  case createXDelta1 IncludeVerification compression (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Right (Parsed parsed _) -> XDelta1.xdelta1PatchCompression parsed === compression
+
 prop_xdelta1CreateProducesVerifyPosture :: Property
-prop_xdelta1CreateProducesVerifyPosture = forAll genPair $ \(sourceBytes, targetBytes) ->
-  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+prop_xdelta1CreateProducesVerifyPosture =
+  forAll genPair $ \(sourceBytes, targetBytes) ->
+  forAll genCompression $ \compression ->
+  case createXDelta1 IncludeVerification compression (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
@@ -975,8 +993,10 @@ prop_xdelta1CreateProducesVerifyPosture = forAll genPair $ \(sourceBytes, target
 -- posture, applies correctly, and surfaces the
 -- 'VerificationOptedOutByCreator' warning on parse.
 prop_xdelta1NoVerifyRoundTrip :: Property
-prop_xdelta1NoVerifyRoundTrip = forAll genPair $ \(sourceBytes, targetBytes) ->
-  case createXDelta1 OmitVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+prop_xdelta1NoVerifyRoundTrip =
+  forAll genPair $ \(sourceBytes, targetBytes) ->
+  forAll genCompression $ \compression ->
+  case createXDelta1 OmitVerification compression (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
@@ -994,6 +1014,9 @@ prop_xdelta1NoVerifyRoundTrip = forAll genPair $ \(sourceBytes, targetBytes) ->
       VerificationOptedOutByCreator _ -> True
       _ -> False
 
+genCompression :: Gen XDelta1PatchCompression
+genCompression = elements [CompressedPatch, UncompressedPatch]
+
 xdelta1EmptyTarget :: Assertion
 xdelta1EmptyTarget = xdelta1RoundTripCase "hello world" ByteString.empty
 
@@ -1006,7 +1029,7 @@ xdelta1TargetEqualsSource = xdelta1RoundTripCase payload payload
 
 xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assertion
 xdelta1RoundTripCase sourceBytes targetBytes =
-  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+  case createXDelta1 IncludeVerification CompressedPatch (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> assertFailure ("create: " ++ renderSlapError createError)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> assertFailure ("parse: " ++ renderSlapError parseError)
@@ -1019,7 +1042,7 @@ xdelta1RoundTripCase sourceBytes targetBytes =
 -- magic). Big-endian: bit 0 is the lowest-order bit of byte 11.
 xdelta1NoVerifySetsFlagBit :: Assertion
 xdelta1NoVerifySetsFlagBit =
-  case createXDelta1 OmitVerification (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+  case createXDelta1 OmitVerification CompressedPatch (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
     Left createError -> assertFailure ("create: " ++ renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool ("patch must be at least 12 bytes, got " ++ show (ByteString.length patchBytes))
@@ -1030,7 +1053,7 @@ xdelta1NoVerifySetsFlagBit =
 
 xdelta1IncludeVerifyClearsFlagBit :: Assertion
 xdelta1IncludeVerifyClearsFlagBit =
-  case createXDelta1 IncludeVerification (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+  case createXDelta1 IncludeVerification CompressedPatch (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
     Left createError -> assertFailure ("create: " ++ renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool "patch must be at least 12 bytes"

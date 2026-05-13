@@ -3,20 +3,20 @@ module Slap.Compression.Stream
   ( zlibInflate
   , zlibDeflate
   , gzipInflate
+  , gzipDeflate
   , bzip2Decompress
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr)
+import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import Slap.Error (DecompressionCause(..))
-import Slap.FFI (readByteString, readString)
+import Slap.FFI (readByteString, readString, withByteString)
 
 foreign import ccall unsafe "rusty_zlib_inflate"
   rustyZlibInflate
@@ -38,6 +38,12 @@ foreign import ccall unsafe "rusty_gzip_inflate"
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> IO CInt
+
+foreign import ccall unsafe "rusty_gzip_deflate"
+  rustyGzipDeflate
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO ()
 
 foreign import ccall unsafe "rusty_bzip2_decompress"
   rustyBzip2Decompress
@@ -61,13 +67,13 @@ callDecompressor
   -> ByteString -> Either DecompressionCause ByteString
 callDecompressor _          input | ByteString.null input = Right ByteString.empty
 callDecompressor decompress input = unsafeDupablePerformIO $
-  UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+  withByteString input $ \dataPointer dataLength ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
     alloca $ \errorAddressPointer ->
     alloca $ \errorLengthPointer -> do
       returnCode <- decompress
-        (castPtr dataPointer) (fromIntegral dataLength)
+        dataPointer dataLength
         resultAddressPointer resultLengthPointer
         errorAddressPointer  errorLengthPointer
       if returnCode /= 0
@@ -94,13 +100,13 @@ zlibDeflate :: ByteString -> ByteString
 zlibDeflate input
   | ByteString.null input = ByteString.empty
   | otherwise = unsafeDupablePerformIO $
-      UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
+      withByteString input $ \dataPointer dataLength ->
         alloca $ \resultAddressPointer ->
         alloca $ \resultLengthPointer ->
         alloca $ \errorAddressPointer ->
         alloca $ \errorLengthPointer -> do
           returnCode <- rustyZlibDeflate
-            (castPtr dataPointer) (fromIntegral dataLength)
+            dataPointer dataLength
             resultAddressPointer resultLengthPointer
             errorAddressPointer  errorLengthPointer
           if returnCode /= 0
@@ -113,6 +119,21 @@ zlibDeflate input
 -- | Gzip (RFC 1952) inflate.
 gzipInflate :: ByteString -> Either DecompressionCause ByteString
 gzipInflate = callDecompressor rustyGzipInflate
+
+-- | Gzip (RFC 1952) deflate via rusty-slap (flate2's gzip encoder, default
+-- compression level, @mtime = 0@ pinned for deterministic output). Pure:
+-- gzip-deflate of arbitrary input is total at the algorithm level; the only
+-- fail-shaped event is allocation failure, which Rust's default allocator
+-- handles by aborting before any error value reaches us. Round-trip partner
+-- of 'gzipInflate'.
+gzipDeflate :: ByteString -> ByteString
+gzipDeflate input = unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+  alloca $ \resultAddressPointer ->
+  alloca $ \resultLengthPointer -> do
+    rustyGzipDeflate dataPointer dataLength
+                     resultAddressPointer resultLengthPointer
+    readByteString   resultAddressPointer resultLengthPointer
 
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString

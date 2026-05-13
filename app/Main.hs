@@ -42,6 +42,7 @@ import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
 import Slap.TextEncoding (makeStdoutAndStderrLenient)
 import Slap.PPF3.Types (PPF3ImageType(..))
+import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
@@ -702,6 +703,8 @@ requestedMetadataParser = do
                             <> help "Omit undo data (default: included when the format supports it)"))
     includeVerification <- optional (flag' OmitVerification (long "no-verify"
                             <> help "Omit source-integrity-checking data (default: included when the format supports it)"))
+    patchCompression  <- optional (flag' UncompressedPatch (long "no-compress"
+                            <> help "Do not gzip-compress the output patch (xdelta1 only; default emits compressed)"))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
@@ -725,6 +728,7 @@ requestedMetadataParser = do
       , requestedVersion             = version
       , requestedUndoInclusion        = includeUndo
       , requestedVerificationInclusion = includeVerification
+      , requestedPatchCompression    = patchCompression
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType

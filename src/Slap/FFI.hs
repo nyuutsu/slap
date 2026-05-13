@@ -4,10 +4,13 @@
 -- ('crc32' lands in BPS, IPS32, PCHTXT, …; 'adler32' is the UPS
 -- footer); one-format-uses-this differs live next to their format
 -- ('Slap.BPS.FFI', 'Slap.XDelta1.FFI'), but they all marshal Rust-
--- allocated buffers home through 'readByteString' and 'readString'.
+-- allocated buffers home through 'readByteString' / 'readString'
+-- and hand input bytes across through 'withByteString' — the FFI-
+-- marshalling helper trio.
 module Slap.FFI
   ( crc32
   , adler32
+  , withByteString
   , readByteString
   , readString
   ) where
@@ -25,10 +28,10 @@ import Slap.Checksum (CRC32(..), Adler32(..))
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 foreign import ccall unsafe "rusty_crc32"
-  rustyCRC32 :: Ptr () -> CSize -> Word32
+  rustyCRC32 :: Ptr Word8 -> CSize -> Word32
 
 foreign import ccall unsafe "rusty_adler32"
-  rustyAdler32 :: Ptr () -> CSize -> Word32
+  rustyAdler32 :: Ptr Word8 -> CSize -> Word32
 
 foreign import ccall unsafe "rusty_free"
   rustyFree :: Ptr Word8 -> CSize -> IO ()
@@ -36,21 +39,41 @@ foreign import ccall unsafe "rusty_free"
 -- | CRC-32 via rusty-slap (hardware-accelerated crc32fast).
 crc32 :: ByteString -> CRC32
 crc32 input = CRC32 $ unsafeDupablePerformIO $
-  UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
-    pure $ rustyCRC32 (castPtr dataPointer) (fromIntegral dataLength)
+  withByteString input $ \dataPointer dataLength ->
+    pure $ rustyCRC32 dataPointer dataLength
 
 -- | Adler-32 via rusty-slap (RFC 1950).
 adler32 :: ByteString -> Adler32
 adler32 input = Adler32 $ unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+    pure $ rustyAdler32 dataPointer dataLength
+
+-- | Use a 'ByteString''s bytes as an FFI-compatible
+-- ('Ptr' 'Word8', 'CSize') pair for the duration of a synchronous
+-- FFI call. Bundles the 'UnsafeByteString.unsafeUseAsCStringLen'
+-- bracket, the 'Ptr CChar' → 'Ptr Word8' relabel (ByteString stores
+-- 'Ptr CChar' for historical reasons; the rusty-slap signatures want
+-- 'Ptr Word8' to match Rust's @*const u8@ honestly), and the 'Int' →
+-- 'CSize' conversion in one place. Input-side mirror of
+-- 'readByteString'.
+--
+-- The unsafe (no-copy) variant of 'unsafeUseAsCStringLen' is
+-- correct for synchronous FFI that consumes the bytes during the
+-- call and doesn't retain a pointer after return — slap's current
+-- shape. A future FFI that retains a pointer (async, callback, or
+-- thread-keeping shape) would need a copying sibling; not present
+-- today.
+withByteString :: ByteString -> (Ptr Word8 -> CSize -> IO a) -> IO a
+withByteString input action =
   UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
-    pure $ rustyAdler32 (castPtr dataPointer) (fromIntegral dataLength)
+    action (castPtr dataPointer) (fromIntegral dataLength)
 
 -- | Pack a Rust-allocated buffer into a managed Haskell 'ByteString'
 -- and free the underlying allocation via 'rustyFree'. Inputs are the
 -- out-pointer pair (address pointer, length pointer) the FFI call
 -- writes into. Returns 'ByteString.empty' for null pointers — the
 -- canonical "no buffer" pair surfaced by @surface_buffer_to_caller@
--- on the Rust side.
+-- on the Rust side. Output-side mirror of 'withByteString'.
 readByteString :: Ptr (Ptr Word8) -> Ptr CSize -> IO ByteString
 readByteString addressPointer lengthPointer = do
   bufferAddress <- peek addressPointer

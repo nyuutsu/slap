@@ -348,6 +348,33 @@ pub unsafe extern "C" fn rusty_gzip_inflate(
     }
 }
 
+/// Gzip (RFC 1952) deflate at the library default level. Rust
+/// allocates the output; caller frees with [`rusty_free`]. No error
+/// channel: gzip-deflate of in-memory bytes is total at the
+/// algorithm level, and allocation failure aborts the process before
+/// any value reaches the caller.
+///
+/// `mtime` in the gzip header is pinned to 0 (see
+/// [`compress::gzip_deflate`]) so the same input bytes always
+/// produce the same compressed bytes — required for the round-trip
+/// re-emit identity property in 'Slap.XDelta1.Create'.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes.
+/// - `output_address_pointer` and `output_length_pointer` must be
+///   valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_gzip_deflate(
+    input_address:          *const u8,
+    input_length:           usize,
+    output_address_pointer: *mut *mut u8,
+    output_length_pointer:  *mut usize,
+) {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    let compressed = compress::gzip_deflate(input);
+    unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
+}
+
 /// Bzip2 decompress. Rust allocates the output; caller frees with
 /// [`rusty_free`]. Returns 0 on success, -1 on decompression error.
 ///
