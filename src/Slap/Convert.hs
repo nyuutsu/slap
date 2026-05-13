@@ -5,7 +5,7 @@ module Slap.Convert
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
-  , ValidationInclusion(..)
+  , VerificationInclusion(..)
   , PatchStability(..)
   , noMetadataRequested
   , RequestedConstraints(..)
@@ -94,6 +94,7 @@ import Slap.Dialect (Dialect(..))
 import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
+import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -188,8 +189,9 @@ data CreateFormat
 -- 'requestedDescription' (woven into the trailing JSON blob via
 -- 'IPS.buildEBPMetadataJSON').  'CreatePPF3' consumes
 -- 'requestedDescription' (the 50-byte header field),
--- 'requestedUndoInclusion', 'requestedValidationInclusion', and
--- 'requestedImageType' (selects the validation offset).
+-- 'requestedUndoInclusion', 'requestedVerificationInclusion' (gates
+-- the validation block), and 'requestedImageType' (selects the
+-- validation offset).
 -- 'CreateNINJA1' consumes 'requestedRomType' (mapped through
 -- 'Slap.Platform.platformToNinja1'); the compression flag rides in
 -- 'PatchContents' rather than this record.  'CreatePMSR' consumes
@@ -198,8 +200,10 @@ data CreateFormat
 -- field).
 --
 -- Differential-format consumption is read directly out of 'createPatch'\'s
--- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob'; 'CreateUPS',
--- 'CreateAPSGBA', 'CreateGDIFF', and 'CreateXDelta1' consume nothing; 'CreateDPS'
+-- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob';
+-- 'CreateXDelta1' consumes 'requestedVerificationInclusion' (gates
+-- @FLAG_NO_VERIFY@ and the per-source MD5 fields); 'CreateUPS',
+-- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
 -- consumes 'requestedTitle'\/'requestedDescription' (name),
 -- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
 -- 'CreateNINJA2' consumes the full title\/author\/version\/description
@@ -211,7 +215,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedDescription          :: Maybe String
   , requestedVersion              :: Maybe String
   , requestedUndoInclusion        :: Maybe UndoInclusion
-  , requestedValidationInclusion  :: Maybe ValidationInclusion
+  , requestedVerificationInclusion :: Maybe VerificationInclusion
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
     -- ^ Shared platform type: NINJA1 and NINJA2 define different
@@ -229,28 +233,6 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- consumes this; the name keeps the concept ("a raw blob to embed")
     -- separate from the format that currently uses it.
   }
-
--- | Whether the output patch should carry undo data, when the format supports it.
---
--- PPF3 is the primary consumer: its patch format has an optional trailing undo
--- section that lets an applied patch be reversed without access to the original
--- source. Other direct formats may gain undo support; this type stays agnostic.
-data UndoInclusion
-  = IncludeUndoData
-  | OmitUndoData
-  deriving (Show, Eq)
-
--- | Whether the output patch should carry a validation block, when the format
--- supports it.
---
--- PPF3 consumes this: its format has a 1024-byte optional validation region
--- sampled from the source at a format-specific offset. Presence in the emitted
--- patch lets an applier check "is this the ROM you're expecting?" before
--- writing anything.
-data ValidationInclusion
-  = IncludeValidationBlock
-  | OmitValidationBlock
-  deriving (Show, Eq)
 
 -- | Stability flag for DPS patches.
 --
@@ -272,8 +254,8 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedAuthor              = Nothing
   , requestedDescription         = Nothing
   , requestedVersion             = Nothing
-  , requestedUndoInclusion       = Nothing
-  , requestedValidationInclusion = Nothing
+  , requestedUndoInclusion        = Nothing
+  , requestedVerificationInclusion = Nothing
   , requestedStability           = Nothing
   , requestedRomType             = Nothing
   , requestedImageType           = Nothing
@@ -293,8 +275,8 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedAuthor              = requestedAuthor cli              <|> requestedAuthor source
   , requestedDescription         = requestedDescription cli         <|> requestedDescription source
   , requestedVersion             = requestedVersion cli             <|> requestedVersion source
-  , requestedUndoInclusion       = requestedUndoInclusion cli       <|> requestedUndoInclusion source
-  , requestedValidationInclusion = requestedValidationInclusion cli <|> requestedValidationInclusion source
+  , requestedUndoInclusion        = requestedUndoInclusion cli        <|> requestedUndoInclusion source
+  , requestedVerificationInclusion = requestedVerificationInclusion cli <|> requestedVerificationInclusion source
   , requestedStability           = requestedStability cli           <|> requestedStability source
   , requestedRomType             = requestedRomType cli             <|> requestedRomType source
   , requestedImageType           = requestedImageType cli           <|> requestedImageType source
@@ -356,33 +338,37 @@ inferUndoInclusion contents = if isJust (contentsUndoData contents)
                                 then IncludeUndoData
                                 else OmitUndoData
 
--- | Which 'ValidationInclusion' a 'PatchContents' carries today.  Used
--- on the conversion path when the user didn't specify: if the source
--- patch already had a validation block, inherit the choice to include it.
-inferValidationInclusion :: PatchContents -> ValidationInclusion
-inferValidationInclusion contents = if isJust (contentsValidation contents)
-                                      then IncludeValidationBlock
-                                      else OmitValidationBlock
+-- | Which 'VerificationInclusion' a 'PatchContents' carries today.
+-- Used on the conversion path when the user didn't specify: if the
+-- source patch already had a validation block (or, eventually, an
+-- xdelta1-style MD5 verification stamp; today 'PatchContents' only
+-- carries the PPF3-style validation block via 'contentsValidation'),
+-- inherit the choice to include verification data in the target.
+inferVerificationInclusion :: PatchContents -> VerificationInclusion
+inferVerificationInclusion contents = if isJust (contentsValidation contents)
+                                        then IncludeVerification
+                                        else OmitVerification
 
 ----------------------------------------------------------------------------
 -- Format specs
 ----------------------------------------------------------------------------
 
 -- | Build the conversion contract for a given direct target.  The
--- 'UndoInclusion' and 'ValidationInclusion' parameters shape PPF3's
+-- 'UndoInclusion' and 'VerificationInclusion' parameters shape PPF3's
 -- /required/ set: both fields are optional in the wire format, so
 -- whether the source patch must carry them depends on whether the
--- user asked for undo or validation to be included in the output.
-directConversionContract :: DirectCreate -> UndoInclusion -> ValidationInclusion -> DirectConversionContract
-directConversionContract target undoChoice validationChoice = case target of
+-- user asked for undo or verification data to be included in the
+-- output.
+directConversionContract :: DirectCreate -> UndoInclusion -> VerificationInclusion -> DirectConversionContract
+directConversionContract target undoChoice verificationChoice = case target of
   CreateIPS     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldTruncation])
   CreateIPS32   -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateEBP     -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldEBPMeta])
   CreatePPF1    -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription])
   CreatePPF2    -> DirectConversionContract (requiredFields [FieldValidation])
                              (acceptedFields [FieldDescription, FieldFileIdDiz])
-  CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData   | undoChoice       == IncludeUndoData]
-                                 ++ [FieldValidation | validationChoice == IncludeValidationBlock])
+  CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData     | undoChoice         == IncludeUndoData]
+                                 ++ [FieldValidation | verificationChoice == IncludeVerification])
                              (acceptedFields [FieldDescription, FieldImageType, FieldFileIdDiz])
   CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldSourceCRC32, FieldSourceMD5, FieldSourceSHA1, FieldRomType])
   CreatePMSR    -> DirectConversionContract (requiredFields []) (acceptedFields [])
@@ -415,7 +401,7 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreateEBP    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataDescription]
   CreatePPF1   -> Set.fromList [MetadataDescription]
   CreatePPF2   -> Set.fromList [MetadataDescription]
-  CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataValidationInclusion]
+  CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataVerificationInclusion]
   CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
   CreatePCHTXT -> Set.fromList [MetadataDescription]
@@ -429,18 +415,18 @@ acceptedMetadataFields (CreateDifferential format) = case format of
     , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
-  CreateXDelta1 -> Set.empty
+  CreateXDelta1 -> Set.singleton MetadataVerificationInclusion
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
 requestedMetadataFields :: RequestedPatchMetadata -> Set.Set MetadataField
 requestedMetadataFields meta = Set.fromList $ concat
-  [ [MetadataTitle               | isJust (requestedTitle               meta)]
-  , [MetadataAuthor              | isJust (requestedAuthor              meta)]
-  , [MetadataDescription         | isJust (requestedDescription         meta)]
-  , [MetadataVersion             | isJust (requestedVersion             meta)]
-  , [MetadataUndoInclusion       | isJust (requestedUndoInclusion       meta)]
-  , [MetadataValidationInclusion | isJust (requestedValidationInclusion meta)]
+  [ [MetadataTitle                | isJust (requestedTitle                meta)]
+  , [MetadataAuthor               | isJust (requestedAuthor               meta)]
+  , [MetadataDescription          | isJust (requestedDescription          meta)]
+  , [MetadataVersion              | isJust (requestedVersion              meta)]
+  , [MetadataUndoInclusion        | isJust (requestedUndoInclusion        meta)]
+  , [MetadataVerificationInclusion | isJust (requestedVerificationInclusion meta)]
   , [MetadataStability           | isJust (requestedStability           meta)]
   , [MetadataRomType             | isJust (requestedRomType             meta)]
   , [MetadataImageType           | isJust (requestedImageType           meta)]
@@ -676,14 +662,14 @@ allDirectTargets = [minBound..maxBound]
 -- 'ApplyOutputFieldsWouldBeDropped' refusal message; dynamic so
 -- future additions to the format table get picked up automatically.
 --
--- 'IncludeUndoData' and 'IncludeValidationBlock' only influence PPF3's
+-- 'IncludeUndoData' and 'IncludeVerification' only influence PPF3's
 -- /required/ set, not its /accepted/ set, so we pass the @Include@
 -- constructors for both without affecting the answer.
 preservingDirectTargets :: PatchField -> [FormatLabel]
 preservingDirectTargets field =
   [ directLabel target
   | target <- allDirectTargets
-  , let contract = directConversionContract target IncludeUndoData IncludeValidationBlock
+  , let contract = directConversionContract target IncludeUndoData IncludeVerification
         accepted = contractRequiredFields contract `Set.union` contractAcceptedFields contract
   , field `Set.member` accepted
   ]
@@ -729,17 +715,18 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 -- where no source PatchContents is available.
 createDefaultNotes :: CreateFormat -> RequestedPatchMetadata -> [SlapWarning]
 createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
-  ++ undoValidateNotes target meta
+  ++ undoVerificationNotes target meta
 createDefaultNotes (CreateDifferential _) _ = []
 
--- | Warn when undo/validation are included by default (no CLI flag, no
--- inherited source value).  Same pattern as rom-type defaulting to RAW.
-undoValidateNotes :: DirectCreate -> RequestedPatchMetadata -> [SlapWarning]
-undoValidateNotes CreatePPF3 meta = concat
-  [ [ IncludingUndoByDefault | Nothing <- [requestedUndoInclusion meta] ]
-  , [ IncludingValidationByDefault | Nothing <- [requestedValidationInclusion meta] ]
+-- | Warn when undo / verification are included by default (no CLI
+-- flag, no inherited source value). Same pattern as rom-type
+-- defaulting to RAW.
+undoVerificationNotes :: DirectCreate -> RequestedPatchMetadata -> [SlapWarning]
+undoVerificationNotes CreatePPF3 meta = concat
+  [ [ IncludingUndoByDefault         | Nothing <- [requestedUndoInclusion         meta] ]
+  , [ IncludingVerificationByDefault | Nothing <- [requestedVerificationInclusion meta] ]
   ]
-undoValidateNotes _ _ = []
+undoVerificationNotes _ _ = []
 
 -- | Note when converting to NINJA1 without source verification hashes.
 ninja1HashNotes :: PatchContents -> DirectCreate -> [SlapWarning]
@@ -803,9 +790,9 @@ convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> Either SlapError CreateResult
 convertDirect _ (CreateDifferential target) _ _ _ = Left (DiffRequiresSource (differentialLabel target))
 convertDirect contents (CreateDirect target) meta constraints dialects = do
-  let undoChoice       = fromMaybe (inferUndoInclusion       contents) (requestedUndoInclusion       meta)
-      validationChoice = fromMaybe (inferValidationInclusion contents) (requestedValidationInclusion meta)
-      contract         = directConversionContract target undoChoice validationChoice
+  let undoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
+      verificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
+      contract           = directConversionContract target undoChoice verificationChoice
   case canConvert contents contract of
     Left (RequirementsMissing missing) ->
       Left (MissingRequiredField (directLabel target) (Set.findMin missing))
@@ -1090,7 +1077,9 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
-  CreateXDelta1 -> XDelta1.createXDelta1 source target
+  CreateXDelta1 -> XDelta1.createXDelta1 verificationChoice source target
+    where
+      verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
@@ -1159,9 +1148,9 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
     validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
                          _       -> 0x9320
-    undoChoice       = fromMaybe IncludeUndoData        (requestedUndoInclusion       meta)
-    validationChoice = fromMaybe IncludeValidationBlock (requestedValidationInclusion meta)
-    contract         = directConversionContract format undoChoice validationChoice
+    undoChoice         = fromMaybe IncludeUndoData     (requestedUndoInclusion         meta)
+    verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
+    contract           = directConversionContract format undoChoice verificationChoice
     allFields = contractRequiredFields contract `Set.union` contractAcceptedFields contract
     needs field = field `Set.member` allFields
 

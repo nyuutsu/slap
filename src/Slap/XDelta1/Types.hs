@@ -78,19 +78,22 @@ data XDelta1Sources = XDelta1Sources
 -- | The slap-internal representation of an xdelta 1.1.x patch's
 -- verification posture — whether MD5 fields carry real verification
 -- data or are the canonical sentinel ('xdelta1EmptyInputMD5Sentinel')
--- emitted by the canonical tool's @--noverify@. Designed as the
--- round-trip vehicle for the @--no-verify@ family in xdelta1: the
--- parser today produces a value of this type from the wire; the
--- future xdelta1 create flow (when @slap create --no-verify@ lands)
--- will consume a value of this type and write the corresponding
--- wire bytes (flag bit set with sentinels in MD5 slots, or flag bit
--- clear with computed MD5s). Constructors are unchanged across
--- directions. Per-source MD5s share the patch-level posture: both
--- sources in 'XDelta1Sources' carry @Just MD5Hash@ under
--- 'VerifyAgainstStoredMD5s' and @Nothing@ under
--- 'CreatorOptedOutOfVerification' (parser-enforced; not type-level).
--- Family siblings: 'VerificationPolicy' on apply (the runtime
--- policy that gates mismatch behavior when verification /does/ run),
+-- emitted by the canonical tool's @--noverify@. The round-trip
+-- vehicle for the @--no-verify@ family in xdelta1: the parser
+-- produces a value of this type from the wire; the encoder in
+-- "Slap.XDelta1.Create" consumes one (mapped from
+-- 'Slap.Convert.VerificationInclusion' at the porcelain boundary)
+-- and writes the corresponding wire bytes (flag bit set with
+-- sentinels in MD5 slots, or flag bit clear with computed MD5s).
+-- Constructors are unchanged across directions. Per-source MD5s
+-- share the patch-level posture: both sources in 'XDelta1Sources'
+-- carry @Just MD5Hash@ under 'VerifyAgainstStoredMD5s' and
+-- @Nothing@ under 'CreatorOptedOutOfVerification' (parser-
+-- enforced; not type-level). Family siblings:
+-- 'Slap.Convert.VerificationInclusion' on create (the user-facing
+-- choice the porcelain maps to a posture), 'VerificationPolicy'
+-- on apply (the runtime policy that gates mismatch behavior when
+-- verification /does/ run),
 -- 'Slap.Error.VerificationOptedOutByCreator' (the warning emitted
 -- when verification is declared absent at the format level).
 data XDelta1VerificationPosture

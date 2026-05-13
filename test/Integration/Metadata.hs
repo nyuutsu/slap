@@ -25,7 +25,7 @@ import Slap.Convert
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
-  , ValidationInclusion(..)
+  , VerificationInclusion(..)
   , noMetadataRequested
   , noDialectsRequested
   )
@@ -87,8 +87,8 @@ mkFieldTest patchPath format fieldName = testCase fieldName $ do
       -- Self-convert: convert to same format
       let meta = case format of
             CreateDirect CreatePPF3 -> noMetadataRequested
-              { requestedUndoInclusion       = Just IncludeUndoData
-              , requestedValidationInclusion = Just IncludeValidationBlock
+              { requestedUndoInclusion        = Just IncludeUndoData
+              , requestedVerificationInclusion = Just IncludeVerification
               }
             _                       -> noMetadataRequested
       convResult <- attemptConvert original format Nothing meta

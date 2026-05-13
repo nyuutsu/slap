@@ -73,6 +73,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFi
 import Slap.Convert (DirectCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                      RequestedDialects(..),
+                     VerificationInclusion(..),
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
                     createAPSGBA, createGDIFF, createXDelta1, createPatch)
@@ -80,9 +81,10 @@ import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (shiftL)
+import qualified Data.Bits as Bits
 import Data.ByteString.Builder (word8, byteString, toLazyByteString)
 import Test.Tasty
-import Test.Tasty.HUnit (testCase, assertEqual, assertFailure, Assertion)
+import Test.Tasty.HUnit (testCase, assertBool, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
 
 import Props.Helpers
@@ -171,11 +173,14 @@ roundTripTests = testGroup "RoundTrip"
       , testCase "parse-sphinx" parsePchtxtSphinx
       ]
   , testGroup "XDelta1"
-      [ testProperty "round-trip"               prop_xdelta1RoundTrips
-      , testProperty "create produces Verify"   prop_xdelta1CreateProducesVerifyPosture
-      , testCase     "empty target round-trips"     xdelta1EmptyTarget
-      , testCase     "single-byte target round-trips" xdelta1SingleByteTarget
-      , testCase     "target equals source"        xdelta1TargetEqualsSource
+      [ testProperty "round-trip"                       prop_xdelta1RoundTrips
+      , testProperty "create produces Verify"           prop_xdelta1CreateProducesVerifyPosture
+      , testProperty "no-verify round-trips and warns"  prop_xdelta1NoVerifyRoundTrip
+      , testCase     "empty target round-trips"         xdelta1EmptyTarget
+      , testCase     "single-byte target round-trips"   xdelta1SingleByteTarget
+      , testCase     "target equals source"             xdelta1TargetEqualsSource
+      , testCase     "no-verify sets FLAG_NO_VERIFY"    xdelta1NoVerifySetsFlagBit
+      , testCase     "include-verify clears FLAG_NO_VERIFY" xdelta1IncludeVerifyClearsFlagBit
       ]
   ]
 
@@ -946,7 +951,7 @@ parsePchtxtSphinx = do
 
 prop_xdelta1RoundTrips :: Property
 prop_xdelta1RoundTrips = forAll genPair $ \(sourceBytes, targetBytes) ->
-  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
@@ -956,7 +961,7 @@ prop_xdelta1RoundTrips = forAll genPair $ \(sourceBytes, targetBytes) ->
 
 prop_xdelta1CreateProducesVerifyPosture :: Property
 prop_xdelta1CreateProducesVerifyPosture = forAll genPair $ \(sourceBytes, targetBytes) ->
-  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
@@ -964,6 +969,30 @@ prop_xdelta1CreateProducesVerifyPosture = forAll genPair $ \(sourceBytes, target
         XDelta1.VerifyAgainstStoredMD5s _     -> property True
         XDelta1.CreatorOptedOutOfVerification ->
           counterexample "expected VerifyAgainstStoredMD5s from create" (property False)
+
+-- | When slap creates an xdelta1 patch with 'OmitVerification' policy,
+-- the resulting patch parses back to 'CreatorOptedOutOfVerification'
+-- posture, applies correctly, and surfaces the
+-- 'VerificationOptedOutByCreator' warning on parse.
+prop_xdelta1NoVerifyRoundTrip :: Property
+prop_xdelta1NoVerifyRoundTrip = forAll genPair $ \(sourceBytes, targetBytes) ->
+  case createXDelta1 OmitVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Right (Parsed parsed warnings) ->
+        let postureCheck = XDelta1.xdelta1Verification parsed === XDelta1.CreatorOptedOutOfVerification
+            warningCheck = counterexample
+              ("expected VerificationOptedOutByCreator warning, got: " ++ show warnings)
+              (any isOptedOutByCreatorWarning warnings)
+            applyCheck = case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
+              Left applyError    -> counterexample ("apply: " ++ renderSlapError applyError) (property False)
+              Right outputBytes  -> outputBytes === OutputFileContents targetBytes
+        in postureCheck .&&. warningCheck .&&. applyCheck
+  where
+    isOptedOutByCreatorWarning warning = case warning of
+      VerificationOptedOutByCreator _ -> True
+      _ -> False
 
 xdelta1EmptyTarget :: Assertion
 xdelta1EmptyTarget = xdelta1RoundTripCase "hello world" ByteString.empty
@@ -977,10 +1006,35 @@ xdelta1TargetEqualsSource = xdelta1RoundTripCase payload payload
 
 xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assertion
 xdelta1RoundTripCase sourceBytes targetBytes =
-  case createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
+  case createXDelta1 IncludeVerification (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> assertFailure ("create: " ++ renderSlapError createError)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
       Left parseError -> assertFailure ("parse: " ++ renderSlapError parseError)
       Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
         Left applyError -> assertFailure ("apply: " ++ renderSlapError applyError)
         Right outputBytes -> assertEqual "round-trip target" (OutputFileContents targetBytes) outputBytes
+
+-- | The wire bit for @FLAG_NO_VERIFY@ is bit 0 of the first 32-bit
+-- header word, which lives at file offset 8..11 (after the 8-byte
+-- magic). Big-endian: bit 0 is the lowest-order bit of byte 11.
+xdelta1NoVerifySetsFlagBit :: Assertion
+xdelta1NoVerifySetsFlagBit =
+  case createXDelta1 OmitVerification (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult (PatchFileContents patchBytes) _) -> do
+      assertBool ("patch must be at least 12 bytes, got " ++ show (ByteString.length patchBytes))
+        (ByteString.length patchBytes >= 12)
+      let flagsLowByte = ByteString.index patchBytes 11
+      assertBool ("FLAG_NO_VERIFY (bit 0) should be set; flags low byte = " ++ show flagsLowByte)
+        (flagsLowByte `Bits.testBit` 0)
+
+xdelta1IncludeVerifyClearsFlagBit :: Assertion
+xdelta1IncludeVerifyClearsFlagBit =
+  case createXDelta1 IncludeVerification (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult (PatchFileContents patchBytes) _) -> do
+      assertBool "patch must be at least 12 bytes"
+        (ByteString.length patchBytes >= 12)
+      let flagsLowByte = ByteString.index patchBytes 11
+      assertBool ("FLAG_NO_VERIFY (bit 0) should be clear under IncludeVerification; flags low byte = " ++ show flagsLowByte)
+        (not (flagsLowByte `Bits.testBit` 0))

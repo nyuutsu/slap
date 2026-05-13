@@ -30,7 +30,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedDialects(..),
                      acceptedDialects,
                      rejectIncompatibleDialects,
-                     UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
+                     UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultNotes, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      createFormatLabel,
@@ -257,14 +257,17 @@ data OverwritePolicy
 -- This is the apply-side member of slap's @--no-verify@ family.
 -- Family siblings:
 --
--- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-side
---   member; what the patch declares about its verification data.
+-- * 'Slap.Convert.VerificationInclusion' — the create-side
+--   member: what 'slap create' embeds in the patch under
+--   @--no-verify@. PPF3 and xdelta1 are the consuming formats
+--   today (the 1024-byte validation block and the source/target
+--   MD5s respectively); future formats with their own integrity-
+--   check mechanisms will plug into the same flag.
+-- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
+--   side member: what a parsed xdelta1 patch declares about its
+--   own verification data.
 -- * 'Slap.Error.VerificationOptedOutByCreator' — the warning
 --   emitted when the parse-side posture indicates an opt-out.
---
--- When @slap create --no-verify@ lands, it will be the create-side
--- member of the same family, producing a posture value the encoder
--- consumes.
 data VerificationPolicy
   = EnforceVerification
   | SkipVerification
@@ -695,10 +698,10 @@ requestedMetadataParser = do
                             <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
     version           <- optional (option str (long "patch-version" <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
-    includeUndo       <- optional (flag' OmitUndoData       (long "no-undo"
+    includeUndo         <- optional (flag' OmitUndoData     (long "no-undo"
                             <> help "Omit undo data (default: included when the format supports it)"))
-    includeValidation <- optional (flag' OmitValidationBlock (long "no-validate"
-                            <> help "Omit validation block (default: included when the format supports it)"))
+    includeVerification <- optional (flag' OmitVerification (long "no-verify"
+                            <> help "Omit source-integrity-checking data (default: included when the format supports it)"))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
                             <> help "Mark patch unstable (DPS)"))
     romType           <- optional (option (eitherReader parseRomType) (long "rom-type" <> metavar "TYPE"
@@ -720,8 +723,8 @@ requestedMetadataParser = do
       , requestedAuthor              = author
       , requestedDescription         = description
       , requestedVersion             = version
-      , requestedUndoInclusion       = includeUndo
-      , requestedValidationInclusion = includeValidation
+      , requestedUndoInclusion        = includeUndo
+      , requestedVerificationInclusion = includeVerification
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType

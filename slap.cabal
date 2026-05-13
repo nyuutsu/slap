@@ -75,6 +75,7 @@ library slap-internal
     , Slap.Measure
     , Slap.Narrow
     , Slap.MetadataField
+    , Slap.MetadataInclusion
     , Slap.Constraint
     , Slap.Dialect
     , Slap.Convert

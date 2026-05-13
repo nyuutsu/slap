@@ -17,7 +17,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFi
 import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
-                     UndoInclusion(..), ValidationInclusion(..), PatchStability(..),
+                     UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      RequestedDialects(..),
                      noMetadataRequested, trimNullSpace)
 import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
@@ -380,8 +380,8 @@ parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF2.ppf2Description patch))
                               in noMetadataRequested
-                                { requestedDescription         = if null description then Nothing else Just description
-                                , requestedValidationInclusion = Just IncludeValidationBlock
+                                { requestedDescription          = if null description then Nothing else Just description
+                                , requestedVerificationInclusion = Just IncludeVerification
                                 }
       }
   where
@@ -451,10 +451,10 @@ parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF3.ppf3Description patch))
                               in noMetadataRequested
-                                { requestedDescription         = if null description then Nothing else Just description
-                                , requestedImageType           = Just (PPF3.ppf3ImageType patch)
-                                , requestedUndoInclusion       = if PPF3.ppf3HasUndo patch then Just IncludeUndoData else Nothing
-                                , requestedValidationInclusion = if isJust (PPF3.ppf3ValidationBlock patch) then Just IncludeValidationBlock else Nothing
+                                { requestedDescription          = if null description then Nothing else Just description
+                                , requestedImageType            = Just (PPF3.ppf3ImageType patch)
+                                , requestedUndoInclusion        = if PPF3.ppf3HasUndo patch then Just IncludeUndoData else Nothing
+                                , requestedVerificationInclusion = if isJust (PPF3.ppf3ValidationBlock patch) then Just IncludeVerification else Nothing
                                 }
       }
   where

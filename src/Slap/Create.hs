@@ -47,6 +47,7 @@ import qualified Slap.XDelta1.Create as XDelta1
 import Slap.Convert (createPatch)
 import Slap.Error (SlapError, CreateResult)
 import Slap.FileContents (InputFileContents, OutputFileContents)
+import Slap.MetadataInclusion (VerificationInclusion(..))
 
 ----------------------------------------------------------------------------
 -- Differential-format porcelain
@@ -86,18 +87,21 @@ createNINJA2 = NINJA2.createNINJA2
 
 -- | Create an xdelta1 patch. The current differ is a placeholder
 -- (entire target inline as data segment, one instruction copies
--- it); the file source's MD5 and length are recorded so apply
--- verifies correctly. The wire encoder produces canonical-shape
--- @%XDZ004%@ patches with @FLAG_PATCH_COMPRESSED = 0@ and
--- @FLAG_NO_VERIFY = 0@; gzip compression and the create-side
--- @--no-verify@ flag are deferred to follow-up commits.
+-- it); the file source's MD5 and length are recorded under
+-- 'IncludeVerification' so apply verifies correctly. The wire
+-- encoder produces canonical-shape @%XDZ004%@ patches with
+-- @FLAG_PATCH_COMPRESSED = 0@; @FLAG_NO_VERIFY@ tracks the
+-- 'VerificationInclusion' choice (set by @slap create
+-- --no-verify@), and gzip compression is deferred to a follow-up
+-- commit.
 --
 -- No metadata wrapper type today: xdelta1 carries @from@\/@to@
 -- name fields, but slap fills them with literal-string
 -- placeholders today. When the CLI lands @--from-name@\/@--to-name@,
 -- this signature gains a metadata record.
 createXDelta1
-  :: InputFileContents
+  :: VerificationInclusion
+  -> InputFileContents
   -> OutputFileContents
   -> Either SlapError CreateResult
 createXDelta1 = XDelta1.createXDelta1

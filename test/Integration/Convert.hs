@@ -31,14 +31,14 @@ import Slap.Convert
   , DifferentialCreate(..)
   , RequestedPatchMetadata(..)
   , UndoInclusion(..)
-  , ValidationInclusion(..)
+  , VerificationInclusion(..)
   , DirectCreate(..)
   , noMetadataRequested
   , noConstraintsRequested
   , noDialectsRequested
   )
 
--- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-validate`)
+-- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-verify`)
 -- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
 -- so the harness controls which flag strings are recognized.
 
@@ -116,9 +116,9 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
           includeUndo
             | "--no-undo" `elem` flags = Just OmitUndoData
             | otherwise                = Nothing
-          includeValidate
-            | "--no-validate" `elem` flags = Just OmitValidationBlock
-            | otherwise                    = Nothing
+          includeVerification
+            | "--no-verify" `elem` flags = Just OmitVerification
+            | otherwise                  = Nothing
 
       maybeBase <- if useWith && not (null baseRel)
                then do
@@ -130,8 +130,8 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
                else pure Nothing
 
       let meta = noMetadataRequested
-            { requestedUndoInclusion       = includeUndo
-            , requestedValidationInclusion = includeValidate
+            { requestedUndoInclusion        = includeUndo
+            , requestedVerificationInclusion = includeVerification
             }
       convResult <- attemptConvert parsed targetCreateFormat maybeBase meta
 

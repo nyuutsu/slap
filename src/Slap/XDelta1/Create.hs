@@ -33,14 +33,21 @@
 --
 -- == @FLAG_NO_VERIFY@
 --
--- The flag bit stays clear today. Real MD5s are computed and
--- written for the target, the data source, and the file source.
--- A future commit adds @slap create --no-verify@ which produces
--- 'CreatorOptedOutOfVerification' and writes sentinels.
+-- Gated by 'Slap.Convert.VerificationInclusion', threaded in from
+-- the porcelain. Under 'IncludeVerification' (default) the bit
+-- stays clear, real MD5s are computed and written for the target,
+-- the data source, and the file source. Under 'OmitVerification'
+-- (set by @slap create --no-verify@) the bit is set, the patch's
+-- verification posture is 'CreatorOptedOutOfVerification', and the
+-- sentinel ('xdelta1EmptyInputMD5Sentinel') is written into every
+-- MD5 slot — matching what canonical xdelta's @--noverify@
+-- produces.
 module Slap.XDelta1.Create
   ( createXDelta1
+  , xdelta1FlagNoVerify
   ) where
 
+import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Source(..), XDelta1Sources(..)
     , XDelta1Instruction(..), XDelta1InstructionTarget(..)
@@ -71,14 +78,23 @@ import Data.Word (Word8, Word32, Word64)
 -- the differ is a placeholder: the entire target is stored inline
 -- in the data segment, and a single instruction reconstructs the
 -- output from it. The file source's MD5 and length are recorded
--- correctly so verification fires on apply; the file source bytes
+-- when the user opted in to verification; the file source bytes
 -- aren't referenced by instructions until the real differ lands.
-createXDelta1 :: InputFileContents -> OutputFileContents
+--
+-- The 'VerificationInclusion' choice (set by @slap create
+-- --no-verify@ at the porcelain) gates two paired wire effects:
+-- under 'OmitVerification' the patch's verification posture is
+-- 'CreatorOptedOutOfVerification', the @FLAG_NO_VERIFY@ header
+-- bit is set, and every MD5 slot carries
+-- 'xdelta1EmptyInputMD5Sentinel'; under 'IncludeVerification' the
+-- posture is 'VerifyAgainstStoredMD5s' with computed hashes and
+-- the bit is clear.
+createXDelta1 :: VerificationInclusion -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
+createXDelta1 inclusion (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
   Right (CreateResult (PatchFileContents wireBytes) [])
   where
-    patch     = buildPlaceholderPatch sourceBytes targetBytes
+    patch     = buildPlaceholderPatch inclusion sourceBytes targetBytes
     wireBytes = encodeXDelta1 patch
 
 ----------------------------------------------------------------------------
@@ -88,22 +104,22 @@ createXDelta1 (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
 -- | Construct an 'XDelta1Patch' value from source and target bytes
 -- using the placeholder differ: the data segment IS the target,
 -- one instruction copies it.
-buildPlaceholderPatch :: ByteString -> ByteString -> XDelta1Patch
-buildPlaceholderPatch sourceBytes targetBytes = XDelta1Patch
+buildPlaceholderPatch :: VerificationInclusion -> ByteString -> ByteString -> XDelta1Patch
+buildPlaceholderPatch inclusion sourceBytes targetBytes = XDelta1Patch
   { xdelta1FromName     = "source"
   , xdelta1ToName       = "target"
-  , xdelta1Verification = VerifyAgainstStoredMD5s targetMD5
+  , xdelta1Verification = posture
   , xdelta1TargetLength = targetFileSize
   , xdelta1Sources      = XDelta1Sources
       { xdelta1DataSource = XDelta1Source
           { xdelta1SourceName       = "(patch data)"
-          , xdelta1SourceMD5        = Just dataSegmentMD5
+          , xdelta1SourceMD5        = perSourceMD5 dataSegmentMD5
           , xdelta1SourceLength     = targetFileSize
           , xdelta1SourceOffsetMode = AbsoluteOffsets
           }
       , xdelta1FileSource = XDelta1Source
           { xdelta1SourceName       = "source"
-          , xdelta1SourceMD5        = Just sourceMD5
+          , xdelta1SourceMD5        = perSourceMD5 sourceMD5
           , xdelta1SourceLength     = byteFileSize sourceBytes
           , xdelta1SourceOffsetMode = AbsoluteOffsets
           }
@@ -116,6 +132,15 @@ buildPlaceholderPatch sourceBytes targetBytes = XDelta1Patch
     targetMD5      = md5 targetBytes
     dataSegmentMD5 = targetMD5
     sourceMD5      = md5 sourceBytes
+
+    posture = case inclusion of
+      IncludeVerification -> VerifyAgainstStoredMD5s targetMD5
+      OmitVerification    -> CreatorOptedOutOfVerification
+
+    perSourceMD5 computed = case inclusion of
+      IncludeVerification -> Just computed
+      OmitVerification    -> Nothing
+
     placeholderInstruction = XDelta1Instruction
       { xdelta1InstructionTarget = FromDataSource
       , xdelta1InstructionOffset = Offset 0
@@ -159,10 +184,12 @@ encodeXDelta1 patch = ByteString.concat
     fromNameLength = ByteString.length (xdelta1FromName patch)
     toNameLength   = ByteString.length (xdelta1ToName patch)
 
-    -- All four flag bits (0/1/2/3) stay clear: not opted out of
-    -- verification, inputs aren't pre-compressed, patch isn't
-    -- gzipped.
-    flagsWord       = 0 :: Word32
+    -- @FLAG_NO_VERIFY@ tracks the patch's verification posture;
+    -- the other three flag bits (1/2/3 — input pre-compression and
+    -- gzip-of-patch) stay clear under the placeholder differ.
+    flagsWord = case xdelta1Verification patch of
+      VerifyAgainstStoredMD5s _     -> 0
+      CreatorOptedOutOfVerification -> xdelta1FlagNoVerify
     nameLengthsWord = fromIntegral (fromNameLength `shiftL` 16 .|. toNameLength) :: Word32
     reservedWord    = 0 :: Word32
     headerBytes = ByteString.concat
@@ -213,11 +240,9 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
     instructions = xdelta1Instructions patch
 
     -- Target MD5 lives inside the posture under
-    -- 'VerifyAgainstStoredMD5s'. Under
-    -- 'CreatorOptedOutOfVerification' we'd write the empty-input
-    -- sentinel here, but that path is gated on a CLI flag we
-    -- don't add in this commit; today the posture is always
-    -- 'VerifyAgainstStoredMD5s'.
+    -- 'VerifyAgainstStoredMD5s' and is the empty-input sentinel
+    -- under 'CreatorOptedOutOfVerification' (matching what
+    -- canonical xdelta's @--noverify@ writes).
     toMD5Bytes = case xdelta1Verification patch of
       VerifyAgainstStoredMD5s md5Hash    -> md5Hash
       CreatorOptedOutOfVerification      -> xdelta1EmptyInputMD5Sentinel
@@ -240,6 +265,12 @@ encodeInstruction instruction =
   putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))
   <> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
+
+-- | Wire flag-bit value for @FLAG_NO_VERIFY@ (bit 0 of the
+-- xdelta1 header's first 32-bit flag word). Set when the patch
+-- declares 'CreatorOptedOutOfVerification'.
+xdelta1FlagNoVerify :: Word32
+xdelta1FlagNoVerify = 1
 
 -- | Wire byte for the source-kind slot of an EDSIO source record.
 -- Inverse of the parser's @sourceKindByte \/= 0@ test

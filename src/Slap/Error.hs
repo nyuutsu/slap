@@ -557,7 +557,7 @@ data SlapWarning
   | DefaultRomType FormatLabel
   | DefaultImageType FormatLabel
   | IncludingUndoByDefault
-  | IncludingValidationByDefault
+  | IncludingVerificationByDefault
   | SourceHashesMissing FormatLabel
 
   -- Encoding
@@ -598,9 +598,9 @@ data SlapWarning
 
   -- | The patch declares no verification data at the format level
   -- (e.g. xdelta1's @FLAG_NO_VERIFY@ header bit, set by canonical's
-  -- @--noverify@; PPF3's absent validation block, when @--no-validate@
-  -- is retired in favor of @--no-verify@). Slap honors the
-  -- declaration by skipping verification entirely; the warning
+  -- @--noverify@; PPF3's absent validation block, set by slap's
+  -- create-side @--no-verify@). Slap honors the declaration by
+  -- skipping verification entirely; the warning
   -- reports that slap cannot attest the output matches the creator's
   -- intent. Family sibling of 'VerificationCRCMismatch' and the
   -- other verification warnings: same category from the user's seat
@@ -1193,8 +1193,8 @@ renderSlapWarning (DefaultImageType _label) =
 renderSlapWarning IncludingUndoByDefault =
   "note: including undo data (omit with --no-undo)"
 
-renderSlapWarning IncludingValidationByDefault =
-  "note: including validation block (omit with --no-validate)"
+renderSlapWarning IncludingVerificationByDefault =
+  "note: including verification data (omit with --no-verify)"
 
 renderSlapWarning (SourceHashesMissing _label) =
   "note: input verification hashes not available (populate with --with INPUT)"

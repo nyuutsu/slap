@@ -17,7 +17,7 @@ data MetadataField
   | MetadataDescription
   | MetadataVersion
   | MetadataUndoInclusion
-  | MetadataValidationInclusion
+  | MetadataVerificationInclusion
   | MetadataStability
   | MetadataRomType
   | MetadataImageType
@@ -36,7 +36,7 @@ metadataFieldName MetadataAuthor              = "author"
 metadataFieldName MetadataDescription         = "description"
 metadataFieldName MetadataVersion             = "version"
 metadataFieldName MetadataUndoInclusion       = "undo data"
-metadataFieldName MetadataValidationInclusion = "validation block"
+metadataFieldName MetadataVerificationInclusion = "verification data"
 metadataFieldName MetadataStability           = "stability flag"
 metadataFieldName MetadataRomType             = "ROM type"
 metadataFieldName MetadataImageType           = "image type"
@@ -56,7 +56,7 @@ metadataFieldFlagName MetadataAuthor              = "author"
 metadataFieldFlagName MetadataDescription         = "description"
 metadataFieldFlagName MetadataVersion             = "version"
 metadataFieldFlagName MetadataUndoInclusion       = "no-undo"
-metadataFieldFlagName MetadataValidationInclusion = "no-validate"
+metadataFieldFlagName MetadataVerificationInclusion = "no-verify"
 metadataFieldFlagName MetadataStability           = "unstable"
 metadataFieldFlagName MetadataRomType             = "rom-type"
 metadataFieldFlagName MetadataImageType           = "image-type"
