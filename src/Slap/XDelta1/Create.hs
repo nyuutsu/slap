@@ -302,7 +302,7 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
       <> encodeSource (xdelta1DataSource sources) WireKindData
       <> encodeSource (xdelta1FileSource sources) WireKindFile
       <> putEdsioVarint (fromIntegral (length instructions))
-      <> foldMap encodeInstruction instructions
+      <> foldMap (encodeInstruction sources) instructions
 
     sources      = xdelta1Sources patch
     instructions = xdelta1Instructions patch
@@ -328,11 +328,25 @@ encodeSource source wireKind =
       Just md5Hash -> md5Hash
       Nothing      -> xdelta1EmptyInputMD5Sentinel
 
-encodeInstruction :: XDelta1Instruction -> Builder
-encodeInstruction instruction =
+-- | Encode one instruction. The offset field is written as 0 when the
+-- applicable source is in 'SequentialOffsets' mode (the parser at
+-- 'Slap.XDelta1.Parse.fixSequentialOffsets' reconstructs the absolute
+-- offset from the running cumulative length); under 'AbsoluteOffsets'
+-- the offset is written verbatim. The applicable source is the one
+-- this instruction targets (data or file), looked up via
+-- 'xdelta1InstructionTarget'.
+encodeInstruction :: XDelta1Sources -> XDelta1Instruction -> Builder
+encodeInstruction sources instruction =
   putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))
-  <> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
+  <> offsetVarint
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
+  where
+    instructionSource = case xdelta1InstructionTarget instruction of
+      FromDataSource -> xdelta1DataSource sources
+      FromFileSource -> xdelta1FileSource sources
+    offsetVarint = case xdelta1SourceOffsetMode instructionSource of
+      SequentialOffsets -> putEdsioVarint 0
+      AbsoluteOffsets   -> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
 
 -- | Wire byte for the source-kind slot of an EDSIO source record.
 -- Inverse of the parser's @sourceKindByte \/= 0@ test
