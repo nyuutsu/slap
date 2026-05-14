@@ -1,20 +1,14 @@
-//! xdelta1 differ. Faithful to canonical xdelta-1.1.x's algorithm
-//! shape: rsync-style weak rolling checksum at 16-byte block
-//! boundaries over source, byte-by-byte rolling-checksum walk over
-//! target, greedy bidirectional match extension on hash hits,
-//! per-source data-driven sequential-offset-mode flip.
+//! xdelta1 differ. Takes source bytes and target bytes; produces an
+//! [`XDelta1DiffOutput`] containing the instructions and data segment
+//! that, applied to the source, reproduce the target. Emits
+//! [`InstructionTarget::FileSource`] for spans of target that match
+//! some region of source and [`InstructionTarget::DataSource`] for
+//! bytes that didn't match (accumulated into the inline data
+//! segment).
 //!
-//! Provenance: Josh MacDonald's xdelta-1.1.x
-//! (`xdelta.c::generate_checksums`, `::compute_copies`, `::try_match`,
-//! `::pack_instructions`). The shape is what's faithful; the
-//! implementation is slap's. The `CHEW` byte-permutation table from
-//! canonical is not replicated — it's a museum piece of anti-Adler-32
-//! tuning, not part of the algorithm's idea.
-//!
-//! Below the FFI boundary this module is safe Rust: no `unwrap`, no
-//! `expect`, no `panic!`. Allocations that can fail use fallible-
-//! allocation patterns; the cause is propagated as `String` for the
-//! Haskell side to wrap as `XDelta1DiffCause`.
+//! Crosses the FFI seam as parallel homogeneous buffers. The Haskell
+//! side in `Slap.XDelta1.FFI` reassembles the output and feeds it to
+//! `Slap.XDelta1.Create.assemblePatch`.
 
 /// Anchor granularity for the rolling-checksum index. Matches
 /// canonical's `QUERY_SIZE_POW = 1 << 4` default (`xdelta.h:78`) and
@@ -46,15 +40,11 @@ pub enum InstructionTarget {
 
 /// The differ's structured output. Crosses the FFI seam as parallel
 /// homogeneous buffers (one per instruction field, plus the data
-/// segment and the per-source sequential flags); this struct is the
+/// segment and the per-source sequential flag); this struct is the
 /// pre-serialization in-Rust shape.
 pub struct XDelta1DiffOutput {
     pub instructions:              Vec<Instruction>,
     pub data_segment:              Vec<u8>,
-    /// True when every emit against the data source picked up at the
-    /// previous emit's end position. False after the first non-
-    /// contiguous emit. Computed honestly during emit, not pre-set.
-    pub data_source_is_sequential: bool,
     pub file_source_is_sequential: bool,
 }
 
@@ -174,10 +164,9 @@ impl RollingChecksum {
 /// Open-addressed, no-probing table mapping rolling-checksum hash
 /// keys to the byte offset of the source block they cover. Bucket =
 /// `hash_key & (table_size − 1)`; on insert, the last block with this
-/// bucket wins (same trade-off canonical makes — see provenance).
-/// The hash key is stored alongside the offset so that lookups whose
-/// keys differ from the stored key — bucket collisions — register as
-/// misses rather than false hits.
+/// bucket wins. The hash key is stored alongside the offset so that
+/// lookups whose keys differ from the stored key — bucket collisions —
+/// register as misses rather than false hits.
 struct SourceIndex {
     buckets:    Vec<Option<IndexEntry>>,
     table_mask: usize,
@@ -249,18 +238,19 @@ impl SourceIndex {
 /// Mutable state threaded through the target walk. `literal_run_start`
 /// tracks an in-progress run of bytes destined for the data segment so
 /// consecutive non-match positions accumulate into one
-/// `FromDataSource` instruction rather than one per byte. The two
-/// `position_after_last_emit` cursors back the per-source sequential-
-/// offset-mode tracking — both flags start true and flip on the first
-/// non-contiguous emit against their source.
+/// `FromDataSource` instruction rather than one per byte.
+/// `file_source_position_after_last_emit` backs the file-source
+/// sequential-offset-mode tracking — the flag starts true and flips
+/// on the first non-contiguous file-source emit. The data source is
+/// always sequential by construction (literals append in order, so
+/// each `FromDataSource` emit's `source_offset` equals the running
+/// data-segment length) so it carries no flag of its own.
 struct EncoderState {
     instructions:                          Vec<Instruction>,
     data_segment:                          Vec<u8>,
     target_position:                       usize,
     literal_run_start:                     Option<usize>,
-    data_source_position_after_last_emit:  u64,
     file_source_position_after_last_emit:  u64,
-    data_source_is_sequential:             bool,
     file_source_is_sequential:             bool,
 }
 
@@ -271,9 +261,7 @@ impl EncoderState {
             data_segment:                         Vec::new(),
             target_position:                      0,
             literal_run_start:                    None,
-            data_source_position_after_last_emit: 0,
             file_source_position_after_last_emit: 0,
-            data_source_is_sequential:            true,
             file_source_is_sequential:            true,
         }
     }
@@ -333,30 +321,23 @@ impl EncoderState {
         }
     }
 
-    /// Record an emit instruction and update the relevant source's
-    /// sequential-mode tracking. A non-contiguous source_offset
-    /// permanently flips `is_sequential` to false; the data source
-    /// stays true by construction (literals append in order; this
-    /// helper is also the one that appends them).
+    /// Record an emit. For file-source emits, also tracks sequential
+    /// mode: a non-contiguous `source_offset` permanently flips
+    /// `file_source_is_sequential` to false. Data-source emits don't
+    /// need tracking — the data source is always sequential by
+    /// construction (literals append in order, so `source_offset` is
+    /// always the running data-segment length).
     fn record_emit(
         &mut self,
         instruction_target: InstructionTarget,
         source_offset:      u64,
         length:             u64,
     ) {
-        match instruction_target {
-            InstructionTarget::DataSource => {
-                if source_offset != self.data_source_position_after_last_emit {
-                    self.data_source_is_sequential = false;
-                }
-                self.data_source_position_after_last_emit = source_offset + length;
+        if let InstructionTarget::FileSource = instruction_target {
+            if source_offset != self.file_source_position_after_last_emit {
+                self.file_source_is_sequential = false;
             }
-            InstructionTarget::FileSource => {
-                if source_offset != self.file_source_position_after_last_emit {
-                    self.file_source_is_sequential = false;
-                }
-                self.file_source_position_after_last_emit = source_offset + length;
-            }
+            self.file_source_position_after_last_emit = source_offset + length;
         }
         self.instructions.push(Instruction {
             target: instruction_target,
@@ -380,7 +361,6 @@ impl EncoderState {
         Ok(XDelta1DiffOutput {
             instructions:              self.instructions,
             data_segment:              self.data_segment,
-            data_source_is_sequential: self.data_source_is_sequential,
             file_source_is_sequential: self.file_source_is_sequential,
         })
     }
@@ -425,9 +405,6 @@ fn decide_step(
         return Step::AccumulateLiteral;
     };
 
-    if source_anchor + BLOCK_SIZE > source.len() {
-        return Step::AccumulateLiteral;
-    }
     let target_window = &target[state.target_position..state.target_position + BLOCK_SIZE];
     let source_window = &source[source_anchor..source_anchor + BLOCK_SIZE];
     if target_window != source_window {
@@ -444,11 +421,7 @@ fn decide_step(
         backward_floor,
     );
 
-    if extended.match_length >= BLOCK_SIZE as u64 {
-        Step::EmitFileMatch(extended)
-    } else {
-        Step::AccumulateLiteral
-    }
+    Step::EmitFileMatch(extended)
 }
 
 /// Walk the match forward past the 16-byte anchor and backward into
@@ -521,7 +494,6 @@ mod tests {
         let diff = xdelta1_diff(&[1, 2, 3], &[]).expect("differ should succeed");
         assert!(diff.instructions.is_empty());
         assert!(diff.data_segment.is_empty());
-        assert!(diff.data_source_is_sequential);
         assert!(diff.file_source_is_sequential);
     }
 

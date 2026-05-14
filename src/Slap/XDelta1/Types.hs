@@ -28,6 +28,14 @@ import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), FileSize(..))
 
+-- | Per-source wire convention for how instruction offsets are
+-- encoded. Under 'AbsoluteOffsets', each instruction's source offset
+-- is written verbatim. Under 'SequentialOffsets', the wire offset is
+-- 0 for every instruction, and each instruction's actual source
+-- offset is reconstructed on parse as the running cumulative sum of
+-- preceding instructions' lengths against that source.
+-- Encoded by 'Slap.XDelta1.Create.encodeInstruction'; reconstructed
+-- by 'Slap.XDelta1.Parse.fixSequentialOffsets'.
 data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
   deriving (Show, Eq)
 

@@ -42,7 +42,6 @@ import Slap.XDelta1.Types
 data XDelta1DiffOutput = XDelta1DiffOutput
   { xdelta1DiffInstructions             :: ![XDelta1Instruction]
   , xdelta1DiffDataSegment              :: !ByteString
-  , xdelta1DiffDataSourceIsSequential   :: !Bool
   , xdelta1DiffFileSourceIsSequential   :: !Bool
   }
   deriving (Show, Eq)
@@ -54,7 +53,6 @@ foreign import ccall unsafe "rusty_xdelta1_diff"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_source_offsets
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_lengths
     -> Ptr (Ptr Word8) -> Ptr CSize    -- data_segment
-    -> Ptr Word8                       -- data_source_is_sequential
     -> Ptr Word8                       -- file_source_is_sequential
     -> Ptr (Ptr Word8) -> Ptr CSize    -- error_cause
     -> IO CInt
@@ -78,7 +76,6 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
     alloca $ \lengthsLengthPointer         ->
     alloca $ \dataSegmentAddressPointer    ->
     alloca $ \dataSegmentLengthPointer     ->
-    alloca $ \dataSourceFlagPointer        ->
     alloca $ \fileSourceFlagPointer        ->
     alloca $ \errorCauseAddressPointer     ->
     alloca $ \errorCauseLengthPointer      -> do
@@ -89,7 +86,6 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
         sourceOffsetsAddressPointer sourceOffsetsLengthPointer
         lengthsAddressPointer       lengthsLengthPointer
         dataSegmentAddressPointer   dataSegmentLengthPointer
-        dataSourceFlagPointer
         fileSourceFlagPointer
         errorCauseAddressPointer    errorCauseLengthPointer
       if returnCode /= 0
@@ -101,7 +97,6 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
           sourceOffsetBytes   <- readByteString sourceOffsetsAddressPointer sourceOffsetsLengthPointer
           lengthBytes         <- readByteString lengthsAddressPointer       lengthsLengthPointer
           dataSegmentBytes    <- readByteString dataSegmentAddressPointer   dataSegmentLengthPointer
-          dataSourceFlagByte  <- peek dataSourceFlagPointer
           fileSourceFlagByte  <- peek fileSourceFlagPointer
           -- The success path's error_cause is canonically the empty
           -- buffer (null pointer, zero length). Free defensively in
@@ -114,7 +109,6 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
               pure $ Right XDelta1DiffOutput
                 { xdelta1DiffInstructions           = instructions
                 , xdelta1DiffDataSegment            = dataSegmentBytes
-                , xdelta1DiffDataSourceIsSequential = dataSourceFlagByte /= 0
                 , xdelta1DiffFileSourceIsSequential = fileSourceFlagByte /= 0
                 }
 

@@ -27,7 +27,7 @@
 //!   target at an arbitrary offset (payload is a signed delta from the
 //!   previous `TargetCopy`'s end).
 
-use crate::suffix_sort::{self, SuffixArray};
+use crate::bps_suffix_sort::{self, SuffixArray};
 
 // ── Tuning constants ───────────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ fn build_sorted_concat(target: &[u8], source: &[u8], sorted_window_size: usize) 
     let mut bytes = Vec::with_capacity(sorted_window_size + source.len());
     bytes.extend_from_slice(&target[..sorted_window_size]);
     bytes.extend_from_slice(source);
-    let suffix_array = suffix_sort::suffix_sort(&bytes);
+    let suffix_array = bps_suffix_sort::suffix_sort(&bytes);
     let mut rank_at_position = vec![0usize; bytes.len()];
     for (rank, position) in suffix_array.iter_positions().enumerate() {
         rank_at_position[position] = rank;

@@ -6,9 +6,9 @@
 //! decompression seam so each FFI body reads as one sentence.
 
 mod bps_diff;
+mod bps_suffix_sort;
 mod compress;
 mod crc32;
-mod suffix_sort;
 mod xdelta1_diff;
 
 // ── Boundary helpers ──────────────────────────────────────────────────
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn rusty_bps_diff(
 // ── xdelta1 diff FFI ──────────────────────────────────────────────────
 
 /// Compute an xdelta1 diff. Returns 0 on success (all six output
-/// buffers + two flag bytes populated; `error_cause` null). Returns
+/// buffers + one flag byte populated; `error_cause` null). Returns
 /// -1 on failure (all output buffers null; `error_cause` carries the
 /// cause string). All caller-owned buffers must be freed via
 /// [`rusty_free`].
@@ -191,7 +191,6 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
     instruction_lengths_length_pointer:          *mut usize,
     data_segment_address_pointer:                *mut *mut u8,
     data_segment_length_pointer:                 *mut usize,
-    data_source_is_sequential_pointer:           *mut u8,
     file_source_is_sequential_pointer:           *mut u8,
     error_cause_address_pointer:                 *mut *mut u8,
     error_cause_length_pointer:                  *mut usize,
@@ -206,7 +205,6 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
                 surface_buffer_to_caller(source_offsets,    instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
                 surface_buffer_to_caller(lengths,           instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
                 surface_buffer_to_caller(diff.data_segment, data_segment_address_pointer,               data_segment_length_pointer);
-                *data_source_is_sequential_pointer = u8::from(diff.data_source_is_sequential);
                 *file_source_is_sequential_pointer = u8::from(diff.file_source_is_sequential);
                 surface_buffer_to_caller(Vec::new(), error_cause_address_pointer, error_cause_length_pointer);
             }
@@ -218,7 +216,6 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
                 surface_buffer_to_caller(Vec::new(), instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
                 surface_buffer_to_caller(Vec::new(), instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
                 surface_buffer_to_caller(Vec::new(), data_segment_address_pointer,               data_segment_length_pointer);
-                *data_source_is_sequential_pointer = 0;
                 *file_source_is_sequential_pointer = 0;
                 surface_buffer_to_caller(cause_message.into_bytes(), error_cause_address_pointer, error_cause_length_pointer);
             }

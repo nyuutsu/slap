@@ -141,7 +141,7 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
           { xdelta1SourceName       = "(patch data)"
           , xdelta1SourceMD5        = perSourceMD5 dataSegmentMD5
           , xdelta1SourceLength     = byteFileSize dataSegmentBytes
-          , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffDataSourceIsSequential diff)
+          , xdelta1SourceOffsetMode = SequentialOffsets
           }
       , xdelta1FileSource = XDelta1Source
           { xdelta1SourceName       = "source"
