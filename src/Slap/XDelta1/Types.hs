@@ -18,8 +18,11 @@ module Slap.XDelta1.Types
   , xdelta1FlagFromCompressed
   , xdelta1FlagToCompressed
   , xdelta1FlagPatchCompressed
+  , xdelta1ControlTypeTag
+  , xdelta1ControlAllocationBound
   ) where
 
+import Data.Bits (shiftL)
 import Data.ByteString (ByteString)
 import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
@@ -198,3 +201,47 @@ xdelta1FlagToCompressed = 4
 -- (each segment is its own gzip stream).
 xdelta1FlagPatchCompressed :: Word32
 xdelta1FlagPatchCompressed = 8
+
+-- | EDSIO type tag for canonical xdelta's @ST_XdeltaControl@ record
+-- type. Derived from @tools\/xdelta1\/xdelta-1.1.4\/xd_edsio.h:108@:
+--
+-- @
+-- ST_XdeltaControl = (1 << (7 + EDSIO_LIBRARY_OFFSET_BITS)) + 3
+-- @
+--
+-- with @EDSIO_LIBRARY_OFFSET_BITS = 8@ from
+-- @tools\/xdelta1\/xdelta-1.1.4\/libedsio\/edsio.h:41@. The low byte
+-- (3) is the library number canonical validates at
+-- @libedsio\/generic.c:66@ — a literal-zero library bails with
+-- "Unregistered library: 0", which is the symptom slap-made patches
+-- produced before this constant was wired in; the high bits identify
+-- the type within that library. Big-endian on the wire, occupying
+-- bytes 0..3 of the EDSIO-serialized control segment.
+xdelta1ControlTypeTag :: Word32
+xdelta1ControlTypeTag = (1 `shiftL` 15) + 3  -- = 0x00008003
+
+-- | Allocation upper bound written into the control prelude's second
+-- 32-bit slot (bytes 4..7 of the EDSIO-serialized control segment,
+-- big-endian). Canonical's parser reads this into
+-- @source->alloc_total@ at
+-- @tools\/xdelta1\/xdelta-1.1.4\/libedsio\/default.c@ and bounds-
+-- checks every sub-record allocation against it: a sub-allocation
+-- request whose running total would exceed the declared bound fires
+-- @EC_EdsioIncorrectAllocation@ and bails. Not a hint — a hard cap.
+--
+-- The exact "right" value is the in-memory struct allocation
+-- canonical would need to reconstruct the parsed objects —
+-- platform-dependent (struct layout, pointer size, 8-byte alignment),
+-- not derivable from wire bytes alone. Slap doesn't attempt to
+-- compute it precisely; this constant is a generous fixed upper
+-- bound, large enough to satisfy canonical's check for any patch
+-- slap can produce, small enough to fit in a 32-bit word. The cost
+-- of over-declaring is wasted-then-freed memory inside canonical's
+-- parser, not wire bloat (the field is always 4 bytes regardless of
+-- value).
+--
+-- 16 MiB is comfortably above any realistic per-patch allocation
+-- canonical would actually use and well under the 4 GiB ceiling.
+-- Revisit if a future patch shape grows past it.
+xdelta1ControlAllocationBound :: Word32
+xdelta1ControlAllocationBound = 16 * 1024 * 1024

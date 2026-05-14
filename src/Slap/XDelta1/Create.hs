@@ -58,6 +58,8 @@ import Slap.XDelta1.Types
     , xdelta1FlagFromCompressed
     , xdelta1FlagToCompressed
     , xdelta1FlagPatchCompressed
+    , xdelta1ControlTypeTag
+    , xdelta1ControlAllocationBound
     )
 import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
@@ -270,15 +272,29 @@ encodeXDelta1 patch = ByteString.concat
 ----------------------------------------------------------------------------
 
 -- | Encode the EDSIO-serialized control structure (mirror image of
--- 'Slap.XDelta1.Parse.parseControlBody'): 8 zero bytes for the
--- deprecated type-tag + allocation slot, the target MD5, a varint
--- target length, the @has_data@ boolean, the source list (always
--- two records, in @[data, file]@ order), and the instruction list.
+-- 'Slap.XDelta1.Parse.parseControlBody'): the canonical
+-- @ST_XdeltaControl@ type tag ('xdelta1ControlTypeTag', 4 BE bytes),
+-- a parser-scratch allocation upper bound
+-- ('xdelta1ControlAllocationBound', 4 BE bytes), the target MD5, a
+-- varint target length, the @has_data@ boolean, the source list
+-- (always two records, in @[data, file]@ order), and the instruction
+-- list.
+--
+-- The two prelude words are non-negotiable: canonical xdelta's
+-- generic EDSIO reader (@libedsio\/generic.c:66@) bails immediately
+-- with "Unregistered library: 0" when the type tag's low byte
+-- isn't a registered library number, and its sub-allocation
+-- accountant (@libedsio\/default.c@) caps every reconstructed
+-- pointer at the declared allocation bound. Slap's own parser
+-- previously skipped both fields without inspection, which is why
+-- the all-zeros prelude this encoder used to emit round-tripped
+-- under slap but was rejected by canonical.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
   where
     builder =
-      byteString (ByteString.replicate 8 0)
+      byteString (word32BEBytes xdelta1ControlTypeTag)
+      <> byteString (word32BEBytes xdelta1ControlAllocationBound)
       <> byteString (unMD5Hash toMD5Bytes)
       <> putEdsioVarint (fromIntegral (unFileSize (xdelta1TargetLength patch)))
       <> word8 1  -- has_data flag: nonzero means a data segment follows

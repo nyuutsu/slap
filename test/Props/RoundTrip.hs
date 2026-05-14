@@ -84,6 +84,8 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Bits (shiftL)
 import qualified Data.Bits as Bits
 import Data.ByteString.Builder (word8, byteString, toLazyByteString)
+import Data.List (isInfixOf)
+import Slap.Binary (getWord32BE)
 import Test.Tasty
 import Test.Tasty.HUnit (testCase, assertBool, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
@@ -183,6 +185,7 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "target equals source"             xdelta1TargetEqualsSource
       , testCase     "no-verify sets FLAG_NO_VERIFY"    xdelta1NoVerifySetsFlagBit
       , testCase     "include-verify clears FLAG_NO_VERIFY" xdelta1IncludeVerifyClearsFlagBit
+      , testCase     "parser rejects corrupted control type tag" xdelta1RejectsWrongControlTypeTag
       ]
   ]
 
@@ -1061,3 +1064,38 @@ xdelta1IncludeVerifyClearsFlagBit =
       let flagsLowByte = ByteString.index patchBytes 11
       assertBool ("FLAG_NO_VERIFY (bit 0) should be clear under IncludeVerification; flags low byte = " ++ show flagsLowByte)
         (not (flagsLowByte `Bits.testBit` 0))
+
+-- | Pins the parser-side half of the @ST_XdeltaControl@ type-tag fix
+-- in 'Slap.XDelta1.Parse.parseControlBody': slap previously
+-- @skip (Length 8)@ed the type tag + allocation prelude without
+-- inspection, which is how it failed to notice that its own encoder
+-- was writing all-zero bytes there — a shape canonical xdelta-1.x
+-- rejects with "Unregistered library: 0".
+--
+-- This test creates an uncompressed patch (so the control prelude is
+-- on the wire literally, not behind a gzip stream), corrupts the
+-- high byte of the type tag, and asserts the parser refuses with an
+-- error message that names what went wrong.
+xdelta1RejectsWrongControlTypeTag :: Assertion
+xdelta1RejectsWrongControlTypeTag =
+  case createXDelta1 IncludeVerification UncompressedPatch
+                     (InputFileContents "abcdef")
+                     (OutputFileContents "ghijkl") of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult (PatchFileContents patchBytes) _) ->
+      let totalLength    = ByteString.length patchBytes
+          controlOffset  = fromIntegral (getWord32BE (totalLength - 12) patchBytes) :: Int
+          corruptedBytes = ByteString.concat
+            [ ByteString.take controlOffset patchBytes
+            , ByteString.singleton 0xFF        -- flip high byte of type tag
+            , ByteString.drop (controlOffset + 1) patchBytes
+            ]
+      in case XDelta1.parseXDelta1 (PatchFileContents corruptedBytes) of
+        Right _ -> assertFailure
+          "expected parser to reject corrupted control type tag; parse succeeded"
+        Left parseError ->
+          let rendered = renderSlapError parseError
+          in assertBool
+               ("rejection should name the type tag (got: " ++ rendered ++ ")")
+               (   "type tag"        `isInfixOf` rendered
+                || "ST_XdeltaControl" `isInfixOf` rendered)

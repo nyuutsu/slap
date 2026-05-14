@@ -35,22 +35,25 @@ import Slap.XDelta1.Types
     , xdelta1FlagFromCompressed
     , xdelta1FlagToCompressed
     , xdelta1FlagPatchCompressed
+    , xdelta1ControlTypeTag
     )
 import Slap.Binary (getWord32BE)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..), SlapWarning(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint)
+import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint, word32BE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..))
 import Slap.Compression.Stream (gzipInflate)
 
+import Control.Monad (unless)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
+import Numeric (showHex)
 
 ----------------------------------------------------------------------------
 -- Role newtypes for 'parseControl'
@@ -295,7 +298,23 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
 
     parseControlBody :: Get (MD5Hash, FileSize, [ParsedSourceRecord], [ParsedInstruction])
     parseControlBody = do
-      skip (Length 8)  -- type tag + allocation (deprecated)
+      observedTypeTag <- word32BE
+      unless (observedTypeTag == xdelta1ControlTypeTag) $
+        fail
+          ( "control segment opens with type tag 0x"
+            ++ showHex observedTypeTag ""
+            ++ "; expected ST_XdeltaControl (0x"
+            ++ showHex xdelta1ControlTypeTag ""
+            ++ "). Canonical xdelta-1.x's EDSIO reader rejects unrecognized"
+            ++ " library numbers (low byte of the type tag) with "
+            ++ "\"Unregistered library: N\"."
+          )
+      _allocationBound <- word32BE
+        -- Canonical xdelta uses this 32-bit BE word as a hard upper
+        -- bound on parser scratch allocations (libedsio/default.c).
+        -- Slap doesn't track sub-record allocations, so the value is
+        -- read and discarded here; the encoder writes a generous
+        -- fixed bound ('xdelta1ControlAllocationBound').
       toMD5 <- MD5Hash <$> getBytes (Length 16)
       targetLength <- edsioVarint
       skip (Length 1)  -- has_data boolean

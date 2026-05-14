@@ -55,7 +55,10 @@ import Slap.XDelta1.Types
   , xdelta1Verification
   , xdelta1FromAtDeltaTime
   , xdelta1ToAtDeltaTime
+  , xdelta1ControlTypeTag
+  , xdelta1ControlAllocationBound
   )
+import Slap.Binary (word32BEBytes)
 import Slap.Measure (FileSize(..))
 import Slap.Convert
   ( DirectCreate(..)
@@ -936,7 +939,8 @@ data TestSourceKind = TestDataKind | TestFileKind
 --
 -- Layout (all integers EDSIO varints unless noted):
 --
--- > 8 bytes : type tag + allocation (zeros, skipped by parser)
+-- > 4 bytes : ST_XdeltaControl type tag (BE)
+-- > 4 bytes : allocation upper bound (BE; read and discarded by parser)
 -- > 16 bytes: target MD5 (zeros)
 -- > varint  : target length (0)
 -- > 1 byte  : has_data flag (0, ignored)
@@ -954,7 +958,8 @@ buildXDelta1Control
   -> [(Int, Int, Int)]      -- ^ (instruction index, offset, length) tuples
   -> ByteString
 buildXDelta1Control sourceKinds instructions = ByteString.concat
-  [ ByteString.replicate 8  0x00          -- type tag + allocation
+  [ word32BEBytes xdelta1ControlTypeTag        -- ST_XdeltaControl
+  , word32BEBytes xdelta1ControlAllocationBound -- parser scratch bound
   , ByteString.replicate 16 0x00          -- target MD5
   , edsioVarintByte 0                     -- target length
   , ByteString.singleton 0x00             -- has_data
