@@ -664,13 +664,18 @@ parseSomePatchFromUPS patchContents = do
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noWarnings (UPS.applyUPS patch source)) }
-    , patchUndo           = Just $ UndoStrategy $ \(OutputFileContents modified) ->
-        -- UPS is self-inverse (XOR-based): applying the patch to the
-        -- target recovers the source. For a well-parsed patch this
-        -- reapplication cannot fail.
-        case UPS.applyUPS patch (InputFileContents modified) of
-          Right (OutputFileContents reverted) ->
-            Right (noWarnings (InputFileContents reverted))
+    , patchUndo           = Just $ UndoStrategy $ \modified ->
+        -- UPS is self-inverse (XOR-based): walking the same block
+        -- stream against the target reconstructs the source. The
+        -- only direction-dependent choice is the output buffer
+        -- size — 'undoUPS' handles that internally by passing
+        -- sourceSize instead of targetSize to the shared walker,
+        -- which is what makes size-changing UPS patches round-trip
+        -- correctly (a reapply-forward path would have produced a
+        -- target-sized buffer regardless of direction, silently
+        -- wrong for growth patches).
+        case UPS.undoUPS patch modified of
+          Right reverted -> Right (noWarnings reverted)
           Left slapError -> Left slapError
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)

@@ -2,9 +2,10 @@
 --
 -- > undo(apply(patch, src)) == src
 --
--- UPS undo is the special case of self-inversion (applying the same
--- XOR patch twice recovers the original). PPF3 undo stores original
--- bytes explicitly.
+-- UPS undo relies on XOR's self-inverse property: walking the same
+-- block stream against the target with a source-sized output buffer
+-- reconstructs the source. PPF3 undo stores original bytes
+-- explicitly.
 module Props.Undo (undoTests) where
 
 import qualified Slap.UPS.Apply as UPS
@@ -30,11 +31,17 @@ undoTests = testGroup "Undo"
   , testProperty "PPF3" prop_ppf3Undo
   ]
 
--- | UPS XOR is symmetric: applying the same patch to the target yields
--- the source.  Only holds for same-size inputs (different sizes lose
--- information in the size field).
+-- | UPS XOR is symmetric: applying the patch forward to source
+-- yields target, and the dedicated 'undoUPS' (which walks the same
+-- block stream but sizes the output buffer to 'upsSourceSize'
+-- instead of 'upsTargetSize') takes that target back to the source.
+-- Holds for arbitrary pairs, including size changes — the size each
+-- direction produces is the one declared in the patch's header.
+-- The same-size-only restriction this property used to carry was an
+-- artefact of slap's old undo path, which reapplied 'applyUPS' and
+-- so always produced a target-sized buffer regardless of direction.
 prop_upsUndo :: Property
-prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
+prop_upsUndo = forAll genPair $ \(source, target) ->
   case createUPS (InputFileContents source) (OutputFileContents target) of
     Left _createError -> property True
     Right (CreateResult patch _) ->
@@ -42,7 +49,11 @@ prop_upsUndo = forAll genSameSizePair $ \(source, target) ->
         Left parseError ->
           counterexample ("parse: " ++ renderSlapError parseError) $ property False
         Right (Parsed parsed _parseWarnings) ->
-          (UPS.applyUPS parsed (InputFileContents source) >>= \(OutputFileContents intermediate) -> UPS.applyUPS parsed (InputFileContents intermediate)) === Right (OutputFileContents source)
+          case UPS.applyUPS parsed (InputFileContents source) of
+            Left applyError ->
+              counterexample ("apply: " ++ renderSlapError applyError) $ property False
+            Right intermediate ->
+              UPS.undoUPS parsed intermediate === Right (InputFileContents source)
 
 -- | PPF3 with undo data: apply then undo recovers the original.
 -- Same-size pairs only — PPF3 undo writes back original bytes but can't

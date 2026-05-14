@@ -1,5 +1,6 @@
 module Slap.UPS.Apply
   ( applyUPS
+  , undoUPS
   , detectOOBBlocks
   ) where
 
@@ -29,11 +30,18 @@ import Foreign.Ptr (Ptr, castPtr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
--- | Apply a parsed UPS patch to a source ByteString. Returns
--- 'Left' with a structured error if the declared target size is
--- negative (unreachable by construction but defensively guarded).
--- Blocks whose span exceeds the declared target size are clipped
--- to target bounds — the in-bounds portion is written and the
+-- | Apply a parsed UPS patch to a source ByteString. Walks the
+-- block stream against @source@ and writes the result into a
+-- target-sized output buffer. The reverse-direction sibling is
+-- 'undoUPS'; both go through the same internal walker
+-- ('runUPSXorWalk') which is parameterised on the output buffer
+-- size — the direction choice lives in these two thin wrappers,
+-- not threaded through the walker.
+--
+-- Returns 'Left' with a structured error if the declared target
+-- size is negative (unreachable by construction but defensively
+-- guarded). Blocks whose span exceeds the output size are clipped
+-- to its bounds — the in-bounds portion is written and the
 -- out-of-bounds portion is silently skipped. This tolerates the
 -- common creation-tool artifact where the final block's terminator
 -- byte lands 1 past the declared output size. Use 'detectOOBBlocks'
@@ -44,18 +52,41 @@ import System.IO.Unsafe (unsafePerformIO)
 -- an error. The caller is still responsible for CRC validation
 -- before calling.
 applyUPS :: UPSPatch -> InputFileContents -> Either SlapError OutputFileContents
-applyUPS patch (InputFileContents source)
-  | unFileSize targetSize < 0 =
-      Left (NegativeTargetSize LabelUPS targetSize)
-  | unFileSize targetSize == 0 =
-      Right (OutputFileContents ByteString.empty)
-  | otherwise = Right $ OutputFileContents $ unsafePerformIO $
-      create (unFileSize targetSize) $ \outputPointer ->
+applyUPS patch (InputFileContents source) =
+  OutputFileContents <$> runUPSXorWalk patch source (upsTargetSize patch)
+
+-- | Reverse-direction sibling to 'applyUPS'. UPS XOR is self-inverse,
+-- so reconstructing the source from the target uses the same block
+-- stream walked the same way — only the output buffer size differs
+-- (@source_size@ instead of @target_size@). Same OOB-clipping rules
+-- apply: blocks whose span exceeds the new (source-side) output
+-- size get clipped against it, which is the typical situation for
+-- growth patches where the block stream covers the larger target
+-- but undo writes only the smaller source.
+undoUPS :: UPSPatch -> OutputFileContents -> Either SlapError InputFileContents
+undoUPS patch (OutputFileContents modified) =
+  InputFileContents <$> runUPSXorWalk patch modified (upsSourceSize patch)
+
+-- | Internal: walks a UPS patch's block stream against @inputBytes@,
+-- writing an output buffer of @outputSize@ bytes. The two public
+-- entry points ('applyUPS' and 'undoUPS') differ only in which
+-- declared size they pass here. Renders 'NegativeTargetSize' for a
+-- defensively-checked negative output size — the variant is named
+-- after the apply direction's "target" but covers both directions
+-- (a negative declared size is unreachable from a well-parsed patch
+-- in either case).
+runUPSXorWalk :: UPSPatch -> ByteString -> FileSize -> Either SlapError ByteString
+runUPSXorWalk patch source outputSize
+  | unFileSize outputSize < 0 =
+      Left (NegativeTargetSize LabelUPS outputSize)
+  | unFileSize outputSize == 0 =
+      Right ByteString.empty
+  | otherwise = Right $ unsafePerformIO $
+      create (unFileSize outputSize) $ \outputPointer ->
         unsafeUseAsCStringLen source $ \(sourcePointerCString, _) ->
           let sourcePointer = castPtr sourcePointerCString :: Ptr Word8
           in runApply outputPointer sourcePointer
   where
-    targetSize     = upsTargetSize patch
     sourceSize     = byteFileSize source
     blocks         = upsBlocks patch
     blockStreamEnd = streamEndIndex blocks
@@ -129,10 +160,10 @@ applyUPS patch (InputFileContents source)
         applyBlockStream :: ActionIndex -> Offset -> IO ()
         applyBlockStream !blockIndex !outputPosition
           | blockIndex >= blockStreamEnd = do
-              -- End of stream: tail copy from source to target,
+              -- End of stream: tail copy from source to output,
               -- zero-filling past source end. No ApplyTargetUnderfilled
-              -- check — the tail copy always fills target exactly.
-              let tailLength = remainingFromOffset outputPosition targetSize
+              -- check — the tail copy always fills the output exactly.
+              let tailLength = remainingFromOffset outputPosition outputSize
               copySourceSlice outputPosition tailLength
           | otherwise =
               handleBlock blockIndex outputPosition
@@ -146,20 +177,25 @@ applyUPS patch (InputFileContents source)
               xorStart       = advance skipStart skipLen
               terminatorPos  = advance xorStart xorLen
               nextPosition   = advance terminatorPos upsTerminatorByteLength
-          in if fitsWithin outputPosition totalBlockLen targetSize
+          in if fitsWithin outputPosition totalBlockLen outputSize
                then do
-                 -- Fast path: entire block fits within target.
+                 -- Fast path: entire block fits within the output buffer.
                  copySourceSlice skipStart skipLen
                  xorSourceSlice xorStart xorLen xorData
                  copySourceSlice terminatorPos upsTerminatorByteLength
                  applyBlockStream (nextAction blockIndex) nextPosition
                else do
                  -- OOB path: clip each sub-operation to remaining
-                 -- target space. The cursor advances by the full
+                 -- output space. The cursor advances by the full
                  -- block span regardless — the patch was authored
                  -- with that stride, and any subsequent blocks (rare
-                 -- but legal) depend on it.
-                 let available      = remainingFromOffset outputPosition targetSize
+                 -- but legal) depend on it. In the apply direction
+                 -- this fires for the typical "terminator at target
+                 -- end" tail block; in the undo direction it can
+                 -- fire much earlier for growth patches (block
+                 -- stream covers the larger target; undo writes the
+                 -- smaller source).
+                 let available      = remainingFromOffset outputPosition outputSize
                      clippedSkipLen = minLength skipLen available
                      afterSkip      = subtractLength available clippedSkipLen
                      clippedXorLen  = minLength xorLen afterSkip

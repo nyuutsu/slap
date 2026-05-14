@@ -113,18 +113,17 @@ data CursorKind = SourceCursor | TargetCursor
 ----------------------------------------------------------------------------
 
 -- | Why a (source, target) pair cannot be encoded as a UPS patch.
--- Per the UPS spec, each diff run must end with a terminator byte
--- that counts against the target file pointer; this makes certain
--- byte configurations impossible to represent.
+-- The UPS spec sells bi-directional patching as a defining feature:
+-- the same patch applied to either side recovers the other. Slap's
+-- 'createUPS' refuses pairs that would silently break that guarantee.
 data UnencodeabilityReason
-  = UPSLastByteDiffers     -- ^ target's final byte differs from source (with
-                           --   virtual zero-padding past source end), so any
-                           --   diff run at that position would need a terminator
-                           --   past target end
-  | UPSSourceTailNonZero   -- ^ source has non-zero bytes past target size,
-                           --   which appear as diffs against virtual-zero
-                           --   target and cannot be represented without
-                           --   writing past target end
+  = UPSSourceTailNonZero   -- ^ Source has non-zero bytes past target size.
+                           --   Refused to preserve UPS's bi-directional undo
+                           --   guarantee (spec §2): the block stream only
+                           --   covers @[0, target_size)@, so forward apply
+                           --   produces the correct target, but reverse apply
+                           --   reconstructs a source with zeros where the
+                           --   non-zero tail bytes used to be.
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
@@ -1335,12 +1334,9 @@ renderSlapWarning (VerificationOptedOutByCreator label) =
 ----------------------------------------------------------------------------
 
 renderUnencodeabilityReason :: UnencodeabilityReason -> String
-renderUnencodeabilityReason UPSLastByteDiffers =
-  "target's final byte differs from source (with virtual zero-padding);"
-  ++ " no terminator byte can be placed past target end"
 renderUnencodeabilityReason UPSSourceTailNonZero =
   "source has non-zero bytes past target size;"
-  ++ " these cannot be represented in a UPS patch"
+  ++ " these cannot be represented bi-directionally in a UPS patch"
 
 -- | Render a trailer marker's raw bytes for inclusion in an error
 -- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable
