@@ -117,12 +117,14 @@ data ExplainVerbosity
 -- 'ApplyInPlace' overwrites the source file (the most invasive option;
 -- carries a 'BackupBehavior' to opt into a @.bak@ copy before writing).
 -- Mutually exclusive with @-o@\/positional @OUTPUT@ and with @--dry-run@.
--- 'ApplyToExplicitFile' writes to an operator-chosen path.  @-o FILE@ and
--- the positional @OUTPUT@ are two spellings of this same lane, so using
--- both in one command is a parse error.  Carries an 'OverwritePolicy' to
--- opt into clobbering an existing destination via @--force@; the flag is
--- a sub-flag of this lane (and 'ApplyToDerivedFile') because it is
--- meaningless against an in-place write or a dry run.
+-- 'ApplyToExplicitFile' writes to an operator-chosen path.  The path
+-- can be given as @-o FILE@ or as a bare third positional @OUTPUT@;
+-- the two spellings are equivalent, and giving both at once is a parse
+-- error because there's no sensible way to honor two different paths.
+-- Carries an 'OverwritePolicy' to opt into clobbering an existing
+-- destination via @--force@; the flag is a sub-flag of this lane (and
+-- 'ApplyToDerivedFile') because it is meaningless against an in-place
+-- write or a dry run.
 -- 'ApplyToDerivedFile' writes to a path derived from the source file name
 -- (the default when no lane-distinguishing flag is given).  Also carries
 -- an 'OverwritePolicy' for the same reason as 'ApplyToExplicitFile'.
@@ -154,12 +156,14 @@ data BackupBehavior
 -- (the most invasive option; carries a 'BackupBehavior' to opt into a
 -- @.bak@ copy before writing).  Mutually exclusive with @-o@\/positional
 -- @OUTPUT@ and with @--dry-run@.
--- 'UndoToExplicitFile' writes to an operator-chosen path.  @-o FILE@ and
--- the positional @OUTPUT@ are two spellings of this same lane, so using
--- both in one command is a parse error.  Carries an 'OverwritePolicy' to
--- opt into clobbering an existing destination via @--force@; the flag is
--- a sub-flag of this lane (and 'UndoToDerivedFile') because it is
--- meaningless against an in-place write or a dry run.
+-- 'UndoToExplicitFile' writes to an operator-chosen path.  The path
+-- can be given as @-o FILE@ or as a bare third positional @OUTPUT@;
+-- the two spellings are equivalent, and giving both at once is a parse
+-- error because there's no sensible way to honor two different paths.
+-- Carries an 'OverwritePolicy' to opt into clobbering an existing
+-- destination via @--force@; the flag is a sub-flag of this lane (and
+-- 'UndoToDerivedFile') because it is meaningless against an in-place
+-- write or a dry run.
 -- 'UndoToDerivedFile' writes to a path derived from the modified file
 -- name (the default when no lane-distinguishing flag is given).  Also
 -- carries an 'OverwritePolicy' for the same reason as
@@ -489,9 +493,9 @@ applyOutputParser = asum
         outputPathOption :: Parser FilePath
         outputPathOption =
               option str (long "output" <> short 'o' <> metavar "FILE"
-                <> help "Write patched output to FILE (alternative: positional OUTPUT)")
+                <> help "Write patched output to FILE. Or pass it as the third argument.")
           <|> argument str (metavar "OUTPUT"
-                <> help "Write patched output to this path (alternative: -o FILE)")
+                <> help "Write patched output to this path. Or pass it via -o FILE.")
 
         overwritePolicyFlag :: Parser OverwritePolicy
         overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
@@ -559,9 +563,9 @@ undoOutputParser = asum
         outputPathOption :: Parser FilePath
         outputPathOption =
               option str (long "output" <> short 'o' <> metavar "FILE"
-                <> help "Write reverted output to FILE (alternative: positional OUTPUT)")
+                <> help "Write reverted output to FILE. Or pass it as the third argument.")
           <|> argument str (metavar "OUTPUT"
-                <> help "Write reverted output to this path (alternative: -o FILE)")
+                <> help "Write reverted output to this path. Or pass it via -o FILE.")
 
         overwritePolicyFlag :: Parser OverwritePolicy
         overwritePolicyFlag = flag RefuseOverwrite ForceOverwrite
