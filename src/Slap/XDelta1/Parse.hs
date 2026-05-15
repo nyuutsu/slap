@@ -12,8 +12,6 @@ module Slap.XDelta1.Parse
     -- * Role newtypes for parseControl arguments
   , XDelta1ControlSegment(..)
   , XDelta1DataSegment(..)
-  , XDelta1FromName(..)
-  , XDelta1ToName(..)
   , XDelta1NoVerifyFlag(..)
   ) where
 
@@ -26,6 +24,8 @@ import Slap.XDelta1.Types
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
     , XDelta1FileAtDeltaTime(..)
+    , XDelta1FromName(..)
+    , XDelta1ToName(..)
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
     , xdelta1DataRecordName
@@ -71,21 +71,6 @@ newtype XDelta1ControlSegment = XDelta1ControlSegment
 -- control stream.
 newtype XDelta1DataSegment = XDelta1DataSegment
   { unXDelta1DataSegment :: ByteString
-  } deriving (Eq, Show)
-
--- | The from-name field parsed out of an XDelta1 patch header:
--- the name the patch records as the source filename.
-newtype XDelta1FromName = XDelta1FromName
-  { unXDelta1FromName :: ByteString
-  } deriving (Eq, Show)
-
--- | The to-name field parsed out of an XDelta1 patch header: the
--- name the patch records as the target filename. Distinct from
--- 'XDelta1FromName' so a transposition at 'parseControl' would
--- silently produce a patch with reversed source/target names; the
--- newtype boundary forces the spec direction at the call site.
-newtype XDelta1ToName = XDelta1ToName
-  { unXDelta1ToName :: ByteString
   } deriving (Eq, Show)
 
 -- | Whether bit 0 (@FLAG_NO_VERIFY@) of the patch header's flags
@@ -321,8 +306,8 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
       let fixedInstructions =
             fixSequentialOffsets dataOffsetMode fileOffsetMode translatedInstructions
           patch = XDelta1Patch
-            { xdelta1FromName         = fromNameBytes
-            , xdelta1ToName           = toNameBytes
+            { xdelta1FromName         = fromName
+            , xdelta1ToName           = toName
             , xdelta1Verification     = verificationPosture
             , xdelta1PatchCompression = compressionPosture
               -- 'parseControl' is scoped to the control segment;
@@ -333,7 +318,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
             , xdelta1FromAtDeltaTime  = FileWasRawBytes
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = targetLength
-            , xdelta1SourceName       = parsedSourceName parsedFileRec
+            , xdelta1SourceName       = XDelta1FromName (parsedSourceName parsedFileRec)
             , xdelta1SourceMD5        = fileSourceMD5
             , xdelta1SourceLength     = parsedSourceLength parsedFileRec
             , xdelta1SourceOffsetMode = fileOffsetMode
@@ -362,8 +347,6 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
   where
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment
-    fromNameBytes = unXDelta1FromName       fromName
-    toNameBytes   = unXDelta1ToName         toName
 
     parseControlBody :: Get (MD5Hash, FileSize, [ParsedSourceRecord], [ParsedInstruction])
     parseControlBody = do

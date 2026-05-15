@@ -40,12 +40,12 @@ import Slap.XDelta1.Parse
   ( parseControl
   , parseXDelta1
   , XDelta1ControlSegment(..), XDelta1DataSegment(..)
-  , XDelta1FromName(..), XDelta1ToName(..)
   , XDelta1NoVerifyFlag(..)
   )
 import qualified Slap.XDelta1.Apply as XDelta1
 import Slap.XDelta1.Types
   ( XDelta1Patch(..)
+  , XDelta1FromName(..), XDelta1ToName(..)
   , XDelta1OffsetMode(..)
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
@@ -428,7 +428,7 @@ crossFormatRoundTripTests base bps =
       let expectedSha = sha1Hex targetBytes
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
-      case createPatch createFormatA (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+      case createPatch createFormatA Nothing (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
@@ -441,7 +441,7 @@ crossFormatRoundTripTests base bps =
                 Right (OutputFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
-                  case createPatch createFormatB (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+                  case createPatch createFormatB Nothing (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
                     Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
@@ -454,7 +454,7 @@ crossFormatRoundTripTests base bps =
                             Right (OutputFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
-                              case createPatch createFormatC (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+                              case createPatch createFormatC Nothing (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
                                 Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome noDialectsRequested patchC of
@@ -522,7 +522,7 @@ createRoundTripTests getTargets dm4yBase dm4yBps
       createFormat <- case parseCreateFormat formatString of
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
-      case createPatch createFormat (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+      case createPatch createFormat Nothing (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome noDialectsRequested patchBytes of
@@ -607,7 +607,7 @@ smcShapeConstraintTests =
       -- wire-valid truncation marker it always has.
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
-      case createPatch (CreateDirect CreateIPS)
+      case createPatch (CreateDirect CreateIPS) Nothing
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
@@ -644,7 +644,7 @@ smcShapeConstraintTests =
       { requestedSMCShape = RequireSMCShapedTruncation }
 
     createWithSMC source target =
-      createPatch (CreateDirect CreateIPS)
+      createPatch (CreateDirect CreateIPS) Nothing
         (InputFileContents source) (OutputFileContents target)
         noMetadataRequested Nothing smcConstraints noDialectsRequested
 
@@ -656,7 +656,7 @@ smcShapeConstraintTests =
     buildNonSMCShapedIPS = do
       let source = ByteString.replicate 0x2000 0x00
           target = ByteString.replicate 4000 0xFF
-      case createPatch (CreateDirect CreateIPS)
+      case createPatch (CreateDirect CreateIPS) Nothing
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
@@ -866,14 +866,14 @@ xdelta1InputPreCompressionTests fixturePath =
   -- parse pipeline.
   , testCase "xdelta1/empty target with FROM_COMPRESSED refuses apply" $ do
       let patch = XDelta1Patch
-            { xdelta1FromName         = ByteString.empty
-            , xdelta1ToName           = ByteString.empty
+            { xdelta1FromName         = XDelta1FromName ByteString.empty
+            , xdelta1ToName           = XDelta1ToName   ByteString.empty
             , xdelta1Verification     = CreatorOptedOutOfVerification
             , xdelta1PatchCompression = UncompressedPatch
             , xdelta1FromAtDeltaTime  = FileWasGzipStream
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = FileSize 0
-            , xdelta1SourceName       = ByteString.empty
+            , xdelta1SourceName       = XDelta1FromName ByteString.empty
             , xdelta1SourceMD5        = Nothing
             , xdelta1SourceLength     = FileSize 0
             , xdelta1SourceOffsetMode = AbsoluteOffsets
@@ -1050,7 +1050,7 @@ dialectAxisRejectionTests =
       -- with the same origin and round-trip via apply.
       let source = ByteString.replicate 64 0x11
           target = ByteString.pack [if i == 10 then 0xAA else 0x11 | i <- [0..63 :: Int]]
-      case createPatch (CreateDirect CreatePPF1)
+      case createPatch (CreateDirect CreatePPF1) Nothing
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested amigaDialects of
         Left slapError -> assertFailure

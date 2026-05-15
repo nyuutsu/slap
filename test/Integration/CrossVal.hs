@@ -91,7 +91,7 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
     bootstrapTargets <- getTargets
     baseBytes        <- mmapRomFile basePath
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
-    case createPatch format
+    case createPatch format Nothing
            (InputFileContents baseBytes)
            (OutputFileContents targetBytes)
            noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of

@@ -48,6 +48,9 @@ data FieldName
   -- Trailer / count fields
   | FieldFileIdDizLength
   | FieldRecordCount
+  -- xdelta1 header name fields
+  | FieldXDelta1FromName
+  | FieldXDelta1ToName
   deriving (Show, Eq, Enum, Bounded)
 
 fieldNameLabel :: FieldName -> String
@@ -82,3 +85,5 @@ fieldNameLabel FieldRecordSourceOffset = "record source offset"
 fieldNameLabel FieldRecordLength       = "record length"
 fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"
+fieldNameLabel FieldXDelta1FromName  = "from-name"
+fieldNameLabel FieldXDelta1ToName    = "to-name"

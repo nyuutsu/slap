@@ -52,6 +52,11 @@ import Slap.XDelta1.Types
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
     , XDelta1FileAtDeltaTime(..)
+    , XDelta1FromName(..)
+    , XDelta1ToName(..)
+    , ResolvedXDelta1FileNames
+    , resolvedXDelta1FromName
+    , resolvedXDelta1ToName
     , xdelta1EmptyInputMD5Sentinel
     , xdelta1DataRecordName
     , xdelta1FlagNoVerify
@@ -99,17 +104,25 @@ import Data.Word (Word8, Word32, Word64)
 -- control segments are gzip-deflated independently before placement
 -- and whether @FLAG_PATCH_COMPRESSED@ is set.
 createXDelta1 :: VerificationInclusion -> XDelta1PatchCompression
+              -> ResolvedXDelta1FileNames
+                 -- ^ from-name and to-name, already resolved and
+                 -- cap-checked by the porcelain via
+                 -- 'Slap.XDelta1.Types.resolveXDelta1FileNames' /
+                 -- 'Slap.XDelta1.Types.requireXDelta1FileNames'. The
+                 -- type is the proof of resolution — there is no
+                 -- other way to obtain one, so this function trusts
+                 -- the invariants (both bytes locale-encoded, each ≤
+                 -- the u16 cap).
               -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta1 inclusion compression inputContents outputContents =
-  case xdelta1Diff inputContents outputContents of
-    Left slapError -> Left slapError
-    Right diff ->
-      let sourceBytes = unInputFileContents inputContents
-          targetBytes = unOutputFileContents outputContents
-          patch       = assemblePatch inclusion compression sourceBytes targetBytes diff
-          wireBytes   = encodeXDelta1 patch
-      in  Right (CreateResult (PatchFileContents wireBytes) [])
+createXDelta1 inclusion compression resolvedNames inputContents outputContents = do
+  diff <- xdelta1Diff inputContents outputContents
+  let sourceBytes = unInputFileContents inputContents
+      targetBytes = unOutputFileContents outputContents
+      patch = assemblePatch inclusion compression resolvedNames
+                            sourceBytes targetBytes diff
+      wireBytes = encodeXDelta1 patch
+  Right (CreateResult (PatchFileContents wireBytes) [])
 
 ----------------------------------------------------------------------------
 -- Differ output → XDelta1Patch
@@ -125,11 +138,13 @@ createXDelta1 inclusion compression inputContents outputContents =
 -- the data-segment bytes and 'xdelta1DataRecordName'.
 assemblePatch
   :: VerificationInclusion -> XDelta1PatchCompression
+  -> ResolvedXDelta1FileNames
   -> ByteString -> ByteString
+     -- ^ source bytes and target bytes (for MD5 and size computation).
   -> XDelta1DiffOutput -> XDelta1Patch
-assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
-  { xdelta1FromName         = "source"
-  , xdelta1ToName           = "target"
+assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff = XDelta1Patch
+  { xdelta1FromName         = resolvedXDelta1FromName resolvedNames
+  , xdelta1ToName           = resolvedXDelta1ToName   resolvedNames
   , xdelta1Verification     = verificationPosture
   , xdelta1PatchCompression = compression
     -- Slap doesn't detect gzip-magic on inputs at create time, so
@@ -139,7 +154,10 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
   , xdelta1FromAtDeltaTime  = FileWasRawBytes
   , xdelta1ToAtDeltaTime    = FileWasRawBytes
   , xdelta1TargetLength     = byteFileSize targetBytes
-  , xdelta1SourceName       = "source"
+    -- The per-source-record name in the EDSIO source list reflects
+    -- the same source file as the header's from-name; the resolver
+    -- produces one value and both wire fields consume it.
+  , xdelta1SourceName       = resolvedXDelta1FromName resolvedNames
   , xdelta1SourceMD5        = perSourceMD5 (md5 sourceBytes)
   , xdelta1SourceLength     = byteFileSize sourceBytes
   , xdelta1SourceOffsetMode = xdelta1DiffFileSourceOffsetMode diff
@@ -189,8 +207,8 @@ encodeXDelta1 :: XDelta1Patch -> ByteString
 encodeXDelta1 patch = ByteString.concat
   [ magicBytes
   , headerBytes
-  , xdelta1FromName patch
-  , xdelta1ToName patch
+  , fromNameBytes
+  , toNameBytes
   , dataSegment
   , controlSegment
   , word32BEBytes controlOffset
@@ -198,8 +216,10 @@ encodeXDelta1 patch = ByteString.concat
   ]
   where
     magicBytes     = "%XDZ004%"
-    fromNameLength = ByteString.length (xdelta1FromName patch)
-    toNameLength   = ByteString.length (xdelta1ToName patch)
+    fromNameBytes  = unXDelta1FromName (xdelta1FromName patch)
+    toNameBytes    = unXDelta1ToName   (xdelta1ToName   patch)
+    fromNameLength = ByteString.length fromNameBytes
+    toNameLength   = ByteString.length toNameBytes
 
     -- Flags word: @FLAG_NO_VERIFY@ (bit 0) tracks the patch's
     -- verification posture; @FLAG_FROM_COMPRESSED@ (bit 1) and
@@ -352,13 +372,14 @@ encodeDataRecord patch =
 -- whether per-instruction offsets are absolute or sequential.
 encodeFileSourceRecord :: XDelta1Patch -> Builder
 encodeFileSourceRecord patch =
-  putEdsioVarint (fromIntegral (ByteString.length (xdelta1SourceName patch)))
-  <> byteString (xdelta1SourceName patch)
+  putEdsioVarint (fromIntegral (ByteString.length sourceNameBytes))
+  <> byteString sourceNameBytes
   <> byteString (unMD5Hash sourceMD5Bytes)
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1SourceLength patch)))
   <> word8 0  -- kind: file source
   <> word8 (offsetModeByte (xdelta1SourceOffsetMode patch))
   where
+    sourceNameBytes = unXDelta1FromName (xdelta1SourceName patch)
     sourceMD5Bytes = case xdelta1SourceMD5 patch of
       Just md5Hash -> md5Hash
       Nothing      -> xdelta1EmptyInputMD5Sentinel

@@ -39,6 +39,7 @@ import Integration.Skip
   , renderSkipSummary
   )
 import Integration.Undo (undoTests)
+import Integration.XDelta1Names (xdelta1NamesTests)
 
 import System.Environment (setEnv)
 import System.IO (hPutStrLn, stderr)
@@ -72,6 +73,7 @@ runIntegrationSuite tier = do
     , undoTests tier
     , cliTests tier
     , failureModeTests tier getTargets
+    , xdelta1NamesTests
     ]
 
   hPutStrLn stderr (renderSkipSummary (groupPlanSkips combinedPlan))

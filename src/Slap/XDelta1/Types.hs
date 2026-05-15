@@ -8,6 +8,21 @@ module Slap.XDelta1.Types
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
   , XDelta1FileAtDeltaTime(..)
+    -- * Header-name newtypes
+  , XDelta1FromName(..)
+  , XDelta1ToName(..)
+    -- * Resolved file-name pair (smart constructor)
+    --
+    -- The bare data constructor is intentionally not exported; the
+    -- only paths to a 'ResolvedXDelta1FileNames' value are the two
+    -- resolvers below, so every value at every call site has been
+    -- run through the u16 byte-length cap check.
+  , ResolvedXDelta1FileNames
+      ( resolvedXDelta1FromName
+      , resolvedXDelta1ToName
+      )
+  , resolveXDelta1FileNames
+  , requireXDelta1FileNames
     -- * Named constants
   , xdelta1TrailerSize
   , xdelta1EmptyInputMD5Sentinel
@@ -22,9 +37,16 @@ module Slap.XDelta1.Types
 
 import Data.Bits (shiftL)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Measure (Offset(..), FileSize(..))
+import Slap.Error (SlapError(..))
+import Slap.FieldName (FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset(..), FileSize(..),
+                     Length(..), EncodedLength(..), MaxLength(..))
+import Slap.TextEncoding (encodeLocaleField)
+import System.FilePath (takeFileName)
 
 -- | Per-source wire convention for how instruction offsets are
 -- encoded. Under 'AbsoluteOffsets', each instruction's source offset
@@ -54,20 +76,149 @@ data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
 -- offset reconstruction for data-targeting instructions; name is
 -- consulted for an informational notice but never gates apply).
 data XDelta1Patch = XDelta1Patch
-  { xdelta1FromName         :: ByteString
-  , xdelta1ToName           :: ByteString
+  { xdelta1FromName         :: XDelta1FromName
+  , xdelta1ToName           :: XDelta1ToName
   , xdelta1Verification     :: XDelta1VerificationPosture
   , xdelta1PatchCompression :: XDelta1PatchCompression
   , xdelta1FromAtDeltaTime  :: XDelta1FileAtDeltaTime
   , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
-  , xdelta1SourceName       :: ByteString
+  , xdelta1SourceName       :: XDelta1FromName
+    -- ^ The per-source-record \"name\" field for the file-source record
+    -- in the EDSIO source list. Distinct concept from the header
+    -- 'xdelta1FromName' (which lives at fixed offsets in the header
+    -- words), but slap's create path mirrors the two: the same
+    -- 'resolvedXDelta1FromName' from a 'ResolvedXDelta1FileNames'
+    -- flows into both wire fields so the source-record name reflects
+    -- the real source file, not a placeholder. The type is
+    -- 'XDelta1FromName' rather than 'ByteString' so the same value
+    -- pipes into both fields without an intermediate raw-byte hop.
   , xdelta1SourceMD5        :: Maybe MD5Hash
   , xdelta1SourceLength     :: FileSize
   , xdelta1SourceOffsetMode :: XDelta1OffsetMode
   , xdelta1Instructions     :: [XDelta1Instruction]
   , xdelta1DataSegment      :: ByteString  -- decompressed literal data
   } deriving (Show, Eq)
+
+-- | The from-name an xdelta 1.1.x patch carries in its header — the
+-- display label for the source file at create time. Distinct from
+-- 'XDelta1ToName' so transposition at any call site (encoder,
+-- parser, resolver, test fixture) is a type error rather than a
+-- silent wire-byte swap. The bytes themselves are locale-encoded:
+-- canonical xdelta does @memcpy@ from @argv@ and slap matches that
+-- convention; the conversion to and from 'String' for display
+-- routes through 'Slap.TextEncoding.encodeLocaleField' /
+-- 'Slap.TextEncoding.decodeLocaleField'.
+--
+-- The u16 byte-length cap that the wire's packed name-lengths
+-- header word imposes is enforced at construction of
+-- 'ResolvedXDelta1FileNames' — not at the newtype itself, since the
+-- parser pulls bytes whose length is already cap-bounded by virtue
+-- of the u16 length-prefix on the wire. The newtype is a transport
+-- for at-rest type discipline; the cap-check is at-edge validation
+-- that lives at the resolver.
+newtype XDelta1FromName = XDelta1FromName
+  { unXDelta1FromName :: ByteString
+  } deriving (Eq, Show)
+
+-- | The to-name an xdelta 1.1.x patch carries in its header — the
+-- display label for the target file at create time. See
+-- 'XDelta1FromName' for the rationale on the newtype boundary and
+-- the locale-encoding convention.
+newtype XDelta1ToName = XDelta1ToName
+  { unXDelta1ToName :: ByteString
+  } deriving (Eq, Show)
+
+-- | The two file-name fields an xdelta 1.1.x patch carries (the
+-- source file's display label and the target file's display label),
+-- resolved and cap-checked. xdelta1 takes these names from one of
+-- three places: a CLI @--from-name@\/@--to-name@ flag (explicit), the
+-- basename of the source\/target file path (create-time fallback), or
+-- the inherited fields of a parsed xdelta1 source patch
+-- (xdelta1@→@xdelta1 convert).
+--
+-- The bare constructor is not exported; the only paths to a value
+-- are 'resolveXDelta1FileNames' (create) and 'requireXDelta1FileNames'
+-- (convert). The wire encoder in "Slap.XDelta1.Create" takes one of
+-- these and writes the contents to the header without re-checking —
+-- the type IS the proof that resolution ran and that both bytes are
+-- locale-encoded and within the u16 byte cap the wire's packed
+-- name-lengths header word imposes.
+data ResolvedXDelta1FileNames = ResolvedXDelta1FileNames
+  { resolvedXDelta1FromName :: !XDelta1FromName
+  , resolvedXDelta1ToName   :: !XDelta1ToName
+  } deriving (Eq, Show)
+
+-- | Create-time resolver. For each of the two name slots, the CLI
+-- override (if any) wins; otherwise the slot is filled with the
+-- locale-encoded basename of the corresponding file path. The
+-- resulting bytes are then cap-checked.
+--
+-- The CLI inputs are 'Maybe' 'ByteString' (already locale-encoded
+-- at the CLI boundary), not 'Maybe' 'XDelta1FromName'\/'ToName' —
+-- the newtype wrap is part of what this resolver does, so callers
+-- pass raw bytes and the smart-constructor pattern is the only
+-- way to obtain the wrapped, validated values.
+resolveXDelta1FileNames
+  :: Maybe ByteString  -- ^ CLI @--from-name@ override; 'Nothing' falls back to @takeFileName@ of the source path.
+  -> Maybe ByteString  -- ^ CLI @--to-name@   override; 'Nothing' falls back to @takeFileName@ of the target path.
+  -> FilePath          -- ^ source file path (basename feeds the from-name default)
+  -> FilePath          -- ^ target file path (basename feeds the to-name   default)
+  -> Either SlapError ResolvedXDelta1FileNames
+resolveXDelta1FileNames cliFromName cliToName sourcePath targetPath =
+  buildResolvedXDelta1FileNames fromBytes toBytes
+  where
+    fromBytes = maybe (encodeLocaleField (takeFileName sourcePath)) id cliFromName
+    toBytes   = maybe (encodeLocaleField (takeFileName targetPath)) id cliToName
+
+-- | Convert-time resolver. Takes the already-merged CLI-or-inherited
+-- pair (the porcelain runs 'Slap.Convert.mergeRequestedMetadata'
+-- upstream so a CLI override has already won over a parsed xdelta1
+-- source patch's field). If either slot is still 'Nothing', refuses
+-- with 'XDelta1ConvertRequiresNames' naming the source format so
+-- the user sees \"BPS doesn't carry these fields\" rather than a
+-- bare \"names required\". Otherwise cap-checks both bytes and
+-- bundles them.
+requireXDelta1FileNames
+  :: Maybe ByteString  -- ^ merged from-name (CLI > inherited > 'Nothing')
+  -> Maybe ByteString  -- ^ merged to-name
+  -> FormatLabel       -- ^ source format the convert originated from
+  -> Either SlapError ResolvedXDelta1FileNames
+requireXDelta1FileNames mergedFromName mergedToName sourceLabel =
+  case (mergedFromName, mergedToName) of
+    (Just fromBytes, Just toBytes) ->
+      buildResolvedXDelta1FileNames fromBytes toBytes
+    _ -> Left (XDelta1ConvertRequiresNames sourceLabel)
+
+-- | The one place where the u16 byte-length cap is enforced. Both
+-- exported resolvers funnel through here. Construction of
+-- 'ResolvedXDelta1FileNames' anywhere else in slap is a type error
+-- (the constructor is module-private).
+buildResolvedXDelta1FileNames
+  :: ByteString -> ByteString
+  -> Either SlapError ResolvedXDelta1FileNames
+buildResolvedXDelta1FileNames fromBytes toBytes = do
+  () <- checkNameLength FieldXDelta1FromName fromBytes
+  () <- checkNameLength FieldXDelta1ToName   toBytes
+  Right (ResolvedXDelta1FileNames (XDelta1FromName fromBytes) (XDelta1ToName toBytes))
+
+-- | Refuse a name whose encoded byte length exceeds the u16 cap that
+-- the xdelta1 header's packed name-lengths word imposes (top 16 bits
+-- = from-name length, bottom 16 = to-name length; see
+-- 'Slap.XDelta1.Create.encodeXDelta1'\'s @nameLengthsWord@). Both
+-- names are checked independently so the offender's identity reaches
+-- the user verbatim.
+checkNameLength :: FieldName -> ByteString -> Either SlapError ()
+checkNameLength field bytes
+  | ByteString.length bytes <= xdelta1NameByteCap = Right ()
+  | otherwise = Left $ FieldTooLong LabelXDelta1 field
+      (EncodedLength (Length (ByteString.length bytes)))
+      (MaxLength     (Length xdelta1NameByteCap))
+
+-- | Maximum byte count that fits in a 16-bit name-length slot of the
+-- xdelta1 header's packed name-lengths word.
+xdelta1NameByteCap :: Int
+xdelta1NameByteCap = 0xFFFF
 
 -- | The slap-internal representation of an xdelta 1.1.x patch's
 -- verification posture — whether MD5 fields carry real verification

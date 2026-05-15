@@ -20,7 +20,9 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Convert
-  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
+  (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested,
+   noDialectsRequested)
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames, resolveXDelta1FileNames)
 import Slap.Create (createPatch)
 import Slap.Error (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -79,13 +81,18 @@ mkRoundTripTest getTargets label format basePath bootPath expectedTargetSha =
     bootstrapTargets <- getTargets
     baseBytes <- mmapRomFile basePath
     let targetBytes = lookupBootstrapTarget bootstrapTargets basePath bootPath
-    roundTrip format baseBytes targetBytes expectedTargetSha
+    roundTrip format basePath bootPath baseBytes targetBytes expectedTargetSha
 
 -- | Create a patch in @format@, parse it back, apply to @baseBytes@,
--- and assert the resulting SHA1.
-roundTrip :: CreateFormat -> ByteString -> ByteString -> String -> IO ()
-roundTrip format baseBytes targetBytes expectedSha =
-  case createPatch format
+-- and assert the resulting SHA1. The two 'FilePath' arguments feed
+-- 'resolveXDelta1FileNames' for the xdelta1 target only (other
+-- formats receive 'Nothing' for the resolved-names slot); without
+-- them, the create dispatcher would refuse with
+-- 'XDelta1ConvertRequiresNames'.
+roundTrip :: CreateFormat -> FilePath -> FilePath -> ByteString -> ByteString -> String -> IO ()
+roundTrip format basePath bootPath baseBytes targetBytes expectedSha = do
+  let resolvedXDelta1Names = resolveXDelta1NamesForRoundTrip format basePath bootPath
+  case createPatch format resolvedXDelta1Names
          (InputFileContents baseBytes)
          (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
@@ -101,3 +108,20 @@ roundTrip format baseBytes targetBytes expectedSha =
             assertFailure ("re-apply failed: " ++ renderSlapError slapError)
           Right (OutputFileContents output) ->
             assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)
+
+-- | Resolve the xdelta1 header-name pair for 'roundTrip' when the
+-- target format is xdelta1; 'Nothing' for every other target. The
+-- resolver's basename defaulting fires unconditionally here (the
+-- round-trip harness never passes explicit names), so the cap check
+-- is the only failure mode — and at the path-derived sizes the
+-- harness uses, that's never going to trip. The 'error' fallback is
+-- the test-side analogue of slap's "if this fires the porcelain is
+-- broken" assertion.
+resolveXDelta1NamesForRoundTrip
+  :: CreateFormat -> FilePath -> FilePath -> Maybe ResolvedXDelta1FileNames
+resolveXDelta1NamesForRoundTrip (CreateDifferential CreateXDelta1) basePath bootPath =
+  case resolveXDelta1FileNames Nothing Nothing basePath bootPath of
+    Right resolved  -> Just resolved
+    Left slapError  -> error ("resolveXDelta1NamesForRoundTrip: "
+                              ++ renderSlapError slapError)
+resolveXDelta1NamesForRoundTrip _ _ _ = Nothing

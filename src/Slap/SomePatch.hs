@@ -981,6 +981,16 @@ parseSomePatchFromXDelta1 patchContents = do
     , patchSourceNotes    = dataNameNotices
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
+        -- An xdelta1 source patch carries both display labels in its
+        -- header; threading them through 'requestedXDelta1*Name' lets
+        -- 'mergeRequestedMetadata' inherit them across an
+        -- xdelta1@→@xdelta1 convert without round-tripping through
+        -- the locale-decode layer (the bytes are opaque on the wire
+        -- and we keep them opaque here, typed as 'XDelta1FromName' /
+        -- 'XDelta1ToName' so the merge can't transpose).
+        { requestedXDelta1FromName = Just (XDelta1.xdelta1FromName patch)
+        , requestedXDelta1ToName   = Just (XDelta1.xdelta1ToName   patch)
+        }
     }
   where
     isXDelta1DataNameNotice XDelta1DataRecordNameDiverges{} = True

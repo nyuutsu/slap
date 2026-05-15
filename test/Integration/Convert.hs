@@ -208,7 +208,7 @@ makeTruncatingIPSPatch :: IO SomePatch
 makeTruncatingIPSPatch =
   let sourceBytes = ByteString.replicate 1024 0x00
       targetBytes = ByteString.replicate 512 0xFF
-  in case createPatch (CreateDirect CreateIPS)
+  in case createPatch (CreateDirect CreateIPS) Nothing
          (InputFileContents sourceBytes) (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError ->

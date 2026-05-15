@@ -28,6 +28,8 @@ data MetadataField
   | MetadataWebsite
   | MetadataPatchEncoding
   | MetadataEmbeddedBlob
+  | MetadataXDelta1FromName
+  | MetadataXDelta1ToName
   deriving (Eq, Ord, Show)
 
 -- | Human-readable name for prose contexts in error and help messages.
@@ -48,6 +50,8 @@ metadataFieldName MetadataDate                = "date"
 metadataFieldName MetadataWebsite             = "website"
 metadataFieldName MetadataPatchEncoding       = "patch encoding"
 metadataFieldName MetadataEmbeddedBlob        = "embedded metadata blob"
+metadataFieldName MetadataXDelta1FromName     = "xdelta1 from-name"
+metadataFieldName MetadataXDelta1ToName       = "xdelta1 to-name"
 
 -- | The CLI flag name (without leading dashes) that sets each field.
 -- Used in rejection messages so the user sees the exact flag they
@@ -69,3 +73,5 @@ metadataFieldFlagName MetadataDate                = "date"
 metadataFieldFlagName MetadataWebsite             = "website"
 metadataFieldFlagName MetadataPatchEncoding       = "patch-encoding"
 metadataFieldFlagName MetadataEmbeddedBlob        = "metadata"
+metadataFieldFlagName MetadataXDelta1FromName     = "from-name"
+metadataFieldFlagName MetadataXDelta1ToName       = "to-name"

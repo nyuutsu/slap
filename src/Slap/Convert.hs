@@ -66,7 +66,9 @@ import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.XDelta1.Create as XDelta1
-import Slap.XDelta1.Types (XDelta1PatchCompression(..))
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
+                           XDelta1FromName(..), XDelta1ToName(..),
+                           XDelta1PatchCompression(..))
 import qualified Slap.PMSR.Types as PMSR
 import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload)
 import qualified Slap.PMSR.Create as PMSR
@@ -239,6 +241,18 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ Contents of the user's @--metadata FILE@ flag.  Today only BPS
     -- consumes this; the name keeps the concept ("a raw blob to embed")
     -- separate from the format that currently uses it.
+  , requestedXDelta1FromName      :: Maybe XDelta1FromName
+    -- ^ xdelta1 only: user-supplied @--from-name TEXT@, already
+    -- locale-encoded so the bytes match canonical xdelta's wire
+    -- shape. This is the unresolved input: the porcelain runs
+    -- 'Slap.XDelta1.Types.resolveXDelta1FileNames' (create) or
+    -- 'Slap.XDelta1.Types.requireXDelta1FileNames' (convert) on
+    -- these two fields to produce the typed
+    -- 'Slap.XDelta1.Types.ResolvedXDelta1FileNames' passed to
+    -- 'createPatch'.
+  , requestedXDelta1ToName        :: Maybe XDelta1ToName
+    -- ^ xdelta1 only: counterpart to 'requestedXDelta1FromName' for
+    -- the to-name slot.
   }
 
 -- | Stability flag for DPS patches.
@@ -273,6 +287,8 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedWebsite             = Nothing
   , requestedPatchEncoding       = Nothing
   , requestedEmbeddedBlob        = Nothing
+  , requestedXDelta1FromName     = Nothing
+  , requestedXDelta1ToName       = Nothing
   }
 
 -- | Merge two metadata records: first (CLI) wins for each field, then
@@ -295,6 +311,8 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
   , requestedPatchEncoding       = requestedPatchEncoding cli       <|> requestedPatchEncoding source
   , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
+  , requestedXDelta1FromName     = requestedXDelta1FromName cli     <|> requestedXDelta1FromName source
+  , requestedXDelta1ToName       = requestedXDelta1ToName cli       <|> requestedXDelta1ToName source
   }
 
 ----------------------------------------------------------------------------
@@ -424,7 +442,8 @@ acceptedMetadataFields (CreateDifferential format) = case format of
     , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
-  CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression]
+  CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
+                                 MetadataXDelta1FromName, MetadataXDelta1ToName]
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -446,6 +465,8 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataWebsite             | isJust (requestedWebsite             meta)]
   , [MetadataPatchEncoding       | isJust (requestedPatchEncoding       meta)]
   , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
+  , [MetadataXDelta1FromName     | isJust (requestedXDelta1FromName     meta)]
+  , [MetadataXDelta1ToName       | isJust (requestedXDelta1ToName       meta)]
   ]
 
 -- | Reject any metadata field set by the user that the target format
@@ -1037,14 +1058,27 @@ encodeDirect contents source target meta limits constraints dialects = case targ
 -- 'PatchContents' carries structural data from the source patch (EBP JSON,
 -- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for inheritance in
 -- the @--with@ conversion path.
-createPatch :: CreateFormat -> InputFileContents -> OutputFileContents
+--
+-- The 'Maybe' 'ResolvedXDelta1FileNames' is the porcelain's resolved
+-- pair of xdelta1 file names: it is 'Just' exactly when the target
+-- is xdelta1 (the resolution runs in 'app\/Main.hs' via
+-- 'Slap.XDelta1.Types.resolveXDelta1FileNames' or
+-- 'requireXDelta1FileNames' before this entry point is called).
+-- Non-xdelta1 arms ignore it. The xdelta1 arm pattern-matches and
+-- refuses with 'XDelta1ConvertRequiresNames' if it's 'Nothing' —
+-- which should never happen if the porcelain did its job; the
+-- refusal is the graceful structured-error fallback for a programmer
+-- contract violation, not an 'error' crash.
+createPatch :: CreateFormat
+            -> Maybe ResolvedXDelta1FileNames
+            -> InputFileContents -> OutputFileContents
             -> RequestedPatchMetadata -> Maybe PatchContents
             -> RequestedConstraints -> RequestedDialects
             -> Either SlapError CreateResult
-createPatch (CreateDirect format) source target meta sourceContents constraints dialects =
+createPatch (CreateDirect format) _resolvedNames source target meta sourceContents constraints dialects =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format) constraints dialects
-createPatch (CreateDifferential format) source target meta sourceContents _constraints _dialects = case format of
+createPatch (CreateDifferential format) maybeResolvedNames source target meta sourceContents _constraints _dialects = case format of
   -- The constraints parameter is unused on the differential arm: today
   -- no differential format honors any constraint ('acceptedConstraints'
   -- returns 'Set.empty' for every 'CreateDifferential' constructor),
@@ -1087,7 +1121,16 @@ createPatch (CreateDifferential format) source target meta sourceContents _const
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
-  CreateXDelta1 -> XDelta1.createXDelta1 verificationChoice compressionChoice source target
+  CreateXDelta1 -> case maybeResolvedNames of
+    Just resolvedNames ->
+      XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
+    -- The 'Nothing' branch is the typed escape hatch for a porcelain
+    -- contract violation (the caller chose 'CreateXDelta1' but didn't
+    -- run a resolver upstream). 'LabelXDelta1' as the \"source\" label
+    -- is the truthful answer: there is no convert-source format in
+    -- scope, and the rendered message reads as a generic refusal
+    -- rather than a crash.
+    Nothing -> Left (XDelta1ConvertRequiresNames LabelXDelta1)
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
       compressionChoice  = fromMaybe CompressedPatch     (requestedPatchCompression     meta)

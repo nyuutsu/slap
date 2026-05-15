@@ -60,7 +60,7 @@ prop_upsUndo = forAll genPair $ \(source, target) ->
 -- truncate the file, so growth is irreversible.
 prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
-  case createPatch (CreateDirect CreatePPF3) (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested noDialectsRequested of
+  case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False

@@ -270,7 +270,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
     case targetResult of
       Left slapError -> pure (Left (renderSlapError slapError))
       Right target ->
-        case createPatch targetFormat (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested noDialectsRequested of
+        case createPatch targetFormat Nothing (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested noDialectsRequested of
           Left slapErr -> pure (Left (renderSlapError slapErr))
           Right result -> pure (Right result)
   Nothing -> case patchKind somePatch of

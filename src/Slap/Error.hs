@@ -483,6 +483,16 @@ data SlapError
   -- parsing or encoding work begins.
   | DialectNotSupported (NonEmpty Dialect) FormatLabel
 
+  -- | The user asked @slap convert@ to write an xdelta1 patch from a
+  -- non-xdelta1 source patch without supplying @--from-name@ /
+  -- @--to-name@. xdelta1's header carries two free-form display
+  -- labels (the from-file and to-file basenames at create time); no
+  -- other format slap reads carries equivalents, so there's nothing
+  -- to inherit during a cross-format convert. Slap refuses rather
+  -- than fabricate placeholders. The 'FormatLabel' names the source
+  -- format the conversion came from.
+  | XDelta1ConvertRequiresNames FormatLabel
+
   -- | The IPS create gate refused a truncation marker whose declared
   -- target size doesn't satisfy SNESTool's
   -- @(size & 0xFFF) == 0x200@ shape filter. Surfaced by
@@ -1121,6 +1131,13 @@ renderSlapError (DialectNotSupported axes target) =
          "the " ++ formatLabelName target
          ++ " format does not have these dialect axes:"
          ++ concatMap (\d -> "\n  - " ++ renderOne d) many
+
+renderSlapError (XDelta1ConvertRequiresNames sourceLabel) =
+  "cannot convert from " ++ formatLabelName sourceLabel
+  ++ " to " ++ formatLabelName LabelXDelta1
+  ++ ": xdelta1 patches carry a from-name and a to-name in the header,"
+  ++ " and " ++ formatLabelName sourceLabel ++ " has no equivalent fields to inherit from."
+  ++ "\n  pass --from-name TEXT and --to-name TEXT to supply them explicitly"
 
 renderSlapError (TruncationViolatesSMCShape size) =
   "--" ++ constraintFlagName SMCShapeConstraint

@@ -35,12 +35,19 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      createFormatLabel,
                      formatExtension, formatName)
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
+                            resolveXDelta1FileNames,
+                            requireXDelta1FileNames,
+                            XDelta1FromName(..), XDelta1ToName(..))
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.TextEncoding (makeStdoutAndStderrLenient)
+import Slap.TextEncoding (encodeLocaleField, makeStdoutAndStderrLenient)
+-- 'encodeLocaleField' is imported for the CLI parser's
+-- @--from-name@ / @--to-name@ string→bytes boundary;
+-- 'fillXDelta1NameDefaults' lives in "Slap.Convert".
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import Slap.PlatformType (PlatformType(..))
@@ -725,6 +732,12 @@ requestedMetadataParser = do
                             <> help "Website (NINJA2)"))
     patchEncoding     <- optional (option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
                             <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8 unless source patch declares otherwise)"))
+    xdelta1FromName   <- optional (option str (long "from-name" <> metavar "TEXT"
+                            <> help ("Embedded source-file display label (xdelta1 only;"
+                                  ++ " default: basename of input/source ROM on create,"
+                                  ++ " inherited from source patch on xdelta1" ++ [rightwardsArrow] ++ "xdelta1 convert)")))
+    xdelta1ToName     <- optional (option str (long "to-name" <> metavar "TEXT"
+                            <> help "Embedded target-file display label (xdelta1 only; same defaulting as --from-name)"))
     pure RequestedPatchMetadata
       { requestedTitle               = title
       , requestedAuthor              = author
@@ -742,6 +755,8 @@ requestedMetadataParser = do
       , requestedWebsite             = website
       , requestedPatchEncoding       = patchEncoding
       , requestedEmbeddedBlob        = Nothing
+      , requestedXDelta1FromName     = fmap (XDelta1FromName . encodeLocaleField) xdelta1FromName
+      , requestedXDelta1ToName       = fmap (XDelta1ToName   . encodeLocaleField) xdelta1ToName
       }
 
 -- | Create-side metadata: the parsed metadata fields plus an optional
@@ -1121,11 +1136,13 @@ doCreate parsedCommand = do
             (acceptedDialects (createFormatLabel (createFormat parsedCommand)))
             (createFormatLabel (createFormat parsedCommand))
             (createDialects parsedCommand))
+  resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
   emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
   result <- orBail (createPatch
                      (createFormat parsedCommand)
+                     resolvedXDelta1Names
                      (InputFileContents originalBytes)
                      (OutputFileContents modifiedBytes)
                      createMeta
@@ -1135,6 +1152,23 @@ doCreate parsedCommand = do
   emitWarnings InformationalNote (resultWarnings result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   putStrLn ("wrote " ++ createOutput parsedCommand)
+
+-- | Resolve the xdelta1 file-name pair for @slap create@, falling
+-- back to @basename@ of the source\/target file paths when CLI flags
+-- are absent. 'Just' iff the target format is xdelta1; 'Nothing' for
+-- every other target.
+resolveCreateXDelta1Names
+  :: CreateCommand
+  -> RequestedPatchMetadata
+  -> Either SlapError (Maybe ResolvedXDelta1FileNames)
+resolveCreateXDelta1Names parsedCommand createMeta = case createFormat parsedCommand of
+  CreateDifferential CreateXDelta1 -> fmap Just $
+    resolveXDelta1FileNames
+      (fmap unXDelta1FromName (requestedXDelta1FromName createMeta))
+      (fmap unXDelta1ToName   (requestedXDelta1ToName   createMeta))
+      (createOriginal parsedCommand)
+      (createModified parsedCommand)
+  _ -> Right Nothing
 
 ----------------------------------------------------------------------------
 -- Convert
@@ -1208,13 +1242,14 @@ doConvert parsedCommand = do
             { requestedEmbeddedBlob = Nothing }
         _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
       bpsDropWarnings = computeBPSDropWarnings parsed (convertTo parsedCommand)
+  resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
       sourceBytes <- readMaybeUnwrap (convertFileReading parsedCommand) (convertWithSourcePath withSource)
       let source = InputFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) (convertDialects parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) (convertDialects parsedCommand))
       emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
                         ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
                         ++ resultWarnings createResult)
@@ -1227,6 +1262,28 @@ doConvert parsedCommand = do
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     ConvertRequiresSource somePatch ->
       bail (needSourceMessage somePatch)
+
+-- | Resolve the xdelta1 file-name pair for @slap convert@. The
+-- merge step in 'doConvert' has already combined the CLI value (if
+-- any) with the source patch's extracted-meta inheritance (if the
+-- source patch is xdelta1; otherwise the inherited side is
+-- 'Nothing' and only the CLI value contributes). The convert
+-- resolver refuses if either slot is still 'Nothing' after the
+-- merge, naming the source patch's format in the refusal so the
+-- user sees \"BPS doesn't carry these fields\". 'Just' iff the
+-- target format is xdelta1; 'Nothing' for every other target.
+resolveConvertXDelta1Names
+  :: ConvertCommand
+  -> SomePatch
+  -> RequestedPatchMetadata
+  -> Either SlapError (Maybe ResolvedXDelta1FileNames)
+resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo parsedCommand of
+  CreateDifferential CreateXDelta1 -> fmap Just $
+    requireXDelta1FileNames
+      (fmap unXDelta1FromName (requestedXDelta1FromName mergedMeta))
+      (fmap unXDelta1ToName   (requestedXDelta1ToName   mergedMeta))
+      (patchFormat parsed)
+  _ -> Right Nothing
 
 -- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> InputFileContents -> IO OutputFileContents

@@ -14,6 +14,8 @@ import Slap.XDelta1.Types
     , XDelta1OffsetMode(..)
     , XDelta1VerificationPosture(..)
     , XDelta1FileAtDeltaTime(..)
+    , XDelta1FromName(..)
+    , XDelta1ToName(..)
     , xdelta1DataRecordName
     )
 import Slap.Display.Analysis
@@ -41,8 +43,8 @@ import qualified Data.ByteString as ByteString
 
 xdelta1Meta :: XDelta1Patch -> [InfoLine]
 xdelta1Meta patch =
-  [ InfoLine "from"        (decodeLocaleField (xdelta1FromName patch))
-  , InfoLine "to"          (decodeLocaleField (xdelta1ToName patch))
+  [ InfoLine "from"        (decodeLocaleField (unXDelta1FromName (xdelta1FromName patch)))
+  , InfoLine "to"          (decodeLocaleField (unXDelta1ToName   (xdelta1ToName   patch)))
   , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
   ] ++ verificationLines ++ inputsLines ++
   [ InfoLine "sources"     "2"
@@ -123,7 +125,7 @@ makeXDelta1DataRecordText patch =
 makeXDelta1FileSourceText :: XDelta1Patch -> AnalysisSection
 makeXDelta1FileSourceText patch =
   renderSourceLine 1 "file"
-    (xdelta1SourceName patch)
+    (unXDelta1FromName (xdelta1SourceName patch))
     (xdelta1SourceLength patch)
     (xdelta1SourceOffsetMode patch)
     (xdelta1SourceMD5 patch)

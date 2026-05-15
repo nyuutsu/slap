@@ -48,7 +48,7 @@ import Slap.Convert (createPatch)
 import Slap.Error (SlapError, CreateResult)
 import Slap.FileContents (InputFileContents, OutputFileContents)
 import Slap.MetadataInclusion (VerificationInclusion(..))
-import Slap.XDelta1.Types (XDelta1PatchCompression(..))
+import Slap.XDelta1.Types (ResolvedXDelta1FileNames, XDelta1PatchCompression(..))
 
 ----------------------------------------------------------------------------
 -- Differential-format porcelain
@@ -94,13 +94,18 @@ createNINJA2 = NINJA2.createNINJA2
 -- before placement. Both shapes round-trip through
 -- 'Slap.XDelta1.Parse.parseXDelta1'.
 --
--- No metadata wrapper type today: xdelta1 carries @from@\/@to@
--- name fields, but slap fills them with literal-string
--- placeholders today. When the CLI lands @--from-name@\/@--to-name@,
--- this signature gains a metadata record.
+-- The 'ResolvedXDelta1FileNames' carries the from-name and to-name
+-- header fields, resolved and cap-checked by the porcelain via
+-- 'Slap.XDelta1.Types.resolveXDelta1FileNames' /
+-- 'Slap.XDelta1.Types.requireXDelta1FileNames'; the typed value IS
+-- the proof that the two display labels survived CLI parsing,
+-- basename defaulting (create) or source-patch inheritance
+-- (convert), and the u16 length cap that the wire's packed
+-- name-lengths word imposes.
 createXDelta1
   :: VerificationInclusion
   -> XDelta1PatchCompression
+  -> ResolvedXDelta1FileNames
   -> InputFileContents
   -> OutputFileContents
   -> Either SlapError CreateResult
