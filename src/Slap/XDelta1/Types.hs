@@ -2,18 +2,16 @@
 
 module Slap.XDelta1.Types
   ( XDelta1Patch(..)
-  , XDelta1Source(..)
-  , XDelta1Sources(..)
   , XDelta1Instruction(..)
   , XDelta1InstructionTarget(..)
   , XDelta1OffsetMode(..)
-  , XDelta1SourceWireKind(..)
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
   , XDelta1FileAtDeltaTime(..)
     -- * Named constants
   , xdelta1TrailerSize
   , xdelta1EmptyInputMD5Sentinel
+  , xdelta1DataRecordName
   , xdelta1FlagNoVerify
   , xdelta1FlagFromCompressed
   , xdelta1FlagToCompressed
@@ -39,19 +37,22 @@ import Slap.Measure (Offset(..), FileSize(..))
 data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
   deriving (Show, Eq)
 
--- | The two values the wire format's source-kind byte can carry,
--- named at the type level. Used by "Slap.XDelta1.Parse" to
--- classify the byte during parse and by "Slap.XDelta1.Create" to
--- write the byte during create. The wire convention is byte @1@
--- for 'WireKindData' and byte @0@ for 'WireKindFile' — canonical
--- xdelta's @xdelta.c:246@ writes the data source at index 0 with
--- kind byte 1, and @xdmain.c:1539-1542@ adds the from-file source
--- at index 1 with kind byte 0.
-data XDelta1SourceWireKind
-  = WireKindData
-  | WireKindFile
-  deriving (Show, Eq)
-
+-- | An xdelta 1.1.x patch's in-memory model. Field layout mirrors
+-- 'Slap.BPS.Types.BPSPatch' / 'Slap.UPS.Types.UPSPatch' (flat source
+-- fields on the patch record) rather than the parallel-source shape
+-- canonical xdelta's libedsio serializer paints on the wire. The wire
+-- carries two source records (data segment and source file) treated
+-- uniformly by libedsio; slap's type model only carries the file
+-- source's metadata because the data segment's "name" is the fixed
+-- literal 'xdelta1DataRecordName', its MD5 is computed against bytes
+-- in 'xdelta1DataSegment', its length equals 'ByteString.length' of
+-- that segment, and its offset-mode is always sequential at encode
+-- time (slap's differ never emits non-sequential data emits). On
+-- parse, the data-record's wire fields are validated against those
+-- invariants (length must match the segment bytes; MD5 must match
+-- under 'VerifyAgainstStoredMD5s'; offset-mode dispatches sequential-
+-- offset reconstruction for data-targeting instructions; name is
+-- consulted for an informational notice but never gates apply).
 data XDelta1Patch = XDelta1Patch
   { xdelta1FromName         :: ByteString
   , xdelta1ToName           :: ByteString
@@ -60,40 +61,12 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1FromAtDeltaTime  :: XDelta1FileAtDeltaTime
   , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
-  , xdelta1Sources          :: XDelta1Sources
-  , xdelta1Instructions     :: [XDelta1Instruction]
-  , xdelta1DataSegment      :: ByteString  -- decompressed literal data
-  } deriving (Show, Eq)
-
--- | An xdelta1 source record. The 'xdelta1SourceMD5' is 'Just' when
--- the enclosing 'XDelta1Patch' has posture 'VerifyAgainstStoredMD5s'
--- and 'Nothing' when the posture is 'CreatorOptedOutOfVerification';
--- see 'XDelta1VerificationPosture' for the invariant.
---
--- The role (data segment vs file source) is determined by which
--- field of 'XDelta1Sources' the record occupies — there is no
--- per-source kind field, and there is no representable state where
--- a source could be in the wrong slot.
-data XDelta1Source = XDelta1Source
-  { xdelta1SourceName       :: ByteString
+  , xdelta1SourceName       :: ByteString
   , xdelta1SourceMD5        :: Maybe MD5Hash
   , xdelta1SourceLength     :: FileSize
   , xdelta1SourceOffsetMode :: XDelta1OffsetMode
-  } deriving (Show, Eq)
-
--- | The two-source list xdelta1 patches carry: one data segment
--- (instructions referencing it copy from the patch's inline data
--- bytes) followed by one file source (instructions referencing it
--- copy from the user's external source file). The order is wire-
--- significant — index 0 is the data source, index 1 is the file
--- source — and matches what canonical xdelta emits unconditionally
--- ('xdelta-1.1.4/xdelta.c:241-251' adds the data source, then
--- 'xdmain.c:1539-1542' adds the from-file source). The parser
--- refuses any other source-list configuration with
--- 'Slap.Error.UnsupportedXDelta1Shape'.
-data XDelta1Sources = XDelta1Sources
-  { xdelta1DataSource :: XDelta1Source
-  , xdelta1FileSource :: XDelta1Source
+  , xdelta1Instructions     :: [XDelta1Instruction]
+  , xdelta1DataSegment      :: ByteString  -- decompressed literal data
   } deriving (Show, Eq)
 
 -- | The slap-internal representation of an xdelta 1.1.x patch's
@@ -106,11 +79,11 @@ data XDelta1Sources = XDelta1Sources
 -- 'Slap.Convert.VerificationInclusion' at the porcelain boundary)
 -- and writes the corresponding wire bytes (flag bit set with
 -- sentinels in MD5 slots, or flag bit clear with computed MD5s).
--- Constructors are unchanged across directions. Per-source MD5s
--- share the patch-level posture: both sources in 'XDelta1Sources'
--- carry @Just MD5Hash@ under 'VerifyAgainstStoredMD5s' and
--- @Nothing@ under 'CreatorOptedOutOfVerification' (parser-
--- enforced; not type-level). Family siblings:
+-- Constructors are unchanged across directions. The source-file
+-- MD5 ('xdelta1SourceMD5') shares the patch-level posture: it
+-- carries @Just MD5Hash@ under 'VerifyAgainstStoredMD5s' and
+-- @Nothing@ under 'CreatorOptedOutOfVerification' (parser-enforced;
+-- not type-level). Family siblings:
 -- 'Slap.Convert.VerificationInclusion' on create (the user-facing
 -- choice the porcelain maps to a posture), 'VerificationPolicy'
 -- on apply (the runtime policy that gates mismatch behavior when
@@ -183,6 +156,19 @@ xdelta1TrailerSize = 12
 xdelta1EmptyInputMD5Sentinel :: MD5Hash
 xdelta1EmptyInputMD5Sentinel = MD5Hash
   "\xd4\x1d\x8c\xd9\x8f\x00\xb2\x04\xe9\x80\x09\x98\xec\xf8\x42\x7e"
+
+-- | The fixed literal canonical xdelta writes into the data-record's
+-- @name@ slot — see @xdelta-1.1.4/xdelta.c:241-251@, where the data
+-- source is added with name @"(patch data)"@. The data record is
+-- the patch's inline literal-bytes source ('xdelta1DataSegment'),
+-- not an externally-named source, so a name field is meaningful
+-- only as a label in @xdelta info@-style displays; canonical xdelta
+-- itself never consults this field at apply time. Slap encodes the
+-- canonical bytes on create and surfaces an informational notice
+-- (no warning, no apply refusal) if the parsed patch carries
+-- anything else.
+xdelta1DataRecordName :: ByteString
+xdelta1DataRecordName = "(patch data)"
 
 -- | Bit 0 of the xdelta1 header's flags word. Set when the patch's
 -- verification posture is 'CreatorOptedOutOfVerification' (matching

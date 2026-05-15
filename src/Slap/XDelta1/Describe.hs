@@ -1,17 +1,20 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.XDelta1.Describe
   ( xdelta1Meta
   , analyzeXDelta1
   , makeXDelta1Region
-  , makeXDelta1SourceText
+  , makeXDelta1DataRecordText
+  , makeXDelta1FileSourceText
   ) where
 
 import Slap.XDelta1.Types
-    ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
-    , XDelta1Sources(..)
+    ( XDelta1Patch(..), XDelta1Instruction(..)
     , XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
     , XDelta1VerificationPosture(..)
     , XDelta1FileAtDeltaTime(..)
+    , xdelta1DataRecordName
     )
 import Slap.Display.Analysis
     ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
@@ -19,6 +22,7 @@ import Slap.Display.Analysis
     , SummaryInfo(..)
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
+import Slap.Binary (md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
@@ -28,6 +32,7 @@ import Slap.Measure (Length(..), FileSize(..))
 import Slap.TextEncoding (decodeLocaleField)
 
 import Data.Int (Int64)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 ----------------------------------------------------------------------------
@@ -42,9 +47,9 @@ xdelta1Meta patch =
   ] ++ verificationLines ++ inputsLines ++
   [ InfoLine "sources"     "2"
   ] ++ sourceMD5Lines ++
-  [ InfoLine "data seg"    (show (ByteString.length (xdelta1DataSegment patch)) ++ " bytes") ]
+  [ InfoLine "data seg"    (show dataSegmentLength ++ " bytes") ]
   where
-    sources = xdelta1Sources patch
+    dataSegmentLength = ByteString.length (xdelta1DataSegment patch)
 
     verificationLines = case xdelta1Verification patch of
       VerifyAgainstStoredMD5s targetMD5
@@ -69,13 +74,12 @@ xdelta1Meta patch =
     sourceMD5Lines = case xdelta1Verification patch of
       CreatorOptedOutOfVerification -> []
       VerifyAgainstStoredMD5s _     ->
-        md5LineFor "data segment MD5" (xdelta1DataSource sources)
-        ++ md5LineFor "file source MD5" (xdelta1FileSource sources)
-
-    md5LineFor :: String -> XDelta1Source -> [InfoLine]
-    md5LineFor label src = case xdelta1SourceMD5 src of
-      Just md5 -> [InfoLine label (hexByteString (unMD5Hash md5))]
-      Nothing  -> []
+        [ InfoLine "data segment MD5"
+            (hexByteString (unMD5Hash (md5 (xdelta1DataSegment patch))))
+        ]
+        ++ case xdelta1SourceMD5 patch of
+             Just fileMD5 -> [InfoLine "file source MD5" (hexByteString (unMD5Hash fileMD5))]
+             Nothing      -> []
 
 ----------------------------------------------------------------------------
 -- Explain
@@ -84,8 +88,8 @@ xdelta1Meta patch =
 analyzeXDelta1 :: XDelta1Patch -> PatchAnalysis
 analyzeXDelta1 patch = PatchAnalysis
   { analysisSections =
-      [ makeXDelta1SourceText 0 "data" (xdelta1DataSource sources)
-      , makeXDelta1SourceText 1 "file" (xdelta1FileSource sources)
+      [ makeXDelta1DataRecordText patch
+      , makeXDelta1FileSourceText patch
       , SectionText ""
       , SectionText ("instructions: " ++ show instructionCount)
       , SectionText ""
@@ -94,18 +98,47 @@ analyzeXDelta1 patch = PatchAnalysis
   , analysisSummary  = Summary (SummaryInfo (Tally instructionCount) Instructions (Just (TotalOutputBytes (xdelta1TargetLength patch))))
   }
   where
-    sources = xdelta1Sources patch
     instructionCount = length (xdelta1Instructions patch)
 
-makeXDelta1SourceText :: Int -> String -> XDelta1Source -> AnalysisSection
-makeXDelta1SourceText index kindLabel sourceEntry = SectionText $
-  "  [" ++ show index ++ "] " ++ decodeLocaleField (xdelta1SourceName sourceEntry)
+-- | Render the data-record source section as the encoder would have
+-- written it: name is 'xdelta1DataRecordName', length is the data
+-- segment's byte count, offset-mode is always sequential, MD5 is the
+-- segment-bytes MD5 (only when the patch's posture is
+-- 'VerifyAgainstStoredMD5s'). The format mirrors
+-- 'makeXDelta1FileSourceText' so explain output reads as two
+-- comparable rows.
+makeXDelta1DataRecordText :: XDelta1Patch -> AnalysisSection
+makeXDelta1DataRecordText patch =
+  renderSourceLine 0 "data" xdelta1DataRecordName
+    (FileSize dataSegmentLength) SequentialOffsets dataMD5
+  where
+    dataSegmentBytes  = xdelta1DataSegment patch
+    dataSegmentLength = ByteString.length dataSegmentBytes
+    dataMD5 = case xdelta1Verification patch of
+      VerifyAgainstStoredMD5s _     -> Just (md5 dataSegmentBytes)
+      CreatorOptedOutOfVerification -> Nothing
+
+-- | Render the file-source section from the patch's flat
+-- @xdelta1Source*@ fields.
+makeXDelta1FileSourceText :: XDelta1Patch -> AnalysisSection
+makeXDelta1FileSourceText patch =
+  renderSourceLine 1 "file"
+    (xdelta1SourceName patch)
+    (xdelta1SourceLength patch)
+    (xdelta1SourceOffsetMode patch)
+    (xdelta1SourceMD5 patch)
+
+renderSourceLine
+  :: Int -> String -> ByteString -> FileSize -> XDelta1OffsetMode
+  -> Maybe MD5Hash -> AnalysisSection
+renderSourceLine index kindLabel sourceName sourceLength offsetMode md5Hash = SectionText $
+  "  [" ++ show index ++ "] " ++ decodeLocaleField sourceName
   ++ " (" ++ kindLabel ++ ")"
-  ++ (case xdelta1SourceOffsetMode sourceEntry of SequentialOffsets -> " seq"; AbsoluteOffsets -> "")
-  ++ "  " ++ show (unFileSize (xdelta1SourceLength sourceEntry)) ++ " bytes"
-  ++ (case xdelta1SourceMD5 sourceEntry of
-        Just md5 -> "  MD5:" ++ hexByteString (unMD5Hash md5)
-        Nothing  -> "")
+  ++ (case offsetMode of SequentialOffsets -> " seq"; AbsoluteOffsets -> "")
+  ++ "  " ++ show (unFileSize sourceLength) ++ " bytes"
+  ++ (case md5Hash of
+        Just hash -> "  MD5:" ++ hexByteString (unMD5Hash hash)
+        Nothing   -> "")
 
 makeXDelta1Region :: XDelta1Instruction -> AnalysisRegion
 makeXDelta1Region instruction = AnalysisRegion

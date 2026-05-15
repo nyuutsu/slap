@@ -7,7 +7,6 @@ module Slap.XDelta1.Parse
   , parseOneSource
   , parseInstructions
   , requireDataAndFileRecords
-  , applyPostureToSources
   , translateInstruction
   , fixSequentialOffsets
     -- * Role newtypes for parseControl arguments
@@ -21,23 +20,22 @@ module Slap.XDelta1.Parse
 -- Canonical reference: tools/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
 
 import Slap.XDelta1.Types
-    ( XDelta1Patch(..), XDelta1Source(..), XDelta1Instruction(..)
-    , XDelta1Sources(..)
+    ( XDelta1Patch(..), XDelta1Instruction(..)
     , XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
-    , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
     , XDelta1FileAtDeltaTime(..)
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
+    , xdelta1DataRecordName
     , xdelta1FlagNoVerify
     , xdelta1FlagFromCompressed
     , xdelta1FlagToCompressed
     , xdelta1FlagPatchCompressed
     , xdelta1ControlTypeTag
     )
-import Slap.Binary (getWord32BE)
+import Slap.Binary (getWord32BE, md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..), SlapWarning(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -45,7 +43,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint, word32BE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
-                     ActualMagic(..), ExpectedMagic(..))
+                     ActualMagic(..), ExpectedMagic(..),
+                     ExpectedSize(..), ActualSize(..))
 import Slap.Compression.Stream (gzipInflate)
 
 import Control.Monad (unless)
@@ -100,6 +99,22 @@ newtype XDelta1ToName = XDelta1ToName
 data XDelta1NoVerifyFlag
   = NoVerifyFlagClear
   | NoVerifyFlagSet
+  deriving (Show, Eq)
+
+-- | The two values the wire format's source-kind byte can carry.
+-- Parser-internal: the wire records its source-kind on a per-record
+-- basis (the byte is @1@ for the data record and @0@ for the file
+-- record), and 'requireDataAndFileRecords' uses these tags to
+-- validate the canonical @[data, file]@ ordering before the parser
+-- narrows the records into 'XDelta1Patch' fields. Canonical xdelta's
+-- @xdelta.c:246@ writes the data source at index 0 with kind byte
+-- 1; @xdmain.c:1539-1542@ writes the from-file source at index 1
+-- with kind byte 0. Not part of slap's in-memory model — the data
+-- source isn't a source in any user-meaningful sense (see
+-- "Slap.XDelta1.Types" for the rationale).
+data ParsedSourceKind
+  = ParsedDataKind
+  | ParsedFileKind
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -189,7 +204,7 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
 -- | An xdelta1 source record as parsed from the wire, before the
 -- patch-level verification posture has been folded into its MD5
 -- representation and before the @[data, file]@ shape has been
--- validated. 'parsedSourceWireKind' captures the wire's source-kind
+-- validated. 'parsedSourceKind' captures the wire's source-kind
 -- byte so 'requireDataAndFileRecords' can verify the canonical
 -- ordering and refuse anything else. Internal to the parser; not
 -- exported.
@@ -197,15 +212,15 @@ data ParsedSourceRecord = ParsedSourceRecord
   { parsedSourceName       :: !ByteString
   , parsedSourceMD5        :: !MD5Hash
   , parsedSourceLength     :: !FileSize
-  , parsedSourceWireKind   :: !XDelta1SourceWireKind
+  , parsedSourceKind       :: !ParsedSourceKind
   , parsedSourceOffsetMode :: !XDelta1OffsetMode
   } deriving (Show, Eq)
 
 -- | The two records that survive shape validation, in canonical
 -- @[data, file]@ order. Carries the pre-posture-folding records so
--- 'applyPostureToSources' can produce the public 'XDelta1Sources'
--- and the curio-warning check can consult the raw MD5s. Internal
--- to the parser; not exported.
+-- the parser can fold the verification posture in per-side and the
+-- curio-warning check can consult the raw MD5s. Internal to the
+-- parser; not exported.
 data ParsedSourcePair = ParsedSourcePair
   { parsedDataRecord :: !ParsedSourceRecord
   , parsedFileRecord :: !ParsedSourceRecord
@@ -232,6 +247,33 @@ data ParsedInstruction = ParsedInstruction
 -- pass do sequential offsets get resolved and the 'XDelta1Patch'
 -- record assembled.
 --
+-- The data-record's wire fields are handled per-field rather than
+-- carried on the patch (see "Slap.XDelta1.Types" for the rationale):
+--
+--   [@name@]        Compared to 'xdelta1DataRecordName'. Mismatches
+--                   surface an informational notice
+--                   ('XDelta1DataRecordNameDiverges') — the field is
+--                   a display label and canonical xdelta-1.x never
+--                   gates apply on it.
+--   [@MD5@]         Under 'VerifyAgainstStoredMD5s', compared to the
+--                   MD5 of the data-segment bytes via the porcelain's
+--                   verification pipeline ('verifyDataMD5'); under
+--                   'CreatorOptedOutOfVerification', the bytes are
+--                   discarded (the curio-warning consults them
+--                   separately to spot non-canonical sentinels).
+--   [@length@]      Compared to the byte count of the data segment
+--                   slap parsed from the patch envelope; structural
+--                   inconsistency is fatal
+--                   ('XDelta1DataRecordLengthMismatch').
+--   [@offset-mode@] Dispatches parser behavior for data-targeting
+--                   instructions: under 'SequentialOffsets', their
+--                   wire offsets are zero and the absolute offset is
+--                   reconstructed by 'fixSequentialOffsets'; under
+--                   'AbsoluteOffsets', the wire offset is used
+--                   verbatim. Canonical's converter (xdelta.c:1433-
+--                   1471) can produce absolute-mode data records, so
+--                   the parser must honor both.
+--
 -- All xdelta1 parse warnings are emitted here: the family
 -- 'VerificationOptedOutByCreator' under 'NoVerifyFlagSet', and the
 -- 'XDelta1NoVerifyWithDivergentSentinel' curio when the flag is set
@@ -252,12 +294,32 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
           Left errorMessage -> Left (ParseError LabelXDelta1 errorMessage)
           Right result      -> Right result
       sourcePair <- requireDataAndFileRecords parsedSources
+      let parsedDataRec      = parsedDataRecord sourcePair
+          parsedFileRec      = parsedFileRecord sourcePair
+          dataSegmentLength  = ByteString.length dataBytes
+          declaredDataLength = parsedSourceLength parsedDataRec
+      unless (fromIntegral (unFileSize declaredDataLength) == dataSegmentLength) $
+        Left $ XDelta1DataRecordLengthMismatch
+          (ExpectedSize declaredDataLength)
+          (ActualSize (FileSize dataSegmentLength))
       let verificationPosture = case noVerifyFlag of
             NoVerifyFlagSet   -> CreatorOptedOutOfVerification
             NoVerifyFlagClear -> VerifyAgainstStoredMD5s toMD5
-          sources = applyPostureToSources verificationPosture sourcePair
+          fileSourceMD5 = case verificationPosture of
+            VerifyAgainstStoredMD5s _     -> Just (parsedSourceMD5 parsedFileRec)
+            CreatorOptedOutOfVerification -> Nothing
+          dataOffsetMode = parsedSourceOffsetMode parsedDataRec
+          fileOffsetMode = parsedSourceOffsetMode parsedFileRec
+      case verificationPosture of
+        CreatorOptedOutOfVerification -> Right ()
+        VerifyAgainstStoredMD5s _     ->
+          let computedDataMD5 = md5 dataBytes
+              declaredDataMD5 = parsedSourceMD5 parsedDataRec
+          in unless (computedDataMD5 == declaredDataMD5) $
+               Left $ XDelta1DataRecordMD5Mismatch declaredDataMD5 computedDataMD5
       translatedInstructions <- traverse translateInstruction parsedInstrs
-      let fixedInstructions = fixSequentialOffsets sources translatedInstructions
+      let fixedInstructions =
+            fixSequentialOffsets dataOffsetMode fileOffsetMode translatedInstructions
           patch = XDelta1Patch
             { xdelta1FromName         = fromNameBytes
             , xdelta1ToName           = toNameBytes
@@ -271,10 +333,17 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
             , xdelta1FromAtDeltaTime  = FileWasRawBytes
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = targetLength
-            , xdelta1Sources          = sources
+            , xdelta1SourceName       = parsedSourceName parsedFileRec
+            , xdelta1SourceMD5        = fileSourceMD5
+            , xdelta1SourceLength     = parsedSourceLength parsedFileRec
+            , xdelta1SourceOffsetMode = fileOffsetMode
             , xdelta1Instructions     = fixedInstructions
             , xdelta1DataSegment      = dataBytes
             }
+          dataNameNotices
+            | parsedSourceName parsedDataRec == xdelta1DataRecordName = []
+            | otherwise =
+                [XDelta1DataRecordNameDiverges (parsedSourceName parsedDataRec)]
           postureWarnings = case verificationPosture of
             VerifyAgainstStoredMD5s _      -> []
             CreatorOptedOutOfVerification  -> [VerificationOptedOutByCreator LabelXDelta1]
@@ -283,13 +352,13 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
             NoVerifyFlagSet
               | all (== xdelta1EmptyInputMD5Sentinel)
                     [ toMD5
-                    , parsedSourceMD5 (parsedDataRecord sourcePair)
-                    , parsedSourceMD5 (parsedFileRecord sourcePair)
+                    , parsedSourceMD5 parsedDataRec
+                    , parsedSourceMD5 parsedFileRec
                     ]
                   -> []
               | otherwise
                   -> [XDelta1NoVerifyWithDivergentSentinel]
-      Right (Parsed patch (postureWarnings ++ curioWarnings))
+      Right (Parsed patch (dataNameNotices ++ postureWarnings ++ curioWarnings))
   where
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment
@@ -317,7 +386,10 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
         -- fixed bound ('xdelta1ControlAllocationBound').
       toMD5 <- MD5Hash <$> getBytes (Length 16)
       targetLength <- edsioVarint
-      skip (Length 1)  -- has_data boolean
+      skip (Length 1)  -- has_data boolean: encoder-derived from
+                       -- the data segment's emptiness, parser-
+                       -- ignored because the segment carries its
+                       -- own length via the patch envelope
       sourceCount <- fromIntegral <$> edsioVarint
       sources <- parseSourceList sourceCount
       instructionCount <- fromIntegral <$> edsioVarint
@@ -329,9 +401,8 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
            )
 
 -- | Parse a single EDSIO-serialized source record. Returns the raw
--- fields tagged with the wire kind byte; shape validation and
--- posture folding happen afterwards in 'requireDataAndFileRecords'
--- and 'applyPostureToSources'.
+-- fields tagged with the wire kind byte; shape validation happens
+-- afterwards in 'requireDataAndFileRecords'.
 parseOneSource :: Get ParsedSourceRecord
 parseOneSource = do
   nameLength <- fromIntegral <$> edsioVarint
@@ -340,13 +411,13 @@ parseOneSource = do
   sourceLength <- edsioVarint
   sourceKindByte <- getByte
   offsetModeByte <- getByte
-  let wireKind   = if sourceKindByte /= 0 then WireKindData else WireKindFile
+  let kind       = if sourceKindByte /= 0 then ParsedDataKind else ParsedFileKind
       offsetMode = if offsetModeByte /= 0 then SequentialOffsets else AbsoluteOffsets
   pure ParsedSourceRecord
     { parsedSourceName       = sourceName
     , parsedSourceMD5        = md5Bytes
     , parsedSourceLength     = FileSize (fromIntegral sourceLength)
-    , parsedSourceWireKind   = wireKind
+    , parsedSourceKind       = kind
     , parsedSourceOffsetMode = offsetMode
     }
 
@@ -374,43 +445,21 @@ parseSourceList count = do
 -- needing a separate render arm per malformation.
 requireDataAndFileRecords :: [ParsedSourceRecord] -> Either SlapError ParsedSourcePair
 requireDataAndFileRecords sources = case sources of
-  [first, second] -> case (parsedSourceWireKind first, parsedSourceWireKind second) of
-    (WireKindData, WireKindFile) -> Right ParsedSourcePair
+  [first, second] -> case (parsedSourceKind first, parsedSourceKind second) of
+    (ParsedDataKind, ParsedFileKind) -> Right ParsedSourcePair
       { parsedDataRecord = first
       , parsedFileRecord = second
       }
-    (WireKindData, WireKindData) -> shapeError "[data, data]"
-    (WireKindFile, WireKindData) -> shapeError "[file, data]"
-    (WireKindFile, WireKindFile) -> shapeError "[file, file]"
+    (ParsedDataKind, ParsedDataKind) -> shapeError "[data, data]"
+    (ParsedFileKind, ParsedDataKind) -> shapeError "[file, data]"
+    (ParsedFileKind, ParsedFileKind) -> shapeError "[file, file]"
   []        -> shapeError "0 sources"
-  [single]  -> shapeError ("1 source: " ++ wireKindLabel (parsedSourceWireKind single))
+  [single]  -> shapeError ("1 source: " ++ parsedKindLabel (parsedSourceKind single))
   many      -> shapeError (show (length many) ++ " sources")
   where
     shapeError description = Left (UnsupportedXDelta1Shape description)
-    wireKindLabel WireKindData = "data"
-    wireKindLabel WireKindFile = "file"
-
--- | Wrap a 'ParsedSourcePair' into the public 'XDelta1Sources'
--- record, folding the patch-level verification posture into each
--- source's MD5 field. Under 'VerifyAgainstStoredMD5s', per-source
--- MD5s survive as @Just@; under 'CreatorOptedOutOfVerification',
--- the parsed bytes are discarded (the curio-warning consults them
--- separately) and the field becomes @Nothing@.
-applyPostureToSources :: XDelta1VerificationPosture -> ParsedSourcePair -> XDelta1Sources
-applyPostureToSources posture sourcePair = XDelta1Sources
-  { xdelta1DataSource = assembleSourceRecord posture (parsedDataRecord sourcePair)
-  , xdelta1FileSource = assembleSourceRecord posture (parsedFileRecord sourcePair)
-  }
-  where
-    assembleSourceRecord :: XDelta1VerificationPosture -> ParsedSourceRecord -> XDelta1Source
-    assembleSourceRecord postureArg rec = XDelta1Source
-      { xdelta1SourceName       = parsedSourceName rec
-      , xdelta1SourceMD5        = case postureArg of
-          VerifyAgainstStoredMD5s _      -> Just (parsedSourceMD5 rec)
-          CreatorOptedOutOfVerification  -> Nothing
-      , xdelta1SourceLength     = parsedSourceLength rec
-      , xdelta1SourceOffsetMode = parsedSourceOffsetMode rec
-      }
+    parsedKindLabel ParsedDataKind = "data"
+    parsedKindLabel ParsedFileKind = "file"
 
 -- | Translate the wire-level source index of an instruction to the
 -- 'XDelta1InstructionTarget' sum, or refuse with
@@ -443,15 +492,16 @@ parseInstructions count = do
 
 -- | When a source uses sequential-offset mode, on-wire instruction
 -- offsets are zero and the real offset is the running total of all
--- preceding instructions' lengths against that source. Looks up the
--- two sources' offset modes once, then folds across instructions
--- maintaining a per-target running position.
-fixSequentialOffsets :: XDelta1Sources -> [XDelta1Instruction] -> [XDelta1Instruction]
-fixSequentialOffsets sources instructions =
+-- preceding instructions' lengths against that source. The data
+-- record's offset-mode is consulted for data-targeting instructions;
+-- the file source's for file-targeting instructions. Folds across
+-- instructions maintaining a per-target running position.
+fixSequentialOffsets :: XDelta1OffsetMode -> XDelta1OffsetMode -> [XDelta1Instruction] -> [XDelta1Instruction]
+fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
   reverse (snd (foldl' resolveSequentialOffset (initialPositions, []) instructions))
   where
-    dataIsSequential = xdelta1SourceOffsetMode (xdelta1DataSource sources) == SequentialOffsets
-    fileIsSequential = xdelta1SourceOffsetMode (xdelta1FileSource sources) == SequentialOffsets
+    dataIsSequential = dataOffsetMode == SequentialOffsets
+    fileIsSequential = fileOffsetMode == SequentialOffsets
 
     initialPositions :: SequentialPositions
     initialPositions = SequentialPositions

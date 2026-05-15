@@ -368,6 +368,36 @@ data SlapError
   -- source bytes. The payload names which side(s) are affected.
   | XDelta1InputPreCompressionUnsupported XDelta1GzipStreamInputs
 
+  -- | An xdelta1 patch's data-record declared a length that
+  -- disagrees with the actual byte count of the data segment slap
+  -- decompressed out of the patch envelope. Both values live in the
+  -- same patch — the data-record's @length@ field inside the EDSIO
+  -- control structure, and the byte count of the inline data
+  -- segment between the header and control segment — and they
+  -- describe the same bytes, so a disagreement is structural
+  -- inconsistency the parser cannot reconcile. Slap refuses with
+  -- this constructor rather than picking a winner; the 'ExpectedSize'
+  -- carries the wire-declared length and 'ActualSize' the segment-
+  -- bytes length.
+  | XDelta1DataRecordLengthMismatch ExpectedSize ActualSize
+
+  -- | An xdelta1 patch's data-record declared an MD5 that disagrees
+  -- with the MD5 of the data-segment bytes slap parsed from the
+  -- patch envelope. Both values describe the same bytes, so a
+  -- disagreement is structural inconsistency within the patch.
+  -- Slap fires only when the patch's verification posture is
+  -- 'VerifyAgainstStoredMD5s'; under 'CreatorOptedOutOfVerification'
+  -- the wire MD5 is the canonical empty-input sentinel
+  -- ('xdelta1EmptyInputMD5Sentinel') by convention and the
+  -- comparison is skipped entirely. Parse-time fatal, mirroring
+  -- 'PatchCRCMismatch' for UPS\/BPS — the user's apply-time
+  -- @--no-verify@ does not downgrade this, because the inconsistency
+  -- is between two fields of the patch itself, not between the
+  -- patch and any external bytes. The first 'MD5Hash' is the wire-
+  -- declared value; the second is the value computed from the
+  -- segment bytes.
+  | XDelta1DataRecordMD5Mismatch MD5Hash MD5Hash
+
   -- Apply
   | NegativeTargetSize FormatLabel FileSize
   | ApplyFailed FormatLabel ApplyError
@@ -583,6 +613,20 @@ data SlapWarning
   -- wondering about the patch's provenance learns it wasn't produced
   -- by canonical xdelta.
   | XDelta1NoVerifyWithDivergentSentinel
+
+  -- | An xdelta 1.1.x patch's data-record carried a @name@ field
+  -- that wasn't the canonical literal 'xdelta1DataRecordName'
+  -- (@"(patch data)"@). The data-record names the patch's inline
+  -- literal-bytes source, not an externally-named file, so the
+  -- field is purely a display label — canonical xdelta-1.x consults
+  -- it only in @xdelta info@-style displays and never at apply
+  -- time. Slap honors the wire bytes (no verification, no apply
+  -- refusal) and surfaces this as an informational note (routed
+  -- through 'patchSourceNotes' at the porcelain boundary, not
+  -- through the warning lane) so the reader learns the patch's
+  -- data-record carries a non-canonical label. The 'ByteString' is
+  -- what was read.
+  | XDelta1DataRecordNameDiverges !ByteString
 
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
@@ -950,6 +994,18 @@ renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   ++ "; xdelta1 patches carry exactly two sources, so valid indices are"
   ++ " 0 (data segment) or 1 (file source)"
 
+renderSlapError (XDelta1DataRecordLengthMismatch (ExpectedSize declared) (ActualSize actual)) =
+  formatLabelName LabelXDelta1
+  ++ ": data-record declares length " ++ show (unFileSize declared)
+  ++ " bytes but the patch's data segment is " ++ show (unFileSize actual)
+  ++ " bytes (structural inconsistency; the two fields describe the same bytes and slap cannot pick a winner)"
+
+renderSlapError (XDelta1DataRecordMD5Mismatch declared computed) =
+  formatLabelName LabelXDelta1
+  ++ ": data-record declares MD5 " ++ hexByteString (unMD5Hash declared)
+  ++ " but the patch's data segment hashes to " ++ hexByteString (unMD5Hash computed)
+  ++ " (structural inconsistency; the two values describe the same bytes and slap cannot pick a winner)"
+
 renderSlapError (XDelta1InputPreCompressionUnsupported sides) =
   formatLabelName LabelXDelta1
   ++ ": apply refused — patch expects " ++ describeSides sides
@@ -1217,6 +1273,11 @@ renderSlapWarning (APSN64UnrecognizedCountry byte) =
 
 renderSlapWarning XDelta1NoVerifyWithDivergentSentinel =
   "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
+
+renderSlapWarning (XDelta1DataRecordNameDiverges observedName) =
+  "note: " ++ formatLabelName LabelXDelta1
+  ++ ": data-record name is " ++ show observedName
+  ++ " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"
 
 renderSlapWarning (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue

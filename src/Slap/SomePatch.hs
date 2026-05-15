@@ -109,6 +109,7 @@ import qualified Slap.Compression.Yay0 as Yay0
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
+import Data.List (partition)
 import Data.Maybe (fromMaybe, isJust)
 import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 
@@ -949,11 +950,16 @@ parseSomePatchFromXDelta1 patchContents = do
   Parsed patch parseWarnings <- XDelta1.parseXDelta1 patchContents
   let xdeltaVerification = case XDelta1.xdelta1Verification patch of
         XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
-          { verifySourceMD5 = XDelta1.xdelta1SourceMD5
-              (XDelta1.xdelta1FileSource (XDelta1.xdelta1Sources patch))
+          { verifySourceMD5 = XDelta1.xdelta1SourceMD5 patch
           , verifyTargetMD5 = Just targetMD5
           }
         XDelta1.CreatorOptedOutOfVerification -> noVerification
+      -- The data-record-name divergence is an informational note —
+      -- the field is a display label, not anything apply consults
+      -- (see 'XDelta1DataRecordNameDiverges'). Split it off the
+      -- warning lane so the porcelain emits it through the @slap:@-
+      -- prefixed notice path instead of the @warning:@ lane.
+      (dataNameNotices, otherWarnings) = partition isXDelta1DataNameNotice parseWarnings
   Right SomePatch
     { patchFormat         = LabelXDelta1
     , patchAnalysis       = XDelta1.analyzeXDelta1 patch
@@ -962,7 +968,7 @@ parseSomePatchFromXDelta1 patchContents = do
         { runApply     = \source -> pure (fmap noWarnings (XDelta1.applyXDelta1 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = xdeltaVerification
-    , patchWarnings       = parseWarnings
+    , patchWarnings       = otherWarnings
                             ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelXDelta1 Nothing
@@ -972,10 +978,13 @@ parseSomePatchFromXDelta1 patchContents = do
         , infoBytes  = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceNotes    = dataNameNotices
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
+  where
+    isXDelta1DataNameNotice XDelta1DataRecordNameDiverges{} = True
+    isXDelta1DataNameNotice _                               = False
 
 parseSomePatchFromPMSR :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPMSR patchContents = do

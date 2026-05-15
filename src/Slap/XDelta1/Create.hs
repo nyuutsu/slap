@@ -46,14 +46,14 @@ import Slap.XDelta1.FFI
     , xdelta1Diff
     )
 import Slap.XDelta1.Types
-    ( XDelta1Patch(..), XDelta1Source(..), XDelta1Sources(..)
+    ( XDelta1Patch(..)
     , XDelta1Instruction(..), XDelta1InstructionTarget(..)
     , XDelta1OffsetMode(..)
-    , XDelta1SourceWireKind(..)
     , XDelta1VerificationPosture(..)
     , XDelta1PatchCompression(..)
     , XDelta1FileAtDeltaTime(..)
     , xdelta1EmptyInputMD5Sentinel
+    , xdelta1DataRecordName
     , xdelta1FlagNoVerify
     , xdelta1FlagFromCompressed
     , xdelta1FlagToCompressed
@@ -119,7 +119,10 @@ createXDelta1 inclusion compression inputContents outputContents =
 -- per-source sequential-mode flags) into an 'XDelta1Patch' ready
 -- for the wire encoder. The MD5s, the 'VerificationInclusion'
 -- wiring, and the 'XDelta1PatchCompression' wiring live here; the
--- differ doesn't know about them.
+-- differ doesn't know about them. The data-record's metadata (name,
+-- MD5, length, offset-mode) doesn't live on the patch type — those
+-- values are inline constants in 'encodeControl' below, derived from
+-- the data-segment bytes and 'xdelta1DataRecordName'.
 assemblePatch
   :: VerificationInclusion -> XDelta1PatchCompression
   -> ByteString -> ByteString
@@ -136,28 +139,15 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
   , xdelta1FromAtDeltaTime  = FileWasRawBytes
   , xdelta1ToAtDeltaTime    = FileWasRawBytes
   , xdelta1TargetLength     = byteFileSize targetBytes
-  , xdelta1Sources          = XDelta1Sources
-      { xdelta1DataSource = XDelta1Source
-          { xdelta1SourceName       = "(patch data)"
-          , xdelta1SourceMD5        = perSourceMD5 dataSegmentMD5
-          , xdelta1SourceLength     = byteFileSize dataSegmentBytes
-          , xdelta1SourceOffsetMode = SequentialOffsets
-          }
-      , xdelta1FileSource = XDelta1Source
-          { xdelta1SourceName       = "source"
-          , xdelta1SourceMD5        = perSourceMD5 sourceMD5
-          , xdelta1SourceLength     = byteFileSize sourceBytes
-          , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffFileSourceIsSequential diff)
-          }
-      }
+  , xdelta1SourceName       = "source"
+  , xdelta1SourceMD5        = perSourceMD5 (md5 sourceBytes)
+  , xdelta1SourceLength     = byteFileSize sourceBytes
+  , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffFileSourceIsSequential diff)
   , xdelta1Instructions     = xdelta1DiffInstructions diff
-  , xdelta1DataSegment      = dataSegmentBytes
+  , xdelta1DataSegment      = xdelta1DiffDataSegment diff
   }
   where
-    dataSegmentBytes = xdelta1DiffDataSegment diff
-    targetMD5        = md5 targetBytes
-    sourceMD5        = md5 sourceBytes
-    dataSegmentMD5   = md5 dataSegmentBytes
+    targetMD5 = md5 targetBytes
 
     verificationPosture = case inclusion of
       IncludeVerification -> VerifyAgainstStoredMD5s targetMD5
@@ -289,6 +279,15 @@ encodeXDelta1 patch = ByteString.concat
 -- previously skipped both fields without inspection, which is why
 -- the all-zeros prelude this encoder used to emit round-tripped
 -- under slap but was rejected by canonical.
+--
+-- The data-record's wire bytes (name, MD5, length, kind, offset-
+-- mode) are inline constants here: name is 'xdelta1DataRecordName';
+-- MD5 is computed from the data-segment bytes (or the sentinel
+-- under 'CreatorOptedOutOfVerification'); length is the data
+-- segment's byte count; kind byte is @1@ (data); offset-mode byte
+-- is @1@ (sequential — slap's differ never emits non-sequential
+-- data emits). The source-file record's bytes come from the patch's
+-- flat @xdelta1Source*@ fields.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
   where
@@ -297,15 +296,26 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
       <> byteString (word32BEBytes xdelta1ControlAllocationBound)
       <> byteString (unMD5Hash toMD5Bytes)
       <> putEdsioVarint (fromIntegral (unFileSize (xdelta1TargetLength patch)))
-      <> word8 1  -- has_data flag: nonzero means a data segment follows
-      <> putEdsioVarint 2  -- two source records: the data source, then the file source
-      <> encodeSource (xdelta1DataSource sources) WireKindData
-      <> encodeSource (xdelta1FileSource sources) WireKindFile
+      <> word8 hasDataByte
+      <> putEdsioVarint 2  -- two source records: the data record, then the file source
+      <> encodeDataRecord patch
+      <> encodeFileSourceRecord patch
       <> putEdsioVarint (fromIntegral (length instructions))
-      <> foldMap (encodeInstruction sources) instructions
+      <> foldMap (encodeInstruction patch) instructions
 
-    sources      = xdelta1Sources patch
     instructions = xdelta1Instructions patch
+
+    -- @has_data@ is set when the data segment is non-empty. Canonical
+    -- xdelta clears the byte when the differ found the entire target
+    -- by copies from the source file with no inline literals
+    -- (@xdelta.c:1082@). The parser at
+    -- 'Slap.XDelta1.Parse.parseControlBody' reads and discards the
+    -- byte; slap's apply ignores it because the data-segment bytes
+    -- carry their own length via the patch envelope.
+    hasDataByte :: Word8
+    hasDataByte
+      | ByteString.null (xdelta1DataSegment patch) = 0
+      | otherwise                                  = 1
 
     -- Target MD5 lives inside the posture under
     -- 'VerifyAgainstStoredMD5s' and is the empty-input sentinel
@@ -315,16 +325,44 @@ encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)
       VerifyAgainstStoredMD5s md5Hash    -> md5Hash
       CreatorOptedOutOfVerification      -> xdelta1EmptyInputMD5Sentinel
 
-encodeSource :: XDelta1Source -> XDelta1SourceWireKind -> Builder
-encodeSource source wireKind =
-  putEdsioVarint (fromIntegral (ByteString.length (xdelta1SourceName source)))
-  <> byteString (xdelta1SourceName source)
-  <> byteString (unMD5Hash sourceMD5Bytes)
-  <> putEdsioVarint (fromIntegral (unFileSize (xdelta1SourceLength source)))
-  <> word8 (sourceWireKindByte wireKind)
-  <> word8 (offsetModeByte (xdelta1SourceOffsetMode source))
+-- | Encode the data-record's EDSIO source-record bytes. The wire
+-- bytes here are all inline constants in the slap model: the name
+-- is 'xdelta1DataRecordName', the MD5 is the data segment's MD5
+-- (or the sentinel under 'CreatorOptedOutOfVerification'), the
+-- length is the data segment's byte count, the kind byte is @1@
+-- (data), and the offset-mode byte is @1@ (sequential). See
+-- 'encodeControl' for why these are constants rather than fields
+-- on 'XDelta1Patch'.
+encodeDataRecord :: XDelta1Patch -> Builder
+encodeDataRecord patch =
+  putEdsioVarint (fromIntegral (ByteString.length xdelta1DataRecordName))
+  <> byteString xdelta1DataRecordName
+  <> byteString (unMD5Hash dataMD5Bytes)
+  <> putEdsioVarint (fromIntegral (ByteString.length dataBytes))
+  <> word8 1  -- kind: data record
+  <> word8 1  -- offset-mode: sequential (slap's differ only emits sequential data)
   where
-    sourceMD5Bytes = case xdelta1SourceMD5 source of
+    dataBytes = xdelta1DataSegment patch
+    dataMD5Bytes = case xdelta1Verification patch of
+      VerifyAgainstStoredMD5s _     -> md5 dataBytes
+      CreatorOptedOutOfVerification -> xdelta1EmptyInputMD5Sentinel
+
+-- | Encode the source-file record's EDSIO source-record bytes from
+-- the patch's flat @xdelta1Source*@ fields. The kind byte is @0@
+-- (file source); the offset-mode byte tracks the differ's choice
+-- ('xdelta1SourceOffsetMode'), which 'fixSequentialOffsets' on
+-- parse and 'encodeInstruction' on create both consult to decide
+-- whether per-instruction offsets are absolute or sequential.
+encodeFileSourceRecord :: XDelta1Patch -> Builder
+encodeFileSourceRecord patch =
+  putEdsioVarint (fromIntegral (ByteString.length (xdelta1SourceName patch)))
+  <> byteString (xdelta1SourceName patch)
+  <> byteString (unMD5Hash sourceMD5Bytes)
+  <> putEdsioVarint (fromIntegral (unFileSize (xdelta1SourceLength patch)))
+  <> word8 0  -- kind: file source
+  <> word8 (offsetModeByte (xdelta1SourceOffsetMode patch))
+  where
+    sourceMD5Bytes = case xdelta1SourceMD5 patch of
       Just md5Hash -> md5Hash
       Nothing      -> xdelta1EmptyInputMD5Sentinel
 
@@ -332,29 +370,23 @@ encodeSource source wireKind =
 -- applicable source is in 'SequentialOffsets' mode (the parser at
 -- 'Slap.XDelta1.Parse.fixSequentialOffsets' reconstructs the absolute
 -- offset from the running cumulative length); under 'AbsoluteOffsets'
--- the offset is written verbatim. The applicable source is the one
--- this instruction targets (data or file), looked up via
--- 'xdelta1InstructionTarget'.
-encodeInstruction :: XDelta1Sources -> XDelta1Instruction -> Builder
-encodeInstruction sources instruction =
+-- the offset is written verbatim. The applicable source is decided
+-- by 'xdelta1InstructionTarget': data-targeting instructions are
+-- always sequential (slap's differ only emits sequential data
+-- emits, matching 'encodeDataRecord' above), file-targeting
+-- instructions follow the patch's 'xdelta1SourceOffsetMode'.
+encodeInstruction :: XDelta1Patch -> XDelta1Instruction -> Builder
+encodeInstruction patch instruction =
   putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))
   <> offsetVarint
   <> putEdsioVarint (fromIntegral (unFileSize (xdelta1InstructionLength instruction)))
   where
-    instructionSource = case xdelta1InstructionTarget instruction of
-      FromDataSource -> xdelta1DataSource sources
-      FromFileSource -> xdelta1FileSource sources
-    offsetVarint = case xdelta1SourceOffsetMode instructionSource of
+    instructionOffsetMode = case xdelta1InstructionTarget instruction of
+      FromDataSource -> SequentialOffsets
+      FromFileSource -> xdelta1SourceOffsetMode patch
+    offsetVarint = case instructionOffsetMode of
       SequentialOffsets -> putEdsioVarint 0
       AbsoluteOffsets   -> putEdsioVarint (fromIntegral (unOffset (xdelta1InstructionOffset instruction)))
-
--- | Wire byte for the source-kind slot of an EDSIO source record.
--- Inverse of the parser's @sourceKindByte \/= 0@ test
--- ('Slap.XDelta1.Parse.parseOneSource'): canonical xdelta writes
--- @1@ for the data source and @0@ for the file source.
-sourceWireKindByte :: XDelta1SourceWireKind -> Word8
-sourceWireKindByte WireKindData = 1
-sourceWireKindByte WireKindFile = 0
 
 -- | Wire byte for the offset-mode slot of an EDSIO source record.
 -- Inverse of the parser's @offsetModeByte \/= 0@ test

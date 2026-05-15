@@ -46,8 +46,6 @@ import Slap.XDelta1.Parse
 import qualified Slap.XDelta1.Apply as XDelta1
 import Slap.XDelta1.Types
   ( XDelta1Patch(..)
-  , XDelta1Source(..)
-  , XDelta1Sources(..)
   , XDelta1OffsetMode(..)
   , XDelta1VerificationPosture(..)
   , XDelta1PatchCompression(..)
@@ -57,7 +55,9 @@ import Slap.XDelta1.Types
   , xdelta1ToAtDeltaTime
   , xdelta1ControlTypeTag
   , xdelta1ControlAllocationBound
+  , xdelta1EmptyInputMD5Sentinel
   )
+import Slap.Checksum (MD5Hash(..))
 import Slap.Binary (word32BEBytes)
 import Slap.Measure (FileSize(..))
 import Slap.Convert
@@ -865,13 +865,7 @@ xdelta1InputPreCompressionTests fixturePath =
   -- before its target-length guards, which is independent of the
   -- parse pipeline.
   , testCase "xdelta1/empty target with FROM_COMPRESSED refuses apply" $ do
-      let emptySource = XDelta1Source
-            { xdelta1SourceName       = ByteString.empty
-            , xdelta1SourceMD5        = Nothing
-            , xdelta1SourceLength     = FileSize 0
-            , xdelta1SourceOffsetMode = AbsoluteOffsets
-            }
-          patch = XDelta1Patch
+      let patch = XDelta1Patch
             { xdelta1FromName         = ByteString.empty
             , xdelta1ToName           = ByteString.empty
             , xdelta1Verification     = CreatorOptedOutOfVerification
@@ -879,7 +873,10 @@ xdelta1InputPreCompressionTests fixturePath =
             , xdelta1FromAtDeltaTime  = FileWasGzipStream
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = FileSize 0
-            , xdelta1Sources          = XDelta1Sources emptySource emptySource
+            , xdelta1SourceName       = ByteString.empty
+            , xdelta1SourceMD5        = Nothing
+            , xdelta1SourceLength     = FileSize 0
+            , xdelta1SourceOffsetMode = AbsoluteOffsets
             , xdelta1Instructions     = []
             , xdelta1DataSegment      = ByteString.empty
             }
@@ -972,13 +969,28 @@ buildXDelta1Control sourceKinds instructions = ByteString.concat
     encodeSource :: TestSourceKind -> ByteString
     encodeSource kind = ByteString.concat
       [ edsioVarintByte 0                 -- name length
-      , ByteString.replicate 16 0x00      -- source MD5
+      , sourceMD5ForKind                  -- source MD5
       , edsioVarintByte 0                 -- source length
       , ByteString.singleton (case kind of
           TestDataKind -> 0x01            -- nonzero = data segment
           TestFileKind -> 0x00)
       , ByteString.singleton 0x00         -- absolute offsets
       ]
+      where
+        -- The parser checks the data-record's MD5 against the actual
+        -- data-segment bytes under the default verify posture
+        -- (which 'parseControlBytes' uses); the test fixtures pass
+        -- an empty data segment, whose MD5 is
+        -- 'xdelta1EmptyInputMD5Sentinel'. Writing the sentinel here
+        -- keeps the structural consistency invariant the parser
+        -- expects so these source-shape tests can focus on the
+        -- shape failure they're testing rather than tripping the
+        -- MD5 check first. File-source records aren't checked
+        -- against external bytes at parse time, so the byte value
+        -- there is incidental.
+        sourceMD5ForKind = case kind of
+          TestDataKind -> unMD5Hash xdelta1EmptyInputMD5Sentinel
+          TestFileKind -> ByteString.replicate 16 0x00
 
     encodeInstruction :: (Int, Int, Int) -> ByteString
     encodeInstruction (idx, off, len) = ByteString.concat
