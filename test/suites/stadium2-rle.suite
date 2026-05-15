@@ -1,0 +1,10 @@
+# Pokemon Stadium 2 — rle (large repeated-byte regions)
+# 64 MB N64 ROM where the target contains wide runs of a single byte. Useful for exercising long-match behavior in matchers.
+#
+# xdelta1: slap-encoded; cross-validated against xdelta 1.1.4.
+
+base:   test/data/stadium2/base.z64
+sha1:   7d2429057a46656466ad7e56e45f944a011c5d9e
+desc:   stadium2 rle (64 MB N64, long runs of repeated bytes)
+
+xdelta1  | test/data/stadium2/rle/patch.xdelta1  | synthetic | slap

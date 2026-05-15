@@ -84,15 +84,10 @@ data Tier = AllTests deriving (Eq, Show)
 isHeavyPath :: FilePath -> Bool
 isHeavyPath path = "stadium2" `isInfixOf` path || "paper-mario" `isInfixOf` path
 
--- | True if @suiteFileName@ is a @.suite@ file the 'Quick' apply tier
--- should skip. The two stadium2 suites are excluded wholesale because
--- they hash a 64 MB ROM per entry; @papermario-pmmq.suite@ is excluded
--- specifically because its single PMSR/Yay0 entry takes ~77 seconds.
--- Other paper-mario suites stay in 'Quick' since the apply path on a
--- 40 MB ROM is still fast.
 isHeavySuiteName :: String -> Bool
 isHeavySuiteName suiteFileName =
-  "stadium2-" `isPrefixOf` suiteFileName
+     suiteFileName == "stadium2-fair.suite"
+  || suiteFileName == "stadium2-size.suite"
   || suiteFileName == "papermario-pmmq.suite"
 
 -- | Filter entries by tier. With only 'AllTests' today, this is the identity

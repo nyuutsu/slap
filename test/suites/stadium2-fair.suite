@@ -18,6 +18,7 @@ NINJA1   | test/data/stadium2/fair-heavy/patch.ninja1      | synthetic | slap
 NINJA2   | test/data/stadium2/fair-heavy/patch.rup         | synthetic | slap
 APS-N64  | test/data/stadium2/fair-heavy/patch.aps         | synthetic | slap
 GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
+xdelta1  | test/data/stadium2/fair-heavy/patch.xdelta1     | synthetic | slap
 
 # slap made each of these. For each format we also made a patch with
 # the listed tool, and applied them with both tools — the resulting
@@ -32,6 +33,7 @@ GDIFF    | test/data/stadium2/fair-heavy/patch.gdiff       | synthetic | slap
 #   NINJA2  ninja-2.0 PHP reference***
 #   APS-N64 RomPatcher.js
 #   GDIFF   javaxdelta
+#   xdelta1 xdelta 1.1.4
 #
 # *   We used their apply algorithm, not the program directly
 # **  PHP only encodes {raw, snes, mega, gb} and its >30 MB streaming
