@@ -33,6 +33,7 @@ import Slap.Measure (Offset(..), FileSize(..))
 import Slap.XDelta1.Types
     ( XDelta1Instruction(..)
     , XDelta1InstructionTarget(..)
+    , XDelta1OffsetMode(..)
     )
 
 -- | The xdelta1 differ's output, marshaled out of Rust into typed
@@ -40,9 +41,9 @@ import Slap.XDelta1.Types
 -- FFI seam by parallel-array serialization (one Rust buffer per
 -- instruction field) and zip3-style reconstruction on this side.
 data XDelta1DiffOutput = XDelta1DiffOutput
-  { xdelta1DiffInstructions             :: ![XDelta1Instruction]
-  , xdelta1DiffDataSegment              :: !ByteString
-  , xdelta1DiffFileSourceIsSequential   :: !Bool
+  { xdelta1DiffInstructions          :: ![XDelta1Instruction]
+  , xdelta1DiffDataSegment           :: !ByteString
+  , xdelta1DiffFileSourceOffsetMode  :: !XDelta1OffsetMode
   }
   deriving (Show, Eq)
 
@@ -53,7 +54,7 @@ foreign import ccall unsafe "rusty_xdelta1_diff"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_source_offsets
     -> Ptr (Ptr Word8) -> Ptr CSize    -- instruction_lengths
     -> Ptr (Ptr Word8) -> Ptr CSize    -- data_segment
-    -> Ptr Word8                       -- file_source_is_sequential
+    -> Ptr Word8                       -- file_source_offset_mode (0=absolute, 1=sequential)
     -> Ptr (Ptr Word8) -> Ptr CSize    -- error_cause
     -> IO CInt
 
@@ -76,7 +77,7 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
     alloca $ \lengthsLengthPointer         ->
     alloca $ \dataSegmentAddressPointer    ->
     alloca $ \dataSegmentLengthPointer     ->
-    alloca $ \fileSourceFlagPointer        ->
+    alloca $ \offsetModeBytePointer        ->
     alloca $ \errorCauseAddressPointer     ->
     alloca $ \errorCauseLengthPointer      -> do
       returnCode <- rustyXDelta1Diff
@@ -86,31 +87,30 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
         sourceOffsetsAddressPointer sourceOffsetsLengthPointer
         lengthsAddressPointer       lengthsLengthPointer
         dataSegmentAddressPointer   dataSegmentLengthPointer
-        fileSourceFlagPointer
+        offsetModeBytePointer
         errorCauseAddressPointer    errorCauseLengthPointer
       if returnCode /= 0
         then do
           rustMessage <- readString errorCauseAddressPointer errorCauseLengthPointer
           pure $ Left (XDelta1DiffFailed (XDelta1DiffCause rustMessage))
         else do
-          targetTagBytes      <- readByteString targetsAddressPointer       targetsLengthPointer
-          sourceOffsetBytes   <- readByteString sourceOffsetsAddressPointer sourceOffsetsLengthPointer
-          lengthBytes         <- readByteString lengthsAddressPointer       lengthsLengthPointer
-          dataSegmentBytes    <- readByteString dataSegmentAddressPointer   dataSegmentLengthPointer
-          fileSourceFlagByte  <- peek fileSourceFlagPointer
+          targetTagBytes     <- readByteString targetsAddressPointer       targetsLengthPointer
+          sourceOffsetBytes  <- readByteString sourceOffsetsAddressPointer sourceOffsetsLengthPointer
+          lengthBytes        <- readByteString lengthsAddressPointer       lengthsLengthPointer
+          dataSegmentBytes   <- readByteString dataSegmentAddressPointer   dataSegmentLengthPointer
+          offsetModeByte     <- peek offsetModeBytePointer
           -- The success path's error_cause is canonically the empty
           -- buffer (null pointer, zero length). Free defensively in
           -- case a future Rust-side change starts writing one.
-          _                   <- readByteString errorCauseAddressPointer    errorCauseLengthPointer
-          case parseParallelInstructions targetTagBytes sourceOffsetBytes lengthBytes of
-            Left slapError ->
-              pure (Left slapError)
-            Right instructions ->
-              pure $ Right XDelta1DiffOutput
-                { xdelta1DiffInstructions           = instructions
-                , xdelta1DiffDataSegment            = dataSegmentBytes
-                , xdelta1DiffFileSourceIsSequential = fileSourceFlagByte /= 0
-                }
+          _                  <- readByteString errorCauseAddressPointer    errorCauseLengthPointer
+          pure $ do
+            instructions <- parseParallelInstructions targetTagBytes sourceOffsetBytes lengthBytes
+            offsetMode   <- decodeOffsetModeByte offsetModeByte
+            pure XDelta1DiffOutput
+              { xdelta1DiffInstructions         = instructions
+              , xdelta1DiffDataSegment          = dataSegmentBytes
+              , xdelta1DiffFileSourceOffsetMode = offsetMode
+              }
 
 -- | Reconstruct '[XDelta1Instruction]' from the three parallel
 -- buffers the Rust side surfaces (one byte per target tag; eight LE
@@ -156,6 +156,20 @@ parseParallelInstructions targetTags sourceOffsetBytes lengthBytes
       _ -> Left $ ffiInvariantFailure $
              "invalid instruction target tag byte 0x" ++ padHex 2 tagByte
              ++ " (expected 0 = data source or 1 = file source)"
+
+-- | Decode the FFI byte that carries the differ's choice of
+-- per-instruction-offset encoding for the file source. Inverse of
+-- the byte the Rust side writes from
+-- 'xdelta1_diff::FileSourceOffsetMode' — see @rusty-slap/src/lib.rs@
+-- (the @rusty_xdelta1_diff@ entry point). Any byte other than 0 or
+-- 1 is an FFI-invariant violation rather than a silent fallback.
+decodeOffsetModeByte :: Word8 -> Either SlapError XDelta1OffsetMode
+decodeOffsetModeByte modeByte = case modeByte of
+  0 -> Right AbsoluteOffsets
+  1 -> Right SequentialOffsets
+  _ -> Left $ ffiInvariantFailure $
+         "invalid file-source offset-mode byte 0x" ++ padHex 2 modeByte
+         ++ " (expected 0 = absolute or 1 = sequential)"
 
 ffiInvariantFailure :: String -> SlapError
 ffiInvariantFailure detail =

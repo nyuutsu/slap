@@ -142,7 +142,7 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
   , xdelta1SourceName       = "source"
   , xdelta1SourceMD5        = perSourceMD5 (md5 sourceBytes)
   , xdelta1SourceLength     = byteFileSize sourceBytes
-  , xdelta1SourceOffsetMode = offsetMode (xdelta1DiffFileSourceIsSequential diff)
+  , xdelta1SourceOffsetMode = xdelta1DiffFileSourceOffsetMode diff
   , xdelta1Instructions     = xdelta1DiffInstructions diff
   , xdelta1DataSegment      = xdelta1DiffDataSegment diff
   }
@@ -156,9 +156,6 @@ assemblePatch inclusion compression sourceBytes targetBytes diff = XDelta1Patch
     perSourceMD5 computedMD5 = case inclusion of
       IncludeVerification -> Just computedMD5
       OmitVerification    -> Nothing
-
-    offsetMode True  = SequentialOffsets
-    offsetMode False = AbsoluteOffsets
 
 ----------------------------------------------------------------------------
 -- Wire encoder

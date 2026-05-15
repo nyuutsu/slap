@@ -10,6 +10,7 @@ mod bps_suffix_sort;
 mod compress;
 mod crc32;
 mod xdelta1_diff;
+mod xdelta1_suffix_array;
 
 // ── Boundary helpers ──────────────────────────────────────────────────
 
@@ -162,10 +163,10 @@ pub unsafe extern "C" fn rusty_bps_diff(
 // ── xdelta1 diff FFI ──────────────────────────────────────────────────
 
 /// Compute an xdelta1 diff. Returns 0 on success (all six output
-/// buffers + one flag byte populated; `error_cause` null). Returns
-/// -1 on failure (all output buffers null; `error_cause` carries the
-/// cause string). All caller-owned buffers must be freed via
-/// [`rusty_free`].
+/// buffers + one offset-mode byte populated; `error_cause` null).
+/// Returns -1 on failure (all output buffers null; `error_cause`
+/// carries the cause string). All caller-owned buffers must be
+/// freed via [`rusty_free`].
 ///
 /// The instruction stream is returned as three parallel homogeneous
 /// arrays — one byte per `instruction_target` (0 = data source, 1 =
@@ -173,6 +174,11 @@ pub unsafe extern "C" fn rusty_bps_diff(
 /// `u64` LE per `instruction_length`. The three arrays share length
 /// N (= the instruction count); the byte counts on the offset and
 /// length buffers are 8N.
+///
+/// The `file_source_offset_mode` byte encodes the differ's choice
+/// for the file-source's per-instruction-offset encoding: 0 =
+/// absolute, 1 = sequential. The Haskell side decodes the byte
+/// into `Slap.XDelta1.Types.XDelta1OffsetMode` directly.
 ///
 /// # Safety
 /// All buffer pointers follow rusty-slap's existing convention (see
@@ -191,7 +197,7 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
     instruction_lengths_length_pointer:          *mut usize,
     data_segment_address_pointer:                *mut *mut u8,
     data_segment_length_pointer:                 *mut usize,
-    file_source_is_sequential_pointer:           *mut u8,
+    file_source_offset_mode_pointer:             *mut u8,
     error_cause_address_pointer:                 *mut *mut u8,
     error_cause_length_pointer:                  *mut usize,
 ) -> i32 {
@@ -205,7 +211,10 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
                 surface_buffer_to_caller(source_offsets,    instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
                 surface_buffer_to_caller(lengths,           instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
                 surface_buffer_to_caller(diff.data_segment, data_segment_address_pointer,               data_segment_length_pointer);
-                *file_source_is_sequential_pointer = u8::from(diff.file_source_is_sequential);
+                *file_source_offset_mode_pointer = match diff.file_source_offset_mode {
+                    xdelta1_diff::FileSourceOffsetMode::Absolute   => 0,
+                    xdelta1_diff::FileSourceOffsetMode::Sequential => 1,
+                };
                 surface_buffer_to_caller(Vec::new(), error_cause_address_pointer, error_cause_length_pointer);
             }
             0
@@ -216,7 +225,7 @@ pub unsafe extern "C" fn rusty_xdelta1_diff(
                 surface_buffer_to_caller(Vec::new(), instruction_source_offsets_address_pointer, instruction_source_offsets_length_pointer);
                 surface_buffer_to_caller(Vec::new(), instruction_lengths_address_pointer,        instruction_lengths_length_pointer);
                 surface_buffer_to_caller(Vec::new(), data_segment_address_pointer,               data_segment_length_pointer);
-                *file_source_is_sequential_pointer = 0;
+                *file_source_offset_mode_pointer = 0;
                 surface_buffer_to_caller(cause_message.into_bytes(), error_cause_address_pointer, error_cause_length_pointer);
             }
             -1
