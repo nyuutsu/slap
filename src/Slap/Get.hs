@@ -38,7 +38,7 @@ import Slap.Binary
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
   )
-import Slap.Measure (Position(..), Length(..))
+import Slap.Measure (Position(..), Length(..), remainingFromPosition)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -145,7 +145,7 @@ atEnd :: Get Bool
 atEnd = Get $ \input (Position position) -> Right (position >= ByteString.length input, Position position)
 
 remaining :: Get Length
-remaining = Get $ \input (Position position) -> Right (Length (ByteString.length input - position), Position position)
+remaining = Get $ \input position -> Right (remainingFromPosition position input, position)
 
 failGet :: String -> Get a
 failGet = fail

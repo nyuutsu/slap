@@ -19,7 +19,7 @@ import Slap.VCDIFF.Types
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
 import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..), Length(..), advance)
+import Slap.Measure (Offset(..), FileSize(..), Length(..), advance, distance)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -456,7 +456,8 @@ decodeWindowInstructions codeTable (VCDIFFNearCacheSize nearSize) (VCDIFFSameCac
       -- Implicit trailing copy from source
       windowOffset <- readSTRef windowOffsetReference
       when (hasSource && windowOffset < targetLength) $
-        emit (DecodedCopy (Offset windowOffset) (Length (targetLength - windowOffset))
-                     (Just (advance (vcdiffSourcePosition window) (Length windowOffset))))
+        emit (DecodedCopy (Offset windowOffset)
+                          (distance (Offset windowOffset) (Offset targetLength))
+                          (Just (advance (vcdiffSourcePosition window) (Length windowOffset))))
 
       reverse <$> readSTRef resultReference

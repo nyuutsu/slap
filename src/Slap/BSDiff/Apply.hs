@@ -12,7 +12,8 @@ import Slap.Error (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), Cursor(..), remainingFromOffset)
+                     SignedOffset(..), Cursor(..), remainingFromOffset,
+                     minLength)
 import Data.Word (Word8)
 import Foreign.Ptr (plusPtr)
 import Foreign.Storable (pokeByteOff)
@@ -123,7 +124,7 @@ applyBSDiff patch (InputFileContents source) = Right $ OutputFileContents $ unsa
         addLoop 0
         -- Copy: target[outputPosition+addLength..] = extra[extraOffset..]
         let safeCopyLength = if unOffset extraReadOffset >= 0 && unOffset extraReadOffset < extraLength
-                        then min copyLength (Length (extraLength - unOffset extraReadOffset))
+                        then minLength copyLength (remainingFromOffset extraReadOffset (FileSize extraLength))
                         else Length 0
         copyRegion targetPointer (advance outputPosition addLength) extraBytes extraReadOffset safeCopyLength
         applyLoop

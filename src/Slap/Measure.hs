@@ -59,6 +59,7 @@ module Slap.Measure
   , Cursor(..)
     -- * Cursor helpers
   , remainingFromOffset
+  , remainingFromPosition
   , firstAction
   , nextAction
   , streamEndIndex
@@ -450,6 +451,14 @@ instance Cursor WritePosition where
 remainingFromOffset :: Offset -> FileSize -> Length
 remainingFromOffset (Offset position) (FileSize totalSize) =
   Length (max 0 (totalSize - position))
+
+-- | The number of bytes remaining in a 'ByteString' from a given parse
+-- 'Position'. The 'Position'-aware analogue of 'remainingFromOffset',
+-- with the same saturating convention: returns @'Length' 0@ if the
+-- cursor is past the end of the input. Used by 'Slap.Get.remaining'.
+remainingFromPosition :: Position -> ByteString -> Length
+remainingFromPosition (Position cursorPosition) input =
+  Length (max 0 (ByteString.length input - cursorPosition))
 
 -- | The first index in any action stream.
 firstAction :: ActionIndex

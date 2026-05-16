@@ -12,9 +12,9 @@ import Slap.DPS.Types (DPSMetadata(..), DPSStability, fromDPSStability,
                        narrowDPSRecords, narrowDPSSourceSize,
                        unDPSSourceSize, dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (Offset(..), Length(..), Hunk(..),
+import Slap.Measure (Offset(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..),
-                     byteFileSize)
+                     byteFileSize, distance)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
 import Slap.Error (SlapError, SlapWarning(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
@@ -67,14 +67,14 @@ dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
     trailingCopy position
       | position < modifiedLength =
           [DPSCopyFromROM (Offset position)
-             (Offset position) (Length (modifiedLength - position))]
+             (Offset position) (distance (Offset position) (Offset modifiedLength))]
       | otherwise = []
     buildRecords position [] = trailingCopy position
     buildRecords position (Hunk rawOffset rawData : rest) =
       let intOffset = unOffset rawOffset
       in if intOffset > position
          then DPSCopyFromROM (Offset position)
-                (Offset position) (Length (intOffset - position))
+                (Offset position) (distance (Offset position) rawOffset)
               : DPSEnclosedData rawOffset rawData
               : buildRecords (intOffset + ByteString.length rawData) rest
          else DPSEnclosedData rawOffset rawData

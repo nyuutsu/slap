@@ -497,17 +497,17 @@ findByteRuns input
     scanRuns :: Int -> Word8 -> Int -> [ByteRun]
     scanRuns !runStartPosition !runByte !position
       | position >= inputLength =
-          [ ByteRun (Offset runStartPosition)
-                    (Length (inputLength - runStartPosition))
-          | inputLength - runStartPosition >= 4
-          ]
+          let runLength = distance (Offset runStartPosition) (Offset inputLength)
+          in [ ByteRun (Offset runStartPosition) runLength
+             | runLength >= Length 4
+             ]
       | ByteString.index input position == runByte =
           scanRuns runStartPosition runByte (position + 1)
       | otherwise =
-          [ ByteRun (Offset runStartPosition)
-                    (Length (position - runStartPosition))
-          | position - runStartPosition >= 4
-          ]
+          let runLength = distance (Offset runStartPosition) (Offset position)
+          in [ ByteRun (Offset runStartPosition) runLength
+             | runLength >= Length 4
+             ]
           ++ scanRuns position
                       (ByteString.index input position)
                       (position + 1)

@@ -10,7 +10,8 @@ import Slap.XDelta1.Types
 import Slap.Error (SlapError(..), XDelta1GzipStreamInputs(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset,
+                     minLength, byteFileSize)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -83,7 +84,7 @@ applyXDelta1 patch sourceContents =
                 sourceSafeLength =
                   if unOffset instructionOffset >= 0
                      && unOffset instructionOffset < ByteString.length sourceBytes
-                  then min safeLength (Length (ByteString.length sourceBytes - unOffset instructionOffset))
+                  then minLength safeLength (remainingFromOffset instructionOffset (byteFileSize sourceBytes))
                   else Length 0
             copyRegion targetPointer outputPosition sourceBytes instructionOffset sourceSafeLength
             applyLoop (advance outputPosition safeLength) rest
