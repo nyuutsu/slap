@@ -13,8 +13,8 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..)
     )
 import Slap.Display.Common (InfoLine, Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (Offset(..), Length(..),
-                     OffsetRange(..), advance, byteLength)
+import Slap.Measure (Length(..),
+                     OffsetRange(..), advance, byteLength, distance)
 import Data.Vector (Vector)
 
 import qualified Data.ByteString as ByteString
@@ -70,7 +70,7 @@ pmsrRecordsRange records
           endOfLastRecord     = Vector.maximum (Vector.map recordEndOffset records)
       in Just OffsetRange
           { rangeStart  = firstAffectedOffset
-          , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+          , rangeLength = distance firstAffectedOffset endOfLastRecord
           }
   where
     recordEndOffset record =

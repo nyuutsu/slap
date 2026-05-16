@@ -14,8 +14,8 @@ import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (padHex)
-import Slap.Measure (Offset(..), Length(..),
-                     OffsetRange(..), advance, byteLength)
+import Slap.Measure (Length(..),
+                     OffsetRange(..), advance, byteLength, distance)
 
 import qualified Data.ByteString as ByteString
 
@@ -74,7 +74,7 @@ ninja1RecordsRange records =
       endOfLastRecord     = maximum (map recordEndOffset records)
   in Just OffsetRange
       { rangeStart  = firstAffectedOffset
-      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      , rangeLength = distance firstAffectedOffset endOfLastRecord
       }
   where
     recordEndOffset record =

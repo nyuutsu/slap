@@ -15,7 +15,7 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         unPPF2SourceSize,
                         ppf2ValidationOffset)
 import Slap.Measure (Offset(..), Length(..),
-                     OffsetRange(..), advance, byteLength)
+                     OffsetRange(..), advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
                             ByteCount(TotalPayloadBytes))
@@ -79,7 +79,7 @@ ppf2RecordsRange records =
       endOfLastRecord     = maximum (map recordEndOffset records)
   in Just OffsetRange
       { rangeStart  = firstAffectedOffset
-      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      , rangeLength = distance firstAffectedOffset endOfLastRecord
       }
   where
     recordEndOffset record =

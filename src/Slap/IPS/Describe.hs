@@ -62,8 +62,8 @@ import Slap.Display.Analysis
   )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     OffsetRange(..), advance)
+import Slap.Measure (Offset(Offset), FileSize(..),
+                     OffsetRange(..), advance, distance)
 
 import Data.Vector (Vector)
 
@@ -232,7 +232,7 @@ ipsRecordsRange records
           endOfLastRecord     = Vector.maximum (Vector.map recordEndOffset records)
       in Just OffsetRange
           { rangeStart  = firstAffectedOffset
-          , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+          , rangeLength = distance firstAffectedOffset endOfLastRecord
           }
   where
     recordEndOffset record =

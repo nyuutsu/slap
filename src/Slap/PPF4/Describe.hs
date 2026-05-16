@@ -4,8 +4,8 @@ module Slap.PPF4.Describe
   ) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
-import Slap.Measure (Offset(..), Length(..),
-                     OffsetRange(..), advance, byteLength)
+import Slap.Measure (Offset(Offset), Length(..),
+                     OffsetRange(..), advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(Records), ByteCount(TotalPayloadBytes))
 import Slap.Display.Analysis
@@ -103,7 +103,7 @@ ppf4ReplacesRange replaces =
       endOfLastRecord     = maximum (map replaceEndOffset replaces)
   in Just OffsetRange
       { rangeStart  = firstAffectedOffset
-      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      , rangeLength = distance firstAffectedOffset endOfLastRecord
       }
   where
     replaceEndOffset replace =

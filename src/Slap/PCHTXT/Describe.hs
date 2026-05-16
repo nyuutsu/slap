@@ -12,8 +12,8 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
                      Annotation(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (Offset(..), Length(..),
-                     OffsetRange(..), advance, byteLength)
+import Slap.Measure (Length(..),
+                     OffsetRange(..), advance, byteLength, distance)
 
 import qualified Data.ByteString as ByteString
 
@@ -74,7 +74,7 @@ pchtxtEntriesRange entries =
       endOfLastRecord     = maximum (map entryEndOffset entries)
   in Just OffsetRange
       { rangeStart  = firstAffectedOffset
-      , rangeLength = Length (unOffset endOfLastRecord - unOffset firstAffectedOffset)
+      , rangeLength = distance firstAffectedOffset endOfLastRecord
       }
   where
     entryEndOffset entry =
