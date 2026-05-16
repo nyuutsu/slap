@@ -19,10 +19,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
-import Control.Monad (unless)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.ByteString.Internal (createAndTrim')
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
@@ -115,11 +113,10 @@ applyBPS patch (InputFileContents source)
   | unFileSize targetSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize targetSize) $ \outputPointer ->
-        runApply outputPointer errorRef
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+      (result, outcome) <- createAndTrim' (unFileSize targetSize) $ \outputPointer -> do
+        maybeErr <- runApply outputPointer
+        pure (0, unFileSize targetSize, maybeErr)
+      pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelBPS applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
@@ -128,13 +125,10 @@ applyBPS patch (InputFileContents source)
     actions         = bpsActions patch
     actionStreamEnd = streamEndIndex actions
 
-    runApply outputPointer errorRef =
+    runApply outputPointer =
       let
         actionAt index =
           Vector.unsafeIndex actions (unActionIndex index)
-
-        abort :: ApplyError -> IO ()
-        abort applyErr = writeIORef errorRef (Just applyErr)
 
         generalOverlapLoop :: ReadOffset -> WritePosition -> Length -> IO ()
         generalOverlapLoop readStart writePos copyLength =
@@ -150,7 +144,8 @@ applyBPS patch (InputFileContents source)
           in loop 0
 
         applyActionStream
-          :: ActionIndex -> WritePosition -> SourceRelativeOffset -> TargetRelativeOffset -> IO ()
+          :: ActionIndex -> WritePosition -> SourceRelativeOffset -> TargetRelativeOffset
+          -> IO (Maybe ApplyError)
         applyActionStream !actionIndex !outputPosition !sourceRelative !targetRelative
           | actionIndex >= actionStreamEnd =
               -- End of action stream: verify we wrote the full target.
@@ -158,8 +153,9 @@ applyBPS patch (InputFileContents source)
               -- ApplyWritesPastTarget catches over-writes per-action
               -- before they can happen, so outputPosition > targetSize
               -- is unreachable here.
-              unless (remainingFromOffset outputOffset targetSize == Length 0) $
-                abort (ApplyTargetUnderfilled outputPosition (ExpectedSize targetSize))
+              if remainingFromOffset outputOffset targetSize == Length 0
+                then pure Nothing
+                else pure (Just (ApplyTargetUnderfilled outputPosition (ExpectedSize targetSize)))
           | otherwise = case actionAt actionIndex of
               SourceRead actionLength ->
                 handleSourceRead actionLength
@@ -179,12 +175,12 @@ applyBPS patch (InputFileContents source)
 
             handleSourceRead actionLength
               | not (fitsWithin outputOffset actionLength targetSize) =
-                  abort (ApplyWritesPastTarget actionIndex
-                          (RequestedLength actionLength)
-                          (RemainingLength remaining))
+                  pure (Just (ApplyWritesPastTarget actionIndex
+                               (RequestedLength actionLength)
+                               (RemainingLength remaining)))
               | not (fitsWithin outputOffset actionLength sourceSize) =
-                  abort (ApplySourceReadOutOfBounds actionIndex
-                          (advance outputOffset actionLength) sourceSize)
+                  pure (Just (ApplySourceReadOutOfBounds actionIndex
+                               (advance outputOffset actionLength) sourceSize))
               | otherwise = do
                   copyRegion outputPointer outputOffset
                              source outputOffset actionLength
@@ -194,9 +190,9 @@ applyBPS patch (InputFileContents source)
             handleTargetRead payload =
               let payloadLength = Length (ByteString.length payload)
               in if not (fitsWithin outputOffset payloadLength targetSize)
-                   then abort (ApplyWritesPastTarget actionIndex
-                                (RequestedLength payloadLength)
-                                (RemainingLength remaining))
+                   then pure (Just (ApplyWritesPastTarget actionIndex
+                                     (RequestedLength payloadLength)
+                                     (RemainingLength remaining)))
                    else do
                      copyRegion outputPointer outputOffset
                                 payload (Offset 0) payloadLength
@@ -206,18 +202,18 @@ applyBPS patch (InputFileContents source)
             handleSourceCopy actionLength actionDelta =
               let nextSourceRelative = displace sourceRelative actionDelta
               in if not (fitsWithin outputOffset actionLength targetSize)
-                   then abort (ApplyWritesPastTarget actionIndex
-                                (RequestedLength actionLength)
-                                (RemainingLength remaining))
+                   then pure (Just (ApplyWritesPastTarget actionIndex
+                                     (RequestedLength actionLength)
+                                     (RemainingLength remaining)))
                    else case examineSignedOffset (unSourceRelativeOffset nextSourceRelative) of
                      NegativeCursor negativeCursor ->
-                       abort (ApplyCursorUnderflow SourceCursor
-                               actionIndex negativeCursor)
+                       pure (Just (ApplyCursorUnderflow SourceCursor
+                                    actionIndex negativeCursor))
                      NonNegativeCursor safeSourceStart ->
                        if not (fitsWithin safeSourceStart actionLength sourceSize)
-                         then abort (ApplySourceReadOutOfBounds actionIndex
-                                      (advance safeSourceStart actionLength)
-                                      sourceSize)
+                         then pure (Just (ApplySourceReadOutOfBounds actionIndex
+                                           (advance safeSourceStart actionLength)
+                                           sourceSize))
                          else do
                            copyRegion outputPointer outputOffset
                                       source safeSourceStart actionLength
@@ -228,18 +224,18 @@ applyBPS patch (InputFileContents source)
             handleTargetCopy actionLength actionDelta =
               let nextTargetRelative = displace targetRelative actionDelta
               in if not (fitsWithin outputOffset actionLength targetSize)
-                   then abort (ApplyWritesPastTarget actionIndex
-                                (RequestedLength actionLength)
-                                (RemainingLength remaining))
+                   then pure (Just (ApplyWritesPastTarget actionIndex
+                                     (RequestedLength actionLength)
+                                     (RemainingLength remaining)))
                    else case examineSignedOffset (unTargetRelativeOffset nextTargetRelative) of
                      NegativeCursor negativeCursor ->
-                       abort (ApplyCursorUnderflow TargetCursor
-                               actionIndex negativeCursor)
+                       pure (Just (ApplyCursorUnderflow TargetCursor
+                                    actionIndex negativeCursor))
                      NonNegativeCursor readStartOffset ->
                        if readStartOffset >= outputOffset
-                         then abort (ApplyTargetReadUnwritten actionIndex
-                                      (ReadOffset readStartOffset)
-                                      outputPosition)
+                         then pure (Just (ApplyTargetReadUnwritten actionIndex
+                                           (ReadOffset readStartOffset)
+                                           outputPosition))
                          else do
                            executeTargetCopy (ReadOffset readStartOffset) actionLength
                            recurse (advance outputPosition actionLength)

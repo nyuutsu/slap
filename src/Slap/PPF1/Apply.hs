@@ -19,8 +19,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.ByteString.Internal (createAndTrim')
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
@@ -34,16 +33,15 @@ applyPPF1 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
                     (unLength (distance sourceEnd outputEnd))
-        applyRecordStream outputPointer errorRef firstAction (ppf1Records patch)
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+        maybeErr <- applyRecordStream outputPointer firstAction (ppf1Records patch)
+        pure (0, unFileSize outputFileSize, maybeErr)
+      pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
@@ -60,20 +58,19 @@ applyPPF1 patch (InputFileContents source)
         accumulateEnd currentEnd (PPF1Record writeOffset payload) =
           max currentEnd (advance writeOffset (byteLength payload))
 
-    applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
-                      -> ActionIndex -> [PPF1Record] -> IO ()
-    applyRecordStream _ _ _ [] = pure ()
-    applyRecordStream outputPointer errorRef recordIndex (PPF1Record writeOffset payload : rest)
+    applyRecordStream :: Ptr Word8
+                      -> ActionIndex -> [PPF1Record] -> IO (Maybe ApplyError)
+    applyRecordStream _ _ [] = pure Nothing
+    applyRecordStream outputPointer recordIndex (PPF1Record writeOffset payload : rest)
       | unOffset writeOffset < 0 =
-          writeIORef errorRef (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
+          pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
       | not (fitsWithin writeOffset payloadLength outputFileSize) =
-          writeIORef errorRef (Just (ApplyWritesPastTarget recordIndex
-                                       (RequestedLength payloadLength)
-                                       (RemainingLength
-                                          (remainingFromOffset writeOffset outputFileSize))))
+          pure (Just (ApplyWritesPastTarget recordIndex
+                       (RequestedLength payloadLength)
+                       (RemainingLength
+                          (remainingFromOffset writeOffset outputFileSize))))
       | otherwise = do
           copyRegion outputPointer writeOffset payload (Offset 0) payloadLength
-          applyRecordStream outputPointer errorRef
-            (nextAction recordIndex) rest
+          applyRecordStream outputPointer (nextAction recordIndex) rest
       where
         payloadLength = byteLength payload

@@ -13,8 +13,7 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.ByteString.Internal (createAndTrim')
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
@@ -35,27 +34,24 @@ applyPPF4 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
                     (unLength (distance sourceEnd outputEnd))
-        appendStartIndex <- applyReplaces outputPointer errorRef firstAction (ppf4Replaces patch)
-        -- Skip the Append phase if the Replace phase already errored,
-        -- so the first failure wins (an Append-phase failure on a
-        -- buffer corrupted by a failed Replace would otherwise
-        -- overwrite the more useful diagnostic).
-        afterReplaces <- readIORef errorRef
-        case afterReplaces of
-          Just _  -> pure ()
-          Nothing ->
-            applyAppends outputPointer errorRef
+        replaceOutcome <- applyReplaces outputPointer firstAction (ppf4Replaces patch)
+        -- First failure wins: a Replace-phase error short-circuits the
+        -- Append phase, so an Append-phase failure on a buffer corrupted
+        -- by a failed Replace can't overwrite the more useful diagnostic.
+        finalOutcome <- case replaceOutcome of
+          Left applyErr -> pure (Just applyErr)
+          Right appendStartIndex ->
+            applyAppends outputPointer
                          appendStartIndex
                          appendStartOffset (ppf4Appends patch)
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+        pure (0, unFileSize outputFileSize, finalOutcome)
+      pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
@@ -72,36 +68,34 @@ applyPPF4 patch (InputFileContents source)
     -- is the exact final start of the Append region.
     appendStartOffset = sourceEnd
 
-    applyReplaces :: Ptr Word8 -> IORef (Maybe ApplyError)
-                  -> ActionIndex -> [PPF4Replace] -> IO ActionIndex
-    applyReplaces _ _ recordIndex [] = pure recordIndex
-    applyReplaces outputPointer errorRef recordIndex (replace : rest)
-      | unOffset writeOffset < 0 = do
-          writeIORef errorRef (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
-          pure recordIndex
-      | not (fitsWithin writeOffset payloadLength sourceFileSize) = do
-          writeIORef errorRef (Just (ApplyReplaceGrowsFile recordIndex writeOffset
-                                       (RequestedLength payloadLength)
-                                       sourceFileSize))
-          pure recordIndex
+    applyReplaces :: Ptr Word8
+                  -> ActionIndex -> [PPF4Replace] -> IO (Either ApplyError ActionIndex)
+    applyReplaces _ recordIndex [] = pure (Right recordIndex)
+    applyReplaces outputPointer recordIndex (replace : rest)
+      | unOffset writeOffset < 0 =
+          pure (Left (ApplyNegativeRecordOffset recordIndex writeOffset))
+      | not (fitsWithin writeOffset payloadLength sourceFileSize) =
+          pure (Left (ApplyReplaceGrowsFile recordIndex writeOffset
+                       (RequestedLength payloadLength)
+                       sourceFileSize))
       | otherwise = do
           copyRegion outputPointer writeOffset (replaceData replace) (Offset 0) payloadLength
-          applyReplaces outputPointer errorRef (nextAction recordIndex) rest
+          applyReplaces outputPointer (nextAction recordIndex) rest
       where
         writeOffset   = replaceOffset replace
         payloadLength = byteLength (replaceData replace)
 
-    applyAppends :: Ptr Word8 -> IORef (Maybe ApplyError)
-                 -> ActionIndex -> Offset -> [PPF4Append] -> IO ()
-    applyAppends _ _ _ _ [] = pure ()
-    applyAppends outputPointer errorRef recordIndex currentEnd (PPF4Append payloadBytes : rest)
+    applyAppends :: Ptr Word8
+                 -> ActionIndex -> Offset -> [PPF4Append] -> IO (Maybe ApplyError)
+    applyAppends _ _ _ [] = pure Nothing
+    applyAppends outputPointer recordIndex currentEnd (PPF4Append payloadBytes : rest)
       | not (fitsWithin currentEnd payloadLength outputFileSize) =
-          writeIORef errorRef (Just (ApplyWritesPastTarget recordIndex
-                                       (RequestedLength payloadLength)
-                                       (RemainingLength (remainingFromOffset currentEnd outputFileSize))))
+          pure (Just (ApplyWritesPastTarget recordIndex
+                       (RequestedLength payloadLength)
+                       (RemainingLength (remainingFromOffset currentEnd outputFileSize))))
       | otherwise = do
           copyRegion outputPointer currentEnd payloadBytes (Offset 0) payloadLength
-          applyAppends outputPointer errorRef (nextAction recordIndex)
+          applyAppends outputPointer (nextAction recordIndex)
                        (advance currentEnd payloadLength) rest
       where
         payloadLength = byteLength payloadBytes

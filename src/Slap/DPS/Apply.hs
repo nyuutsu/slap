@@ -15,8 +15,7 @@ import Slap.Measure (Offset(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.ByteString.Internal (createAndTrim')
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
@@ -39,11 +38,10 @@ applyDPS patch (InputFileContents source)
   | unFileSize outputSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize outputSize) $ \outputPointer ->
-        runApply outputPointer errorRef
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+      (result, outcome) <- createAndTrim' (unFileSize outputSize) $ \outputPointer -> do
+        maybeErr <- runApply outputPointer
+        pure (0, unFileSize outputSize, maybeErr)
+      pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
@@ -51,29 +49,26 @@ applyDPS patch (InputFileContents source)
     sourceSize = byteFileSize source
     outputSize = dpsOutputExtent records
 
-    runApply :: Ptr Word8 -> IORef (Maybe ApplyError) -> IO ()
-    runApply outputPointer errorRef =
+    runApply :: Ptr Word8 -> IO (Maybe ApplyError)
+    runApply outputPointer =
       let
-        abort :: ApplyError -> IO ()
-        abort applyErr = writeIORef errorRef (Just applyErr)
-
-        applyRecordStream :: ActionIndex -> [DPSRecord] -> IO ()
-        applyRecordStream !_recordIndex [] = pure ()
+        applyRecordStream :: ActionIndex -> [DPSRecord] -> IO (Maybe ApplyError)
+        applyRecordStream !_recordIndex [] = pure Nothing
         applyRecordStream !recordIndex (record : remaining) =
           handleRecord recordIndex record remaining
 
-        handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO ()
+        handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO (Maybe ApplyError)
 
         handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remaining =
           let readEnd        = advance sourceOffset copyLength
               writeLength    = copyLength
               remainingSpace = remainingFromOffset outputOffset outputSize
           in if not (fitsWithin sourceOffset copyLength sourceSize)
-               then abort (ApplySourceReadOutOfBounds recordIndex readEnd sourceSize)
+               then pure (Just (ApplySourceReadOutOfBounds recordIndex readEnd sourceSize))
                else if not (fitsWithin outputOffset writeLength outputSize)
-               then abort (ApplyWritesPastTarget recordIndex
-                            (RequestedLength writeLength)
-                            (RemainingLength remainingSpace))
+               then pure (Just (ApplyWritesPastTarget recordIndex
+                                  (RequestedLength writeLength)
+                                  (RemainingLength remainingSpace)))
                else do
                  copyRegion outputPointer outputOffset source sourceOffset copyLength
                  applyRecordStream (nextAction recordIndex) remaining
@@ -82,9 +77,9 @@ applyDPS patch (InputFileContents source)
           let writeLength    = byteLength payload
               remainingSpace = remainingFromOffset outputOffset outputSize
           in if not (fitsWithin outputOffset writeLength outputSize)
-               then abort (ApplyWritesPastTarget recordIndex
-                            (RequestedLength writeLength)
-                            (RemainingLength remainingSpace))
+               then pure (Just (ApplyWritesPastTarget recordIndex
+                                  (RequestedLength writeLength)
+                                  (RemainingLength remainingSpace)))
                else do
                  copyRegion outputPointer outputOffset payload (Offset 0) writeLength
                  applyRecordStream (nextAction recordIndex) remaining

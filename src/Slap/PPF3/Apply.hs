@@ -23,8 +23,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (create)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.ByteString.Internal (createAndTrim')
 import Data.Maybe (fromMaybe)
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
@@ -39,16 +38,15 @@ applyPPF3 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
                     (unLength (distance sourceEnd outputEnd))
-        applyRecordStream outputPointer errorRef firstAction (ppf3Records patch)
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+        maybeErr <- applyRecordStream outputPointer firstAction (ppf3Records patch)
+        pure (0, unFileSize outputFileSize, maybeErr)
+      pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
@@ -67,21 +65,20 @@ applyPPF3 patch (InputFileContents source)
                                  (byteLength (ppf3RecordPayload record))
           in max currentEnd writeEnd
 
-    applyRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
-                      -> ActionIndex -> [PPF3Record] -> IO ()
-    applyRecordStream _ _ _ [] = pure ()
-    applyRecordStream outputPointer errorRef recordIndex (record : rest)
+    applyRecordStream :: Ptr Word8
+                      -> ActionIndex -> [PPF3Record] -> IO (Maybe ApplyError)
+    applyRecordStream _ _ [] = pure Nothing
+    applyRecordStream outputPointer recordIndex (record : rest)
       | unOffset writeOffset < 0 =
-          writeIORef errorRef (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
+          pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
       | not (fitsWithin writeOffset payloadLength outputFileSize) =
-          writeIORef errorRef (Just (ApplyWritesPastTarget recordIndex
-                                       (RequestedLength payloadLength)
-                                       (RemainingLength
-                                          (remainingFromOffset writeOffset outputFileSize))))
+          pure (Just (ApplyWritesPastTarget recordIndex
+                       (RequestedLength payloadLength)
+                       (RemainingLength
+                          (remainingFromOffset writeOffset outputFileSize))))
       | otherwise = do
           copyRegion outputPointer writeOffset (ppf3RecordPayload record) (Offset 0) payloadLength
-          applyRecordStream outputPointer errorRef
-            (nextAction recordIndex) rest
+          applyRecordStream outputPointer (nextAction recordIndex) rest
       where
         writeOffset   = ppf3RecordOffset record
         payloadLength = byteLength (ppf3RecordPayload record)
@@ -91,33 +88,32 @@ undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =
       Right (InputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      result <- create inputLength $ \outputPointer -> do
+      (result, outcome) <- createAndTrim' inputLength $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) input (Offset 0) (Length inputLength)
-        undoRecordStream outputPointer errorRef firstAction (ppf3Records patch)
-      errorState <- readIORef errorRef
-      pure $ case errorState of
+        maybeErr <- undoRecordStream outputPointer firstAction (ppf3Records patch)
+        pure (0, inputLength, maybeErr)
+      pure $ case outcome of
         Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
         Nothing       -> Right (InputFileContents result)
   where
     inputLength = ByteString.length input
 
-    undoRecordStream :: Ptr Word8 -> IORef (Maybe ApplyError)
-                     -> ActionIndex -> [PPF3Record] -> IO ()
-    undoRecordStream _ _ _ [] = pure ()
-    undoRecordStream outputPointer errorRef recordIndex (record : rest)
+    undoRecordStream :: Ptr Word8
+                     -> ActionIndex -> [PPF3Record] -> IO (Maybe ApplyError)
+    undoRecordStream _ _ [] = pure Nothing
+    undoRecordStream outputPointer recordIndex (record : rest)
       | ByteString.null undoPayload =
-          undoRecordStream outputPointer errorRef (nextAction recordIndex) rest
+          undoRecordStream outputPointer (nextAction recordIndex) rest
       | unOffset writeOffset < 0 =
-          writeIORef errorRef (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
+          pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
       | not (fitsWithin writeOffset payloadLength (FileSize inputLength)) =
-          writeIORef errorRef (Just (ApplyWritesPastTarget recordIndex
-                                       (RequestedLength payloadLength)
-                                       (RemainingLength
-                                          (remainingFromOffset writeOffset (FileSize inputLength)))))
+          pure (Just (ApplyWritesPastTarget recordIndex
+                       (RequestedLength payloadLength)
+                       (RemainingLength
+                          (remainingFromOffset writeOffset (FileSize inputLength)))))
       | otherwise = do
           copyRegion outputPointer writeOffset undoPayload (Offset 0) payloadLength
-          undoRecordStream outputPointer errorRef (nextAction recordIndex) rest
+          undoRecordStream outputPointer (nextAction recordIndex) rest
       where
         writeOffset   = ppf3RecordOffset record
         undoPayload   = fromMaybe ByteString.empty (ppf3RecordUndo record)
