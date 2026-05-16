@@ -20,8 +20,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Control.Monad (when)
-import Data.ByteString.Internal (create)
-import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
+import Data.ByteString.Internal (createAndTrim')
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
@@ -97,17 +96,15 @@ applyIPS (InputFileContents source) patch
   | unFileSize effectiveSize < 0 =
       Left (NegativeTargetSize patchLabel effectiveSize)
   | otherwise = unsafePerformIO $ do
-      errorRef <- newIORef Nothing
-      clipRef  <- newIORef Nothing
-      result <- create (unFileSize effectiveSize) $ \outputPointer ->
-        runApply outputPointer errorRef clipRef
-      errorState <- readIORef errorRef
-      clipState  <- readIORef clipRef
-      pure $ case errorState of
+      (result, (errorOutcome, clipOutcome)) <-
+        createAndTrim' (unFileSize effectiveSize) $ \outputPointer -> do
+          outcomes <- runApply outputPointer
+          pure (0, unFileSize effectiveSize, outcomes)
+      pure $ case errorOutcome of
         Just applyErr -> Left (ApplyFailed patchLabel applyErr)
         Nothing       -> Right (Outcome
           (OutputFileContents result)
-          (dispositionWarnings ++ clipWarnings clipState))
+          (dispositionWarnings ++ clipWarnings clipOutcome))
   where
     patchLabel    = case ipsVariant patch of
                       StandardIPS -> LabelIPS
@@ -152,28 +149,28 @@ applyIPS (InputFileContents source) patch
 
     recordStreamEnd = streamEndIndex records
 
-    runApply outputPointer errorRef clipRef =
+    runApply outputPointer =
       let
-        abort :: ApplyError -> IO ()
-        abort applyErr = writeIORef errorRef (Just applyErr)
-
         -- | Record a clip event into the accumulator. The first
         -- clip starts the accumulator with count=1 and notes the
         -- record's index; subsequent clips increment count and add
-        -- to total overshoot, preserving the first index.
-        recordClip :: ActionIndex -> Length -> IO ()
-        recordClip recordIndex overshootLen =
-          modifyIORef' clipRef $ \current -> Just $ case current of
-            Nothing -> ClipAccumulator
-              { clipCount      = ClippedRecordCount 1
-              , clipFirstIndex = recordIndex
-              , clipOvershoot  = MarkerOvershootBytes overshootLen
-              }
-            Just existing -> existing
-              { clipCount     = ClippedRecordCount
-                                  (unClippedRecordCount (clipCount existing) + 1)
-              , clipOvershoot = clipOvershoot existing <> MarkerOvershootBytes overshootLen
-              }
+        -- to total overshoot, preserving the first index. Pure
+        -- value-threading: the caller passes the current 'Maybe
+        -- ClipAccumulator' in and threads the updated one to the
+        -- next recursive call.
+        recordClip :: ActionIndex -> Length
+                   -> Maybe ClipAccumulator -> Maybe ClipAccumulator
+        recordClip recordIndex overshootLen current = Just $ case current of
+          Nothing -> ClipAccumulator
+            { clipCount      = ClippedRecordCount 1
+            , clipFirstIndex = recordIndex
+            , clipOvershoot  = MarkerOvershootBytes overshootLen
+            }
+          Just existing -> existing
+            { clipCount     = ClippedRecordCount
+                                (unClippedRecordCount (clipCount existing) + 1)
+            , clipOvershoot = clipOvershoot existing <> MarkerOvershootBytes overshootLen
+            }
 
         -- | Seed every byte of the output buffer before any record
         -- runs. The leading @min sourceSize effectiveSize@ bytes are
@@ -225,17 +222,19 @@ applyIPS (InputFileContents source) patch
                     fillByte
                     (unLength prefixLength)
 
-        -- | Tail-recursive walk over the record vector. Each step
-        -- indexes the next record, hands it to 'handleRecord', and
-        -- either aborts (on a failed bounds guard) or recurses (on
-        -- a successful write). End-of-stream is a bare 'pure ()' —
-        -- the buffer is already fully populated by 'initialFill'
-        -- before the walk begins.
-        applyRecordStream :: ActionIndex -> IO ()
-        applyRecordStream !recordIndex
-          | recordIndex >= recordStreamEnd = pure ()
+        -- | Tail-recursive walk over the record vector, threading
+        -- the clip accumulator through each step. End-of-stream
+        -- returns the accumulated clip state with no error; a
+        -- failed bounds guard returns the error alongside whatever
+        -- clip state had been built up so far. The buffer is
+        -- already fully populated by 'initialFill' before the walk
+        -- begins.
+        applyRecordStream :: ActionIndex -> Maybe ClipAccumulator
+                          -> IO (Maybe ApplyError, Maybe ClipAccumulator)
+        applyRecordStream !recordIndex !clipState
+          | recordIndex >= recordStreamEnd = pure (Nothing, clipState)
           | otherwise =
-              handleRecord recordIndex
+              handleRecord recordIndex clipState
                 (Vector.unsafeIndex records (unActionIndex recordIndex))
 
         -- | Per-record dispatch. Routes 'MarkerHonored' through
@@ -244,12 +243,13 @@ applyIPS (InputFileContents source) patch
         -- check). Explicit four-arm match: a future fifth
         -- disposition fires '-Wincomplete-patterns' here and the
         -- author has to decide which class it belongs to.
-        handleRecord :: ActionIndex -> IPSRecord -> IO ()
-        handleRecord recordIndex record = case disposition of
-          MarkerHonored _declared _natural -> handleHonored recordIndex record
-          MarkerAbsent   _natural           -> handleStrict   recordIndex record
-          MarkerNoOp     _declared          -> handleStrict   recordIndex record
-          MarkerIgnored  _declared _natural -> handleStrict   recordIndex record
+        handleRecord :: ActionIndex -> Maybe ClipAccumulator -> IPSRecord
+                     -> IO (Maybe ApplyError, Maybe ClipAccumulator)
+        handleRecord recordIndex clipState record = case disposition of
+          MarkerHonored _declared _natural -> handleHonored recordIndex clipState record
+          MarkerAbsent   _natural          -> handleStrict   recordIndex clipState record
+          MarkerNoOp     _declared         -> handleStrict   recordIndex clipState record
+          MarkerIgnored  _declared _natural -> handleStrict   recordIndex clipState record
 
         -- | Record handler for 'MarkerHonored'. Three behaviors
         -- per record: entirely-within-effective writes verbatim;
@@ -257,47 +257,50 @@ applyIPS (InputFileContents source) patch
         -- payload as overshoot; straddling-effective writes the
         -- fitting prefix and counts the trailing length as
         -- overshoot.
-        handleHonored :: ActionIndex -> IPSRecord -> IO ()
-        handleHonored recordIndex record =
+        handleHonored :: ActionIndex -> Maybe ClipAccumulator -> IPSRecord
+                      -> IO (Maybe ApplyError, Maybe ClipAccumulator)
+        handleHonored recordIndex clipState record =
           let writePosition = ipsRecordOffset record
               writeLength   = recordPayloadLength record
           in if fitsWithin writePosition writeLength effectiveSize
                then do
                  writeRecord record
-                 applyRecordStream (nextAction recordIndex)
+                 applyRecordStream (nextAction recordIndex) clipState
                else if offsetToFileSize writePosition >= effectiveSize
-                 then do
-                   recordClip recordIndex writeLength
+                 then
                    applyRecordStream (nextAction recordIndex)
+                                     (recordClip recordIndex writeLength clipState)
                  else
                    let prefixLength = remainingFromOffset writePosition effectiveSize
                        overshootLen = subtractLength writeLength prefixLength
                    in do
                      writeRecordPrefix record prefixLength
-                     recordClip recordIndex overshootLen
                      applyRecordStream (nextAction recordIndex)
+                                       (recordClip recordIndex overshootLen clipState)
 
         -- | Record handler for the three non-Honored dispositions.
         -- Strict bounds check; 'ApplyWritesPastTarget' on overrun.
         -- Structurally unreachable for these dispositions
         -- (effective >= maxRecordEnd by construction), kept as a
         -- defensive total guard.
-        handleStrict :: ActionIndex -> IPSRecord -> IO ()
-        handleStrict recordIndex record =
+        handleStrict :: ActionIndex -> Maybe ClipAccumulator -> IPSRecord
+                     -> IO (Maybe ApplyError, Maybe ClipAccumulator)
+        handleStrict recordIndex clipState record =
           let writePosition  = ipsRecordOffset record
               writeLength    = recordPayloadLength record
               remainingSpace = remainingFromOffset writePosition effectiveSize
           in if not (fitsWithin writePosition writeLength effectiveSize)
-               then abort (ApplyWritesPastTarget recordIndex
-                            (RequestedLength writeLength)
-                            (RemainingLength remainingSpace))
+               then pure ( Just (ApplyWritesPastTarget recordIndex
+                                  (RequestedLength writeLength)
+                                  (RemainingLength remainingSpace))
+                         , clipState )
                else do
                  writeRecord record
-                 applyRecordStream (nextAction recordIndex)
+                 applyRecordStream (nextAction recordIndex) clipState
 
       in do
         initialFill
-        applyRecordStream firstAction
+        applyRecordStream firstAction Nothing
 
 ----------------------------------------------------------------------------
 -- ClipAccumulator
@@ -305,7 +308,7 @@ applyIPS (InputFileContents source) patch
 
 -- | Aggregated clip statistics across the record walk. Only
 -- populated when at least one record was clipped under
--- 'MarkerHonored'; 'Nothing' in the surrounding 'IORef' means no
+-- 'MarkerHonored'; the apply's clip outcome is 'Nothing' when no
 -- clips happened.
 data ClipAccumulator = ClipAccumulator
   { clipCount      :: !ClippedRecordCount
