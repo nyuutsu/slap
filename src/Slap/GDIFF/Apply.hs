@@ -6,7 +6,7 @@ import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..), ActionIndex
-  , advance, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
+  , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
   )
 import Slap.Error (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -46,7 +46,7 @@ applyGDIFF patch (InputFileContents source) =
         applyLoop _outputPosition [] = pure ()
         applyLoop !outputPosition (command : remaining) = case command of
           GDiffCommandData { gdiffDataPayload = payload } -> do
-            let dataLength = Length (ByteString.length payload)
+            let dataLength = byteLength payload
             copyRegion outputPointer outputPosition payload (Offset 0) dataLength
             applyLoop (advance outputPosition dataLength) remaining
           GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength } -> do
@@ -71,7 +71,7 @@ validateCommands sourceSize = validateCommandStream firstAction (Length 0)
     validateCommandStream !actionIndex !accumulatedOutput (command : remainingCommands) =
       case command of
         GDiffCommandData { gdiffDataPayload = payload } ->
-          let payloadLength = Length (ByteString.length payload)
+          let payloadLength = byteLength payload
           in validateCommandStream
                (nextAction actionIndex)
                (accumulatedOutput <> payloadLength)

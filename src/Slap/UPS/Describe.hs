@@ -12,9 +12,8 @@ import Slap.Display.Analysis
     )
 import Slap.Checksum (showCRC32)
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), advance)
+import Slap.Measure (Offset(..), FileSize(..), advance, byteLength)
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 upsMeta :: UPSPatch -> [InfoLine]
@@ -42,7 +41,7 @@ analyzeUPS patch = PatchAnalysis
 makeUPSRegion :: Offset -> UPSBlock -> (Offset, AnalysisRegion)
 makeUPSRegion position (UPSBlock skipLength xorData) =
   let xorOffset = advance position skipLength
-      xorDataLength = Length (ByteString.length xorData)
+      xorDataLength = byteLength xorData
       nextPosition = advance xorOffset (xorDataLength <> upsTerminatorByteLength)
   in ( nextPosition
      , AnalysisRegion xorOffset xorDataLength "XOR  " (PayloadXOR (Just xorData))

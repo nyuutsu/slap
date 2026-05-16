@@ -19,7 +19,8 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 
 import qualified Data.ByteString as ByteString
 
@@ -39,7 +40,7 @@ apsGbaStructure input =
 parseAPSGBA :: PatchFileContents -> Either SlapError (Parsed APSGBAPatch)
 parseAPSGBA (PatchFileContents input)
   | ByteString.length input < 4 =
-      Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
+      Left (InputTooShort LabelAPSGBA (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= apsGbaMagicBytes =
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise =

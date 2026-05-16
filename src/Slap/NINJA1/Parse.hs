@@ -26,7 +26,8 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 import Slap.Compression.Stream (zlibInflate)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 
@@ -40,7 +41,7 @@ import Numeric (readHex)
 
 parseNINJA1 :: PatchFileContents -> Either SlapError (Parsed NINJA1Patch)
 parseNINJA1 (PatchFileContents input)
-  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (byteLength input)))
   | ByteString.take 6 input /= ninja1MagicBytes = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
   | subFormatIdentifier == "B "                = wrapParsed (parseBinary Ninja1Binary (PatchFileContents payload))
   | subFormatIdentifier == "BZ"                = wrapParsed (zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents))
@@ -72,7 +73,7 @@ zlibDecompress compressed = case zlibInflate compressed of
 
 parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
 parseBinary format (PatchFileContents payload)
-  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (Length (ByteString.length payload))))
+  | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
   | otherwise = case runGet (parseBinaryGet format) payload of
       Left errorMessage -> Left (ParseError LabelNINJA1 errorMessage)
       Right patch -> Right patch

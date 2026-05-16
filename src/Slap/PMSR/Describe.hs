@@ -48,7 +48,7 @@ analyzePMSR patch = PatchAnalysis
 makePMSRRegion :: PMSRRecord -> AnalysisRegion
 makePMSRRegion record = AnalysisRegion
   { regionOffset     = pmsrOffset record
-  , regionSize       = Length (ByteString.length (pmsrData record))
+  , regionSize       = byteLength (pmsrData record)
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (pmsrData record)
   , regionAnnotation = AnnotationAt AtOffset (pmsrOffset record) []

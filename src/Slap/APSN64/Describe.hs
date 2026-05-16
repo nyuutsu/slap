@@ -10,7 +10,7 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Display.Primitives (padHex)
-import Slap.Measure (Length(..), FileSize(..))
+import Slap.Measure (Length(..), FileSize(..), byteLength)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -72,7 +72,7 @@ analyzeAPSN64 (APSN64Patch _header records) = PatchAnalysis
 makeN64Region :: APSN64Record -> AnalysisRegion
 makeN64Region (APSN64Normal recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
-  , regionSize       = Length (ByteString.length recordPayload)
+  , regionSize       = byteLength recordPayload
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotationAt AtOffset recordOffset []

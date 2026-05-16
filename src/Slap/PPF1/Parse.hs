@@ -15,7 +15,7 @@ import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE, word
 import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
-                     firstAction, nextAction)
+                     firstAction, nextAction, byteLength)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -26,7 +26,7 @@ parsePPF1 origin (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF1ParseLength =
       Left (InputTooShort LabelPPF1
               (RequiredLength minimumPPF1ParseLength)
-              (ActualLength (Length (ByteString.length input))))
+              (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
       patch <- first (ParseError LabelPPF1) (runGet parsePPF1Body input)

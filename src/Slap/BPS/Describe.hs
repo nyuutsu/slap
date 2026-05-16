@@ -16,10 +16,10 @@ import Slap.Display.Analysis
 import Slap.Checksum (showCRC32)
 import Slap.Error (CursorKind(SourceCursor))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),
-                     examineSignedOffset)
+                     examineSignedOffset, byteLength)
 
 import Slap.TextEncoding (decodeLocaleField)
 
@@ -85,7 +85,7 @@ makeBPSRegion state action = case action of
         (AnnotationAt AtOutput (regionOutputPosition state) [DetailSource (regionOutputPosition state)])
     )
   TargetRead payload ->
-    let payloadLength = Length (ByteString.length payload)
+    let payloadLength = byteLength payload
     in ( state { regionOutputPosition = advance (regionOutputPosition state) payloadLength }
        , AnalysisRegion (regionOutputPosition state) payloadLength "TargetRead " (PayloadWrite payload)
            (AnnotationAt AtOutput (regionOutputPosition state) [])

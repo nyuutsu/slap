@@ -23,7 +23,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
 import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 
 import Data.Bits (testBit)
 import qualified Data.ByteString as ByteString
@@ -38,7 +39,7 @@ parseVCDIFF = parseVCDIFFWith True
 
 parseVCDIFFWith :: Bool -> PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
 parseVCDIFFWith allowCustom (PatchFileContents input)
-  | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < 5 = Left (InputTooShort LabelVCDIFF (RequiredLength (Length 5)) (ActualLength (byteLength input)))
   | ByteString.take 3 input /= vcdiffMagicBytes = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)

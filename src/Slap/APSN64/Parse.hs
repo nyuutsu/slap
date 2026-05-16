@@ -21,7 +21,8 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -42,7 +43,7 @@ parseAPSN64 (PatchFileContents input)
   | ByteString.length input < magicLength =
       Left (InputTooShort LabelAPSN64
              (RequiredLength (Length magicLength))
-             (ActualLength (Length (ByteString.length input))))
+             (ActualLength (byteLength input)))
   | ByteString.take magicLength input /= apsN64MagicBytes =
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
   | otherwise =
@@ -55,7 +56,7 @@ parseAPSN64 (PatchFileContents input)
 
 parseN64 :: Get APSN64ParseWalk
 parseN64 = do
-  skip (Length (ByteString.length apsN64MagicBytes))  -- "APS10"
+  skip (byteLength apsN64MagicBytes)  -- "APS10"
   patchTypeByte <- getByte
   case toAPSPatchType patchTypeByte of
     Left errorMessage -> fail errorMessage

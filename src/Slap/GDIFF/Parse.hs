@@ -13,13 +13,13 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
-                     ActualMagic(..), FoundVersion(..))
+                     ActualMagic(..), FoundVersion(..), byteLength)
 
 import qualified Data.ByteString as ByteString
 
 parseGDIFF :: PatchFileContents -> Either SlapError (Parsed GDiffPatch)
 parseGDIFF (PatchFileContents input)
-  | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (RequiredLength (Length 5)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < 5 = Left (InputTooShort LabelGDIFF (RequiredLength (Length 5)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= gdiffMagicBytes = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (FoundVersion (ByteString.index input 4)))
   | otherwise = case runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input of

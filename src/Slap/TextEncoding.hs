@@ -19,7 +19,7 @@ module Slap.TextEncoding
   , makeStdoutAndStderrLenient
   ) where
 
-import Slap.Measure (Length(..))
+import Slap.Measure (Length(..), byteLength)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
@@ -148,8 +148,8 @@ encodeBoundedUtf8 fieldWidth inputText =
                  (max 0 (fieldWidth - ByteString.length truncated)) 0
       truncation = if ByteString.length encoded > fieldWidth
                    then Just TruncationInfo
-                              { truncatedFrom = Length (ByteString.length encoded)
-                              , truncatedTo   = Length (ByteString.length truncated) }
+                              { truncatedFrom = byteLength encoded
+                              , truncatedTo   = byteLength truncated }
                    else Nothing
   in BoundedResult padded truncation
 
@@ -163,8 +163,8 @@ encodeBoundedLocale fieldWidth inputText =
                  (max 0 (fieldWidth - ByteString.length truncated)) 0
       truncation = if ByteString.length encoded > fieldWidth
                    then Just TruncationInfo
-                              { truncatedFrom = Length (ByteString.length encoded)
-                              , truncatedTo   = Length (ByteString.length truncated) }
+                              { truncatedFrom = byteLength encoded
+                              , truncatedTo   = byteLength truncated }
                    else Nothing
   in BoundedResult padded truncation
 

@@ -53,7 +53,7 @@ makePCHTXTBlock (index, block) =
 makePCHTXTEntry :: PCHTXTEntry -> AnalysisRegion
 makePCHTXTEntry entry = AnalysisRegion
   { regionOffset     = pchtxtOffset entry
-  , regionSize       = Length (ByteString.length (pchtxtData entry))
+  , regionSize       = byteLength (pchtxtData entry)
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite (pchtxtData entry)
   , regionAnnotation = AnnotationNone

@@ -30,7 +30,7 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         PPF2SourceSize, unPPF2SourceSize,
                         ppf2DescriptionLength)
 import Slap.Measure (Length(..), Offset(..),
-                     OriginalLength(..), TruncatedLength(..))
+                     OriginalLength(..), TruncatedLength(..), byteLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
 import Slap.Error (SlapWarning(..), CreateResult(..))
@@ -76,8 +76,8 @@ padDescription text =
                     (max 0 (width - ByteString.length truncated)) 0x20
       warnings = if ByteString.length encoded > width
                    then [FieldTruncated LabelPPF2 FieldDescription
-                           (OriginalLength (Length (ByteString.length encoded)))
-                           (TruncatedLength (Length (ByteString.length truncated)))]
+                           (OriginalLength (byteLength encoded))
+                           (TruncatedLength (byteLength truncated))]
                    else []
   in (padded, warnings)
 

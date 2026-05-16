@@ -20,18 +20,18 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
-                     ActualMagic(..), ParsedSizeValue(..))
+                     ActualMagic(..), ParsedSizeValue(..), byteLength)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 parseUPS :: PatchFileContents -> Either SlapError (Parsed UPSPatch)
 parseUPS (PatchFileContents input)
   | ByteString.length input < unLength upsMagicLength =
-      Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (Length (ByteString.length input))))
+      Left (InputTooShort LabelUPS (RequiredLength upsMagicLength) (ActualLength (byteLength input)))
   | ByteString.take (unLength upsMagicLength) input /= upsMagicBytes =
       Left (BadMagic LabelUPS (ActualMagic (ByteString.take (unLength upsMagicLength) input)))
   | ByteString.length input < unLength upsOverheadLength =
-      Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (Length (ByteString.length input))))
+      Left (InputTooShort LabelUPS (RequiredLength upsOverheadLength) (ActualLength (byteLength input)))
   | otherwise = do
       -- Validate patch CRC
       let inputLength    = ByteString.length input

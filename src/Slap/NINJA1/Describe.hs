@@ -53,7 +53,7 @@ analyzeNINJA1 patch = PatchAnalysis
 makeNINJA1Region :: NINJA1Record -> AnalysisRegion
 makeNINJA1Region (NINJA1Record recordOffset recordPayload) = AnalysisRegion
   { regionOffset     = recordOffset
-  , regionSize       = Length (ByteString.length recordPayload)
+  , regionSize       = byteLength recordPayload
   , regionLabel      = "Write  "
   , regionPayload    = PayloadWrite recordPayload
   , regionAnnotation = AnnotationAt AtOffset recordOffset []

@@ -14,7 +14,7 @@ import Slap.Display.Analysis
     )
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Measure (Length(..), FileSize(..))
+import Slap.Measure (Length(..), FileSize(..), byteLength)
 
 import Slap.TextEncoding (decodeLocaleField)
 
@@ -58,7 +58,7 @@ analyzeDPS patch = PatchAnalysis
 makeDPSRegion :: DPSRecord -> AnalysisRegion
 makeDPSRegion (DPSEnclosedData outputOffset payload) = AnalysisRegion
   { regionOffset     = outputOffset
-  , regionSize       = Length (ByteString.length payload)
+  , regionSize       = byteLength payload
   , regionLabel      = "Data   "
   , regionPayload    = PayloadWrite payload
   , regionAnnotation = AnnotationAt AtOffset outputOffset []

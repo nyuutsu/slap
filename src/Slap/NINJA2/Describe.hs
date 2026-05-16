@@ -8,7 +8,7 @@ import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Display.Primitives (padHex)
-import Slap.Measure (Length(..), FileSize(..))
+import Slap.Measure (FileSize(..), byteLength)
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..))
@@ -75,7 +75,7 @@ analyzeNINJA2 patch = PatchAnalysis
 makeNINJA2Region :: NINJA2Record -> AnalysisRegion
 makeNINJA2Region (NINJA2Record recordOffset deltaBytes) = AnalysisRegion
   { regionOffset     = recordOffset
-  , regionSize       = Length (ByteString.length deltaBytes)
+  , regionSize       = byteLength deltaBytes
   , regionLabel      = "XOR  "
   , regionPayload    = PayloadXOR (Just deltaBytes)
   , regionAnnotation = AnnotationAt AtOffset recordOffset []

@@ -44,7 +44,8 @@ import Slap.Error (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
-                     Length(..), EncodedLength(..), MaxLength(..))
+                     Length(..), EncodedLength(..), MaxLength(..),
+                     byteLength)
 import Slap.TextEncoding (encodeLocaleField)
 import System.FilePath (takeFileName)
 
@@ -212,7 +213,7 @@ checkNameLength :: FieldName -> ByteString -> Either SlapError ()
 checkNameLength field bytes
   | ByteString.length bytes <= xdelta1NameByteCap = Right ()
   | otherwise = Left $ FieldTooLong LabelXDelta1 field
-      (EncodedLength (Length (ByteString.length bytes)))
+      (EncodedLength (byteLength bytes))
       (MaxLength     (Length xdelta1NameByteCap))
 
 -- | Maximum byte count that fits in a 16-bit name-length slot of the

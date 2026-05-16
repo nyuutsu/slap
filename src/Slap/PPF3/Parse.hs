@@ -23,7 +23,7 @@ import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
-                     firstAction, nextAction)
+                     firstAction, nextAction, byteLength)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -44,7 +44,7 @@ parsePPF3 (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF3ParseLength =
       Left (InputTooShort LabelPPF3
               (RequiredLength minimumPPF3ParseLength)
-              (ActualLength (Length (ByteString.length input))))
+              (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
       header <- first (ParseError LabelPPF3) (runGet parseHeader input)

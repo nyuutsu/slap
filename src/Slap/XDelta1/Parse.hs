@@ -44,7 +44,7 @@ import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint, word32BE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..),
-                     ExpectedSize(..), ActualSize(..))
+                     ExpectedSize(..), ActualSize(..), byteLength)
 import Slap.Compression.Stream (gzipInflate)
 
 import Control.Monad (unless)
@@ -108,7 +108,7 @@ data ParsedSourceKind
 
 parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 patchContents@(PatchFileContents input)
-  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (byteLength input)))
   | magic == "%XDZ004%" = parseVersion1Point1 patchContents (ExpectedMagic magic)
   | magic == "%XDZ003%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0.4")
   | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0")
@@ -272,7 +272,7 @@ parseControl :: XDelta1NoVerifyFlag
              -> Either SlapError (Parsed XDelta1Patch)
 parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName toName
   | ByteString.length controlBytes < 28 =
-      Left (TruncatedRecord LabelXDelta1 0 (Length 28) (Length (ByteString.length controlBytes)))
+      Left (TruncatedRecord LabelXDelta1 0 (Length 28) (byteLength controlBytes))
   | otherwise = do
       (toMD5, targetLength, parsedSources, parsedInstrs) <-
         case runGet parseControlBody controlBytes of

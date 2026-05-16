@@ -16,7 +16,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Offset(..), Length(..),
                      RequiredLength(..), ActualLength(..),
-                     ActionIndex(unActionIndex), firstAction, nextAction)
+                     ActionIndex(unActionIndex), firstAction, nextAction,
+                     byteLength)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -34,7 +35,7 @@ parsePPF4 (PatchFileContents input)
   | ByteString.length input < unLength minPPF4Length =
       Left (InputTooShort LabelPPF4
               (RequiredLength minPPF4Length)
-              (ActualLength (Length (ByteString.length input))))
+              (ActualLength (byteLength input)))
   | otherwise = do
       (description, replaces, appends) <- ppf4WrapError (runGet parsePPF4Body input)
       pure (Parsed

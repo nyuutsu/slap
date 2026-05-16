@@ -20,7 +20,7 @@ import Slap.Display.Analysis
 import Slap.Checksum (showAdler32)
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (padHex)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Delta(..), displace)
+import Slap.Measure (Offset(..), FileSize(..), Delta(..), displace, byteLength)
 
 import qualified Data.ByteString as ByteString
 
@@ -93,7 +93,7 @@ decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> AnalysisRegion
 decodedToRegion globalOffset instruction = case instruction of
   DecodedAdd windowOffset payload -> AnalysisRegion
     { regionOffset     = absoluteOffset windowOffset
-    , regionSize       = Length (ByteString.length payload)
+    , regionSize       = byteLength payload
     , regionLabel      = "Add    "
     , regionPayload    = PayloadWrite payload
     , regionAnnotation = AnnotationAt AtOutput (absoluteOffset windowOffset) []

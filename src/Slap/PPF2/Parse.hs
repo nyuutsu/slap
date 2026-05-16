@@ -25,7 +25,7 @@ import Slap.Measure (Offset(..), Length(..),
                      EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
-                     firstAction, nextAction)
+                     firstAction, nextAction, byteLength)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -36,7 +36,7 @@ parsePPF2 (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF2ParseLength =
       Left (InputTooShort LabelPPF2
               (RequiredLength minimumPPF2ParseLength)
-              (ActualLength (Length (ByteString.length input))))
+              (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
       let fileId     = detectFileId input

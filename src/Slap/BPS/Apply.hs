@@ -15,7 +15,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..),
                      Cursor(..), distance, examineSignedOffset, fitsWithin,
-                     remainingFromOffset, byteFileSize,
+                     remainingFromOffset, byteFileSize, byteLength,
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -188,7 +188,7 @@ applyBPS patch (InputFileContents source)
                           sourceRelative targetRelative
 
             handleTargetRead payload =
-              let payloadLength = Length (ByteString.length payload)
+              let payloadLength = byteLength payload
               in if not (fitsWithin outputOffset payloadLength targetSize)
                    then pure (Just (ApplyWritesPastTarget actionIndex
                                      (RequestedLength payloadLength)

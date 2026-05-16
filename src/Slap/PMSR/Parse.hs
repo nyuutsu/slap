@@ -16,7 +16,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining)
 import qualified Slap.Get as Get
 import Slap.Measure (Length(..), Offset(..),
-                     RequiredLength(..), ActualLength(..), ActualMagic(..))
+                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     byteLength)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -26,7 +27,7 @@ import qualified Data.Vector as Vector
 -- Star Rod (Java) uses big-endian — this is the authoritative producer.
 parsePMSR :: PatchFileContents -> Either SlapError (Parsed PMSRPatch)
 parsePMSR (PatchFileContents input)
-  | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (Length (ByteString.length input))))
+  | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= pmsrMagicBytes = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
   | otherwise = case runGet parsePMSRBody input of
       Left errorMessage -> Left (ParseError LabelPMSR errorMessage)

@@ -12,7 +12,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
                      Cursor(..), fitsWithin, remainingFromOffset,
                      subtractLength, minLength,
-                     byteFileSize,
+                     byteFileSize, byteLength,
                      firstAction, nextAction,
                      streamEndIndex, actionAtPosition, plusOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -171,7 +171,7 @@ runUPSXorWalk patch source outputSize
 
         handleBlock :: ActionIndex -> Offset -> UPSBlock -> IO ()
         handleBlock blockIndex outputPosition (UPSBlock skipLen xorData) =
-          let xorLen         = Length (ByteString.length xorData)
+          let xorLen         = byteLength xorData
               totalBlockLen  = skipLen <> xorLen <> upsTerminatorByteLength
               skipStart      = outputPosition
               xorStart       = advance skipStart skipLen
@@ -254,7 +254,7 @@ detectOOBBlocks patch = case oobFirstIndex finalState of
     finalState = Vector.ifoldl' walkBlock initialState (upsBlocks patch)
 
     walkBlock state blockIdx (UPSBlock skipLen xorData) =
-      let xorLen        = Length (ByteString.length xorData)
+      let xorLen        = byteLength xorData
           totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
           nextPosition  = advance (oobPosition state) totalBlockLen
       in if fitsWithin (oobPosition state) totalBlockLen targetFileSize

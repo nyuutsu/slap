@@ -19,7 +19,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      RequiredLength(..), ActualLength(..),
-                     ActualMagic(..), ParsedSizeValue(..))
+                     ActualMagic(..), ParsedSizeValue(..), byteLength)
 
 import Data.Bits ((.&.), shiftR)
 import qualified Data.ByteString as ByteString
@@ -28,11 +28,11 @@ import qualified Data.Vector as Vector
 parseBPS :: PatchFileContents -> Either SlapError (Parsed BPSPatch)
 parseBPS (PatchFileContents input)
   | ByteString.length input < unLength bpsMagicLength =
-      Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (Length (ByteString.length input))))
+      Left (InputTooShort LabelBPS (RequiredLength bpsMagicLength) (ActualLength (byteLength input)))
   | ByteString.take (unLength bpsMagicLength) input /= bpsMagicBytes =
       Left (BadMagic LabelBPS (ActualMagic (ByteString.take (unLength bpsMagicLength) input)))
   | ByteString.length input < unLength bpsFooterLength =
-      Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (Length (ByteString.length input))))
+      Left (InputTooShort LabelBPS (RequiredLength bpsFooterLength) (ActualLength (byteLength input)))
   | otherwise = do
       -- Validate patch CRC (covers everything except the trailing patch CRC)
       let inputLength    = ByteString.length input

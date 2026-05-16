@@ -92,7 +92,7 @@ parseIPS (PatchFileContents inputBytes)
   | ByteString.length inputBytes < unLength ipsMagicLength =
       Left (InputTooShort LabelIPS
               (RequiredLength ipsMagicLength)
-              (ActualLength (Length (ByteString.length inputBytes))))
+              (ActualLength (byteLength inputBytes)))
   | leadingMagicBytes == ipsVariantMagic (variantSpec StandardIPS) =
       runVariantParser StandardIPS
   | leadingMagicBytes == ipsVariantMagic (variantSpec IPS32) =
@@ -706,7 +706,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
   | otherwise =
       Left (UnrecognizedTrailer LabelIPS
               (TrailerMarker (ipsVariantEOFMarker (variantSpec StandardIPS)))
-              (ActualLength (Length (ByteString.length trailingBytes))))
+              (ActualLength (byteLength trailingBytes)))
 assembleCleanResult IPS32 recordVector trailingBytes =
   let trailerLength  = ByteString.length trailingBytes
       ips32Patch     = IPSParseCleanIPS IPSPatch
