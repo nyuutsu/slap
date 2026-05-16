@@ -11,7 +11,7 @@ import Slap.Display.Analysis
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
-import Slap.Measure (Offset(..), Length(..), FileSize(..), advance, byteLength)
+import Slap.Measure (Offset(..), Length(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
 import Data.List (mapAccumL)
@@ -24,10 +24,10 @@ gdiffMeta patch =
   ]
   where
     commands  = gdiffCommands patch
-    dataCount = length [() | GDiffData _ <- commands]
-    copyCount = length [() | GDiffCopy{} <- commands]
-    dataBytes = sum [ByteString.length payload | GDiffData payload      <- commands]
-    copyBytes = sum [unFileSize copyLength     | GDiffCopy _ copyLength <- commands]
+    dataCount = length [() | GDiffCommandData{} <- commands]
+    copyCount = length [() | GDiffCommandCopy{} <- commands]
+    dataBytes = sum [ByteString.length payload | GDiffCommandData { gdiffDataPayload = payload } <- commands]
+    copyBytes = sum [unLength copyLength       | GDiffCommandCopy { gdiffCopyLength = copyLength } <- commands]
     totalOut  = dataBytes + copyBytes
 
 analyzeGDIFF :: GDiffPatch -> PatchAnalysis
@@ -40,14 +40,14 @@ analyzeGDIFF patch = PatchAnalysis
 
 makeGDIFFRegion :: Offset -> GDiffCommand -> (Offset, AnalysisRegion)
 makeGDIFFRegion outputPosition command = case command of
-  GDiffData payload ->
+  GDiffCommandData { gdiffDataPayload = payload } ->
     let payloadLength = byteLength payload
     in ( advance outputPosition payloadLength
        , AnalysisRegion outputPosition payloadLength "DATA  " (PayloadWrite payload)
            (AnnotationAt AtOutput outputPosition [])
        )
-  GDiffCopy sourceOffset copyLength ->
-    ( advance outputPosition (Length (unFileSize copyLength))
-    , AnalysisRegion outputPosition (Length (unFileSize copyLength)) "COPY  " (PayloadCopy FromSource)
+  GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength } ->
+    ( advance outputPosition copyLength
+    , AnalysisRegion outputPosition copyLength "COPY  " (PayloadCopy FromSource)
         (AnnotationAt AtOutput outputPosition [DetailSource sourceOffset])
     )

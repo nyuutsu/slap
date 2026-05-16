@@ -508,7 +508,7 @@ prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
         let parsedCommands = GDIFF.gdiffCommands parsed
             parsedCopies =
               [ (commandOffset, commandLength)
-              | GDIFF.GDiffCopy commandOffset (FileSize commandLength) <- parsedCommands ]
+              | GDIFF.GDiffCommandCopy { GDIFF.gdiffCopyOffset = commandOffset, GDIFF.gdiffCopyLength = Length commandLength } <- parsedCommands ]
             actualOffsets   = fmap (unOffset . fst) parsedCopies
             chunkLengths    = fmap snd parsedCopies
             expectedOffsets = scanl (+) (unOffset initialOffset) chunkLengths

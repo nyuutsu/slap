@@ -13,16 +13,21 @@ module Slap.GDIFF.Types
   , maximumTwoByteLength
   ) where
 
-import Slap.Measure (Offset(..), Length(..), FileSize)
+import Slap.Measure (Offset(..), Length(..))
 
 import Data.ByteString (ByteString)
 
 data GDiffCommand
-  = GDiffData ByteString    -- literal data to append
-  | GDiffCopy !Offset !FileSize  -- offset into source, length
+  = GDiffCommandData
+      { gdiffDataPayload :: !ByteString
+      }
+  | GDiffCommandCopy
+      { gdiffCopyOffset :: !Offset
+      , gdiffCopyLength :: !Length
+      }
   deriving (Show)
 
-data GDiffPatch = GDiffPatch
+newtype GDiffPatch = GDiffPatch
   { gdiffCommands :: [GDiffCommand]
   } deriving (Show)
 
