@@ -11,6 +11,7 @@ mod compress;
 mod crc32;
 mod xdelta1_diff;
 mod xdelta1_suffix_array;
+mod yay0;
 
 // ── Boundary helpers ──────────────────────────────────────────────────
 
@@ -400,6 +401,33 @@ pub unsafe extern "C" fn rusty_bzip2_decompress(
     unsafe {
         surface_outcome_to_caller(
             compress::bzip2_decompress(input),
+            output_address_pointer, output_length_pointer,
+            error_address_pointer,  error_length_pointer,
+        )
+    }
+}
+
+/// Yay0 (Nintendo LZSS) decompression. Rust allocates the output;
+/// caller frees with [`rusty_free`]. Returns 0 on success, -1 on
+/// decompression error — the cause message flows through the error
+/// channel.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes.
+/// - All four out-pointers must be valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_yay0_decompress(
+    input_address:          *const u8,
+    input_length:           usize,
+    output_address_pointer: *mut *mut u8,
+    output_length_pointer:  *mut usize,
+    error_address_pointer:  *mut *mut u8,
+    error_length_pointer:   *mut usize,
+) -> i32 {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    unsafe {
+        surface_outcome_to_caller(
+            yay0::yay0_decompress(input),
             output_address_pointer, output_length_pointer,
             error_address_pointer,  error_length_pointer,
         )

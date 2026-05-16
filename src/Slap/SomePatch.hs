@@ -106,6 +106,7 @@ import Slap.Error (SlapError(..), SlapWarning(..), DecompressionFailure(..),
                    Parsed(..), Outcome(..), noWarnings)
 import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Compression.Yay0 as Yay0
+import qualified Slap.Compression.Stream as Stream
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -1138,7 +1139,7 @@ parseSomePatchFromDPS patchContents = do
 -- 'renderAnalysisFull' and 'renderAnalysisSummary' read the format-name
 -- straight off 'patchInfo' now.
 parseSomePatchFromYay0 :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromYay0 dialects (PatchFileContents input) = case Yay0.decompressYay0 input of
+parseSomePatchFromYay0 dialects (PatchFileContents input) = case Stream.yay0Decompress input of
   Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))
   Right decompressedBytes -> case parseSome dialects (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError

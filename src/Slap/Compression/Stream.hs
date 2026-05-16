@@ -1,10 +1,11 @@
--- | Compression and decompression via rusty-slap (flate2 + bzip2-rs, pure Rust).
+-- | Compression and decompression via rusty-slap.
 module Slap.Compression.Stream
   ( zlibInflate
   , zlibDeflate
   , gzipInflate
   , gzipDeflate
   , bzip2Decompress
+  , yay0Decompress
   ) where
 
 import Data.ByteString (ByteString)
@@ -47,6 +48,13 @@ foreign import ccall unsafe "rusty_gzip_deflate"
 
 foreign import ccall unsafe "rusty_bzip2_decompress"
   rustyBzip2Decompress
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO CInt
+
+foreign import ccall unsafe "rusty_yay0_decompress"
+  rustyYay0Decompress
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
@@ -138,3 +146,7 @@ gzipDeflate input = unsafeDupablePerformIO $
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
 bzip2Decompress = callDecompressor rustyBzip2Decompress
+
+-- | Yay0 (Nintendo LZSS) decompression.
+yay0Decompress :: ByteString -> Either DecompressionCause ByteString
+yay0Decompress = callDecompressor rustyYay0Decompress
