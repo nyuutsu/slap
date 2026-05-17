@@ -9,7 +9,7 @@ import Slap.Binary (copyRegion, copyInPlace)
 import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     SignedOffset(..), ActionIndex(unActionIndex),
+                     SignedOffset(..), Delta, ActionIndex(unActionIndex),
                      SignedOffsetSign(..),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
@@ -19,6 +19,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      firstAction, nextAction, streamEndIndex, plusOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (createAndTrim')
 import qualified Data.Vector as Vector
@@ -70,7 +73,7 @@ data TargetCopyStrategy
     -- Safe to execute as a single 'copyInPlace' ('memmove') call.
   | TargetCopySingleByteRun
     -- ^ The source is a single byte immediately before the
-    -- destination (@readStart == writePos - 1@). Every iteration
+    -- destination (@readStart == writePosition - 1@). Every iteration
     -- reads the same byte, so this is byte run-length encoding —
     -- execute as a single 'peekByteOff' + 'fillBytes' ('memset').
   | TargetCopyGeneralOverlap
@@ -81,18 +84,18 @@ data TargetCopyStrategy
 
 -- | Classify a TargetCopy execution strategy. Assumes the caller
 -- has already validated that @readStart >= 0@ and
--- @readStart < writePos@ — classification is only meaningful on
+-- @readStart < writePosition@ — classification is only meaningful on
 -- valid inputs. The strict apply path always validates before
 -- classifying.
 classifyTargetCopy :: ReadOffset -> WritePosition -> Length -> TargetCopyStrategy
-classifyTargetCopy readStart writePos copyLength
-  | readEnd <= writePosOffset                                = TargetCopyNonOverlapping
-  | distance readStartOffset writePosOffset == Length 1      = TargetCopySingleByteRun
+classifyTargetCopy readStart writePosition copyLength
+  | readEnd <= outputOffset                                  = TargetCopyNonOverlapping
+  | distance readStartOffset outputOffset == Length 1        = TargetCopySingleByteRun
   | otherwise                                                = TargetCopyGeneralOverlap
   where
     readStartOffset = unReadOffset readStart
     readEnd         = advance readStartOffset copyLength
-    writePosOffset  = unWritePosition writePos
+    outputOffset    = unWritePosition writePosition
 
 ----------------------------------------------------------------------------
 -- applyBPS
@@ -131,9 +134,9 @@ applyBPS patch (InputFileContents source)
           Vector.unsafeIndex actions (unActionIndex index)
 
         generalOverlapLoop :: ReadOffset -> WritePosition -> Length -> IO ()
-        generalOverlapLoop readStart writePos copyLength =
+        generalOverlapLoop readStart writePosition copyLength =
           let readBase   = plusOffset outputPointer (unReadOffset readStart)
-              writeBase  = plusOffset outputPointer (unWritePosition writePos)
+              writeBase  = plusOffset outputPointer (unWritePosition writePosition)
               totalBytes = unLength copyLength
               loop !byteOffset
                 | byteOffset >= totalBytes = pure ()
@@ -143,118 +146,187 @@ applyBPS patch (InputFileContents source)
                     loop (byteOffset + 1)
           in loop 0
 
-        applyActionStream
-          :: ActionIndex -> WritePosition -> SourceRelativeOffset -> TargetRelativeOffset
-          -> IO (Maybe ApplyError)
-        applyActionStream !actionIndex !outputPosition !sourceRelative !targetRelative
-          | actionIndex >= actionStreamEnd =
+        -- | Pure 'IO': takes the write position as an argument and
+        -- does not touch 'BPSApply' state. The caller reads the
+        -- current write position out of state, passes it here, and
+        -- issues the matching state update afterwards.
+        executeTargetCopy :: WritePosition -> ReadOffset -> Length -> IO ()
+        executeTargetCopy writePosition readStart copyLength =
+          let outputOffset = unWritePosition writePosition
+          in case classifyTargetCopy readStart writePosition copyLength of
+               TargetCopyNonOverlapping ->
+                 copyInPlace outputPointer (unReadOffset readStart) outputOffset copyLength
+               TargetCopySingleByteRun -> do
+                 byte <- peekByteOff outputPointer
+                                     (unOffset outputOffset - 1) :: IO Word8
+                 fillBytes (plusOffset outputPointer outputOffset)
+                           byte (unLength copyLength)
+               TargetCopyGeneralOverlap ->
+                 generalOverlapLoop readStart writePosition copyLength
+
+        -- | Advance the write head by @stride@ bytes. The cursor
+        -- transition done by 'SourceRead' and 'TargetRead': those
+        -- actions move the write head only.
+        advanceOutput :: Length -> BPSApply ()
+        advanceOutput stride = modify $ \cursors ->
+          cursors { outputPosition = advance (outputPosition cursors) stride }
+
+        -- | The cursor transition done by 'SourceCopy': re-base the
+        -- source-relative cursor (the caller has already applied
+        -- the action's signed delta) and then advance both the
+        -- write head and the source-relative cursor by @stride@.
+        advanceOutputAndSource :: SourceRelativeOffset -> Length -> BPSApply ()
+        advanceOutputAndSource newSourceRelative stride = modify $ \cursors -> cursors
+          { outputPosition = advance (outputPosition cursors) stride
+          , sourceRelative = advance newSourceRelative stride
+          }
+
+        -- | The cursor transition done by 'TargetCopy': re-base the
+        -- target-relative cursor (the caller has already applied
+        -- the action's signed delta) and then advance both the
+        -- write head and the target-relative cursor by @stride@.
+        advanceOutputAndTarget :: TargetRelativeOffset -> Length -> BPSApply ()
+        advanceOutputAndTarget newTargetRelative stride = modify $ \cursors -> cursors
+          { outputPosition = advance (outputPosition cursors) stride
+          , targetRelative = advance newTargetRelative stride
+          }
+
+        -- | Tail-recursive walk over the action vector. The three
+        -- cursors live in 'BPSApply' state, so each step needs only
+        -- the current action index. End-of-stream verifies that the
+        -- walker filled the entire target buffer.
+        applyActionStream :: ActionIndex -> BPSApply (Maybe ApplyError)
+        applyActionStream !actionIndex
+          | actionIndex >= actionStreamEnd = do
               -- End of action stream: verify we wrote the full target.
               -- Note: no corresponding over-filled check because
               -- ApplyWritesPastTarget catches over-writes per-action
               -- before they can happen, so outputPosition > targetSize
               -- is unreachable here.
+              writePosition <- gets outputPosition
+              let outputOffset = unWritePosition writePosition
               if remainingFromOffset outputOffset targetSize == Length 0
                 then pure Nothing
-                else pure (Just (ApplyTargetUnderfilled outputPosition (ExpectedSize targetSize)))
+                else pure (Just (ApplyTargetUnderfilled writePosition (ExpectedSize targetSize)))
           | otherwise = case actionAt actionIndex of
-              SourceRead actionLength ->
-                handleSourceRead actionLength
-              TargetRead payload ->
-                handleTargetRead payload
-              SourceCopy actionLength actionDelta ->
-                handleSourceCopy actionLength actionDelta
-              TargetCopy actionLength actionDelta ->
-                handleTargetCopy actionLength actionDelta
-          where
-            outputOffset = unWritePosition outputPosition
-            remaining    = remainingFromOffset outputOffset targetSize
+              SourceRead actionLength            -> handleSourceRead actionIndex actionLength
+              TargetRead payload                 -> handleTargetRead actionIndex payload
+              SourceCopy actionLength actionDelta -> handleSourceCopy actionIndex actionLength actionDelta
+              TargetCopy actionLength actionDelta -> handleTargetCopy actionIndex actionLength actionDelta
 
-            recurse newOutput newSource newTarget =
-              applyActionStream
-                (nextAction actionIndex) newOutput newSource newTarget
+        handleSourceRead :: ActionIndex -> Length -> BPSApply (Maybe ApplyError)
+        handleSourceRead actionIndex actionLength = do
+          writePosition <- gets outputPosition
+          let outputOffset = unWritePosition writePosition
+              remaining    = remainingFromOffset outputOffset targetSize
+          if not (fitsWithin outputOffset actionLength targetSize)
+            then pure (Just (ApplyWritesPastTarget actionIndex
+                              (RequestedLength actionLength)
+                              (RemainingLength remaining)))
+            else if not (fitsWithin outputOffset actionLength sourceSize)
+              then pure (Just (ApplySourceReadOutOfBounds actionIndex
+                                (advance outputOffset actionLength) sourceSize))
+              else do
+                liftIO (copyRegion outputPointer outputOffset
+                                   source outputOffset actionLength)
+                advanceOutput actionLength
+                applyActionStream (nextAction actionIndex)
 
-            handleSourceRead actionLength
-              | not (fitsWithin outputOffset actionLength targetSize) =
-                  pure (Just (ApplyWritesPastTarget actionIndex
-                               (RequestedLength actionLength)
-                               (RemainingLength remaining)))
-              | not (fitsWithin outputOffset actionLength sourceSize) =
-                  pure (Just (ApplySourceReadOutOfBounds actionIndex
-                               (advance outputOffset actionLength) sourceSize))
-              | otherwise = do
-                  copyRegion outputPointer outputOffset
-                             source outputOffset actionLength
-                  recurse (advance outputPosition actionLength)
-                          sourceRelative targetRelative
+        handleTargetRead :: ActionIndex -> ByteString -> BPSApply (Maybe ApplyError)
+        handleTargetRead actionIndex payload = do
+          writePosition <- gets outputPosition
+          let outputOffset  = unWritePosition writePosition
+              remaining     = remainingFromOffset outputOffset targetSize
+              payloadLength = byteLength payload
+          if not (fitsWithin outputOffset payloadLength targetSize)
+            then pure (Just (ApplyWritesPastTarget actionIndex
+                              (RequestedLength payloadLength)
+                              (RemainingLength remaining)))
+            else do
+              liftIO (copyRegion outputPointer outputOffset
+                                 payload (Offset 0) payloadLength)
+              advanceOutput payloadLength
+              applyActionStream (nextAction actionIndex)
 
-            handleTargetRead payload =
-              let payloadLength = byteLength payload
-              in if not (fitsWithin outputOffset payloadLength targetSize)
-                   then pure (Just (ApplyWritesPastTarget actionIndex
-                                     (RequestedLength payloadLength)
-                                     (RemainingLength remaining)))
-                   else do
-                     copyRegion outputPointer outputOffset
-                                payload (Offset 0) payloadLength
-                     recurse (advance outputPosition payloadLength)
-                             sourceRelative targetRelative
+        handleSourceCopy :: ActionIndex -> Length -> Delta -> BPSApply (Maybe ApplyError)
+        handleSourceCopy actionIndex actionLength actionDelta = do
+          writePosition         <- gets outputPosition
+          currentSourceRelative <- gets sourceRelative
+          let outputOffset       = unWritePosition writePosition
+              remaining          = remainingFromOffset outputOffset targetSize
+              nextSourceRelative = displace currentSourceRelative actionDelta
+          if not (fitsWithin outputOffset actionLength targetSize)
+            then pure (Just (ApplyWritesPastTarget actionIndex
+                              (RequestedLength actionLength)
+                              (RemainingLength remaining)))
+            else case examineSignedOffset (unSourceRelativeOffset nextSourceRelative) of
+              NegativeCursor negativeCursor ->
+                pure (Just (ApplyCursorUnderflow SourceCursor
+                             actionIndex negativeCursor))
+              NonNegativeCursor safeSourceStart ->
+                if not (fitsWithin safeSourceStart actionLength sourceSize)
+                  then pure (Just (ApplySourceReadOutOfBounds actionIndex
+                                    (advance safeSourceStart actionLength)
+                                    sourceSize))
+                  else do
+                    liftIO (copyRegion outputPointer outputOffset
+                                       source safeSourceStart actionLength)
+                    advanceOutputAndSource nextSourceRelative actionLength
+                    applyActionStream (nextAction actionIndex)
 
-            handleSourceCopy actionLength actionDelta =
-              let nextSourceRelative = displace sourceRelative actionDelta
-              in if not (fitsWithin outputOffset actionLength targetSize)
-                   then pure (Just (ApplyWritesPastTarget actionIndex
-                                     (RequestedLength actionLength)
-                                     (RemainingLength remaining)))
-                   else case examineSignedOffset (unSourceRelativeOffset nextSourceRelative) of
-                     NegativeCursor negativeCursor ->
-                       pure (Just (ApplyCursorUnderflow SourceCursor
-                                    actionIndex negativeCursor))
-                     NonNegativeCursor safeSourceStart ->
-                       if not (fitsWithin safeSourceStart actionLength sourceSize)
-                         then pure (Just (ApplySourceReadOutOfBounds actionIndex
-                                           (advance safeSourceStart actionLength)
-                                           sourceSize))
-                         else do
-                           copyRegion outputPointer outputOffset
-                                      source safeSourceStart actionLength
-                           recurse (advance outputPosition actionLength)
-                                   (advance nextSourceRelative actionLength)
-                                   targetRelative
+        handleTargetCopy :: ActionIndex -> Length -> Delta -> BPSApply (Maybe ApplyError)
+        handleTargetCopy actionIndex actionLength actionDelta = do
+          writePosition         <- gets outputPosition
+          currentTargetRelative <- gets targetRelative
+          let outputOffset       = unWritePosition writePosition
+              remaining          = remainingFromOffset outputOffset targetSize
+              nextTargetRelative = displace currentTargetRelative actionDelta
+          if not (fitsWithin outputOffset actionLength targetSize)
+            then pure (Just (ApplyWritesPastTarget actionIndex
+                              (RequestedLength actionLength)
+                              (RemainingLength remaining)))
+            else case examineSignedOffset (unTargetRelativeOffset nextTargetRelative) of
+              NegativeCursor negativeCursor ->
+                pure (Just (ApplyCursorUnderflow TargetCursor
+                             actionIndex negativeCursor))
+              NonNegativeCursor readStartOffset ->
+                if readStartOffset >= outputOffset
+                  then pure (Just (ApplyTargetReadUnwritten actionIndex
+                                    (ReadOffset readStartOffset)
+                                    writePosition))
+                  else do
+                    liftIO (executeTargetCopy writePosition
+                                              (ReadOffset readStartOffset)
+                                              actionLength)
+                    advanceOutputAndTarget nextTargetRelative actionLength
+                    applyActionStream (nextAction actionIndex)
 
-            handleTargetCopy actionLength actionDelta =
-              let nextTargetRelative = displace targetRelative actionDelta
-              in if not (fitsWithin outputOffset actionLength targetSize)
-                   then pure (Just (ApplyWritesPastTarget actionIndex
-                                     (RequestedLength actionLength)
-                                     (RemainingLength remaining)))
-                   else case examineSignedOffset (unTargetRelativeOffset nextTargetRelative) of
-                     NegativeCursor negativeCursor ->
-                       pure (Just (ApplyCursorUnderflow TargetCursor
-                                    actionIndex negativeCursor))
-                     NonNegativeCursor readStartOffset ->
-                       if readStartOffset >= outputOffset
-                         then pure (Just (ApplyTargetReadUnwritten actionIndex
-                                           (ReadOffset readStartOffset)
-                                           outputPosition))
-                         else do
-                           executeTargetCopy (ReadOffset readStartOffset) actionLength
-                           recurse (advance outputPosition actionLength)
-                                   sourceRelative
-                                   (advance nextTargetRelative actionLength)
+        initialCursors = BPSCursors
+          { outputPosition = WritePosition (Offset 0)
+          , sourceRelative = SourceRelativeOffset (SignedOffset 0)
+          , targetRelative = TargetRelativeOffset (SignedOffset 0)
+          }
 
-            executeTargetCopy readStart copyLength =
-              case classifyTargetCopy readStart outputPosition copyLength of
-                TargetCopyNonOverlapping ->
-                  copyInPlace outputPointer (unReadOffset readStart) outputOffset copyLength
-                TargetCopySingleByteRun -> do
-                  byte <- peekByteOff outputPointer
-                                      (unOffset outputOffset - 1) :: IO Word8
-                  fillBytes (plusOffset outputPointer outputOffset)
-                            byte (unLength copyLength)
-                TargetCopyGeneralOverlap ->
-                  generalOverlapLoop readStart outputPosition copyLength
+      in evalStateT (applyActionStream firstAction) initialCursors
 
-      in applyActionStream firstAction
-                           (WritePosition (Offset 0))
-                           (SourceRelativeOffset (SignedOffset 0))
-                           (TargetRelativeOffset (SignedOffset 0))
+----------------------------------------------------------------------------
+-- Cursor state
+----------------------------------------------------------------------------
+
+-- | The three cursors threaded through the BPS action-stream walk.
+-- Bundled into a record so 'BPSApply' (a 'StateT' over 'IO') can
+-- carry them implicitly. Each handler updates only the slots its
+-- action class touches:
+--
+--   * 'SourceRead' and 'TargetRead' update 'outputPosition' only.
+--   * 'SourceCopy' updates 'outputPosition' and 'sourceRelative'.
+--   * 'TargetCopy' updates 'outputPosition' and 'targetRelative'.
+data BPSCursors = BPSCursors
+  { outputPosition :: !WritePosition
+  , sourceRelative :: !SourceRelativeOffset
+  , targetRelative :: !TargetRelativeOffset
+  }
+
+-- | Strict 'StateT' over 'IO'. Strict because the cursors update
+-- on nearly every action and lazy thunk build-up would buy nothing.
+type BPSApply = StateT BPSCursors IO
