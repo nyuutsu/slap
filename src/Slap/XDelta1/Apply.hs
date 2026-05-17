@@ -18,6 +18,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..),
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.State.Strict (StateT, evalStateT, get, modify)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (createAndTrim')
@@ -90,28 +92,55 @@ applyXDelta1 patch sourceContents =
       where
         runApply targetPointer =
           let
-            applyLoop :: Offset -> [XDelta1Instruction] -> ActionIndex -> IO (Maybe ApplyError)
-            applyLoop !outputPosition [] _actionIndex
-              | remainingFromOffset outputPosition targetFileSize == Length 0 =
-                  pure Nothing
-              | otherwise =
-                  pure (Just (ApplyTargetUnderfilled
-                                (WritePosition outputPosition)
-                                (ExpectedSize targetFileSize)))
-            applyLoop !outputPosition (instruction:rest) !actionIndex =
+            -- | The single cursor transition done after every
+            -- xdelta1 instruction: the output cursor advances by the
+            -- instruction's length. The whole apply walk has exactly
+            -- one piece of state and exactly one transition; this is
+            -- it.
+            advanceOutputByInstruction :: Length -> XDelta1Apply ()
+            advanceOutputByInstruction stride =
+              modify (\outputPosition -> advance outputPosition stride)
+
+            -- | Tail-recursive walk over the instruction list. The
+            -- output cursor lives in 'XDelta1Apply' state, so each
+            -- step needs only the remaining instructions and the
+            -- running action index. End-of-stream verifies the
+            -- walker filled the entire target buffer.
+            applyLoop :: [XDelta1Instruction] -> ActionIndex -> XDelta1Apply (Maybe ApplyError)
+            applyLoop [] _actionIndex = do
+              outputPosition <- get
+              if remainingFromOffset outputPosition targetFileSize == Length 0
+                then pure Nothing
+                else pure (Just (ApplyTargetUnderfilled
+                                   (WritePosition outputPosition)
+                                   (ExpectedSize targetFileSize)))
+            applyLoop (instruction:rest) !actionIndex = do
+              outputPosition <- get
               let instructionOffset = xdelta1InstructionOffset instruction
                   instructionLength = Length (unFileSize (xdelta1InstructionLength instruction))
                   sourceBytes       = sourceBytesFor source (xdelta1InstructionTarget instruction)
                   sourceFileSize    = byteFileSize sourceBytes
                   remainingForWrite = remainingFromOffset outputPosition targetFileSize
-              in if not (fitsWithin outputPosition instructionLength targetFileSize)
-                   then pure (Just (ApplyWritesPastTarget actionIndex
-                                     (RequestedLength instructionLength)
-                                     (RemainingLength remainingForWrite)))
-                   else if not (fitsWithin instructionOffset instructionLength sourceFileSize)
-                   then pure (Just (ApplySourceReadOutOfBounds actionIndex
-                                     (advance instructionOffset instructionLength) sourceFileSize))
-                   else do
-                     copyRegion targetPointer outputPosition sourceBytes instructionOffset instructionLength
-                     applyLoop (advance outputPosition instructionLength) rest (nextAction actionIndex)
-          in applyLoop (Offset 0) (xdelta1Instructions patch) firstAction
+              if not (fitsWithin outputPosition instructionLength targetFileSize)
+                then pure (Just (ApplyWritesPastTarget actionIndex
+                                  (RequestedLength instructionLength)
+                                  (RemainingLength remainingForWrite)))
+                else if not (fitsWithin instructionOffset instructionLength sourceFileSize)
+                then pure (Just (ApplySourceReadOutOfBounds actionIndex
+                                  (advance instructionOffset instructionLength) sourceFileSize))
+                else do
+                  liftIO (copyRegion targetPointer outputPosition sourceBytes instructionOffset instructionLength)
+                  advanceOutputByInstruction instructionLength
+                  applyLoop rest (nextAction actionIndex)
+          in evalStateT (applyLoop (xdelta1Instructions patch) firstAction) (Offset 0)
+
+----------------------------------------------------------------------------
+-- Cursor state
+----------------------------------------------------------------------------
+
+-- | Strict 'StateT' over 'IO'. The state slot carries the output
+-- cursor — the apply's only threaded value, advanced by one
+-- instruction's length per step. Kept as a bare 'Offset' rather than
+-- a one-field record because there is nothing else to bundle with
+-- it; xdelta1's apply is small by design.
+type XDelta1Apply = StateT Offset IO
