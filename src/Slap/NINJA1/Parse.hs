@@ -21,7 +21,10 @@ module Slap.NINJA1.Parse
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
-import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..))
+import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
+                    GetErrorMessage(..),
+                    NINJA1Malformation(..),
+                    LineText(..), OffsetTokenText(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining)
@@ -48,7 +51,7 @@ parseNINJA1 (PatchFileContents input)
   -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
   | subFormatIdentifier == ByteString.pack [0x54,0x0A] = wrapParsed (parseText Ninja1Text (PatchFileContents payload))    -- "T\n"
   | subFormatIdentifier == "TZ"                = wrapParsed (zlibDecompress payload >>= (parseText Ninja1TextCompressed . PatchFileContents))
-  | otherwise                    = Left (UnsupportedSubformat LabelNINJA1 (show subFormatIdentifier))
+  | otherwise                    = Left (UnsupportedNINJA1Subformat subFormatIdentifier)
   where
     subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
     payload = ByteString.drop 8 input
@@ -75,7 +78,7 @@ parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Pa
 parseBinary format (PatchFileContents payload)
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
   | otherwise = case runGet (parseBinaryGet format) payload of
-      Left errorMessage -> Left (ParseError LabelNINJA1 errorMessage)
+      Left errorMessage -> Left (ParseError LabelNINJA1 (GetErrorMessage errorMessage))
       Right patch -> Right patch
 
 parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch
@@ -139,7 +142,7 @@ parseText format (PatchFileContents payload) = do
   let stripCR = ByteString8.takeWhile (/= '\r')
       contentLines = filter (not . isSkippable) (map stripCR (ByteString8.lines payload))
   case contentLines of
-    [] -> Left (MalformedTextField LabelNINJA1 "empty textual patch")
+    [] -> Left (MalformedNINJA1Content NINJA1EmptyTextualPatch)
     (headerLine : recordLines) -> do
       let header = parseTextHeader headerLine
       records <- mapM parseTextRecord recordLines
@@ -186,8 +189,8 @@ parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
       [(offset, "")] -> Right (NINJA1Record (Offset (fromIntegral offset)) (hexToBS (concatMap ByteString8.unpack dataParts)))
-      _ -> Left (MalformedTextField LabelNINJA1 ("invalid offset in text record: " ++ ByteString8.unpack offsetString))
-  _ -> Left (MalformedTextField LabelNINJA1 ("malformed text record: " ++ ByteString8.unpack line))
+      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (ByteString8.unpack offsetString))))
+  _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (ByteString8.unpack line))))
 
 hexToBS :: String -> ByteString
 hexToBS text = ByteString.pack (parseHexPairs text)

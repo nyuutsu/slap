@@ -7,7 +7,7 @@ module Slap.GDIFF.Parse
 -- Canonical reference: W3C NOTE-GDIFF-19970901
 
 import Slap.GDIFF.Types (GDiffPatch(..), GDiffCommand(..), gdiffMagicBytes)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, word16BE, word32BE, int64BE)
@@ -23,7 +23,7 @@ parseGDIFF (PatchFileContents input)
   | ByteString.take 4 input /= gdiffMagicBytes = Left (BadMagic LabelGDIFF (ActualMagic (ByteString.take 4 input)))
   | ByteString.index input 4 /= 4 = Left (BadVersion LabelGDIFF (FoundVersion (ByteString.index input 4)))
   | otherwise = case runGet (do { _ <- getBytes (Length 5); parseCommands [] }) input of
-      Left errorMessage -> Left (ParseError LabelGDIFF errorMessage)
+      Left errorMessage -> Left (ParseError LabelGDIFF (GetErrorMessage errorMessage))
       Right patch -> Right (Parsed patch [])
   where
     parseCommands accumulated = do

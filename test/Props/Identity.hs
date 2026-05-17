@@ -6,7 +6,7 @@
 -- produces a valid patch that applies to the source unchanged.
 module Props.Identity (identityTests) where
 
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),

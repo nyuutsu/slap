@@ -5,7 +5,7 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Error (SlapError(..), SlapWarning(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..),
                    OOBBlockCount(..), OOBOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -231,10 +231,10 @@ data OOBWalkState = OOBWalkState
 -- | Walk the block stream and detect blocks whose span exceeds the
 -- declared target size. Returns a single summary warning if any OOB
 -- blocks exist, or an empty list if all blocks fit. Called at parse
--- time from 'Slap.SomePatch' to populate 'patchWarnings' — the
+-- time from 'Slap.SomePatch' to populate 'patchAdvisories' — the
 -- user sees the diagnostic before apply runs, and 'applyUPS' clips
 -- the writes silently.
-detectOOBBlocks :: UPSPatch -> [SlapWarning]
+detectOOBBlocks :: UPSPatch -> [SlapAdvisory]
 detectOOBBlocks patch = case oobFirstIndex finalState of
   Nothing       -> []
   Just firstIdx ->

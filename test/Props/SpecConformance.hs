@@ -18,7 +18,7 @@ import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), SlapWarning(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError)
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -1072,9 +1072,9 @@ bpsNegativeZeroSignedVarintWarns =
   in case parseBPS patch of
        Left slapError ->
          assertFailure ("expected parse to succeed: " ++ renderSlapError slapError)
-       Right (Parsed _parsed parseWarnings) ->
-         assertBool ("expected NegativeZeroInBPS in: " ++ show parseWarnings)
-                    (NegativeZeroInBPS `elem` parseWarnings)
+       Right (Parsed _parsed parseAdvisories) ->
+         assertBool ("expected NegativeZeroInBPS in: " ++ show parseAdvisories)
+                    (NegativeZeroInBPS `elem` parseAdvisories)
 
 -- | 'parseSome' must populate 'verifyFileSizeAdvisory' with the declared
 -- source size so the Verification layer can diagnose mismatches.

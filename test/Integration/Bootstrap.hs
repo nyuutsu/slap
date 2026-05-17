@@ -28,7 +28,7 @@ import Integration.Helpers
   , applyPatch
   , mmapRomFile
   )
-import Slap.Error (renderSlapError)
+import Slap.Status (renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)

@@ -13,7 +13,7 @@ module Props.ParseWarnings (parseWarningsTests) where
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.IPS.Parse as IPS
-import Slap.Error (Parsed(..), SlapWarning(..), OverlapCount(..),
+import Slap.Status (Parsed(..), SlapAdvisory(..), OverlapCount(..),
                    renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -208,7 +208,7 @@ truncatedIPS32NoEOFMarkerCarriesVariantLabel =
 -- inspected — each test's invariant is on the warning channel, and
 -- the parse-succeeds gate is enough to confirm the record walk
 -- reached the end of the input.
-assertParseWarnings :: ByteString -> [SlapWarning] -> Assertion
+assertParseWarnings :: ByteString -> [SlapAdvisory] -> Assertion
 assertParseWarnings patchBytes expectedWarnings =
   case IPS.parseIPS (PatchFileContents patchBytes) of
     Left slapError ->
@@ -269,7 +269,7 @@ apsN64Type0Patch =
 -- | Run 'APSN64.parseAPSN64' on the given bytes, assert the parse
 -- succeeds, and yield the parsed header plus its surfaced warnings
 -- to the caller for further structural assertions.
-withParsedAPSN64 :: ByteString -> (APSN64.APSN64Header -> [SlapWarning] -> Assertion) -> Assertion
+withParsedAPSN64 :: ByteString -> (APSN64.APSN64Header -> [SlapAdvisory] -> Assertion) -> Assertion
 withParsedAPSN64 patchBytes inspect =
   case APSN64.parseAPSN64 (PatchFileContents patchBytes) of
     Left slapError ->

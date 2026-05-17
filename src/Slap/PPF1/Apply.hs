@@ -8,7 +8,7 @@ module Slap.PPF1.Apply (applyPPF1) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,

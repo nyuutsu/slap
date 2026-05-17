@@ -8,7 +8,7 @@ module Slap.PPF1.Parse (parsePPF1, parsePPF1Records) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..), PPF1Origin(..),
                         ppf1DescriptionLength)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE, word32BE)
@@ -29,7 +29,7 @@ parsePPF1 origin (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      patch <- first (ParseError LabelPPF1) (runGet parsePPF1Body input)
+      patch <- first (ParseError LabelPPF1 . GetErrorMessage) (runGet parsePPF1Body input)
       pure (Parsed patch [])
   where
     parsePPF1Body :: Get PPF1Patch

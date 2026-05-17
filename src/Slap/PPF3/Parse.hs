@@ -14,7 +14,7 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         ppf3FileIdLengthFieldWidth,
                         ppf3FileIdMarkerLength, ppf3FileIdFooterLength)
 import Slap.Binary (getWord16LE)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -47,7 +47,7 @@ parsePPF3 (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      header <- first (ParseError LabelPPF3) (runGet parseHeader input)
+      header <- first (ParseError LabelPPF3 . GetErrorMessage) (runGet parseHeader input)
       imageType <- case ppf3HeaderImageTypeByte header of
         0x00 -> Right BIN
         0x01 -> Right GI
@@ -58,7 +58,7 @@ parsePPF3 (PatchFileContents input)
           fileId       = detectFileId input
           recordBody   = stripFileId fileId
                             (ByteString.drop (unLength headerLength) input)
-      records <- first (ParseError LabelPPF3)
+      records <- first (ParseError LabelPPF3 . GetErrorMessage)
                        (runGet (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
                                recordBody)
       pure (Parsed

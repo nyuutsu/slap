@@ -25,7 +25,7 @@ import Slap.IPS.Types
   , offsetWidthByteCount
   )
 import Slap.Binary (getWord24BE)
-import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..), OverlapCount(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get
@@ -108,7 +108,7 @@ parseIPS (PatchFileContents inputBytes)
             ByteString.drop (unLength ipsMagicLength) inputBytes
       in case runGet (parseIPSBody variant) bodyAfterMagic of
            Left getErrorMessage ->
-             Left (ParseError LabelIPS getErrorMessage)
+             Left (ParseError LabelIPS (GetErrorMessage getErrorMessage))
            Right bodyShape ->
              finalizeBodyShape variant bodyShape
 
@@ -127,8 +127,8 @@ parseIPS (PatchFileContents inputBytes)
 -- This shape is strictly private: 'parseIPS' lifts it into the
 -- public 'IPSParseResult' after the shared validation pass.
 data IPSBodyShape
-  = IPSBodyClean     ![IPSRecord] !ByteString ![SlapWarning]
-  | IPSBodyTruncated ![IPSRecord] ![SlapWarning]
+  = IPSBodyClean     ![IPSRecord] !ByteString ![SlapAdvisory]
+  | IPSBodyTruncated ![IPSRecord] ![SlapAdvisory]
 
 -- | Apply the post-walk validation to the records and lift the
 -- body shape into the public 'IPSParseResult'. Validation runs
@@ -153,31 +153,31 @@ finalizeBodyShape :: IPSVariant
                   -> IPSBodyShape
                   -> Either SlapError (Parsed IPSParseResult)
 finalizeBodyShape variant bodyShape = case bodyShape of
-  IPSBodyClean recordList trailingBytes walkerWarnings -> do
+  IPSBodyClean recordList trailingBytes walkerAdvisories -> do
     () <- validateRecordList variant recordList
     let recordVector    = Vector.fromList recordList
         variantLabel    = labelForIPSVariant variant
-        overlapWarnings = detectOverlappingRecords variantLabel recordVector
-        unsortedWarnings = detectFirstUnsortedRecord variantLabel recordVector
+        overlapAdvisories = detectOverlappingRecords variantLabel recordVector
+        unsortedAdvisories = detectFirstUnsortedRecord variantLabel recordVector
     IPSCleanResult { ipsCleanResult   = resultPayload
-                   , ipsCleanWarnings = trailerWarnings } <-
+                   , ipsCleanAdvisories = trailerAdvisories } <-
       assembleCleanResult variant recordVector trailingBytes
     pure (Parsed resultPayload
-                 (walkerWarnings
-                  ++ overlapWarnings
-                  ++ unsortedWarnings
-                  ++ trailerWarnings))
-  IPSBodyTruncated recordList walkerWarnings -> do
+                 (walkerAdvisories
+                  ++ overlapAdvisories
+                  ++ unsortedAdvisories
+                  ++ trailerAdvisories))
+  IPSBodyTruncated recordList walkerAdvisories -> do
     () <- validateRecordList variant recordList
     let recordVector    = Vector.fromList recordList
         variantLabel    = labelForIPSVariant variant
-        overlapWarnings = detectOverlappingRecords variantLabel recordVector
-        unsortedWarnings = detectFirstUnsortedRecord variantLabel recordVector
+        overlapAdvisories = detectOverlappingRecords variantLabel recordVector
+        unsortedAdvisories = detectFirstUnsortedRecord variantLabel recordVector
     pure (Parsed (IPSParseTruncated variant recordVector)
                  (NoEOFMarker variantLabel
-                  : walkerWarnings
-                  ++ overlapWarnings
-                  ++ unsortedWarnings))
+                  : walkerAdvisories
+                  ++ overlapAdvisories
+                  ++ unsortedAdvisories))
 
 -- | Label used when surfacing a structural warning keyed to an IPS
 -- variant. The two 'IPSVariant' cases map to the two format labels
@@ -257,7 +257,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
       Offset24 -> Offset . fromIntegral <$> word24BE
       Offset32 -> Offset . fromIntegral <$> word32BE
 
-    truncatedFrom :: [IPSRecord] -> [SlapWarning] -> Get IPSBodyShape
+    truncatedFrom :: [IPSRecord] -> [SlapAdvisory] -> Get IPSBodyShape
     truncatedFrom accumulatedReversed warningsReversed =
       pure (IPSBodyTruncated (reverse accumulatedReversed)
                              (reverse warningsReversed))
@@ -268,7 +268,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     -- will be tagged with in wire order. The index advances
     -- exactly once per accepted record — a truncated tail leaves
     -- it unchanged, since no record was committed.
-    bodyLoop :: [IPSRecord] -> [SlapWarning] -> ActionIndex -> Get IPSBodyShape
+    bodyLoop :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Get IPSBodyShape
     bodyLoop accumulatedReversed warningsReversed currentIndex = do
       bytesLeft <- remaining
       if unLength bytesLeft < unLength eofMarkerLength
@@ -291,7 +291,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
                                                currentIndex
 
     decodeOneRecordOrTruncate :: [IPSRecord]
-                              -> [SlapWarning]
+                              -> [SlapAdvisory]
                               -> ActionIndex
                               -> Get IPSBodyShape
     decodeOneRecordOrTruncate accumulatedReversed warningsReversed currentIndex = do
@@ -309,7 +309,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     -- 'validateRecordList' still runs against the final record list;
     -- a zero-count RLE whose offset is in range is a no-op, which is
     -- exactly what Apply will execute.
-    decodeRLEBody :: [IPSRecord] -> [SlapWarning] -> ActionIndex -> Offset -> Get IPSBodyShape
+    decodeRLEBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> Get IPSBodyShape
     decodeRLEBody accumulatedReversed warningsReversed currentIndex recordOffset = do
       tailSpace <- remaining
       if unLength tailSpace < unLength rleTailLength
@@ -323,15 +323,15 @@ parseIPSBody variant = bodyLoop [] [] firstAction
                               , ipsRleCount  = runLength
                               , ipsRleFill   = fillByte
                               }
-              newWarnings = if unLength runLength == 0
+              newAdvisories = if unLength runLength == 0
                               then ZeroCountRLERecord variantLabel currentIndex
                                      : warningsReversed
                               else warningsReversed
           bodyLoop (newRecord : accumulatedReversed)
-                   newWarnings
+                   newAdvisories
                    (nextAction currentIndex)
 
-    decodeCopyBody :: [IPSRecord] -> [SlapWarning] -> ActionIndex -> Offset -> Length -> Get IPSBodyShape
+    decodeCopyBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> Length -> Get IPSBodyShape
     decodeCopyBody accumulatedReversed warningsReversed currentIndex recordOffset declaredPayload = do
       payloadSpace <- remaining
       if unLength payloadSpace < unLength declaredPayload
@@ -438,7 +438,7 @@ validateRecordList variant = walkAt firstAction
 -- which the sweep eliminates.
 detectOverlappingRecords :: FormatLabel
                          -> Vector IPSRecord
-                         -> [SlapWarning]
+                         -> [SlapAdvisory]
 detectOverlappingRecords label records
   | overlapPairCount == 0 = []
   | otherwise             =
@@ -576,12 +576,12 @@ stepSweep currentState (IntervalCloses _) = currentState
 -- structural warning in a fully reverse-sorted pathological patch.
 detectFirstUnsortedRecord :: FormatLabel
                           -> Vector.Vector IPSRecord
-                          -> [SlapWarning]
+                          -> [SlapAdvisory]
 detectFirstUnsortedRecord label recordVector = scanFrom 1
   where
     recordCount = Vector.length recordVector
 
-    scanFrom :: Int -> [SlapWarning]
+    scanFrom :: Int -> [SlapAdvisory]
     scanFrom candidateIndex
       | candidateIndex >= recordCount = []
       | laterOffset < earlierOffset   =
@@ -625,7 +625,7 @@ ipsTruncationMarkerLength =
 -- pattern is named and uniform across slap's parse layer.
 data IPSCleanResult = IPSCleanResult
   { ipsCleanResult   :: !IPSParseResult
-  , ipsCleanWarnings :: ![SlapWarning]
+  , ipsCleanAdvisories :: ![SlapAdvisory]
   }
 
 -- | Build the final 'IPSParseResult' from the validated record
@@ -677,7 +677,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
                                , ipsRecords             = recordVector
                                , ipsTruncatedTargetSize = Nothing
                                }
-        , ipsCleanWarnings = []
+        , ipsCleanAdvisories = []
         }
   | ByteString.length trailingBytes == unLength ipsTruncationMarkerLength =
       let truncatedTargetSize =
@@ -688,7 +688,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
                                   , ipsRecords             = recordVector
                                   , ipsTruncatedTargetSize = Just truncatedTargetSize
                                   }
-           , ipsCleanWarnings = []
+           , ipsCleanAdvisories = []
            }
   | ByteString.head trailingBytes == ebpJSONOpeningByte =
       let basePatch = IPSPatch
@@ -701,7 +701,7 @@ assembleCleanResult StandardIPS recordVector trailingBytes
                                   { ebpBasePatch = basePatch
                                   , ebpMetadata  = EBPMetadata trailingBytes
                                   }
-           , ipsCleanWarnings = []
+           , ipsCleanAdvisories = []
            }
   | otherwise =
       Left (UnrecognizedTrailer LabelIPS
@@ -720,5 +720,5 @@ assembleCleanResult IPS32 recordVector trailingBytes =
             [IPS32TrailingBytes LabelIPS32 (Length trailerLength)]
   in Right IPSCleanResult
        { ipsCleanResult   = ips32Patch
-       , ipsCleanWarnings = trailingWarnings
+       , ipsCleanAdvisories = trailingWarnings
        }

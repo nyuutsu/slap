@@ -15,7 +15,7 @@ import Integration.Skip
   , namedGroup
   , requireFixture
   )
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents
   (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))

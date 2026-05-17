@@ -1,7 +1,7 @@
 {-# LANGUAGE StrictData #-}
 
 -- | Names of header, trailer, and per-record fields used across slap's
--- error and narrowing surfaces. Lifted out of "Slap.Error" so that
+-- error and narrowing surfaces. Lifted out of "Slap.Status" so that
 -- "Slap.Narrow" can tag 'FieldValueExceedsBound' failures without
 -- importing the application-wide error module — keeping 'Slap.Narrow'
 -- a leaf of the error graph (and dodging an import cycle).

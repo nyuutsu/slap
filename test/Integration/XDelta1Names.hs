@@ -22,7 +22,7 @@ import Slap.Convert
   , mergeRequestedMetadata
   )
 import Slap.Create (createXDelta1)
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
+import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))

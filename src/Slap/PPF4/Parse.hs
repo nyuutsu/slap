@@ -9,7 +9,7 @@ module Slap.PPF4.Parse (parsePPF4) where
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
                         ppf4PreambleLength, ppf4DescriptionLength,
                         ppf4PostDescriptionLength)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
@@ -62,7 +62,7 @@ minPPF4Length = ppf4PreambleLength
 
 -- | Wrap a Get error string into a SlapError, labeled PPF4.
 ppf4WrapError :: Either String a -> Either SlapError a
-ppf4WrapError = either (Left . ParseError LabelPPF4) Right
+ppf4WrapError = either (Left . ParseError LabelPPF4 . GetErrorMessage) Right
 
 -- | Parse PPF4 records (1-byte cmd, 4-byte offset, 1-byte count, N
 -- bytes data) while enforcing the two-phase invariant: every Replace

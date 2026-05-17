@@ -1,5 +1,6 @@
 module Slap.PlatformType
   ( PlatformType(..)
+  , platformName
   ) where
 
 -- | Platform type representing the union of all platforms known to
@@ -33,3 +34,30 @@ data PlatformType
   | PlatformJaguar           -- NINJA1 only
   | PlatformGP32             -- NINJA1 only
   deriving (Show, Eq)
+
+-- | The user-facing display name for a 'PlatformType'. Used by
+-- 'Slap.Status' when rendering the 'PlatformNotAvailable' advisory
+-- and by any other site that needs to name a platform in human-
+-- readable form. The strings track the names slap surfaces in CLI
+-- output and error messages — distinct from any format-specific
+-- wire encoding (NINJA1's 'RomNES', NINJA2's 'Ninja2NES', etc.).
+platformName :: PlatformType -> String
+platformName PlatformRaw            = "Raw"
+platformName PlatformNES            = "NES"
+platformName PlatformFDS            = "FDS"
+platformName PlatformSNES           = "SNES"
+platformName PlatformN64            = "N64"
+platformName PlatformGB             = "Game Boy"
+platformName PlatformGBC            = "GBC"
+platformName PlatformGBA            = "GBA"
+platformName PlatformNGP            = "NGP"
+platformName PlatformNGPC           = "NGPC"
+platformName PlatformSMS            = "SMS"
+platformName PlatformGameGear       = "Game Gear"
+platformName PlatformGenesis        = "Genesis"
+platformName PlatformPCEngine       = "PC Engine"
+platformName PlatformWonderSwan     = "WonderSwan"
+platformName PlatformWonderSwanColor = "WonderSwan Color"
+platformName PlatformLynx           = "Lynx"
+platformName PlatformJaguar         = "Jaguar"
+platformName PlatformGP32           = "GP32"

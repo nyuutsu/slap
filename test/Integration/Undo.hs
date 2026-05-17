@@ -17,7 +17,7 @@ import Integration.Skip
   , namedGroup
   , requireFixture
   )
-import Slap.Error (renderSlapError)
+import Slap.Status (renderSlapError)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..))
 import Slap.SomePatch (parseSome)
 import Slap.Convert (noDialectsRequested)

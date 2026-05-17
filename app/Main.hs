@@ -31,7 +31,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      acceptedDialects,
                      rejectIncompatibleDialects,
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
-                     PatchEncoding(..), createDefaultNotes, convertDirect,
+                     PatchEncoding(..), createDefaultAdvisories, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      createFormatLabel,
                      formatExtension, formatName)
@@ -56,23 +56,22 @@ import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
                       ExpectedCRC32(..), ActualCRC32(..), showCRC32)
 import Slap.FFI (crc32, adler32)
-import Slap.Error (SlapError(..), SlapWarning(..), CreateResult(..), Outcome(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), CreateResult(..), Outcome(..),
                    VerificationSide(..), HashAlgorithm(..),
                    ExpectedAdler32(..), ActualAdler32(..), ByteCheckLabel(..),
-                   renderSlapError, renderSlapWarning)
+                   emitAdvisories, bail, bailError, orBail)
 import Slap.Display.Glyph (rightwardsArrow, checkMark, ballotX, emDash, spacePaddedRightwardsArrow)
 import Slap.FormatLabel (formatLabelName)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Set as Set
 import Control.Monad (when, forM_)
-import Data.Foldable (traverse_)
 import Data.Char (toLower)
 import Data.List (intercalate)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
-import System.Exit (exitFailure, exitSuccess)
+import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (hPutStr, hPutStrLn, stderr)
 
@@ -278,7 +277,7 @@ data OverwritePolicy
 -- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
 --   side member: what a parsed xdelta1 patch declares about its
 --   own verification data.
--- * 'Slap.Error.VerificationOptedOutByCreator' — the warning
+-- * 'Slap.Status.VerificationOptedOutByCreator' — the warning
 --   emitted when the parse-side posture indicates an opt-out.
 data VerificationPolicy
   = EnforceVerification
@@ -296,10 +295,6 @@ data Verbosity
   = Quiet
   | Verbose
   deriving (Show, Eq)
-
--- | The two stderr-prefix categories slap uses; see 'severityPrefix'.
-data WarningSeverity = WarningProper | InformationalNote
-  deriving (Eq, Show)
 
 -- | The top-level CLI command.  Each constructor wraps a dedicated record
 -- type whose fields are total within that subcommand's scope; field
@@ -980,7 +975,7 @@ doInfo parsedCommand = do
             (patchFormat parsed)
             (infoDialects parsedCommand))
   mapM_ (putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
-  emitWarnings WarningProper (patchWarnings parsed)
+  emitAdvisories (patchAdvisories parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
     Just outPath -> case patchMetadata parsed of
@@ -1003,7 +998,7 @@ doExplain parsedCommand = do
         Summary     -> renderAnalysisSummary
         FullRecords -> renderAnalysisFull
   putStr (renderFunction (patchInfo parsed) (patchAnalysis parsed) maybeSource)
-  emitWarnings WarningProper (patchWarnings parsed)
+  emitAdvisories (patchAdvisories parsed)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -1016,7 +1011,7 @@ doApply parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (applyDialects parsedCommand))
-  emitWarnings WarningProper (patchWarnings parsed)
+  emitAdvisories (patchAdvisories parsed)
   emitVerboseAnalysis (applyVerbosity parsedCommand) parsed
 
   let verification = patchVerification parsed
@@ -1027,7 +1022,7 @@ doApply parsedCommand = do
         let source = InputFileContents sourceBytes
         verifySource verificationPolicy verification source
         outcome <- orBail =<< runApply (patchApply parsed) source
-        emitWarnings WarningProper (outcomeWarnings outcome)
+        emitAdvisories (outcomeAdvisories outcome)
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unOutputFileContents target)
@@ -1074,7 +1069,7 @@ doUndo parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (undoDialects parsedCommand))
-  emitWarnings WarningProper (patchWarnings parsed)
+  emitAdvisories (patchAdvisories parsed)
   emitVerboseAnalysis (undoVerbosity parsedCommand) parsed
   case patchUndo parsed of
     Nothing -> bail "undo not supported for this format"
@@ -1086,7 +1081,7 @@ doUndo parsedCommand = do
             modified <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
             verifyTarget verificationPolicy verification (OutputFileContents modified)
             outcome <- orBail (runUndo undo (OutputFileContents modified))
-            emitWarnings WarningProper (outcomeWarnings outcome)
+            emitAdvisories (outcomeAdvisories outcome)
             let revertedSource = outcomeValue outcome
             verifySource verificationPolicy verification revertedSource
             let InputFileContents result = revertedSource
@@ -1139,7 +1134,7 @@ doCreate parsedCommand = do
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
-  emitWarnings InformationalNote (createDefaultNotes (createFormat parsedCommand) createMeta)
+  emitAdvisories (createDefaultAdvisories (createFormat parsedCommand) createMeta)
   result <- orBail (createPatch
                      (createFormat parsedCommand)
                      resolvedXDelta1Names
@@ -1149,7 +1144,7 @@ doCreate parsedCommand = do
                      Nothing
                      (createConstraints parsedCommand)
                      (createDialects parsedCommand))
-  emitWarnings InformationalNote (resultWarnings result)
+  emitAdvisories (resultAdvisories result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   putStrLn ("wrote " ++ createOutput parsedCommand)
 
@@ -1225,7 +1220,7 @@ doConvert parsedCommand = do
                   `Set.union` acceptedDialects targetLabel
   orBail (rejectIncompatibleDialects acceptedForChain targetLabel
                                      (convertDialects parsedCommand))
-  emitWarnings WarningProper (patchWarnings parsed)
+  emitAdvisories (patchAdvisories parsed)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
         ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
@@ -1241,7 +1236,7 @@ doConvert parsedCommand = do
           (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
             { requestedEmbeddedBlob = Nothing }
         _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      bpsDropWarnings = computeBPSDropWarnings parsed (convertTo parsedCommand)
+      bpsDropAdvisories = computeBPSDropAdvisories parsed (convertTo parsedCommand)
   resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
@@ -1250,14 +1245,14 @@ doConvert parsedCommand = do
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) (convertDialects parsedCommand))
-      emitWarnings InformationalNote (patchSourceNotes parsed ++ bpsDropWarnings
-                        ++ createDefaultNotes (convertTo parsedCommand) mergedMeta
-                        ++ resultWarnings createResult)
+      emitAdvisories (patchSourceAdvisories parsed ++ bpsDropAdvisories
+                        ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
+                        ++ resultAdvisories createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     SourceLessConvert contents -> do
       convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) (convertDialects parsedCommand))
-      emitWarnings InformationalNote (patchSourceNotes parsed ++ resultWarnings convertResult)
+      emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
     ConvertRequiresSource somePatch ->
@@ -1289,7 +1284,7 @@ resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo pars
 applyForConvert :: SomePatch -> InputFileContents -> IO OutputFileContents
 applyForConvert somePatch source = do
   outcome <- orBail =<< runApply (patchApply somePatch) source
-  emitWarnings WarningProper (outcomeWarnings outcome)
+  emitAdvisories (outcomeAdvisories outcome)
   pure (outcomeValue outcome)
 
 -- | Local helper for 'needSourceMessage' — the cause/consequence pair
@@ -1326,8 +1321,8 @@ needSourceMessage somePatch =
 -- when conversion silently drops the bytes.  Returns @[]@ for
 -- BPS→BPS (the merge carries the bytes through) and for any source
 -- patch that didn't have metadata to begin with.
-computeBPSDropWarnings :: SomePatch -> CreateFormat -> [SlapWarning]
-computeBPSDropWarnings parsed targetFormat = case patchMetadata parsed of
+computeBPSDropAdvisories :: SomePatch -> CreateFormat -> [SlapAdvisory]
+computeBPSDropAdvisories parsed targetFormat = case patchMetadata parsed of
   Just metaBytes | targetFormat /= CreateDifferential CreateBPS ->
     [MetadataDropped (ByteString.length metaBytes)]
   _ -> []
@@ -1417,14 +1412,14 @@ verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = 
 -- | Emit a verification-mismatch warning. The 'note*' family
 -- delegates here; 'enforceMismatch' falls through here on its
 -- 'SkipVerification' branch.
-noteMismatch :: SlapWarning -> IO ()
-noteMismatch warning = emitWarnings WarningProper [warning]
+noteMismatch :: SlapAdvisory -> IO ()
+noteMismatch warning = emitAdvisories [warning]
 
 -- | Policy-aware twin of 'noteMismatch'. Under
 -- 'EnforceVerification' the mismatch is fatal; under
 -- 'SkipVerification' (@--no-verify@) it falls through to
 -- 'noteMismatch'.
-enforceMismatch :: VerificationPolicy -> SlapWarning -> IO ()
+enforceMismatch :: VerificationPolicy -> SlapAdvisory -> IO ()
 enforceMismatch SkipVerification    = noteMismatch
 enforceMismatch EnforceVerification = bailError . VerificationFatal
 
@@ -1477,14 +1472,6 @@ noteSourceBytes label checkOffset expectedData sourceBytes =
 formatCRC :: CRC32 -> String
 formatCRC crcValue = "0x" ++ showCRC32 crcValue
 
-severityPrefix :: WarningSeverity -> String
-severityPrefix WarningProper     = "slap: warning: "
-severityPrefix InformationalNote = "slap: "
-
-emitWarnings :: WarningSeverity -> [SlapWarning] -> IO ()
-emitWarnings severity = traverse_ $ \warning ->
-  hPutStrLn stderr (severityPrefix severity ++ renderSlapWarning warning)
-
 -- | Render the full per-record analysis to stderr, but only when
 -- verbosity is 'Verbose'. Used by 'doApply' and 'doUndo' to share
 -- the pre-action verbose dump; the caller passes the parsed patch
@@ -1494,22 +1481,10 @@ emitVerboseAnalysis Verbose parsed =
   hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
 emitVerboseAnalysis Quiet _ = pure ()
 
-bail :: String -> IO a
-bail message = hPutStrLn stderr ("slap: " ++ message) >> exitFailure
-
-bailError :: SlapError -> IO a
-bailError = bail . renderSlapError
-
--- | Unwrap an 'Either SlapError' or terminate with a rendered error.
--- Replaces the 'case ... of Left err -> bailError err; Right v -> ...' pattern
--- that appears in every do-function that calls into the library.
-orBail :: Either SlapError a -> IO a
-orBail = either bailError pure
-
 -- | Read a patch file, parse it, return the parsed 'SomePatch'. Terminates
 -- with a rendered error if the file can't be read or the bytes don't parse.
--- Caller is responsible for calling 'emitWarnings' on the result if parse-
--- time warnings should be surfaced. Some callers ('doInfo', 'doExplain')
+-- Caller is responsible for calling 'emitAdvisories' on the result if parse-
+-- time advisories should be surfaced. Some callers ('doInfo', 'doExplain')
 -- defer warning emission until after their primary stdout output renders,
 -- so the user sees the asked-for content unobstructed; others ('doApply',
 -- 'doUndo', 'doConvert') emit warnings immediately. The helper stays

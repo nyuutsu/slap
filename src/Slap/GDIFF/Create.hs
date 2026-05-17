@@ -9,7 +9,7 @@ module Slap.GDIFF.Create
   ) where
 
 import Slap.Binary (diffHunks, putWord16BE, putWord32BE, putInt64BE)
-import Slap.Error (SlapError, CreateResult(..))
+import Slap.Status (SlapError, CreateResult(..))
 import Slap.GDIFF.Types (gdiffMagicBytes, maxSingleCommandLength,
                          maximumTwoByteOffset, maximumFourByteOffset,
                          maximumOneByteLength, maximumTwoByteLength)

@@ -2,7 +2,7 @@ module Slap.PPF4.Apply (applyPPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),

@@ -9,7 +9,7 @@ module Slap.PPF2.Apply (applyPPF2) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..))
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,

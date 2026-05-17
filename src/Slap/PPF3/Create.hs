@@ -21,7 +21,7 @@ import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -32,7 +32,7 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Maybe (isJust)
 
-padDescription :: String -> (ByteString, [SlapWarning])
+padDescription :: String -> (ByteString, [SlapAdvisory])
 padDescription text =
   let result = encodeBoundedLocale (unLength ppf3DescriptionLength) text
       warnings = case boundedTruncation result of
@@ -81,7 +81,7 @@ encodePPF3 :: [EncodedHunk]
            -> PPF3ImageType
            -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
-  let (descriptionBytes, descriptionWarnings) = padDescription description
+  let (descriptionBytes, descriptionAdvisories) = padDescription description
       hasValidate = isJust validationBlock
       hasUndo     = isJust undoHunks
       validationBytes = maybe ByteString.empty unPPF3ValidationBlock validationBlock
@@ -92,7 +92,7 @@ encodePPF3 records description undoHunks validationBlock imageType =
         Nothing    -> foldMap encodeWriteRecord records
   in CreateResult
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
-       descriptionWarnings
+       descriptionAdvisories
 
 -- | Encode a FILE_ID.DIZ trailer in PPF3 format (2-byte LE length).
 encodeFileIdDiz :: PPF3FileId -> ByteString

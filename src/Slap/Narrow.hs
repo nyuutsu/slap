@@ -24,7 +24,7 @@
 -- 'EncodingLimits') and 'FieldValueExceedsBound' for header/trailer
 -- field value overflows (raised by 'narrowToWord32' / 'narrowToWord16'
 -- on behalf of per-format @narrow*@ smart constructors). The
--- application wraps both as 'Slap.Error.NarrowingError' at the
+-- application wraps both as 'Slap.Status.NarrowingError' at the
 -- boundary where they leave this module.
 module Slap.Narrow
   ( EncodedHunk
@@ -84,9 +84,9 @@ data EncodingLimits = EncodingLimits
   } deriving (Show)
 
 -- | The failure space of the narrowing layer. A small dedicated sum
--- kept separate from the application-wide 'Slap.Error.SlapError' so
--- this module has no dependency on 'Slap.Error'. The application
--- wraps narrowing failures as 'Slap.Error.NarrowingError' at the
+-- kept separate from the application-wide 'Slap.Status.SlapError' so
+-- this module has no dependency on 'Slap.Status'. The application
+-- wraps narrowing failures as 'Slap.Status.NarrowingError' at the
 -- boundary where they leave 'Slap.Narrow'.
 data NarrowingFailure
   = OffsetExceedsBound !FormatLabel !ActualOffset !MaxOffset

@@ -25,7 +25,7 @@ import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.XDelta1.Parse as XDelta1
 
-import Slap.Error (CreateResult(..))
+import Slap.Status (CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,

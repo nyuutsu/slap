@@ -44,7 +44,7 @@ import Integration.External (ExternalTool(..), ExternalRun(..), runExternal)
 
 import Slap.Binary (sha1)
 import Slap.Checksum (SHA1Hash(..))
-import Slap.Error (SlapError, CreateResult(..), Outcome(..), renderSlapError)
+import Slap.Status (SlapError, CreateResult(..), Outcome(..), renderSlapError)
 import Slap.Display.Primitives (padHex)
 import Slap.Display.Glyph (emDash)
 import Slap.FormatLabel (formatLabelName)

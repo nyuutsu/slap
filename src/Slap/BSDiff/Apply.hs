@@ -8,7 +8,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),

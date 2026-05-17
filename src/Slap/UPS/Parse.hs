@@ -12,7 +12,7 @@ import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicBytes, upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
@@ -49,7 +49,7 @@ parseUPS (PatchFileContents input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
       case runGet parseUPSBody bodyBytes of
-        Left errorMessage -> Left (ParseError LabelUPS errorMessage)
+        Left errorMessage -> Left (ParseError LabelUPS (GetErrorMessage errorMessage))
         Right body
           | unFileSize (upsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldSourceSize

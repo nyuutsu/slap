@@ -6,7 +6,7 @@ module Slap.BPS.Apply
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
 import Slap.Binary (copyRegion, copyInPlace)
-import Slap.Error (SlapError(..), ApplyError(..), CursorKind(..))
+import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),

@@ -25,7 +25,7 @@ module Slap.BPS.Create
 import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.BPS.Types (bpsMagicBytes)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), CreateResult(..))
+import Slap.Status (SlapError(..), CreateResult(..))
 import Slap.BPS.FFI (bpsDiff)
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))

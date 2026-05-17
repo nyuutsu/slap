@@ -12,7 +12,7 @@ module Slap.PPF3.Apply (applyPPF3, undoPPF3) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..))
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,

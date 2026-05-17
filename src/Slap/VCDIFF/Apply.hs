@@ -17,7 +17,7 @@ import Slap.VCDIFF.Types
     , CodeEntry(..), sameCacheSlots
     )
 import Slap.Binary (VarintResult(..), getVcdiffVarint, copyByteStringRange)
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Length(..), advance, distance)
 

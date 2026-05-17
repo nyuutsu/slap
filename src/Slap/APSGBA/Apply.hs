@@ -6,7 +6,7 @@ module Slap.APSGBA.Apply
 
 import Slap.APSGBA.Types
 import Slap.Binary (copyByteStringRange)
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (FileSize(..), Offset(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))

@@ -18,7 +18,7 @@ import Slap.VCDIFF.Types
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
                   atEnd, vcdiffVarint, word32BE, failGet)
@@ -144,5 +144,5 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
         }
 
     wrapParse :: Either String a -> Either SlapError a
-    wrapParse (Left errorMessage) = Left (ParseError LabelVCDIFF errorMessage)
+    wrapParse (Left errorMessage) = Left (ParseError LabelVCDIFF (GetErrorMessage errorMessage))
     wrapParse (Right result) = Right result

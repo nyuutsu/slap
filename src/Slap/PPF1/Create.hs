@@ -21,7 +21,7 @@ import Slap.Measure (Length(..), Offset(..),
                      OriginalLength(..), TruncatedLength(..), byteLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -45,12 +45,12 @@ encodePPF1 origin records description =
   let writeOffsetWord = case origin of
         PPF1OriginPC    -> word32LE
         PPF1OriginAmiga -> word32BE
-      (descriptionBytes, descriptionWarnings) = padDescription description
+      (descriptionBytes, descriptionAdvisories) = padDescription description
       header = buildHeader descriptionBytes
       body   = foldMap (encodeRecord writeOffsetWord) records
   in CreateResult
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
-       descriptionWarnings
+       descriptionAdvisories
 
 -- | Encode the description as exactly 'ppf1DescriptionLength' bytes,
 -- space-padded on the right per the PPF1 spec doc and matching the
@@ -58,7 +58,7 @@ encodePPF1 origin records description =
 -- @' '@, @strcpy@s the text in, then writes a space over the
 -- @strcpy@'s NUL terminator — so the on-wire bytes are
 -- @text ++ replicate (50 - length text) 0x20@, no NULs anywhere.
-padDescription :: String -> (ByteString, [SlapWarning])
+padDescription :: String -> (ByteString, [SlapAdvisory])
 padDescription text =
   let encoded   = encodeLocaleField text
       width     = unLength ppf1DescriptionLength

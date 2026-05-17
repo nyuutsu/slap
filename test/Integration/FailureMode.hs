@@ -25,8 +25,8 @@ import Integration.Skip
   , requireFixture
   , requireSlapBinary
   )
-import Slap.Error
-  ( CreateResult(..), SlapError(..), SlapWarning(..), Parsed(..)
+import Slap.Status
+  ( CreateResult(..), SlapError(..), SlapAdvisory(..), Parsed(..)
   , XDelta1GzipStreamInputs(..)
   , renderSlapError
   )
@@ -34,7 +34,7 @@ import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.SomePatch
-  (parseSome, patchKind, patchFormat, patchWarnings
+  (parseSome, patchKind, patchFormat, patchAdvisories
   , patchVerification, verifySourceMD5, verifyTargetMD5, PatchKind(..))
 import Slap.XDelta1.Parse
   ( parseControl
@@ -767,7 +767,7 @@ xdelta1ShapeRejectionTests =
 --      and emits 'VerificationOptedOutByCreator LabelXDelta1'.
 --   2. With the bit flipped on, 'parseSome' wires both
 --      'verifySourceMD5' and 'verifyTargetMD5' to 'Nothing' and
---      passes the warning through 'patchWarnings'.
+--      passes the warning through 'patchAdvisories'.
 --   3. Regression: the unflipped fixture parses with
 --      'VerifyAgainstStoredMD5s' posture, no opt-out warning fires.
 xdelta1NoVerifyTests :: FilePath -> [TestTree]
@@ -794,10 +794,10 @@ xdelta1NoVerifyTests fixturePath =
           let verification = patchVerification somePatch
           assertEqual "verifySourceMD5 is Nothing" Nothing (verifySourceMD5 verification)
           assertEqual "verifyTargetMD5 is Nothing" Nothing (verifyTargetMD5 verification)
-          assertBool "VerificationOptedOutByCreator LabelXDelta1 reaches patchWarnings"
-            (VerificationOptedOutByCreator LabelXDelta1 `elem` patchWarnings somePatch)
-          assertBool "XDelta1NoVerifyWithDivergentSentinel reaches patchWarnings"
-            (XDelta1NoVerifyWithDivergentSentinel `elem` patchWarnings somePatch)
+          assertBool "VerificationOptedOutByCreator LabelXDelta1 reaches patchAdvisories"
+            (VerificationOptedOutByCreator LabelXDelta1 `elem` patchAdvisories somePatch)
+          assertBool "XDelta1NoVerifyWithDivergentSentinel reaches patchAdvisories"
+            (XDelta1NoVerifyWithDivergentSentinel `elem` patchAdvisories somePatch)
 
   , testCase "xdelta1/unflipped fixture parses with VerifyAgainstStoredMD5s" $ do
       originalBytes <- ByteString.readFile fixturePath

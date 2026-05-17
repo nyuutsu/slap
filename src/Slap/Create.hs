@@ -45,7 +45,7 @@ import Slap.GDIFF.Create (createGDIFF)
 import qualified Slap.XDelta1.Create as XDelta1
 
 import Slap.Convert (createPatch)
-import Slap.Error (SlapError, CreateResult)
+import Slap.Status (SlapError, CreateResult)
 import Slap.FileContents (InputFileContents, OutputFileContents)
 import Slap.MetadataInclusion (VerificationInclusion(..))
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, XDelta1PatchCompression(..))

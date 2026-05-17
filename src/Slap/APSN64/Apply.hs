@@ -3,7 +3,7 @@ module Slap.APSN64.Apply
   ) where
 
 import Slap.APSN64.Types
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (offsetToInt)
 import Slap.Binary (copyByteStringRange)
 

@@ -7,7 +7,7 @@ import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        MarkerDisposition(..), decideMarkerDisposition,
                        effectiveTargetSize)
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..), SlapWarning(..),
+import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -130,7 +130,7 @@ applyIPS (InputFileContents source) patch
     -- | Apply-time warnings derived from the disposition alone.
     -- 'MarkerAbsent' and 'MarkerNoOp' are silent; the other two
     -- emit one warning each.
-    dispositionWarnings :: [SlapWarning]
+    dispositionWarnings :: [SlapAdvisory]
     dispositionWarnings = case disposition of
       MarkerAbsent  _natural          -> []
       MarkerHonored declared natural -> [IPSTruncationMarkerHonored patchLabel declared natural]
@@ -141,7 +141,7 @@ applyIPS (InputFileContents source) patch
     -- no clipping happened (the common case under all four
     -- dispositions); a single 'IPSRecordsClippedByMarker' when
     -- records were clipped under 'MarkerHonored'.
-    clipWarnings :: Maybe ClipAccumulator -> [SlapWarning]
+    clipWarnings :: Maybe ClipAccumulator -> [SlapAdvisory]
     clipWarnings Nothing = []
     clipWarnings (Just clip) =
       [IPSRecordsClippedByMarker patchLabel

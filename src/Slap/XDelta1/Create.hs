@@ -68,7 +68,7 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError, CreateResult(..))
+import Slap.Status (SlapError, CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..), byteFileSize)

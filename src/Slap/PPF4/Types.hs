@@ -35,7 +35,7 @@ data PPF4Patch = PPF4Patch
 -- the target. Replace records cannot grow the file; the offset plus
 -- the payload length must be in @[0, sourceFileSize]@. Enforced at
 -- apply time by 'Slap.PPF4.Apply.applyPPF4', which fails with
--- 'Slap.Error.ApplyReplaceGrowsFile' on violation.
+-- 'Slap.Status.ApplyReplaceGrowsFile' on violation.
 data PPF4Replace = PPF4Replace
   { replaceOffset :: !Offset
   , replaceData   :: !ByteString

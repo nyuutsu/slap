@@ -35,7 +35,7 @@ module Slap.PPF2.Types
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word32)
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize(..))

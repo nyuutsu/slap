@@ -27,7 +27,7 @@ module Slap.Convert
   , conversionNotes
   , convertDirect
   , createPatch
-  , createDefaultNotes
+  , createDefaultAdvisories
   , mergeRequestedMetadata
   , trimNullSpace
   , formatExtension
@@ -94,7 +94,8 @@ import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowUndoHunksUnbounded)
 import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..))
-import Slap.Error (SlapError(..), SlapWarning(..), DroppedValue(..), CreateResult(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), DroppedValue(..),
+                    DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
 import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..))
@@ -709,21 +710,21 @@ preservingDirectTargets field =
 -- Conversion notes (dropped-field warnings)
 ----------------------------------------------------------------------------
 
-conversionNotes :: PatchContents -> DirectCreate -> DirectConversionContract -> RequestedPatchMetadata -> [SlapWarning]
+conversionNotes :: PatchContents -> DirectCreate -> DirectConversionContract -> RequestedPatchMetadata -> [SlapAdvisory]
 conversionNotes contents target contract meta =
   let have = provides contents
       kept = contractRequiredFields contract `Set.union` contractAcceptedFields contract
       dropped = have `Set.difference` kept `Set.difference` Set.singleton FieldRecords
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
-      defaultNotes = defaultAssumptionNotes target meta (contentsRomType contents) (contentsImageType contents)
-      hashNotes = ninja1HashNotes contents target
+      defaultAdvisories = defaultAssumptionAdvisories target meta (contentsRomType contents) (contentsImageType contents)
+      hashAdvisories = ninja1HashAdvisories contents target
       encodingNotes = encodingGapNotes contents target
-  in droppedNotes ++ defaultNotes ++ hashNotes ++ encodingNotes
+  in droppedNotes ++ defaultAdvisories ++ hashAdvisories ++ encodingNotes
 
 -- | Warn when converting from a format with known text encoding to one
 -- without an encoding flag.  The bytes are copied unchanged — but the
 -- target has no way to record what encoding they are.
-encodingGapNotes :: PatchContents -> DirectCreate -> [SlapWarning]
+encodingGapNotes :: PatchContents -> DirectCreate -> [SlapAdvisory]
 encodingGapNotes contents target = case contentsPatchEncoding contents of
   Just _ | isJust (contentsDescription contents)
          , target `elem` [CreatePPF3, CreateAPSN64]
@@ -732,8 +733,8 @@ encodingGapNotes contents target = case contentsPatchEncoding contents of
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
-defaultAssumptionNotes :: DirectCreate -> RequestedPatchMetadata -> Maybe PlatformType -> Maybe PPF3ImageType -> [SlapWarning]
-defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
+defaultAssumptionAdvisories :: DirectCreate -> RequestedPatchMetadata -> Maybe PlatformType -> Maybe PPF3ImageType -> [SlapAdvisory]
+defaultAssumptionAdvisories target meta sourceRomType sourceImageType = concat
   [ [ DefaultRomType LabelNINJA1
     | target == CreateNINJA1
     , Nothing <- [requestedRomType meta <|> sourceRomType] ]
@@ -744,31 +745,31 @@ defaultAssumptionNotes target meta sourceRomType sourceImageType = concat
 
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available.
-createDefaultNotes :: CreateFormat -> RequestedPatchMetadata -> [SlapWarning]
-createDefaultNotes (CreateDirect target) meta = defaultAssumptionNotes target meta Nothing Nothing
-  ++ undoVerificationNotes target meta
-createDefaultNotes (CreateDifferential _) _ = []
+createDefaultAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
+createDefaultAdvisories (CreateDirect target) meta = defaultAssumptionAdvisories target meta Nothing Nothing
+  ++ undoVerificationAdvisories target meta
+createDefaultAdvisories (CreateDifferential _) _ = []
 
 -- | Warn when undo / verification are included by default (no CLI
 -- flag, no inherited source value). Same pattern as rom-type
 -- defaulting to RAW.
-undoVerificationNotes :: DirectCreate -> RequestedPatchMetadata -> [SlapWarning]
-undoVerificationNotes CreatePPF3 meta = concat
+undoVerificationAdvisories :: DirectCreate -> RequestedPatchMetadata -> [SlapAdvisory]
+undoVerificationAdvisories CreatePPF3 meta = concat
   [ [ IncludingUndoByDefault         | Nothing <- [requestedUndoInclusion         meta] ]
   , [ IncludingVerificationByDefault | Nothing <- [requestedVerificationInclusion meta] ]
   ]
-undoVerificationNotes _ _ = []
+undoVerificationAdvisories _ _ = []
 
 -- | Note when converting to NINJA1 without source verification hashes.
-ninja1HashNotes :: PatchContents -> DirectCreate -> [SlapWarning]
-ninja1HashNotes contents CreateNINJA1
+ninja1HashAdvisories :: PatchContents -> DirectCreate -> [SlapAdvisory]
+ninja1HashAdvisories contents CreateNINJA1
   | isNothing (contentsSourceCRC32 contents)
     || isNothing (contentsSourceMD5 contents)
     || isNothing (contentsSourceSHA1 contents)
   = [SourceHashesMissing LabelNINJA1]
-ninja1HashNotes _ _ = []
+ninja1HashAdvisories _ _ = []
 
-fieldNote :: PatchContents -> PatchField -> [SlapWarning]
+fieldNote :: PatchContents -> PatchField -> [SlapAdvisory]
 fieldNote contents field = case field of
   FieldRecords -> []
   FieldSourceCRC32 -> case contentsSourceCRC32 contents of
@@ -782,7 +783,7 @@ fieldNote contents field = case field of
     _ -> []
   FieldDescription -> case contentsDescription contents of
     Just description | not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      [FieldDropped FieldDescription (DroppedDescription (trimNullSpace (decodeLocaleField description)))]
+      [FieldDropped FieldDescription (DroppedDescription (DroppedDescriptionText (trimNullSpace (decodeLocaleField description))))]
     _ -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
@@ -839,7 +840,7 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
       encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints dialects
       Right CreateResult
         { resultBytes    = resultBytes encoded
-        , resultWarnings = notes ++ resultWarnings encoded
+        , resultAdvisories = notes ++ resultAdvisories encoded
         }
 
 -- | Per-format wire-format offset bound, consulted by the @narrow@
@@ -988,7 +989,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
-             (fromMaybe False (contentsNINJA1Compressed contents))) platformWarnings)
+             (fromMaybe False (contentsNINJA1Compressed contents))) platformAdvisories)
   CreatePMSR -> do
     count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
@@ -1045,7 +1046,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
     -- CLI flag > PatchContents > format default
-    (ninja1Type, platformWarnings) = maybe (NINJA1.RomRAW, []) platformToNinja1 (requestedRomType meta <|> contentsRomType contents)
+    (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNinja1 (requestedRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
 
 ----------------------------------------------------------------------------

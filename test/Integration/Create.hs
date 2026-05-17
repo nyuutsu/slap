@@ -24,7 +24,7 @@ import Slap.Convert
    noDialectsRequested)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames, resolveXDelta1FileNames)
 import Slap.Create (createPatch)
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
 

@@ -14,7 +14,7 @@ import Slap.APSGBA.Types (APSGBAPatch(..), APSGBAHeader(..), APSGBARecord(..),
                            apsGbaMagicBytes, apsGbaBlockSize, apsGbaRecordSize,
                            apsGbaHeaderSize)
 import Slap.Checksum (CRC16(..))
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
@@ -45,7 +45,7 @@ parseAPSGBA (PatchFileContents input)
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise =
       case runGet parseGBA input of
-        Left errorMessage -> Left (ParseError LabelAPSGBA errorMessage)
+        Left errorMessage -> Left (ParseError LabelAPSGBA (GetErrorMessage errorMessage))
         Right patch -> Right (Parsed patch [])
 
 parseGBA :: Get APSGBAPatch

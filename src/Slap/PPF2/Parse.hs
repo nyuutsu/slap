@@ -17,7 +17,7 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2FileIdLengthFieldWidth,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
 import Slap.Binary (getWord32LE)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE)
@@ -43,8 +43,8 @@ parsePPF2 (PatchFileContents input)
           recordBody = stripFileId fileId
                           (ByteString.drop (unLength ppf2HeaderLength) input)
       (description, fileSize, validationBlock) <-
-        first (ParseError LabelPPF2) (runGet parsePPF2Header input)
-      records <- first (ParseError LabelPPF2)
+        first (ParseError LabelPPF2 . GetErrorMessage) (runGet parsePPF2Header input)
+      records <- first (ParseError LabelPPF2 . GetErrorMessage)
                        (runGet (parsePPF2Records firstAction) recordBody)
       pure (Parsed
         PPF2Patch

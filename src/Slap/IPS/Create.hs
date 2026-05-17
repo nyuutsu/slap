@@ -40,7 +40,7 @@ module Slap.IPS.Create
   ) where
 
 import Slap.Binary (putWord16BE)
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FileContents
   ( PatchFileContents(..)
   , InputFileContents(..)

@@ -4,7 +4,7 @@ module Slap.PCHTXT.Apply
 
 import Slap.PCHTXT.Types (PCHTXTPatch(..), PCHTXTBlock(..), PCHTXTEntry(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (offsetToInt)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))

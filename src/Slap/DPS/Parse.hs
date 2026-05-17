@@ -16,7 +16,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
 import Slap.Binary (trimNull)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -82,7 +82,7 @@ parseDPS (PatchFileContents input)
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
   | otherwise = case runGet parseDPSBody input of
-      Left errorMessage        -> Left (ParseError LabelDPS errorMessage)
+      Left errorMessage        -> Left (ParseError LabelDPS (GetErrorMessage errorMessage))
       Right (Left slapError)   -> Left slapError
       Right (Right patch)      -> Right (Parsed patch [])
 

@@ -3,7 +3,7 @@ module Slap.NINJA1.Apply
   ) where
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..))
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (offsetToInt)
 import Slap.Binary (copyByteStringRange)
 

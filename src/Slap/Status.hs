@@ -1,8 +1,20 @@
 {-# LANGUAGE StrictData #-}
 
-module Slap.Error
-  ( SlapError(..)
-  , SlapWarning(..)
+module Slap.Status
+  ( -- Severity
+    Severity(..)
+  , severityLabel
+  , slapAdvisorySeverity
+    -- Emit pipeline
+  , emitToStderr
+  , emitAdvisory
+  , emitAdvisories
+  , bail
+  , bailError
+  , orBail
+    -- Status values
+  , SlapError(..)
+  , SlapAdvisory(..)
   , ApplyError(..)
   , CursorKind(..)
   , UnencodeabilityReason(..)
@@ -20,7 +32,7 @@ module Slap.Error
   , CreateResult(..)
   , Parsed(..)
   , Outcome(..)
-  , noWarnings
+  , noAdvisories
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
@@ -33,10 +45,25 @@ module Slap.Error
   , ByteCheckLabel(..)
   , verificationSideLabel
   , hashAlgorithmLabel
+    -- Restructured payload sums / newtypes
+  , EmptyUnit(..)
+  , emptyUnitLabel
+  , XDelta1KnownUnsupportedVersion(..)
+  , XDelta1ShapeViolation(..)
+  , PCHTXTMalformation(..)
+  , NINJA1Malformation(..)
+  , NINJA1SubformatConversion(..)
+  , LineText(..)
+  , OffsetTokenText(..)
+  , HexDigitsText(..)
+  , FlagErrorText(..)
+  , GetErrorMessage(..)
+  , DroppedDescriptionText(..)
+    -- Rendering
   , renderSlapError
   , renderApplyError
   , renderCursorKind
-  , renderSlapWarning
+  , renderSlapAdvisory
   ) where
 
 import Numeric (showHex)
@@ -46,6 +73,7 @@ import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
+import Slap.PlatformType (PlatformType, platformName)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),
@@ -70,10 +98,66 @@ import Slap.MetadataField (MetadataField, metadataFieldFlagName, metadataFieldNa
 import Slap.PatchField (PatchField, fieldName)
 
 import Data.ByteString (ByteString)
+import Data.Foldable (traverse_)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Word (Word8)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
+
+----------------------------------------------------------------------------
+-- Severity and emit pipeline
+----------------------------------------------------------------------------
+
+-- | The valence of a status item: error halts, warning and note do
+-- not. Severity is a property of each 'SlapError' constructor
+-- (always 'SeverityError') and each 'SlapAdvisory' constructor
+-- (varies, projected by 'slapAdvisorySeverity'). The 'emitToStderr'
+-- pipeline uses 'severityLabel' to translate severity into the
+-- prefix the user sees.
+data Severity = SeverityError | SeverityWarning | SeverityNote
+  deriving (Eq, Show)
+
+-- | The user-facing label for each severity. Bare word; the
+-- delimiters that surround it on the wire ('emitToStderr' adds
+-- @": "@ after) are the formatter's responsibility.
+severityLabel :: Severity -> String
+severityLabel SeverityError   = "error"
+severityLabel SeverityWarning = "warning"
+severityLabel SeverityNote    = "note"
+
+-- | The single low-level stderr writer for slap. Every error,
+-- warning, or note the program emits routes through this. The
+-- program-name prefix @"slap: "@ and the severity-prefix delimiter
+-- @": "@ are the only places those literals appear in the codebase.
+emitToStderr :: Severity -> String -> IO ()
+emitToStderr severity body =
+  hPutStrLn stderr ("slap: " ++ severityLabel severity ++ ": " ++ body)
+
+-- | Emit a single advisory at its declared severity.
+emitAdvisory :: SlapAdvisory -> IO ()
+emitAdvisory advisory = emitToStderr severity body
+  where severity = slapAdvisorySeverity advisory
+        body     = renderSlapAdvisory advisory
+
+-- | Emit a list of advisories in order.
+emitAdvisories :: [SlapAdvisory] -> IO ()
+emitAdvisories = traverse_ emitAdvisory
+
+-- | Emit an ad-hoc error message and exit. Used at the IO boundary
+-- for failures that don't yet have a typed 'SlapError' constructor
+-- (e.g., file-system preconditions in @Main@).
+bail :: String -> IO a
+bail body = emitToStderr SeverityError body >> exitFailure
+
+-- | Emit a typed 'SlapError' and exit.
+bailError :: SlapError -> IO a
+bailError = bail . renderSlapError
+
+-- | Unwrap an 'Either SlapError' or terminate with a rendered error.
+orBail :: Either SlapError a -> IO a
+orBail = either bailError pure
 
 ----------------------------------------------------------------------------
 -- DroppedValue
@@ -83,18 +167,26 @@ data DroppedValue
   = DroppedCRC CRC32
   | DroppedMD5 MD5Hash
   | DroppedSHA1 SHA1Hash
-  | DroppedDescription String
+  | DroppedDescription DroppedDescriptionText
   | DroppedSize FileSize
   | DroppedEmpty
   deriving (Show, Eq)
 
+-- | The text of a description field being dropped during conversion.
+-- Wrapped so the opaque user-supplied content stays labeled and
+-- non-pattern-matchable at the type level — peer to
+-- 'DecompressionCause' and 'XDelta1DiffCause' in spirit.
+newtype DroppedDescriptionText = DroppedDescriptionText
+  { unDroppedDescriptionText :: String }
+  deriving (Show, Eq)
+
 renderDroppedValue :: DroppedValue -> String
-renderDroppedValue (DroppedCRC crc)             = "0x" ++ showCRC32 crc
-renderDroppedValue (DroppedMD5 hash)            = hexByteString (unMD5Hash hash)
-renderDroppedValue (DroppedSHA1 hash)           = hexByteString (unSHA1Hash hash)
-renderDroppedValue (DroppedDescription text)    = "\"" ++ text ++ "\""
-renderDroppedValue (DroppedSize size)           = show (unFileSize size) ++ " bytes"
-renderDroppedValue DroppedEmpty                 = ""
+renderDroppedValue (DroppedCRC crc)                                = "0x" ++ showCRC32 crc
+renderDroppedValue (DroppedMD5 hash)                               = hexByteString (unMD5Hash hash)
+renderDroppedValue (DroppedSHA1 hash)                              = hexByteString (unSHA1Hash hash)
+renderDroppedValue (DroppedDescription (DroppedDescriptionText t)) = "\"" ++ t ++ "\""
+renderDroppedValue (DroppedSize size)                              = show (unFileSize size) ++ " bytes"
+renderDroppedValue DroppedEmpty                                    = ""
 
 ----------------------------------------------------------------------------
 -- CursorKind
@@ -268,7 +360,17 @@ data SlapError
   | InputTooShort FormatLabel RequiredLength ActualLength
   | BadMagic FormatLabel ActualMagic
   | BadVersion FormatLabel FoundVersion
-  | UnsupportedSubformat FormatLabel String
+  -- | xdelta1 magic identifies a known older subformat slap does not
+  -- read. One constructor per known-unsupported version; future
+  -- support graduates a version out of 'XDelta1KnownUnsupportedVersion'
+  -- and into its own parser.
+  | UnsupportedXDelta1Subformat XDelta1KnownUnsupportedVersion
+  -- | NINJA1's @subFormatIdentifier@ two-byte tag names a wire shape
+  -- slap does not implement. Canonical NINJA1 only emits @"B "@
+  -- (binary), @"BZ"@ (compressed binary), @"T\\n"@ (text), and
+  -- @"TZ"@ (compressed text); any other pair is off-spec or from a
+  -- newer revision.
+  | UnsupportedNINJA1Subformat ByteString
   | TruncatedRecord FormatLabel Int Length Length
   | NegativeSize FormatLabel FieldName ParsedSizeValue
   | DecompressionFailed DecompressionFailure
@@ -331,24 +433,35 @@ data SlapError
   -- decoded and slap has no honest answer for an undefined value.
   | NINJA2UnrecognizedPatchEncoding !Word8
 
-  | MalformedTextField FormatLabel String
-  | EntryOutsideBlock FormatLabel String
+  -- | A structurally malformed text field in a PCHTXT patch — every
+  -- shape of "the bytes do not parse as the format expects" is a
+  -- constructor of 'PCHTXTMalformation', enumerated as the failure
+  -- space is finite per the format spec.
+  | MalformedPCHTXTContent PCHTXTMalformation
+  -- | A structurally malformed text field in a NINJA1 textual patch.
+  -- Same shape and rationale as 'MalformedPCHTXTContent'; per-format
+  -- so the constructors track exactly what each format's text-mode
+  -- parser rejects.
+  | MalformedNINJA1Content NINJA1Malformation
 
-  -- Parse: generic Get monad failures
-  | ParseError FormatLabel String
+  -- | A generic Get-monad failure surfaced from a per-format parser.
+  -- The wrapped 'GetErrorMessage' carries the diagnostic verbatim;
+  -- the newtype labels the string as opaque text from the Get layer,
+  -- discouraging pattern-matching on its contents. A future deeper
+  -- restructure of 'Get' errors can replace the inner 'String' or
+  -- the whole newtype without coordinating outside this seam.
+  | ParseError FormatLabel GetErrorMessage
 
   -- | The xdelta1 parser rejected a source-list configuration that
   -- was not the canonical @[data segment, file source]@ pair. The
-  -- 'String' carries a human-readable description of what was found
-  -- ("3 sources", "[file, data]", "[file, file]", "1 source: data",
-  -- "0 sources", etc.) for diagnostic clarity. The wire encodes the
-  -- source list as an EDSIO length-prefixed sequence, so any count
-  -- parses structurally; canonical xdelta unconditionally emits
-  -- exactly two sources in @[data, file]@ order
-  -- ('xdelta-1.1.4/xdelta.c:241-251' adds the data source,
-  -- 'xdmain.c:1539-1542' adds the from-file source), and slap
-  -- refuses anything else as off-spec.
-  | UnsupportedXDelta1Shape String
+  -- 'XDelta1ShapeViolation' enumerates the off-spec shapes the wire
+  -- can produce. The wire encodes the source list as an EDSIO
+  -- length-prefixed sequence, so any count parses structurally;
+  -- canonical xdelta unconditionally emits exactly two sources in
+  -- @[data, file]@ order ('xdelta-1.1.4/xdelta.c:241-251' adds the
+  -- data source, 'xdmain.c:1539-1542' adds the from-file source),
+  -- and slap refuses anything else as off-spec.
+  | UnsupportedXDelta1Shape XDelta1ShapeViolation
 
   -- | An xdelta1 patch's instruction referenced a source index that
   -- is not 0 (the data source) or 1 (the file source). Canonical
@@ -440,7 +553,6 @@ data SlapError
   | SourceTooSmallForPPF2Validation FormatLabel ActualSize ExpectedSize
 
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
-  | EncodingFailure FormatLabel FieldName String
 
   -- Convert
   | MissingRequiredField FormatLabel PatchField
@@ -500,28 +612,33 @@ data SlapError
   -- user opted into 'Slap.IPS.Types.RequireSMCShapedTruncation'.
   | TruncationViolatesSMCShape !FileSize
 
-  -- | A verification check would have produced a 'SlapWarning' but
+  -- | A verification check would have produced a 'SlapAdvisory' but
   -- the user did not pass @--no-verify@, so the mismatch is fatal.
-  -- The embedded 'SlapWarning' is one of the four "downgraded fatal"
+  -- The embedded 'SlapAdvisory' is one of the four "downgraded fatal"
   -- kinds: 'VerificationCRCMismatch', 'VerificationHashMismatch',
   -- 'VerificationAdler32Mismatch', or 'VerificationFileSizeMismatch'.
-  -- The renderer delegates to 'renderSlapWarning' for the body and
+  -- The renderer delegates to 'renderSlapAdvisory' for the body and
   -- appends the @--no-verify@ tail. No type-level guarantee enforces
-  -- that the embedded warning is one of the four fatal-promotable
+  -- that the embedded advisory is one of the four fatal-promotable
   -- kinds; the four 'check*' helpers in 'Main' are the only callers
   -- and the audit surface is tractable.
-  | VerificationFatal SlapWarning
+  | VerificationFatal SlapAdvisory
 
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
--- SlapWarning
+-- SlapAdvisory
 ----------------------------------------------------------------------------
 
-data SlapWarning
+-- | A non-halting status item slap raises about something it noticed
+-- during work — covers both warning-severity ("you may want to know")
+-- and note-severity ("informational") items. Severity is a property
+-- of each constructor, projected by 'slapAdvisorySeverity'; the
+-- 'emitToStderr' pipeline reads it to choose the user-facing prefix.
+data SlapAdvisory
 
   -- Patch quality
-  = EmptyPatch FormatLabel String
+  = EmptyPatch FormatLabel EmptyUnit
   | NoEOFMarker FormatLabel
 
   -- | An IPS-family RLE record whose run-length field was zero was
@@ -632,7 +749,7 @@ data SlapWarning
   -- it only in @xdelta info@-style displays and never at apply
   -- time. Slap honors the wire bytes (no verification, no apply
   -- refusal) and surfaces this as an informational note (routed
-  -- through 'patchSourceNotes' at the porcelain boundary, not
+  -- through 'patchSourceAdvisories' at the porcelain boundary, not
   -- through the warning lane) so the reader learns the patch's
   -- data-record carries a non-canonical label. The 'ByteString' is
   -- what was read.
@@ -658,14 +775,27 @@ data SlapWarning
   | EncodingGap FormatLabel FormatLabel
 
   -- Platform conversion
-  | PlatformNotAvailable FormatLabel String  -- target format, platform name
-  | PlatformAmbiguous FormatLabel String String String  -- source format, combined name, default name, override value
+  --
+  -- | The source patch named a platform that the target format
+  -- has no wire encoding for; slap falls back to the format's Raw
+  -- placeholder and surfaces the change.
+  | PlatformNotAvailable FormatLabel PlatformType
+  -- | NINJA2's combined SMS/Game Gear slot is ambiguous on convert
+  -- to a sibling format: slap defaults to SMS. The user can override
+  -- with @--rom-type gg@. Today the only ambiguity slap surfaces;
+  -- future ambiguities get their own nullary constructors so each
+  -- one's rendered prose is its own thing.
+  | NINJA2SMSGameGearAmbiguity
 
   -- Apply: out-of-bounds block clipping
   | ApplyOOBBlocksSkipped FormatLabel OOBBlockCount ActionIndex OOBOvershootBytes FileSize
 
   -- Format-specific
-  | SubformatConverted FormatLabel String String
+  --
+  -- | A NINJA1 textual subformat was converted to its binary peer at
+  -- parse time; the wire bytes the user reads will still describe
+  -- the same patch but the in-memory shape is the binary one.
+  | SubformatConverted NINJA1SubformatConversion
   | OffsetShiftApplied
 
   -- Verification: source/target integrity check mismatches
@@ -709,8 +839,8 @@ data SlapWarning
 ----------------------------------------------------------------------------
 
 data CreateResult = CreateResult
-  { resultBytes    :: !PatchFileContents
-  , resultWarnings :: ![SlapWarning]
+  { resultBytes      :: !PatchFileContents
+  , resultAdvisories :: ![SlapAdvisory]
   } deriving (Show)
 
 ----------------------------------------------------------------------------
@@ -718,39 +848,39 @@ data CreateResult = CreateResult
 ----------------------------------------------------------------------------
 
 -- | The parse-side companion to 'CreateResult': a successfully
--- parsed payload paired with any warnings the parser accumulated.
--- Two fields: the parsed value (parametric) and the warning list.
-data Parsed value = Parsed !value ![SlapWarning]
+-- parsed payload paired with any advisories the parser accumulated.
+-- Two fields: the parsed value (parametric) and the advisory list.
+data Parsed value = Parsed !value ![SlapAdvisory]
   deriving (Show)
 
 ----------------------------------------------------------------------------
 -- Outcome
 ----------------------------------------------------------------------------
 
--- | The value and warning channels of an apply or undo operation.
+-- | The value and advisory channels of an apply or undo operation.
 -- Mirrors 'CreateResult' on the create side and 'Parsed' on the parse
 -- side — every value-producing operation in slap pairs its value with
--- a warning channel. The polymorphic parameter lets a single envelope
+-- an advisory channel. The polymorphic parameter lets a single envelope
 -- serve both apply (carrying 'OutputFileContents') and undo (carrying
 -- 'InputFileContents') without duplicating the shape; the 'Functor'
 -- instance lets a wrapper function the inner value through 'fmap'
 -- without unpacking the envelope.
 --
--- Wrap sites that don't emit warnings use 'noWarnings' to lift their
--- bare value into the envelope; sites that do construct 'Outcome'
--- directly with the warning list.
+-- Wrap sites that don't emit advisories use 'noAdvisories' to lift
+-- their bare value into the envelope; sites that do construct
+-- 'Outcome' directly with the advisory list.
 data Outcome a = Outcome
-  { outcomeValue    :: !a
-  , outcomeWarnings :: ![SlapWarning]
+  { outcomeValue      :: !a
+  , outcomeAdvisories :: ![SlapAdvisory]
   }
   deriving (Show, Functor)
 
--- | Wrap a warning-free value in the 'Outcome' envelope. Every wrap
--- site at the apply/undo boundary uses this so the @[]@ warning list
+-- | Wrap an advisory-free value in the 'Outcome' envelope. Every
+-- wrap site at the apply/undo boundary uses this so the @[]@ list
 -- has exactly one home; specific apply or undo paths that actually
--- emit warnings will construct 'Outcome' directly.
-noWarnings :: a -> Outcome a
-noWarnings value = Outcome value []
+-- emit advisories will construct 'Outcome' directly.
+noAdvisories :: a -> Outcome a
+noAdvisories value = Outcome value []
 
 ----------------------------------------------------------------------------
 -- OverlapCount — payload of the OverlappingRecords warning
@@ -811,7 +941,7 @@ newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
 ----------------------------------------------------------------------------
 
 -- | Which side of the apply (input ROM or output ROM) a verification
--- check fired against. Carried by the verification 'SlapWarning'
+-- check fired against. Carried by the verification 'SlapAdvisory'
 -- constructors so the renderer can name \"input\" vs \"output\" without
 -- callers passing strings. The constructor names retain slap's older
 -- source\/target vocabulary; the rendered labels track the CLI's
@@ -927,9 +1057,16 @@ renderSlapError (BadVersion label (FoundVersion versionByte)) =
   formatLabelName label ++ ": unsupported version "
   ++ show versionByte
 
-renderSlapError (UnsupportedSubformat label subformat) =
-  formatLabelName label ++ ": unsupported subformat: "
-  ++ subformat
+renderSlapError (UnsupportedXDelta1Subformat version) =
+  formatLabelName LabelXDelta1 ++ ": unsupported subformat: "
+  ++ case version of
+       XDelta1_1_0_4 -> "version 1.0.4"
+       XDelta1_1_0   -> "version 1.0"
+       XDelta1_0_14  -> "version 0.14"
+
+renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
+  formatLabelName LabelNINJA1 ++ ": unsupported subformat: "
+  ++ show subformatBytes
 
 renderSlapError (TruncatedRecord label recordIndex needed available) =
   formatLabelName label ++ ": record " ++ show recordIndex
@@ -983,20 +1120,39 @@ renderSlapError (NINJA2UnrecognizedPatchEncoding byte) =
     ++ " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
     ++ "and slap will not guess how to decode text fields under an undefined encoding"
 
-renderSlapError (MalformedTextField label detail) =
-  formatLabelName label ++ ": malformed text: " ++ detail
+renderSlapError (MalformedPCHTXTContent malformation) =
+  formatLabelName LabelPCHTXT ++ ": " ++ case malformation of
+    PCHTXTExpectedHexOffset    (LineText line)        -> "malformed text: expected hex offset: " ++ line
+    PCHTXTInvalidHexOffset     (OffsetTokenText t)    -> "malformed text: invalid hex offset: " ++ t
+    PCHTXTNoDataAfterOffset    (LineText line)        -> "malformed text: no data after offset: " ++ line
+    PCHTXTOddHexDigitCount     (HexDigitsText digits) -> "malformed text: odd number of hex digits: " ++ digits
+    PCHTXTUnterminatedQuotedString                    -> "malformed text: unterminated quoted string"
+    PCHTXTFlagParseError       (FlagErrorText msg)    -> "malformed text: " ++ msg
+    PCHTXTEntryOutsideBlock    (LineText line)        -> "entry outside block: " ++ line
 
-renderSlapError (EntryOutsideBlock label detail) =
-  formatLabelName label ++ ": entry outside block: " ++ detail
+renderSlapError (MalformedNINJA1Content malformation) =
+  formatLabelName LabelNINJA1 ++ ": malformed text: " ++ case malformation of
+    NINJA1EmptyTextualPatch                          -> "empty textual patch"
+    NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " ++ t
+    NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " ++ line
 
-renderSlapError (ParseError label message) =
+renderSlapError (ParseError label (GetErrorMessage message)) =
   formatLabelName label ++ ": " ++ message
 
-renderSlapError (UnsupportedXDelta1Shape description) =
+renderSlapError (UnsupportedXDelta1Shape violation) =
   formatLabelName LabelXDelta1
-  ++ ": source list is not canonical [data segment, file source]: " ++ description
+  ++ ": source list is not canonical [data segment, file source]: "
+  ++ describeViolation violation
   ++ " (xdelta1 patches carry exactly two sources in that order;"
   ++ " any other count or ordering is off-spec)"
+  where
+    describeViolation XDelta1TwoDataSources        = "[data, data]"
+    describeViolation XDelta1ReversedDataFileOrder = "[file, data]"
+    describeViolation XDelta1TwoFileSources        = "[file, file]"
+    describeViolation XDelta1ZeroSources           = "0 sources"
+    describeViolation XDelta1OneDataSource         = "1 source: data"
+    describeViolation XDelta1OneFileSource         = "1 source: file"
+    describeViolation (XDelta1TooManySources n)    = show n ++ " sources"
 
 renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   formatLabelName LabelXDelta1
@@ -1076,10 +1232,6 @@ renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLengt
   ++ " too long (" ++ show (unLength encodedLength)
   ++ " bytes, maximum " ++ show (unLength maxLength) ++ ")"
 
-renderSlapError (EncodingFailure label name detail) =
-  formatLabelName label ++ ": failed to encode "
-  ++ fieldNameLabel name ++ ": " ++ detail
-
 renderSlapError (MissingRequiredField label field) =
   formatLabelName label ++ " requires " ++ fieldName field
   ++ " but source patch doesn't provide it"
@@ -1145,8 +1297,8 @@ renderSlapError (TruncationViolatesSMCShape size) =
   ++ " bytes does not satisfy (size & 0xFFF) == 0x200; "
   ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
-renderSlapError (VerificationFatal warning) =
-  renderSlapWarning warning ++ "\n  use --no-verify to proceed anyway"
+renderSlapError (VerificationFatal advisory) =
+  renderSlapAdvisory advisory ++ "\n  use --no-verify to proceed anyway"
 
 ----------------------------------------------------------------------------
 -- renderDecompressionFailure
@@ -1220,52 +1372,52 @@ renderNarrowingFailure (FieldValueExceedsBound label field actual maxValue) =
   ++ " exceeds the wire-format maximum of " ++ show maxValue
 
 ----------------------------------------------------------------------------
--- renderSlapWarning
+-- renderSlapAdvisory
 ----------------------------------------------------------------------------
 
-renderSlapWarning :: SlapWarning -> String
+renderSlapAdvisory :: SlapAdvisory -> String
 
-renderSlapWarning (EmptyPatch _label unit) =
-  "empty patch (0 " ++ unit ++ ")"
+renderSlapAdvisory (EmptyPatch _label unit) =
+  "empty patch (0 " ++ emptyUnitLabel unit ++ ")"
 
-renderSlapWarning (NoEOFMarker _label) =
+renderSlapAdvisory (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
 
-renderSlapWarning (ZeroCountRLERecord label actionIndex) =
-  "note: " ++ formatLabelName label
+renderSlapAdvisory (ZeroCountRLERecord label actionIndex) =
+  formatLabelName label
   ++ ": zero-count RLE record at position " ++ show (unActionIndex actionIndex)
   ++ " (accepted as no-op)"
 
-renderSlapWarning NegativeZeroInBPS =
-  "note: " ++ formatLabelName LabelBPS
+renderSlapAdvisory NegativeZeroInBPS =
+  formatLabelName LabelBPS
   ++ ": signed-delta varint encoded zero as 0x81 (non-canonical;"
   ++ " 0x80 is the canonical form)"
 
-renderSlapWarning (OverlappingRecords label (OverlapCount pairCount)) =
-  "note: " ++ formatLabelName label
+renderSlapAdvisory (OverlappingRecords label (OverlapCount pairCount)) =
+  formatLabelName label
   ++ ": " ++ show pairCount
   ++ (if pairCount == 1 then " overlapping record pair"
                         else " overlapping record pairs")
   ++ " (later writes clobber earlier; unusual)"
 
-renderSlapWarning (UnsortedRecords label actionIndex) =
-  "note: " ++ formatLabelName label
+renderSlapAdvisory (UnsortedRecords label actionIndex) =
+  formatLabelName label
   ++ ": record at position " ++ show (unActionIndex actionIndex)
   ++ " has a lower offset than the record before it"
   ++ " (unsorted records; applied in wire order)"
 
-renderSlapWarning (IPS32TrailingBytes label (Length n)) =
-  "note: " ++ formatLabelName label
+renderSlapAdvisory (IPS32TrailingBytes label (Length n)) =
+  formatLabelName label
   ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
 
-renderSlapWarning (IPSTruncationMarkerHonored label
+renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
   ++ " apply: honored truncation marker (declared "
   ++ show (unFileSize declared) ++ " bytes, natural "
   ++ show (unFileSize natural) ++ " bytes)"
 
-renderSlapWarning (IPSRecordsClippedByMarker label
+renderSlapAdvisory (IPSRecordsClippedByMarker label
     (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
   formatLabelName label ++ " apply: "
   ++ show count
@@ -1276,83 +1428,84 @@ renderSlapWarning (IPSRecordsClippedByMarker label
   ++ (if unLength overshoot == 1 then " byte" else " bytes")
   ++ " total clipped)"
 
-renderSlapWarning (IPSTruncationMarkerIgnored label
+renderSlapAdvisory (IPSTruncationMarkerIgnored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
   ++ " apply: ignored truncation marker (declared "
   ++ show (unFileSize declared) ++ " bytes, natural "
   ++ show (unFileSize natural) ++ " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
 
-renderSlapWarning (APSN64UnrecognizedCountry byte) =
-  "note: " ++ formatLabelName LabelAPSN64
+renderSlapAdvisory (APSN64UnrecognizedCountry byte) =
+  formatLabelName LabelAPSN64
   ++ ": country code 0x" ++ padHex 2 byte
   ++ " is not a recognized N64 region code; preserving the byte verbatim"
 
-renderSlapWarning XDelta1NoVerifyWithDivergentSentinel =
+renderSlapAdvisory XDelta1NoVerifyWithDivergentSentinel =
   "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
 
-renderSlapWarning (XDelta1DataRecordNameDiverges observedName) =
-  "note: " ++ formatLabelName LabelXDelta1
+renderSlapAdvisory (XDelta1DataRecordNameDiverges observedName) =
+  formatLabelName LabelXDelta1
   ++ ": data-record name is " ++ show observedName
   ++ " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"
 
-renderSlapWarning (FieldDropped field droppedValue) =
+renderSlapAdvisory (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue
   in if null rendered
-     then "note: dropping " ++ fieldName field
-     else "note: dropping " ++ fieldName field ++ ": " ++ rendered
+     then "dropping " ++ fieldName field
+     else "dropping " ++ fieldName field ++ ": " ++ rendered
 
-renderSlapWarning (UndoDataDropped recordCount) =
-  "note: dropping undo data (" ++ show recordCount ++ " records)"
+renderSlapAdvisory (UndoDataDropped recordCount) =
+  "dropping undo data (" ++ show recordCount ++ " records)"
 
-renderSlapWarning ValidationBlockDropped =
-  "note: dropping validation block (1024 bytes)"
+renderSlapAdvisory ValidationBlockDropped =
+  "dropping validation block (1024 bytes)"
 
-renderSlapWarning (DisabledEntriesDropped entryCount) =
-  "note: dropping " ++ show entryCount ++ " disabled entries"
+renderSlapAdvisory (DisabledEntriesDropped entryCount) =
+  "dropping " ++ show entryCount ++ " disabled entries"
 
-renderSlapWarning BlockDescriptionsDropped =
-  "note: dropping block descriptions"
+renderSlapAdvisory BlockDescriptionsDropped =
+  "dropping block descriptions"
 
-renderSlapWarning (MetadataDropped byteCount) =
-  "note: dropping metadata (" ++ show byteCount ++ " bytes)"
+renderSlapAdvisory (MetadataDropped byteCount) =
+  "dropping metadata (" ++ show byteCount ++ " bytes)"
 
-renderSlapWarning (DefaultRomType _label) =
-  "note: assuming ROM type RAW (override with --rom-type)"
+renderSlapAdvisory (DefaultRomType _label) =
+  "assuming ROM type RAW (override with --rom-type)"
 
-renderSlapWarning (DefaultImageType _label) =
-  "note: assuming image type BIN (override with --image-type gi for GI disc images)"
+renderSlapAdvisory (DefaultImageType _label) =
+  "assuming image type BIN (override with --image-type gi for GI disc images)"
 
-renderSlapWarning IncludingUndoByDefault =
-  "note: including undo data (omit with --no-undo)"
+renderSlapAdvisory IncludingUndoByDefault =
+  "including undo data (omit with --no-undo)"
 
-renderSlapWarning IncludingVerificationByDefault =
-  "note: including verification data (omit with --no-verify)"
+renderSlapAdvisory IncludingVerificationByDefault =
+  "including verification data (omit with --no-verify)"
 
-renderSlapWarning (SourceHashesMissing _label) =
-  "note: input verification hashes not available (populate with --with INPUT)"
+renderSlapAdvisory (SourceHashesMissing _label) =
+  "input verification hashes not available (populate with --with INPUT)"
 
-renderSlapWarning (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
-  "note: " ++ formatLabelName label ++ " "
+renderSlapAdvisory (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
+  formatLabelName label ++ " "
   ++ fieldNameLabel name ++ " truncated to fit "
   ++ show (unLength truncated) ++ "-byte field (was "
   ++ show (unLength original) ++ " bytes)"
 
-renderSlapWarning (EncodingGap fromLabel toLabel) =
-  "note: " ++ formatLabelName fromLabel
+renderSlapAdvisory (EncodingGap fromLabel toLabel) =
+  formatLabelName fromLabel
   ++ " text was stored with known encoding; "
   ++ formatLabelName toLabel
   ++ " has no encoding flag; writing bytes as-is"
 
-renderSlapWarning (PlatformNotAvailable label name) =
-  "note: platform " ++ name ++ " not available in " ++ formatLabelName label ++ "; using Raw"
+renderSlapAdvisory (PlatformNotAvailable label platform) =
+  "platform " ++ platformName platform
+  ++ " not available in " ++ formatLabelName label ++ "; using Raw"
 
-renderSlapWarning (PlatformAmbiguous label combined chosen override) =
-  "note: " ++ formatLabelName label ++ " ROM type " ++ combined
-  ++ " is ambiguous; defaults to " ++ chosen
-  ++ " on conversion (override with --rom-type " ++ override ++ ")"
+renderSlapAdvisory NINJA2SMSGameGearAmbiguity =
+  formatLabelName LabelNINJA2 ++ " ROM type SMS/Game Gear"
+  ++ " is ambiguous; defaults to SMS"
+  ++ " on conversion (override with --rom-type gg)"
 
-renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
+renderSlapAdvisory (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
   formatLabelName label ++ " apply: "
   ++ show count ++ plural count " block writes" " blocks write"
   ++ " past declared output size ("
@@ -1362,48 +1515,50 @@ renderSlapWarning (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex 
   ++ " total overshoot — clipped to output bounds"
   where plural n singular pluralForm = if n == 1 then singular else pluralForm
 
-renderSlapWarning (SubformatConverted label fromSub toSub) =
-  "note: " ++ formatLabelName label ++ " "
-  ++ fromSub ++ " converted to " ++ toSub
+renderSlapAdvisory (SubformatConverted conversion) = case conversion of
+  NINJA1TextToBinary                       ->
+    formatLabelName LabelNINJA1 ++ " text (T) converted to binary (B)"
+  NINJA1CompressedTextToCompressedBinary   ->
+    formatLabelName LabelNINJA1 ++ " text (TZ) converted to compressed binary (BZ)"
 
-renderSlapWarning OffsetShiftApplied =
-  "note: PCHTXT offset_shift applied to absolute offsets; output has no @flag directive"
+renderSlapAdvisory OffsetShiftApplied =
+  "PCHTXT offset_shift applied to absolute offsets; output has no @flag directive"
 
 ----------------------------------------------------------------------------
 -- Verification: source/target integrity check mismatches
 ----------------------------------------------------------------------------
 
-renderSlapWarning (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
+renderSlapAdvisory (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
   verificationSideLabel side ++ " CRC mismatch (expected 0x"
   ++ showCRC32 expected ++ ", got 0x" ++ showCRC32 actual ++ ")"
 
-renderSlapWarning (VerificationHashMismatch side algorithm) =
+renderSlapAdvisory (VerificationHashMismatch side algorithm) =
   verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm ++ " mismatch"
 
-renderSlapWarning (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
+renderSlapAdvisory (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
   "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
   ++ " (expected 0x" ++ showAdler32 expected
   ++ ", got 0x" ++ showAdler32 actual ++ ")"
 
-renderSlapWarning (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
+renderSlapAdvisory (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
   verificationSideLabel side ++ " file size mismatch (expected "
   ++ show (unFileSize expectedSize) ++ " bytes, got "
   ++ show (unFileSize actualSize) ++ " bytes)"
 
-renderSlapWarning (VerificationBlockCRC16Mismatch side blockOffset) =
+renderSlapAdvisory (VerificationBlockCRC16Mismatch side blockOffset) =
   verificationSideLabel side ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
 
-renderSlapWarning (VerificationPPFBlockMismatch blockOffset) =
+renderSlapAdvisory (VerificationPPFBlockMismatch blockOffset) =
   "validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
 
-renderSlapWarning (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
+renderSlapAdvisory (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
   "file size mismatch (expected " ++ show (unFileSize expectedSize)
   ++ ", got " ++ show (unFileSize actualSize) ++ ")"
 
-renderSlapWarning (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
+renderSlapAdvisory (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
   label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset)
 
-renderSlapWarning (VerificationOptedOutByCreator label) =
+renderSlapAdvisory (VerificationOptedOutByCreator label) =
   formatLabelName label
     ++ ": creator opted out of verification (--no-verify); slap cannot attest the output matches the creator's intent"
 
@@ -1457,3 +1612,179 @@ commaList []     = ""
 commaList [x]    = x
 commaList [x, y] = x ++ " or " ++ y
 commaList items  = concatMap (++ ", ") (init items) ++ "or " ++ last items
+
+----------------------------------------------------------------------------
+-- Restructured payload types
+----------------------------------------------------------------------------
+
+-- | The semantic unit a patch enumerates. Used by the 'EmptyPatch'
+-- advisory so the renderer can name the right noun for the format
+-- ("records", "blocks", "windows", ...) without callers passing
+-- strings. Each constructor's 'emptyUnitLabel' gives the noun used
+-- in the rendered text.
+data EmptyUnit
+  = EmptyRecords
+  | EmptyActions
+  | EmptyBlocks
+  | EmptyWindows
+  | EmptyCommands
+  | EmptyInstructions
+  | EmptyEntries
+  deriving (Eq, Show)
+
+emptyUnitLabel :: EmptyUnit -> String
+emptyUnitLabel EmptyRecords      = "records"
+emptyUnitLabel EmptyActions      = "actions"
+emptyUnitLabel EmptyBlocks       = "blocks"
+emptyUnitLabel EmptyWindows      = "windows"
+emptyUnitLabel EmptyCommands     = "commands"
+emptyUnitLabel EmptyInstructions = "instructions"
+emptyUnitLabel EmptyEntries      = "entries"
+
+-- | The xdelta1 versions whose magic slap recognizes but whose body
+-- shape it does not parse. The constructor's stable property is
+-- "slap does not implement this version" rather than "older"; if
+-- support for any of them lands later, that constructor graduates
+-- to its own parser and leaves this sum.
+data XDelta1KnownUnsupportedVersion
+  = XDelta1_1_0_4
+  | XDelta1_1_0
+  | XDelta1_0_14
+  deriving (Eq, Show)
+
+-- | The off-spec shapes the xdelta1 source-list parser refuses. The
+-- nullary constructors cover the enumerable cases; 'XDelta1TooManySources'
+-- carries the count (N >= 3) because the value is open-ended.
+data XDelta1ShapeViolation
+  = XDelta1TwoDataSources
+  | XDelta1ReversedDataFileOrder
+  | XDelta1TwoFileSources
+  | XDelta1ZeroSources
+  | XDelta1OneDataSource
+  | XDelta1OneFileSource
+  | XDelta1TooManySources Int
+  deriving (Eq, Show)
+
+-- | The PCHTXT-format-specific malformations a parser can refuse.
+-- Each constructor names a structural failure mode of the textual
+-- patch grammar; the labeled newtypes (e.g. 'LineText') carry the
+-- offending wire bytes verbatim for the renderer.
+data PCHTXTMalformation
+  = PCHTXTExpectedHexOffset    LineText
+  | PCHTXTInvalidHexOffset     OffsetTokenText
+  | PCHTXTNoDataAfterOffset    LineText
+  | PCHTXTOddHexDigitCount     HexDigitsText
+  | PCHTXTUnterminatedQuotedString
+  | PCHTXTFlagParseError       FlagErrorText
+  | PCHTXTEntryOutsideBlock    LineText
+  deriving (Eq, Show)
+
+-- | The NINJA1-format-specific malformations a textual-patch parser
+-- can refuse. Same shape and rationale as 'PCHTXTMalformation'.
+data NINJA1Malformation
+  = NINJA1EmptyTextualPatch
+  | NINJA1InvalidOffsetInTextRecord OffsetTokenText
+  | NINJA1MalformedTextRecord       LineText
+  deriving (Eq, Show)
+
+-- | The shape of a NINJA1 subformat conversion noticed at parse time.
+-- NINJA1's textual variants are decoded into their binary peers
+-- before slap's per-format machinery sees them; this advisory
+-- surfaces that change. The FormatLabel is implicit (always NINJA1).
+data NINJA1SubformatConversion
+  = NINJA1TextToBinary
+  | NINJA1CompressedTextToCompressedBinary
+  deriving (Eq, Show)
+
+-- | A line of textual-patch input, carried verbatim for inclusion in
+-- a malformation diagnostic. Labeled so the wire content stays
+-- non-pattern-matchable at the type level.
+newtype LineText = LineText { unLineText :: String }
+  deriving (Eq, Show)
+
+-- | A hex-offset token slice from a textual-patch line, carried
+-- verbatim for inclusion in a malformation diagnostic.
+newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: String }
+  deriving (Eq, Show)
+
+-- | A hex-digits slice from a textual-patch line, carried verbatim
+-- for inclusion in a malformation diagnostic.
+newtype HexDigitsText = HexDigitsText { unHexDigitsText :: String }
+  deriving (Eq, Show)
+
+-- | A flag-parser error message bubbled up from the PCHTXT @flag@-
+-- directive parser, carried verbatim for inclusion in a malformation
+-- diagnostic.
+newtype FlagErrorText = FlagErrorText { unFlagErrorText :: String }
+  deriving (Eq, Show)
+
+-- | The diagnostic returned by a 'Get'-monad parser when it refuses
+-- an input. Carried verbatim and wrapped so the opaque string stays
+-- labeled and non-pattern-matchable at the type level — a future
+-- deeper restructure of 'Get' errors can replace the inner content
+-- without coordinating outside this seam.
+newtype GetErrorMessage = GetErrorMessage { unGetErrorMessage :: String }
+  deriving (Eq, Show)
+
+----------------------------------------------------------------------------
+-- Severity assignment
+----------------------------------------------------------------------------
+
+-- | Map each 'SlapAdvisory' constructor to its severity. Severity is
+-- a property of the value, not a call-site decision; this is the
+-- single source of truth for which prefix the user sees when an
+-- advisory is emitted. The 'emitToStderr' pipeline reads this
+-- value and looks the prefix up via 'severityLabel'.
+slapAdvisorySeverity :: SlapAdvisory -> Severity
+slapAdvisorySeverity advisory = case advisory of
+
+  -- Warnings: something happened the user should look at. Patch
+  -- shape that suggests truncation, decisions slap made at apply
+  -- time that altered output bytes vs the wire, or integrity checks
+  -- that didn't agree with the patch's stored hashes.
+  NoEOFMarker{}                        -> SeverityWarning
+  IPSTruncationMarkerHonored{}         -> SeverityWarning
+  IPSRecordsClippedByMarker{}          -> SeverityWarning
+  IPSTruncationMarkerIgnored{}         -> SeverityWarning
+  XDelta1NoVerifyWithDivergentSentinel -> SeverityWarning
+  ApplyOOBBlocksSkipped{}              -> SeverityWarning
+  VerificationCRCMismatch{}            -> SeverityWarning
+  VerificationHashMismatch{}           -> SeverityWarning
+  VerificationAdler32Mismatch{}        -> SeverityWarning
+  VerificationFileSizeMismatch{}       -> SeverityWarning
+  VerificationBlockCRC16Mismatch{}     -> SeverityWarning
+  VerificationPPFBlockMismatch{}       -> SeverityWarning
+  VerificationFileSizeAdvisory{}       -> SeverityWarning
+  VerificationSourceBytesMismatch{}    -> SeverityWarning
+  VerificationOptedOutByCreator{}      -> SeverityWarning
+
+  -- Notes: informational. Spec-level oddities accepted as no-ops,
+  -- conversions that dropped a field with no equivalent in the
+  -- target format, defaults slap chose when the user didn't specify,
+  -- truncations and encoding gaps that did happen but are reported
+  -- so the reader knows rather than because anything needs fixing.
+  EmptyPatch{}                         -> SeverityNote
+  ZeroCountRLERecord{}                 -> SeverityNote
+  NegativeZeroInBPS                    -> SeverityNote
+  OverlappingRecords{}                 -> SeverityNote
+  UnsortedRecords{}                    -> SeverityNote
+  IPS32TrailingBytes{}                 -> SeverityNote
+  APSN64UnrecognizedCountry{}          -> SeverityNote
+  XDelta1DataRecordNameDiverges{}      -> SeverityNote
+  FieldDropped{}                       -> SeverityNote
+  UndoDataDropped{}                    -> SeverityNote
+  ValidationBlockDropped               -> SeverityNote
+  DisabledEntriesDropped{}             -> SeverityNote
+  BlockDescriptionsDropped             -> SeverityNote
+  MetadataDropped{}                    -> SeverityNote
+  DefaultRomType{}                     -> SeverityNote
+  DefaultImageType{}                   -> SeverityNote
+  IncludingUndoByDefault               -> SeverityNote
+  IncludingVerificationByDefault       -> SeverityNote
+  SourceHashesMissing{}                -> SeverityNote
+  FieldTruncated{}                     -> SeverityNote
+  EncodingGap{}                        -> SeverityNote
+  PlatformNotAvailable{}               -> SeverityNote
+  NINJA2SMSGameGearAmbiguity           -> SeverityNote
+  SubformatConverted{}                 -> SeverityNote
+  OffsetShiftApplied                   -> SeverityNote

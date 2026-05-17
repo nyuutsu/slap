@@ -11,7 +11,7 @@ import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..)
                        bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
@@ -50,7 +50,7 @@ parseBPS (PatchFileContents input)
           -- Parse body between magic and footer using Get monad
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
       case runGet parseBPSBody bodyBytes of
-        Left errorMessage -> Left (ParseError LabelBPS errorMessage)
+        Left errorMessage -> Left (ParseError LabelBPS (GetErrorMessage errorMessage))
         Right body
           | unFileSize (bpsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldSourceSize
@@ -108,7 +108,7 @@ parseBPSBody = do
 -- 'bpsBodyActions' and 'bpsBodyWarnings'.
 data BPSParsedActionStream = BPSParsedActionStream
   { parsedActionList     :: ![BPSAction]
-  , parsedActionWarnings :: ![SlapWarning]
+  , parsedActionWarnings :: ![SlapAdvisory]
   }
 
 -- | One decoded action plus the warnings its decoding emitted.
@@ -119,7 +119,7 @@ data BPSParsedActionStream = BPSParsedActionStream
 -- that just stitches results into its two reversed accumulators.
 data BPSDecodedAction = BPSDecodedAction
   { bpsDecodedActionValue    :: !BPSAction
-  , bpsDecodedActionWarnings :: ![SlapWarning]
+  , bpsDecodedActionWarnings :: ![SlapAdvisory]
   }
 
 -- | Which kind of copy action 'decodeCopyAction' is decoding. The
@@ -140,7 +140,7 @@ data BPSCopyKind = CopyFromSource | CopyFromTarget
 parseActions :: Get BPSParsedActionStream
 parseActions = walkActions [] []
   where
-    walkActions :: [BPSAction] -> [SlapWarning] -> Get BPSParsedActionStream
+    walkActions :: [BPSAction] -> [SlapAdvisory] -> Get BPSParsedActionStream
     walkActions accumulatedActionsReversed accumulatedWarningsReversed = do
       done <- atEnd
       if done

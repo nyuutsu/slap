@@ -33,7 +33,7 @@ import Slap.Measure (Length(..), Offset(..),
                      OriginalLength(..), TruncatedLength(..), byteLength)
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -57,17 +57,17 @@ encodePPF2
   -> PPF2ValidationBlock   -- ^ 1024-byte block sampled from source[0x9320]
   -> CreateResult
 encodePPF2 records description sourceSize (PPF2ValidationBlock validationBytes) =
-  let (descriptionBytes, descriptionWarnings) = padDescription description
+  let (descriptionBytes, descriptionAdvisories) = padDescription description
       header = buildHeader descriptionBytes sourceSize validationBytes
       body   = foldMap encodeRecord records
   in CreateResult
        (PatchFileContents (LazyByteString.toStrict (toLazyByteString (header <> body))))
-       descriptionWarnings
+       descriptionAdvisories
 
 -- | Space-pad the description to 50 bytes. Same shape as PPF1.Create's
 -- helper — see that module for the rationale (matches the reference
 -- @memset(buf,' ',50)@ + @strcpy@ + @space-overwrite@ idiom).
-padDescription :: String -> (ByteString, [SlapWarning])
+padDescription :: String -> (ByteString, [SlapAdvisory])
 padDescription text =
   let encoded   = encodeLocaleField text
       width     = unLength ppf2DescriptionLength

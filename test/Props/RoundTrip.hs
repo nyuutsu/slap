@@ -63,8 +63,8 @@ import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
-                   SlapWarning(..), renderSlapError)
+import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
+                   SlapAdvisory(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),

@@ -23,7 +23,7 @@ import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
                      OffsetRange(..), rangeLastByte, advance, distance)
-import Slap.Error (CursorKind, renderCursorKind)
+import Slap.Status (CursorKind, renderCursorKind)
 import Data.Array (accumArray, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)

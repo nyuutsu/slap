@@ -8,7 +8,7 @@ module Props.IPSMarkerPolicy (ipsMarkerPolicyTests) where
 import qualified Slap.IPS.Apply as IPS
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        MarkerDisposition(..), decideMarkerDisposition)
-import Slap.Error (Outcome(..), SlapWarning(..),
+import Slap.Status (Outcome(..), SlapAdvisory(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..),
                    renderSlapError)
 import Slap.FormatLabel (FormatLabel(..))
@@ -204,7 +204,7 @@ runApplyOrFail source patch =
 assertApplyResult
   :: String                -- ^ test description for failure messages
   -> Int                   -- ^ expected target byte length
-  -> [SlapWarning]         -- ^ expected warning list (in order)
+  -> [SlapAdvisory]         -- ^ expected warning list (in order)
   -> Outcome OutputFileContents
   -> Assertion
 assertApplyResult description expectedLength expectedWarnings outcome = do
@@ -212,7 +212,7 @@ assertApplyResult description expectedLength expectedWarnings outcome = do
   assertEqual (description ++ ": target length")
     expectedLength (ByteString.length targetBytes)
   assertEqual (description ++ ": warnings")
-    expectedWarnings (outcomeWarnings outcome)
+    expectedWarnings (outcomeAdvisories outcome)
 
 -- absent: source 100, one record at offset 30 length 5. Expected:
 -- 100-byte output, no warnings.

@@ -20,7 +20,7 @@ import Slap.Binary (diffHunks, md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Measure (Offset(..), Length(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..))
-import Slap.Error (SlapError, SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapError, SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Platform (platformToNinja2)
@@ -46,7 +46,7 @@ import Data.Bits (xor)
 -- patch; reporting it via 'TruncatedLength' matches DPS, APSN64,
 -- and PPF3.
 encodeBoundedField :: PatchEncoding -> FieldName -> Length -> Maybe String
-                   -> (ByteString, [SlapWarning])
+                   -> (ByteString, [SlapAdvisory])
 encodeBoundedField encoding fieldName fieldWidth = \case
   Nothing -> (ByteString.replicate (unLength fieldWidth) 0, [])
   Just inputText ->
@@ -64,13 +64,13 @@ encodeBoundedField encoding fieldName fieldWidth = \case
 -- XOR-based records with VLV encoding; handles size changes via overflow.
 -- Field-truncation warnings (from fields too long to fit the fixed
 -- header) and platform warnings (from 'PlatformType' values NINJA2
--- can't express) are both folded into 'CreateResult.resultWarnings'
+-- can't express) are both folded into 'CreateResult.resultAdvisories'
 -- so the caller doesn't have to remember to collect them separately.
 createNINJA2 :: InputFileContents -> OutputFileContents -> NINJA2Metadata
              -> Either SlapError CreateResult
 createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata =
     Right (CreateResult (PatchFileContents patchBytes)
-                        (fieldWarnings ++ platformWarnings))
+                        (fieldWarnings ++ platformAdvisories))
   where
     encoding              = ninja2MetadataEncoding metadata
     encodeMetadataField   = encodeBoundedField encoding
@@ -81,12 +81,12 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
     (languageBytes,    languageWarnings)    = encodeMetadataField FieldLanguage    ninja2LanguageWidth    (ninja2MetadataLanguage    metadata)
     (dateBytes,        dateWarnings)        = encodeMetadataField FieldDate        ninja2DateWidth        (ninja2MetadataDate        metadata)
     (websiteBytes,     websiteWarnings)     = encodeMetadataField FieldWebsite     ninja2WebsiteWidth     (ninja2MetadataWebsite     metadata)
-    (descriptionBytes, descriptionWarnings) = encodeMetadataField FieldDescription ninja2DescriptionWidth (ninja2MetadataDescription metadata)
+    (descriptionBytes, descriptionAdvisories) = encodeMetadataField FieldDescription ninja2DescriptionWidth (ninja2MetadataDescription metadata)
     fixedHeaderBytes  = authorBytes <> versionBytes <> titleBytes <> genreBytes
                      <> languageBytes <> dateBytes <> websiteBytes <> descriptionBytes
     fieldWarnings     = authorWarnings ++ versionWarnings ++ titleWarnings ++ genreWarnings
-                     ++ languageWarnings ++ dateWarnings ++ websiteWarnings ++ descriptionWarnings
-    (romType, platformWarnings) =
+                     ++ languageWarnings ++ dateWarnings ++ websiteWarnings ++ descriptionAdvisories
+    (romType, platformAdvisories) =
       maybe (Ninja2Raw, []) platformToNinja2 (ninja2MetadataPlatform metadata)
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)

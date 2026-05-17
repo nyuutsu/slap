@@ -4,7 +4,7 @@ module Slap.DPS.Apply
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
 import Slap.Binary (copyRegion)
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
                      ActionIndex,

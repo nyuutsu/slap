@@ -40,7 +40,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
@@ -240,7 +240,7 @@ xdelta1NameByteCap = 0xFFFF
 -- choice the porcelain maps to a posture), 'VerificationPolicy'
 -- on apply (the runtime policy that gates mismatch behavior when
 -- verification /does/ run),
--- 'Slap.Error.VerificationOptedOutByCreator' (the warning emitted
+-- 'Slap.Status.VerificationOptedOutByCreator' (the warning emitted
 -- when verification is declared absent at the format level).
 data XDelta1VerificationPosture
   = VerifyAgainstStoredMD5s MD5Hash
@@ -266,7 +266,7 @@ data XDelta1PatchCompression
 -- ('xdelta1FlagFromCompressed' bit 1, 'xdelta1FlagToCompressed'
 -- bit 2) tells the apply tool to do the inverse transparency on
 -- its side. Slap doesn't implement that transparency today; apply
--- refuses with 'Slap.Error.XDelta1InputPreCompressionUnsupported'
+-- refuses with 'Slap.Status.XDelta1InputPreCompressionUnsupported'
 -- when either side is 'FileWasGzipStream', rather than silently
 -- producing wrong output against the user's literal source bytes.
 data XDelta1FileAtDeltaTime
@@ -278,7 +278,7 @@ data XDelta1FileAtDeltaTime
 -- The wire format encodes this as an integer index (0 for the data
 -- source, 1 for the file source); the parser translates the wire
 -- byte to this sum at parse time and refuses any other index with
--- 'Slap.Error.XDelta1UnknownInstructionTarget'. Apply-side
+-- 'Slap.Status.XDelta1UnknownInstructionTarget'. Apply-side
 -- dispatch ('Slap.XDelta1.Apply.applyXDelta1') pattern-matches on
 -- this rather than threading the raw integer through.
 data XDelta1InstructionTarget

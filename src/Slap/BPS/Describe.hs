@@ -14,7 +14,7 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Error (CursorKind(SourceCursor))
+import Slap.Status (CursorKind(SourceCursor))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffset(SignedOffset),

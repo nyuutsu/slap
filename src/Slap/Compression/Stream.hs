@@ -16,7 +16,7 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
-import Slap.Error (DecompressionCause(..))
+import Slap.Status (DecompressionCause(..))
 import Slap.FFI (readByteString, readString, withByteString)
 
 foreign import ccall unsafe "rusty_zlib_inflate"

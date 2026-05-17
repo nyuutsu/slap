@@ -29,7 +29,7 @@ import Integration.Skip
 import Slap.Convert
   (CreateFormat(..), DifferentialCreate(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
-import Slap.Error (CreateResult(..), renderSlapError)
+import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents
   (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 

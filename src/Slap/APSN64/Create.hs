@@ -9,7 +9,7 @@ import Slap.Binary (putWord32LE)
 import Slap.Measure (Offset(..), OriginalLength(..), TruncatedLength(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
@@ -27,7 +27,7 @@ import Data.Word (Word32)
 encodeAPSN64 :: [EncodedHunk] -> Word32 -> APSN64Description -> CreateResult
 encodeAPSN64 records destinationSize description =
     let bounded = encodeBoundedLocale apsN64DescriptionWidth (unAPSN64Description description)
-        descriptionWarnings = case boundedTruncation bounded of
+        descriptionAdvisories = case boundedTruncation bounded of
           Nothing -> []
           Just info -> [FieldTruncated LabelAPSN64 FieldDescription
                          (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
@@ -38,7 +38,7 @@ encodeAPSN64 records destinationSize description =
             <> byteString (boundedField bounded)
             <> putWord32LE destinationSize
             <> foldMap encodeAPSN64Record records
-    in CreateResult (PatchFileContents patchBytes) descriptionWarnings
+    in CreateResult (PatchFileContents patchBytes) descriptionAdvisories
 
 -- | Encode one APS-N64 record. Caller must ensure the payload's length
 -- is at most 'Slap.APSN64.Types.apsN64MaxChunkSize' (255 bytes); the

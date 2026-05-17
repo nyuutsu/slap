@@ -10,7 +10,7 @@ module Slap.NINJA2.Parse
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
@@ -69,7 +69,7 @@ parseNINJA2 (PatchFileContents input)
   | otherwise = case toPatchEncoding (ByteString.index input 6) of
       Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
       Right encoding -> case runGet (parseNINJA2Body encoding) input of
-        Left errorMessage -> Left (ParseError LabelNINJA2 errorMessage)
+        Left errorMessage -> Left (ParseError LabelNINJA2 (GetErrorMessage errorMessage))
         Right patch -> Right (Parsed patch [])
   where
     parseNINJA2Body :: PatchEncoding -> Get NINJA2Patch

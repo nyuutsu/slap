@@ -7,7 +7,7 @@ import Slap.XDelta1.Types
     , XDelta1InstructionTarget(..)
     , XDelta1FileAtDeltaTime(..)
     )
-import Slap.Error (SlapError(..), XDelta1GzipStreamInputs(..))
+import Slap.Status (SlapError(..), XDelta1GzipStreamInputs(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset,

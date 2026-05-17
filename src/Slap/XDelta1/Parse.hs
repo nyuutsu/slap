@@ -37,7 +37,10 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (getWord32BE, md5)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Error (SlapError(..), DecompressionFailure(..), Parsed(..), SlapWarning(..))
+import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
+                    SlapAdvisory(..), GetErrorMessage(..),
+                    XDelta1KnownUnsupportedVersion(..),
+                    XDelta1ShapeViolation(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint, word32BE)
@@ -110,9 +113,9 @@ parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 patchContents@(PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (byteLength input)))
   | magic == "%XDZ004%" = parseVersion1Point1 patchContents (ExpectedMagic magic)
-  | magic == "%XDZ003%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0.4")
-  | magic == "%XDZ002%" = Left (UnsupportedSubformat LabelXDelta1 "version 1.0")
-  | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedSubformat LabelXDelta1 "version 0.14")
+  | magic == "%XDZ003%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0_4)
+  | magic == "%XDZ002%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0)
+  | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedXDelta1Subformat XDelta1_0_14)
   | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
   where
     magic = ByteString.take 8 input
@@ -276,7 +279,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
   | otherwise = do
       (toMD5, targetLength, parsedSources, parsedInstrs) <-
         case runGet parseControlBody controlBytes of
-          Left errorMessage -> Left (ParseError LabelXDelta1 errorMessage)
+          Left errorMessage -> Left (ParseError LabelXDelta1 (GetErrorMessage errorMessage))
           Right result      -> Right result
       sourcePair <- requireDataAndFileRecords parsedSources
       let parsedDataRec      = parsedDataRecord sourcePair
@@ -433,16 +436,14 @@ requireDataAndFileRecords sources = case sources of
       { parsedDataRecord = first
       , parsedFileRecord = second
       }
-    (ParsedDataKind, ParsedDataKind) -> shapeError "[data, data]"
-    (ParsedFileKind, ParsedDataKind) -> shapeError "[file, data]"
-    (ParsedFileKind, ParsedFileKind) -> shapeError "[file, file]"
-  []        -> shapeError "0 sources"
-  [single]  -> shapeError ("1 source: " ++ parsedKindLabel (parsedSourceKind single))
-  many      -> shapeError (show (length many) ++ " sources")
-  where
-    shapeError description = Left (UnsupportedXDelta1Shape description)
-    parsedKindLabel ParsedDataKind = "data"
-    parsedKindLabel ParsedFileKind = "file"
+    (ParsedDataKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1TwoDataSources)
+    (ParsedFileKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1ReversedDataFileOrder)
+    (ParsedFileKind, ParsedFileKind) -> Left (UnsupportedXDelta1Shape XDelta1TwoFileSources)
+  []        -> Left (UnsupportedXDelta1Shape XDelta1ZeroSources)
+  [single]  -> case parsedSourceKind single of
+    ParsedDataKind -> Left (UnsupportedXDelta1Shape XDelta1OneDataSource)
+    ParsedFileKind -> Left (UnsupportedXDelta1Shape XDelta1OneFileSource)
+  many      -> Left (UnsupportedXDelta1Shape (XDelta1TooManySources (length many)))
 
 -- | Translate the wire-level source index of an instruction to the
 -- 'XDelta1InstructionTarget' sum, or refuse with

@@ -102,8 +102,9 @@ import Slap.Display.Analysis (PatchAnalysis)
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Info (PatchInfo(..))
-import Slap.Error (SlapError(..), SlapWarning(..), DecompressionFailure(..),
-                   Parsed(..), Outcome(..), noWarnings)
+import Slap.Status (SlapError(..), SlapAdvisory(..), DecompressionFailure(..),
+                   Parsed(..), Outcome(..), noAdvisories,
+                   EmptyUnit(..), NINJA1SubformatConversion(..))
 import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Compression.Yay0 as Yay0
 import qualified Slap.Compression.Stream as Stream
@@ -231,12 +232,12 @@ data SomePatch = SomePatch
   , patchApply          :: ApplyStrategy
   , patchUndo           :: Maybe UndoStrategy
   , patchVerification   :: Verification
-  , patchWarnings       :: [SlapWarning]
+  , patchAdvisories       :: [SlapAdvisory]
   , patchInfo           :: PatchInfo
     -- ^ Cheap display carrier consumed by @slap info@ and @slap apply@.
     -- Populated at parse time without per-record analytical work.
     -- The expensive analytical carrier is 'patchAnalysis'.
-  , patchSourceNotes    :: [SlapWarning]
+  , patchSourceAdvisories    :: [SlapAdvisory]
   , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
   , patchExtractedMeta  :: RequestedPatchMetadata  -- ^ Text metadata extracted at parse time for conversion
   }
@@ -280,7 +281,7 @@ parseSome dialects patchContents = case detectFormat patchContents of
 -- validation block, no undo data, no file-size advisory, and no
 -- FILE_ID.DIZ — the simplest of the four PPF dispatchers.
 parseSomePatchFromPPF1 :: Parsed PPF1.PPF1Patch -> Either SlapError SomePatch
-parseSomePatchFromPPF1 (Parsed patch parseWarnings) =
+parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
   let records = PPF1.ppf1Records patch
   in Right SomePatch
       { patchFormat         = LabelPPF1
@@ -305,11 +306,11 @@ parseSomePatchFromPPF1 (Parsed patch parseWarnings) =
           , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PPF1.applyPPF1 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PPF1.applyPPF1 patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = parseWarnings
-                              ++ [EmptyPatch LabelPPF1 "records" | null records]
+      , patchAdvisories       = parseAdvisories
+                              ++ [EmptyPatch LabelPPF1 EmptyRecords | null records]
       , patchInfo           = PatchInfo
           { infoFormat = FormatHeader LabelPPF1 Nothing
           , infoLines  = PPF1.ppf1Meta patch
@@ -319,7 +320,7 @@ parseSomePatchFromPPF1 (Parsed patch parseWarnings) =
               (sum (map (ByteString.length . PPF1.ppf1RecordPayload) records))))
           , infoRange  = PPF1.ppf1RecordsRange records
           }
-      , patchSourceNotes    = []
+      , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF1.ppf1Description patch))
                               in noMetadataRequested
@@ -333,7 +334,7 @@ parseSomePatchFromPPF1 (Parsed patch parseWarnings) =
 -- block (BIN-only at offset 0x9320), plus an optional FILE_ID.DIZ
 -- trailer.
 parseSomePatchFromPPF2 :: Parsed PPF2.PPF2Patch -> Either SlapError SomePatch
-parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
+parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
   let records = PPF2.ppf2Records patch
       validationBytes = PPF2.unPPF2ValidationBlock (PPF2.ppf2ValidationBlock patch)
       sourceFileSize = FileSize (fromIntegral (PPF2.unPPF2SourceSize (PPF2.ppf2SourceFileSize patch)))
@@ -364,11 +365,11 @@ parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
           , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PPF2.applyPPF2 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PPF2.applyPPF2 patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = ppfVerification
-      , patchWarnings       = parseWarnings
-                              ++ [EmptyPatch LabelPPF2 "records" | null records]
+      , patchAdvisories       = parseAdvisories
+                              ++ [EmptyPatch LabelPPF2 EmptyRecords | null records]
       , patchInfo           = PatchInfo
           { infoFormat = FormatHeader LabelPPF2 Nothing
           , infoLines  = PPF2.ppf2Meta patch
@@ -378,7 +379,7 @@ parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
               (sum (map (ByteString.length . PPF2.ppf2RecordPayload) records))))
           , infoRange  = PPF2.ppf2RecordsRange records
           }
-      , patchSourceNotes    = []
+      , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF2.ppf2Description patch))
                               in noMetadataRequested
@@ -394,7 +395,7 @@ parseSomePatchFromPPF2 (Parsed patch parseWarnings) =
 -- per-record undo bytes, and a 2-byte-length FILE_ID.DIZ
 -- trailer.
 parseSomePatchFromPPF3 :: Parsed PPF3.PPF3Patch -> Either SlapError SomePatch
-parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
+parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
   let records = PPF3.ppf3Records patch
       validationBlockBytes = fmap PPF3.unPPF3ValidationBlock (PPF3.ppf3ValidationBlock patch)
       ppfVerification = noVerification
@@ -433,13 +434,13 @@ parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
           , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PPF3.applyPPF3 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PPF3.applyPPF3 patch source)) }
       , patchUndo           = if PPF3.ppf3HasUndo patch
-                               then Just (UndoStrategy (fmap noWarnings . PPF3.undoPPF3 patch))
+                               then Just (UndoStrategy (fmap noAdvisories . PPF3.undoPPF3 patch))
                                else Nothing
       , patchVerification   = ppfVerification
-      , patchWarnings       = parseWarnings
-                              ++ [EmptyPatch LabelPPF3 "records" | null records]
+      , patchAdvisories       = parseAdvisories
+                              ++ [EmptyPatch LabelPPF3 EmptyRecords | null records]
       , patchInfo           = PatchInfo
           { infoFormat = FormatHeader LabelPPF3 Nothing
           , infoLines  = PPF3.ppf3Meta patch
@@ -449,7 +450,7 @@ parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
               (sum (map (ByteString.length . PPF3.ppf3RecordPayload) records))))
           , infoRange  = PPF3.ppf3RecordsRange records
           }
-      , patchSourceNotes    = []
+      , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF3.ppf3Description patch))
                               in noMetadataRequested
@@ -471,7 +472,7 @@ parseSomePatchFromPPF3 (Parsed patch parseWarnings) =
 -- can't be expressed as 'Hunk's).
 parseSomePatchFromPPF4 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPPF4 patchContents = do
-  Parsed patch parseWarnings <- PPF4.parsePPF4 patchContents
+  Parsed patch parseAdvisories <- PPF4.parsePPF4 patchContents
   let replaces = PPF4.ppf4Replaces patch
       appends  = PPF4.ppf4Appends patch
       totalRecords = length replaces + length appends
@@ -483,11 +484,11 @@ parseSomePatchFromPPF4 patchContents = do
                                        { contentsDescription = Just (PPF4.ppf4Description patch) }
                                 else Nothing)
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PPF4.applyPPF4 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PPF4.applyPPF4 patch source)) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
-      , patchWarnings       = parseWarnings
-                              ++ [EmptyPatch LabelPPF4 "records" | totalRecords == 0]
+      , patchAdvisories       = parseAdvisories
+                              ++ [EmptyPatch LabelPPF4 EmptyRecords | totalRecords == 0]
       , patchInfo           = PatchInfo
           { infoFormat = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
           , infoLines  = PPF4.ppf4Meta patch
@@ -498,7 +499,7 @@ parseSomePatchFromPPF4 patchContents = do
               + sum (map (ByteString.length . PPF4.appendData) appends) )))
           , infoRange  = PPF4.ppf4ReplacesRange replaces
           }
-      , patchSourceNotes    = []
+      , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF4.ppf4Description patch))
                               in noMetadataRequested
@@ -508,7 +509,7 @@ parseSomePatchFromPPF4 patchContents = do
 
 parseSomePatchFromIPS :: IPS.IPSVariant -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromIPS variant patchContents = do
-  Parsed parseResult parseWarnings <- IPS.parseIPS patchContents
+  Parsed parseResult parseAdvisories <- IPS.parseIPS patchContents
   let label = case variant of
         IPS.StandardIPS -> LabelIPS
         IPS.IPS32       -> LabelIPS32
@@ -533,8 +534,8 @@ parseSomePatchFromIPS variant patchContents = do
               { runApply = \source -> pure (IPS.applyIPS source ipsPatch) }
         , patchUndo           = Nothing
         , patchVerification   = noVerification
-        , patchWarnings       = parseWarnings
-                                ++ [EmptyPatch label "records" | Vector.null records]
+        , patchAdvisories       = parseAdvisories
+                                ++ [EmptyPatch label EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
             { infoFormat = FormatHeader label Nothing
             , infoLines  = IPS.ipsMeta ipsPatch
@@ -543,7 +544,7 @@ parseSomePatchFromIPS variant patchContents = do
             , infoBytes  = Nothing
             , infoRange  = IPS.ipsRecordsRange records
             }
-        , patchSourceNotes    = []
+        , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
         }
@@ -568,8 +569,8 @@ parseSomePatchFromIPS variant patchContents = do
               { runApply = \source -> pure (IPS.applyIPS source basePatch) }
         , patchUndo           = Nothing
         , patchVerification   = noVerification
-        , patchWarnings       = parseWarnings
-                                ++ [EmptyPatch LabelEBP "records" | Vector.null records]
+        , patchAdvisories       = parseAdvisories
+                                ++ [EmptyPatch LabelEBP EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
             { infoFormat = FormatHeader LabelEBP Nothing
             , infoLines  = IPS.ebpMeta ebpPatch
@@ -578,7 +579,7 @@ parseSomePatchFromIPS variant patchContents = do
             , infoBytes  = Nothing
             , infoRange  = IPS.ipsRecordsRange records
             }
-        , patchSourceNotes    = []
+        , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = extractedMeta
         }
@@ -599,8 +600,8 @@ parseSomePatchFromIPS variant patchContents = do
               { runApply = \source -> pure (IPS.applyIPS source truncatedPatch) }
         , patchUndo           = Nothing
         , patchVerification   = noVerification
-        , patchWarnings       = parseWarnings
-                                ++ [EmptyPatch label "records" | Vector.null records]
+        , patchAdvisories       = parseAdvisories
+                                ++ [EmptyPatch label EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
             { infoFormat = FormatHeader label Nothing
             , infoLines  = IPS.ipsMeta truncatedPatch
@@ -609,14 +610,14 @@ parseSomePatchFromIPS variant patchContents = do
             , infoBytes  = Nothing
             , infoRange  = IPS.ipsRecordsRange records
             }
-        , patchSourceNotes    = []
+        , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
         , patchExtractedMeta  = noMetadataRequested
         }
 
 parseSomePatchFromBPS :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromBPS patchContents = do
-  Parsed patch parseWarnings <- BPS.parseBPS patchContents
+  Parsed patch parseAdvisories <- BPS.parseBPS patchContents
   let actions = BPS.bpsActions patch
       metadataBytes = BPS.unBPSMetadata (BPS.bpsMetadata patch)
       bpsMetaBlob = if ByteString.null metadataBytes then Nothing
@@ -626,7 +627,7 @@ parseSomePatchFromBPS patchContents = do
     , patchAnalysis       = BPS.analyzeBPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (BPS.applyBPS patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (BPS.applyBPS patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
@@ -641,8 +642,8 @@ parseSomePatchFromBPS patchContents = do
         -- diagnostic more specific before the CRC hard-errors.
         , verifyFileSizeAdvisory = Just (BPS.bpsSourceSize patch)
         }
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelBPS "actions" | Vector.null actions]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelBPS EmptyActions | Vector.null actions]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelBPS Nothing
         , infoLines  = BPS.bpsMeta patch
@@ -651,21 +652,21 @@ parseSomePatchFromBPS patchContents = do
         , infoBytes  = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = bpsMetaBlob
     , patchExtractedMeta  = noMetadataRequested { requestedEmbeddedBlob = bpsMetaBlob }
     }
 
 parseSomePatchFromUPS :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromUPS patchContents = do
-  Parsed patch parseWarnings <- UPS.parseUPS patchContents
+  Parsed patch parseAdvisories <- UPS.parseUPS patchContents
   let blocks = UPS.upsBlocks patch
   Right SomePatch
     { patchFormat         = LabelUPS
     , patchAnalysis       = UPS.analyzeUPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (UPS.applyUPS patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (UPS.applyUPS patch source)) }
     , patchUndo           = Just $ UndoStrategy $ \modified ->
         -- UPS is self-inverse (XOR-based): walking the same block
         -- stream against the target reconstructs the source. The
@@ -677,7 +678,7 @@ parseSomePatchFromUPS patchContents = do
         -- target-sized buffer regardless of direction, silently
         -- wrong for growth patches).
         case UPS.undoUPS patch modified of
-          Right reverted -> Right (noWarnings reverted)
+          Right reverted -> Right (noAdvisories reverted)
           Left slapError -> Left slapError
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
@@ -693,8 +694,8 @@ parseSomePatchFromUPS patchContents = do
         -- verifyFileSizeAdvisory.
         , verifyFileSizeAdvisory = Just (UPS.upsSourceSize patch)
         }
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelUPS "blocks" | Vector.null blocks]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelUPS EmptyBlocks | Vector.null blocks]
                             ++ UPS.detectOOBBlocks patch
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelUPS Nothing
@@ -704,14 +705,14 @@ parseSomePatchFromUPS patchContents = do
         , infoBytes  = Just (TotalOutputBytes (UPS.upsTargetSize patch))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
 
 parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromVCDIFF patchContents = do
-  Parsed patch parseWarnings <- VCDIFF.parseVCDIFF patchContents
+  Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
   let windows = VCDIFF.vcdiffWindows patch
       windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
       adlerChecks =
@@ -724,11 +725,11 @@ parseSomePatchFromVCDIFF patchContents = do
     , patchAnalysis       = VCDIFF.analyzeVCDIFF patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (VCDIFF.applyVCDIFF patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelVCDIFF "windows" | null windows]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelVCDIFF EmptyWindows | null windows]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelVCDIFF (case VCDIFF.vcdiffVersion (VCDIFF.vcdiffHeader patch) of
                                                    VCDIFF.VCDIFFXDelta3  -> Just " (xdelta3)"
@@ -740,7 +741,7 @@ parseSomePatchFromVCDIFF patchContents = do
             (sum (map (unFileSize . VCDIFF.vcdiffTargetLength) windows))))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -754,7 +755,7 @@ parseSomePatchFromVCDIFF patchContents = do
 -- 'parseSomePatchFromAPSN64' runs the bytes really are APSN64.
 parseSomePatchFromAPSN64 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSN64 patchContents = do
-  Parsed patch@(APSN64.APSN64Patch header records) parseWarnings <- APSN64.parseAPSN64 patchContents
+  Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 patchContents
   let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
       expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
   Right SomePatch
@@ -765,7 +766,7 @@ parseSomePatchFromAPSN64 patchContents = do
           , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
           })
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (APSN64.applyAPSN64 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (APSN64.applyAPSN64 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
           { verifySourceBytes = concat
@@ -774,8 +775,8 @@ parseSomePatchFromAPSN64 patchContents = do
               , maybe [] (\crc -> [ByteCheck (Offset 0x10) (AdvisoryExpectedBytes (APSN64.unN64ChecksumPair crc)) "N64 CRC"]) (APSN64.apsN64Crc header)
               ]
           }
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelAPSN64 "records" | Vector.null records]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelAPSN64 EmptyRecords | Vector.null records]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelAPSN64 Nothing
         , infoLines  = APSN64.apsN64Meta patch
@@ -784,7 +785,7 @@ parseSomePatchFromAPSN64 patchContents = do
         , infoBytes  = Just (TotalOutputBytes (APSN64.apsN64DestinationSize header))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
                             in noMetadataRequested
@@ -793,7 +794,7 @@ parseSomePatchFromAPSN64 patchContents = do
 
 parseSomePatchFromNINJA2 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromNINJA2 patchContents = do
-  Parsed patch parseWarnings <- NINJA2.parseNINJA2 patchContents
+  Parsed patch parseAdvisories <- NINJA2.parseNINJA2 patchContents
   let filterZeroMD5 (Just hash@(MD5Hash bytes))
         | ByteString.all (== 0) bytes = Nothing
         | otherwise                   = Just hash
@@ -802,21 +803,21 @@ parseSomePatchFromNINJA2 patchContents = do
       romTypeForPlatformConversion = case openNewFile of
         Just open -> NINJA2.openNewFileRomType open
         Nothing   -> NINJA2.Ninja2Raw
-      (platformType, platformWarnings) = ninja2ToPlatform romTypeForPlatformConversion
+      (platformType, platformAdvisories) = ninja2ToPlatform romTypeForPlatformConversion
   Right SomePatch
     { patchFormat         = LabelNINJA2
     , patchAnalysis       = NINJA2.analyzeNINJA2 patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (NINJA2.applyNINJA2 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (NINJA2.applyNINJA2 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
         { verifySourceMD5 = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
         , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
         }
-    , patchWarnings       = parseWarnings
-                             ++ [EmptyPatch LabelNINJA2 "records" | null (NINJA2.ninja2Records patch)]
-                             ++ platformWarnings
+    , patchAdvisories       = parseAdvisories
+                             ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
+                             ++ platformAdvisories
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelNINJA2 Nothing
         , infoLines  = NINJA2.ninja2Meta patch
@@ -825,7 +826,7 @@ parseSomePatchFromNINJA2 patchContents = do
         , infoBytes  = Nothing
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = let decode = NINJA2.decodeNINJA2Field (NINJA2.ninja2PatchEncoding patch)
                                 nonEmptyField fieldBytes = let decoded = decode fieldBytes
@@ -846,17 +847,17 @@ parseSomePatchFromNINJA2 patchContents = do
 
 parseSomePatchFromNINJA1 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromNINJA1 patchContents = do
-  Parsed patch parseWarnings <- NINJA1.parseNINJA1 patchContents
+  Parsed patch parseAdvisories <- NINJA1.parseNINJA1 patchContents
   let records = NINJA1.ninja1Records patch
       warnings = concat
-        [ parseWarnings
+        [ parseAdvisories
         , [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
-        , [EmptyPatch LabelNINJA1 "records" | null records]
+        , [EmptyPatch LabelNINJA1 EmptyRecords | null records]
         ]
       compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.Ninja1BinaryCompressed, NINJA1.Ninja1TextCompressed]
-      sourceNotes = case NINJA1.ninja1SubFormat patch of
-        NINJA1.Ninja1Text  -> [SubformatConverted LabelNINJA1 "text (T)" "binary (B)"]
-        NINJA1.Ninja1TextCompressed -> [SubformatConverted LabelNINJA1 "text (TZ)" "compressed binary (BZ)"]
+      sourceAdvisories = case NINJA1.ninja1SubFormat patch of
+        NINJA1.Ninja1Text  -> [SubformatConverted NINJA1TextToBinary]
+        NINJA1.Ninja1TextCompressed -> [SubformatConverted NINJA1CompressedTextToCompressedBinary]
         _              -> []
   Right SomePatch
     { patchFormat         = LabelNINJA1
@@ -869,7 +870,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , contentsNINJA1Compressed = Just compressed
         })
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (NINJA1.applyNINJA1 patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (NINJA1.applyNINJA1 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
         { verifySourceCRC32  = NINJA1.ninja1SourceCRC patch
@@ -877,7 +878,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , verifySourceSHA1   = NINJA1.ninja1SourceSHA1 patch
         , verifySourcePreHash = NINJA1.ninja1HashInput
         }
-    , patchWarnings       = warnings
+    , patchAdvisories       = warnings
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelNINJA1
             (Just (" (" ++ NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) ++ ")"))
@@ -888,7 +889,7 @@ parseSomePatchFromNINJA1 patchContents = do
             (sum (map (ByteString.length . NINJA1.ninja1RecordData) records))))
         , infoRange  = NINJA1.ninja1RecordsRange records
         }
-    , patchSourceNotes    = sourceNotes
+    , patchSourceAdvisories    = sourceAdvisories
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         { requestedRomType = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch)) }
@@ -896,17 +897,17 @@ parseSomePatchFromNINJA1 patchContents = do
 
 parseSomePatchFromBSDiff :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromBSDiff patchContents = do
-  Parsed patch parseWarnings <- BSDiff.parseBSDiff patchContents
+  Parsed patch parseAdvisories <- BSDiff.parseBSDiff patchContents
   Right SomePatch
     { patchFormat         = LabelBSDiff
     , patchAnalysis       = BSDiff.analyzeBSDiff patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (BSDiff.applyBSDiff patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (BSDiff.applyBSDiff patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelBSDiff "instructions" | null (BSDiff.bsdiffInstructions patch)]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelBSDiff EmptyInstructions | null (BSDiff.bsdiffInstructions patch)]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelBSDiff Nothing
         , infoLines  = BSDiff.bsdiffMeta patch
@@ -915,24 +916,24 @@ parseSomePatchFromBSDiff patchContents = do
         , infoBytes  = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
 
 parseSomePatchFromGDIFF :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromGDIFF patchContents = do
-  Parsed patch parseWarnings <- GDIFF.parseGDIFF patchContents
+  Parsed patch parseAdvisories <- GDIFF.parseGDIFF patchContents
   Right SomePatch
     { patchFormat         = LabelGDIFF
     , patchAnalysis       = GDIFF.analyzeGDIFF patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (GDIFF.applyGDIFF patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (GDIFF.applyGDIFF patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelGDIFF "commands" | null (GDIFF.gdiffCommands patch)]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelGDIFF EmptyCommands | null (GDIFF.gdiffCommands patch)]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelGDIFF Nothing
         , infoLines  = GDIFF.gdiffMeta patch
@@ -941,14 +942,14 @@ parseSomePatchFromGDIFF patchContents = do
         , infoBytes  = Nothing
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
 
 parseSomePatchFromXDelta1 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromXDelta1 patchContents = do
-  Parsed patch parseWarnings <- XDelta1.parseXDelta1 patchContents
+  Parsed patch parseAdvisories <- XDelta1.parseXDelta1 patchContents
   let xdeltaVerification = case XDelta1.xdelta1Verification patch of
         XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
           { verifySourceMD5 = XDelta1.xdelta1SourceMD5 patch
@@ -960,17 +961,17 @@ parseSomePatchFromXDelta1 patchContents = do
       -- (see 'XDelta1DataRecordNameDiverges'). Split it off the
       -- warning lane so the porcelain emits it through the @slap:@-
       -- prefixed notice path instead of the @warning:@ lane.
-      (dataNameNotices, otherWarnings) = partition isXDelta1DataNameNotice parseWarnings
+      (dataNameNotices, otherWarnings) = partition isXDelta1DataNameNotice parseAdvisories
   Right SomePatch
     { patchFormat         = LabelXDelta1
     , patchAnalysis       = XDelta1.analyzeXDelta1 patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (XDelta1.applyXDelta1 patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (XDelta1.applyXDelta1 patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = xdeltaVerification
-    , patchWarnings       = otherWarnings
-                            ++ [EmptyPatch LabelXDelta1 "instructions" | null (XDelta1.xdelta1Instructions patch)]
+    , patchAdvisories       = otherWarnings
+                            ++ [EmptyPatch LabelXDelta1 EmptyInstructions | null (XDelta1.xdelta1Instructions patch)]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelXDelta1 Nothing
         , infoLines  = XDelta1.xdelta1Meta patch
@@ -979,7 +980,7 @@ parseSomePatchFromXDelta1 patchContents = do
         , infoBytes  = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = dataNameNotices
+    , patchSourceAdvisories    = dataNameNotices
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
         -- An xdelta1 source patch carries both display labels in its
@@ -999,7 +1000,7 @@ parseSomePatchFromXDelta1 patchContents = do
 
 parseSomePatchFromPMSR :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPMSR patchContents = do
-  Parsed patch parseWarnings <- PMSR.parsePMSR patchContents
+  Parsed patch parseAdvisories <- PMSR.parsePMSR patchContents
   let records = PMSR.pmsrRecords patch
   Right SomePatch
     { patchFormat         = LabelPMSR
@@ -1007,11 +1008,11 @@ parseSomePatchFromPMSR patchContents = do
     , patchKind           = Direct (Just (emptyContents
         (map recordToHunk (Vector.toList records))))
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PMSR.applyPMSR patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PMSR.applyPMSR patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelPMSR "records" | Vector.null records]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelPMSR EmptyRecords | Vector.null records]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelPMSR Nothing
         , infoLines  = PMSR.pmsrMeta patch
@@ -1022,7 +1023,7 @@ parseSomePatchFromPMSR patchContents = do
                               runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records)))
         , infoRange  = PMSR.pmsrRecordsRange records
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
@@ -1031,12 +1032,12 @@ parseSomePatchFromPMSR patchContents = do
 
 parseSomePatchFromPCHTXT :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPCHTXT patchContents = do
-  Parsed patch parseWarnings <- PCHTXT.parsePCHTXT patchContents
+  Parsed patch parseAdvisories <- PCHTXT.parsePCHTXT patchContents
   let allBlocks = PCHTXT.pchtxtBlocks patch
       enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
       entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
       contentRecords = map (\entry -> Hunk (PCHTXT.pchtxtOffset entry) (PCHTXT.pchtxtData entry)) entries
-      sourceNotes = [OffsetShiftApplied | PCHTXT.pchtxtHasShift patch]
+      sourceAdvisories = [OffsetShiftApplied | PCHTXT.pchtxtHasShift patch]
   Right SomePatch
     { patchFormat         = LabelPCHTXT
     , patchAnalysis       = PCHTXT.analyzePCHTXT patch
@@ -1045,11 +1046,11 @@ parseSomePatchFromPCHTXT patchContents = do
         , contentsPCHTXTBlocks = Just allBlocks
         })
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (PCHTXT.applyPCHTXT patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (PCHTXT.applyPCHTXT patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelPCHTXT "entries" | null entries]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelPCHTXT EmptyEntries | null entries]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelPCHTXT Nothing
         , infoLines  = PCHTXT.pchtxtMeta patch
@@ -1059,28 +1060,28 @@ parseSomePatchFromPCHTXT patchContents = do
             (sum (map (ByteString.length . PCHTXT.pchtxtData) entries))))
         , infoRange  = PCHTXT.pchtxtEntriesRange entries
         }
-    , patchSourceNotes    = sourceNotes
+    , patchSourceAdvisories    = sourceAdvisories
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
 
 parseSomePatchFromAPSGBA :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSGBA patchContents = do
-  Parsed patch@(APSGBA.APSGBAPatch header records) parseWarnings <- APSGBA.parseAPSGBA patchContents
+  Parsed patch@(APSGBA.APSGBAPatch header records) parseAdvisories <- APSGBA.parseAPSGBA patchContents
   Right SomePatch
     { patchFormat         = LabelAPSGBA
     , patchAnalysis       = APSGBA.analyzeAPSGBA patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noWarnings (APSGBA.applyAPSGBA patch source)) }
+          { runApply = \source -> pure (fmap noAdvisories (APSGBA.applyAPSGBA patch source)) }
     , patchUndo           = Nothing
     , patchVerification   = noVerification
           { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records
           , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
           , verifyFileSizeAdvisory = Just (APSGBA.apsGbaSourceSize header)
           }
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelAPSGBA "blocks" | null records]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelAPSGBA EmptyBlocks | null records]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelAPSGBA Nothing
         , infoLines  = APSGBA.apsGBAMeta patch
@@ -1089,26 +1090,26 @@ parseSomePatchFromAPSGBA patchContents = do
         , infoBytes  = Just (TotalOutputBytes (APSGBA.apsGbaTargetSize header))
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = noMetadataRequested
     }
 
 parseSomePatchFromDPS :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromDPS patchContents = do
-  Parsed patch parseWarnings <- DPS.parseDPS patchContents
+  Parsed patch parseAdvisories <- DPS.parseDPS patchContents
   let records = DPS.dpsRecords patch
   Right SomePatch
     { patchFormat         = LabelDPS
     , patchAnalysis       = DPS.analyzeDPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noWarnings (DPS.applyDPS patch source)) }
+        { runApply     = \source -> pure (fmap noAdvisories (DPS.applyDPS patch source)) }
     , patchVerification   = noVerification
           { verifyFileSizeRequired = Just (DPS.dpsSourceSizeAsFileSize (DPS.dpsOriginalSize patch)) }
     , patchUndo           = Nothing
-    , patchWarnings       = parseWarnings
-                            ++ [EmptyPatch LabelDPS "records" | null records]
+    , patchAdvisories       = parseAdvisories
+                            ++ [EmptyPatch LabelDPS EmptyRecords | null records]
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelDPS Nothing
         , infoLines  = DPS.dpsMeta patch
@@ -1117,7 +1118,7 @@ parseSomePatchFromDPS patchContents = do
         , infoBytes  = Nothing
         , infoRange  = Nothing
         }
-    , patchSourceNotes    = []
+    , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  = let nonEmpty fieldBytes = let decoded = trimNullSpace (decodeLocaleField fieldBytes)
                                                      in if null decoded then Nothing else Just decoded

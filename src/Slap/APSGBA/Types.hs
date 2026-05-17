@@ -22,7 +22,7 @@ module Slap.APSGBA.Types
 import Data.ByteString (ByteString)
 import Data.Word (Word32)
 import Slap.Checksum (CRC16)
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Offset)

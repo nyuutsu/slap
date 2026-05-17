@@ -11,7 +11,7 @@ module Slap.NINJA1.Create
 import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Error (SlapError(..))
+import Slap.Status (SlapError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Delta(..), Cursor(..), Offset(..),
                      Hunk(..),

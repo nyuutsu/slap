@@ -3,7 +3,7 @@ module Slap.NINJA2.Apply
   ) where
 
 import Slap.NINJA2.Types
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (FileSize(..), offsetToInt)
 import Slap.Binary (copyByteStringRange)
 

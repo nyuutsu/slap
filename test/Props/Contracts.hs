@@ -17,7 +17,7 @@ import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Types (IPSParseResult(..))
 
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
-import Slap.Error (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError, renderSlapWarning)
+import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..), renderSlapError, renderSlapAdvisory)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..), Hunk(..),
@@ -123,7 +123,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsRomType     = if FieldRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
             , contentsImageType   = if FieldImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
-          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapWarning (conversionNotes trimmed format contract noMetadataRequested))
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapAdvisory (conversionNotes trimmed format contract noMetadataRequested))
       in droppedNotes === []
   | format <- directFormats
   ]

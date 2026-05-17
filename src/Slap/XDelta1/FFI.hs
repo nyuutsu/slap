@@ -8,7 +8,7 @@
 -- narrow Rust-side cause into 'SlapError' via 'XDelta1DiffFailed'.
 --
 -- The FFI module has one downstream caller ('Slap.XDelta1.Create'),
--- so the narrower 'Slap.Error.XDelta1DiffCause' is wrapped here
+-- so the narrower 'Slap.Status.XDelta1DiffCause' is wrapped here
 -- rather than being threaded further out.
 module Slap.XDelta1.FFI
   ( XDelta1DiffOutput(..)
@@ -26,7 +26,7 @@ import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
 import Slap.Display.Primitives (padHex)
-import Slap.Error (SlapError(..), XDelta1DiffCause(..))
+import Slap.Status (SlapError(..), XDelta1DiffCause(..))
 import Slap.FFI (readByteString, readString, withByteString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..))

@@ -8,7 +8,7 @@ import Slap.Measure
   ( Offset(..), Length(..), FileSize(..), ActionIndex
   , advance, byteLength, firstAction, nextAction, fitsWithin, lengthToFileSize, byteFileSize
   )
-import Slap.Error (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))

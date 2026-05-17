@@ -60,7 +60,7 @@ library slap-internal
     , Slap.Display.Common
     , Slap.Display.Info
     , Slap.FileContents
-    , Slap.Error
+    , Slap.Status
     , Slap.GDIFF.Apply
     , Slap.GDIFF.Create
     , Slap.GDIFF.Describe

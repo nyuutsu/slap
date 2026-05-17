@@ -15,7 +15,7 @@ module Slap.UPS.Create
 import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
 import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.Checksum (CRC32(..))
-import Slap.Error (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
 import Slap.FFI (crc32)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), advance, distance, offsetToInt)

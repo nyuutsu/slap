@@ -20,7 +20,7 @@ import Data.ByteString (ByteString)
 import Data.Int (Int64)
 import Data.Vector (Vector)
 import Slap.Checksum (CRC32)
-import Slap.Error (SlapWarning)
+import Slap.Status (SlapAdvisory)
 import Slap.Measure (Length(..), FileSize(..), Delta(..))
 
 data BPSAction
@@ -35,7 +35,7 @@ data BPSBody = BPSBody
   , bpsBodyTargetSize :: !FileSize
   , bpsBodyMetadata   :: !BPSMetadata
   , bpsBodyActions    :: ![BPSAction]
-  , bpsBodyWarnings   :: ![SlapWarning]
+  , bpsBodyWarnings   :: ![SlapAdvisory]
   } deriving (Show)
 
 data BPSPatch = BPSPatch

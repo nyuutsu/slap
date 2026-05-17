@@ -4,7 +4,7 @@ module Slap.PMSR.Apply
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
 import Slap.Binary (copyByteStringRange)
-import Slap.Error (SlapError)
+import Slap.Status (SlapError)
 import Slap.Measure (offsetToInt,
                      ActionIndex(unActionIndex),
                      firstAction, nextAction, streamEndIndex)

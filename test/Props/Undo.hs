@@ -13,7 +13,7 @@ import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 
-import Slap.Error (CreateResult(..), Parsed(..), renderSlapError)
+import Slap.Status (CreateResult(..), Parsed(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), RequestedPatchMetadata(..),
                      UndoInclusion(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)

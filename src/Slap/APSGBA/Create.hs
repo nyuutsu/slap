@@ -10,7 +10,7 @@ import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize,
                            unAPSGBASourceSize, unAPSGBATargetSize)
 import Slap.Binary (crc16, putWord32LE, putWord16LE, viewBytesInRange)
 import Slap.Checksum (CRC16(..))
-import Slap.Error (SlapError, CreateResult(..))
+import Slap.Status (SlapError, CreateResult(..))
 import Slap.Measure (Offset(..), Length(..), byteFileSize)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))

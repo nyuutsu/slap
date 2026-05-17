@@ -16,7 +16,7 @@ import Slap.Measure (Offset(..), Hunk(..),
                      OriginalLength(..), TruncatedLength(..),
                      byteFileSize, distance)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Error (SlapError, SlapWarning(..), CreateResult(..))
+import Slap.Status (SlapError, SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 

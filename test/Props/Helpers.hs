@@ -24,7 +24,7 @@ module Props.Helpers
   ) where
 
 import qualified Slap.NINJA2.Types as NINJA2
-import Slap.Error (SlapError, SlapWarning(..), Outcome(..))
+import Slap.Status (SlapError, SlapAdvisory(..), Outcome(..))
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Hunk(..), Offset, splitHunksUnbounded)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..), narrowHunks)
@@ -171,7 +171,7 @@ emptyNINJA2Metadata = NINJA2.NINJA2Metadata
 -- Warning helpers
 ----------------------------------------------------------------------------
 
-isFieldTruncatedFor :: FormatLabel -> SlapWarning -> Bool
+isFieldTruncatedFor :: FormatLabel -> SlapAdvisory -> Bool
 isFieldTruncatedFor expectedLabel (FieldTruncated warningLabel _ _ _) = expectedLabel == warningLabel
 isFieldTruncatedFor _ _ = False
 

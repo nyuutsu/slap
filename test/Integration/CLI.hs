@@ -22,7 +22,7 @@ import Integration.Skip
   , requireFixture
   , requireSlapBinary
   )
-import Slap.Error (renderSlapError, renderSlapWarning)
+import Slap.Status (renderSlapError, renderSlapAdvisory)
 import Slap.Display.Analysis (renderAnalysisSummary)
 import Slap.FormatLabel (formatLabelName)
 import Slap.FileContents (PatchFileContents(..))
@@ -302,7 +302,7 @@ warningTests repo =
       case parseSome noDialectsRequested (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
         Right parsed -> assertBool "expected 'no EOF marker' in warnings"
-                     (any (ciContains "no EOF marker" . renderSlapWarning) (patchWarnings parsed))
+                     (any (ciContains "no EOF marker" . renderSlapAdvisory) (patchAdvisories parsed))
 
   , testCase "warnings/truncated IPS empty" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
@@ -329,7 +329,7 @@ warningTests repo =
           patchBytes <- ByteString.readFile ipsPath
           case parseSome noDialectsRequested (PatchFileContents patchBytes) of
             Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
-            Right parsed -> assertBool "unexpected warning" (null (patchWarnings parsed))
+            Right parsed -> assertBool "unexpected warning" (null (patchAdvisories parsed))
   ]
 
 

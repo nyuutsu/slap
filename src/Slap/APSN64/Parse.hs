@@ -16,7 +16,7 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            toAPSRecordEncoding, toAPSN64Country,
                            apsN64MagicBytes, apsN64DescriptionWidth,
                            apsN64RecordHeaderSize)
-import Slap.Error (SlapError(..), SlapWarning(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
@@ -35,7 +35,7 @@ import qualified Data.Vector as Vector
 -- through the same channel as APSN64's polish pass lands them.
 data APSN64ParseWalk = APSN64ParseWalk
   { apsN64ParseWalkPatch    :: !APSN64Patch
-  , apsN64ParseWalkWarnings :: ![SlapWarning]
+  , apsN64ParseWalkWarnings :: ![SlapAdvisory]
   }
 
 parseAPSN64 :: PatchFileContents -> Either SlapError (Parsed APSN64Patch)
@@ -48,7 +48,7 @@ parseAPSN64 (PatchFileContents input)
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
   | otherwise =
       case runGet parseN64 input of
-        Left errorMessage -> Left (ParseError LabelAPSN64 errorMessage)
+        Left errorMessage -> Left (ParseError LabelAPSN64 (GetErrorMessage errorMessage))
         Right walk ->
           Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
   where

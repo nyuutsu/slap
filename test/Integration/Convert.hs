@@ -22,7 +22,7 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Create (createPatch)
-import Slap.Error (CreateResult(..), renderSlapError, renderSlapWarning)
+import Slap.Status (CreateResult(..), renderSlapError, renderSlapAdvisory)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
@@ -147,7 +147,7 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
           case convResult of
             Left errorMessage -> assertFailure ("conversion failed: " ++ errorMessage)
             Right (CreateResult convertedBytes warnings) -> do
-              checkWarnings warningsString (map renderSlapWarning warnings)
+              checkWarnings warningsString (map renderSlapAdvisory warnings)
               when (not (null targetSha) && not (null baseRel)) $ do
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath

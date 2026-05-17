@@ -10,7 +10,7 @@ module Slap.PMSR.Parse
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
-import Slap.Error (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Get (Get, runGet, getBytes, skip, remaining)
@@ -30,7 +30,7 @@ parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= pmsrMagicBytes = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
   | otherwise = case runGet parsePMSRBody input of
-      Left errorMessage -> Left (ParseError LabelPMSR errorMessage)
+      Left errorMessage -> Left (ParseError LabelPMSR (GetErrorMessage errorMessage))
       Right result -> Right (Parsed result [])
 
 parsePMSRBody :: Get PMSRPatch
