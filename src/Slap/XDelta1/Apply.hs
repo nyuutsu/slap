@@ -7,17 +7,21 @@ import Slap.XDelta1.Types
     , XDelta1InstructionTarget(..)
     , XDelta1FileAtDeltaTime(..)
     )
-import Slap.Status (SlapError(..), XDelta1GzipStreamInputs(..))
+import Slap.Status (SlapError(..), ApplyError(..), XDelta1GzipStreamInputs(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion)
-import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), remainingFromOffset,
-                     minLength, byteFileSize)
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..),
+                     ActionIndex, RequestedLength(..), RemainingLength(..),
+                     ExpectedSize(..), WritePosition(..),
+                     fitsWithin, remainingFromOffset, byteFileSize,
+                     firstAction, nextAction)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (unsafeCreate)
+import Data.ByteString.Internal (createAndTrim')
+import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Apply
@@ -29,8 +33,13 @@ import Data.ByteString.Internal (unsafeCreate)
 -- 'XDelta1InstructionTarget': the parser
 -- ('Slap.XDelta1.Parse.translateInstruction') guarantees that every
 -- instruction targets one of the patch's two sources, so no runtime
--- bounds check is needed here and 'sourceBytesFor' is a two-arm
--- pattern-match.
+-- bounds check is needed on the source dispatch and 'sourceBytesFor'
+-- is a two-arm pattern-match. Per-instruction OOB on the resolved
+-- source — a length/offset combination that would read past that
+-- source's end — is a precondition violation enforced at the
+-- instruction boundary; the apply loop returns
+-- 'ApplySourceReadOutOfBounds' rather than producing partial
+-- output.
 --
 -- Before any target-length interpretation, the patch's recorded
 -- input pre-compression posture is checked: if either input was a
@@ -56,14 +65,14 @@ applyXDelta1 patch sourceContents =
     (FileWasGzipStream, FileWasGzipStream)
       -> Left (XDelta1InputPreCompressionUnsupported BothFilesWereGzipStreams)
     (FileWasRawBytes,   FileWasRawBytes)
-      | unFileSize (xdelta1TargetLength patch) == 0
+      | unFileSize targetFileSize == 0
           -> Right (OutputFileContents ByteString.empty)
-      | unFileSize (xdelta1TargetLength patch) < 0
-          -> Left (NegativeTargetSize LabelXDelta1 (xdelta1TargetLength patch))
+      | unFileSize targetFileSize < 0
+          -> Left (NegativeTargetSize LabelXDelta1 targetFileSize)
       | otherwise
           -> proceedWithApply sourceContents
   where
-    outputSize     = unFileSize (xdelta1TargetLength patch)
+    outputSize     = unFileSize targetFileSize
     targetFileSize = xdelta1TargetLength patch
     dataSegment    = xdelta1DataSegment patch
 
@@ -71,21 +80,38 @@ applyXDelta1 patch sourceContents =
     sourceBytesFor _      FromDataSource = dataSegment
     sourceBytesFor source FromFileSource = source
 
-    proceedWithApply (InputFileContents source) =
-      Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer ->
-        let
-          applyLoop :: Offset -> [XDelta1Instruction] -> IO ()
-          applyLoop _outputPosition [] = pure ()
-          applyLoop !outputPosition (instruction:rest) = do
-            let sourceBytes       = sourceBytesFor source (xdelta1InstructionTarget instruction)
-                instructionOffset = xdelta1InstructionOffset instruction
-                instructionLength = Length (unFileSize (xdelta1InstructionLength instruction))
-                safeLength        = min instructionLength (remainingFromOffset outputPosition targetFileSize)
-                sourceSafeLength =
-                  if unOffset instructionOffset >= 0
-                     && unOffset instructionOffset < ByteString.length sourceBytes
-                  then minLength safeLength (remainingFromOffset instructionOffset (byteFileSize sourceBytes))
-                  else Length 0
-            copyRegion targetPointer outputPosition sourceBytes instructionOffset sourceSafeLength
-            applyLoop (advance outputPosition safeLength) rest
-        in applyLoop (Offset 0) (xdelta1Instructions patch)
+    proceedWithApply (InputFileContents source) = unsafePerformIO $ do
+      (result, outcome) <- createAndTrim' outputSize $ \targetPointer -> do
+        maybeErr <- runApply targetPointer
+        pure (0, outputSize, maybeErr)
+      pure $ case outcome of
+        Just applyErr -> Left (ApplyFailed LabelXDelta1 applyErr)
+        Nothing       -> Right (OutputFileContents result)
+      where
+        runApply targetPointer =
+          let
+            applyLoop :: Offset -> [XDelta1Instruction] -> ActionIndex -> IO (Maybe ApplyError)
+            applyLoop !outputPosition [] _actionIndex
+              | remainingFromOffset outputPosition targetFileSize == Length 0 =
+                  pure Nothing
+              | otherwise =
+                  pure (Just (ApplyTargetUnderfilled
+                                (WritePosition outputPosition)
+                                (ExpectedSize targetFileSize)))
+            applyLoop !outputPosition (instruction:rest) !actionIndex =
+              let instructionOffset = xdelta1InstructionOffset instruction
+                  instructionLength = Length (unFileSize (xdelta1InstructionLength instruction))
+                  sourceBytes       = sourceBytesFor source (xdelta1InstructionTarget instruction)
+                  sourceFileSize    = byteFileSize sourceBytes
+                  remainingForWrite = remainingFromOffset outputPosition targetFileSize
+              in if not (fitsWithin outputPosition instructionLength targetFileSize)
+                   then pure (Just (ApplyWritesPastTarget actionIndex
+                                     (RequestedLength instructionLength)
+                                     (RemainingLength remainingForWrite)))
+                   else if not (fitsWithin instructionOffset instructionLength sourceFileSize)
+                   then pure (Just (ApplySourceReadOutOfBounds actionIndex
+                                     (advance instructionOffset instructionLength) sourceFileSize))
+                   else do
+                     copyRegion targetPointer outputPosition sourceBytes instructionOffset instructionLength
+                     applyLoop (advance outputPosition instructionLength) rest (nextAction actionIndex)
+          in applyLoop (Offset 0) (xdelta1Instructions patch) firstAction

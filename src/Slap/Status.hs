@@ -279,6 +279,18 @@ data ApplyError
   -- record's payload length; the 'FileSize' is the source size.
   | ApplyReplaceGrowsFile ActionIndex Offset RequestedLength FileSize
 
+  -- | A BSDiff ADD instruction would read past the end of the diff
+  -- stream. The 'Offset' is the would-be read end; the 'FileSize' is
+  -- the actual diff-stream size. BSDiff-specific because no other
+  -- format carries a diff stream alongside the source.
+  | ApplyDiffReadOutOfBounds ActionIndex Offset FileSize
+
+  -- | A BSDiff COPY instruction would read past the end of the extra
+  -- stream. The 'Offset' is the would-be read end; the 'FileSize' is
+  -- the actual extra-stream size. BSDiff-specific (see comment on
+  -- 'ApplyDiffReadOutOfBounds').
+  | ApplyExtraReadOutOfBounds ActionIndex Offset FileSize
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -1030,6 +1042,18 @@ renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payl
   ++ ", which would extend past the source size of "
   ++ show (unFileSize sourceSize) ++ " bytes"
   ++ " (PPF4 Replaces cannot grow the file; use Append records)"
+
+renderApplyError (ApplyDiffReadOutOfBounds actionIndex readEndOffset diffSize) =
+  "at step #" ++ show (unActionIndex actionIndex)
+  ++ ": diff-stream read would end at offset 0x"
+  ++ showHex (unOffset readEndOffset) ""
+  ++ " but diff stream is " ++ show (unFileSize diffSize) ++ " bytes"
+
+renderApplyError (ApplyExtraReadOutOfBounds actionIndex readEndOffset extraSize) =
+  "at step #" ++ show (unActionIndex actionIndex)
+  ++ ": extra-stream read would end at offset 0x"
+  ++ showHex (unOffset readEndOffset) ""
+  ++ " but extra stream is " ++ show (unFileSize extraSize) ++ " bytes"
 
 ----------------------------------------------------------------------------
 -- renderSlapError
