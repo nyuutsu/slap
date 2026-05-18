@@ -666,8 +666,8 @@ parseSomePatchFromUPS patchContents = do
     , patchAnalysis       = UPS.analyzeUPS patch
     , patchKind           = Differential
     , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noAdvisories (UPS.applyUPS patch source)) }
-    , patchUndo           = Just $ UndoStrategy $ \modified ->
+        { runApply     = \source -> pure (UPS.applyUPS patch source) }
+    , patchUndo           = Just $ UndoStrategy (UPS.undoUPS patch)
         -- UPS is self-inverse (XOR-based): walking the same block
         -- stream against the target reconstructs the source. The
         -- only direction-dependent choice is the output buffer
@@ -676,10 +676,12 @@ parseSomePatchFromUPS patchContents = do
         -- which is what makes size-changing UPS patches round-trip
         -- correctly (a reapply-forward path would have produced a
         -- target-sized buffer regardless of direction, silently
-        -- wrong for growth patches).
-        case UPS.undoUPS patch modified of
-          Right reverted -> Right (noAdvisories reverted)
-          Left slapError -> Left slapError
+        -- wrong for growth patches). Each direction's 'Outcome'
+        -- also carries its own 'ApplyOOBBlocksSkipped' advisory
+        -- measured against that direction's output size — apply
+        -- against 'upsTargetSize', undo against 'upsSourceSize' —
+        -- so the user sees a direction-correct OOB summary instead
+        -- of one frozen at parse time against the target.
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
         , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
@@ -696,7 +698,6 @@ parseSomePatchFromUPS patchContents = do
         }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelUPS EmptyBlocks | Vector.null blocks]
-                            ++ UPS.detectOOBBlocks patch
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelUPS Nothing
         , infoLines  = UPS.upsMeta patch

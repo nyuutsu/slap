@@ -221,7 +221,8 @@ prop_ups = forAll genPair $ \(source, target) ->
         Left parseError ->
           counterexample (renderSlapError parseError) $ property False
         Right (Parsed parsed _parseWarnings) ->
-          UPS.applyUPS parsed (InputFileContents source) === Right (OutputFileContents target)
+          fmap outcomeValue (UPS.applyUPS parsed (InputFileContents source))
+            === Right (OutputFileContents target)
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->

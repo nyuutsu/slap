@@ -331,7 +331,7 @@ parseAndApplyBPS patchBytes sourceBytes = do
 parseAndApplyUPS :: PatchFileContents -> ByteString -> Either SlapError ByteString
 parseAndApplyUPS patchBytes sourceBytes = do
   Parsed parsed _parseWarnings <- parseUPS patchBytes
-  targetResult <- applyUPS parsed (InputFileContents sourceBytes)
+  Outcome targetResult _applyWarnings <- applyUPS parsed (InputFileContents sourceBytes)
   pure (unOutputFileContents targetResult)
 
 assertParseApply
@@ -857,7 +857,7 @@ upsApplyBlockPastTarget =
        Right (Parsed parsed _parseWarnings) ->
          case applyUPS parsed (InputFileContents source) of
            Left slapError -> assertFailure ("apply failed (expected success with OOB clipping): " ++ renderSlapError slapError)
-           Right (OutputFileContents result) ->
+           Right (Outcome (OutputFileContents result) _applyWarnings) ->
              assertEqual "OOB-clipped output" expectedOutput result
 
 ----------------------------------------------------------------------------

@@ -5,7 +5,7 @@ module Slap.UPS.Apply
   ) where
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
-import Slap.Status (SlapError(..), SlapAdvisory(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
                    OOBBlockCount(..), OOBOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -44,16 +44,21 @@ import System.IO.Unsafe (unsafePerformIO)
 -- to its bounds — the in-bounds portion is written and the
 -- out-of-bounds portion is silently skipped. This tolerates the
 -- common creation-tool artifact where the final block's terminator
--- byte lands 1 past the declared output size. Use 'detectOOBBlocks'
--- at parse time to surface these as warnings to the user.
+-- byte lands 1 past the declared output size. The returned
+-- 'Outcome' carries an 'ApplyOOBBlocksSkipped' advisory measured
+-- against the apply-direction output size ('upsTargetSize') so the
+-- caller sees a direction-correct summary of any clipping.
 --
 -- Source-shorter-than-target is legal (spec-mandated zero-fill past
 -- source end) and is handled inline by the helper functions, not as
 -- an error. The caller is still responsible for CRC validation
 -- before calling.
-applyUPS :: UPSPatch -> InputFileContents -> Either SlapError OutputFileContents
-applyUPS patch (InputFileContents source) =
-  OutputFileContents <$> runUPSXorWalk patch source (upsTargetSize patch)
+applyUPS :: UPSPatch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
+applyUPS patch (InputFileContents source) = do
+  bytes <- runUPSXorWalk patch source outputSize
+  pure (Outcome (OutputFileContents bytes) (detectOOBBlocks patch outputSize))
+  where
+    outputSize = upsTargetSize patch
 
 -- | Reverse-direction sibling to 'applyUPS'. UPS XOR is self-inverse,
 -- so reconstructing the source from the target uses the same block
@@ -62,10 +67,17 @@ applyUPS patch (InputFileContents source) =
 -- apply: blocks whose span exceeds the new (source-side) output
 -- size get clipped against it, which is the typical situation for
 -- growth patches where the block stream covers the larger target
--- but undo writes only the smaller source.
-undoUPS :: UPSPatch -> OutputFileContents -> Either SlapError InputFileContents
-undoUPS patch (OutputFileContents modified) =
-  InputFileContents <$> runUPSXorWalk patch modified (upsSourceSize patch)
+-- but undo writes only the smaller source. The returned 'Outcome'
+-- carries an 'ApplyOOBBlocksSkipped' advisory measured against the
+-- undo-direction output size ('upsSourceSize'), which for growth
+-- patches reports many more blocks and many more bytes than the
+-- apply-direction advisory does on the same patch.
+undoUPS :: UPSPatch -> OutputFileContents -> Either SlapError (Outcome InputFileContents)
+undoUPS patch (OutputFileContents modified) = do
+  bytes <- runUPSXorWalk patch modified outputSize
+  pure (Outcome (InputFileContents bytes) (detectOOBBlocks patch outputSize))
+  where
+    outputSize = upsSourceSize patch
 
 -- | Internal: walks a UPS patch's block stream against @inputBytes@,
 -- writing an output buffer of @outputSize@ bytes. The two public
@@ -228,22 +240,29 @@ data OOBWalkState = OOBWalkState
   , oobOvershoot  :: !OOBOvershootBytes
   }
 
--- | Walk the block stream and detect blocks whose span exceeds the
--- declared target size. Returns a single summary warning if any OOB
--- blocks exist, or an empty list if all blocks fit. Called at parse
--- time from 'Slap.SomePatch' to populate 'patchAdvisories' — the
--- user sees the diagnostic before apply runs, and 'applyUPS' clips
--- the writes silently.
-detectOOBBlocks :: UPSPatch -> [SlapAdvisory]
-detectOOBBlocks patch = case oobFirstIndex finalState of
+-- | Walk the block stream and detect blocks whose declared span
+-- exceeds the supplied @outputSize@. Returns a single summary
+-- advisory if any OOB blocks exist, or an empty list if all blocks
+-- fit. The output_size parameter is direction-dependent: apply
+-- supplies 'upsTargetSize', undo supplies 'upsSourceSize'. Same
+-- block stream, different output sizes, different OOB profiles —
+-- a growth patch typically has a handful of OOB blocks (often just
+-- one, from the terminator quirk) in the apply direction and many
+-- in the undo direction, because the block stream covers the
+-- larger target while undo writes the smaller source.
+--
+-- Called from 'applyUPS' and 'undoUPS' against their respective
+-- output sizes; the resulting advisory is carried in the returned
+-- 'Outcome' so the user always sees a summary measured against the
+-- operation that actually ran.
+detectOOBBlocks :: UPSPatch -> FileSize -> [SlapAdvisory]
+detectOOBBlocks patch outputSize = case oobFirstIndex finalState of
   Nothing       -> []
   Just firstIdx ->
     [ApplyOOBBlocksSkipped LabelUPS
       (oobCount finalState) firstIdx
-      (oobOvershoot finalState) targetFileSize]
+      (oobOvershoot finalState) outputSize]
   where
-    targetFileSize = upsTargetSize patch
-
     initialState = OOBWalkState
       { oobPosition   = Offset 0
       , oobCount      = OOBBlockCount 0
@@ -257,9 +276,9 @@ detectOOBBlocks patch = case oobFirstIndex finalState of
       let xorLen        = byteLength xorData
           totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
           nextPosition  = advance (oobPosition state) totalBlockLen
-      in if fitsWithin (oobPosition state) totalBlockLen targetFileSize
+      in if fitsWithin (oobPosition state) totalBlockLen outputSize
            then state { oobPosition = nextPosition }
-           else let remaining      = remainingFromOffset (oobPosition state) targetFileSize
+           else let remaining      = remainingFromOffset (oobPosition state) outputSize
                     blockOvershoot = subtractLength totalBlockLen remaining
                     OOBBlockCount currentCount = oobCount state
                 in state

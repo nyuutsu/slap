@@ -13,7 +13,7 @@ import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 
-import Slap.Status (CreateResult(..), Parsed(..), renderSlapError)
+import Slap.Status (CreateResult(..), Parsed(..), Outcome(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), RequestedPatchMetadata(..),
                      UndoInclusion(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
@@ -52,8 +52,9 @@ prop_upsUndo = forAll genPair $ \(source, target) ->
           case UPS.applyUPS parsed (InputFileContents source) of
             Left applyError ->
               counterexample ("apply: " ++ renderSlapError applyError) $ property False
-            Right intermediate ->
-              UPS.undoUPS parsed intermediate === Right (InputFileContents source)
+            Right (Outcome intermediate _applyWarnings) ->
+              fmap outcomeValue (UPS.undoUPS parsed intermediate)
+                === Right (InputFileContents source)
 
 -- | PPF3 with undo data: apply then undo recovers the original.
 -- Same-size pairs only — PPF3 undo writes back original bytes but can't
