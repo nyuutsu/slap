@@ -6,7 +6,8 @@ module Slap.UPS.Apply
 
 import Slap.UPS.Types (UPSPatch(..), UPSBlock(..), upsTerminatorByteLength)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Outcome(..),
-                   OOBBlockCount(..), OOBOvershootBytes(..))
+                   OOBBlockCount(..), OOBOvershootBytes(..),
+                   ApplyDirection(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex(unActionIndex),
@@ -56,7 +57,7 @@ import System.IO.Unsafe (unsafePerformIO)
 applyUPS :: UPSPatch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
 applyUPS patch (InputFileContents source) = do
   bytes <- runUPSXorWalk patch source outputSize
-  pure (Outcome (OutputFileContents bytes) (detectOOBBlocks patch outputSize))
+  pure (Outcome (OutputFileContents bytes) (detectOOBBlocks patch Forward outputSize))
   where
     outputSize = upsTargetSize patch
 
@@ -75,7 +76,7 @@ applyUPS patch (InputFileContents source) = do
 undoUPS :: UPSPatch -> OutputFileContents -> Either SlapError (Outcome InputFileContents)
 undoUPS patch (OutputFileContents modified) = do
   bytes <- runUPSXorWalk patch modified outputSize
-  pure (Outcome (InputFileContents bytes) (detectOOBBlocks patch outputSize))
+  pure (Outcome (InputFileContents bytes) (detectOOBBlocks patch Reverse outputSize))
   where
     outputSize = upsSourceSize patch
 
@@ -251,15 +252,19 @@ data OOBWalkState = OOBWalkState
 -- in the undo direction, because the block stream covers the
 -- larger target while undo writes the smaller source.
 --
+-- The direction parameter tags the advisory with which operation
+-- produced it ('Forward' for apply, 'Reverse' for undo), so the
+-- rendered text matches the operation the user invoked.
+--
 -- Called from 'applyUPS' and 'undoUPS' against their respective
 -- output sizes; the resulting advisory is carried in the returned
 -- 'Outcome' so the user always sees a summary measured against the
 -- operation that actually ran.
-detectOOBBlocks :: UPSPatch -> FileSize -> [SlapAdvisory]
-detectOOBBlocks patch outputSize = case oobFirstIndex finalState of
+detectOOBBlocks :: UPSPatch -> ApplyDirection -> FileSize -> [SlapAdvisory]
+detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
   Nothing       -> []
   Just firstIdx ->
-    [ApplyOOBBlocksSkipped LabelUPS
+    [ApplyOOBBlocksSkipped LabelUPS direction
       (oobCount finalState) firstIdx
       (oobOvershoot finalState) outputSize]
   where

@@ -38,6 +38,8 @@ module Slap.Status
   , OOBBlockCount(..)
   , MarkerOvershootBytes(..)
   , OOBOvershootBytes(..)
+  , ApplyDirection(..)
+  , directionVerb
   , VerificationSide(..)
   , HashAlgorithm(..)
   , ExpectedAdler32(..)
@@ -800,7 +802,7 @@ data SlapAdvisory
   | NINJA2SMSGameGearAmbiguity
 
   -- Apply: out-of-bounds block clipping
-  | ApplyOOBBlocksSkipped FormatLabel OOBBlockCount ActionIndex OOBOvershootBytes FileSize
+  | ApplyOOBBlocksSkipped FormatLabel ApplyDirection OOBBlockCount ActionIndex OOBOvershootBytes FileSize
 
   -- Format-specific
   --
@@ -947,6 +949,38 @@ newtype MarkerOvershootBytes = MarkerOvershootBytes { unMarkerOvershootBytes :: 
 -- 'detectOOBBlocks' walk can use '<>' and 'mempty' directly.
 newtype OOBOvershootBytes = OOBOvershootBytes { unOOBOvershootBytes :: Length }
   deriving (Eq, Ord, Show, Semigroup, Monoid)
+
+----------------------------------------------------------------------------
+-- ApplyDirection — which direction an apply/undo operation ran in
+----------------------------------------------------------------------------
+
+-- | Which direction an apply/undo operation ran in. Tagged onto
+-- advisories that describe direction-dependent observations about
+-- an operation (such as 'ApplyOOBBlocksSkipped', whose count and
+-- overshoot are measured against the output the operation actually
+-- wrote — target_size for forward, source_size for reverse).
+--
+-- Not related to the CLI subcommand the user typed. Two distinct
+-- subcommands (@slap apply@, @slap undo@) happen to drive the two
+-- directions one-to-one, but the direction concept lives at the
+-- Format layer (each format's apply/undo functions know which
+-- direction they implement), while subcommand selection lives at
+-- the Entry-point layer ('app/Main.hs'). Naming an operation by
+-- direction rather than by subcommand keeps the Foundation layer's
+-- vocabulary independent of the CLI surface.
+data ApplyDirection
+  = Forward  -- ^ The natural-direction operation: 'applyUPS', 'applyBPS', etc.
+  | Reverse  -- ^ The inverse operation: 'undoUPS', 'undoBPS', etc.
+  deriving (Eq, Show)
+
+-- | The verb describing operations of each direction, suitable for
+-- inclusion in rendered advisory text. Returns @"apply"@ and @"undo"@
+-- (rather than @"forward"@ and @"reverse"@) because those are the
+-- words slap uses elsewhere in user-facing text, including the CLI
+-- subcommands that drive each direction.
+directionVerb :: ApplyDirection -> String
+directionVerb Forward = "apply"
+directionVerb Reverse = "undo"
 
 ----------------------------------------------------------------------------
 -- Verification: shared payload types
@@ -1529,8 +1563,8 @@ renderSlapAdvisory NINJA2SMSGameGearAmbiguity =
   ++ " is ambiguous; defaults to SMS"
   ++ " on conversion (override with --rom-type gg)"
 
-renderSlapAdvisory (ApplyOOBBlocksSkipped label (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
-  formatLabelName label ++ " apply: "
+renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
+  formatLabelName label ++ " " ++ directionVerb direction ++ ": "
   ++ show count ++ plural count " block writes" " blocks write"
   ++ " past declared output size ("
   ++ show (unFileSize declaredSize) ++ " bytes); first at step #"
