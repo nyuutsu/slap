@@ -10,10 +10,10 @@ module Slap.NINJA2.Parse
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, atEnd)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -68,11 +68,11 @@ parseNINJA2 (PatchFileContents input)
       Left (InputTooShort LabelNINJA2 (RequiredLength headerSize) (ActualLength (byteLength input)))
   | otherwise = case toPatchEncoding (ByteString.index input 6) of
       Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
-      Right encoding -> case runGet (parseNINJA2Body encoding) input of
-        Left errorMessage -> Left (ParseError LabelNINJA2 (GetErrorMessage errorMessage))
+      Right encoding -> case runByteParser (parseNINJA2Body encoding) input of
+        Left parserError -> Left (ParseError LabelNINJA2 parserError)
         Right patch -> Right (Parsed patch [])
   where
-    parseNINJA2Body :: PatchEncoding -> Get NINJA2Patch
+    parseNINJA2Body :: PatchEncoding -> ByteParser NINJA2Patch
     parseNINJA2Body encoding = do
       headerBytes <- getBytes headerSize
       let meta = parseFixedHeader headerBytes
@@ -85,7 +85,7 @@ parseNINJA2 (PatchFileContents input)
       , ninja2PatchEncoding = encoding
       }
 
-parseCommands :: NINJA2Patch -> Get NINJA2Patch
+parseCommands :: NINJA2Patch -> ByteParser NINJA2Patch
 parseCommands patch = do
   done <- atEnd
   if done then pure patch
@@ -98,7 +98,7 @@ parseCommands patch = do
       _    -> fail ("unknown command code: 0x" ++ padHex 2 code)
 
 -- | Command 0x01: OPEN_NEW_FILE
-parseFileCommand :: NINJA2Patch -> Get NINJA2Patch
+parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch
 parseFileCommand patch = do
   _filename <- parsePackedByteString
   romTypeByte <- getByte  -- ROM type byte
@@ -127,7 +127,7 @@ parseFileCommand patch = do
              }
 
 -- | Command 0x02: XOR record
-parseXorRecord :: NINJA2Patch -> Get NINJA2Patch
+parseXorRecord :: NINJA2Patch -> ByteParser NINJA2Patch
 parseXorRecord patch = do
   recordOffset <- Offset . fromIntegral <$> parsePackedInteger
   xorPayload <- parsePackedByteString

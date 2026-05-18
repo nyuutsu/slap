@@ -14,11 +14,11 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         ppf3FileIdLengthFieldWidth,
                         ppf3FileIdMarkerLength, ppf3FileIdFooterLength)
 import Slap.Binary (getWord16LE)
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, int64LE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, int64LE)
 import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
                      ActionIndex, unActionIndex,
@@ -47,7 +47,7 @@ parsePPF3 (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      header <- first (ParseError LabelPPF3 . GetErrorMessage) (runGet parseHeader input)
+      header <- first (ParseError LabelPPF3) (runByteParser parseHeader input)
       imageType <- case ppf3HeaderImageTypeByte header of
         0x00 -> Right BIN
         0x01 -> Right GI
@@ -58,9 +58,9 @@ parsePPF3 (PatchFileContents input)
           fileId       = detectFileId input
           recordBody   = stripFileId fileId
                             (ByteString.drop (unLength headerLength) input)
-      records <- first (ParseError LabelPPF3 . GetErrorMessage)
-                       (runGet (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
-                               recordBody)
+      records <- first (ParseError LabelPPF3)
+                       (runByteParser (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
+                                      recordBody)
       pure (Parsed
         PPF3Patch
           { ppf3Description     = ppf3HeaderDescription header
@@ -72,7 +72,7 @@ parsePPF3 (PatchFileContents input)
           }
         [])
   where
-    parseHeader :: Get PPF3ParsedHeader
+    parseHeader :: ByteParser PPF3ParsedHeader
     parseHeader = do
       skip (Length 6)
       description <- getBytes ppf3DescriptionLength
@@ -105,7 +105,7 @@ checkEncodingByte input
 -- count=0 RLE sentinel, but each record optionally carries an
 -- equal-length undo-bytes payload after the write payload (when
 -- the parent patch's undo flag is set).
-parsePPF3Records :: Bool -> ActionIndex -> Get [PPF3Record]
+parsePPF3Records :: Bool -> ActionIndex -> ByteParser [PPF3Record]
 parsePPF3Records hasUndo recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 9 then pure []

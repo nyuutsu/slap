@@ -11,12 +11,12 @@ import Slap.BPS.Types (BPSPatch(..), BPSBody(..), BPSAction(..), BPSMetadata(..)
                        bpsMagicBytes, bpsMagicLength, bpsCRC32Length, bpsFooterLength, bpsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getBytes, byuuVarint, atEnd)
+import Slap.ByteParser (ByteParser, runByteParser, getBytes, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..), Delta(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
@@ -47,10 +47,10 @@ parseBPS (PatchFileContents input)
         else pure ()
       let sourceCRC = CRC32 (getWord32LE (inputLength - footerLength) input)
           targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
-          -- Parse body between magic and footer using Get monad
+          -- Parse body between magic and footer using ByteParser monad
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
-      case runGet parseBPSBody bodyBytes of
-        Left errorMessage -> Left (ParseError LabelBPS (GetErrorMessage errorMessage))
+      case runByteParser parseBPSBody bodyBytes of
+        Left parserError -> Left (ParseError LabelBPS parserError)
         Right body
           | unFileSize (bpsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelBPS FieldSourceSize
@@ -76,7 +76,7 @@ parseBPS (PatchFileContents input)
                   }
                 (bpsBodyWarnings body))
 
-parseBPSBody :: Get BPSBody
+parseBPSBody :: ByteParser BPSBody
 parseBPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
@@ -137,10 +137,10 @@ data BPSCopyKind = CopyFromSource | CopyFromTarget
 -- per-action decoding is delegated to 'decodeOneAction' so the
 -- four-arm command-code dispatch — and the @0x81@ negative-zero
 -- detection it carries on the two copy arms — has one home.
-parseActions :: Get BPSParsedActionStream
+parseActions :: ByteParser BPSParsedActionStream
 parseActions = walkActions [] []
   where
-    walkActions :: [BPSAction] -> [SlapAdvisory] -> Get BPSParsedActionStream
+    walkActions :: [BPSAction] -> [SlapAdvisory] -> ByteParser BPSParsedActionStream
     walkActions accumulatedActionsReversed accumulatedWarningsReversed = do
       done <- atEnd
       if done
@@ -160,7 +160,7 @@ parseActions = walkActions [] []
 -- The two copy variants additionally inspect the offset varint for
 -- the non-canonical @0x81@ encoding of zero and emit
 -- 'NegativeZeroInBPS' when seen.
-decodeOneAction :: Get BPSDecodedAction
+decodeOneAction :: ByteParser BPSDecodedAction
 decodeOneAction = do
   encoded <- byuuVarint
   let dataLength = Length (fromIntegral (shiftR encoded 2) + 1)
@@ -184,7 +184,7 @@ decodeOneAction = do
 -- header. The encoded varint is captured before decoding so the
 -- @0x81@ negative-zero shape can be detected and surfaced as a
 -- 'NegativeZeroInBPS' warning without re-reading the wire.
-decodeCopyAction :: BPSCopyKind -> Length -> Get BPSDecodedAction
+decodeCopyAction :: BPSCopyKind -> Length -> ByteParser BPSDecodedAction
 decodeCopyAction copyKind dataLength = do
   offsetEncoded <- byuuVarint
   let delta = Delta (fromIntegral (decodeSignedVarint offsetEncoded))

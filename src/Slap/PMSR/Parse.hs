@@ -10,11 +10,11 @@ module Slap.PMSR.Parse
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getBytes, skip, remaining)
-import qualified Slap.Get as Get
+import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining)
+import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -29,22 +29,22 @@ parsePMSR :: PatchFileContents -> Either SlapError (Parsed PMSRPatch)
 parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (byteLength input)))
   | ByteString.take 4 input /= pmsrMagicBytes = Left (BadMagic LabelPMSR (ActualMagic (ByteString.take 4 input)))
-  | otherwise = case runGet parsePMSRBody input of
-      Left errorMessage -> Left (ParseError LabelPMSR (GetErrorMessage errorMessage))
+  | otherwise = case runByteParser parsePMSRBody input of
+      Left parserError -> Left (ParseError LabelPMSR parserError)
       Right result -> Right (Parsed result [])
 
-parsePMSRBody :: Get PMSRPatch
+parsePMSRBody :: ByteParser PMSRPatch
 parsePMSRBody = do
   skip (Length 4)  -- magic
-  count <- fromIntegral <$> Get.word32BE
+  count <- fromIntegral <$> ByteParser.word32BE
   records  <- parseLoop count []
   pure (PMSRPatch (Vector.fromList records))
 
-parseLoop :: Int -> [PMSRRecord] -> Get [PMSRRecord]
+parseLoop :: Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
 parseLoop 0 accumulated = pure (reverse accumulated)
 parseLoop count accumulated = do
-  offset <- Offset . fromIntegral <$> Get.word32BE
-  dataLength <- fromIntegral <$> Get.word32BE
+  offset <- Offset . fromIntegral <$> ByteParser.word32BE
+  dataLength <- fromIntegral <$> ByteParser.word32BE
   available <- remaining
   if dataLength > unLength available
     then fail ("record needs " ++ show dataLength ++ " bytes but only "

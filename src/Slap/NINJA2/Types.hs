@@ -56,7 +56,7 @@ module Slap.NINJA2.Types
 -- through 'Slap.PlatformType.PlatformType'.
 
 import Slap.Checksum (MD5Hash)
-import Slap.Get (Get, getByte, getBytes)
+import Slap.ByteParser (ByteParser, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Display.Primitives (padHex)
 import Slap.PlatformType (PlatformType)
@@ -269,7 +269,7 @@ data XorRecord = XorRecord
 -- VLV: Variable Length Value (1-byte length prefix, then N LE bytes)
 ----------------------------------------------------------------------------
 
-parsePackedInteger :: Get Int64
+parsePackedInteger :: ByteParser Int64
 parsePackedInteger = do
   count <- fromIntegral <$> getByte
   packedBytes <- getBytes (Length count)
@@ -279,7 +279,7 @@ parsePackedInteger = do
   pure $ foldl' (\accumulated index ->
     accumulated + fromIntegral (ByteString.index packedBytes index) * (256 ^ index)) 0 [0..clampedCount-1]
 
-parsePackedByteString :: Get ByteString
+parsePackedByteString :: ByteParser ByteString
 parsePackedByteString = do
   dataLength <- fromIntegral <$> parsePackedInteger
   getBytes (Length dataLength)

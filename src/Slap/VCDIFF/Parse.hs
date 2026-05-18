@@ -18,10 +18,10 @@ import Slap.VCDIFF.Types
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), ByteParserError, Parsed(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (runGet, getByte, getBytes, skip, getPosition, setPosition,
-                  atEnd, vcdiffVarint, word32BE, failGet)
+import Slap.ByteParser (runByteParser, getByte, getBytes, skip, getPosition, setPosition,
+                         atEnd, vcdiffVarint, word32BE, failByteParser)
 import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -43,7 +43,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
   | ByteString.take 3 input /= vcdiffMagicBytes = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)
-      (maybeTableBytes, header, windows) <- wrapParse (runGet (parseHeader validatedVersion) input)
+      (maybeTableBytes, header, windows) <- wrapParse (runByteParser (parseHeader validatedVersion) input)
       case maybeTableBytes of
         Nothing -> Right (Parsed (VCDIFFPatch header windows defaultCodeTable
                                               defaultNearSize defaultSameSize) [])
@@ -67,7 +67,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       maybeTableBytes <- if hasCodeTable
         then do
           when (not allowCustom) $
-            failGet "nested custom code tables are not allowed"
+            failByteParser "nested custom code tables are not allowed"
           tableLength <- fromIntegral <$> vcdiffVarint
           Just <$> getBytes (Length tableLength)
         else pure Nothing
@@ -100,7 +100,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       let deltaEnd = Position (unPosition deltaStart + fromIntegral deltaLength)
       -- Inside the delta body:
       rawTargetSize <- vcdiffVarint
-      when (rawTargetSize < 0) $ failGet "negative window target size"
+      when (rawTargetSize < 0) $ failByteParser "negative window target size"
       let targetSize = FileSize (fromIntegral rawTargetSize)
       deltaIndicator <- getByte
       let secondaryCompression = toVCDIFFSecondaryCompression deltaIndicator
@@ -111,7 +111,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       when (compressAddRunData secondaryCompression
             || compressInstructions secondaryCompression
             || (not isXdelta3 && compressAddresses secondaryCompression)) $
-        failGet "secondary compression in data sections is not supported"
+        failByteParser "secondary compression in data sections is not supported"
       -- Compute data section start from deltaEnd, not from current position.
       -- xdelta3 writes 4 bytes of Adler32 after the length fields (even in
       -- version 0 mode, sometimes without setting any flag), so working
@@ -143,6 +143,6 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
         , vcdiffAddresses              = addressData
         }
 
-    wrapParse :: Either String a -> Either SlapError a
-    wrapParse (Left errorMessage) = Left (ParseError LabelVCDIFF (GetErrorMessage errorMessage))
+    wrapParse :: Either ByteParserError a -> Either SlapError a
+    wrapParse (Left parserError) = Left (ParseError LabelVCDIFF parserError)
     wrapParse (Right result) = Right result

@@ -59,11 +59,13 @@ module Slap.Status
   , OffsetTokenText(..)
   , HexDigitsText(..)
   , FlagErrorText(..)
-  , GetErrorMessage(..)
+  , ByteParserError(..)
+  , ByteParserOperation(..)
   , DroppedDescriptionText(..)
     -- Rendering
   , renderSlapError
   , renderApplyError
+  , renderByteParserError
   , renderCursorKind
   , renderSlapAdvisory
   ) where
@@ -76,7 +78,7 @@ import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.PlatformType (PlatformType, platformName)
-import Slap.Measure (Offset(..), Length(..), FileSize(..),
+import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
                      SignedOffset(..), ActionIndex(unActionIndex),
                      ReadOffset(..), WritePosition(..),
                      RequestedLength(..), RemainingLength(..),
@@ -458,13 +460,16 @@ data SlapError
   -- parser rejects.
   | MalformedNINJA1Content NINJA1Malformation
 
-  -- | A generic Get-monad failure surfaced from a per-format parser.
-  -- The wrapped 'GetErrorMessage' carries the diagnostic verbatim;
-  -- the newtype labels the string as opaque text from the Get layer,
-  -- discouraging pattern-matching on its contents. A future deeper
-  -- restructure of 'Get' errors can replace the inner 'String' or
-  -- the whole newtype without coordinating outside this seam.
-  | ParseError FormatLabel GetErrorMessage
+  -- | A byte-parser failure surfaced from a per-format parser. The
+  -- payload is a structured 'ByteParserError' that enumerates each
+  -- shape the parser layer can fail in (underflow, terminator-not-
+  -- found, varint overrun, and so on), so the renderer and any
+  -- programmatic consumer can dispatch on the cause without scraping
+  -- a free-form string. The 'FormatLabel' names which format's parser
+  -- raised the failure; the constructor is per-format because the
+  -- same byte-parser primitive surfaces meaning differently depending
+  -- on which format-level call site invoked it.
+  | ParseError FormatLabel ByteParserError
 
   -- | The xdelta1 parser rejected a source-list configuration that
   -- was not the canonical @[data segment, file source]@ pair. The
@@ -1090,6 +1095,52 @@ renderApplyError (ApplyExtraReadOutOfBounds actionIndex readEndOffset extraSize)
   ++ " but extra stream is " ++ show (unFileSize extraSize) ++ " bytes"
 
 ----------------------------------------------------------------------------
+-- renderByteParserError
+----------------------------------------------------------------------------
+
+-- | Human-readable name for the primitive that surfaced an error.
+-- Renderer-private; no consumer dispatches on the string form.
+byteParserOperationLabel :: ByteParserOperation -> String
+byteParserOperationLabel GetBytesOperation        = "getBytes"
+byteParserOperationLabel SkipOperation            = "skip"
+byteParserOperationLabel FixedWidthReadOperation  = "fixed-width read"
+byteParserOperationLabel VarintReadOperation      = "varint read"
+
+renderByteParserError :: ByteParserError -> String
+
+renderByteParserError
+  (ByteParserUnderflow
+      operation
+      (RequestedLength (Length requested))
+      (RemainingLength (Length available))
+      (Position cursor)) =
+  byteParserOperationLabel operation
+  ++ ": need " ++ show requested ++ " bytes at offset " ++ show cursor
+  ++ " but only " ++ show available ++ " available"
+
+renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cursor)) =
+  "getUntilByte: terminator 0x" ++ padHex 2 terminatorByte
+  ++ " not found from offset " ++ show cursor
+
+renderByteParserError
+  (ByteParserPositionOutOfBounds (Position target) (ActualLength (Length inputLength))) =
+  "setPosition: " ++ show target
+  ++ " out of bounds (input length " ++ show inputLength ++ ")"
+
+renderByteParserError
+  (ByteParserNegativeLengthRequested operation (Length amount)) =
+  byteParserOperationLabel operation ++ ": negative length " ++ show amount
+
+renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
+  "varint read overran buffer at offset " ++ show cursor
+
+renderByteParserError ByteParserVarintExceededWidth =
+  "varint overflow (too many continuation bytes)"
+
+renderByteParserError (ByteParserGenericFailure message) =
+  message
+
+----------------------------------------------------------------------------
 -- renderSlapError
 ----------------------------------------------------------------------------
 
@@ -1194,8 +1245,8 @@ renderSlapError (MalformedNINJA1Content malformation) =
     NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " ++ t
     NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " ++ line
 
-renderSlapError (ParseError label (GetErrorMessage message)) =
-  formatLabelName label ++ ": " ++ message
+renderSlapError (ParseError label parserError) =
+  formatLabelName label ++ ": " ++ renderByteParserError parserError
 
 renderSlapError (UnsupportedXDelta1Shape violation) =
   formatLabelName LabelXDelta1
@@ -1776,12 +1827,83 @@ newtype HexDigitsText = HexDigitsText { unHexDigitsText :: String }
 newtype FlagErrorText = FlagErrorText { unFlagErrorText :: String }
   deriving (Eq, Show)
 
--- | The diagnostic returned by a 'Get'-monad parser when it refuses
--- an input. Carried verbatim and wrapped so the opaque string stays
--- labeled and non-pattern-matchable at the type level — a future
--- deeper restructure of 'Get' errors can replace the inner content
--- without coordinating outside this seam.
-newtype GetErrorMessage = GetErrorMessage { unGetErrorMessage :: String }
+----------------------------------------------------------------------------
+-- ByteParserError
+----------------------------------------------------------------------------
+
+-- | Which primitive of 'Slap.ByteParser' surfaced an underflow- or
+-- negative-length-flavored error. Carried by the two
+-- 'ByteParserError' constructors whose shape is the same across
+-- multiple primitives ('ByteParserUnderflow',
+-- 'ByteParserNegativeLengthRequested') so the renderer can name
+-- which call site the failure came from.
+data ByteParserOperation
+  = GetBytesOperation
+  | SkipOperation
+  | FixedWidthReadOperation
+  | VarintReadOperation
+  deriving (Eq, Show)
+
+-- | The structured failure type for 'Slap.ByteParser.ByteParser'.
+-- Lifted into 'SlapError' via the per-format 'ParseError' constructor;
+-- each format's 'Parse.hs' wraps it with its own 'FormatLabel' at the
+-- @runByteParser@ seam.
+--
+-- Constructors are 'ByteParser'-prefixed to match slap's per-domain
+-- convention ('ApplyError' constructors are @Apply*@, 'PCHTXTMalformation'
+-- are @PCHTXT*@, and so on). Shared underflow shape is parameterized
+-- over 'ByteParserOperation' rather than split into a constructor per
+-- primitive — the axes the consumer wants to dispatch on are the
+-- failure kind and the surfacing primitive, in that order.
+--
+-- 'ByteParserGenericFailure' is the @MonadFail@ fallback for messages
+-- that don't yet have a typed home. Each remaining occurrence is a
+-- candidate for promotion to a real constructor in a later tightening
+-- pass; the arm is explicitly the last resort, not a kitchen sink.
+data ByteParserError
+
+  -- | A read could not be satisfied: 'RequestedLength' bytes were
+  -- asked for at 'Position', but only 'RemainingLength' bytes were
+  -- left in the input. The 'ByteParserOperation' names which
+  -- primitive surfaced the underflow.
+  = ByteParserUnderflow ByteParserOperation RequestedLength RemainingLength Position
+
+  -- | 'Slap.ByteParser.getUntilByte' scanned for the given terminator
+  -- byte from 'Position' to end-of-input and did not find it.
+  | ByteParserTerminatorNotFound Word8 Position
+
+  -- | A 'Slap.ByteParser.setPosition' target was outside the half-
+  -- open interval @[0, inputLength]@. The 'Position' is the
+  -- offending target; the 'ActualLength' is the input's total length.
+  | ByteParserPositionOutOfBounds Position ActualLength
+
+  -- | A primitive was asked for a negative number of bytes. The
+  -- 'ByteParserOperation' names which primitive received the
+  -- negative request; the 'Length' is the offending value as
+  -- received.
+  | ByteParserNegativeLengthRequested ByteParserOperation Length
+
+  -- | A varint started inside the buffer but its continuation bytes
+  -- ran past the end. The 'Position' is where the varint started.
+  -- Distinct from 'ByteParserUnderflow'\@'VarintReadOperation', which
+  -- fires when the read started at or past EOF.
+  | ByteParserVarintOverranBuffer Position
+
+  -- | A varint accumulated too many continuation bytes to fit in the
+  -- target machine word. Today only the EDSIO varint produces this;
+  -- the constructor takes no payload because the only thing the
+  -- variant says is "the value can't be represented", which is
+  -- complete on its own.
+  | ByteParserVarintExceededWidth
+
+  -- | 'MonadFail'\@'fail' fallback. Carries the message verbatim so
+  -- existing call sites that hand a literal string ('failByteParser'
+  -- uses and pattern-match-bind failures inside @do@-notation) keep
+  -- their diagnostics. Promoting a recurring message into a typed
+  -- constructor above is the right follow-up for any new failure
+  -- shape that proves load-bearing.
+  | ByteParserGenericFailure String
+
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------

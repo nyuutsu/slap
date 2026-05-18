@@ -9,11 +9,11 @@ module Slap.PPF4.Parse (parsePPF4) where
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
                         ppf4PreambleLength, ppf4DescriptionLength,
                         ppf4PostDescriptionLength)
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), ByteParserError, Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, skip, remaining, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Offset(..), Length(..),
                      RequiredLength(..), ActualLength(..),
                      ActionIndex(unActionIndex), firstAction, nextAction,
@@ -37,7 +37,7 @@ parsePPF4 (PatchFileContents input)
               (RequiredLength minPPF4Length)
               (ActualLength (byteLength input)))
   | otherwise = do
-      (description, replaces, appends) <- ppf4WrapError (runGet parsePPF4Body input)
+      (description, replaces, appends) <- ppf4WrapError (runByteParser parsePPF4Body input)
       pure (Parsed
         PPF4Patch
           { ppf4Description = description
@@ -46,7 +46,7 @@ parsePPF4 (PatchFileContents input)
           }
         [])
   where
-    parsePPF4Body :: Get (ByteString, [PPF4Replace], [PPF4Append])
+    parsePPF4Body :: ByteParser (ByteString, [PPF4Replace], [PPF4Append])
     parsePPF4Body = do
       skip ppf4PreambleLength
       description <- getBytes ppf4DescriptionLength
@@ -60,16 +60,16 @@ parsePPF4 (PatchFileContents input)
 minPPF4Length :: Length
 minPPF4Length = ppf4PreambleLength
 
--- | Wrap a Get error string into a SlapError, labeled PPF4.
-ppf4WrapError :: Either String a -> Either SlapError a
-ppf4WrapError = either (Left . ParseError LabelPPF4 . GetErrorMessage) Right
+-- | Wrap a ByteParser error into a SlapError, labeled PPF4.
+ppf4WrapError :: Either ByteParserError a -> Either SlapError a
+ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 
 -- | Parse PPF4 records (1-byte cmd, 4-byte offset, 1-byte count, N
 -- bytes data) while enforcing the two-phase invariant: every Replace
 -- record must precede every Append record.
 parsePPF4Records :: ActionIndex -> PPF4ParsePhase
                  -> [PPF4Replace] -> [PPF4Append]
-                 -> Get ([PPF4Replace], [PPF4Append])
+                 -> ByteParser ([PPF4Replace], [PPF4Append])
 parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
   remainingBytes <- remaining
   if unLength remainingBytes < 6

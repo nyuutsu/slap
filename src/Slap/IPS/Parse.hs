@@ -25,12 +25,12 @@ import Slap.IPS.Types
   , offsetWidthByteCount
   )
 import Slap.Binary (getWord24BE)
-import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get
-  ( Get
-  , runGet
+import Slap.ByteParser
+  ( ByteParser
+  , runByteParser
   , getByte
   , getBytes
   , skip
@@ -106,9 +106,9 @@ parseIPS (PatchFileContents inputBytes)
     runVariantParser variant =
       let bodyAfterMagic =
             ByteString.drop (unLength ipsMagicLength) inputBytes
-      in case runGet (parseIPSBody variant) bodyAfterMagic of
-           Left getErrorMessage ->
-             Left (ParseError LabelIPS (GetErrorMessage getErrorMessage))
+      in case runByteParser (parseIPSBody variant) bodyAfterMagic of
+           Left parserError ->
+             Left (ParseError LabelIPS parserError)
            Right bodyShape ->
              finalizeBodyShape variant bodyShape
 
@@ -192,7 +192,7 @@ labelForIPSVariant StandardIPS = LabelIPS
 labelForIPSVariant IPS32       = LabelIPS32
 
 ----------------------------------------------------------------------------
--- parseIPSBody — Get-monad inner record loop
+-- parseIPSBody — ByteParser-monad inner record loop
 ----------------------------------------------------------------------------
 
 -- | Walk the post-magic record stream record by record, peeking at
@@ -216,7 +216,7 @@ labelForIPSVariant IPS32       = LabelIPS32
 --     as an 'IPSParseTruncated' with a 'NoEOFMarker' warning.
 --
 -- The peek is genuinely non-destructive: 'lookAhead' from
--- 'Slap.Get' runs the sub-parser and rewinds the cursor regardless
+-- 'Slap.ByteParser' runs the sub-parser and rewinds the cursor regardless
 -- of result, so the subsequent record-decode path consumes the same
 -- bytes the peek inspected.
 --
@@ -241,7 +241,7 @@ labelForIPSVariant IPS32       = LabelIPS32
 -- decoded records and nothing half-read. A half-consumed header
 -- followed by a short payload reports as truncated before the
 -- first byte of that record is touched.
-parseIPSBody :: IPSVariant -> Get IPSBodyShape
+parseIPSBody :: IPSVariant -> ByteParser IPSBodyShape
 parseIPSBody variant = bodyLoop [] [] firstAction
   where
     spec               = variantSpec variant
@@ -252,12 +252,12 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     rleTailLength      = ipsRleCountFieldLength <> ipsRleFillByteLength
     variantLabel       = labelForIPSVariant variant
 
-    readRecordOffset :: Get Offset
+    readRecordOffset :: ByteParser Offset
     readRecordOffset = case offsetWidth of
       Offset24 -> Offset . fromIntegral <$> word24BE
       Offset32 -> Offset . fromIntegral <$> word32BE
 
-    truncatedFrom :: [IPSRecord] -> [SlapAdvisory] -> Get IPSBodyShape
+    truncatedFrom :: [IPSRecord] -> [SlapAdvisory] -> ByteParser IPSBodyShape
     truncatedFrom accumulatedReversed warningsReversed =
       pure (IPSBodyTruncated (reverse accumulatedReversed)
                              (reverse warningsReversed))
@@ -268,7 +268,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     -- will be tagged with in wire order. The index advances
     -- exactly once per accepted record — a truncated tail leaves
     -- it unchanged, since no record was committed.
-    bodyLoop :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Get IPSBodyShape
+    bodyLoop :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> ByteParser IPSBodyShape
     bodyLoop accumulatedReversed warningsReversed currentIndex = do
       bytesLeft <- remaining
       if unLength bytesLeft < unLength eofMarkerLength
@@ -293,7 +293,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     decodeOneRecordOrTruncate :: [IPSRecord]
                               -> [SlapAdvisory]
                               -> ActionIndex
-                              -> Get IPSBodyShape
+                              -> ByteParser IPSBodyShape
     decodeOneRecordOrTruncate accumulatedReversed warningsReversed currentIndex = do
       recordOffset       <- readRecordOffset
       rawSizeField       <- word16BE
@@ -309,7 +309,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     -- 'validateRecordList' still runs against the final record list;
     -- a zero-count RLE whose offset is in range is a no-op, which is
     -- exactly what Apply will execute.
-    decodeRLEBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> Get IPSBodyShape
+    decodeRLEBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> ByteParser IPSBodyShape
     decodeRLEBody accumulatedReversed warningsReversed currentIndex recordOffset = do
       tailSpace <- remaining
       if unLength tailSpace < unLength rleTailLength
@@ -331,7 +331,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
                    newAdvisories
                    (nextAction currentIndex)
 
-    decodeCopyBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> Length -> Get IPSBodyShape
+    decodeCopyBody :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> Offset -> Length -> ByteParser IPSBodyShape
     decodeCopyBody accumulatedReversed warningsReversed currentIndex recordOffset declaredPayload = do
       payloadSpace <- remaining
       if unLength payloadSpace < unLength declaredPayload

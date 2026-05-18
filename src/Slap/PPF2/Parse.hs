@@ -17,10 +17,10 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2FileIdLengthFieldWidth,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
 import Slap.Binary (getWord32LE)
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, remaining, skip, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, word32LE)
 import Slap.Measure (Offset(..), Length(..),
                      EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
@@ -43,9 +43,9 @@ parsePPF2 (PatchFileContents input)
           recordBody = stripFileId fileId
                           (ByteString.drop (unLength ppf2HeaderLength) input)
       (description, fileSize, validationBlock) <-
-        first (ParseError LabelPPF2 . GetErrorMessage) (runGet parsePPF2Header input)
-      records <- first (ParseError LabelPPF2 . GetErrorMessage)
-                       (runGet (parsePPF2Records firstAction) recordBody)
+        first (ParseError LabelPPF2) (runByteParser parsePPF2Header input)
+      records <- first (ParseError LabelPPF2)
+                       (runByteParser (parsePPF2Records firstAction) recordBody)
       pure (Parsed
         PPF2Patch
           { ppf2Description     = description
@@ -56,7 +56,7 @@ parsePPF2 (PatchFileContents input)
           }
         [])
   where
-    parsePPF2Header :: Get (ByteString, PPF2SourceSize, PPF2ValidationBlock)
+    parsePPF2Header :: ByteParser (ByteString, PPF2SourceSize, PPF2ValidationBlock)
     parsePPF2Header = do
       skip (Length 6)
       description <- getBytes ppf2DescriptionLength
@@ -81,7 +81,7 @@ checkEncodingByte input
 -- its own copy. Pulling them into a shared helper would invite a
 -- single-edit, two-format mistake whenever a producer-quirk for one
 -- version turns up that doesn't apply to the other.
-parsePPF2Records :: ActionIndex -> Get [PPF2Record]
+parsePPF2Records :: ActionIndex -> ByteParser [PPF2Record]
 parsePPF2Records recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 5 then pure []
@@ -95,7 +95,7 @@ parsePPF2Records recordIndex = do
     rest <- parsePPF2Records (nextAction recordIndex)
     pure (record : rest)
   where
-    parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> Get PPF2Record
+    parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF2Record
     parseLiteralBody index remainingAfterHeader writeOffset payloadLength
       | unLength remainingAfterHeader < payloadLength =
           fail (truncatedMessage index
@@ -105,7 +105,7 @@ parsePPF2Records recordIndex = do
           payload <- getBytes (Length payloadLength)
           pure (PPF2Record writeOffset payload)
 
-    parseRleBody :: ActionIndex -> Length -> Offset -> Get PPF2Record
+    parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF2Record
     parseRleBody index remainingAfterHeader writeOffset
       | unLength remainingAfterHeader < 2 =
           fail (truncatedMessage index

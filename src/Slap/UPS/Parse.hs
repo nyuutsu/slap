@@ -12,12 +12,12 @@ import Slap.UPS.Types (UPSPatch(..), UPSBody(..), UPSBlock(..),
                        upsMagicBytes, upsMagicLength, upsCRC32Length, upsFooterLength, upsOverheadLength)
 import Slap.Binary (getWord32LE)
 import Slap.Checksum (CRC32(..), ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getUntilByte, byuuVarint, atEnd)
+import Slap.ByteParser (ByteParser, runByteParser, getUntilByte, byuuVarint, atEnd)
 import Slap.Measure (Length(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ParsedSizeValue(..), byteLength)
@@ -48,8 +48,8 @@ parseUPS (PatchFileContents input)
           targetCRC = CRC32 (getWord32LE (inputLength - 2 * crcLength) input)
           -- Parse body between magic and footer
           bodyBytes = ByteString.take (inputLength - overheadLength) (ByteString.drop magicLength input)
-      case runGet parseUPSBody bodyBytes of
-        Left errorMessage -> Left (ParseError LabelUPS (GetErrorMessage errorMessage))
+      case runByteParser parseUPSBody bodyBytes of
+        Left parserError -> Left (ParseError LabelUPS parserError)
         Right body
           | unFileSize (upsBodySourceSize body) < 0 ->
               Left (NegativeSize LabelUPS FieldSourceSize
@@ -69,7 +69,7 @@ parseUPS (PatchFileContents input)
                   }
                 [])
 
-parseUPSBody :: Get UPSBody
+parseUPSBody :: ByteParser UPSBody
 parseUPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
@@ -84,7 +84,7 @@ parseUPSBody = do
     , upsBodyBlocks     = Vector.fromList blocks
     }
 
-parseBlocks :: Get [UPSBlock]
+parseBlocks :: ByteParser [UPSBlock]
 parseBlocks = do
   done <- atEnd
   if done then pure []

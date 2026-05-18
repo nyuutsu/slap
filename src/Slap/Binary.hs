@@ -215,7 +215,7 @@ edsioVarintMaxSingleByteValue = fromIntegral edsioVarintPayloadMask
 
 -- | Encode a non-negative integer as an EDSIO-style varint:
 -- 7 payload bits per byte, LSB first, high bit set on every byte
--- except the last. Inverse of 'Slap.Get.edsioVarint'. Takes
+-- except the last. Inverse of 'Slap.ByteParser.edsioVarint'. Takes
 -- 'Word64' under the same convention as 'putByuuVarint'
 -- (caller's domain says non-negative; encoder doesn't redo the
 -- check).

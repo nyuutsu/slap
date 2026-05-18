@@ -8,7 +8,7 @@ CLAUDE.md describes the values; this document covers the shape. If the document 
 
 Four layers, dependencies flowing strictly downward.
 
-1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `Get`, `Format`, `Compress`, `FormatLabel`, `Checksum`, `Error`, `TextEncoding`, `JSON`, `PatchField`, `MetadataField`, `Constraint`, `Platform`, `PlatformType`.
+1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `Format`, `Compress`, `FormatLabel`, `Checksum`, `Error`, `TextEncoding`, `JSON`, `PatchField`, `MetadataField`, `Constraint`, `Platform`, `PlatformType`.
 
 2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` is the current example, hosting the DP partitioner that decides which copy and RLE records IPS create should emit. Some formats currently lack `Create` and some currently return `TargetFileContents` directly instead of `Either SlapError TargetFileContents`; both are gaps the project is closing, not design choices. No format module imports another format module; siblings share only the foundation.
 

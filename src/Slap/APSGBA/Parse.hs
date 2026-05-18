@@ -14,10 +14,10 @@ import Slap.APSGBA.Types (APSGBAPatch(..), APSGBAHeader(..), APSGBARecord(..),
                            apsGbaMagicBytes, apsGbaBlockSize, apsGbaRecordSize,
                            apsGbaHeaderSize)
 import Slap.Checksum (CRC16(..))
-import Slap.Status (SlapError(..), GetErrorMessage(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getBytes, skip, remaining, word16LE, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining, word16LE, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -44,11 +44,11 @@ parseAPSGBA (PatchFileContents input)
   | ByteString.take 4 input /= apsGbaMagicBytes =
       Left (BadMagic LabelAPSGBA (ActualMagic (ByteString.take 4 input)))
   | otherwise =
-      case runGet parseGBA input of
-        Left errorMessage -> Left (ParseError LabelAPSGBA (GetErrorMessage errorMessage))
+      case runByteParser parseGBA input of
+        Left parserError -> Left (ParseError LabelAPSGBA parserError)
         Right patch -> Right (Parsed patch [])
 
-parseGBA :: Get APSGBAPatch
+parseGBA :: ByteParser APSGBAPatch
 parseGBA = do
   skip (Length 4)  -- "APS1"
   sourceSize <- FileSize . fromIntegral <$> word32LE
@@ -56,7 +56,7 @@ parseGBA = do
   records <- parseGBARecords
   pure $ APSGBAPatch (APSGBAHeader sourceSize targetSize) records
 
-parseGBARecords :: Get [APSGBARecord]
+parseGBARecords :: ByteParser [APSGBARecord]
 parseGBARecords = do
   remainingLength <- remaining
   if unLength remainingLength < apsGbaRecordSize then pure []

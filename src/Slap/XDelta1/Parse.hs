@@ -38,12 +38,12 @@ import Slap.XDelta1.Types
 import Slap.Binary (getWord32BE, md5)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
-                    SlapAdvisory(..), GetErrorMessage(..),
+                    SlapAdvisory(..),
                     XDelta1KnownUnsupportedVersion(..),
                     XDelta1ShapeViolation(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, skip, edsioVarint, word32BE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, edsioVarint, word32BE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..),
@@ -278,8 +278,8 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
       Left (TruncatedRecord LabelXDelta1 0 (Length 28) (byteLength controlBytes))
   | otherwise = do
       (toMD5, targetLength, parsedSources, parsedInstrs) <-
-        case runGet parseControlBody controlBytes of
-          Left errorMessage -> Left (ParseError LabelXDelta1 (GetErrorMessage errorMessage))
+        case runByteParser parseControlBody controlBytes of
+          Left parserError -> Left (ParseError LabelXDelta1 parserError)
           Right result      -> Right result
       sourcePair <- requireDataAndFileRecords parsedSources
       let parsedDataRec      = parsedDataRecord sourcePair
@@ -351,7 +351,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment
 
-    parseControlBody :: Get (MD5Hash, FileSize, [ParsedSourceRecord], [ParsedInstruction])
+    parseControlBody :: ByteParser (MD5Hash, FileSize, [ParsedSourceRecord], [ParsedInstruction])
     parseControlBody = do
       observedTypeTag <- word32BE
       unless (observedTypeTag == xdelta1ControlTypeTag) $
@@ -389,7 +389,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
 -- | Parse a single EDSIO-serialized source record. Returns the raw
 -- fields tagged with the wire kind byte; shape validation happens
 -- afterwards in 'requireDataAndFileRecords'.
-parseOneSource :: Get ParsedSourceRecord
+parseOneSource :: ByteParser ParsedSourceRecord
 parseOneSource = do
   nameLength <- fromIntegral <$> edsioVarint
   sourceName <- getBytes (Length nameLength)
@@ -411,8 +411,8 @@ parseOneSource = do
 -- happens afterwards in 'requireDataAndFileRecords'; this function
 -- is intentionally permissive over the wire so that off-spec shapes
 -- can be reported with structured 'UnsupportedXDelta1Shape' rather
--- than as bare Get-monad failures.
-parseSourceList :: Int -> Get [ParsedSourceRecord]
+-- than as bare ByteParser-monad failures.
+parseSourceList :: Int -> ByteParser [ParsedSourceRecord]
 parseSourceList 0 = pure []
 parseSourceList count = do
   source <- parseOneSource
@@ -465,7 +465,7 @@ translateInstruction parsed = case parsedInstructionWireIndex parsed of
         }
   other -> Left (XDelta1UnknownInstructionTarget other)
 
-parseInstructions :: Int -> Get [ParsedInstruction]
+parseInstructions :: Int -> ByteParser [ParsedInstruction]
 parseInstructions 0 = pure []
 parseInstructions count = do
   wireIndex <- edsioVarint

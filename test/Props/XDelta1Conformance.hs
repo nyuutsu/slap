@@ -21,7 +21,8 @@
 module Props.XDelta1Conformance (xdelta1ConformanceTests) where
 
 import Slap.Binary (putEdsioVarint)
-import Slap.Get (runGet, edsioVarint)
+import Slap.ByteParser (runByteParser, edsioVarint)
+import Slap.Status (ByteParserError, renderByteParserError)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -56,8 +57,8 @@ xdelta1ConformanceTests = testGroup "XDelta1Conformance"
 encodeEdsioVarint :: Word64 -> ByteString
 encodeEdsioVarint = LazyByteString.toStrict . toLazyByteString . putEdsioVarint
 
-decodeEdsioVarint :: ByteString -> Either String Int64
-decodeEdsioVarint = runGet edsioVarint
+decodeEdsioVarint :: ByteString -> Either ByteParserError Int64
+decodeEdsioVarint = runByteParser edsioVarint
 
 -- | Assert that encoding a value produces the expected byte sequence,
 -- and that decoding those bytes round-trips back to the original.
@@ -67,7 +68,7 @@ edsioVarintCase value expectedBytes = do
       expected = ByteString.pack expectedBytes
   assertEqual ("encode " ++ show value) expected encoded
   case decodeEdsioVarint encoded of
-    Left errorMessage ->
-      assertFailure ("decode failed: " ++ errorMessage)
+    Left parserError ->
+      assertFailure ("decode failed: " ++ renderByteParserError parserError)
     Right decoded ->
       assertEqual ("decode " ++ show value) (fromIntegral value) decoded

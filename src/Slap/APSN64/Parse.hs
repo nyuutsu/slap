@@ -16,10 +16,10 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            toAPSRecordEncoding, toAPSN64Country,
                            apsN64MagicBytes, apsN64DescriptionWidth,
                            apsN64RecordHeaderSize)
-import Slap.Status (SlapError(..), GetErrorMessage(..), SlapAdvisory(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, skip, atEnd, remaining, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, atEnd, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -27,7 +27,7 @@ import Slap.Measure (Length(..), FileSize(..), Offset(..),
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
--- | What 'parseN64' produces from the inner Get walk: the decoded
+-- | What 'parseN64' produces from the inner ByteParser walk: the decoded
 -- patch plus walker-time warnings accumulated during the walk, in
 -- wire order. Today only 'APSN64UnrecognizedCountry' is emitted
 -- here; future parse-time observations (unrecognized image format,
@@ -47,14 +47,14 @@ parseAPSN64 (PatchFileContents input)
   | ByteString.take magicLength input /= apsN64MagicBytes =
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
   | otherwise =
-      case runGet parseN64 input of
-        Left errorMessage -> Left (ParseError LabelAPSN64 (GetErrorMessage errorMessage))
+      case runByteParser parseN64 input of
+        Left parserError -> Left (ParseError LabelAPSN64 parserError)
         Right walk ->
           Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
   where
     magicLength = ByteString.length apsN64MagicBytes
 
-parseN64 :: Get APSN64ParseWalk
+parseN64 :: ByteParser APSN64ParseWalk
 parseN64 = do
   skip (byteLength apsN64MagicBytes)  -- "APS10"
   patchTypeByte <- getByte
@@ -102,10 +102,10 @@ parseN64 = do
             , apsN64ParseWalkWarnings = countryWarnings
             }
 
-parseN64Records :: Get [APSN64Record]
+parseN64Records :: ByteParser [APSN64Record]
 parseN64Records = walkRecords []
   where
-    walkRecords :: [APSN64Record] -> Get [APSN64Record]
+    walkRecords :: [APSN64Record] -> ByteParser [APSN64Record]
     walkRecords accumulatedReversed = do
       done <- atEnd
       if done then pure (reverse accumulatedReversed)

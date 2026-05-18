@@ -22,12 +22,11 @@ module Slap.NINJA1.Parse
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
-                    GetErrorMessage(..),
                     NINJA1Malformation(..),
                     LineText(..), OffsetTokenText(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Get (Get, runGet, getByte, getBytes, remaining)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining)
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -77,11 +76,11 @@ zlibDecompress compressed = case zlibInflate compressed of
 parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Patch
 parseBinary format (PatchFileContents payload)
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
-  | otherwise = case runGet (parseBinaryGet format) payload of
-      Left errorMessage -> Left (ParseError LabelNINJA1 (GetErrorMessage errorMessage))
+  | otherwise = case runByteParser (parseBinaryGet format) payload of
+      Left parserError -> Left (ParseError LabelNINJA1 parserError)
       Right patch -> Right patch
 
-parseBinaryGet :: NINJA1SubFormat -> Get NINJA1Patch
+parseBinaryGet :: NINJA1SubFormat -> ByteParser NINJA1Patch
 parseBinaryGet format = do
   romType   <- toNINJA1RomType <$> getByte
   crcBytes  <- getBytes (Length 4)
@@ -107,14 +106,14 @@ decodeBigEndian32 = ByteString.foldl' (\accumulated byte -> accumulated * 256 + 
 decodeBigEndian :: ByteString -> Int64
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
-parseBinaryRecords :: Get NINJA1BinaryResult
+parseBinaryRecords :: ByteParser NINJA1BinaryResult
 parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
       remainingLength <- remaining
       if unLength remainingLength < 1 then pure (NINJA1BinaryResult (reverse accumulated) False)
       else do
-        offsetWidth <- fromIntegral <$> getByte :: Get Int
+        offsetWidth <- fromIntegral <$> getByte :: ByteParser Int
         if offsetWidth == 0 then pure (NINJA1BinaryResult (reverse accumulated) False)
         else do
           offsetBytes <- getBytes (Length offsetWidth)
@@ -122,7 +121,7 @@ parseBinaryRecords = parseLoop []
             then pure (NINJA1BinaryResult (reverse accumulated) True)
             else do
               let recordOffset = Offset (fromIntegral (decodeBigEndian offsetBytes))
-              dataWidth <- fromIntegral <$> getByte :: Get Int
+              dataWidth <- fromIntegral <$> getByte :: ByteParser Int
               dataLenBytes <- getBytes (Length dataWidth)
               let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
               payload <- getBytes (Length dataLength)
