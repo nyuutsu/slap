@@ -29,6 +29,40 @@ import Foreign.Marshal.Utils (fillBytes)
 import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
+-- Record placement classifier
+----------------------------------------------------------------------------
+
+-- | Where an IPS record's write span sits relative to the effective
+-- output size. Used by 'handleHonored' (under 'MarkerHonored') to
+-- decide between writing the record in full, writing only an
+-- in-bounds prefix, or accounting the entire payload as overshoot
+-- without writing.
+data RecordPlacement
+  = RecordFits
+    -- ^ The record's write span ends at or before the effective
+    -- size. The handler writes the full payload.
+  | RecordPartiallyOvershoots !Length
+    -- ^ The record starts in bounds but its write span extends past
+    -- the effective size. The carried 'Length' is the in-bounds
+    -- prefix the handler still writes; the remaining payload bytes
+    -- are accounted as overshoot.
+  | RecordEntirelyPastBoundary
+    -- ^ The record's start position sits at or past the effective
+    -- size. The handler writes nothing; the full payload length is
+    -- accounted as overshoot.
+  deriving (Show, Eq)
+
+-- | Classify an IPS record's write span against the effective output
+-- size. Pure function of three typed arguments: the record's write
+-- position, its payload length, and the effective output size.
+classifyRecordPlacement :: Offset -> Length -> FileSize -> RecordPlacement
+classifyRecordPlacement writePosition writeLength effectiveSize
+  | fitsWithin writePosition writeLength effectiveSize = RecordFits
+  | offsetToFileSize writePosition >= effectiveSize    = RecordEntirelyPastBoundary
+  | otherwise =
+      RecordPartiallyOvershoots (remainingFromOffset writePosition effectiveSize)
+
+----------------------------------------------------------------------------
 -- applyIPS
 ----------------------------------------------------------------------------
 
@@ -113,18 +147,17 @@ applyIPS (InputFileContents source) patch
                       IPS32       -> LabelIPS32
     records       = ipsRecords patch
     sourceSize    = byteFileSize source
-    maxRecordEnd  = Vector.foldl' stepMaxEnd (FileSize 0) records
-    naturalSize   = NaturalTargetSize
-                      (FileSize (max (unFileSize sourceSize)
-                                     (unFileSize maxRecordEnd)))
+    maxRecordEnd  = Vector.foldl' extendMaxWith (FileSize 0) records
+    naturalSize   = NaturalTargetSize (max sourceSize maxRecordEnd)
     declaredSize  = fmap DeclaredTargetSize (ipsTruncatedTargetSize patch)
     disposition   = decideMarkerDisposition declaredSize naturalSize
     effectiveSize = effectiveTargetSize disposition
 
-    -- | Strict fold step that grows the running 'maxRecordEnd'
-    -- upper bound to cover the given record.
-    stepMaxEnd :: FileSize -> IPSRecord -> FileSize
-    stepMaxEnd currentMax record =
+    -- | Extend the running 'maxRecordEnd' upper bound to cover one
+    -- more record's write region. Used as the fold step over the
+    -- record vector.
+    extendMaxWith :: FileSize -> IPSRecord -> FileSize
+    extendMaxWith currentMax record =
       max currentMax (offsetToFileSize
                         (advance (ipsRecordOffset record)
                                  (recordPayloadLength record)))
@@ -250,31 +283,27 @@ applyIPS (InputFileContents source) patch
           MarkerNoOp     _declared         -> handleStrict  recordIndex record
           MarkerIgnored  _declared _natural -> handleStrict  recordIndex record
 
-        -- | Record handler for 'MarkerHonored'. Three behaviors
-        -- per record: entirely-within-effective writes verbatim;
-        -- entirely-past-effective skips and counts the full
-        -- payload as overshoot; straddling-effective writes the
-        -- fitting prefix and counts the trailing length as
-        -- overshoot.
+        -- | Record handler for 'MarkerHonored'. Dispatches on
+        -- 'classifyRecordPlacement' and either writes the record (in
+        -- full or as an in-bounds prefix) or counts it as overshoot.
+        -- The per-arm bookkeeping is the only thing this handler
+        -- adds on top of the classifier's geometry.
         handleHonored :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
-        handleHonored recordIndex record =
+        handleHonored recordIndex record = do
           let writePosition = ipsRecordOffset record
               writeLength   = recordPayloadLength record
-          in if fitsWithin writePosition writeLength effectiveSize
-               then do
-                 liftIO (writeRecord record)
-                 applyRecordStream (nextAction recordIndex)
-               else if offsetToFileSize writePosition >= effectiveSize
-                 then do
-                   recordClip recordIndex writeLength
-                   applyRecordStream (nextAction recordIndex)
-                 else
-                   let prefixLength = remainingFromOffset writePosition effectiveSize
-                       overshootLen = subtractLength writeLength prefixLength
-                   in do
-                     liftIO (writeRecordPrefix record prefixLength)
-                     recordClip recordIndex overshootLen
-                     applyRecordStream (nextAction recordIndex)
+          case classifyRecordPlacement writePosition writeLength effectiveSize of
+            RecordFits -> do
+              liftIO (writeRecord record)
+              applyRecordStream (nextAction recordIndex)
+            RecordEntirelyPastBoundary -> do
+              recordClip recordIndex writeLength
+              applyRecordStream (nextAction recordIndex)
+            RecordPartiallyOvershoots prefixLength -> do
+              let overshootLength = subtractLength writeLength prefixLength
+              liftIO (writeRecordPrefix record prefixLength)
+              recordClip recordIndex overshootLength
+              applyRecordStream (nextAction recordIndex)
 
         -- | Record handler for the three non-Honored dispositions.
         -- Strict bounds check; 'ApplyWritesPastTarget' on overrun.

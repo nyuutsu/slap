@@ -82,6 +82,24 @@ applyXDelta1 patch sourceContents =
     sourceBytesFor _      FromDataSource = dataSegment
     sourceBytesFor source FromFileSource = source
 
+    -- | Per-instruction guards: the write must fit in the remaining
+    -- target buffer, and the read must fit in the per-instruction
+    -- resolved source (data segment or file, as 'sourceBytesFor'
+    -- resolves).
+    checkInstructionPreconditions :: ActionIndex -> Length
+                                  -> Offset -> Offset -> FileSize
+                                  -> Either ApplyError ()
+    checkInstructionPreconditions actionIndex instructionLength
+                                  outputPosition instructionOffset sourceFileSize
+      | not (fitsWithin outputPosition instructionLength targetFileSize) =
+          Left (ApplyWritesPastTarget actionIndex
+                 (RequestedLength instructionLength)
+                 (RemainingLength (remainingFromOffset outputPosition targetFileSize)))
+      | not (fitsWithin instructionOffset instructionLength sourceFileSize) =
+          Left (ApplySourceReadOutOfBounds actionIndex
+                 (advance instructionOffset instructionLength) sourceFileSize)
+      | otherwise = Right ()
+
     proceedWithApply (InputFileContents source) = unsafePerformIO $ do
       (result, outcome) <- createAndTrim' outputSize $ \targetPointer -> do
         maybeErr <- runApply targetPointer
@@ -120,16 +138,12 @@ applyXDelta1 patch sourceContents =
                   instructionLength = Length (unFileSize (xdelta1InstructionLength instruction))
                   sourceBytes       = sourceBytesFor source (xdelta1InstructionTarget instruction)
                   sourceFileSize    = byteFileSize sourceBytes
-                  remainingForWrite = remainingFromOffset outputPosition targetFileSize
-              if not (fitsWithin outputPosition instructionLength targetFileSize)
-                then pure (Just (ApplyWritesPastTarget actionIndex
-                                  (RequestedLength instructionLength)
-                                  (RemainingLength remainingForWrite)))
-                else if not (fitsWithin instructionOffset instructionLength sourceFileSize)
-                then pure (Just (ApplySourceReadOutOfBounds actionIndex
-                                  (advance instructionOffset instructionLength) sourceFileSize))
-                else do
-                  liftIO (copyRegion targetPointer outputPosition sourceBytes instructionOffset instructionLength)
+              case checkInstructionPreconditions actionIndex instructionLength
+                                                 outputPosition instructionOffset sourceFileSize of
+                Left err -> pure (Just err)
+                Right () -> do
+                  liftIO (copyRegion targetPointer outputPosition
+                                     sourceBytes instructionOffset instructionLength)
                   advanceOutputByInstruction instructionLength
                   applyLoop rest (nextAction actionIndex)
           in evalStateT (applyLoop (xdelta1Instructions patch) firstAction) (Offset 0)

@@ -28,62 +28,28 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Apply-time cursors
 ----------------------------------------------------------------------------
 
--- | Read cursor into the diff byte stream. Advances by @addLength@
--- per instruction.
-newtype DiffStreamReadOffset = DiffStreamReadOffset
-  { unDiffStreamReadOffset :: Offset
-  } deriving (Eq, Ord, Show)
-
--- | Read cursor into the extra byte stream. Advances by @copyLength@
--- per instruction.
-newtype ExtraStreamReadOffset = ExtraStreamReadOffset
-  { unExtraStreamReadOffset :: Offset
-  } deriving (Eq, Ord, Show)
-
--- | Read cursor into the source ROM. Carried as 'SignedOffset'
--- because BSDiff's Seek delta can take the cursor negative or past
--- the end of the source. The bsdiff matching-window extension rule
--- (see 'sourceByteOrZero') treats source positions outside
--- @[0, sourceLength)@ as contributing zero to the byte-wise sum,
--- which is required for correctness — valid patches use this to
--- encode bytes in a match-section whose corresponding source
--- position falls outside the source.
-newtype OriginalReadPosition = OriginalReadPosition
-  { unOriginalReadPosition :: SignedOffset
-  } deriving (Eq, Ord, Show)
-
--- | Write cursor into the output target buffer. Advances by
--- @addLength <> copyLength@ per instruction.
-newtype OutputWritePosition = OutputWritePosition
-  { unOutputWritePosition :: Offset
-  } deriving (Eq, Ord, Show)
-
-instance Cursor DiffStreamReadOffset where
-  advance  (DiffStreamReadOffset position) stride = DiffStreamReadOffset (advance  position stride)
-  displace (DiffStreamReadOffset position) delta  = DiffStreamReadOffset (displace position delta)
-
-instance Cursor ExtraStreamReadOffset where
-  advance  (ExtraStreamReadOffset position) stride = ExtraStreamReadOffset (advance  position stride)
-  displace (ExtraStreamReadOffset position) delta  = ExtraStreamReadOffset (displace position delta)
-
-instance Cursor OriginalReadPosition where
-  advance  (OriginalReadPosition position) stride = OriginalReadPosition (advance  position stride)
-  displace (OriginalReadPosition position) delta  = OriginalReadPosition (displace position delta)
-
-instance Cursor OutputWritePosition where
-  advance  (OutputWritePosition position) stride = OutputWritePosition (advance  position stride)
-  displace (OutputWritePosition position) delta  = OutputWritePosition (displace position delta)
-
 -- | The four cursors threaded through 'applyLoop': one per stream
--- (diff, extra, source, output). Lifted into a record so the
--- recursive call updates fields by name; a future edit cannot
--- transpose two same-typed cursors at the recursive call site
--- without the type checker noticing.
+-- (diff, extra, source, output). Lifted into a record so each cursor
+-- is identified by name, never by position.
 data BSDiffCursors = BSDiffCursors
-  { diffStreamRead  :: !DiffStreamReadOffset
-  , extraStreamRead :: !ExtraStreamReadOffset
-  , originalRead    :: !OriginalReadPosition
-  , outputWrite     :: !OutputWritePosition
+  { -- | Read cursor into the diff byte stream. Advances by
+    -- @addLength@ per instruction.
+    diffStreamRead  :: !Offset
+    -- | Read cursor into the extra byte stream. Advances by
+    -- @copyLength@ per instruction.
+  , extraStreamRead :: !Offset
+    -- | Read cursor into the source ROM. Carried as 'SignedOffset'
+    -- because BSDiff's seek delta can take the cursor negative or
+    -- past the end of the source. The matching-window extension
+    -- rule (see 'sourceByteOrZero') treats source positions outside
+    -- @[0, sourceLength)@ as contributing zero to the byte-wise sum,
+    -- which is required for correctness — valid patches use this to
+    -- encode bytes in a match-section whose corresponding source
+    -- position falls outside the source.
+  , originalRead    :: !SignedOffset
+    -- | Write cursor into the output target buffer. Advances by
+    -- @addLength <> copyLength@ per instruction.
+  , outputWrite     :: !Offset
   } deriving (Show)
 
 -- | Strict 'StateT' over 'IO' carrying 'BSDiffCursors'. Strict
@@ -96,10 +62,10 @@ type BSDiffApply = StateT BSDiffCursors IO
 -- offset zero.
 initialCursors :: BSDiffCursors
 initialCursors = BSDiffCursors
-  { diffStreamRead  = DiffStreamReadOffset (Offset 0)
-  , extraStreamRead = ExtraStreamReadOffset (Offset 0)
-  , originalRead    = OriginalReadPosition (SignedOffset 0)
-  , outputWrite     = OutputWritePosition (Offset 0)
+  { diffStreamRead  = Offset 0
+  , extraStreamRead = Offset 0
+  , originalRead    = SignedOffset 0
+  , outputWrite     = Offset 0
   }
 
 ----------------------------------------------------------------------------
@@ -133,6 +99,40 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     diffSize       = byteFileSize diffBytes
     extraSize      = byteFileSize extraBytes
 
+    -- | Per-instruction guards for an ADD region: the write must fit
+    -- in the remaining target buffer, and the diff read must fit in
+    -- the remaining diff stream. The source byte read is intentionally
+    -- unbounded — the matching-window extension rule (see
+    -- 'sourceByteOrZero') defines the algorithm for source positions
+    -- outside @[0, sourceLength)@, so there is no precondition to
+    -- enforce on the source side.
+    checkAddPreconditions :: ActionIndex -> Length -> Offset -> Offset
+                          -> Either ApplyError ()
+    checkAddPreconditions actionIndex addLength outputPosition diffReadOffset
+      | not (fitsWithin outputPosition addLength targetFileSize) =
+          Left (ApplyWritesPastTarget actionIndex
+                 (RequestedLength addLength)
+                 (RemainingLength (remainingFromOffset outputPosition targetFileSize)))
+      | not (fitsWithin diffReadOffset addLength diffSize) =
+          Left (ApplyDiffReadOutOfBounds actionIndex
+                 (advance diffReadOffset addLength) diffSize)
+      | otherwise = Right ()
+
+    -- | Per-instruction guards for a COPY region: the write must fit
+    -- in the remaining target buffer, and the extra read must fit in
+    -- the remaining extra stream.
+    checkCopyPreconditions :: ActionIndex -> Length -> Offset -> Offset
+                           -> Either ApplyError ()
+    checkCopyPreconditions actionIndex copyLength outputAfterAdd extraReadOffset
+      | not (fitsWithin outputAfterAdd copyLength targetFileSize) =
+          Left (ApplyWritesPastTarget actionIndex
+                 (RequestedLength copyLength)
+                 (RemainingLength (remainingFromOffset outputAfterAdd targetFileSize)))
+      | not (fitsWithin extraReadOffset copyLength extraSize) =
+          Left (ApplyExtraReadOutOfBounds actionIndex
+                 (advance extraReadOffset copyLength) extraSize)
+      | otherwise = Right ()
+
     runApply targetPointer =
       let
         -- | The cursor transition done after an instruction's ADD
@@ -160,6 +160,27 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
           , outputWrite     = advance (outputWrite cursors) copyLength
           }
 
+        -- | Materialise one ADD region into the target buffer:
+        -- @target[outputPosition+i] = source[originalPosition+i] + diff[diffReadOffset+i]@
+        -- for @i@ in @[0, addLength)@. The source read goes through
+        -- 'sourceByteOrZero', so positions outside the source contribute
+        -- zero per the matching-window extension rule.
+        executeAddRegion :: Length -> SignedOffset -> Offset -> Offset -> IO ()
+        executeAddRegion addLength originalPosition diffReadOffset outputPosition =
+            writeRemainingBytes 0
+          where
+            totalBytes = unLength addLength
+            sourceBase = unSignedOffset originalPosition
+            diffBase   = unOffset diffReadOffset
+            writeBase  = targetPointer `plusPtr` unOffset outputPosition
+            writeRemainingBytes !byteOffset
+              | byteOffset >= totalBytes = pure ()
+              | otherwise = do
+                  let sourceByte = sourceByteOrZero source (sourceBase + byteOffset)
+                      diffByte   = ByteString.index diffBytes (diffBase + byteOffset)
+                  pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
+                  writeRemainingBytes (byteOffset + 1)
+
         -- | Tail-recursive walk over the instruction list. The four
         -- cursors live in 'BSDiffApply' state, so each step needs
         -- only the remaining instructions and the running action
@@ -167,59 +188,31 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
         -- target buffer.
         applyLoop :: [BSDiffInstruction] -> ActionIndex -> BSDiffApply (Maybe ApplyError)
         applyLoop [] _actionIndex = do
-          finalOutput <- gets (unOutputWritePosition . outputWrite)
+          finalOutput <- gets outputWrite
           if remainingFromOffset finalOutput targetFileSize == Length 0
             then pure Nothing
             else pure (Just (ApplyTargetUnderfilled
                               (WritePosition finalOutput)
                               (ExpectedSize targetFileSize)))
         applyLoop (instruction:rest) !actionIndex = do
-          outputPosition   <- gets (unOutputWritePosition . outputWrite)
-          diffReadOffset   <- gets (unDiffStreamReadOffset . diffStreamRead)
-          originalPosition <- gets (unOriginalReadPosition . originalRead)
-          let addLength       = controlAdd instruction
-              copyLength      = controlCopy instruction
-              seekDelta       = controlSeek instruction
-              remainingForAdd = remainingFromOffset outputPosition targetFileSize
-          -- ADD region's preconditions: target-write and diff-read.
-          -- The source byte read is NOT bounded here: the bsdiff
-          -- matching-window extension rule (see 'sourceByteOrZero')
-          -- defines the algorithm for source positions outside
-          -- [0, sourceLength).
-          if not (fitsWithin outputPosition addLength targetFileSize)
-            then pure (Just (ApplyWritesPastTarget actionIndex
-                              (RequestedLength addLength)
-                              (RemainingLength remainingForAdd)))
-            else if not (fitsWithin diffReadOffset addLength diffSize)
-            then pure (Just (ApplyDiffReadOutOfBounds actionIndex
-                              (advance diffReadOffset addLength) diffSize))
-            else do
-              -- ADD: target[outputPosition+i] = source[originalPosition+i] + diff[diffOffset+i]
-              let totalBytes = unLength addLength
-                  sourceBase = unSignedOffset originalPosition
-                  diffBase   = unOffset diffReadOffset
-                  writeBase  = targetPointer `plusPtr` unOffset outputPosition
-                  addLoop !byteOffset
-                    | byteOffset >= totalBytes = pure ()
-                    | otherwise = do
-                        let sourceByte = sourceByteOrZero source (sourceBase + byteOffset)
-                            diffByte   = ByteString.index diffBytes (diffBase + byteOffset)
-                        pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
-                        addLoop (byteOffset + 1)
-              liftIO (addLoop 0)
+          outputPosition   <- gets outputWrite
+          diffReadOffset   <- gets diffStreamRead
+          originalPosition <- gets originalRead
+          let addLength  = controlAdd instruction
+              copyLength = controlCopy instruction
+              seekDelta  = controlSeek instruction
+          case checkAddPreconditions actionIndex addLength outputPosition diffReadOffset of
+            Left err -> pure (Just err)
+            Right () -> do
+              liftIO (executeAddRegion addLength originalPosition
+                                       diffReadOffset outputPosition)
               advanceForAdd addLength seekDelta
-              -- COPY region's preconditions: target-write and extra-read.
-              outputAfterAdd  <- gets (unOutputWritePosition . outputWrite)
-              extraReadOffset <- gets (unExtraStreamReadOffset . extraStreamRead)
-              let remainingForCopy = remainingFromOffset outputAfterAdd targetFileSize
-              if not (fitsWithin outputAfterAdd copyLength targetFileSize)
-                then pure (Just (ApplyWritesPastTarget actionIndex
-                                  (RequestedLength copyLength)
-                                  (RemainingLength remainingForCopy)))
-                else if not (fitsWithin extraReadOffset copyLength extraSize)
-                then pure (Just (ApplyExtraReadOutOfBounds actionIndex
-                                  (advance extraReadOffset copyLength) extraSize))
-                else do
+              outputAfterAdd  <- gets outputWrite
+              extraReadOffset <- gets extraStreamRead
+              case checkCopyPreconditions actionIndex copyLength
+                                          outputAfterAdd extraReadOffset of
+                Left err -> pure (Just err)
+                Right () -> do
                   liftIO (copyRegion targetPointer outputAfterAdd
                                      extraBytes extraReadOffset copyLength)
                   advanceForCopy copyLength

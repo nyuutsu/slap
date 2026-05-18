@@ -6,7 +6,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
 import Slap.Binary (copyRegion)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..),
+import Slap.Measure (Offset(..), Length, FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
                      advance, fitsWithin, remainingFromOffset,
@@ -49,6 +49,21 @@ applyDPS patch (InputFileContents source)
     sourceSize = byteFileSize source
     outputSize = dpsOutputExtent records
 
+    -- | Per-record guards for a CopyFromROM record: the source
+    -- read must fit in the source ROM, and the resulting write
+    -- must fit in the output buffer.
+    checkCopyFromRomPreconditions :: ActionIndex -> Offset -> Offset -> Length
+                                  -> Either ApplyError ()
+    checkCopyFromRomPreconditions recordIndex outputOffset sourceOffset copyLength
+      | not (fitsWithin sourceOffset copyLength sourceSize) =
+          Left (ApplySourceReadOutOfBounds recordIndex
+                 (advance sourceOffset copyLength) sourceSize)
+      | not (fitsWithin outputOffset copyLength outputSize) =
+          Left (ApplyWritesPastTarget recordIndex
+                 (RequestedLength copyLength)
+                 (RemainingLength (remainingFromOffset outputOffset outputSize)))
+      | otherwise = Right ()
+
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply outputPointer =
       let
@@ -60,18 +75,11 @@ applyDPS patch (InputFileContents source)
         handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO (Maybe ApplyError)
 
         handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remaining =
-          let readEnd        = advance sourceOffset copyLength
-              writeLength    = copyLength
-              remainingSpace = remainingFromOffset outputOffset outputSize
-          in if not (fitsWithin sourceOffset copyLength sourceSize)
-               then pure (Just (ApplySourceReadOutOfBounds recordIndex readEnd sourceSize))
-               else if not (fitsWithin outputOffset writeLength outputSize)
-               then pure (Just (ApplyWritesPastTarget recordIndex
-                                  (RequestedLength writeLength)
-                                  (RemainingLength remainingSpace)))
-               else do
-                 copyRegion outputPointer outputOffset source sourceOffset copyLength
-                 applyRecordStream (nextAction recordIndex) remaining
+          case checkCopyFromRomPreconditions recordIndex outputOffset sourceOffset copyLength of
+            Left err -> pure (Just err)
+            Right () -> do
+              copyRegion outputPointer outputOffset source sourceOffset copyLength
+              applyRecordStream (nextAction recordIndex) remaining
 
         handleRecord recordIndex (DPSEnclosedData outputOffset payload) remaining =
           let writeLength    = byteLength payload
