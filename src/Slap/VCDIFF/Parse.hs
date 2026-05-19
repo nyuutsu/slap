@@ -18,16 +18,19 @@ import Slap.VCDIFF.Types
 import Slap.VCDIFF.Apply (applyVCDIFF, defaultNearSize, defaultSameSize)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Checksum (Adler32(..))
-import Slap.Status (SlapError(..), ByteParserError, Parsed(..))
+import Slap.Status (SlapError(..), ByteParserError, Parsed(..),
+                    VCDIFFShapeViolation(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (runByteParser, getByte, getBytes, skip, getPosition, setPosition,
-                         atEnd, vcdiffVarint, word32BE, failByteParser)
+                         atEnd, vcdiffVarint, word32BE)
 import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 
 import Data.Bits (testBit)
+import Data.Int (Int64)
 import qualified Data.ByteString as ByteString
+import Data.Maybe (isJust)
 import Control.Monad (when)
 
 ----------------------------------------------------------------------------
@@ -43,7 +46,11 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
   | ByteString.take 3 input /= vcdiffMagicBytes = Left (BadMagic LabelVCDIFF (ActualMagic (ByteString.take 3 input)))
   | otherwise = do
       validatedVersion <- toVCDIFFVersion (ByteString.index input 3)
-      (maybeTableBytes, header, windows) <- wrapParse (runByteParser (parseHeader validatedVersion) input)
+      (maybeTableBytes, header, rawWindows) <-
+        wrapParse (runByteParser (parseHeader validatedVersion) input)
+      when (not allowCustom && isJust maybeTableBytes) $
+        Left (UnsupportedVCDIFFShape VCDIFFNestedCustomCodeTable)
+      windows <- traverse (validateWindowShape validatedVersion) rawWindows
       case maybeTableBytes of
         Nothing -> Right (Parsed (VCDIFFPatch header windows defaultCodeTable
                                               defaultNearSize defaultSameSize) [])
@@ -55,9 +62,12 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
           (table, nearSize, sameSize) <- decodeCustomTable applyInnerDelta rawTableBytes
           Right (Parsed (VCDIFFPatch header windows table nearSize sameSize) [])
   where
+    -- The byte-parser produces a raw window paired with the
+    -- pre-conversion 'Int64' target-size varint, so the
+    -- non-negativity rule can be enforced after the byte-level
+    -- walk against the value as it appeared on the wire.
     parseHeader validatedVersion = do
       skip (Length 4)  -- magic + version byte (already validated)
-      let isXdelta3 = validatedVersion == VCDIFFXDelta3
       headerIndicator <- getByte
       let hasCompressor = testBit headerIndicator 0
           hasCodeTable  = testBit headerIndicator 1
@@ -66,8 +76,6 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
         else pure Nothing
       maybeTableBytes <- if hasCodeTable
         then do
-          when (not allowCustom) $
-            failByteParser "nested custom code tables are not allowed"
           tableLength <- fromIntegral <$> vcdiffVarint
           Just <$> getBytes (Length tableLength)
         else pure Nothing
@@ -76,18 +84,18 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
         applicationLength <- fromIntegral <$> vcdiffVarint
         skip (Length applicationLength)
       let header = VCDIFFHeader validatedVersion compressorIdentifier hasCodeTable
-      windows <- parseWindows isXdelta3
-      pure (maybeTableBytes, header, windows)
+      rawWindows <- parseWindows
+      pure (maybeTableBytes, header, rawWindows)
 
-    parseWindows isXdelta3 = do
+    parseWindows = do
       finished <- atEnd
       if finished then pure []
       else do
-        window <- parseOneWindow isXdelta3
-        remaining <- parseWindows isXdelta3
-        pure (window : remaining)
+        rawWindow <- parseOneWindow
+        rest      <- parseWindows
+        pure (rawWindow : rest)
 
-    parseOneWindow isXdelta3 = do
+    parseOneWindow = do
       windowIndicator <- getByte
       let windowSource = toVCDIFFWindowSource windowIndicator
           hasSource = windowSource /= WindowNoSource
@@ -100,18 +108,12 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       let deltaEnd = Position (unPosition deltaStart + fromIntegral deltaLength)
       -- Inside the delta body:
       rawTargetSize <- vcdiffVarint
-      when (rawTargetSize < 0) $ failByteParser "negative window target size"
       let targetSize = FileSize (fromIntegral rawTargetSize)
       deltaIndicator <- getByte
       let secondaryCompression = toVCDIFFSecondaryCompression deltaIndicator
       addRunLength <- vcdiffVarint
       instructionLength   <- vcdiffVarint
       addressLength   <- vcdiffVarint
-      -- Check for secondary compression
-      when (compressAddRunData secondaryCompression
-            || compressInstructions secondaryCompression
-            || (not isXdelta3 && compressAddresses secondaryCompression)) $
-        failByteParser "secondary compression in data sections is not supported"
       -- Compute data section start from deltaEnd, not from current position.
       -- xdelta3 writes 4 bytes of Adler32 after the length fields (even in
       -- version 0 mode, sometimes without setting any flag), so working
@@ -131,17 +133,35 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       instructionData   <- getBytes (Length (fromIntegral instructionLength))
       addressData   <- getBytes (Length (fromIntegral addressLength))
       setPosition deltaEnd
-      pure VCDIFFWindow
-        { vcdiffWindowSource           = windowSource
-        , vcdiffSourceLength           = sourceLength
-        , vcdiffSourcePosition         = sourcePosition
-        , vcdiffTargetLength           = targetSize
-        , vcdiffSecondaryCompression   = secondaryCompression
-        , vcdiffAdler32                = adlerChecksum
-        , vcdiffAddRunData             = addRunData
-        , vcdiffInstructions           = instructionData
-        , vcdiffAddresses              = addressData
-        }
+      let window = VCDIFFWindow
+            { vcdiffWindowSource           = windowSource
+            , vcdiffSourceLength           = sourceLength
+            , vcdiffSourcePosition         = sourcePosition
+            , vcdiffTargetLength           = targetSize
+            , vcdiffSecondaryCompression   = secondaryCompression
+            , vcdiffAdler32                = adlerChecksum
+            , vcdiffAddRunData             = addRunData
+            , vcdiffInstructions           = instructionData
+            , vcdiffAddresses              = addressData
+            }
+      pure (window, rawTargetSize)
+
+    -- Post-parse structural validation of a window: target-size
+    -- non-negativity and the secondary-compression rule against
+    -- whichever VCDIFF version the header declared.
+    validateWindowShape :: VCDIFFVersion
+                        -> (VCDIFFWindow, Int64)
+                        -> Either SlapError VCDIFFWindow
+    validateWindowShape validatedVersion (window, rawTargetSize) = do
+      when (rawTargetSize < 0) $
+        Left (UnsupportedVCDIFFShape (VCDIFFNegativeWindowTargetSize rawTargetSize))
+      let comp      = vcdiffSecondaryCompression window
+          isXdelta3 = validatedVersion == VCDIFFXDelta3
+      when (compressAddRunData comp
+            || compressInstructions comp
+            || (not isXdelta3 && compressAddresses comp)) $
+        Left (UnsupportedVCDIFFShape VCDIFFSecondaryCompressionUnsupportedInDataSections)
+      pure window
 
     wrapParse :: Either ByteParserError a -> Either SlapError a
     wrapParse (Left parserError) = Left (ParseError LabelVCDIFF parserError)

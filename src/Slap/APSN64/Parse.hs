@@ -46,61 +46,65 @@ parseAPSN64 (PatchFileContents input)
              (ActualLength (byteLength input)))
   | ByteString.take magicLength input /= apsN64MagicBytes =
       Left (BadMagic LabelAPSN64 (ActualMagic (ByteString.take magicLength input)))
-  | otherwise =
-      case runByteParser parseN64 input of
+  | ByteString.length input < magicLength + 1 =
+      Left (InputTooShort LabelAPSN64
+             (RequiredLength (Length (magicLength + 1)))
+             (ActualLength (byteLength input)))
+  | otherwise = do
+      patchType <- case toAPSPatchType (ByteString.index input magicLength) of
+        Left malformation -> Left (MalformedAPSN64Header malformation)
+        Right validatedType -> Right validatedType
+      case runByteParser (parseN64 patchType) input of
         Left parserError -> Left (ParseError LabelAPSN64 parserError)
         Right walk ->
           Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
   where
     magicLength = ByteString.length apsN64MagicBytes
 
-parseN64 :: ByteParser APSN64ParseWalk
-parseN64 = do
+parseN64 :: APSPatchType -> ByteParser APSN64ParseWalk
+parseN64 patchType = do
   skip (byteLength apsN64MagicBytes)  -- "APS10"
-  patchTypeByte <- getByte
-  case toAPSPatchType patchTypeByte of
-    Left errorMessage -> fail errorMessage
-    Right patchType -> do
-      encodingMethod <- toAPSRecordEncoding <$> getByte
-      description <- getBytes (Length apsN64DescriptionWidth)
-      case patchType of
-        APSSimple -> do
-          destinationSize <- FileSize . fromIntegral <$> word32LE
-          records <- parseN64Records
-          let patch = APSN64Patch
-                APSN64Header
-                  { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
-                  , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
-                  , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
-                  }
-                (Vector.fromList records)
-          pure APSN64ParseWalk
-            { apsN64ParseWalkPatch    = patch
-            , apsN64ParseWalkWarnings = []
-            }
-        APSN64Specific -> do
-          imageFormat  <- toAPSImageFormat <$> getByte
-          cartId  <- N64CartId <$> getBytes (Length 2)
-          countryByte <- getByte
-          let parsedCountry   = toAPSN64Country countryByte
-              countryWarnings = case parsedCountry of
-                APSN64CountryUnrecognized byte -> [APSN64UnrecognizedCountry byte]
-                _                              -> []
-          crcBytes  <- N64ChecksumPair <$> getBytes (Length 8)
-          skip (Length 5)  -- padding (bytes 69-73)
-          destinationSize <- FileSize . fromIntegral <$> word32LE
-          records <- parseN64Records
-          let patch = APSN64Patch
-                APSN64Header
-                  { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
-                  , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
-                  , apsN64Country = Just parsedCountry, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
-                  }
-                (Vector.fromList records)
-          pure APSN64ParseWalk
-            { apsN64ParseWalkPatch    = patch
-            , apsN64ParseWalkWarnings = countryWarnings
-            }
+  skip (Length 1)                     -- patch-type byte (pre-validated)
+  encodingMethod <- toAPSRecordEncoding <$> getByte
+  description    <- getBytes (Length apsN64DescriptionWidth)
+  case patchType of
+    APSSimple -> do
+      destinationSize <- FileSize . fromIntegral <$> word32LE
+      records         <- parseN64Records
+      let patch = APSN64Patch
+            APSN64Header
+              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
+              , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
+              , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
+              }
+            (Vector.fromList records)
+      pure APSN64ParseWalk
+        { apsN64ParseWalkPatch    = patch
+        , apsN64ParseWalkWarnings = []
+        }
+    APSN64Specific -> do
+      imageFormat <- toAPSImageFormat <$> getByte
+      cartId      <- N64CartId <$> getBytes (Length 2)
+      countryByte <- getByte
+      let parsedCountry   = toAPSN64Country countryByte
+          countryWarnings = case parsedCountry of
+            APSN64CountryUnrecognized byte -> [APSN64UnrecognizedCountry byte]
+            _                              -> []
+      crcBytes        <- N64ChecksumPair <$> getBytes (Length 8)
+      skip (Length 5)  -- padding (bytes 69-73)
+      destinationSize <- FileSize . fromIntegral <$> word32LE
+      records         <- parseN64Records
+      let patch = APSN64Patch
+            APSN64Header
+              { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
+              , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
+              , apsN64Country = Just parsedCountry, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
+              }
+            (Vector.fromList records)
+      pure APSN64ParseWalk
+        { apsN64ParseWalkPatch    = patch
+        , apsN64ParseWalkWarnings = countryWarnings
+        }
 
 parseN64Records :: ByteParser [APSN64Record]
 parseN64Records = walkRecords []

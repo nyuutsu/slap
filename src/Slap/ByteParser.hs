@@ -37,7 +37,6 @@ module Slap.ByteParser
   , getInput
   , atEnd
   , remaining
-  , failByteParser
     -- * Fixed-width readers
   , word16LE
   , word32LE
@@ -89,20 +88,22 @@ import Data.Word (Word8, Word16, Word32)
 -- @StateT Position (ReaderT ByteString (Either ByteParserError))@.
 -- The newtype exists for the 'MonadFail' instance below — 'Either'
 -- has no 'MonadFail' and we want @do@-notation desugaring to land
--- in 'ByteParserGenericFailure' rather than @error@. No record
--- selector is needed (the helpers below pattern-match on the
--- constructor and the runner uses 'unwrap' directly), so we use
--- the constructor form rather than record syntax.
+-- in 'ByteParserUnexpectedDoPatternFailure' rather than @error@.
+-- No record selector is needed (the helpers below pattern-match on
+-- the constructor and the runner uses 'unwrap' directly), so we
+-- use the constructor form rather than record syntax.
 newtype ByteParser a
   = ByteParser (StateT Position (ReaderT ByteString (Either ByteParserError)) a)
   deriving newtype (Functor, Applicative, Monad)
 
--- | @do@-notation's @fail@ desugars to a 'ByteParserGenericFailure'
--- error carrying the message. Typed constructors are preferred at
--- new call sites; the 'Generic' arm exists as the honest fallback
--- for messages that don't yet have a typed home.
+-- | @do@-notation's @fail@ desugars here when a refutable pattern
+-- bind inside slap's parser code doesn't match. The arm names that
+-- explicitly: reaching it means slap has a bug, not that the wire
+-- was malformed. Real failure shapes go through the typed
+-- 'ByteParserError' constructors directly via 'throwByteParserError'.
 instance MonadFail ByteParser where
-  fail message = throwByteParserError (ByteParserGenericFailure message)
+  fail message =
+    throwByteParserError (ByteParserUnexpectedDoPatternFailure message)
 
 -- | Run a parser against an input 'ByteString' starting at offset
 -- zero. The final position is discarded — no consumer cares where
@@ -244,14 +245,6 @@ remaining = do
   currentPosition <- ByteParser get
   pure (remainingFromPosition currentPosition input)
 
--- | Public alias for 'fail'. Used by sites that want to surface an
--- ad-hoc message without yet having a typed 'ByteParserError'
--- constructor for the failure shape. Each surviving call is a
--- candidate for promotion to a real constructor in a future tightening
--- pass; for now they land in 'ByteParserGenericFailure'.
-failByteParser :: String -> ByteParser a
-failByteParser = fail
-
 ----------------------------------------------------------------------------
 -- Fixed-width readers (lifted from Slap.Binary)
 ----------------------------------------------------------------------------
@@ -301,7 +294,7 @@ liftReadVarint reader = do
             currentPosition)
     else case reader startAt input of
       Left underlyingMessage ->
-        throwByteParserError (ByteParserGenericFailure underlyingMessage)
+        throwByteParserError (ByteParserVarintInternalError underlyingMessage)
       Right (VarintResult result consumed) ->
         if startAt + consumed > inputLength
           then

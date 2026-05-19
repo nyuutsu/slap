@@ -35,9 +35,11 @@ module Slap.VCDIFF.Types
 -- Canonical reference: RFC 3284
 
 import Slap.Checksum (Adler32)
-import Slap.Status (SlapError(..), ByteParserError(..))
+import Slap.Status (SlapError(..), VCDIFFCodeTableMalformation(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset(..), FileSize(..), Length(..), FoundVersion(..))
+import Slap.Measure (Offset(..), FileSize(..), Length(..),
+                     ActualLength(..), FoundVersion(..),
+                     byteLength)
 
 import Control.Monad (when)
 import Data.Array (Array, listArray, (!))
@@ -236,7 +238,9 @@ serializedDefaultTable = ByteString.pack $
 
 deserializeCodeTable :: ByteString -> Either SlapError (Array Word8 CodeEntry)
 deserializeCodeTable tableBytes
-  | ByteString.length tableBytes /= 1536 = Left $ ParseError LabelVCDIFF (ByteParserGenericFailure ("code table must be 1536 bytes, got " ++ show (ByteString.length tableBytes)))
+  | ByteString.length tableBytes /= 1536 =
+      Left (MalformedVCDIFFCodeTable
+              (VCDIFFCodeTableWrongLength (ActualLength (byteLength tableBytes))))
   | otherwise = do
       entries <- mapM makeEntry [0..255]
       pure $ listArray (0, 255) entries
@@ -251,8 +255,9 @@ deserializeCodeTable tableBytes
     makeInstruction 2 size _    = Right (VcdiffRun  (Length (fromIntegral size)))
     makeInstruction 3 size mode = Right (VcdiffCopy (Length (fromIntegral size))
                                                     (VCDIFFAddressMode (fromIntegral mode)))
-    makeInstruction typeCode _ _ = Left (ParseError LabelVCDIFF
-                                           (ByteParserGenericFailure ("invalid instruction type in code table: " ++ show typeCode)))
+    makeInstruction typeCode _ _ =
+      Left (MalformedVCDIFFCodeTable
+              (VCDIFFCodeTableInvalidInstructionType typeCode))
 
 -- | Decode a custom code table from the header's code table data.
 --   Format: near_size (1 byte), same_size (1 byte), then a VCDIFF delta
@@ -267,7 +272,8 @@ decodeCustomTable :: (ByteString -> Either SlapError ByteString)
                   -> ByteString
                   -> Either SlapError (Array Word8 CodeEntry, VCDIFFNearCacheSize, VCDIFFSameCacheSize)
 decodeCustomTable applyInnerDelta input = do
-  when (ByteString.length input < 2) $ Left (ParseError LabelVCDIFF (ByteParserGenericFailure "custom code table data too short"))
+  when (ByteString.length input < 2) $
+    Left (MalformedVCDIFFCodeTable VCDIFFCodeTableHeaderTooShort)
   let nearSize   = VCDIFFNearCacheSize (fromIntegral (ByteString.index input 0))
       sameSize   = VCDIFFSameCacheSize (fromIntegral (ByteString.index input 1))
       deltaBytes = ByteString.drop 2 input

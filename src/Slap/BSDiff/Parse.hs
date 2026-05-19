@@ -15,7 +15,8 @@ import Data.Bits ((.&.), (.|.), shiftL, testBit)
 import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
 import Slap.Compression.Stream (bzip2Decompress)
-import Slap.Status (SlapError(..), ByteParserError(..), DecompressionFailure(..), BSDiffSection(..), Parsed(..))
+import Slap.Status (SlapError(..), BSDiffHeaderMalformation(..),
+                    DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize(..), Length(..), Delta(..),
@@ -56,7 +57,8 @@ parseBSDiff :: PatchFileContents -> Either SlapError (Parsed BSDiffPatch)
 parseBSDiff (PatchFileContents input)
   | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (RequiredLength (Length 32)) (ActualLength (byteLength input)))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
-  | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 = Left (ParseError LabelBSDiff (ByteParserGenericFailure "invalid header (negative size)"))
+  | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 =
+      Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes rawControlSize rawDiffSize rawTargetSize))
   | otherwise = do
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed

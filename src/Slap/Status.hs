@@ -52,6 +52,10 @@ module Slap.Status
   , emptyUnitLabel
   , XDelta1KnownUnsupportedVersion(..)
   , XDelta1ShapeViolation(..)
+  , VCDIFFShapeViolation(..)
+  , VCDIFFCodeTableMalformation(..)
+  , BSDiffHeaderMalformation(..)
+  , APSN64HeaderMalformation(..)
   , PCHTXTMalformation(..)
   , NINJA1Malformation(..)
   , NINJA1SubformatConversion(..)
@@ -481,6 +485,42 @@ data SlapError
   -- data source, 'xdmain.c:1539-1542' adds the from-file source),
   -- and slap refuses anything else as off-spec.
   | UnsupportedXDelta1Shape XDelta1ShapeViolation
+
+  -- | A VCDIFF patch's wire shape disagreed with the per-format
+  -- structural rules slap enforces. The 'VCDIFFShapeViolation' names
+  -- the specific failure: a nested custom code table (forbidden by
+  -- RFC 3284 inside an already-custom-table payload), a window
+  -- target-size varint that decoded as negative, or a secondary-
+  -- compression flag set on a data section slap doesn't implement.
+  -- These are validated after the byte-parser has produced the raw
+  -- window list, so the parser stays focused on byte-level reading.
+  | UnsupportedVCDIFFShape VCDIFFShapeViolation
+
+  -- | A VCDIFF custom code table failed structural validation. The
+  -- 'VCDIFFCodeTableMalformation' names the specific failure: the
+  -- decoded table bytes were not exactly 1536 bytes long, contained
+  -- a byte that did not decode to a valid instruction type, or were
+  -- too short to even contain the 2-byte near\/same-cache-size
+  -- header. Surfaced from 'Slap.VCDIFF.Types.decodeCustomTable' and
+  -- 'deserializeCodeTable', both of which run outside the byte
+  -- parser.
+  | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
+
+  -- | A BSDiff patch's fixed-width header decoded with at least one
+  -- of the three size fields as negative. The 'BSDiffHeaderMalformation'
+  -- carries all three field values so the renderer can name which
+  -- one(s) were off. The check happens outside the byte parser
+  -- because the header is read with a fixed-offset signed-magnitude
+  -- helper rather than the monadic primitives.
+  | MalformedBSDiffHeader BSDiffHeaderMalformation
+
+  -- | An APS-N64 patch's header carried a value that did not decode
+  -- to a known variant. The 'APSN64HeaderMalformation' names which
+  -- header field rejected which byte. Validated outside the byte
+  -- parser at 'Slap.APSN64.Parse.parseAPSN64', using a pre-read of
+  -- the patch-type byte at the known fixed offset after the magic
+  -- bytes.
+  | MalformedAPSN64Header APSN64HeaderMalformation
 
   -- | An xdelta1 patch's instruction referenced a source index that
   -- is not 0 (the data source) or 1 (the file source). Canonical
@@ -1137,8 +1177,11 @@ renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
 renderByteParserError ByteParserVarintExceededWidth =
   "varint overflow (too many continuation bytes)"
 
-renderByteParserError (ByteParserGenericFailure message) =
-  message
+renderByteParserError (ByteParserVarintInternalError underlyingMessage) =
+  "varint reader: " ++ underlyingMessage
+
+renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
+  "internal: do-pattern match failed in slap's parser: " ++ message
 
 ----------------------------------------------------------------------------
 -- renderSlapError
@@ -1262,6 +1305,34 @@ renderSlapError (UnsupportedXDelta1Shape violation) =
     describeViolation XDelta1OneDataSource         = "1 source: data"
     describeViolation XDelta1OneFileSource         = "1 source: file"
     describeViolation (XDelta1TooManySources n)    = show n ++ " sources"
+
+renderSlapError (UnsupportedVCDIFFShape violation) =
+  formatLabelName LabelVCDIFF ++ ": " ++ case violation of
+    VCDIFFNestedCustomCodeTable ->
+      "nested custom code tables are not allowed (RFC 3284 §4.1)"
+    VCDIFFNegativeWindowTargetSize rawValue ->
+      "negative window target size (decoded as " ++ show rawValue ++ ")"
+    VCDIFFSecondaryCompressionUnsupportedInDataSections ->
+      "secondary compression in data sections is not supported"
+
+renderSlapError (MalformedVCDIFFCodeTable malformation) =
+  formatLabelName LabelVCDIFF ++ ": " ++ case malformation of
+    VCDIFFCodeTableWrongLength (ActualLength (Length actualLength)) ->
+      "code table must be 1536 bytes, got " ++ show actualLength
+    VCDIFFCodeTableInvalidInstructionType typeCode ->
+      "invalid instruction type in code table: " ++ show typeCode
+    VCDIFFCodeTableHeaderTooShort ->
+      "custom code table data too short"
+
+renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize diffSize targetSize)) =
+  formatLabelName LabelBSDiff
+  ++ ": invalid header (negative size: control="
+  ++ show controlSize ++ ", diff=" ++ show diffSize
+  ++ ", target=" ++ show targetSize ++ ")"
+
+renderSlapError (MalformedAPSN64Header malformation) =
+  formatLabelName LabelAPSN64 ++ ": " ++ case malformation of
+    APSN64UnknownPatchType byte -> "unknown patch type: " ++ show byte
 
 renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   formatLabelName LabelXDelta1
@@ -1774,6 +1845,71 @@ data XDelta1ShapeViolation
   | XDelta1TooManySources Int
   deriving (Eq, Show)
 
+-- | The off-spec wire shapes a VCDIFF (RFC 3284) parser refuses. The
+-- byte-parser produces raw windows without enforcing these rules;
+-- 'Slap.VCDIFF.Parse.parseVCDIFFWith' validates each one against
+-- this sum after the wire-level walk and lifts the failure into
+-- 'UnsupportedVCDIFFShape'.
+data VCDIFFShapeViolation
+  -- | The patch had its @VCD_CODETABLE@ header flag set inside a
+  -- payload that was itself a custom code table delta. RFC 3284
+  -- §4.1 forbids nesting; the inner-delta parse is invoked with
+  -- @allowCustom = False@ and rejects anything that tries.
+  = VCDIFFNestedCustomCodeTable
+  -- | A window's target-size varint decoded as a negative
+  -- 'Int64'. VCDIFF varints are signed but every spec-allowed
+  -- value is non-negative; the field carries the offending raw
+  -- value verbatim.
+  | VCDIFFNegativeWindowTargetSize !Int64
+  -- | A window's delta indicator set at least one of the three
+  -- secondary-compression bits ('VCD_DATACOMP', 'VCD_INSTCOMP',
+  -- 'VCD_ADDRCOMP'). Slap does not implement the secondary
+  -- compressor; the renderer names the rule without naming
+  -- which bit fired (any subset is equally refused).
+  | VCDIFFSecondaryCompressionUnsupportedInDataSections
+  deriving (Eq, Show)
+
+-- | The structural failures slap raises when decoding a VCDIFF
+-- custom code table. Validated outside the byte parser by
+-- 'Slap.VCDIFF.Types.decodeCustomTable' and 'deserializeCodeTable',
+-- both of which receive a bytestring slice and return
+-- 'Either SlapError ...' directly.
+data VCDIFFCodeTableMalformation
+  -- | The serialized code-table bytes did not have the spec-
+  -- mandated 1536-byte width (six 256-entry slices: types1,
+  -- types2, sizes1, sizes2, modes1, modes2). The 'ActualLength'
+  -- carries the observed length.
+  = VCDIFFCodeTableWrongLength !ActualLength
+  -- | A byte in the types1 or types2 slice did not decode to a
+  -- valid 'VCDIFFInstruction' type tag (Noop=0, Add=1, Run=2,
+  -- Copy=3). The 'Word8' is the offending byte value.
+  | VCDIFFCodeTableInvalidInstructionType !Word8
+  -- | The custom-code-table data section was shorter than the
+  -- 2-byte header (near-cache size byte, same-cache size byte)
+  -- it must begin with.
+  | VCDIFFCodeTableHeaderTooShort
+  deriving (Eq, Show)
+
+-- | The structural failures slap raises when validating a BSDiff
+-- fixed-width header. The three 'Int64' fields are the
+-- @control@, @diff@, and @target@ sizes in declaration order; at
+-- least one of them decoded as negative, and all three are
+-- preserved verbatim so the renderer can name which.
+data BSDiffHeaderMalformation
+  = BSDiffNegativeHeaderSizes !Int64 !Int64 !Int64
+  deriving (Eq, Show)
+
+-- | The structural failures slap raises when validating an
+-- APS-N64 header byte before invoking the main wire-level walk.
+-- Today only the patch-type byte is pre-validated; future
+-- additions (unrecognized image format, unrecognized record
+-- encoding) will add sibling constructors here as those fields
+-- migrate from "carried verbatim with an advisory" to "rejected
+-- with an error".
+data APSN64HeaderMalformation
+  = APSN64UnknownPatchType !Word8
+  deriving (Eq, Show)
+
 -- | The PCHTXT-format-specific malformations a parser can refuse.
 -- Each constructor names a structural failure mode of the textual
 -- patch grammar; the labeled newtypes (e.g. 'LineText') carry the
@@ -1856,10 +1992,14 @@ data ByteParserOperation
 -- primitive — the axes the consumer wants to dispatch on are the
 -- failure kind and the surfacing primitive, in that order.
 --
--- 'ByteParserGenericFailure' is the @MonadFail@ fallback for messages
--- that don't yet have a typed home. Each remaining occurrence is a
--- candidate for promotion to a real constructor in a later tightening
--- pass; the arm is explicitly the last resort, not a kitchen sink.
+-- 'ByteParserUnexpectedDoPatternFailure' is the 'MonadFail' fallback
+-- and exists for one reason only: when a @do@-notation pattern bind
+-- inside slap's parser code fails (e.g. a refutable pattern that
+-- doesn't match), the desugaring needs somewhere to land that isn't
+-- 'error'. Reaching that arm means slap has a bug, not that the
+-- input was malformed; the renderer prefixes it as an internal
+-- failure for that reason. Real failure shapes have typed
+-- constructors above.
 data ByteParserError
 
   -- | A read could not be satisfied: 'RequestedLength' bytes were
@@ -1896,13 +2036,22 @@ data ByteParserError
   -- complete on its own.
   | ByteParserVarintExceededWidth
 
-  -- | 'MonadFail'\@'fail' fallback. Carries the message verbatim so
-  -- existing call sites that hand a literal string ('failByteParser'
-  -- uses and pattern-match-bind failures inside @do@-notation) keep
-  -- their diagnostics. Promoting a recurring message into a typed
-  -- constructor above is the right follow-up for any new failure
-  -- shape that proves load-bearing.
-  | ByteParserGenericFailure String
+  -- | A 'Slap.Binary'-level varint reader (byuu or VCDIFF) returned
+  -- its @Either String@ failure channel through the lifting seam in
+  -- 'Slap.ByteParser.liftReadVarint'. The string is the underlying
+  -- message verbatim; the boundary preserved here rather than
+  -- structured further because the 'Slap.Binary' varints return
+  -- 'Either String' for now and restructuring them is a separate
+  -- pass.
+  | ByteParserVarintInternalError String
+
+  -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
+  -- failures inside slap's parser code. Reaching this arm means a
+  -- refutable pattern bind in a parser body didn't match — i.e.
+  -- slap has a bug, not that the wire input was malformed. The
+  -- string is the desugared @fail@ message; the renderer prefixes
+  -- it as an internal failure.
+  | ByteParserUnexpectedDoPatternFailure String
 
   deriving (Eq, Show)
 

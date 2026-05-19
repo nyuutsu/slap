@@ -35,6 +35,7 @@ import Data.Word (Word8)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize, Length(..), Offset(..))
 import Slap.Narrow (EncodingLimits(..))
+import Slap.Status (APSN64HeaderMalformation(..))
 
 -- | The description field of an APS-N64 patch header. Locale-encoded
 -- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
@@ -63,10 +64,10 @@ newtype N64ChecksumPair = N64ChecksumPair { unN64ChecksumPair :: ByteString }
 data APSPatchType = APSSimple | APSN64Specific
   deriving (Show, Eq)
 
-toAPSPatchType :: Word8 -> Either String APSPatchType
-toAPSPatchType 0 = Right APSSimple
-toAPSPatchType 1 = Right APSN64Specific
-toAPSPatchType byte = Left ("unknown patch type: " ++ show byte)
+toAPSPatchType :: Word8 -> Either APSN64HeaderMalformation APSPatchType
+toAPSPatchType 0    = Right APSSimple
+toAPSPatchType 1    = Right APSN64Specific
+toAPSPatchType byte = Left (APSN64UnknownPatchType byte)
 
 fromAPSPatchType :: APSPatchType -> Word8
 fromAPSPatchType APSSimple       = 0
