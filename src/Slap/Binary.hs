@@ -10,6 +10,7 @@ module Slap.Binary
   , getInt64BE
     -- * Variable-length integers
   , VarintResult(..)
+  , VarintReadFailure(..)
   , getByuuVarint
   , getVcdiffVarint
     -- * Builders
@@ -107,22 +108,36 @@ getInt64BE offset input =
 -- Variable-length integers
 ----------------------------------------------------------------------------
 
+-- | The two failure modes a varint reader can surface. Both varint
+-- formats slap reads ('byuu', 'VCDIFF') share this failure space;
+-- the EDSIO varint in 'Slap.ByteParser.edsioVarint' is decoded
+-- against the parser monad directly and surfaces the same
+-- meanings through 'ByteParserError' constructors.
+data VarintReadFailure
+  -- | The reader accumulated nine continuation bytes without
+  -- seeing a terminating byte. Nine 7-bit groups would already
+  -- exceed an 'Int64' regardless of the encoding's continuation
+  -- discipline, so the reader gives up at that point.
+  = VarintTooManyContinuationBytes
+  -- | A continuation byte was followed by no more input; the
+  -- varint started inside the buffer but its continuation bytes
+  -- ran past the end. Distinct from "read started at or past
+  -- EOF", which is an 'ByteParserUnderflow' at the lifting seam.
+  | VarintRanPastEndOfInput
+  deriving (Eq, Show)
+
 -- | byuu/Near-style varint used by BPS and UPS.
 -- LSB-first encoding: each 7-bit group is stored low byte first.
 -- High bit clear = more bytes follow. High bit set = final byte.
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
 -- Returns (value, bytes consumed).
-getByuuVarint :: Int -> ByteString -> Either String VarintResult
+getByuuVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
 getByuuVarint offset input = decode offset 0 1 (0 :: Int)
   where
     inputLength = ByteString.length input
     decode position accumulated multiplier !iterations
-      | iterations >= 9 =
-          Left ("varint overflow at offset " ++ show offset
-                ++ " (too many continuation bytes)")
-      | position >= inputLength =
-          Left ("unterminated varint at offset " ++ show offset
-                ++ " (reached end of input after " ++ show (position - offset) ++ " bytes)")
+      | iterations >= 9       = Left VarintTooManyContinuationBytes
+      | position >= inputLength = Left VarintRanPastEndOfInput
       | otherwise =
           let byte = ByteString.index input position
               payload = fromIntegral (byte .&. 0x7F) :: Int64
@@ -135,17 +150,13 @@ getByuuVarint offset input = decode offset 0 1 (0 :: Int)
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
-getVcdiffVarint :: Int -> ByteString -> Either String VarintResult
+getVcdiffVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
 getVcdiffVarint offset input = decode offset 0 (0 :: Int)
   where
     inputLength = ByteString.length input
     decode position accumulated !iterations
-      | iterations >= 9 =
-          Left ("varint overflow at offset " ++ show offset
-                ++ " (too many continuation bytes)")
-      | position >= inputLength =
-          Left ("unterminated varint at offset " ++ show offset
-                ++ " (reached end of input after " ++ show (position - offset) ++ " bytes)")
+      | iterations >= 9       = Left VarintTooManyContinuationBytes
+      | position >= inputLength = Left VarintRanPastEndOfInput
       | otherwise =
           let byte = ByteString.index input position
               total = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)

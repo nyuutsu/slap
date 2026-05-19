@@ -180,7 +180,7 @@ encodeVarint = LazyByteString.toStrict . toLazyByteString . putByuuVarint
 
 decodeVarint :: ByteString -> Either String Int64
 decodeVarint input = case getByuuVarint 0 input of
-  Left errorMessage -> Left errorMessage
+  Left failure -> Left (show failure)
   Right (VarintResult value _consumed) -> Right value
 
 ----------------------------------------------------------------------------
@@ -1200,8 +1200,8 @@ prop_varintCanonical :: Property
 prop_varintCanonical =
   forAll genWellFormedVarint $ \bytes ->
     case getByuuVarint 0 bytes of
-      Left errorMessage ->
-        counterexample ("unexpected decode failure: " ++ errorMessage) (property False)
+      Left failure ->
+        counterexample ("unexpected decode failure: " ++ show failure) (property False)
       Right (VarintResult value consumed) ->
         counterexample ("input bytes: " ++ show (ByteString.unpack bytes)
                         ++ ", decoded: " ++ show value
@@ -1243,7 +1243,7 @@ test_varintNearMaxBound = do
   let largeValue = 2 ^ (56 :: Int) :: Int64
       encoded = encodeVarint largeValue
   case getByuuVarint 0 encoded of
-    Left errorMessage -> assertFailure ("decode failed: " ++ errorMessage)
+    Left failure -> assertFailure ("decode failed: " ++ show failure)
     Right (VarintResult decoded consumed) -> do
       assertEqual "round-trip" largeValue decoded
       assertEqual "consumed equals encoded length"

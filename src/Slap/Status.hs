@@ -1168,17 +1168,18 @@ renderByteParserError
   ++ " out of bounds (input length " ++ show inputLength ++ ")"
 
 renderByteParserError
-  (ByteParserNegativeLengthRequested operation (Length amount)) =
-  byteParserOperationLabel operation ++ ": negative length " ++ show amount
+  (ByteParserNegativeLengthRequestedInGetBytes (Length amount)) =
+  "getBytes: negative length " ++ show amount
+
+renderByteParserError
+  (ByteParserNegativeLengthRequestedInSkip (Length amount)) =
+  "skip: negative length " ++ show amount
 
 renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
   "varint read overran buffer at offset " ++ show cursor
 
 renderByteParserError ByteParserVarintExceededWidth =
   "varint overflow (too many continuation bytes)"
-
-renderByteParserError (ByteParserVarintInternalError underlyingMessage) =
-  "varint reader: " ++ underlyingMessage
 
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
   "internal: do-pattern match failed in slap's parser: " ++ message
@@ -1967,12 +1968,14 @@ newtype FlagErrorText = FlagErrorText { unFlagErrorText :: String }
 -- ByteParserError
 ----------------------------------------------------------------------------
 
--- | Which primitive of 'Slap.ByteParser' surfaced an underflow- or
--- negative-length-flavored error. Carried by the two
--- 'ByteParserError' constructors whose shape is the same across
--- multiple primitives ('ByteParserUnderflow',
--- 'ByteParserNegativeLengthRequested') so the renderer can name
--- which call site the failure came from.
+-- | Which primitive of 'Slap.ByteParser' surfaced an underflow.
+-- Carried by 'ByteParserUnderflow' so the renderer can name which
+-- call site the failure came from. All four primitives can
+-- genuinely underflow; the parallel "negative length requested"
+-- failure is split into per-primitive constructors instead
+-- ('ByteParserNegativeLengthRequestedInGetBytes',
+-- 'ByteParserNegativeLengthRequestedInSkip') because only those
+-- two primitives accept a caller-supplied length.
 data ByteParserOperation
   = GetBytesOperation
   | SkipOperation
@@ -2017,11 +2020,17 @@ data ByteParserError
   -- offending target; the 'ActualLength' is the input's total length.
   | ByteParserPositionOutOfBounds Position ActualLength
 
-  -- | A primitive was asked for a negative number of bytes. The
-  -- 'ByteParserOperation' names which primitive received the
-  -- negative request; the 'Length' is the offending value as
-  -- received.
-  | ByteParserNegativeLengthRequested ByteParserOperation Length
+  -- | 'Slap.ByteParser.getBytes' was asked for a negative number
+  -- of bytes. The 'Length' is the offending value as received.
+  -- Split from the parallel 'Skip' variant below so the only
+  -- representable shapes are the ones the byte-parser can
+  -- actually surface — fixed-width and varint reads don't take a
+  -- caller-supplied length, so they can't produce this failure.
+  | ByteParserNegativeLengthRequestedInGetBytes Length
+
+  -- | 'Slap.ByteParser.skip' was asked to advance by a negative
+  -- number of bytes. The 'Length' is the offending value.
+  | ByteParserNegativeLengthRequestedInSkip Length
 
   -- | A varint started inside the buffer but its continuation bytes
   -- ran past the end. The 'Position' is where the varint started.
@@ -2029,21 +2038,14 @@ data ByteParserError
   -- fires when the read started at or past EOF.
   | ByteParserVarintOverranBuffer Position
 
-  -- | A varint accumulated too many continuation bytes to fit in the
-  -- target machine word. Today only the EDSIO varint produces this;
-  -- the constructor takes no payload because the only thing the
-  -- variant says is "the value can't be represented", which is
-  -- complete on its own.
+  -- | A varint accumulated too many continuation bytes to fit in
+  -- the target machine word. Raised by all three slap varint
+  -- readers (byuu, VCDIFF, EDSIO) — once nine 7-bit groups have
+  -- accumulated without a terminator, the value exceeds 'Int64'
+  -- regardless of the encoding. The constructor takes no payload
+  -- because the only thing the variant says is "the value can't
+  -- be represented".
   | ByteParserVarintExceededWidth
-
-  -- | A 'Slap.Binary'-level varint reader (byuu or VCDIFF) returned
-  -- its @Either String@ failure channel through the lifting seam in
-  -- 'Slap.ByteParser.liftReadVarint'. The string is the underlying
-  -- message verbatim; the boundary preserved here rather than
-  -- structured further because the 'Slap.Binary' varints return
-  -- 'Either String' for now and restructuring them is a separate
-  -- pass.
-  | ByteParserVarintInternalError String
 
   -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
   -- failures inside slap's parser code. Reaching this arm means a

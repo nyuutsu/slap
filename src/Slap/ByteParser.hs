@@ -56,6 +56,7 @@ module Slap.ByteParser
 
 import Slap.Binary
   ( VarintResult(..)
+  , VarintReadFailure(..)
   , getWord16LE, getWord32LE, getInt64LE
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
@@ -143,7 +144,7 @@ getBytes :: Length -> ByteParser ByteString
 getBytes requestedLength@(Length count)
   | count < 0 =
       throwByteParserError
-        (ByteParserNegativeLengthRequested GetBytesOperation requestedLength)
+        (ByteParserNegativeLengthRequestedInGetBytes requestedLength)
   | otherwise = do
       input              <- askInput
       currentPosition    <- ByteParser get
@@ -184,7 +185,7 @@ skip :: Length -> ByteParser ()
 skip requestedLength@(Length count)
   | count < 0 =
       throwByteParserError
-        (ByteParserNegativeLengthRequested SkipOperation requestedLength)
+        (ByteParserNegativeLengthRequestedInSkip requestedLength)
   | otherwise = do
       input            <- askInput
       currentPosition  <- ByteParser get
@@ -271,13 +272,16 @@ liftRead readWidth@(Length width) reader = do
             (RemainingLength (Length (inputLength - startAt)))
             currentPosition)
 
--- | Adapt a variable-length pure varint reader. Two distinct failure
--- modes are surfaced separately: starting the read at or past EOF is
--- an 'ByteParserUnderflow' tagged with 'VarintReadOperation' (the
--- request asked for at least one byte, none were available); a varint
--- that starts inside the buffer but whose continuation bytes run past
--- the end is 'ByteParserVarintOverranBuffer'.
-liftReadVarint :: (Int -> ByteString -> Either String VarintResult)
+-- | Adapt a variable-length pure varint reader. Three distinct
+-- failure modes are surfaced through typed 'ByteParserError'
+-- arms: starting the read at or past EOF is 'ByteParserUnderflow'
+-- tagged with 'VarintReadOperation' (the request asked for at
+-- least one byte, none were available); a varint that starts
+-- inside the buffer but whose continuation bytes run past the
+-- end is 'ByteParserVarintOverranBuffer'; a varint that
+-- accumulates more continuation bytes than fit in 'Int64' is
+-- 'ByteParserVarintExceededWidth'.
+liftReadVarint :: (Int -> ByteString -> Either VarintReadFailure VarintResult)
                -> ByteParser Int64
 liftReadVarint reader = do
   input            <- askInput
@@ -293,16 +297,13 @@ liftReadVarint reader = do
             (RemainingLength (Length 0))
             currentPosition)
     else case reader startAt input of
-      Left underlyingMessage ->
-        throwByteParserError (ByteParserVarintInternalError underlyingMessage)
-      Right (VarintResult result consumed) ->
-        if startAt + consumed > inputLength
-          then
-            throwByteParserError
-              (ByteParserVarintOverranBuffer currentPosition)
-          else do
-            ByteParser (put (Position (startAt + consumed)))
-            pure result
+      Left VarintTooManyContinuationBytes ->
+        throwByteParserError ByteParserVarintExceededWidth
+      Left VarintRanPastEndOfInput ->
+        throwByteParserError (ByteParserVarintOverranBuffer currentPosition)
+      Right (VarintResult result consumed) -> do
+        ByteParser (put (Position (startAt + consumed)))
+        pure result
 
 word16LE :: ByteParser Word16
 word16LE = liftRead (Length 2) getWord16LE
