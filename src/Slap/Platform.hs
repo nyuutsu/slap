@@ -1,9 +1,9 @@
 module Slap.Platform
   ( platformName
   , ninja1ToPlatform
-  , platformToNinja1
+  , platformToNINJA1
   , ninja2ToPlatform
-  , platformToNinja2
+  , platformToNINJA2
   ) where
 
 import Slap.PlatformType (PlatformType(..), platformName)
@@ -39,65 +39,65 @@ ninja1ToPlatform (RomUnknown _)    = PlatformRaw
 
 -- | Convert a shared platform to NINJA1.  Only FDS has no NINJA1
 -- representation and falls back to Raw with an advisory.
-platformToNinja1 :: PlatformType -> (NINJA1RomType, [SlapAdvisory])
-platformToNinja1 PlatformRaw            = (RomRAW, [])
-platformToNinja1 PlatformNES            = (RomNES, [])
-platformToNinja1 PlatformFDS            = (RomRAW, [PlatformNotAvailable LabelNINJA1 PlatformFDS])
-platformToNinja1 PlatformSNES           = (RomSNES, [])
-platformToNinja1 PlatformN64            = (RomN64, [])
-platformToNinja1 PlatformGB             = (RomGB, [])
-platformToNinja1 PlatformGBC            = (RomGBC, [])
-platformToNinja1 PlatformGBA            = (RomGBA, [])
-platformToNinja1 PlatformNGP            = (RomNGP, [])
-platformToNinja1 PlatformNGPC           = (RomNGPC, [])
-platformToNinja1 PlatformSMS            = (RomSMS, [])
-platformToNinja1 PlatformGameGear       = (RomGameGear, [])
-platformToNinja1 PlatformGenesis        = (RomGenesis, [])
-platformToNinja1 PlatformPCEngine       = (RomPCEngine, [])
-platformToNinja1 PlatformWonderSwan     = (RomWonderSwan, [])
-platformToNinja1 PlatformWonderSwanColor = (RomWonderSwanColor, [])
-platformToNinja1 PlatformLynx           = (RomLynx, [])
-platformToNinja1 PlatformJaguar         = (RomJaguar, [])
-platformToNinja1 PlatformGP32           = (RomGP32, [])
+platformToNINJA1 :: PlatformType -> (NINJA1RomType, [SlapAdvisory])
+platformToNINJA1 PlatformRaw            = (RomRAW, [])
+platformToNINJA1 PlatformNES            = (RomNES, [])
+platformToNINJA1 PlatformFDS            = (RomRAW, [PlatformNotAvailable LabelNINJA1 PlatformFDS])
+platformToNINJA1 PlatformSNES           = (RomSNES, [])
+platformToNINJA1 PlatformN64            = (RomN64, [])
+platformToNINJA1 PlatformGB             = (RomGB, [])
+platformToNINJA1 PlatformGBC            = (RomGBC, [])
+platformToNINJA1 PlatformGBA            = (RomGBA, [])
+platformToNINJA1 PlatformNGP            = (RomNGP, [])
+platformToNINJA1 PlatformNGPC           = (RomNGPC, [])
+platformToNINJA1 PlatformSMS            = (RomSMS, [])
+platformToNINJA1 PlatformGameGear       = (RomGameGear, [])
+platformToNINJA1 PlatformGenesis        = (RomGenesis, [])
+platformToNINJA1 PlatformPCEngine       = (RomPCEngine, [])
+platformToNINJA1 PlatformWonderSwan     = (RomWonderSwan, [])
+platformToNINJA1 PlatformWonderSwanColor = (RomWonderSwanColor, [])
+platformToNINJA1 PlatformLynx           = (RomLynx, [])
+platformToNINJA1 PlatformJaguar         = (RomJaguar, [])
+platformToNINJA1 PlatformGP32           = (RomGP32, [])
 
 ----------------------------------------------------------------------------
 -- NINJA2 conversion
 ----------------------------------------------------------------------------
 
 ninja2ToPlatform :: NINJA2RomType -> (PlatformType, [SlapAdvisory])
-ninja2ToPlatform Ninja2Raw                    = (PlatformRaw, [])
-ninja2ToPlatform Ninja2NES                    = (PlatformNES, [])
-ninja2ToPlatform Ninja2FDS                    = (PlatformFDS, [])
-ninja2ToPlatform Ninja2SNES                   = (PlatformSNES, [])
-ninja2ToPlatform Ninja2N64                    = (PlatformN64, [])
-ninja2ToPlatform Ninja2GB                     = (PlatformGB, [])
-ninja2ToPlatform Ninja2SMSGameGear            = (PlatformSMS, [NINJA2SMSGameGearAmbiguity])
-ninja2ToPlatform Ninja2Genesis                = (PlatformGenesis, [])
-ninja2ToPlatform Ninja2PCEngine               = (PlatformPCEngine, [])
-ninja2ToPlatform Ninja2Lynx                   = (PlatformLynx, [])
-ninja2ToPlatform (Ninja2UnknownRomType _)     = (PlatformRaw, [])
+ninja2ToPlatform NINJA2Raw                    = (PlatformRaw, [])
+ninja2ToPlatform NINJA2NES                    = (PlatformNES, [])
+ninja2ToPlatform NINJA2FDS                    = (PlatformFDS, [])
+ninja2ToPlatform NINJA2SNES                   = (PlatformSNES, [])
+ninja2ToPlatform NINJA2N64                    = (PlatformN64, [])
+ninja2ToPlatform NINJA2GB                     = (PlatformGB, [])
+ninja2ToPlatform NINJA2SMSGameGear            = (PlatformSMS, [NINJA2SMSGameGearAmbiguity])
+ninja2ToPlatform NINJA2Genesis                = (PlatformGenesis, [])
+ninja2ToPlatform NINJA2PCEngine               = (PlatformPCEngine, [])
+ninja2ToPlatform NINJA2Lynx                   = (PlatformLynx, [])
+ninja2ToPlatform (NINJA2UnknownRomType _)     = (PlatformRaw, [])
 
 -- | Convert a shared platform to NINJA2.  Platforms that NINJA2
 -- doesn't enumerate (GBC, GBA, NGP, NGPC, WonderSwan,
 -- WonderSwan Color, Jaguar, GP32) fall back to Raw with an advisory.
 -- Game Gear maps to NINJA2's combined SMS/Game Gear slot.
-platformToNinja2 :: PlatformType -> (NINJA2RomType, [SlapAdvisory])
-platformToNinja2 PlatformRaw            = (Ninja2Raw, [])
-platformToNinja2 PlatformNES            = (Ninja2NES, [])
-platformToNinja2 PlatformFDS            = (Ninja2FDS, [])
-platformToNinja2 PlatformSNES           = (Ninja2SNES, [])
-platformToNinja2 PlatformN64            = (Ninja2N64, [])
-platformToNinja2 PlatformGB             = (Ninja2GB, [])
-platformToNinja2 PlatformGBC            = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGBC])
-platformToNinja2 PlatformGBA            = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGBA])
-platformToNinja2 PlatformNGP            = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformNGP])
-platformToNinja2 PlatformNGPC           = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformNGPC])
-platformToNinja2 PlatformSMS            = (Ninja2SMSGameGear, [])
-platformToNinja2 PlatformGameGear       = (Ninja2SMSGameGear, [])
-platformToNinja2 PlatformGenesis        = (Ninja2Genesis, [])
-platformToNinja2 PlatformPCEngine       = (Ninja2PCEngine, [])
-platformToNinja2 PlatformWonderSwan     = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformWonderSwan])
-platformToNinja2 PlatformWonderSwanColor = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformWonderSwanColor])
-platformToNinja2 PlatformLynx           = (Ninja2Lynx, [])
-platformToNinja2 PlatformJaguar         = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformJaguar])
-platformToNinja2 PlatformGP32           = (Ninja2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGP32])
+platformToNINJA2 :: PlatformType -> (NINJA2RomType, [SlapAdvisory])
+platformToNINJA2 PlatformRaw            = (NINJA2Raw, [])
+platformToNINJA2 PlatformNES            = (NINJA2NES, [])
+platformToNINJA2 PlatformFDS            = (NINJA2FDS, [])
+platformToNINJA2 PlatformSNES           = (NINJA2SNES, [])
+platformToNINJA2 PlatformN64            = (NINJA2N64, [])
+platformToNINJA2 PlatformGB             = (NINJA2GB, [])
+platformToNINJA2 PlatformGBC            = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGBC])
+platformToNINJA2 PlatformGBA            = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGBA])
+platformToNINJA2 PlatformNGP            = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformNGP])
+platformToNINJA2 PlatformNGPC           = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformNGPC])
+platformToNINJA2 PlatformSMS            = (NINJA2SMSGameGear, [])
+platformToNINJA2 PlatformGameGear       = (NINJA2SMSGameGear, [])
+platformToNINJA2 PlatformGenesis        = (NINJA2Genesis, [])
+platformToNINJA2 PlatformPCEngine       = (NINJA2PCEngine, [])
+platformToNINJA2 PlatformWonderSwan     = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformWonderSwan])
+platformToNINJA2 PlatformWonderSwanColor = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformWonderSwanColor])
+platformToNINJA2 PlatformLynx           = (NINJA2Lynx, [])
+platformToNINJA2 PlatformJaguar         = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformJaguar])
+platformToNINJA2 PlatformGP32           = (NINJA2Raw, [PlatformNotAvailable LabelNINJA2 PlatformGP32])

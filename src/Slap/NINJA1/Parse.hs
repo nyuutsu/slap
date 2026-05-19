@@ -5,7 +5,6 @@ module Slap.NINJA1.Parse
   , zlibDecompress
   , parseBinary
   , parseBinaryGet
-  , decodeBigEndian32
   , decodeBigEndian
   , parseBinaryRecords
   , parseText
@@ -20,7 +19,10 @@ module Slap.NINJA1.Parse
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
-                           NINJA1SubFormat(..), NINJA1RomType(..), toNINJA1RomType, ninja1MagicBytes)
+                           NINJA1SubFormat(..), NINJA1RomType(..),
+                           toNINJA1RomType, toNINJA1SubFormat,
+                           ninja1MagicBytes,
+                           ninja1BinaryEOFMarkerBytes, ninja1BinaryEOFMarkerWidth)
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
                     NINJA1Malformation(..),
                     LineText(..), OffsetTokenText(..))
@@ -43,18 +45,18 @@ import Numeric (readHex)
 
 parseNINJA1 :: PatchFileContents -> Either SlapError (Parsed NINJA1Patch)
 parseNINJA1 (PatchFileContents input)
-  | ByteString.length input < 8             = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (byteLength input)))
+  | ByteString.length input < 8                 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 8)) (ActualLength (byteLength input)))
   | ByteString.take 6 input /= ninja1MagicBytes = Left (BadMagic LabelNINJA1 (ActualMagic (ByteString.take 6 input)))
-  | subFormatIdentifier == "B "                = wrapParsed (parseBinary Ninja1Binary (PatchFileContents payload))
-  | subFormatIdentifier == "BZ"                = wrapParsed (zlibDecompress payload >>= (parseBinary Ninja1BinaryCompressed . PatchFileContents))
-  -- Spec says 0x540d but PHP source uses chr(0x0a); spec hex is wrong.
-  | subFormatIdentifier == ByteString.pack [0x54,0x0A] = wrapParsed (parseText Ninja1Text (PatchFileContents payload))    -- "T\n"
-  | subFormatIdentifier == "TZ"                = wrapParsed (zlibDecompress payload >>= (parseText Ninja1TextCompressed . PatchFileContents))
-  | otherwise                    = Left (UnsupportedNINJA1Subformat subFormatIdentifier)
+  | otherwise = case toNINJA1SubFormat subFormatIdentifier of
+      Nothing                       -> Left (UnsupportedNINJA1Subformat subFormatIdentifier)
+      Just NINJA1Binary             -> wrapParsed (parseBinary NINJA1Binary           (PatchFileContents payload))
+      Just NINJA1BinaryCompressed   -> wrapParsed (zlibDecompress payload >>= (parseBinary NINJA1BinaryCompressed . PatchFileContents))
+      Just NINJA1Text               -> wrapParsed (parseText   NINJA1Text             (PatchFileContents payload))
+      Just NINJA1TextCompressed     -> wrapParsed (zlibDecompress payload >>= (parseText   NINJA1TextCompressed   . PatchFileContents))
   where
-    subFormatIdentifier   = ByteString.take 2 (ByteString.drop 6 input)
-    payload = ByteString.drop 8 input
-    wrapParsed = fmap (\patch -> Parsed patch [])
+    subFormatIdentifier = ByteString.take 2 (ByteString.drop 6 input)
+    payload             = ByteString.drop 8 input
+    wrapParsed          = fmap (\patch -> Parsed patch [])
 
 -- | Zlib decompression (PHP gzcompress = RFC 1950 zlib format).
 zlibDecompress :: ByteString -> Either SlapError ByteString
@@ -87,7 +89,7 @@ parseBinaryGet format = do
   md5Bytes  <- getBytes (Length 16)
   sha1Bytes <- getBytes (Length 20)
   result <- parseBinaryRecords
-  let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (CRC32 (decodeBigEndian32 crcBytes))
+  let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (CRC32 (decodeBigEndian crcBytes))
       parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just (MD5Hash md5Bytes)
       parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just (SHA1Hash sha1Bytes)
   pure NINJA1Patch
@@ -100,10 +102,15 @@ parseBinaryGet format = do
     , ninja1CleanEOF   = ninja1BinaryCleanEOF result
     }
 
-decodeBigEndian32 :: ByteString -> Word32
-decodeBigEndian32 = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
-
-decodeBigEndian :: ByteString -> Int64
+-- | Decode an unsigned big-endian byte sequence as any 'Num'
+-- result type. NINJA1's binary record format encodes offsets and
+-- lengths as variable-width unsigned big-endian fields, and slap
+-- consumes them at several widths — 'Word32' for the 4-byte
+-- header CRC, 'Int' for record offsets and data lengths whose
+-- width is given by a preceding byte. The polymorphic result
+-- type lets each call site pick the width it needs without a
+-- per-width helper.
+decodeBigEndian :: Num a => ByteString -> a
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
 parseBinaryRecords :: ByteParser NINJA1BinaryResult
@@ -117,14 +124,14 @@ parseBinaryRecords = parseLoop []
         if offsetWidth == 0 then pure (NINJA1BinaryResult (reverse accumulated) False)
         else do
           offsetBytes <- getBytes (Length offsetWidth)
-          if offsetWidth == 3 && offsetBytes == "EOF"
+          if offsetWidth == ninja1BinaryEOFMarkerWidth && offsetBytes == ninja1BinaryEOFMarkerBytes
             then pure (NINJA1BinaryResult (reverse accumulated) True)
             else do
-              let recordOffset = Offset (fromIntegral (decodeBigEndian offsetBytes))
-              dataWidth <- fromIntegral <$> getByte :: ByteParser Int
-              dataLenBytes <- getBytes (Length dataWidth)
-              let dataLength = fromIntegral (decodeBigEndian dataLenBytes) :: Int
-              payload <- getBytes (Length dataLength)
+              let recordOffset = Offset (decodeBigEndian offsetBytes)
+              dataWidth      <- fromIntegral <$> getByte :: ByteParser Int
+              dataLenBytes   <- getBytes (Length dataWidth)
+              let dataLength = decodeBigEndian dataLenBytes :: Int
+              payload        <- getBytes (Length dataLength)
               parseLoop (NINJA1Record recordOffset payload : accumulated)
 
 ----------------------------------------------------------------------------
@@ -143,7 +150,7 @@ parseText format (PatchFileContents payload) = do
   case contentLines of
     [] -> Left (MalformedNINJA1Content NINJA1EmptyTextualPatch)
     (headerLine : recordLines) -> do
-      let header = parseTextHeader headerLine
+      header  <- parseTextHeader headerLine
       records <- mapM parseTextRecord recordLines
       Right NINJA1Patch
         { ninja1SubFormat  = format
@@ -157,18 +164,27 @@ parseText format (PatchFileContents payload) = do
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
-parseTextHeader :: ByteString -> NINJA1TextHeader
-parseTextHeader line = NINJA1TextHeader
-  { ninja1TextRomType    = romType
-  , ninja1TextSourceCRC  = parsedCRC
-  , ninja1TextSourceMD5  = parsedMD5
-  , ninja1TextSourceSHA1 = parsedSHA1
-  }
+-- | Decode the single textual NINJA1 header line. The ROM type
+-- token is the only mandatory field; absent or unrecognized ROM
+-- type names are refused with 'NINJA1UnknownTextualRomType' (or
+-- 'NINJA1MalformedTextRecord' when the line has no tokens at
+-- all). CRC32, MD5, and SHA1 fields are optional and tolerate the
+-- spec-defined @"unk"@/@"unk."@ placeholders.
+parseTextHeader :: ByteString -> Either SlapError NINJA1TextHeader
+parseTextHeader line = do
+  romType <- case tokens of
+    (formatName:_) -> case romTypeFromName formatName of
+      Just typed -> Right typed
+      Nothing    -> Left (MalformedNINJA1Content (NINJA1UnknownTextualRomType formatName))
+    _              -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (ByteString8.unpack line))))
+  Right NINJA1TextHeader
+    { ninja1TextRomType    = romType
+    , ninja1TextSourceCRC  = parsedCRC
+    , ninja1TextSourceMD5  = parsedMD5
+    , ninja1TextSourceSHA1 = parsedSHA1
+    }
   where
     tokens = map ByteString8.unpack (ByteString8.words line)
-    romType = case tokens of
-      (formatName:_) -> romTypeFromName formatName
-      _              -> RomRAW
     isUnknown text = text == "unk" || text == "unk."
     parsedCRC = case tokens of
       (_:crcText:_) | not (isUnknown crcText) -> case (readHex crcText :: [(Word32, String)]) of
@@ -200,10 +216,17 @@ hexToBS text = ByteString.pack (parseHexPairs text)
       [(value, "")] -> value : parseHexPairs rest
       _             -> []
 
-romTypeFromName :: String -> NINJA1RomType
+-- | Decode the textual NINJA1 ROM type identifier (the first token
+-- of the header line). 'Nothing' means the name doesn't match any
+-- spec-defined identifier; the caller turns that into
+-- 'NINJA1UnknownTextualRomType'. Comparison is case-insensitive
+-- via lowercasing the input, matching the PHP reference's
+-- @strtolower@ behavior at the corresponding site.
+romTypeFromName :: String -> Maybe NINJA1RomType
 romTypeFromName text = case map toLower text of
-  "raw"  -> RomRAW;   "nes"  -> RomNES;   "snes" -> RomSNES;  "n64"  -> RomN64
-  "gb"   -> RomGB;    "gbc"  -> RomGBC;   "gba"  -> RomGBA;   "ngp"  -> RomNGP
-  "ngpc" -> RomNGPC;  "sms"  -> RomSMS;   "gg"   -> RomGameGear; "mega" -> RomGenesis
-  "pce"  -> RomPCEngine; "ws" -> RomWonderSwan; "wsc" -> RomWonderSwanColor
-  "lynx" -> RomLynx;  "jag"  -> RomJaguar; "gp32" -> RomGP32; _ -> RomRAW
+  "raw"  -> Just RomRAW;     "nes"  -> Just RomNES;     "snes" -> Just RomSNES;     "n64"  -> Just RomN64
+  "gb"   -> Just RomGB;      "gbc"  -> Just RomGBC;     "gba"  -> Just RomGBA;      "ngp"  -> Just RomNGP
+  "ngpc" -> Just RomNGPC;    "sms"  -> Just RomSMS;     "gg"   -> Just RomGameGear; "mega" -> Just RomGenesis
+  "pce"  -> Just RomPCEngine; "ws"  -> Just RomWonderSwan; "wsc" -> Just RomWonderSwanColor
+  "lynx" -> Just RomLynx;    "jag"  -> Just RomJaguar;  "gp32" -> Just RomGP32
+  _      -> Nothing

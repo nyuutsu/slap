@@ -77,7 +77,7 @@ import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import Slap.PlatformType (PlatformType(..))
-import Slap.Platform (platformToNinja1)
+import Slap.Platform (platformToNINJA1)
 import qualified Slap.PCHTXT.Types as PCHTXT
 import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
@@ -197,7 +197,7 @@ data CreateFormat
 -- the validation block), and 'requestedImageType' (selects the
 -- validation offset).
 -- 'CreateNINJA1' consumes 'requestedRomType' (mapped through
--- 'Slap.Platform.platformToNinja1'); the compression flag rides in
+-- 'Slap.Platform.platformToNINJA1'); the compression flag rides in
 -- 'PatchContents' rather than this record.  'CreatePMSR' consumes
 -- nothing.  'CreatePCHTXT' consumes 'requestedDescription'.
 -- 'CreateAPSN64' consumes 'requestedDescription' (50-byte header
@@ -231,7 +231,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ Shared platform type: NINJA1 and NINJA2 define different
     -- ROM type enumerations (18 vs 10 values, diverging at byte 2).
     -- PlatformType represents the union; format-specific conversion
-    -- (platformToNinja1, platformToNinja2) handles lossy mappings.
+    -- (platformToNINJA1, platformToNINJA2) handles lossy mappings.
   , requestedImageType            :: Maybe PPF3ImageType
   , requestedGenre                :: Maybe String
   , requestedLanguage             :: Maybe String
@@ -1046,7 +1046,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
     ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
     -- CLI flag > PatchContents > format default
-    (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNinja1 (requestedRomType meta <|> contentsRomType contents)
+    (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNINJA1 (requestedRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
 
 ----------------------------------------------------------------------------

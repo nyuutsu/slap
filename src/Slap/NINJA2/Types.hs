@@ -119,60 +119,60 @@ patchEncodingName PatchEncodingUTF8   = "UTF-8"
 patchEncodingName PatchEncodingSystem = "system"
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
--- documented; Ninja2UnknownRomType preserves any future/unknown value.
+-- documented; NINJA2UnknownRomType preserves any future/unknown value.
 -- Numbering diverges from NINJA1 at value 2 (FDS vs SNES).
 data NINJA2RomType
-  = Ninja2Raw           -- 0: Raw Binary
-  | Ninja2NES           -- 1: NES/Famicom
-  | Ninja2FDS           -- 2: Famicom Disk System
-  | Ninja2SNES          -- 3: SNES/Super Famicom
-  | Ninja2N64           -- 4: Nintendo 64
-  | Ninja2GB            -- 5: Game Boy
-  | Ninja2SMSGameGear   -- 6: SMS/Game Gear
-  | Ninja2Genesis       -- 7: Genesis/Megadrive
-  | Ninja2PCEngine      -- 8: TurboGrafx-16/PC-Engine
-  | Ninja2Lynx          -- 9: Atari Lynx
-  | Ninja2UnknownRomType !Word8
+  = NINJA2Raw           -- 0: Raw Binary
+  | NINJA2NES           -- 1: NES/Famicom
+  | NINJA2FDS           -- 2: Famicom Disk System
+  | NINJA2SNES          -- 3: SNES/Super Famicom
+  | NINJA2N64           -- 4: Nintendo 64
+  | NINJA2GB            -- 5: Game Boy
+  | NINJA2SMSGameGear   -- 6: SMS/Game Gear
+  | NINJA2Genesis       -- 7: Genesis/Megadrive
+  | NINJA2PCEngine      -- 8: TurboGrafx-16/PC-Engine
+  | NINJA2Lynx          -- 9: Atari Lynx
+  | NINJA2UnknownRomType !Word8
   deriving (Show, Eq)
 
 toNINJA2RomType :: Word8 -> NINJA2RomType
-toNINJA2RomType 0 = Ninja2Raw
-toNINJA2RomType 1 = Ninja2NES
-toNINJA2RomType 2 = Ninja2FDS
-toNINJA2RomType 3 = Ninja2SNES
-toNINJA2RomType 4 = Ninja2N64
-toNINJA2RomType 5 = Ninja2GB
-toNINJA2RomType 6 = Ninja2SMSGameGear
-toNINJA2RomType 7 = Ninja2Genesis
-toNINJA2RomType 8 = Ninja2PCEngine
-toNINJA2RomType 9 = Ninja2Lynx
-toNINJA2RomType value = Ninja2UnknownRomType value
+toNINJA2RomType 0 = NINJA2Raw
+toNINJA2RomType 1 = NINJA2NES
+toNINJA2RomType 2 = NINJA2FDS
+toNINJA2RomType 3 = NINJA2SNES
+toNINJA2RomType 4 = NINJA2N64
+toNINJA2RomType 5 = NINJA2GB
+toNINJA2RomType 6 = NINJA2SMSGameGear
+toNINJA2RomType 7 = NINJA2Genesis
+toNINJA2RomType 8 = NINJA2PCEngine
+toNINJA2RomType 9 = NINJA2Lynx
+toNINJA2RomType value = NINJA2UnknownRomType value
 
 fromNINJA2RomType :: NINJA2RomType -> Word8
-fromNINJA2RomType Ninja2Raw                      = 0
-fromNINJA2RomType Ninja2NES                      = 1
-fromNINJA2RomType Ninja2FDS                      = 2
-fromNINJA2RomType Ninja2SNES                     = 3
-fromNINJA2RomType Ninja2N64                      = 4
-fromNINJA2RomType Ninja2GB                       = 5
-fromNINJA2RomType Ninja2SMSGameGear              = 6
-fromNINJA2RomType Ninja2Genesis                  = 7
-fromNINJA2RomType Ninja2PCEngine                 = 8
-fromNINJA2RomType Ninja2Lynx                     = 9
-fromNINJA2RomType (Ninja2UnknownRomType value)   = value
+fromNINJA2RomType NINJA2Raw                      = 0
+fromNINJA2RomType NINJA2NES                      = 1
+fromNINJA2RomType NINJA2FDS                      = 2
+fromNINJA2RomType NINJA2SNES                     = 3
+fromNINJA2RomType NINJA2N64                      = 4
+fromNINJA2RomType NINJA2GB                       = 5
+fromNINJA2RomType NINJA2SMSGameGear              = 6
+fromNINJA2RomType NINJA2Genesis                  = 7
+fromNINJA2RomType NINJA2PCEngine                 = 8
+fromNINJA2RomType NINJA2Lynx                     = 9
+fromNINJA2RomType (NINJA2UnknownRomType value)   = value
 
 ninja2RomTypeName :: NINJA2RomType -> String
-ninja2RomTypeName Ninja2Raw                    = "Raw Binary"
-ninja2RomTypeName Ninja2NES                    = "NES"
-ninja2RomTypeName Ninja2FDS                    = "FDS"
-ninja2RomTypeName Ninja2SNES                   = "SNES"
-ninja2RomTypeName Ninja2N64                    = "N64"
-ninja2RomTypeName Ninja2GB                     = "Game Boy"
-ninja2RomTypeName Ninja2SMSGameGear            = "SMS/Game Gear"
-ninja2RomTypeName Ninja2Genesis                = "Genesis"
-ninja2RomTypeName Ninja2PCEngine               = "PC Engine"
-ninja2RomTypeName Ninja2Lynx                   = "Lynx"
-ninja2RomTypeName (Ninja2UnknownRomType value) = "unknown (" ++ show value ++ ")"
+ninja2RomTypeName NINJA2Raw                    = "Raw Binary"
+ninja2RomTypeName NINJA2NES                    = "NES"
+ninja2RomTypeName NINJA2FDS                    = "FDS"
+ninja2RomTypeName NINJA2SNES                   = "SNES"
+ninja2RomTypeName NINJA2N64                    = "N64"
+ninja2RomTypeName NINJA2GB                     = "Game Boy"
+ninja2RomTypeName NINJA2SMSGameGear            = "SMS/Game Gear"
+ninja2RomTypeName NINJA2Genesis                = "Genesis"
+ninja2RomTypeName NINJA2PCEngine               = "PC Engine"
+ninja2RomTypeName NINJA2Lynx                   = "Lynx"
+ninja2RomTypeName (NINJA2UnknownRomType value) = "unknown (" ++ show value ++ ")"
 
 -- | Encode a 'String' into a fixed-width NINJA2 metadata field
 -- under the patch's declared encoding, choosing the codepoint-boundary

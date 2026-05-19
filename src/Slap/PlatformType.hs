@@ -8,7 +8,7 @@ module Slap.PlatformType
 -- ROM type conversion; format-specific types (NINJA1RomType,
 -- NINJA2RomType) preserve per-format details at the boundaries.
 --
--- The conversions ('platformToNinja1', 'platformToNinja2',
+-- The conversions ('platformToNINJA1', 'platformToNINJA2',
 -- 'ninja1ToPlatform', 'ninja2ToPlatform') live in "Slap.Platform";
 -- this module holds only the shared vocabulary so that format-layer
 -- modules can name a platform without pulling in the per-format
@@ -40,7 +40,7 @@ data PlatformType
 -- and by any other site that needs to name a platform in human-
 -- readable form. The strings track the names slap surfaces in CLI
 -- output and error messages — distinct from any format-specific
--- wire encoding (NINJA1's 'RomNES', NINJA2's 'Ninja2NES', etc.).
+-- wire encoding (NINJA1's 'RomNES', NINJA2's 'NINJA2NES', etc.).
 platformName :: PlatformType -> String
 platformName PlatformRaw            = "Raw"
 platformName PlatformNES            = "NES"

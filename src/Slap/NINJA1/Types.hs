@@ -11,20 +11,45 @@ module Slap.NINJA1.Types
   , NINJA1Compression(..)
   , toNINJA1RomType
   , fromNINJA1RomType
+  , toNINJA1SubFormat
   , romTypeName
   , subFormatName
     -- * Named constants
   , ninja1MagicBytes
   , ninja1SentinelOffset
+  , ninja1BinaryEOFMarkerBytes
+  , ninja1BinaryEOFMarkerWidth
   ) where
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Measure (Offset(..), SentinelOffset(..))
 
-data NINJA1SubFormat = Ninja1Binary | Ninja1BinaryCompressed | Ninja1Text | Ninja1TextCompressed
+data NINJA1SubFormat = NINJA1Binary | NINJA1BinaryCompressed | NINJA1Text | NINJA1TextCompressed
   deriving (Show, Eq)
+
+-- | Decode the two-byte subformat identifier that follows the
+-- 'ninja1MagicBytes' header. The four wire values are @"B "@,
+-- @"BZ"@, @"T\\n"@ (bytes 0x54 0x0A), and @"TZ"@; anything else
+-- means slap doesn't know what this NINJA1 payload claims to be
+-- and 'Slap.NINJA1.Parse.parseNINJA1' refuses it as
+-- 'UnsupportedNINJA1Subformat'.
+--
+-- The text-uncompressed identifier is the one historical
+-- divergence between spec and reference implementation: the
+-- archived format spec (@docs/specs/ninja1-filespec10.txt@) says
+-- the second byte is @0x0D@, but the canonical PHP reference
+-- (@docs/specs/ninja-1.01php.tar.gz@) writes @chr(0x0A)@. The
+-- spec hex is wrong; slap follows the implementation byte.
+toNINJA1SubFormat :: ByteString -> Maybe NINJA1SubFormat
+toNINJA1SubFormat bytes
+  | bytes == "B "                          = Just NINJA1Binary
+  | bytes == "BZ"                          = Just NINJA1BinaryCompressed
+  | bytes == ByteString.pack [0x54, 0x0A]  = Just NINJA1Text
+  | bytes == "TZ"                          = Just NINJA1TextCompressed
+  | otherwise                              = Nothing
 
 -- | Whether the NINJA1 payload is written to disk as raw bytes
 -- ('NINJA1Uncompressed', the @"NINJA1B "@ subformat) or zlib-deflated
@@ -129,6 +154,20 @@ ninja1MagicBytes = "NINJA1"
 ninja1SentinelOffset :: SentinelOffset
 ninja1SentinelOffset = SentinelOffset (Offset 0x454F46)
 
+-- | The 3-byte trailer that closes a NINJA1 binary record stream
+-- (@"EOF"@, bytes @0x45 0x4F 0x46@). Encoded on the wire as an
+-- offset-width-3 record whose offset bytes spell @"EOF"@; see
+-- 'ninja1SentinelOffset' for the collision case the encoder
+-- works around.
+ninja1BinaryEOFMarkerBytes :: ByteString
+ninja1BinaryEOFMarkerBytes = "EOF"
+
+-- | Width of the 'ninja1BinaryEOFMarkerBytes' trailer, in bytes.
+-- A 3-byte offset width followed by 'ninja1BinaryEOFMarkerBytes'
+-- is the on-wire encoding of the binary-format footer.
+ninja1BinaryEOFMarkerWidth :: Int
+ninja1BinaryEOFMarkerWidth = 3
+
 romTypeName :: NINJA1RomType -> String
 romTypeName RomRAW            = "RAW"
 romTypeName RomNES            = "NES"
@@ -151,7 +190,7 @@ romTypeName RomGP32           = "GP32"
 romTypeName (RomUnknown value) = "unknown (" ++ show value ++ ")"
 
 subFormatName :: NINJA1SubFormat -> String
-subFormatName Ninja1Binary           = "binary"
-subFormatName Ninja1BinaryCompressed = "binary, compressed"
-subFormatName Ninja1Text             = "text"
-subFormatName Ninja1TextCompressed   = "text, compressed"
+subFormatName NINJA1Binary           = "binary"
+subFormatName NINJA1BinaryCompressed = "binary, compressed"
+subFormatName NINJA1Text             = "text"
+subFormatName NINJA1TextCompressed   = "text, compressed"

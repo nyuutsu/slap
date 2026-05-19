@@ -1288,6 +1288,7 @@ renderSlapError (MalformedNINJA1Content malformation) =
     NINJA1EmptyTextualPatch                          -> "empty textual patch"
     NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " ++ t
     NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " ++ line
+    NINJA1UnknownTextualRomType     name             -> "unknown ROM type name in text header: " ++ name
 
 renderSlapError (ParseError label parserError) =
   formatLabelName label ++ ": " ++ renderByteParserError parserError
@@ -1931,6 +1932,14 @@ data NINJA1Malformation
   = NINJA1EmptyTextualPatch
   | NINJA1InvalidOffsetInTextRecord OffsetTokenText
   | NINJA1MalformedTextRecord       LineText
+  -- | A textual NINJA1 patch's header line declared a ROM type
+  -- name slap doesn't recognize. The NINJA1 spec
+  -- (@docs\/ninja1\/upstream\/ninja1-filespec10.txt@, §"SYSTEM
+  -- SPECIFIC") says implementations encountering an unsupported
+  -- mode "print an error message and exit"; the carried 'String'
+  -- is the offending name from the wire so the renderer can name
+  -- it.
+  | NINJA1UnknownTextualRomType String
   deriving (Eq, Show)
 
 -- | The shape of a NINJA1 subformat conversion noticed at parse time.

@@ -41,7 +41,7 @@ ninja2Meta patch = concat
       Nothing -> []
       Just openNewFile ->
         let romTypeField = case openNewFileRomType openNewFile of
-              Ninja2Raw -> []
+              NINJA2Raw -> []
               romType   -> [InfoLine "ROM type" (ninja2RomTypeName romType)]
             sizeFields =
               [ InfoLine "source size" (show (unFileSize (openNewFileSourceSize openNewFile)))

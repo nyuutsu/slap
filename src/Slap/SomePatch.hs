@@ -803,7 +803,7 @@ parseSomePatchFromNINJA2 patchContents = do
       openNewFile = NINJA2.ninja2OpenNewFile patch
       romTypeForPlatformConversion = case openNewFile of
         Just open -> NINJA2.openNewFileRomType open
-        Nothing   -> NINJA2.Ninja2Raw
+        Nothing   -> NINJA2.NINJA2Raw
       (platformType, platformAdvisories) = ninja2ToPlatform romTypeForPlatformConversion
   Right SomePatch
     { patchFormat         = LabelNINJA2
@@ -855,10 +855,10 @@ parseSomePatchFromNINJA1 patchContents = do
         , [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
         , [EmptyPatch LabelNINJA1 EmptyRecords | null records]
         ]
-      compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.Ninja1BinaryCompressed, NINJA1.Ninja1TextCompressed]
+      compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.NINJA1BinaryCompressed, NINJA1.NINJA1TextCompressed]
       sourceAdvisories = case NINJA1.ninja1SubFormat patch of
-        NINJA1.Ninja1Text  -> [SubformatConverted NINJA1TextToBinary]
-        NINJA1.Ninja1TextCompressed -> [SubformatConverted NINJA1CompressedTextToCompressedBinary]
+        NINJA1.NINJA1Text  -> [SubformatConverted NINJA1TextToBinary]
+        NINJA1.NINJA1TextCompressed -> [SubformatConverted NINJA1CompressedTextToCompressedBinary]
         _              -> []
   Right SomePatch
     { patchFormat         = LabelNINJA1

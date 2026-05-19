@@ -23,7 +23,7 @@ import Slap.Measure (Offset(..), Length(..), Hunk(..),
 import Slap.Status (SlapError, SlapAdvisory(..), CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Platform (platformToNinja2)
+import Slap.Platform (platformToNINJA2)
 import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -87,7 +87,7 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
     fieldWarnings     = authorWarnings ++ versionWarnings ++ titleWarnings ++ genreWarnings
                      ++ languageWarnings ++ dateWarnings ++ websiteWarnings ++ descriptionAdvisories
     (romType, platformAdvisories) =
-      maybe (Ninja2Raw, []) platformToNinja2 (ninja2MetadataPlatform metadata)
+      maybe (NINJA2Raw, []) platformToNINJA2 (ninja2MetadataPlatform metadata)
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)    -- text encoding (1 byte)
