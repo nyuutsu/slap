@@ -27,7 +27,11 @@ import Slap.IPS.Apply (applyIPS)
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
 import Slap.Measure (FileSize(..), Offset(..), Length(..), actionAtPosition,
                      DeclaredTargetSize(..), NaturalTargetSize(..))
+import qualified Slap.NINJA2.Apply as NINJA2
 import qualified Slap.NINJA2.Parse as NINJA2
+import qualified Slap.APSGBA.Apply as APSGBA
+import qualified Slap.APSGBA.Parse as APSGBA
+import Slap.APSGBA.Types (apsGbaBlockSize)
 import Slap.SomePatch (parseSome, patchVerification, Verification(..))
 import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
@@ -167,6 +171,14 @@ specConformanceTests = testGroup "SpecConformance"
   , testGroup "NINJA2"
       [ testGroup "spec-reject"
           [ testCase "unrecognized-PATCH_ENC-byte" ninja2RejectsUnrecognizedPatchEncoding
+          ]
+      , testGroup "apply-errors"
+          [ testCase "xor-record-writes-past-target" ninja2ApplyXorRecordPastTarget
+          ]
+      ]
+  , testGroup "APSGBA"
+      [ testGroup "apply-errors"
+          [ testCase "record-offset-past-target" apsGbaApplyRecordOffsetPastTarget
           ]
       ]
   ]
@@ -688,6 +700,10 @@ isTargetUnderfilled _ = False
 isTargetReadUnwritten :: SlapError -> Bool
 isTargetReadUnwritten (ApplyFailed _ (ApplyTargetReadUnwritten {})) = True
 isTargetReadUnwritten _ = False
+
+isAbsoluteWritePastTarget :: SlapError -> Bool
+isAbsoluteWritePastTarget (ApplyFailed _ (ApplyAbsoluteWritePastTarget {})) = True
+isAbsoluteWritePastTarget _ = False
 
 ----------------------------------------------------------------------------
 -- UPS spec-conformance: parse + apply
@@ -1306,3 +1322,65 @@ ninja2RejectsUnrecognizedPatchEncoding =
                         ++ renderSlapError otherError)
        Right _ ->
          assertFailure "expected parse to reject unrecognized PATCH_ENC, but it succeeded"
+
+----------------------------------------------------------------------------
+-- NINJA2 apply-error: bounds violation
+----------------------------------------------------------------------------
+
+-- | A NINJA2 XOR record whose @writeOffset + payloadLength@ exceeds
+-- the output buffer's declared end must surface as a typed
+-- 'ApplyAbsoluteWritePastTarget' rather than a silent past-buffer
+-- write through the raw output pointer. The fixture omits
+-- @OPEN_NEW_FILE@, so @outputLength@ defaults to the 4-byte source
+-- length; a single XOR record at offset 8 with a 4-byte payload
+-- attempts to write to @[8, 12)@, well past the 4-byte target.
+ninja2ApplyXorRecordPastTarget :: Assertion
+ninja2ApplyXorRecordPastTarget =
+  let source = ByteString.pack [0x00, 0x00, 0x00, 0x00]
+      header = ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, 0x01]
+            <> ByteString.replicate (0x800 - 7) 0x00
+      commandStream = ByteString.pack
+        [ 0x02                          -- XOR_RECORD opcode
+        , 0x01, 0x08                    -- offset VLV: 1 raw byte LE 0x08
+        , 0x01, 0x04                    -- payload-length VLV: 1 raw byte LE 4
+        , 0xAA, 0xBB, 0xCC, 0xDD        -- 4-byte XOR payload
+        , 0x00                          -- END opcode
+        ]
+      patch = PatchFileContents (header <> commandStream)
+  in assertApplyError NINJA2.parseNINJA2
+       (\parsed src -> fmap (const ()) (NINJA2.applyNINJA2 parsed src))
+       patch source isAbsoluteWritePastTarget
+       "XOR record writes past target"
+
+----------------------------------------------------------------------------
+-- APSGBA apply-error: bounds violation
+----------------------------------------------------------------------------
+
+-- | An APS-GBA record whose block offset sits at or past the
+-- declared target size must surface as a typed
+-- 'ApplyAbsoluteWritePastTarget' rather than a silently-clipped
+-- 64KB no-op. The fixture declares a 4-byte target and emits a
+-- single record at offset 0x10000 (one full block past the target);
+-- the per-block payload is 64KB of zeros to satisfy the wire
+-- structure. Distinct from the legitimate partial-last-block case
+-- (block starts in-bounds, tail extends past), which the apply
+-- still handles by per-byte skip.
+apsGbaApplyRecordOffsetPastTarget :: Assertion
+apsGbaApplyRecordOffsetPastTarget =
+  let source         = ByteString.pack [0x00, 0x00, 0x00, 0x00]
+      sourceSize     = 4 :: Word32
+      targetSize     = 4 :: Word32
+      recordOffset   = fromIntegral apsGbaBlockSize :: Word32
+      header         = toStrict $
+        byteString "APS1"
+        <> putWord32LE sourceSize
+        <> putWord32LE targetSize
+      recordBytes    = toStrict $
+        putWord32LE recordOffset
+        <> byteString (ByteString.replicate 4 0x00)  -- source + target CRC16, unread by apply
+        <> byteString (ByteString.replicate apsGbaBlockSize 0x00)
+      patch          = PatchFileContents (header <> recordBytes)
+  in assertApplyError APSGBA.parseAPSGBA
+       (\parsed src -> fmap (const ()) (APSGBA.applyAPSGBA parsed src))
+       patch source isAbsoluteWritePastTarget
+       "record offset past target"

@@ -299,6 +299,20 @@ data ApplyError
   -- 'ApplyDiffReadOutOfBounds').
   | ApplyExtraReadOutOfBounds ActionIndex Offset FileSize
 
+  -- | A record whose wire-defined absolute write position, together
+  -- with its payload length, would extend past the target buffer's
+  -- declared end. The 'Offset' is the record's write start; the
+  -- 'RequestedLength' is the payload length; the 'FileSize' is the
+  -- declared target size. Used by formats that name absolute write
+  -- positions on the wire — NINJA2's XOR records, NINJA2's
+  -- overflow-append step, APSGBA's blocks — where the start position
+  -- itself can already sit past the declared target end. Distinct
+  -- from 'ApplyWritesPastTarget' (which assumes a forward-walking
+  -- cursor that always sits within the buffer by construction) and
+  -- from 'ApplyReplaceGrowsFile' (PPF4-specific phrasing about
+  -- growing the file).
+  | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
+
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
@@ -1133,6 +1147,13 @@ renderApplyError (ApplyExtraReadOutOfBounds actionIndex readEndOffset extraSize)
   ++ ": extra-stream read would end at offset 0x"
   ++ showHex (unOffset readEndOffset) ""
   ++ " but extra stream is " ++ show (unFileSize extraSize) ++ " bytes"
+
+renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (RequestedLength payloadLength) targetSize) =
+  "record " ++ show (unActionIndex actionIndex)
+  ++ ": write at offset 0x" ++ showHex (unOffset writeStart) ""
+  ++ " of " ++ show (unLength payloadLength) ++ " bytes"
+  ++ " would extend past the target size of "
+  ++ show (unFileSize targetSize) ++ " bytes"
 
 ----------------------------------------------------------------------------
 -- renderByteParserError
