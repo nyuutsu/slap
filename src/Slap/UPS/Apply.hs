@@ -35,7 +35,7 @@ import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
--- Block placement classifier
+-- Placement classifiers
 ----------------------------------------------------------------------------
 
 -- | Where a UPS block's declared span sits relative to the active
@@ -110,6 +110,50 @@ classifyBlockPlacement blockStart totalBlockLen outputSize
   | offsetToFileSize blockStart >= outputSize      = BlockEntirelyPhantom
   | otherwise =
       BlockPartiallyOvershoots (remainingFromOffset blockStart outputSize)
+
+-- | Where a source-byte copy operation sits relative to the source
+-- buffer. UPS's spec-mandated zero-fill semantics for
+-- @source_size < target_size@ make past-source-end a real algorithmic
+-- state: a copy that starts inside source can run off the end, and a
+-- copy can begin at or past the end altogether (every byte read as a
+-- virtual zero). Used by 'copySourceSlice' and 'xorSourceSlice' to
+-- dispatch on the three structural arms; each arm contains only the
+-- writes its case needs, no @when (n > 0)@ guards.
+--
+-- Parallel to 'BlockPlacement' (which classifies a block's write span
+-- against the output buffer). Same three-arm shape, same fits \/
+-- straddles \/ entirely-past structure, different reference buffer.
+data SourceCopyPlacement
+  = SourceCopyEntirelyInSource
+    -- ^ The copy span ends at or before source end: every byte is a
+    -- source-byte read. The handler runs only the source-read path;
+    -- the zero-fill path is unreachable for this arm.
+  | SourceCopyStraddlesSourceEnd !Length !Length
+    -- ^ The copy starts inside source but extends past source end.
+    -- The two carried 'Length's are the in-bounds prefix (source-
+    -- read phase length) and the zero-fill tail (virtual-zero phase
+    -- length), in that order. Their sum equals the requested copy
+    -- length by construction.
+  | SourceCopyEntirelyPastSource
+    -- ^ The copy starts at or past source end: every byte is a
+    -- virtual zero. The handler runs only the zero-fill path; the
+    -- source-read path is unreachable for this arm.
+  deriving (Show, Eq)
+
+-- | Classify a source-byte copy against the source buffer. Pure
+-- function of three typed arguments: the output position at which
+-- writing starts (and from which the source read would begin),
+-- the requested copy length, and the source buffer's size.
+-- The straddle arm's tail length is computed here (once) so neither
+-- 'copySourceSlice' nor 'xorSourceSlice' has to subtract downstream.
+classifySourceCopy :: Offset -> Length -> FileSize -> SourceCopyPlacement
+classifySourceCopy outputPosition copyLength sourceSize
+  | fitsWithin outputPosition copyLength sourceSize = SourceCopyEntirelyInSource
+  | offsetToFileSize outputPosition >= sourceSize   = SourceCopyEntirelyPastSource
+  | otherwise =
+      let inBoundsPrefix = remainingFromOffset outputPosition sourceSize
+          zeroFillTail   = subtractLength copyLength inBoundsPrefix
+      in SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail
 
 ----------------------------------------------------------------------------
 -- applyUPS / undoUPS
@@ -192,67 +236,87 @@ runUPSXorWalk patch source outputSize
       let
         -- | Copy bytes from source to output at the given position,
         -- zero-filling past source end (spec-mandated for source-
-        -- shorter-than-target). The caller is responsible for ensuring
-        -- the copy fits within target bounds — this helper does not
-        -- clip to target.
+        -- shorter-than-target). Dispatches on 'classifySourceCopy':
+        -- the in-source arm runs a single 'copyBytes'; the
+        -- past-source arm runs a single 'fillBytes' of zeros; the
+        -- straddle arm runs the source-read for the in-bounds
+        -- prefix followed by the zero-fill for the tail, with both
+        -- lengths handed back by the classifier. The caller is
+        -- responsible for ensuring the copy fits within target
+        -- bounds — this helper does not clip to target.
         copySourceSlice :: Offset -> Length -> IO ()
-        copySourceSlice outputPosition copyLength = do
-          let availableInSource = remainingFromOffset outputPosition sourceSize
-              inBoundsLength    = minLength copyLength availableInSource
-              zeroFillLength    = subtractLength copyLength inBoundsLength
-              zeroFillStart     = advance outputPosition inBoundsLength
-          when (unLength inBoundsLength > 0) $
-            copyBytes
-              (plusOffset outputPointer outputPosition)
-              (sourcePointer `plusPtr` unOffset outputPosition)
-              (unLength inBoundsLength)
-          when (unLength zeroFillLength > 0) $
-            fillBytes
-              (plusOffset outputPointer zeroFillStart)
-              0
-              (unLength zeroFillLength)
+        copySourceSlice outputPosition copyLength =
+          case classifySourceCopy outputPosition copyLength sourceSize of
+            SourceCopyEntirelyInSource ->
+              copyBytes
+                (plusOffset outputPointer outputPosition)
+                (sourcePointer `plusPtr` unOffset outputPosition)
+                (unLength copyLength)
+            SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail -> do
+              copyBytes
+                (plusOffset outputPointer outputPosition)
+                (sourcePointer `plusPtr` unOffset outputPosition)
+                (unLength inBoundsPrefix)
+              fillBytes
+                (plusOffset outputPointer
+                            (advance outputPosition inBoundsPrefix))
+                0
+                (unLength zeroFillTail)
+            SourceCopyEntirelyPastSource ->
+              fillBytes
+                (plusOffset outputPointer outputPosition)
+                0
+                (unLength copyLength)
 
         -- | XOR source bytes with xorData, writing result to output.
         -- Past source end, source bytes are treated as 0x00 (so
-        -- xorData bytes are written verbatim — x XOR 0 == x). The
-        -- caller is responsible for ensuring the write fits within
-        -- target bounds — this helper does not clip to target.
+        -- xorData bytes are written verbatim — x XOR 0 == x).
+        -- Dispatches on 'classifySourceCopy': the in-source arm runs
+        -- only 'xorWithSourceLoop'; the past-source arm runs only
+        -- 'xorWithZeroLoop' (writing xorData verbatim); the straddle
+        -- arm runs both phases back-to-back, each over the length
+        -- the classifier hands back. The caller is responsible for
+        -- ensuring the write fits within target bounds — this helper
+        -- does not clip to target.
         --
-        -- Two-phase loop: a tight in-bounds phase reads source via
-        -- the raw pinned pointer and XORs against xorData; a tight
-        -- zero-fill phase writes xorData verbatim. This mirrors
-        -- copySourceSlice's split-phase structure and BPS's
-        -- generalOverlapLoop hoisted-base-pointer style.
+        -- The loops use the raw pinned source pointer (in-bounds
+        -- phase) and a hoisted write base, matching BPS's
+        -- 'generalOverlapLoop' style.
         xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
-        xorSourceSlice outputPosition xorDataLength xorData = do
-          let availableInSource = remainingFromOffset outputPosition sourceSize
-              inBoundsLength    = minLength xorDataLength availableInSource
-              readBase          = sourcePointer `plusPtr` unOffset outputPosition
-              writeBase         = plusOffset outputPointer outputPosition
-              inBoundsBytes     = unLength inBoundsLength
-              totalBytes        = unLength xorDataLength
+        xorSourceSlice outputPosition xorDataLength xorData =
+          let readBase  = sourcePointer `plusPtr` unOffset outputPosition
+              writeBase = plusOffset outputPointer outputPosition
 
               -- Phase 1: source is in bounds. Read source, XOR with
               -- xorData, poke result.
-              inBoundsLoop !byteOffset
-                | byteOffset >= inBoundsBytes = pure ()
+              xorWithSourceLoop !byteOffset !endByteOffset
+                | byteOffset >= endByteOffset = pure ()
                 | otherwise = do
                     sourceByte <- peekByteOff readBase byteOffset :: IO Word8
                     let xorByte = unsafeIndex xorData byteOffset
                     pokeByteOff writeBase byteOffset
                       (sourceByte `xor` xorByte :: Word8)
-                    inBoundsLoop (byteOffset + 1)
+                    xorWithSourceLoop (byteOffset + 1) endByteOffset
 
               -- Phase 2: source is past end. Source byte is virtually
               -- 0, so the result is just xorData[byteOffset].
-              zeroFillLoop !byteOffset
-                | byteOffset >= totalBytes = pure ()
+              xorWithZeroLoop !byteOffset !endByteOffset
+                | byteOffset >= endByteOffset = pure ()
                 | otherwise = do
                     let xorByte = unsafeIndex xorData byteOffset
                     pokeByteOff writeBase byteOffset xorByte
-                    zeroFillLoop (byteOffset + 1)
-          inBoundsLoop 0
-          zeroFillLoop inBoundsBytes
+                    xorWithZeroLoop (byteOffset + 1) endByteOffset
+
+          in case classifySourceCopy outputPosition xorDataLength sourceSize of
+               SourceCopyEntirelyInSource ->
+                 xorWithSourceLoop 0 (unLength xorDataLength)
+               SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail -> do
+                 let phaseTwoStart = unLength inBoundsPrefix
+                     phaseTwoEnd   = phaseTwoStart + unLength zeroFillTail
+                 xorWithSourceLoop 0 phaseTwoStart
+                 xorWithZeroLoop phaseTwoStart phaseTwoEnd
+               SourceCopyEntirelyPastSource ->
+                 xorWithZeroLoop 0 (unLength xorDataLength)
 
         -- | Write a block whose declared span crosses the output
         -- boundary. Divides the in-bounds prefix sequentially across
@@ -261,6 +325,12 @@ runUPSXorWalk patch source outputSize
         -- remains, and the trailing OOB bytes drop. The block-stride
         -- cursor advance is the caller's responsibility and fires
         -- regardless of how the prefix divides.
+        --
+        -- A clipped length may be zero — when @skipLen@ is zero or
+        -- when a preceding sub-op consumed the whole prefix. No
+        -- guard at this level: 'copySourceSlice' \/ 'xorSourceSlice'
+        -- dispatch on 'classifySourceCopy' and a zero-length copy
+        -- lands on an arm whose write is itself a no-op.
         writeStraddlingBlock :: Length
                              -> Offset -> Length
                              -> Offset -> Length -> ByteString
@@ -275,13 +345,10 @@ runUPSXorWalk patch source outputSize
               clippedXorLen  = minLength xorLen afterSkip
               afterXor       = subtractLength afterSkip clippedXorLen
               clippedTermLen = minLength upsTerminatorByteLength afterXor
-          when (unLength clippedSkipLen > 0) $
-            copySourceSlice skipStart clippedSkipLen
-          when (unLength clippedXorLen > 0) $
-            xorSourceSlice xorStart clippedXorLen
-              (ByteString.take (unLength clippedXorLen) xorData)
-          when (unLength clippedTermLen > 0) $
-            copySourceSlice terminatorPos clippedTermLen
+          copySourceSlice skipStart clippedSkipLen
+          xorSourceSlice  xorStart  clippedXorLen
+            (ByteString.take (unLength clippedXorLen) xorData)
+          copySourceSlice terminatorPos clippedTermLen
 
         -- | The single cursor transition done after every block.
         -- The output cursor advances by the block's full declared
@@ -299,12 +366,18 @@ runUPSXorWalk patch source outputSize
         -- copy that fills any output bytes the block stream didn't
         -- name — no underfill check, because UPS's tail copy
         -- structurally guarantees the buffer ends exactly filled.
+        -- The cursor may sit past 'outputSize' when phantom or
+        -- straddling blocks advanced it beyond the buffer; the
+        -- at-or-past arm short-circuits before asking
+        -- 'remainingFromOffset' a question whose only sensible
+        -- answer is "no bytes left."
         applyBlockStream :: ActionIndex -> UPSApply ()
         applyBlockStream !blockIndex
           | blockIndex >= blockStreamEnd = do
               outputPosition <- get
-              let tailLength = remainingFromOffset outputPosition outputSize
-              liftIO (copySourceSlice outputPosition tailLength)
+              when (offsetToFileSize outputPosition < outputSize) $ do
+                let tailLength = remainingFromOffset outputPosition outputSize
+                liftIO (copySourceSlice outputPosition tailLength)
           | otherwise =
               handleBlock blockIndex
                 (Vector.unsafeIndex blocks (unActionIndex blockIndex))
@@ -411,16 +484,23 @@ detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
       let xorLen        = byteLength xorData
           totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
           nextPosition  = advance (oobPosition state) totalBlockLen
-      in if fitsWithin (oobPosition state) totalBlockLen outputSize
-           then state { oobPosition = nextPosition }
-           else let remaining      = remainingFromOffset (oobPosition state) outputSize
-                    blockOvershoot = subtractLength totalBlockLen remaining
-                    OOBBlockCount currentCount = oobCount state
-                in state
-                  { oobPosition   = nextPosition
-                  , oobCount      = OOBBlockCount (currentCount + 1)
-                  , oobFirstIndex = case oobFirstIndex state of
-                      Just _  -> oobFirstIndex state
-                      Nothing -> Just (actionAtPosition blockIdx)
-                  , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
-                  }
+          placement     = classifyBlockPlacement
+                            (oobPosition state) totalBlockLen outputSize
+      in case placement of
+           BlockFitsWithinOutput          -> state { oobPosition = nextPosition }
+           BlockPartiallyOvershoots inBoundsPrefix ->
+             recordOOBBlock state blockIdx nextPosition
+                            (subtractLength totalBlockLen inBoundsPrefix)
+           BlockEntirelyPhantom           ->
+             recordOOBBlock state blockIdx nextPosition totalBlockLen
+
+    recordOOBBlock state blockIdx nextPosition blockOvershoot =
+      let OOBBlockCount currentCount = oobCount state
+      in state
+        { oobPosition   = nextPosition
+        , oobCount      = OOBBlockCount (currentCount + 1)
+        , oobFirstIndex = case oobFirstIndex state of
+            Just _  -> oobFirstIndex state
+            Nothing -> Just (actionAtPosition blockIdx)
+        , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
+        }

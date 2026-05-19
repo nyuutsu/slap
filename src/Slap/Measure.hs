@@ -445,20 +445,32 @@ instance Cursor WritePosition where
 -- Cursor helpers
 ----------------------------------------------------------------------------
 
--- | The number of bytes remaining in a file from a given offset.
--- Returns a non-negative 'Length' (clamped to zero if the offset is
--- past the end).
+-- | The number of bytes remaining in a file from a given offset, as a
+-- non-negative 'Length'. The helper assumes @position '<=' totalSize@;
+-- violating that precondition is a programming error and raises
+-- 'error' rather than returning a clamped zero. Callers whose
+-- algorithm genuinely needs the past-end case to read as zero must
+-- detect it explicitly upstream and not invoke this helper.
 remainingFromOffset :: Offset -> FileSize -> Length
-remainingFromOffset (Offset position) (FileSize totalSize) =
-  Length (max 0 (totalSize - position))
+remainingFromOffset (Offset position) (FileSize totalSize)
+  | position <= totalSize = Length (totalSize - position)
+  | otherwise =
+      error ("remainingFromOffset: position " ++ show position
+              ++ " past size " ++ show totalSize)
 
 -- | The number of bytes remaining in a 'ByteString' from a given parse
 -- 'Position'. The 'Position'-aware analogue of 'remainingFromOffset',
--- with the same saturating convention: returns @'Length' 0@ if the
--- cursor is past the end of the input. Used by 'Slap.ByteParser.remaining'.
+-- with the same honest contract: assumes @cursorPosition '<=' length@
+-- and raises 'error' otherwise. Used by 'Slap.ByteParser.remaining',
+-- whose primitives maintain @Position '<=' length@ as an invariant.
 remainingFromPosition :: Position -> ByteString -> Length
-remainingFromPosition (Position cursorPosition) input =
-  Length (max 0 (ByteString.length input - cursorPosition))
+remainingFromPosition (Position cursorPosition) input
+  | cursorPosition <= inputLength = Length (inputLength - cursorPosition)
+  | otherwise =
+      error ("remainingFromPosition: position " ++ show cursorPosition
+              ++ " past input length " ++ show inputLength)
+  where
+    inputLength = ByteString.length input
 
 -- | The first index in any action stream.
 firstAction :: ActionIndex
@@ -489,12 +501,17 @@ streamEndIndex stream = ActionIndex (length stream)
 actionAtPosition :: Int -> ActionIndex
 actionAtPosition = ActionIndex
 
--- | Subtract two 'Length' values, clamping to zero on underflow.
--- Used in apply workers when computing the remaining bytes after a
--- partial copy or fill.
+-- | Subtract two 'Length' values. Assumes @minuend '>=' subtrahend@
+-- and raises 'error' on underflow rather than clamping to zero —
+-- caller is responsible for establishing the ordering upstream (the
+-- typical pattern is bounding 'subtrahend' via 'minLength' against
+-- 'minuend' first).
 subtractLength :: Length -> Length -> Length
-subtractLength (Length minuend) (Length subtrahend) =
-  Length (max 0 (minuend - subtrahend))
+subtractLength (Length minuend) (Length subtrahend)
+  | minuend >= subtrahend = Length (minuend - subtrahend)
+  | otherwise =
+      error ("subtractLength: underflow (" ++ show minuend
+              ++ " - " ++ show subtrahend ++ ")")
 
 -- | The smaller of two 'Length' values. Used in apply workers when
 -- splitting a region into in-bounds and zero-fill phases: the
@@ -539,13 +556,17 @@ plusOffset pointer (Offset position) = pointer `plusPtr` position
 ----------------------------------------------------------------------------
 
 -- | The 'Length' from the start 'Offset' to the end 'Offset':
--- @end - start@, clamping to zero on underflow (matching the
--- saturating convention 'subtractLength' and 'remainingFromOffset'
--- use). The argument order mirrors the typical reading "the distance
--- /from/ start /to/ end."
+-- @end - start@. Assumes @startOffset '<=' endOffset@ and raises
+-- 'error' otherwise — call sites that span a forward walk
+-- ('findRegionEnd', record-stream order, sorted seed positions) have
+-- this ordering by construction. The argument order mirrors the
+-- typical reading "the distance /from/ start /to/ end."
 distance :: Offset -> Offset -> Length
-distance (Offset startOffset) (Offset endOffset) =
-  Length (max 0 (endOffset - startOffset))
+distance (Offset startOffset) (Offset endOffset)
+  | startOffset <= endOffset = Length (endOffset - startOffset)
+  | otherwise =
+      error ("distance: end " ++ show endOffset
+              ++ " before start " ++ show startOffset)
 
 fitsWithin :: Offset -> Length -> FileSize -> Bool
 fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
