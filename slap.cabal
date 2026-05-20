@@ -180,6 +180,7 @@ test-suite props
                   , Props.Helpers
                   , Props.Identity
                   , Props.IPSMarkerPolicy
+                  , Props.JSON
                   , Props.Narrow
                   , Props.ParseWarnings
                   , Props.RoundTrip

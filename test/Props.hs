@@ -25,6 +25,10 @@
 --   * 'Props.ParseWarnings'      — IPS parse-time structural warnings:
 --                                  zero-count RLE, overlap, unsorted,
 --                                  IPS32 trailing bytes.
+--   * 'Props.JSON'               — aeson-backed EBP metadata parser:
+--                                  case-insensitive lookup, escaped
+--                                  Unicode, nested-object tolerance,
+--                                  honest failure on malformed input.
 --
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
@@ -34,6 +38,7 @@ import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
 import qualified Props.Identity as Identity
 import qualified Props.IPSMarkerPolicy as IPSMarkerPolicy
+import qualified Props.JSON as JSON
 import qualified Props.Narrow as Narrow
 import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.RoundTrip as RoundTrip
@@ -60,6 +65,7 @@ main = defaultMain $ testGroup "Properties"
   , ClassifyTargetCopy.classifyTargetCopyTests
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
+  , JSON.jsonTests
   , Narrow.narrowTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

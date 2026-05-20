@@ -55,7 +55,7 @@ import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec,
                        ipsLimits, ips32Limits, ebpLimits)
-import Slap.JSON (jsonPairs, jsonFieldCI)
+import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
@@ -900,12 +900,12 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     let passthrough = case contentsEBPMeta contents of
           Nothing -> Nothing
           Just raw ->
-            let pairs = jsonPairs raw
+            let view = parseEBPMetadata raw
                 normalizeEmpty (Just value) = if null value then Nothing else Just value
                 normalizeEmpty Nothing  = Nothing
-            in if cliDescription == normalizeEmpty (jsonFieldCI pairs "description")
-                  && cliTitle == normalizeEmpty (jsonFieldCI pairs "title")
-                  && cliAuthor == normalizeEmpty (jsonFieldCI pairs "author")
+            in if cliDescription == normalizeEmpty (view >>= ebpMetadataViewDescription)
+                  && cliTitle == normalizeEmpty (view >>= ebpMetadataViewTitle)
+                  && cliAuthor == normalizeEmpty (view >>= ebpMetadataViewAuthor)
                then Just raw
                else Nothing
         ebpMetadataBytes = case passthrough of
@@ -1042,9 +1042,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       , descriptionSourceFallback = replicate 50 ' '
       }
     pchtxtDescription = cliDescription <|> fmap decodeLocaleField (contentsDescription contents)
-    ebpFieldPairs = maybe [] jsonPairs (contentsEBPMeta contents)
-    ebpTitle  = resolveField cliTitle ebpFieldPairs "title"
-    ebpAuthor = resolveField cliAuthor ebpFieldPairs "author"
+    ebpView   = contentsEBPMeta contents >>= parseEBPMetadata
+    ebpTitle  = resolveEBPField cliTitle  (ebpView >>= ebpMetadataViewTitle)
+    ebpAuthor = resolveEBPField cliAuthor (ebpView >>= ebpMetadataViewAuthor)
     -- CLI flag > PatchContents > format default
     (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNINJA1 (requestedRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
@@ -1228,17 +1228,21 @@ resolveDescription :: DescriptionSources -> String
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description
   | Just meta <- descriptionSourceEBPMeta sources
-  , Just description <- jsonFieldCI (jsonPairs meta) "description"
+  , Just view <- parseEBPMetadata meta
+  , Just description <- ebpMetadataViewDescription view
   , not (null description) = description
   | Just raw <- descriptionSourceRawBytes sources = trimNullSpace (decodeLocaleField raw)
   | otherwise = descriptionSourceFallback sources
 
--- | Resolve a single EBP field: CLI flag wins, then fall back to source metadata.
-resolveField :: Maybe String -> [(String, String)] -> String -> String
-resolveField cliValue pairs key
-  | Just provided <- cliValue = provided
-  | Just value <- jsonFieldCI pairs key = value
-  | otherwise = ""
+-- | Resolve a single EBP field: CLI flag wins, then fall back to the
+-- value extracted from the EBP metadata view, then to the empty
+-- string. The two callers feed in the title and author fields
+-- respectively.
+resolveEBPField :: Maybe String -> Maybe String -> String
+resolveEBPField cliValue ebpValue
+  | Just provided <- cliValue  = provided
+  | Just value    <- ebpValue  = value
+  | otherwise                  = ""
 
 trimNullSpace :: String -> String
 trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . reverse

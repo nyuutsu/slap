@@ -21,7 +21,7 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      RequestedDialects(..),
                      noMetadataRequested, trimNullSpace)
 import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
-import Slap.JSON (jsonPairs, jsonFieldCI)
+import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
@@ -551,12 +551,12 @@ parseSomePatchFromIPS variant patchContents = do
     IPS.IPSParseCleanEBP ebpPatch ->
       let basePatch = IPS.ebpBasePatch ebpPatch
           records = IPS.ipsRecords basePatch
-          ebpPairs = jsonPairs (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+          ebpView = parseEBPMetadata (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
           nonEmptyField decoded = if null decoded then Nothing else Just decoded
           extractedMeta = noMetadataRequested
-            { requestedTitle       = jsonFieldCI ebpPairs "title" >>= nonEmptyField
-            , requestedAuthor      = jsonFieldCI ebpPairs "author" >>= nonEmptyField
-            , requestedDescription = jsonFieldCI ebpPairs "description" >>= nonEmptyField
+            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmptyField
+            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmptyField
+            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmptyField
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
