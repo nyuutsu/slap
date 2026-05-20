@@ -16,6 +16,8 @@
 --   * 'Props.Undo'               — UPS/PPF3 apply-then-undo.
 --   * 'Props.Contracts'          — conversion contract system and IPS
 --                                  sentinel collision detection.
+--   * 'Props.Text'               — typed text values with encoding tags;
+--                                  the foundation 'Slap.Text' module.
 --   * 'Props.TextEncoding'       — UTF-8 and locale encoding primitives.
 --   * 'Props.Detection'          — DPS detection heuristic.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
@@ -36,6 +38,7 @@ import qualified Props.Narrow as Narrow
 import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
+import qualified Props.Text as Text
 import qualified Props.TextEncoding as TextEncoding
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
@@ -51,6 +54,7 @@ main = defaultMain $ testGroup "Properties"
   , Identity.identityTests
   , Undo.undoTests
   , Contracts.contractTests
+  , Text.textTests
   , TextEncoding.textEncodingTests
   , Detection.detectionTests
   , ClassifyTargetCopy.classifyTargetCopyTests
