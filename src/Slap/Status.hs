@@ -386,8 +386,22 @@ data CompressionAlgorithm
 
 data SlapError
 
+  -- IO boundary
+  -- | The user pointed slap at a file that doesn't exist on the
+  -- filesystem. Pre-parse, pre-detection — we never made it to the
+  -- bytes. The 'FilePath' is the path the user typed and renders
+  -- verbatim, so the message matches what their tab key (or fingers)
+  -- produced.
+  = MissingInputFile FilePath
+  -- | The file is present but slap couldn't open it: wrong
+  -- permissions, the path resolves to a directory, an underlying
+  -- filesystem error, and so on. The 'String' carries the OS-supplied
+  -- explanation ('System.IO.Error.ioeGetErrorString') so the user
+  -- sees the same words their kernel would have said.
+  | UnreadableInputFile FilePath String
+
   -- Detection
-  = UnrecognizedFormat
+  | UnrecognizedFormat
   | AmbiguousDetection [FormatLabel]
 
   -- Parse: structural
@@ -1232,6 +1246,12 @@ renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
 ----------------------------------------------------------------------------
 
 renderSlapError :: SlapError -> String
+
+renderSlapError (MissingInputFile path) =
+  "cannot read " ++ path ++ ": file not found"
+
+renderSlapError (UnreadableInputFile path reason) =
+  "cannot read " ++ path ++ ": " ++ reason
 
 renderSlapError UnrecognizedFormat =
   "unknown patch format"

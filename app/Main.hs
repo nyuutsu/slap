@@ -65,6 +65,7 @@ import Slap.FormatLabel (formatLabelName)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Set as Set
+import Control.Exception (try)
 import Control.Monad (when, forM_)
 import Data.Char (toLower)
 import Data.List (intercalate)
@@ -74,6 +75,7 @@ import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (hPutStr, hPutStrLn, stderr)
+import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -410,12 +412,26 @@ commandParser = subparser
  <> command "explain" (info (Explain <$> explainParser   <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
   )
 
+-- | A positional argument whose value is a filesystem path. Carries
+-- @action "file"@ so generated shell-completion scripts (see
+-- @slap --bash-completion-script@ / @--zsh-completion-script@ /
+-- @--fish-completion-script@) complete paths at this argument
+-- position. Reach for this anywhere the parsed string will be passed
+-- to an 'IO' file primitive.
+pathArgument :: Mod ArgumentFields FilePath -> Parser FilePath
+pathArgument modifiers = argument str (modifiers <> action "file")
+
+-- | An option whose value is a filesystem path. Carries
+-- @action "file"@ for the same reason as 'pathArgument'.
+pathOption :: Mod OptionFields FilePath -> Parser FilePath
+pathOption modifiers = option str (modifiers <> action "file")
+
 explainParser :: Parser ExplainCommand
 explainParser = do
-    patchFile          <- argument str (metavar "PATCH" <> help "Patch file to explain")
+    patchFile          <- pathArgument (metavar "PATCH" <> help "Patch file to explain")
     verbosity          <- flag Summary FullRecords
                             (long "records" <> help "Show full record-by-record dump instead of summary")
-    maybeWithPath      <- optional (option str (long "with" <> metavar "SOURCE"
+    maybeWithPath      <- optional (pathOption (long "with" <> metavar "SOURCE"
                             <> help "Source file (resolves delta/copy operations in output)"))
     fileReadingOptions <- fileReadingOptionsParser
     dialects           <- dialectsParser
@@ -432,8 +448,8 @@ applyParser = do
     verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch              <- argument str (metavar "PATCH" <> help "Patch file")
-    source             <- argument str (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
+    patch              <- pathArgument (metavar "PATCH" <> help "Patch file")
+    source             <- pathArgument (metavar "SOURCE" <> help "Source file to patch (not modified unless --in-place)")
     output             <- applyOutputParser
     dialects           <- dialectsParser
     pure ApplyCommand
@@ -494,9 +510,9 @@ applyOutputParser = asum
       where
         outputPathOption :: Parser FilePath
         outputPathOption =
-              option str (long "output" <> short 'o' <> metavar "FILE"
+              pathOption (long "output" <> short 'o' <> metavar "FILE"
                 <> help "Write patched output to FILE. Or pass it as the third argument.")
-          <|> argument str (metavar "OUTPUT"
+          <|> pathArgument (metavar "OUTPUT"
                 <> help "Write patched output to this path. Or pass it via -o FILE.")
 
         overwritePolicyFlag :: Parser OverwritePolicy
@@ -519,8 +535,8 @@ undoParser = do
     verificationPolicy <- verificationPolicyParser
     verbosity          <- verbosityParser
     fileReadingOptions <- fileReadingOptionsParser
-    patch              <- argument str (metavar "PATCH" <> help "Patch file")
-    source             <- argument str (metavar "SOURCE" <> help "File to restore")
+    patch              <- pathArgument (metavar "PATCH" <> help "Patch file")
+    source             <- pathArgument (metavar "SOURCE" <> help "File to restore")
     output             <- undoOutputParser
     dialects           <- dialectsParser
     pure UndoCommand
@@ -564,9 +580,9 @@ undoOutputParser = asum
       where
         outputPathOption :: Parser FilePath
         outputPathOption =
-              option str (long "output" <> short 'o' <> metavar "FILE"
+              pathOption (long "output" <> short 'o' <> metavar "FILE"
                 <> help "Write reverted output to FILE. Or pass it as the third argument.")
-          <|> argument str (metavar "OUTPUT"
+          <|> pathArgument (metavar "OUTPUT"
                 <> help "Write reverted output to this path. Or pass it via -o FILE.")
 
         overwritePolicyFlag :: Parser OverwritePolicy
@@ -580,16 +596,16 @@ undoOutputParser = asum
 
 convertOutputParser :: Parser ConvertOutput
 convertOutputParser = maybe ConvertToDerivedFile ConvertToExplicitFile
-  <$> optional (option str (long "output" <> short 'o' <> metavar "FILE"
+  <$> optional (pathOption (long "output" <> short 'o' <> metavar "FILE"
       <> help "Output file (default: replace input extension with target format's)"))
 
 createParser :: Parser CreateCommand
 createParser = do
     format             <- createFormatParser
     fileReadingOptions <- fileReadingOptionsParser
-    original           <- argument str (metavar "ORIGINAL" <> help "Original unmodified file")
-    modified           <- argument str (metavar "MODIFIED" <> help "Modified file")
-    outputFile         <- argument str (metavar "OUTPUT"   <> help "Output patch file")
+    original           <- pathArgument (metavar "ORIGINAL" <> help "Original unmodified file")
+    modified           <- pathArgument (metavar "MODIFIED" <> help "Modified file")
+    outputFile         <- pathArgument (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- createMetadataInputsParser
     constraints        <- constraintsParser
     dialects           <- dialectsParser
@@ -606,7 +622,7 @@ createParser = do
 
 convertParser :: Parser ConvertCommand
 convertParser = do
-    patchFile          <- argument str (metavar "PATCH" <> help "Patch file to convert")
+    patchFile          <- pathArgument (metavar "PATCH" <> help "Patch file to convert")
     targetFormat       <- convertToParser
     output             <- convertOutputParser
     withSource         <- optional convertWithSourceParser
@@ -666,7 +682,7 @@ dialectsParser = do
 -- alongside @--with@.
 convertWithSourceParser :: Parser ConvertWithSource
 convertWithSourceParser = ConvertWithSource
-  <$> option str (long "with" <> metavar "INPUT"
+  <$> pathOption (long "with" <> metavar "INPUT"
         <> help "Input file: enables apply-and-recreate conversion and input hash verification")
   <*> flag EnforceVerification SkipVerification
         (long "no-verify"
@@ -761,7 +777,7 @@ requestedMetadataParser = do
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser
-  <*> optional (option str (long "metadata" <> metavar "FILE"
+  <*> optional (pathOption (long "metadata" <> metavar "FILE"
         <> help "Embed bytes from FILE as the output patch's metadata (BPS only)"))
 
 -- | Convert-side metadata: the parsed metadata fields plus an
@@ -783,7 +799,7 @@ convertMetadataInputsParser = ConvertMetadataInputs
 -- command — the same lane discipline used elsewhere in this file.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
-  [ EmbedFromFile <$> option str (long "metadata" <> metavar "FILE"
+  [ EmbedFromFile <$> pathOption (long "metadata" <> metavar "FILE"
       <> help "Override embedded metadata with bytes from FILE (BPS target only)")
   , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
       <> help ("Discard the source patch's embedded metadata (BPS"
@@ -905,8 +921,8 @@ parseImageType typeString = case map toLower typeString of
 
 patchInfoParser :: Parser InfoCommand
 patchInfoParser = do
-    patchFile <- argument str (metavar "PATCH" <> help "Patch file to inspect")
-    extractMetadataPath <- optional (option str (long "extract-metadata" <> metavar "FILE"
+    patchFile <- pathArgument (metavar "PATCH" <> help "Patch file to inspect")
+    extractMetadataPath <- optional (pathOption (long "extract-metadata" <> metavar "FILE"
         <> help "Write embedded metadata to FILE (BPS)"))
     dialects <- dialectsParser
     pure InfoCommand
@@ -919,10 +935,25 @@ patchInfoParser = do
 -- Archive-aware file reading
 ----------------------------------------------------------------------------
 
+-- | Read a user-supplied input file into a 'ByteString.ByteString',
+-- converting the two interesting IO failure modes — the path does not
+-- exist, and the path exists but cannot be opened — into typed
+-- 'SlapError' values rendered through slap's normal error channel.
+-- Without this wrapper, a missing or unreadable input would escape as
+-- an uncaught 'IOException' and bury the failure under a GHC backtrace.
+readInputFile :: FilePath -> IO ByteString.ByteString
+readInputFile path = do
+  result <- try (ByteString.readFile path)
+  case result of
+    Right fileBytes -> pure fileBytes
+    Left ioErr
+      | isDoesNotExistError ioErr -> bailError (MissingInputFile path)
+      | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
+
 -- | Read a file, transparently unwrapping single-entry archives.
 readUnwrap :: FilePath -> IO ByteString.ByteString
 readUnwrap path = do
-  fileBytes <- ByteString.readFile path
+  fileBytes <- readInputFile path
   case detectArchive (ByteString.take 8 fileBytes) of
     Nothing -> pure fileBytes
     Just format -> do
@@ -939,14 +970,14 @@ readUnwrap path = do
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
-  ReadBytesVerbatim             -> ByteString.readFile
+  ReadBytesVerbatim             -> readInputFile
 
 -- | Resolve @slap create@'s metadata inputs.  @--metadata FILE@'s
 -- contents (when supplied) become the embedded blob; otherwise the
 -- blob field stays 'Nothing'.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
-  embeddedBlob <- traverse ByteString.readFile (createEmbeddedBlobPath inputs)
+  embeddedBlob <- traverse readInputFile (createEmbeddedBlobPath inputs)
   pure (createParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
 
 -- | Resolve @slap convert@'s metadata inputs.  Only 'EmbedFromFile'
@@ -958,7 +989,7 @@ resolveCreateMetadata inputs = do
 resolveConvertMetadata :: ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
-    EmbedFromFile path -> Just <$> ByteString.readFile path
+    EmbedFromFile path -> Just <$> readInputFile path
     DropEmbeddedBlob   -> pure Nothing
     CarryIfPresent     -> pure Nothing
   pure (convertParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
