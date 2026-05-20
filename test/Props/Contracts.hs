@@ -33,6 +33,8 @@ import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
+import Slap.Text (EncodedText(..), EncodingName(..))
 import Data.List (isPrefixOf)
 import qualified Data.Set as Set
 import Test.Tasty
@@ -64,7 +66,7 @@ directFormats =
 fullContents :: PatchContents
 fullContents = PatchContents
   { contentsRecords     = [Hunk (Offset 0) (ByteString.pack [0xFF])]
-  , contentsDescription = Just (ByteString.pack [0x74, 0x65, 0x73, 0x74])
+  , contentsDescription = Just (EncodedText EncodingLocale (Text.pack "test"))
   , contentsSourceCRC32 = Just (CRC32 0xDEADBEEF)
   , contentsSourceMD5   = Just (MD5Hash (ByteString.replicate 16 0xAA))
   , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))

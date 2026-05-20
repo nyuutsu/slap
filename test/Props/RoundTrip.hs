@@ -50,14 +50,21 @@ import Slap.XDelta1.Types (XDelta1PatchCompression(..),
                            ResolvedXDelta1FileNames,
                            resolveXDelta1FileNames)
 import qualified Slap.PPF1.Apply as PPF1
+import qualified Slap.PPF1.Create as PPF1
 import qualified Slap.PPF1.Parse as PPF1
+import qualified Slap.PPF1.Types as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
 import qualified Slap.PPF2.Apply as PPF2
+import qualified Slap.PPF2.Create as PPF2
 import qualified Slap.PPF2.Parse as PPF2
-import Slap.PPF2.Types (narrowPPF2SourceSize)
+import qualified Slap.PPF2.Types as PPF2
+import Slap.PPF2.Types (narrowPPF2FileId, narrowPPF2SourceSize)
 import Slap.Narrow (NarrowingFailure(..))
 import qualified Slap.PPF3.Apply as PPF3
+import qualified Slap.PPF3.Create as PPF3
 import qualified Slap.PPF3.Parse as PPF3
+import qualified Slap.PPF3.Types as PPF3
+import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.PCHTXT.Apply as PCHTXT
 import qualified Slap.PCHTXT.Types as PCHTXT
@@ -83,6 +90,8 @@ import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Data.Text as Text
+import qualified Slap.Text as SlapText
 import Data.Bits (shiftL)
 import qualified Data.Bits as Bits
 import Data.ByteString.Builder (word8, byteString, toLazyByteString)
@@ -122,14 +131,30 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
+      , testCase "description: UTF-8 codepoints round-trip byte-faithfully"
+                 ppf1DescriptionUtf8RoundTrip
+      , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
+                 ppf1DescriptionCodepointAwareTruncation
       ]
   , testGroup "PPF2"
       [ testProperty "round-trip" prop_ppf2
       , testCase     "rejects header source size > 0xFFFFFFFF"
                      ppf2SourceSizeAdversarial
+      , testCase "description: UTF-8 codepoints round-trip byte-faithfully"
+                 ppf2DescriptionUtf8RoundTrip
+      , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
+                 ppf2DescriptionCodepointAwareTruncation
+      , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
+                 ppf2FileIdDizRoundTrip
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
+      , testCase "description: UTF-8 codepoints round-trip byte-faithfully"
+                 ppf3DescriptionUtf8RoundTrip
+      , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
+                 ppf3DescriptionCodepointAwareTruncation
+      , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
+                 ppf3FileIdDizRoundTrip
       ]
   , testGroup "PMSR"
       [ testProperty "round-trip" prop_pmsr
@@ -861,6 +886,189 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
              Just storedBytes ->
                assertEqual "parsed-back stored byte count matches the warning"
                  (byteLength storedBytes) reportedTruncated
+
+----------------------------------------------------------------------------
+-- PPF1/2/3 description text-encoding round-trip and truncation
+----------------------------------------------------------------------------
+
+-- | A non-ASCII codepoint payload that takes 9 UTF-8 bytes and fits
+-- comfortably inside the 50-byte PPF description field. Under a UTF-8
+-- process locale the encode+decode round-trips byte-for-byte; under
+-- a non-UTF-8 locale the test still expects the same Text back
+-- because slap re-encodes through the same locale resolver on both
+-- ends.
+ppfNonAsciiDescriptionText :: Text.Text
+ppfNonAsciiDescriptionText = Text.pack "\x65E5\x672C\x8A9E"  -- "Japanese language"
+
+-- | An overflow probe: 47 ASCII bytes plus a 4-byte UTF-8 codepoint
+-- (🎮, U+1F3AE) — encoded length 51, one byte past the 50-byte cap.
+-- 'encodeTextBounded' drops the 4-byte codepoint whole and keeps the
+-- 47-byte prefix; pre-stage-3a 'encodeBoundedLocale' would have cut
+-- at a raw byte boundary (it relied on iconv's locale-encoded
+-- truncation which has no codepoint awareness for non-UTF-8 locales).
+ppfTruncationProbeText :: Text.Text
+ppfTruncationProbeText = Text.pack (replicate 47 'a' ++ ['\x1F3AE'])
+
+ppfTruncationProbeExpectedOriginal :: Length
+ppfTruncationProbeExpectedOriginal = Length 51
+
+ppfTruncationProbeExpectedTruncated :: Length
+ppfTruncationProbeExpectedTruncated = Length 47
+
+-- | A non-ASCII description round-trips byte-faithfully when re-encoding
+-- the parsed-back text under the same locale produces wire bytes
+-- identical to the original encode. Slap parses the description with
+-- its padding bytes intact, so a text-level @==@ comparison would
+-- need format-specific padding-stripping; the byte-level identity
+-- check is the cleaner end-to-end claim: parse-then-re-create
+-- preserves the field exactly.
+ppfDescriptionRoundTripsByteFaithfully
+  :: CreateResult
+  -> (PatchFileContents -> Either SlapError (Parsed a))
+  -> (a -> SlapText.EncodedText)
+  -> (SlapText.EncodedText -> CreateResult)
+  -> String
+  -> Assertion
+ppfDescriptionRoundTripsByteFaithfully
+    (CreateResult originalBytes _) parseFn descriptionOf reEncode formatName =
+  case parseFn originalBytes of
+    Left slapError -> assertFailure (formatName ++ " parse: " ++ renderSlapError slapError)
+    Right (Parsed parsed _) ->
+      let CreateResult reEncodedBytes _ = reEncode (descriptionOf parsed)
+      in assertEqual (formatName ++ " parse-then-re-create produces byte-identical wire bytes")
+           (unPatchFileContents originalBytes)
+           (unPatchFileContents reEncodedBytes)
+
+-- | Codepoint-aware-truncation assertion shared by PPF1/PPF2/PPF3:
+-- exactly one 'FieldTruncated' warning, naming the right format, the
+-- description field, and matching the byte-count probe.
+assertPPFDescriptionTruncationWarning
+  :: FormatLabel -> [SlapAdvisory] -> Assertion
+assertPPFDescriptionTruncationWarning expectedLabel advisories =
+  case [(originalLen, truncatedLen)
+        | FieldTruncated formatLabel FieldDescription originalLen truncatedLen <- advisories
+        , formatLabel == expectedLabel] of
+    [(OriginalLength original, TruncatedLength storedLength)] -> do
+      assertEqual "OriginalLength reports the full encoded byte count"
+        ppfTruncationProbeExpectedOriginal original
+      assertEqual "TruncatedLength reports the actually-stored byte count"
+        ppfTruncationProbeExpectedTruncated storedLength
+    []         -> assertFailure ("expected one FieldTruncated warning for "
+                                 ++ show expectedLabel ++ " description")
+    multiple   -> assertFailure ("expected one warning, got "
+                                 ++ show (length multiple))
+
+ppf1DescriptionUtf8RoundTrip :: Assertion
+ppf1DescriptionUtf8RoundTrip =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+      patchResult      = PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
+  in ppfDescriptionRoundTripsByteFaithfully patchResult
+       (PPF1.parsePPF1 PPF1OriginPC)
+       PPF1.ppf1Description
+       (PPF1.encodePPF1 PPF1OriginPC [])
+       "PPF1"
+
+ppf1DescriptionCodepointAwareTruncation :: Assertion
+ppf1DescriptionCodepointAwareTruncation =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+      CreateResult _ advisories =
+        PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
+  in assertPPFDescriptionTruncationWarning LabelPPF1 advisories
+
+ppf2DescriptionUtf8RoundTrip :: Assertion
+ppf2DescriptionUtf8RoundTrip =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      patchResult      = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      reEncodePPF2 d   = PPF2.encodePPF2 [] d sourceSize validation
+  in ppfDescriptionRoundTripsByteFaithfully patchResult
+       PPF2.parsePPF2
+       PPF2.ppf2Description
+       reEncodePPF2
+       "PPF2"
+
+ppf2DescriptionCodepointAwareTruncation :: Assertion
+ppf2DescriptionCodepointAwareTruncation =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      CreateResult _ advisories =
+        PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+  in assertPPFDescriptionTruncationWarning LabelPPF2 advisories
+
+ppf3DescriptionUtf8RoundTrip :: Assertion
+ppf3DescriptionUtf8RoundTrip =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+      patchResult      = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      reEncodePPF3 d   = PPF3.encodePPF3 [] d Nothing Nothing BIN
+  in ppfDescriptionRoundTripsByteFaithfully patchResult
+       PPF3.parsePPF3
+       PPF3.ppf3Description
+       reEncodePPF3
+       "PPF3"
+
+ppf3DescriptionCodepointAwareTruncation :: Assertion
+ppf3DescriptionCodepointAwareTruncation =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+      CreateResult _ advisories =
+        PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+  in assertPPFDescriptionTruncationWarning LabelPPF3 advisories
+
+-- | A FILE_ID.DIZ body that round-trips byte-faithfully under a
+-- UTF-8 locale: the typed text encodes to identical bytes whether
+-- read by parse or rewritten by create, so the trailer wraps and
+-- unwraps cleanly with the format's wire-level marker/length frame.
+ppfFileIdDizSampleText :: Text.Text
+ppfFileIdDizSampleText = Text.pack "slap sample FILE_ID.DIZ\nline two\n"
+
+ppf2FileIdDizRoundTrip :: Assertion
+ppf2FileIdDizRoundTrip =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+      sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
+        Right size -> size
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+      validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
+      fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
+      fileId = case narrowPPF2FileId fileIdText of
+        Right value -> value
+        Left  err   -> error ("narrowPPF2FileId: " ++ renderSlapError err)
+      CreateResult patchBytes _ =
+        PPF2.encodePPF2 [] descriptionTyped sourceSize validation
+      (trailerBytes, _trailerAdv) = PPF2.encodeFileIdDiz fileId
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
+  in case PPF2.parsePPF2 stitched of
+       Left slapError -> assertFailure ("PPF2 parse: " ++ renderSlapError slapError)
+       Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
+         Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
+         Just fid ->
+           assertEqual "PPF2 parsed file_id.diz content matches the original"
+             ppfFileIdDizSampleText
+             (SlapText.encodedTextContent (PPF2.unPPF2FileId fid))
+
+ppf3FileIdDizRoundTrip :: Assertion
+ppf3FileIdDizRoundTrip =
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+      fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
+      fileId = case narrowPPF3FileId fileIdText of
+        Right value -> value
+        Left  err   -> error ("narrowPPF3FileId: " ++ renderSlapError err)
+      CreateResult patchBytes _ =
+        PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
+      (trailerBytes, _trailerAdv) = PPF3.encodeFileIdDiz fileId
+      stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
+  in case PPF3.parsePPF3 stitched of
+       Left slapError -> assertFailure ("PPF3 parse: " ++ renderSlapError slapError)
+       Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
+         Nothing  -> assertFailure "PPF3 parsed file_id.diz was Nothing; expected trailer"
+         Just fid ->
+           assertEqual "PPF3 parsed file_id.diz content matches the original"
+             ppfFileIdDizSampleText
+             (SlapText.encodedTextContent (PPF3.unPPF3FileId fid))
 
 -- PCHTXT: pure direct, no truncation
 prop_pchtxt :: Property

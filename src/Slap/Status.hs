@@ -92,6 +92,7 @@ import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
                      RequiredLength(..), ActualLength(..),
                      EncodedLength(..), MaxLength(..),
                      OriginalLength(..), TruncatedLength(..),
+                     SubstitutionCount(..),
                      ActualOffset(..), MaxOffset(..),
                      SentinelOffset(..),
                      ExpectedMagic(..), ActualMagic(..),
@@ -859,6 +860,27 @@ data SlapAdvisory
 
   -- Encoding
   | FieldTruncated FormatLabel FieldName OriginalLength TruncatedLength
+
+  -- | A text field's wire bytes contained one or more byte sequences
+  -- that the declared encoding couldn't decode; slap substituted
+  -- 'U+FFFD' for each and continued parsing. Fires from format parse
+  -- paths that decode locale-encoded fields (PPF1\/2\/3\/4 description
+  -- and the PPF2\/PPF3 FILE_ID.DIZ trailer body). The count is the
+  -- number of byte sequences that were substituted; the position
+  -- detail in 'Slap.Text.LossNotice' is folded down at the advisory
+  -- boundary because the field-level "how many" is what the user
+  -- needs at this layer.
+  | FieldDecodedSubstituted FormatLabel FieldName SubstitutionCount
+
+  -- | A text field's source 'Text' contained one or more codepoints
+  -- that the target encoding couldn't represent; slap substituted
+  -- the encoding's replacement character (U+FFFD where representable,
+  -- @\'?\'@ otherwise) for each and continued encoding. Fires from
+  -- format create paths that encode locale-targeted fields. Sibling
+  -- of 'FieldDecodedSubstituted' for the symmetric encode-side
+  -- substitution event.
+  | FieldEncodedSubstituted FormatLabel FieldName SubstitutionCount
+
   | EncodingGap FormatLabel FormatLabel
 
   -- | The process's locale encoding name (as reported by
@@ -1665,12 +1687,11 @@ renderSlapAdvisory (IPSTruncationMarkerHonored label
 renderSlapAdvisory (IPSRecordsClippedByMarker label
     (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
   formatLabelName label ++ " apply: "
-  ++ show count
-  ++ (if count == 1 then " record" else " records")
+  ++ show count ++ plural count " record" " records"
   ++ " clipped by truncation marker (first at step #"
   ++ show (unActionIndex firstIndex) ++ ", "
   ++ show (unLength overshoot)
-  ++ (if unLength overshoot == 1 then " byte" else " bytes")
+  ++ plural (unLength overshoot) " byte" " bytes"
   ++ " total clipped)"
 
 renderSlapAdvisory (IPSTruncationMarkerIgnored label
@@ -1735,6 +1756,18 @@ renderSlapAdvisory (FieldTruncated label name (OriginalLength original) (Truncat
   ++ show (unLength truncated) ++ "-byte field (was "
   ++ show (unLength original) ++ " bytes)"
 
+renderSlapAdvisory (FieldDecodedSubstituted label name (SubstitutionCount count)) =
+  formatLabelName label ++ " "
+  ++ fieldNameLabel name ++ ": "
+  ++ show count ++ plural count " byte sequence" " byte sequences"
+  ++ " did not decode under the declared encoding; substituted U+FFFD"
+
+renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)) =
+  formatLabelName label ++ " "
+  ++ fieldNameLabel name ++ ": "
+  ++ show count ++ plural count " codepoint was" " codepoints were"
+  ++ " not representable in the target encoding; substituted"
+
 renderSlapAdvisory (EncodingGap fromLabel toLabel) =
   formatLabelName fromLabel
   ++ " text was stored with known encoding; "
@@ -1763,7 +1796,6 @@ renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) 
   ++ show (unActionIndex firstIndex) ++ ", "
   ++ show (unLength overshoot) ++ plural (unLength overshoot) " byte" " bytes"
   ++ " total overshoot — clipped to output bounds"
-  where plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 renderSlapAdvisory (SubformatConverted conversion) = case conversion of
   NINJA1TextToBinary                       ->
@@ -1815,6 +1847,16 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 ----------------------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------------------
+
+-- | Choose the singular or plural label for a count, by simple
+-- @== 1@ comparison. Each call site supplies the leading space (or
+-- absence thereof) inside the singular and plural strings, so the
+-- helper composes uniformly into the surrounding sentence whether
+-- the number is followed by @" record"@ \/ @" records"@ or @" byte"@
+-- \/ @" bytes"@. Used by every 'renderSlapAdvisory' equation whose
+-- prose carries a count.
+plural :: Int -> String -> String -> String
+plural n singular pluralForm = if n == 1 then singular else pluralForm
 
 renderUnencodeabilityReason :: UnencodeabilityReason -> String
 renderUnencodeabilityReason UPSSourceTailNonZero =
@@ -2191,6 +2233,8 @@ slapAdvisorySeverity advisory = case advisory of
   IncludingVerificationByDefault       -> SeverityNote
   SourceHashesMissing{}                -> SeverityNote
   FieldTruncated{}                     -> SeverityNote
+  FieldDecodedSubstituted{}            -> SeverityNote
+  FieldEncodedSubstituted{}            -> SeverityNote
   EncodingGap{}                        -> SeverityNote
   LocaleEncoderUnresolved{}            -> SeverityNote
   PlatformNotAvailable{}               -> SeverityNote

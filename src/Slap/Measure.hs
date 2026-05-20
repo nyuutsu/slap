@@ -25,6 +25,7 @@ module Slap.Measure
   , MaxLength(..)
   , OriginalLength(..)
   , TruncatedLength(..)
+  , SubstitutionCount(..)
   , ActualOffset(..)
   , MaxOffset(..)
   , SentinelOffset(..)
@@ -227,6 +228,14 @@ newtype OriginalLength = OriginalLength { unOriginalLength :: Length }
 
 -- | The byte length of a field after truncation to fit its format.
 newtype TruncatedLength = TruncatedLength { unTruncatedLength :: Length }
+  deriving (Eq, Ord, Show)
+
+-- | How many codepoints were replaced by a substitution character
+-- during a lenient text decode or encode. Each event corresponds to
+-- one input character that the target encoding (encode) or the
+-- declared source encoding (decode) couldn't represent; the count is
+-- the running tally a format-level advisory surfaces to the user.
+newtype SubstitutionCount = SubstitutionCount { unSubstitutionCount :: Int }
   deriving (Eq, Ord, Show)
 
 -- | An offset that a hunk or record actually carried, used in

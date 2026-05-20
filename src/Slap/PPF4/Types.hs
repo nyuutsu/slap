@@ -13,6 +13,7 @@ module Slap.PPF4.Types
 
 import Data.ByteString (ByteString)
 import Slap.Measure (Offset, Length(..))
+import Slap.Text (EncodedText)
 
 -- | A fully parsed PPF4 patch.
 --
@@ -26,7 +27,13 @@ import Slap.Measure (Offset, Length(..))
 -- no undo data, no image type, no File_ID.diz trailer. Those are
 -- PPF1/2/3 facts that live on each format's per-version Patch type.
 data PPF4Patch = PPF4Patch
-  { ppf4Description :: !ByteString
+  { ppf4Description :: !EncodedText
+    -- ^ 50-byte description field, decoded at parse time under the
+    -- process locale. Same encoding model as PPF1\/PPF2\/PPF3. Slap
+    -- parses, applies, and describes PPF4 patches but does not create
+    -- them; the typed-text representation here exists so the
+    -- describe-side rendering goes through the same 'Text' path as
+    -- the other PPFs.
   , ppf4Replaces    :: ![PPF4Replace]
   , ppf4Appends     :: ![PPF4Append]
   } deriving (Show)

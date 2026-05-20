@@ -13,11 +13,14 @@ module Props.ParseWarnings (parseWarningsTests) where
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.IPS.Parse as IPS
+import qualified Slap.PPF1.Parse as PPF1
+import Slap.PPF1.Types (PPF1Origin(..))
+import Slap.FieldName (FieldName(..))
 import Slap.Status (Parsed(..), SlapAdvisory(..), OverlapCount(..),
                    renderSlapError)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (actionAtPosition, Length(..))
+import Slap.Measure (actionAtPosition, Length(..), SubstitutionCount(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -44,6 +47,8 @@ parseWarningsTests = testGroup "ParseWarnings"
       apsN64UnrecognizedCountryEmitsWarning
   , testCase "APS-N64 type-0 (Simple) carries no country field and no country warning"
       apsN64SimplePatchHasNoCountryWarning
+  , testCase "PPF1 description with bytes that do not decode under the locale surfaces a substitution advisory"
+      ppf1DescriptionDecodeSubstitutionEmitsAdvisory
   ]
 
 ----------------------------------------------------------------------------
@@ -294,3 +299,46 @@ apsN64SimplePatchHasNoCountryWarning =
   withParsedAPSN64 apsN64Type0Patch $ \header actualWarnings -> do
     assertEqual "country field" Nothing (APSN64.apsN64Country header)
     assertEqual "surfaced warnings" [] actualWarnings
+
+----------------------------------------------------------------------------
+-- PPF description: parse-time decode substitution advisory
+----------------------------------------------------------------------------
+
+-- | A minimal PPF1 patch whose 50-byte description contains a byte
+-- sequence that does not decode under a UTF-8 locale: an isolated
+-- @0x80@ continuation byte, surrounded by ASCII padding. The patch
+-- carries no records, just the header — enough to exercise the
+-- description-decode pathway and the resulting advisory channel.
+ppf1PatchWithInvalidDescriptionByte :: ByteString
+ppf1PatchWithInvalidDescriptionByte =
+  let invalidByte    = 0x80
+      paddingByte    = 0x20  -- ASCII space; PPF1's reference pad byte
+      descriptionBytes = ByteString.replicate 24 paddingByte
+                      <> ByteString.singleton invalidByte
+                      <> ByteString.replicate 25 paddingByte
+  in ByteString.pack [0x50, 0x50, 0x46, 0x31, 0x30, 0x00]  -- "PPF10" + encoding byte 0x00
+     <> descriptionBytes
+
+-- | When the description bytes don't decode cleanly under the
+-- process locale, slap leniently substitutes 'U+FFFD' for each
+-- offending sequence and surfaces a single
+-- 'FieldDecodedSubstituted' advisory naming the format, the field,
+-- and the substitution count. This test asserts that exact shape on
+-- a hand-built PPF1 patch whose description holds one undecodable
+-- byte.
+--
+-- The test is locale-sensitive: a non-UTF-8 process locale (e.g.
+-- ISO-8859-1) would decode @0x80@ to a single defined codepoint
+-- rather than substituting, and the assertion would not match.
+-- Slap's CI host uses UTF-8 by default, so this assertion is
+-- meaningful in the environments the test suite normally runs in.
+ppf1DescriptionDecodeSubstitutionEmitsAdvisory :: Assertion
+ppf1DescriptionDecodeSubstitutionEmitsAdvisory =
+  case PPF1.parsePPF1 PPF1OriginPC
+         (PatchFileContents ppf1PatchWithInvalidDescriptionByte) of
+    Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
+    Right (Parsed _ advisories) ->
+      assertEqual "surfaced advisories"
+        [FieldDecodedSubstituted LabelPPF1 FieldDescription
+           (SubstitutionCount 1)]
+        advisories

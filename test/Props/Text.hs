@@ -172,25 +172,31 @@ test_utf8LenientNeverSubstitutes = do
 test_utf8LenientReplacesInvalidBytes :: IO ()
 test_utf8LenientReplacesInvalidBytes = do
   let invalid = ByteString.pack [0x80]
-      EncodedText tag decoded = decodeTextLenient EncodingUtf8 invalid
+      (EncodedText tag decoded, notices) = decodeTextLenient EncodingUtf8 invalid
   assertEqual "tag preserved" EncodingUtf8 tag
   assertBool  "contains replacement character"
     (Text.any (== '\xFFFD') decoded)
+  assertBool  "loss notice surfaces the bad byte"
+    (any isSubstitutedByteSequence notices)
+  where
+    isSubstitutedByteSequence SubstitutedByteSequence{} = True
+    isSubstitutedByteSequence _                         = False
 
 -- | Valid UTF-8 bytes lenient-decode to the same string strict
 -- decode would produce.
 test_utf8LenientPassesValid :: IO ()
 test_utf8LenientPassesValid = do
   let bytes = ByteString.pack [0xE6, 0x97, 0xA5, 0xE6, 0x9C, 0xAC, 0xE8, 0xAA, 0x9E]
-      EncodedText _ decoded = decodeTextLenient EncodingUtf8 bytes
+      (EncodedText _ decoded, notices) = decodeTextLenient EncodingUtf8 bytes
   assertEqual "Japanese decodes" (Text.pack "\x65E5\x672C\x8A9E") decoded
+  assertEqual "clean decode emits no loss notices" [] notices
 
 -- | UTF-8 lenient decode never throws on arbitrary bytes. Property:
 -- whatever bytes we feed, we get back an 'EncodedText'.
 prop_utf8LenientNeverFails :: [Int] -> Property
 prop_utf8LenientNeverFails ints =
   let bytes = ByteString.pack (map (fromIntegral . (`mod` 256)) ints)
-      EncodedText _tag text = decodeTextLenient EncodingUtf8 bytes
+      (EncodedText _tag text, _notices) = decodeTextLenient EncodingUtf8 bytes
   in property (Text.length text >= 0)  -- forces evaluation
 
 ----------------------------------------------------------------------------

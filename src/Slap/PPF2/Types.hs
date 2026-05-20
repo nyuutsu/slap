@@ -40,6 +40,8 @@ import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Narrow (EncodingLimits(..), narrowToWord32)
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextLenient)
 
 -- | A PPF2 record. Same wire shape as PPF1: a target-file offset
 -- and the bytes to write. The wire-level RLE encoding (count=0
@@ -61,26 +63,31 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
 -- | FILE_ID.DIZ content optionally appended after the record
 -- stream. The wire trailer is
 -- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <4-byte LE length>@;
--- this newtype carries only the inner @<content>@ bytes whose
--- length has been validated against PPF2's 4-byte LE length
--- field. Constructor private; values come from one of two named
--- producers:
+-- this newtype carries only the inner @<content>@ as a typed
+-- 'EncodedText' value whose encoded byte length has been validated
+-- against PPF2's 4-byte LE length field. Constructor private;
+-- values come from one of two named producers:
 --
--- * 'narrowPPF2FileId' — runtime check, refuses with
---   'Slap.Narrow.FieldValueExceedsBound' if the bytestring's length
+-- * 'narrowPPF2FileId' — runtime check, encodes the typed text under
+--   the locale (lenient) and refuses with
+--   'Slap.Narrow.FieldValueExceedsBound' if the produced byte count
 --   exceeds @0xFFFFFFFF@.
 -- * 'ppf2FileIdFromParsed' — parse-time, trusts the wire format's
---   4-byte length field has already constrained the bytestring.
-newtype PPF2FileId = PPF2FileId { unPPF2FileId :: ByteString }
+--   4-byte length field has already constrained the bytes the
+--   typed text was decoded from.
+newtype PPF2FileId = PPF2FileId { unPPF2FileId :: EncodedText }
   deriving (Show, Eq)
 
-narrowPPF2FileId :: ByteString -> Either SlapError PPF2FileId
-narrowPPF2FileId bs = case narrowToWord32 LabelPPF2 FieldFileIdDizLength
-                            (ByteString.length bs) of
-  Left  failure -> Left (NarrowingError failure)
-  Right _       -> Right (PPF2FileId bs)
+narrowPPF2FileId :: EncodedText -> Either SlapError PPF2FileId
+narrowPPF2FileId description =
+  let (encoded, _notices) =
+        encodeTextLenient EncodingLocale (encodedTextContent description)
+  in case narrowToWord32 LabelPPF2 FieldFileIdDizLength
+                         (ByteString.length encoded) of
+       Left  failure -> Left (NarrowingError failure)
+       Right _       -> Right (PPF2FileId description)
 
-ppf2FileIdFromParsed :: ByteString -> PPF2FileId
+ppf2FileIdFromParsed :: EncodedText -> PPF2FileId
 ppf2FileIdFromParsed = PPF2FileId
 
 -- | PPF2's 4-byte LE source-ROM-size header field, narrowed from a
@@ -101,7 +108,11 @@ ppf2SourceSizeFromParsed = PPF2SourceSize
 
 -- | A fully parsed PPF2 patch.
 data PPF2Patch = PPF2Patch
-  { ppf2Description     :: !ByteString       -- ^ 50-byte description (space- or null-padded raw bytes)
+  { ppf2Description     :: !EncodedText
+    -- ^ 50-byte description field, decoded at parse time under the
+    -- process locale (same model as PPF1). The PPF2 spec is silent on
+    -- the description's encoding, so 'Slap.Text.EncodingLocale'
+    -- carries the "follow the running locale" semantics through.
   , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
   , ppf2ValidationBlock :: !PPF2ValidationBlock
   , ppf2Records         :: ![PPF2Record]

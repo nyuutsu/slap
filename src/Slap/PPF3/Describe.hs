@@ -31,22 +31,25 @@ import Slap.Display.Analysis
   , OffsetKind(AtOffset)
   , AnnotDetail(DetailUndo)
   )
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteStringChar
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import Numeric (showHex)
 
 ppf3Meta :: PPF3Patch -> [InfoLine]
 ppf3Meta patch = concat
-  [ let description = decodeLocaleField (stripTrailing (ppf3Description patch))
+  [ let description = Text.unpack
+                        (stripTrailing (encodedTextContent (ppf3Description patch)))
     in [InfoLine "description" description | not (null description)]
   , [InfoLine "validation" validationLine]
   , [InfoLine "undo data" (if ppf3HasUndo patch then "yes" else "no")]
   , case ppf3FileId patch of
       Nothing  -> []
-      Just fid -> [InfoLine "file_id.diz" (show (ByteString.length (unPPF3FileId fid)) ++ " bytes")]
+      Just fid -> [InfoLine "file_id.diz"
+                     (show (Text.length (encodedTextContent (unPPF3FileId fid)))
+                       ++ " characters")]
   ]
   where
     validationLine = case ppf3ValidationBlock patch of
@@ -58,8 +61,9 @@ ppf3Meta patch = concat
                      (unOffset (ppf3ValidationOffset (ppf3ImageType patch))) :: Word64) ""
         ++ " (" ++ show (ByteString.length blockBytes) ++ " bytes)"
 
-stripTrailing :: ByteString.ByteString -> ByteString.ByteString
-stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')
+stripTrailing :: Text.Text -> Text.Text
+stripTrailing =
+  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF3 :: PPF3Patch -> PatchAnalysis
 analyzePPF3 patch = PatchAnalysis

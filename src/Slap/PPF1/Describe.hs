@@ -27,18 +27,20 @@ import Slap.Display.Analysis
   , Annotation(AnnotationAt)
   , OffsetKind(AtOffset)
   )
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteStringChar
+import qualified Data.Text as Text
 
 ppf1Meta :: PPF1Patch -> [InfoLine]
 ppf1Meta patch =
-  let description = decodeLocaleField (stripTrailing (ppf1Description patch))
+  let description = Text.unpack
+                      (stripTrailing (encodedTextContent (ppf1Description patch)))
   in [InfoLine "description" description | not (null description)]
 
-stripTrailing :: ByteString.ByteString -> ByteString.ByteString
-stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')
+stripTrailing :: Text.Text -> Text.Text
+stripTrailing =
+  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF1 :: PPF1Patch -> PatchAnalysis
 analyzePPF1 patch = PatchAnalysis

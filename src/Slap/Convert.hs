@@ -102,7 +102,9 @@ import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
-import Slap.TextEncoding (isValidUtf8, decodeLocaleField)
+import Slap.TextEncoding (isValidUtf8)
+import Slap.Text (EncodedText(..), EncodingName(..),
+                  encodedTextContent, encodeTextLenient)
 
 import Control.Applicative ((<|>))
 import Data.Bifunctor (first)
@@ -110,6 +112,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Types
@@ -131,7 +134,13 @@ data DirectConversionContract = DirectConversionContract
 -- | Universal representation of a direct patch's contents.
 data PatchContents = PatchContents
   { contentsRecords     :: [Hunk]
-  , contentsDescription :: Maybe ByteString.ByteString
+  , contentsDescription :: Maybe EncodedText
+    -- ^ Typed description carried across the convert seam. The
+    -- encoding tag stays attached end-to-end so a downstream re-encode
+    -- can route through whichever encoder the target format wants
+    -- without having to re-guess what the source's encoding context
+    -- was. Today only the PPF family of direct formats and APSN64
+    -- populate this field; other direct formats leave it 'Nothing'.
   , contentsSourceCRC32 :: Maybe CRC32
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
@@ -144,10 +153,12 @@ data PatchContents = PatchContents
   , contentsEBPMeta     :: Maybe ByteString.ByteString
   , contentsRomType     :: Maybe PlatformType
   , contentsImageType   :: Maybe PPF3ImageType
-  , contentsFileIdDiz   :: Maybe ByteString.ByteString
-    -- ^ Raw FILE_ID.DIZ bytes (PPF2/PPF3). Per-format wire trailers
-    -- differ in length-field width; the bytes themselves are the same
-    -- across formats.
+  , contentsFileIdDiz   :: Maybe EncodedText
+    -- ^ Typed FILE_ID.DIZ content (PPF2/PPF3). The encoding tag is
+    -- preserved through the seam; per-format wire trailers differ in
+    -- length-field width (PPF2: 4 bytes; PPF3: 2 bytes) and apply the
+    -- length check after re-encoding at the format's @encodeFileIdDiz@
+    -- site.
   , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
@@ -155,7 +166,7 @@ data PatchContents = PatchContents
   , contentsPatchEncoding :: Maybe PatchEncoding
     -- ^ Text encoding of description/metadata fields, when the source
     -- format carries an encoding flag (e.g. NINJA2 PATCH_ENC).  Nothing
-    -- for formats with opaque byte fields (PPF, DPS, APSN64).
+    -- for formats with opaque byte fields (DPS, APSN64).
   }
 
 -- | Direct creation target.  Some format families have multiple creation
@@ -782,9 +793,13 @@ fieldNote contents field = case field of
     Just hash | not (ByteString.all (== 0) (unSHA1Hash hash)) -> [FieldDropped FieldSourceSHA1 (DroppedSHA1 hash)]
     _ -> []
   FieldDescription -> case contentsDescription contents of
-    Just description | not (ByteString.all (\byte -> byte == 0x20 || byte == 0) description) ->
-      [FieldDropped FieldDescription (DroppedDescription (DroppedDescriptionText (trimNullSpace (decodeLocaleField description))))]
-    _ -> []
+    Just description ->
+      let trimmed = trimNullSpace (Text.unpack (encodedTextContent description))
+      in if null trimmed
+           then []
+           else [FieldDropped FieldDescription
+                  (DroppedDescription (DroppedDescriptionText trimmed))]
+    Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
     Nothing -> []
@@ -913,7 +928,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
           Nothing  -> IPS.buildEBPMetadataJSON EBPMetadataFields
                         { ebpMetadataTitle       = ebpTitle
                         , ebpMetadataAuthor      = ebpAuthor
-                        , ebpMetadataDescription = description
+                        , ebpMetadataDescription = descriptionString
                         }
     Right (CreateResult
             (IPS.encodeEBPPatch records (EBPMetadata ebpMetadataBytes))
@@ -921,7 +936,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
   CreatePPF1 -> do
     rejectTruncation LabelPPF1 contents source
     records <- narrow (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
-    Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records description)
+    Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records descriptionTyped)
   CreatePPF2 -> do
     rejectTruncation LabelPPF2 contents source
     -- The validation block lives on 'contentsValidation' regardless
@@ -948,16 +963,19 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         records <- narrow (splitHunks ppf2MaxRecordPayload (contentsRecords contents))
         let ppf2Result = PPF2.encodePPF2
                            records
-                           description
+                           descriptionTyped
                            sourceSize
                            (PPF2ValidationBlock validationBytes)
         case contentsFileIdDiz contents of
           Nothing  -> Right ppf2Result
           Just diz -> do
             fid <- narrowPPF2FileId diz
-            Right ppf2Result { resultBytes = PatchFileContents
-                          (unPatchFileContents (resultBytes ppf2Result)
-                           <> PPF2.encodeFileIdDiz fid) }
+            let (trailerBytes, trailerAdvisories) = PPF2.encodeFileIdDiz fid
+            Right ppf2Result
+              { resultBytes = PatchFileContents
+                  (unPatchFileContents (resultBytes ppf2Result) <> trailerBytes)
+              , resultAdvisories = resultAdvisories ppf2Result ++ trailerAdvisories
+              }
   CreatePPF3 -> do
     -- PPF3's offset is Int64-shaped on the wire; the offset bound is
     -- 'Nothing' in 'encodingLimits', so 'narrow' here delegates to
@@ -967,16 +985,19 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- 'narrowUndoHunksUnbounded'.
     records <- narrow (splitHunks ppf3MaxRecordPayload (contentsRecords contents))
     let undoEncoded = fmap narrowUndoHunksUnbounded (contentsUndoData contents)
-        ppfResult   = PPF3.encodePPF3 records description undoEncoded
+        ppfResult   = PPF3.encodePPF3 records descriptionTyped undoEncoded
                         (fmap PPF3ValidationBlock (contentsValidation contents))
                         imageType
     case contentsFileIdDiz contents of
       Nothing  -> Right ppfResult
       Just diz -> do
         fid <- narrowPPF3FileId diz
-        Right ppfResult { resultBytes = PatchFileContents
-                      (unPatchFileContents (resultBytes ppfResult)
-                       <> PPF3.encodeFileIdDiz fid) }
+        let (trailerBytes, trailerAdvisories) = PPF3.encodeFileIdDiz fid
+        Right ppfResult
+          { resultBytes = PatchFileContents
+              (unPatchFileContents (resultBytes ppfResult) <> trailerBytes)
+          , resultAdvisories = resultAdvisories ppfResult ++ trailerAdvisories
+          }
   CreateNINJA1 -> do
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
@@ -1029,19 +1050,27 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     cliDescription   = requestedDescription meta
     cliTitle  = requestedTitle meta
     cliAuthor = requestedAuthor meta
-    description   = resolveDescription DescriptionSources
-      { descriptionSourceCLI      = cliDescription
-      , descriptionSourceEBPMeta  = contentsEBPMeta contents
-      , descriptionSourceRawBytes = contentsDescription contents
-      , descriptionSourceFallback = ""
+    descriptionString = resolveDescription DescriptionSources
+      { descriptionSourceCLI       = cliDescription
+      , descriptionSourceEBPMeta   = contentsEBPMeta contents
+      , descriptionSourceTypedText = contentsDescription contents
+      , descriptionSourceFallback  = ""
       }
+    -- | PPF1/PPF2/PPF3 emit their descriptions through 'encodeTextBounded'
+    -- under the running locale, so the resolved 'String' wraps as a
+    -- locale-tagged 'EncodedText' at the encoder seam. APSN64's
+    -- 'APSN64Description' still consumes a 'String' at this stage —
+    -- its migration to 'EncodedText' belongs to stage 3b alongside the
+    -- DPS field rewrites.
+    descriptionTyped = EncodedText EncodingLocale (Text.pack descriptionString)
     apsDescription = resolveDescription DescriptionSources
-      { descriptionSourceCLI      = cliDescription
-      , descriptionSourceEBPMeta  = Nothing
-      , descriptionSourceRawBytes = contentsDescription contents
-      , descriptionSourceFallback = replicate 50 ' '
+      { descriptionSourceCLI       = cliDescription
+      , descriptionSourceEBPMeta   = Nothing
+      , descriptionSourceTypedText = contentsDescription contents
+      , descriptionSourceFallback  = replicate 50 ' '
       }
-    pchtxtDescription = cliDescription <|> fmap decodeLocaleField (contentsDescription contents)
+    pchtxtDescription = cliDescription
+      <|> fmap (Text.unpack . encodedTextContent) (contentsDescription contents)
     ebpView   = contentsEBPMeta contents >>= parseEBPMetadata
     ebpTitle  = resolveEBPField cliTitle  (ebpView >>= ebpMetadataViewTitle)
     ebpAuthor = resolveEBPField cliAuthor (ebpView >>= ebpMetadataViewAuthor)
@@ -1105,7 +1134,11 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta so
     let detectedEncoding = case sourceContents >>= contentsPatchEncoding of
           Just patchEncoding -> patchEncoding
           Nothing  -> case sourceContents >>= contentsDescription of
-            Just descBytes | not (isValidUtf8 descBytes) -> PatchEncodingSystem
+            Just sourceDescription
+              | EncodingLocale <- encodedTextEncoding sourceDescription
+              , not (isValidUtf8 (fst (encodeTextLenient EncodingLocale
+                                         (encodedTextContent sourceDescription)))) ->
+                  PatchEncodingSystem
             _ -> fromMaybe PatchEncodingUTF8 (requestedPatchEncoding meta)
         ninja2Meta = NINJA2.NINJA2Metadata
           { NINJA2.ninja2MetadataAuthor      = requestedAuthor meta
@@ -1214,16 +1247,20 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
 ----------------------------------------------------------------------------
 
 -- | Sources for 'resolveDescription' to consider, in priority order:
--- CLI flag wins over EBP metadata, EBP metadata wins over raw
--- description bytes, raw bytes win over fallback.
+-- CLI flag wins over EBP metadata, EBP metadata wins over typed
+-- source description, source wins over fallback.
 data DescriptionSources = DescriptionSources
-  { descriptionSourceCLI      :: !(Maybe String)
-  , descriptionSourceEBPMeta  :: !(Maybe ByteString.ByteString)
-  , descriptionSourceRawBytes :: !(Maybe ByteString.ByteString)
-  , descriptionSourceFallback :: !String
+  { descriptionSourceCLI       :: !(Maybe String)
+  , descriptionSourceEBPMeta   :: !(Maybe ByteString.ByteString)
+  , descriptionSourceTypedText :: !(Maybe EncodedText)
+  , descriptionSourceFallback  :: !String
   }
 
--- | Resolve a description from CLI flag, EBP metadata, raw description, or default.
+-- | Resolve a description from CLI flag, EBP metadata, source patch's
+-- typed description, or default. Returns a plain 'String'; PPF and
+-- APSN64 emit sites that need an 'EncodedText' wrap the result back
+-- at their own boundary so the encoding-tag choice is format-local
+-- rather than smuggled through this resolver.
 resolveDescription :: DescriptionSources -> String
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description
@@ -1231,7 +1268,8 @@ resolveDescription sources
   , Just view <- parseEBPMetadata meta
   , Just description <- ebpMetadataViewDescription view
   , not (null description) = description
-  | Just raw <- descriptionSourceRawBytes sources = trimNullSpace (decodeLocaleField raw)
+  | Just typed <- descriptionSourceTypedText sources =
+      trimNullSpace (Text.unpack (encodedTextContent typed))
   | otherwise = descriptionSourceFallback sources
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the

@@ -38,6 +38,8 @@ import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (narrowToWord16)
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextLenient)
 
 -- | The image-type byte at PPF3 header offset 56. Drives where
 -- in the source ROM the 1024-byte validation block is sampled
@@ -72,31 +74,40 @@ newtype PPF3ValidationBlock = PPF3ValidationBlock
 
 -- | FILE_ID.DIZ content optionally appended after the record
 -- stream. PPF3's wire trailer uses a 2-byte LE length suffix
--- (vs PPF2's 4-byte). Carries only the inner content bytes whose
--- length has been validated against PPF3's 2-byte LE length
--- field. Constructor private; values come from one of two named
--- producers:
+-- (vs PPF2's 4-byte). Carries only the inner content as a typed
+-- 'EncodedText' value whose encoded byte length has been validated
+-- against PPF3's 2-byte LE length field. Constructor private;
+-- values come from one of two named producers:
 --
--- * 'narrowPPF3FileId' — runtime check, refuses with
---   'Slap.Narrow.FieldValueExceedsBound' if the bytestring's length
---   exceeds @0xFFFF@.
+-- * 'narrowPPF3FileId' — runtime check, encodes the typed text
+--   under the locale (lenient) and refuses with
+--   'Slap.Narrow.FieldValueExceedsBound' if the produced byte
+--   count exceeds @0xFFFF@.
 -- * 'ppf3FileIdFromParsed' — parse-time, trusts the wire format's
---   2-byte length field has already constrained the bytestring.
-newtype PPF3FileId = PPF3FileId { unPPF3FileId :: ByteString }
+--   2-byte length field has already constrained the bytes the
+--   typed text was decoded from.
+newtype PPF3FileId = PPF3FileId { unPPF3FileId :: EncodedText }
   deriving (Show, Eq)
 
-narrowPPF3FileId :: ByteString -> Either SlapError PPF3FileId
-narrowPPF3FileId bs = case narrowToWord16 LabelPPF3 FieldFileIdDizLength
-                            (ByteString.length bs) of
-  Left  failure -> Left (NarrowingError failure)
-  Right _       -> Right (PPF3FileId bs)
+narrowPPF3FileId :: EncodedText -> Either SlapError PPF3FileId
+narrowPPF3FileId description =
+  let (encoded, _notices) =
+        encodeTextLenient EncodingLocale (encodedTextContent description)
+  in case narrowToWord16 LabelPPF3 FieldFileIdDizLength
+                         (ByteString.length encoded) of
+       Left  failure -> Left (NarrowingError failure)
+       Right _       -> Right (PPF3FileId description)
 
-ppf3FileIdFromParsed :: ByteString -> PPF3FileId
+ppf3FileIdFromParsed :: EncodedText -> PPF3FileId
 ppf3FileIdFromParsed = PPF3FileId
 
 -- | A fully parsed PPF3 patch.
 data PPF3Patch = PPF3Patch
-  { ppf3Description     :: !ByteString          -- ^ 50-byte description (raw bytes, space- or null-padded)
+  { ppf3Description     :: !EncodedText
+    -- ^ 50-byte description field, decoded at parse time under the
+    -- process locale. Same encoding model as PPF1/PPF2/PPF4; the
+    -- PPF3 wire field is null-padded on the encode side (vs PPF1/PPF2's
+    -- space-padding), preserved verbatim by 'Slap.PPF3.Create.padDescription'.
   , ppf3ImageType       :: !PPF3ImageType
   , ppf3HasUndo         :: !Bool                -- ^ True iff each 'PPF3Record' carries an undo payload
   , ppf3ValidationBlock :: !(Maybe PPF3ValidationBlock)  -- ^ Present iff the block-check flag was set in the header

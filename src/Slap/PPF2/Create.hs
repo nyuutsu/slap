@@ -29,11 +29,12 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         PPF2FileId, unPPF2FileId,
                         PPF2SourceSize, unPPF2SourceSize,
                         ppf2DescriptionLength)
-import Slap.Measure (Length(..), Offset(..),
-                     OriginalLength(..), TruncatedLength(..), byteLength)
+import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
-import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Status (SlapAdvisory(..), CreateResult(..))
+import Slap.Status (SlapAdvisory, CreateResult(..))
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextBounded, encodeTextLenient,
+                  encodeLossAdvisories)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -52,7 +53,7 @@ import qualified Data.ByteString.Lazy as LazyByteString
 -- @narrowHunks ppf2Limits@ before reaching this encoder.
 encodePPF2
   :: [EncodedHunk]         -- ^ pre-split, pre-narrowed records
-  -> String                -- ^ description (truncated and space-padded to 50 bytes)
+  -> EncodedText           -- ^ description (truncated and space-padded to 50 bytes)
   -> PPF2SourceSize        -- ^ source ROM size (written into the header for verification)
   -> PPF2ValidationBlock   -- ^ 1024-byte block sampled from source[0x9320]
   -> CreateResult
@@ -67,19 +68,15 @@ encodePPF2 records description sourceSize (PPF2ValidationBlock validationBytes) 
 -- | Space-pad the description to 50 bytes. Same shape as PPF1.Create's
 -- helper — see that module for the rationale (matches the reference
 -- @memset(buf,' ',50)@ + @strcpy@ + @space-overwrite@ idiom).
-padDescription :: String -> (ByteString, [SlapAdvisory])
-padDescription text =
-  let encoded   = encodeLocaleField text
-      width     = unLength ppf2DescriptionLength
-      truncated = truncateLocale width encoded
-      padded    = truncated <> ByteString.replicate
-                    (max 0 (width - ByteString.length truncated)) 0x20
-      warnings = if ByteString.length encoded > width
-                   then [FieldTruncated LabelPPF2 FieldDescription
-                           (OriginalLength (byteLength encoded))
-                           (TruncatedLength (byteLength truncated))]
-                   else []
-  in (padded, warnings)
+padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
+padDescription description =
+  let width = unLength ppf2DescriptionLength
+      (truncatedBytes, notices) =
+        encodeTextBounded EncodingLocale width (encodedTextContent description)
+      padded = truncatedBytes <> ByteString.replicate
+                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
+      advisories = encodeLossAdvisories LabelPPF2 FieldDescription notices
+  in (padded, advisories)
 
 buildHeader :: ByteString -> PPF2SourceSize -> ByteString -> Builder
 buildHeader description sourceSize validationBytes =
@@ -101,13 +98,20 @@ encodeRecord ehunk =
 -- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <length:LE32>@
 --
 -- Differs from PPF3's trailer only in the length field width
--- (PPF2: 4 bytes; PPF3: 2 bytes).
-encodeFileIdDiz :: PPF2FileId -> ByteString
-encodeFileIdDiz fid = LazyByteString.toStrict $ toLazyByteString $
-  byteString "@BEGIN_FILE_ID.DIZ"
-  <> byteString content
-  <> byteString "@END_FILE_ID.DIZ"
-  -- 'fromIntegral' here is safe-by-construction: 'narrowPPF2FileId'
-  -- has validated 'ByteString.length content' fits 'Word32'.
-  <> word32LE (fromIntegral (ByteString.length content))
-  where content = unPPF2FileId fid
+-- (PPF2: 4 bytes; PPF3: 2 bytes). Returns the trailer bytes plus any
+-- substitution advisories from encoding the typed-text content
+-- under the process locale.
+encodeFileIdDiz :: PPF2FileId -> (ByteString, [SlapAdvisory])
+encodeFileIdDiz fid =
+  let description = unPPF2FileId fid
+      (content, notices) =
+        encodeTextLenient EncodingLocale (encodedTextContent description)
+      advisories = encodeLossAdvisories LabelPPF2 FieldFileIdDiz notices
+      trailer = LazyByteString.toStrict $ toLazyByteString $
+                  byteString "@BEGIN_FILE_ID.DIZ"
+                  <> byteString content
+                  <> byteString "@END_FILE_ID.DIZ"
+                  -- 'fromIntegral' is safe-by-construction: 'narrowPPF2FileId'
+                  -- validated the encoded byte count fits 'Word32'.
+                  <> word32LE (fromIntegral (ByteString.length content))
+  in (trailer, advisories)

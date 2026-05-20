@@ -108,6 +108,10 @@ module Slap.Text
 
     -- * Locale resolution
   , processLocaleEncoder
+
+    -- * Advisory adaptation
+  , decodeLossAdvisories
+  , encodeLossAdvisories
   ) where
 
 import Control.Applicative ((<|>))
@@ -120,7 +124,10 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
 import GHC.IO.Encoding (getLocaleEncoding, textEncodingName)
-import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..))
+import Slap.FieldName (FieldName)
+import Slap.FormatLabel (FormatLabel)
+import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..),
+                     SubstitutionCount(..))
 import Slap.Status (SlapAdvisory(..))
 import System.IO.Unsafe (unsafePerformIO)
 
@@ -190,15 +197,21 @@ data DecodeError = DecodeError
 -- Loss notices (lenient and bounded paths)
 ----------------------------------------------------------------------------
 
--- | What got lost when a lenient encode or a bounded encode finished
--- without a 'Left'. Two cases:
+-- | What got lost when a lenient encode, lenient decode, or a
+-- bounded encode finished without a 'Left'. Three cases:
 --
---   * 'SubstitutedCodepoint' — a single codepoint in the source
---     was not representable in the target encoding and was
---     replaced with the encoding's substitute character (U+FFFD
+--   * 'SubstitutedCodepoint' — encode-side: a single codepoint in
+--     the source was not representable in the target encoding and
+--     was replaced with the encoding's substitute character (U+FFFD
 --     when the target represents it, @\'?\'@ otherwise). The
---     'Char' is the original codepoint; the 'Int' is its
---     0-indexed position in the source 'Text'.
+--     'Char' is the original codepoint; the 'Int' is its 0-indexed
+--     position in the source 'Text'.
+--
+--   * 'SubstitutedByteSequence' — decode-side: a byte sequence in
+--     the wire input was not decodeable under the declared
+--     encoding and was replaced with U+FFFD in the resulting
+--     'Text'. The 'Int' is the 0-indexed byte offset of the
+--     offending sequence within the input 'ByteString'.
 --
 --   * 'TruncatedToFitBound' — bounded encoding cut the source
 --     off because adding the next codepoint would have overflowed
@@ -209,12 +222,13 @@ data DecodeError = DecodeError
 --     call site lifting this to an advisory hands the values
 --     straight through with no re-wrapping.
 --
--- Substitution notices report by source position so a caller can
--- describe \"codepoint at position N substituted\"; truncation
--- notices report by byte count because the format-level concept is
--- "the field was N bytes, we wrote M".
+-- Substitution notices report by position so a caller can
+-- describe \"event at position N\"; truncation notices report by
+-- byte count because the format-level concept is "the field was
+-- N bytes, we wrote M".
 data LossNotice
   = SubstitutedCodepoint !Char !Int
+  | SubstitutedByteSequence !Int
   | TruncatedToFitBound !OriginalLength !TruncatedLength
   deriving (Eq, Show)
 
@@ -324,59 +338,75 @@ chooseSubstitute encoder
 
 -- | Decode 'ByteString' under the declared encoding, substituting
 -- U+FFFD for any byte sequence that the encoding can't decode.
--- Always succeeds.
+-- Always succeeds. Returns the decoded 'EncodedText' paired with one
+-- 'SubstitutedByteSequence' notice per substitution event (each one
+-- carrying the byte offset where the offending sequence began); a
+-- clean decode yields an empty notice list.
 --
--- 'EncodingUtf8' routes through 'Data.Text.Encoding.decodeUtf8Lenient'
--- — the @text@ package's native lenient UTF-8 decoder. 'EncodingLocale'
--- tries the strict 'decodeText' first and on failure falls back to a
--- prefix-recovery walk: take the largest decodeable prefix, emit
--- U+FFFD for the offending byte, recurse on the rest. The walk is
--- O(n²) in the bytestring length and is only invoked on the failure
--- path (strict-decode-succeeded short-circuits to 'Text.pack' of the
--- result); for slap's text fields (at most ~1 KiB) the cost is
+-- Each encoding plugs its own strict-decode primitive into the
+-- shared 'recoveringDecode' walk: 'EncodingUtf8' uses
+-- 'TextEncoding.decodeUtf8'', 'EncodingLocale' uses the
+-- locale-resolved 'Encoding.decodeStrictByteStringExplicit'. The
+-- recovery shape — strict-decode first, prefix-recover on failure,
+-- emit a single 'SubstitutedByteSequence' per substituted byte,
+-- recurse on the rest — is identical across both. The walk is O(n)
+-- on the clean path (one strict decode) and O(n²) on the failure
+-- path; for slap's text fields (at most ~1 KiB) the cost is
 -- imperceptible.
-decodeTextLenient :: EncodingName -> ByteString -> EncodedText
+decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
 decodeTextLenient EncodingUtf8 bytes =
-  EncodedText EncodingUtf8 (TextEncoding.decodeUtf8Lenient bytes)
+  let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes
+  in (EncodedText EncodingUtf8 text, notices)
 decodeTextLenient EncodingLocale bytes =
-  EncodedText EncodingLocale (recoveringLocaleDecode encoder bytes)
+  let strictLocaleDecode = fmap Text.pack
+                         . Encoding.decodeStrictByteStringExplicit encoder
+      (text, notices)    = recoveringDecode strictLocaleDecode bytes
+  in (EncodedText EncodingLocale text, notices)
   where
     (encoder, _advisory) = processLocaleEncoder
 
--- | Decode locale-encoded bytes leniently. On success, returns the
--- strict-decode result wrapped as 'Text'. On failure, finds the
--- largest valid prefix, emits its decoded text followed by U+FFFD,
--- and recurses on the bytes past the offending byte.
-recoveringLocaleDecode :: Encoding.DynEncoding -> ByteString -> Text
-recoveringLocaleDecode encoder = walk
+-- | Lenient-decode primitive parameterised over the encoding's strict
+-- decoder. On strict success the whole input decodes cleanly and the
+-- notice list is empty; on strict failure the walk finds the largest
+-- decodeable prefix, emits its decoded text followed by U+FFFD and
+-- a 'SubstitutedByteSequence' carrying the offending byte's offset,
+-- and recurses on the bytes past the offending byte. The
+-- @strictDecode@ parameter's 'Either' failure type is left polymorphic
+-- because each backend reports decode failures with its own exception
+-- type; the walk only cares about success-vs-failure, not the
+-- failure's shape.
+recoveringDecode
+  :: (ByteString -> Either failure Text)
+  -> ByteString
+  -> (Text, [LossNotice])
+recoveringDecode strictDecode = walkAt 0
   where
-    walk bytes
-      | ByteString.null bytes = Text.empty
-      | otherwise =
-          case Encoding.decodeStrictByteStringExplicit encoder bytes of
-            Right decoded -> Text.pack decoded
-            Left _failure ->
-              let prefixLength = largestValidPrefix bytes
-                  prefixBytes  = ByteString.take prefixLength bytes
-                  remaining    = ByteString.drop (prefixLength + 1) bytes
-                  prefixText   = case Encoding.decodeStrictByteStringExplicit
-                                        encoder prefixBytes of
-                                   Right decoded -> Text.pack decoded
-                                   Left _        -> Text.empty
-              in prefixText <> Text.singleton '\xFFFD' <> walk remaining
+    walkAt offset bytes
+      | ByteString.null bytes = (Text.empty, [])
+      | otherwise = case strictDecode bytes of
+          Right text   -> (text, [])
+          Left _failure ->
+            let prefixLength = largestValidPrefix bytes
+                prefixBytes  = ByteString.take prefixLength bytes
+                remainingBytes = ByteString.drop (prefixLength + 1) bytes
+                prefixText   = either (const Text.empty) id
+                                      (strictDecode prefixBytes)
+                badByteOffset = offset + prefixLength
+                (restText, restNotices) =
+                  walkAt (badByteOffset + 1) remainingBytes
+            in ( prefixText <> Text.singleton '\xFFFD' <> restText
+               , SubstitutedByteSequence badByteOffset : restNotices )
 
-    -- | Largest prefix length that decodes cleanly. Linear walk-back
+    -- Largest prefix length that decodes cleanly. Linear walk-back
     -- from the full byte count; the empty prefix always succeeds, so
     -- this always finds at least 0.
     largestValidPrefix bytes = walkBack (ByteString.length bytes - 1)
       where
         walkBack candidate
           | candidate < 0 = 0
-          | otherwise =
-              case Encoding.decodeStrictByteStringExplicit
-                     encoder (ByteString.take candidate bytes) of
-                Right _ -> candidate
-                Left _  -> walkBack (candidate - 1)
+          | otherwise = case strictDecode (ByteString.take candidate bytes) of
+              Right _ -> candidate
+              Left _  -> walkBack (candidate - 1)
 
 ----------------------------------------------------------------------------
 -- Bounded encoding
@@ -453,6 +483,41 @@ takeChunksUnderCap cap = walk 0 []
       in if nextUsed > cap
            then (reverse acc, chunk : rest)
            else walk nextUsed (chunk : acc) rest
+
+----------------------------------------------------------------------------
+-- Advisory adaptation
+----------------------------------------------------------------------------
+
+-- | Adapt the substitution notices a 'decodeTextLenient' call emitted
+-- into 'SlapAdvisory' values tagged with the format and field. The
+-- per-byte position detail is folded down to a single substitution
+-- count: at the advisory layer the user wants to know that the field
+-- had unrepresentable bytes and how many, not where each one sat.
+-- A clean decode (empty notice list) yields an empty advisory list.
+decodeLossAdvisories
+  :: FormatLabel -> FieldName -> [LossNotice] -> [SlapAdvisory]
+decodeLossAdvisories label field notices =
+  let substitutions = length [() | SubstitutedByteSequence{} <- notices]
+  in [FieldDecodedSubstituted label field (SubstitutionCount substitutions)
+      | substitutions > 0]
+
+-- | Adapt the loss notices an 'encodeTextLenient' or 'encodeTextBounded'
+-- call emitted into 'SlapAdvisory' values tagged with the format and
+-- field. Substitution notices fold to a single 'FieldEncodedSubstituted'
+-- carrying the count; a 'TruncatedToFitBound' notice (only produced by
+-- the bounded path) lifts to 'FieldTruncated' with the same byte
+-- counts. Either kind, or both, can fire from one call.
+encodeLossAdvisories
+  :: FormatLabel -> FieldName -> [LossNotice] -> [SlapAdvisory]
+encodeLossAdvisories label field notices =
+  let substitutions = length [() | SubstitutedCodepoint{} <- notices]
+      substitutionAdvisory =
+        [FieldEncodedSubstituted label field (SubstitutionCount substitutions)
+         | substitutions > 0]
+      truncationAdvisories =
+        [FieldTruncated label field original truncated
+         | TruncatedToFitBound original truncated <- notices]
+  in substitutionAdvisory ++ truncationAdvisories
 
 ----------------------------------------------------------------------------
 -- Locale resolution

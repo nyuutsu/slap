@@ -15,13 +15,14 @@ import Slap.PPF3.Types (PPF3ImageType(..),
                         PPF3ValidationBlock(..),
                         fromImageType,
                         ppf3DescriptionLength)
-import Slap.Measure (Length(..), Offset(..),
-                     OriginalLength(..), TruncatedLength(..))
+import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload,
                     EncodedUndoHunk, encodedUndoOffset, encodedUndoPayload,
                     encodedUndoOriginal)
-import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Status (SlapAdvisory(..), CreateResult(..))
+import Slap.Status (SlapAdvisory, CreateResult(..))
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextBounded, encodeTextLenient,
+                  encodeLossAdvisories)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -32,15 +33,22 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Maybe (isJust)
 
-padDescription :: String -> (ByteString, [SlapAdvisory])
-padDescription text =
-  let result = encodeBoundedLocale (unLength ppf3DescriptionLength) text
-      warnings = case boundedTruncation result of
-        Nothing   -> []
-        Just info -> [FieldTruncated LabelPPF3 FieldDescription
-                       (OriginalLength (truncatedFrom info))
-                       (TruncatedLength (truncatedTo info))]
-  in (boundedField result, warnings)
+-- | Codepoint-aware bounded encode of the description into PPF3's
+-- 50-byte field, null-padded on the right. The @0x00@ padding byte
+-- is format-faithful: PPF1\/PPF2 right-pad with @0x20@ (per
+-- @makeppf.c@'s @memset(' ',50)@), while PPF3's reference encoder
+-- uses null padding. The padding is applied here, locally to PPF3,
+-- so the shared bounded primitive does not have to know about
+-- per-format padding choices.
+padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
+padDescription description =
+  let width = unLength ppf3DescriptionLength
+      (truncatedBytes, notices) =
+        encodeTextBounded EncodingLocale width (encodedTextContent description)
+      padded = truncatedBytes <> ByteString.replicate
+                 (max 0 (width - ByteString.length truncatedBytes)) 0x00
+      advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
+  in (padded, advisories)
 
 buildHeader :: ByteString -> Bool -> Bool -> ByteString -> PPF3ImageType -> Builder
 buildHeader description blockCheck hasUndo validationBlock imageType =
@@ -75,7 +83,7 @@ encodeWriteRecord ehunk =
 -- 'Slap.Measure.splitUndoHunks' →
 -- 'Slap.Narrow.narrowUndoHunksUnbounded' enforces this.
 encodePPF3 :: [EncodedHunk]
-           -> String
+           -> EncodedText
            -> Maybe [EncodedUndoHunk]
            -> Maybe PPF3ValidationBlock
            -> PPF3ImageType
@@ -95,12 +103,19 @@ encodePPF3 records description undoHunks validationBlock imageType =
        descriptionAdvisories
 
 -- | Encode a FILE_ID.DIZ trailer in PPF3 format (2-byte LE length).
-encodeFileIdDiz :: PPF3FileId -> ByteString
-encodeFileIdDiz fid = LazyByteString.toStrict $ toLazyByteString $
-  byteString "@BEGIN_FILE_ID.DIZ"
-  <> byteString content
-  <> byteString "@END_FILE_ID.DIZ"
-  -- 'fromIntegral' here is safe-by-construction: 'narrowPPF3FileId'
-  -- has validated 'ByteString.length content' fits 'Word16'.
-  <> word16LE (fromIntegral (ByteString.length content))
-  where content = unPPF3FileId fid
+-- Returns the trailer bytes plus any substitution advisories from
+-- encoding the typed-text content under the process locale.
+encodeFileIdDiz :: PPF3FileId -> (ByteString, [SlapAdvisory])
+encodeFileIdDiz fid =
+  let description = unPPF3FileId fid
+      (content, notices) =
+        encodeTextLenient EncodingLocale (encodedTextContent description)
+      advisories = encodeLossAdvisories LabelPPF3 FieldFileIdDiz notices
+      trailer = LazyByteString.toStrict $ toLazyByteString $
+                  byteString "@BEGIN_FILE_ID.DIZ"
+                  <> byteString content
+                  <> byteString "@END_FILE_ID.DIZ"
+                  -- 'fromIntegral' is safe-by-construction: 'narrowPPF3FileId'
+                  -- validated the encoded byte count fits 'Word16'.
+                  <> word16LE (fromIntegral (ByteString.length content))
+  in (trailer, advisories)

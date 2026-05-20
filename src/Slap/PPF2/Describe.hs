@@ -29,22 +29,25 @@ import Slap.Display.Analysis
   , Annotation(AnnotationAt)
   , OffsetKind(AtOffset)
   )
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteStringChar
+import qualified Data.Text as Text
 import Data.Word (Word64)
 import Numeric (showHex)
 
 ppf2Meta :: PPF2Patch -> [InfoLine]
 ppf2Meta patch = concat
-  [ let description = decodeLocaleField (stripTrailing (ppf2Description patch))
+  [ let description = Text.unpack
+                        (stripTrailing (encodedTextContent (ppf2Description patch)))
     in [InfoLine "description" description | not (null description)]
   , [InfoLine "file size" (show (unPPF2SourceSize (ppf2SourceFileSize patch)) ++ " bytes (validation)")]
   , [InfoLine "validation" validationLine]
   , case ppf2FileId patch of
       Nothing  -> []
-      Just fid -> [InfoLine "file_id.diz" (show (ByteString.length (unPPF2FileId fid)) ++ " bytes")]
+      Just fid -> [InfoLine "file_id.diz"
+                     (show (Text.length (encodedTextContent (unPPF2FileId fid)))
+                       ++ " characters")]
   ]
   where
     validationBlockBytes = unPPF2ValidationBlock (ppf2ValidationBlock patch)
@@ -53,8 +56,9 @@ ppf2Meta patch = concat
       ++ showHex (fromIntegral (unOffset ppf2ValidationOffset) :: Word64) ""
       ++ " (" ++ show (ByteString.length validationBlockBytes) ++ " bytes)"
 
-stripTrailing :: ByteString.ByteString -> ByteString.ByteString
-stripTrailing = ByteStringChar.dropWhileEnd (\char -> char == ' ' || char == '\0')
+stripTrailing :: Text.Text -> Text.Text
+stripTrailing =
+  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis

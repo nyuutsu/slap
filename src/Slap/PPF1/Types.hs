@@ -24,6 +24,7 @@ import Data.ByteString (ByteString)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (EncodingLimits(..))
+import Slap.Text (EncodedText)
 
 -- | A single PPF1 record. Both literal and RLE forms expand to the
 -- same in-memory shape: a target-file offset and the bytes to write
@@ -36,7 +37,13 @@ data PPF1Record = PPF1Record
 -- | A fully parsed PPF1 patch. PPF1 carries no validation block, no
 -- undo data, no FILE_ID.DIZ — just a description and records.
 data PPF1Patch = PPF1Patch
-  { ppf1Description :: !ByteString  -- ^ 50-byte description, raw on-wire bytes (space- or null-padded)
+  { ppf1Description :: !EncodedText
+    -- ^ 50-byte description field, decoded at parse time under the
+    -- process locale. The wire field is locale-unflagged on the PPF1
+    -- spec, so 'Slap.Text.EncodingLocale' carries forward the "follow
+    -- the running locale" semantics through the value's lifetime.
+    -- Encode-side padding (PPF1\/PPF2: @0x20@, PPF3: @0x00@) is
+    -- format-faithful and stays at the format's own @Create.hs@.
   , ppf1Records     :: ![PPF1Record]
   } deriving (Show)
 

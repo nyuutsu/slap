@@ -20,7 +20,10 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      RequestedDialects(..),
                      noMetadataRequested, trimNullSpace)
-import Slap.TextEncoding (decodeLocaleField, encodeUtf8Field)
+import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (EncodedText(..), EncodingName(..),
+                  encodedTextContent, decodeTextLenient)
+import qualified Data.Text as Text
 import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      splitUndoHunkFromParsed)
@@ -322,7 +325,8 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF1.ppf1Description patch))
+      , patchExtractedMeta  = let description = trimNullSpace
+                                    (Text.unpack (encodedTextContent (PPF1.ppf1Description patch)))
                               in noMetadataRequested
                                 { requestedDescription = if null description then Nothing else Just description }
       }
@@ -381,7 +385,8 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF2.ppf2Description patch))
+      , patchExtractedMeta  = let description = trimNullSpace
+                                    (Text.unpack (encodedTextContent (PPF2.ppf2Description patch)))
                               in noMetadataRequested
                                 { requestedDescription          = if null description then Nothing else Just description
                                 , requestedVerificationInclusion = Just IncludeVerification
@@ -452,7 +457,8 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF3.ppf3Description patch))
+      , patchExtractedMeta  = let description = trimNullSpace
+                                    (Text.unpack (encodedTextContent (PPF3.ppf3Description patch)))
                               in noMetadataRequested
                                 { requestedDescription          = if null description then Nothing else Just description
                                 , requestedImageType            = Just (PPF3.ppf3ImageType patch)
@@ -501,7 +507,8 @@ parseSomePatchFromPPF4 patchContents = do
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (PPF4.ppf4Description patch))
+      , patchExtractedMeta  = let description = trimNullSpace
+                                    (Text.unpack (encodedTextContent (PPF4.ppf4Description patch)))
                               in noMetadataRequested
                                 { requestedDescription = if null description then Nothing else Just description
                                 }
@@ -763,7 +770,14 @@ parseSomePatchFromAPSN64 patchContents = do
     { patchFormat         = LabelAPSN64
     , patchAnalysis       = APSN64.analyzeAPSN64 patch
     , patchKind           = Direct (Just (emptyContents (Vector.toList (Vector.map expandN64 records)))
-          { contentsDescription = Just (APSN64.apsN64Description header)
+          { contentsDescription = Just (fst (decodeTextLenient EncodingLocale
+                                              (APSN64.apsN64Description header)))
+          -- ^ APSN64 still stores description as raw bytes on its
+          -- patch type (stage 3b territory); wrap at the seam so the
+          -- convert layer's typed 'contentsDescription' field is
+          -- honest. Any decode substitutions are discarded here for
+          -- now — the convert seam does not yet thread parse-time
+          -- advisories through 'PatchContents'.
           , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
           })
     , patchApply          = ApplyStrategy
@@ -1043,7 +1057,8 @@ parseSomePatchFromPCHTXT patchContents = do
     { patchFormat         = LabelPCHTXT
     , patchAnalysis       = PCHTXT.analyzePCHTXT patch
     , patchKind           = Direct (Just (emptyContents contentRecords)
-        { contentsDescription = encodeUtf8Field <$> PCHTXT.pchtxtNsobid patch
+        { contentsDescription = fmap (EncodedText EncodingUtf8 . Text.pack)
+                                     (PCHTXT.pchtxtNsobid patch)
         , contentsPCHTXTBlocks = Just allBlocks
         })
     , patchApply          = ApplyStrategy

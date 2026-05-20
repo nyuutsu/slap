@@ -17,11 +17,11 @@ module Slap.PPF1.Create
   ) where
 
 import Slap.PPF1.Types (PPF1Origin(..), ppf1DescriptionLength)
-import Slap.Measure (Length(..), Offset(..),
-                     OriginalLength(..), TruncatedLength(..), byteLength)
+import Slap.Measure (Length(..), Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
-import Slap.TextEncoding (encodeLocaleField, truncateLocale)
-import Slap.Status (SlapAdvisory(..), CreateResult(..))
+import Slap.Status (SlapAdvisory, CreateResult(..))
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextBounded, encodeLossAdvisories)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -40,7 +40,7 @@ import Data.Word (Word32)
 -- and @narrowHunks ppf1Limits@ before reaching this encoder, so the
 -- @fromIntegral@ casts at the offset and length sites are
 -- safe-by-construction.
-encodePPF1 :: PPF1Origin -> [EncodedHunk] -> String -> CreateResult
+encodePPF1 :: PPF1Origin -> [EncodedHunk] -> EncodedText -> CreateResult
 encodePPF1 origin records description =
   let writeOffsetWord = case origin of
         PPF1OriginPC    -> word32LE
@@ -58,19 +58,21 @@ encodePPF1 origin records description =
 -- @' '@, @strcpy@s the text in, then writes a space over the
 -- @strcpy@'s NUL terminator — so the on-wire bytes are
 -- @text ++ replicate (50 - length text) 0x20@, no NULs anywhere.
-padDescription :: String -> (ByteString, [SlapAdvisory])
-padDescription text =
-  let encoded   = encodeLocaleField text
-      width     = unLength ppf1DescriptionLength
-      truncated = truncateLocale width encoded
-      padded    = truncated <> ByteString.replicate
-                    (max 0 (width - ByteString.length truncated)) 0x20
-      warnings = if ByteString.length encoded > width
-                   then [FieldTruncated LabelPPF1 FieldDescription
-                           (OriginalLength (byteLength encoded))
-                           (TruncatedLength (byteLength truncated))]
-                   else []
-  in (padded, warnings)
+--
+-- Codepoint-aware truncation via 'encodeTextBounded' fits the bytes
+-- under the 50-byte cap without splitting codepoints; the @0x20@
+-- right-pad happens here, locally to PPF1, because PPF3 fills the
+-- same field with @0x00@ — the padding byte is format-faithful and
+-- does not belong inside the shared bounded-encode primitive.
+padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
+padDescription description =
+  let width = unLength ppf1DescriptionLength
+      (truncatedBytes, notices) =
+        encodeTextBounded EncodingLocale width (encodedTextContent description)
+      padded = truncatedBytes <> ByteString.replicate
+                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
+      advisories = encodeLossAdvisories LabelPPF1 FieldDescription notices
+  in (padded, advisories)
 
 buildHeader :: ByteString -> Builder
 buildHeader description =

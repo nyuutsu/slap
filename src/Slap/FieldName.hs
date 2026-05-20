@@ -46,6 +46,7 @@ data FieldName
   | FieldRecordSourceOffset
   | FieldRecordLength
   -- Trailer / count fields
+  | FieldFileIdDiz
   | FieldFileIdDizLength
   | FieldRecordCount
   -- xdelta1 header name fields
@@ -83,6 +84,7 @@ fieldNameLabel FieldRecordMode       = "record mode"
 fieldNameLabel FieldRecordOutputOffset = "record output offset"
 fieldNameLabel FieldRecordSourceOffset = "record source offset"
 fieldNameLabel FieldRecordLength       = "record length"
+fieldNameLabel FieldFileIdDiz        = "file_id.diz"
 fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"
 fieldNameLabel FieldXDelta1FromName  = "from-name"

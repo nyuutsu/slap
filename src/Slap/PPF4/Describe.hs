@@ -19,17 +19,18 @@ import Slap.Display.Analysis
   , OffsetKind(AtOffset)
   )
 
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteStringChar
+import qualified Data.Text as Text
 
 -- | All key-value metadata carried by a PPF4 patch header. PPF4 has
 -- only a description field; no validation block, no file size, no
 -- undo, no image type, no File_ID.diz.
 ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
-  let description = decodeLocaleField (stripTrailing (ppf4Description patch))
+  let description = Text.unpack
+                      (stripTrailing (encodedTextContent (ppf4Description patch)))
   in [InfoLine "description" description | not (null description)]
 
 totalPayloadBytes :: PPF4Patch -> Int
@@ -37,8 +38,9 @@ totalPayloadBytes patch =
   sum (map (ByteString.length . replaceData) (ppf4Replaces patch))
   + sum (map (ByteString.length . appendData) (ppf4Appends patch))
 
-stripTrailing :: ByteString.ByteString -> ByteString.ByteString
-stripTrailing = ByteStringChar.dropWhileEnd (\character -> character == ' ' || character == '\0')
+stripTrailing :: Text.Text -> Text.Text
+stripTrailing =
+  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 ----------------------------------------------------------------------------
 -- Analyze

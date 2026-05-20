@@ -8,7 +8,8 @@ module Slap.PPF1.Parse (parsePPF1, parsePPF1Records) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..), PPF1Origin(..),
                         ppf1DescriptionLength)
-import Slap.Status (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, word32LE, word32BE)
@@ -16,10 +17,22 @@ import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
                      firstAction, nextAction, byteLength)
+import Slap.Text (EncodedText, EncodingName(..),
+                  decodeTextLenient, decodeLossAdvisories)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bifunctor (first)
+
+-- | Intermediate result of running the PPF1 body parser: the typed
+-- description, any advisories from the description's lenient decode,
+-- and the parsed record stream. Reshaped by 'parsePPF1' into the
+-- final 'PPF1Patch' and 'Parsed' envelope.
+data PPF1ParsedBody = PPF1ParsedBody
+  { ppf1BodyDescription           :: !EncodedText
+  , ppf1BodyDescriptionAdvisories :: ![SlapAdvisory]
+  , ppf1BodyRecords               :: ![PPF1Record]
+  }
 
 parsePPF1 :: PPF1Origin -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
 parsePPF1 origin (PatchFileContents input)
@@ -29,17 +42,27 @@ parsePPF1 origin (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      patch <- first (ParseError LabelPPF1) (runByteParser parsePPF1Body input)
-      pure (Parsed patch [])
+      body <- first (ParseError LabelPPF1) (runByteParser parsePPF1Body input)
+      pure (Parsed
+        PPF1Patch
+          { ppf1Description = ppf1BodyDescription body
+          , ppf1Records     = ppf1BodyRecords body
+          }
+        (ppf1BodyDescriptionAdvisories body))
   where
-    parsePPF1Body :: ByteParser PPF1Patch
+    parsePPF1Body :: ByteParser PPF1ParsedBody
     parsePPF1Body = do
       skip (Length 6)                            -- magic + version + encoding byte
-      description <- getBytes ppf1DescriptionLength
+      descriptionBytes <- getBytes ppf1DescriptionLength
+      let (descriptionText, descriptionNotices) =
+            decodeTextLenient EncodingLocale descriptionBytes
+          descriptionAdvisories =
+            decodeLossAdvisories LabelPPF1 FieldDescription descriptionNotices
       records <- parsePPF1Records origin firstAction
-      pure PPF1Patch
-        { ppf1Description = description
-        , ppf1Records     = records
+      pure PPF1ParsedBody
+        { ppf1BodyDescription           = descriptionText
+        , ppf1BodyDescriptionAdvisories = descriptionAdvisories
+        , ppf1BodyRecords               = records
         }
 
 -- | The PPF1 header must be readable before we can index byte 5

@@ -9,7 +9,8 @@ module Slap.PPF4.Parse (parsePPF4) where
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
                         ppf4PreambleLength, ppf4DescriptionLength,
                         ppf4PostDescriptionLength)
-import Slap.Status (SlapError(..), ByteParserError, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, ByteParserError, Parsed(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
@@ -18,9 +19,22 @@ import Slap.Measure (Offset(..), Length(..),
                      RequiredLength(..), ActualLength(..),
                      ActionIndex(unActionIndex), firstAction, nextAction,
                      byteLength)
+import Slap.Text (EncodedText, EncodingName(..),
+                  decodeTextLenient, decodeLossAdvisories)
 
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+
+-- | Intermediate result of running the PPF4 body parser: the typed
+-- description, any advisories from the description's lenient decode,
+-- and both phases of the record stream (Replaces then Appends).
+-- Reshaped by 'parsePPF4' into the final 'PPF4Patch' and 'Parsed'
+-- envelope.
+data PPF4ParsedBody = PPF4ParsedBody
+  { ppf4BodyDescription           :: !EncodedText
+  , ppf4BodyDescriptionAdvisories :: ![SlapAdvisory]
+  , ppf4BodyReplaces              :: ![PPF4Replace]
+  , ppf4BodyAppends               :: ![PPF4Append]
+  }
 
 -- | Tracks which phase the record walk is in. Wire-format invariant:
 -- once a record with command=1 (Append) is seen, every subsequent
@@ -37,22 +51,31 @@ parsePPF4 (PatchFileContents input)
               (RequiredLength minPPF4Length)
               (ActualLength (byteLength input)))
   | otherwise = do
-      (description, replaces, appends) <- ppf4WrapError (runByteParser parsePPF4Body input)
+      body <- ppf4WrapError (runByteParser parsePPF4Body input)
       pure (Parsed
         PPF4Patch
-          { ppf4Description = description
-          , ppf4Replaces    = replaces
-          , ppf4Appends     = appends
+          { ppf4Description = ppf4BodyDescription body
+          , ppf4Replaces    = ppf4BodyReplaces body
+          , ppf4Appends     = ppf4BodyAppends body
           }
-        [])
+        (ppf4BodyDescriptionAdvisories body))
   where
-    parsePPF4Body :: ByteParser (ByteString, [PPF4Replace], [PPF4Append])
+    parsePPF4Body :: ByteParser PPF4ParsedBody
     parsePPF4Body = do
       skip ppf4PreambleLength
-      description <- getBytes ppf4DescriptionLength
+      descriptionBytes <- getBytes ppf4DescriptionLength
+      let (descriptionText, descriptionNotices) =
+            decodeTextLenient EncodingLocale descriptionBytes
+          descriptionAdvisories =
+            decodeLossAdvisories LabelPPF4 FieldDescription descriptionNotices
       skip ppf4PostDescriptionLength
       (replaces, appends) <- parsePPF4Records firstAction ReplacePhase [] []
-      pure (description, replaces, appends)
+      pure PPF4ParsedBody
+        { ppf4BodyDescription           = descriptionText
+        , ppf4BodyDescriptionAdvisories = descriptionAdvisories
+        , ppf4BodyReplaces              = replaces
+        , ppf4BodyAppends               = appends
+        }
 
 -- | Minimum bytes required before 'parsePPF4' can index into the
 -- input. PPF4 has no encoding-byte check, but the body still skips
