@@ -1721,19 +1721,22 @@ renderSlapAdvisory (FieldDropped field droppedValue) =
      else "dropping " ++ fieldName field ++ ": " ++ rendered
 
 renderSlapAdvisory (UndoDataDropped recordCount) =
-  "dropping undo data (" ++ show recordCount ++ " records)"
+  "dropping undo data (" ++ show recordCount
+  ++ plural recordCount " record" " records" ++ ")"
 
 renderSlapAdvisory ValidationBlockDropped =
   "dropping validation block (1024 bytes)"
 
 renderSlapAdvisory (DisabledEntriesDropped entryCount) =
-  "dropping " ++ show entryCount ++ " disabled entries"
+  "dropping " ++ show entryCount
+  ++ plural entryCount " disabled entry" " disabled entries"
 
 renderSlapAdvisory BlockDescriptionsDropped =
   "dropping block descriptions"
 
 renderSlapAdvisory (MetadataDropped byteCount) =
-  "dropping metadata (" ++ show byteCount ++ " bytes)"
+  "dropping metadata (" ++ show byteCount
+  ++ plural byteCount " byte" " bytes" ++ ")"
 
 renderSlapAdvisory (DefaultRomType _label) =
   "assuming ROM type RAW (override with --rom-type)"

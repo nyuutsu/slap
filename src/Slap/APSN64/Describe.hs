@@ -11,8 +11,10 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
 import Slap.Display.Primitives (padHex)
 import Slap.Measure (Length(..), FileSize(..), byteLength)
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 apsN64Meta :: APSN64Patch -> [InfoLine]
@@ -27,9 +29,19 @@ apsN64Meta (APSN64Patch header _) = concat
   , [InfoLine "dest size" (show (unFileSize (apsN64DestinationSize header)))]
   ]
   where
+    -- Read the decoded text directly off the typed field. The
+    -- pre-migration code rendered @show (ByteString.takeWhile (/= 0) bytes)@,
+    -- which emitted the Haskell-escape-quoted bytestring (literal
+    -- @"abc"@ including the quotes) — a pre-existing bug that the
+    -- migration fixes as a side effect: callers now see plain text.
+    -- The empty-padding guard moves from the byte-level
+    -- @0x20 \/ 0x00@ predicate to a codepoint-level check on the
+    -- decoded 'Text'; the intent ("don't show a description line if
+    -- the wire field was blank padding") is preserved.
     descriptionField description
-      | ByteString.all (\byte -> byte == 0x20 || byte == 0) description = []
-      | otherwise = [InfoLine "description" (show (ByteString.takeWhile (/= 0) description))]
+      | Text.all (\c -> c == ' ' || c == '\NUL') text = []
+      | otherwise = [InfoLine "description" (Text.unpack (Text.takeWhile (/= '\NUL') text))]
+      where text = encodedTextContent description
     patchTypeName APSSimple      = "simple"
     patchTypeName APSN64Specific = "N64-specific"
     formatField Nothing                       = []

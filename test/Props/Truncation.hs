@@ -23,6 +23,8 @@ import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.BSDiff.Parse as BSDiff
+import qualified Slap.Text as SlapText
+import qualified Data.Text as Text
 import qualified Slap.XDelta1.Parse as XDelta1
 
 import Slap.Status (CreateResult(..))
@@ -109,7 +111,11 @@ prop_ninja1Trunc = forAll genPairNoShrink $ \(source, target) ->
 prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
   case createDPS (InputFileContents source) (OutputFileContents target)
-         (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+         (DPS.DPSCreateMetadata
+            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            })
          DPS.DPSStable of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated DPS.parseDPS patch

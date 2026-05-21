@@ -44,10 +44,12 @@ import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.TextEncoding (encodeLocaleField, makeStdoutAndStderrLenient)
--- 'encodeLocaleField' is imported for the CLI parser's
--- @--from-name@ / @--to-name@ string→bytes boundary;
--- 'fillXDelta1NameDefaults' lives in "Slap.Convert".
+import Slap.TextEncoding (makeStdoutAndStderrLenient)
+import Slap.Text (EncodedText(..), EncodingName(..))
+import qualified Data.Text as Text
+-- The CLI parsers below wrap incoming 'String' as 'EncodedText'
+-- tagged 'EncodingLocale' at the boundary, matching how slap models
+-- locale-tied user input throughout the convert seam.
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import Slap.PlatformType (PlatformType(..))
@@ -750,10 +752,10 @@ requestedMetadataParser = do
     xdelta1ToName     <- optional (option str (long "to-name" <> metavar "TEXT"
                             <> help "Embedded target-file display label (xdelta1 only; same defaulting as --from-name)"))
     pure RequestedPatchMetadata
-      { requestedTitle               = title
-      , requestedAuthor              = author
-      , requestedDescription         = description
-      , requestedVersion             = version
+      { requestedTitle               = fmap wrapLocale title
+      , requestedAuthor              = fmap wrapLocale author
+      , requestedDescription         = fmap wrapLocale description
+      , requestedVersion             = fmap wrapLocale version
       , requestedUndoInclusion        = includeUndo
       , requestedVerificationInclusion = includeVerification
       , requestedPatchCompression    = patchCompression
@@ -766,9 +768,12 @@ requestedMetadataParser = do
       , requestedWebsite             = website
       , requestedPatchEncoding       = patchEncoding
       , requestedEmbeddedBlob        = Nothing
-      , requestedXDelta1FromName     = fmap (XDelta1FromName . encodeLocaleField) xdelta1FromName
-      , requestedXDelta1ToName       = fmap (XDelta1ToName   . encodeLocaleField) xdelta1ToName
+      , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapLocale) xdelta1FromName
+      , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapLocale) xdelta1ToName
       }
+  where
+    wrapLocale :: String -> EncodedText
+    wrapLocale = EncodedText EncodingLocale . Text.pack
 
 -- | Create-side metadata: the parsed metadata fields plus an optional
 -- @--metadata FILE@ path whose bytes the resolver embeds as the patch's
@@ -1194,6 +1199,9 @@ resolveCreateXDelta1Names parsedCommand createMeta = case createFormat parsedCom
       (fmap unXDelta1ToName   (requestedXDelta1ToName   createMeta))
       (createOriginal parsedCommand)
       (createModified parsedCommand)
+    -- 'unXDelta1FromName'\/'unXDelta1ToName' now project to
+    -- 'EncodedText' (stage 3b); the resolver's signature changed in
+    -- lockstep, so no other rewrap is needed at this site.
   _ -> Right Nothing
 
 ----------------------------------------------------------------------------

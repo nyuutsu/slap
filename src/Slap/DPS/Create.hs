@@ -6,17 +6,16 @@ module Slap.DPS.Create
   , encodeRecord
   ) where
 
-import Slap.DPS.Types (DPSMetadata(..), DPSStability, fromDPSStability,
+import Slap.DPS.Types (DPSCreateMetadata(..), DPSStability, fromDPSStability,
                        DPSFormatVersion(..), fromDPSFormatVersion,
                        DPSRecord(..), EncodedDPSRecord(..),
                        narrowDPSRecords, narrowDPSSourceSize,
                        unDPSSourceSize, dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (Offset(..), Hunk(..),
-                     OriginalLength(..), TruncatedLength(..),
-                     byteFileSize, distance)
-import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..), encodeBoundedLocale)
-import Slap.Status (SlapError, SlapAdvisory(..), CreateResult(..))
+import Slap.Measure (Offset(..), Hunk(..), byteFileSize, distance)
+import Slap.Text (EncodedText, EncodingName(..),
+                  encodedTextContent, encodeTextBounded, encodeLossAdvisories)
+import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 
@@ -31,14 +30,15 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 -- through the per-format narrowing layer first; downstream the encoder
 -- consumes 'EncodedDPSRecord' values whose 'Word32' offsets and lengths
 -- have already been validated against the wire-format width.
-createDPS :: InputFileContents -> OutputFileContents -> DPSMetadata -> DPSStability
+createDPS :: InputFileContents -> OutputFileContents
+          -> DPSCreateMetadata -> DPSStability
           -> Either SlapError CreateResult
 createDPS inputContents@(InputFileContents original) outputContents metadata stability = do
   sourceSize <- narrowDPSSourceSize (byteFileSize original)
   records    <- narrowDPSRecords (dpsRecordsFromDiff inputContents outputContents)
-  let (nameBytes, nameWarnings)       = encodeField FieldPatchName (dpsMetadataName metadata)
-      (authorBytes, authorWarnings)   = encodeField FieldAuthor (dpsMetadataAuthor metadata)
-      (versionBytes, versionWarnings) = encodeField FieldVersion (dpsMetadataVersion metadata)
+  let (nameBytes,    nameWarnings)    = encodeField FieldPatchName (dpsCreateMetadataName    metadata)
+      (authorBytes,  authorWarnings)  = encodeField FieldAuthor    (dpsCreateMetadataAuthor  metadata)
+      (versionBytes, versionWarnings) = encodeField FieldVersion   (dpsCreateMetadataVersion metadata)
       patchBytes = LazyByteString.toStrict $ toLazyByteString $
           byteString nameBytes
           <> byteString authorBytes
@@ -50,13 +50,21 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
   Right (CreateResult (PatchFileContents patchBytes)
                       (nameWarnings ++ authorWarnings ++ versionWarnings))
   where
-    encodeField fieldName fieldString =
-      let result = encodeBoundedLocale dpsFieldWidth fieldString
-          warnings = case boundedTruncation result of
-            Nothing -> []
-            Just info -> [FieldTruncated LabelDPS fieldName
-                           (OriginalLength (truncatedFrom info)) (TruncatedLength (truncatedTo info))]
-      in (boundedField result, warnings)
+    -- | Codepoint-aware bounded encode of one 64-byte metadata field,
+    -- null-padded on the right. The @0x00@ padding byte matches DPS's
+    -- reference encoder; both substitution and truncation notices
+    -- surface as 'SlapAdvisory' values tagged with the field name.
+    encodeField :: FieldName -> EncodedText
+                -> (ByteString.ByteString, [SlapAdvisory])
+    encodeField fieldName fieldText =
+      let (truncatedBytes, notices) =
+            encodeTextBounded EncodingLocale dpsFieldWidth (encodedTextContent fieldText)
+          padded = truncatedBytes
+                <> ByteString.replicate
+                     (max 0 (dpsFieldWidth - ByteString.length truncatedBytes))
+                     0x00
+          advisories = encodeLossAdvisories LabelDPS fieldName notices
+      in (padded, advisories)
 
 dpsRecordsFromDiff :: InputFileContents -> OutputFileContents -> [DPSRecord]
 dpsRecordsFromDiff _sourceContents (OutputFileContents modified) | ByteString.null modified = []

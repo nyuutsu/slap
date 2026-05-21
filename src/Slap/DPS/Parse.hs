@@ -15,8 +15,7 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsVersionOffset, dpsStabilityOffset,
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
-import Slap.Binary (trimNull)
-import Slap.Status (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -25,6 +24,8 @@ import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), Offset(..),
                      RequiredLength(..), ActualLength(..),
                      RawFlagByte(..), byteLength)
+import Slap.Text (EncodedText, EncodingName(..),
+                  decodeTextLenient, decodeLossAdvisories)
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -82,15 +83,24 @@ parseDPS (PatchFileContents input)
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
   | otherwise = case runByteParser parseDPSBody input of
-      Left parserError         -> Left (ParseError LabelDPS parserError)
-      Right (Left slapError)   -> Left slapError
-      Right (Right patch)      -> Right (Parsed patch [])
+      Left parserError                  -> Left (ParseError LabelDPS parserError)
+      Right (Left slapError)            -> Left slapError
+      Right (Right (patch, advisories)) -> Right (Parsed patch advisories)
 
-parseDPSBody :: ByteParser (Either SlapError DPSPatch)
+-- | Decode one 64-byte metadata field under the process locale.
+-- Lenient: substitution events surface as 'FieldDecodedSubstituted'
+-- advisories tagged with the supplied 'FieldName'.
+parseMetadataField :: FieldName -> ByteParser (EncodedText, [SlapAdvisory])
+parseMetadataField fieldName = do
+  bytes <- getBytes (Length dpsFieldWidth)
+  let (text, notices) = decodeTextLenient EncodingLocale bytes
+  pure (text, decodeLossAdvisories LabelDPS fieldName notices)
+
+parseDPSBody :: ByteParser (Either SlapError (DPSPatch, [SlapAdvisory]))
 parseDPSBody = do
-  name    <- trimNull <$> getBytes (Length dpsFieldWidth)
-  author  <- trimNull <$> getBytes (Length dpsFieldWidth)
-  version <- trimNull <$> getBytes (Length dpsFieldWidth)
+  (name,    nameAdvisories)    <- parseMetadataField FieldPatchName
+  (author,  authorAdvisories)  <- parseMetadataField FieldAuthor
+  (version, versionAdvisories) <- parseMetadataField FieldVersion
   flagByte <- getByte
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage
@@ -100,15 +110,18 @@ parseDPSBody = do
       recordsResult <- parseRecords
       pure $ case recordsResult of
         Left slapError -> Left slapError
-        Right records  -> Right DPSPatch
-          { dpsName       = name
-          , dpsAuthor     = author
-          , dpsVersion    = version
-          , dpsStability       = stability
-          , dpsFormatVersion = DPSVersion1
-          , dpsOriginalSize   = originalSize
-          , dpsRecords    = records
-          }
+        Right records  -> Right
+          ( DPSPatch
+              { dpsName          = name
+              , dpsAuthor        = author
+              , dpsVersion       = version
+              , dpsStability     = stability
+              , dpsFormatVersion = DPSVersion1
+              , dpsOriginalSize  = originalSize
+              , dpsRecords       = records
+              }
+          , nameAdvisories ++ authorAdvisories ++ versionAdvisories
+          )
 
 parseRecords :: ByteParser (Either SlapError [DPSRecord])
 parseRecords = do

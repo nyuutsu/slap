@@ -19,10 +19,9 @@ import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      RequestedDialects(..),
-                     noMetadataRequested, trimNullSpace)
-import Slap.TextEncoding (decodeLocaleField)
+                     noMetadataRequested)
 import Slap.Text (EncodedText(..), EncodingName(..),
-                  encodedTextContent, decodeTextLenient)
+                  encodedTextContent)
 import qualified Data.Text as Text
 import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
@@ -280,6 +279,19 @@ parseSome dialects patchContents = case detectFormat patchContents of
 -- Helpers
 ----------------------------------------------------------------------------
 
+-- | Pass through an 'EncodedText'-shaped header field as a
+-- 'RequestedPatchMetadata.requestedDescription' value, or 'Nothing'
+-- if the wire field was entirely blank padding (space or null on
+-- both ends). The pre-migration shape unpacked to 'String' for the
+-- emptiness check; the migration keeps the value typed and runs the
+-- check on the decoded codepoints directly.
+extractedDescription :: EncodedText -> Maybe EncodedText
+extractedDescription field
+  | Text.null trimmed = Nothing
+  | otherwise         = Just field
+  where
+    trimmed = Text.dropAround (\c -> c == ' ' || c == '\NUL') (encodedTextContent field)
+
 -- | Build a 'SomePatch' from a parsed PPF1 patch. PPF1 carries no
 -- validation block, no undo data, no file-size advisory, and no
 -- FILE_ID.DIZ — the simplest of the four PPF dispatchers.
@@ -325,10 +337,8 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace
-                                    (Text.unpack (encodedTextContent (PPF1.ppf1Description patch)))
-                              in noMetadataRequested
-                                { requestedDescription = if null description then Nothing else Just description }
+      , patchExtractedMeta  = noMetadataRequested
+            { requestedDescription = extractedDescription (PPF1.ppf1Description patch) }
       }
   where
     hunkOf record = Hunk (PPF1.ppf1RecordOffset record) (PPF1.ppf1RecordPayload record)
@@ -385,12 +395,10 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace
-                                    (Text.unpack (encodedTextContent (PPF2.ppf2Description patch)))
-                              in noMetadataRequested
-                                { requestedDescription          = if null description then Nothing else Just description
-                                , requestedVerificationInclusion = Just IncludeVerification
-                                }
+      , patchExtractedMeta  = noMetadataRequested
+            { requestedDescription           = extractedDescription (PPF2.ppf2Description patch)
+            , requestedVerificationInclusion = Just IncludeVerification
+            }
       }
   where
     hunkOf record = Hunk (PPF2.ppf2RecordOffset record) (PPF2.ppf2RecordPayload record)
@@ -457,14 +465,12 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace
-                                    (Text.unpack (encodedTextContent (PPF3.ppf3Description patch)))
-                              in noMetadataRequested
-                                { requestedDescription          = if null description then Nothing else Just description
-                                , requestedImageType            = Just (PPF3.ppf3ImageType patch)
-                                , requestedUndoInclusion        = if PPF3.ppf3HasUndo patch then Just IncludeUndoData else Nothing
-                                , requestedVerificationInclusion = if isJust (PPF3.ppf3ValidationBlock patch) then Just IncludeVerification else Nothing
-                                }
+      , patchExtractedMeta  = noMetadataRequested
+            { requestedDescription           = extractedDescription (PPF3.ppf3Description patch)
+            , requestedImageType             = Just (PPF3.ppf3ImageType patch)
+            , requestedUndoInclusion         = if PPF3.ppf3HasUndo patch then Just IncludeUndoData else Nothing
+            , requestedVerificationInclusion = if isJust (PPF3.ppf3ValidationBlock patch) then Just IncludeVerification else Nothing
+            }
       }
   where
     hunkOf record = Hunk (PPF3.ppf3RecordOffset record) (PPF3.ppf3RecordPayload record)
@@ -507,11 +513,8 @@ parseSomePatchFromPPF4 patchContents = do
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
-      , patchExtractedMeta  = let description = trimNullSpace
-                                    (Text.unpack (encodedTextContent (PPF4.ppf4Description patch)))
-                              in noMetadataRequested
-                                { requestedDescription = if null description then Nothing else Just description
-                                }
+      , patchExtractedMeta  = noMetadataRequested
+            { requestedDescription = extractedDescription (PPF4.ppf4Description patch) }
       }
 
 parseSomePatchFromIPS :: IPS.IPSVariant -> PatchFileContents -> Either SlapError SomePatch
@@ -559,11 +562,17 @@ parseSomePatchFromIPS variant patchContents = do
       let basePatch = IPS.ebpBasePatch ebpPatch
           records = IPS.ipsRecords basePatch
           ebpView = parseEBPMetadata (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
-          nonEmptyField decoded = if null decoded then Nothing else Just decoded
+          -- EBP metadata is JSON, decoded as UTF-8 by the JSON parser;
+          -- wrap each extracted 'String' as 'EncodedText' tagged
+          -- 'EncodingUtf8' so the convert seam carries the encoding
+          -- truthfully forward.
+          nonEmptyUtf8 decoded
+            | null decoded = Nothing
+            | otherwise    = Just (EncodedText EncodingUtf8 (Text.pack decoded))
           extractedMeta = noMetadataRequested
-            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmptyField
-            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmptyField
-            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmptyField
+            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmptyUtf8
+            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmptyUtf8
+            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmptyUtf8
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
@@ -770,14 +779,10 @@ parseSomePatchFromAPSN64 patchContents = do
     { patchFormat         = LabelAPSN64
     , patchAnalysis       = APSN64.analyzeAPSN64 patch
     , patchKind           = Direct (Just (emptyContents (Vector.toList (Vector.map expandN64 records)))
-          { contentsDescription = Just (fst (decodeTextLenient EncodingLocale
-                                              (APSN64.apsN64Description header)))
-          -- ^ APSN64 still stores description as raw bytes on its
-          -- patch type (stage 3b territory); wrap at the seam so the
-          -- convert layer's typed 'contentsDescription' field is
-          -- honest. Any decode substitutions are discarded here for
-          -- now — the convert seam does not yet thread parse-time
-          -- advisories through 'PatchContents'.
+          { contentsDescription = Just (APSN64.apsN64Description header)
+          -- ^ APSN64's description field is typed 'EncodedText' under
+          -- stage 3b; the parse-time decode (and any substitution
+          -- advisories) lives inside 'parseAPSN64'.
           , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
           })
     , patchApply          = ApplyStrategy
@@ -802,9 +807,16 @@ parseSomePatchFromAPSN64 patchContents = do
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  = let description = trimNullSpace (decodeLocaleField (APSN64.apsN64Description header))
-                            in noMetadataRequested
-                              { requestedDescription = if null description then Nothing else Just description }
+    , patchExtractedMeta  =
+        let description       = APSN64.apsN64Description header
+            descriptionText   = encodedTextContent description
+            trimmedText       = Text.dropAround (\c -> c == ' ' || c == '\NUL') descriptionText
+        in noMetadataRequested
+             { requestedDescription =
+                 if Text.null trimmedText
+                   then Nothing
+                   else Just description
+             }
     }
 
 parseSomePatchFromNINJA2 :: PatchFileContents -> Either SlapError SomePatch
@@ -843,21 +855,33 @@ parseSomePatchFromNINJA2 patchContents = do
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  = let decode = NINJA2.decodeNINJA2Field (NINJA2.ninja2PatchEncoding patch)
-                                nonEmptyField fieldBytes = let decoded = decode fieldBytes
-                                                            in if null decoded then Nothing else Just decoded
-                                info = NINJA2.ninja2Header patch
-                            in noMetadataRequested
-                              { requestedTitle       = NINJA2.ninja2Title       info >>= nonEmptyField
-                              , requestedAuthor      = NINJA2.ninja2Author      info >>= nonEmptyField
-                              , requestedVersion     = NINJA2.ninja2Version     info >>= nonEmptyField
-                              , requestedGenre       = NINJA2.ninja2Genre       info >>= nonEmptyField
-                              , requestedLanguage    = NINJA2.ninja2Language    info >>= nonEmptyField
-                              , requestedDate        = NINJA2.ninja2Date        info >>= nonEmptyField
-                              , requestedWebsite     = NINJA2.ninja2Website     info >>= nonEmptyField
-                              , requestedDescription = NINJA2.ninja2Description info >>= nonEmptyField
-                              , requestedRomType     = Just platformType
-                              }
+    , patchExtractedMeta  =
+        let patchEncoding = NINJA2.ninja2PatchEncoding patch
+            decode        = NINJA2.decodeNINJA2Field patchEncoding
+            tag           = case patchEncoding of
+              NINJA2.PatchEncodingUTF8   -> EncodingUtf8
+              NINJA2.PatchEncodingSystem -> EncodingLocale
+            -- Stage-3b: 'requestedTitle' \/ 'Author' \/ 'Version' \/
+            -- 'Description' are typed 'EncodedText'; the encoding tag
+            -- comes from NINJA2's PATCH_ENC byte. The remaining
+            -- string-shaped fields (genre, language, date, website)
+            -- stay 'String' until stage 3c.
+            nonEmptyField fieldBytes = let decoded = decode fieldBytes
+                                       in if null decoded then Nothing else Just decoded
+            nonEmptyEncoded fieldBytes =
+              fmap (EncodedText tag . Text.pack) (nonEmptyField fieldBytes)
+            info = NINJA2.ninja2Header patch
+        in noMetadataRequested
+            { requestedTitle       = NINJA2.ninja2Title       info >>= nonEmptyEncoded
+            , requestedAuthor      = NINJA2.ninja2Author      info >>= nonEmptyEncoded
+            , requestedVersion     = NINJA2.ninja2Version     info >>= nonEmptyEncoded
+            , requestedGenre       = NINJA2.ninja2Genre       info >>= nonEmptyField
+            , requestedLanguage    = NINJA2.ninja2Language    info >>= nonEmptyField
+            , requestedDate        = NINJA2.ninja2Date        info >>= nonEmptyField
+            , requestedWebsite     = NINJA2.ninja2Website     info >>= nonEmptyField
+            , requestedDescription = NINJA2.ninja2Description info >>= nonEmptyEncoded
+            , requestedRomType     = Just platformType
+            }
     }
 
 parseSomePatchFromNINJA1 :: PatchFileContents -> Either SlapError SomePatch
@@ -1136,16 +1160,19 @@ parseSomePatchFromDPS patchContents = do
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  = let nonEmpty fieldBytes = let decoded = trimNullSpace (decodeLocaleField fieldBytes)
-                                                     in if null decoded then Nothing else Just decoded
-                            in noMetadataRequested
-                              { requestedTitle     = nonEmpty (DPS.dpsName    patch)
-                              , requestedAuthor    = nonEmpty (DPS.dpsAuthor  patch)
-                              , requestedVersion   = nonEmpty (DPS.dpsVersion patch)
-                              , requestedStability = case DPS.dpsStability patch of
-                                                       DPS.DPSUnstable -> Just UnstablePatch
-                                                       DPS.DPSStable   -> Nothing
-                              }
+    , patchExtractedMeta  =
+        let nonEmpty field =
+              let trimmed = Text.dropAround (\c -> c == ' ' || c == '\NUL')
+                                            (encodedTextContent field)
+              in if Text.null trimmed then Nothing else Just field
+        in noMetadataRequested
+             { requestedTitle     = nonEmpty (DPS.dpsName    patch)
+             , requestedAuthor    = nonEmpty (DPS.dpsAuthor  patch)
+             , requestedVersion   = nonEmpty (DPS.dpsVersion patch)
+             , requestedStability = case DPS.dpsStability patch of
+                                      DPS.DPSUnstable -> Just UnstablePatch
+                                      DPS.DPSStable   -> Nothing
+             }
     }
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.

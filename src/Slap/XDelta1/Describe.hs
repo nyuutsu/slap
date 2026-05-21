@@ -30,12 +30,12 @@ import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (Length(..), FileSize(..))
-
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (EncodedText(..), EncodingName(..), encodedTextContent)
 
 import Data.Int (Int64)
-import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.Text.Encoding as TextEncoding
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Info
@@ -43,8 +43,8 @@ import qualified Data.ByteString as ByteString
 
 xdelta1Meta :: XDelta1Patch -> [InfoLine]
 xdelta1Meta patch =
-  [ InfoLine "from"        (decodeLocaleField (unXDelta1FromName (xdelta1FromName patch)))
-  , InfoLine "to"          (decodeLocaleField (unXDelta1ToName   (xdelta1ToName   patch)))
+  [ InfoLine "from"        (renderName (unXDelta1FromName (xdelta1FromName patch)))
+  , InfoLine "to"          (renderName (unXDelta1ToName   (xdelta1ToName   patch)))
   , InfoLine "target size" (show (unFileSize (xdelta1TargetLength patch)))
   ] ++ verificationLines ++ inputsLines ++
   [ InfoLine "sources"     "2"
@@ -109,11 +109,19 @@ analyzeXDelta1 patch = PatchAnalysis
 -- 'VerifyAgainstStoredMD5s'). The format mirrors
 -- 'makeXDelta1FileSourceText' so explain output reads as two
 -- comparable rows.
+--
+-- 'xdelta1DataRecordName' is a fixed ASCII wire constant
+-- (@\"(patch data)\"@); decoding it under UTF-8 is byte-identical
+-- to its codepoint reading, so wrapping it as 'EncodedText' tagged
+-- 'EncodingUtf8' is honest and lets the data-record row participate
+-- in the same 'EncodedText' rendering path the file-source row uses.
 makeXDelta1DataRecordText :: XDelta1Patch -> AnalysisSection
 makeXDelta1DataRecordText patch =
-  renderSourceLine 0 "data" xdelta1DataRecordName
+  renderSourceLine 0 "data" dataRecordNameText
     (FileSize dataSegmentLength) SequentialOffsets dataMD5
   where
+    dataRecordNameText =
+      EncodedText EncodingUtf8 (TextEncoding.decodeUtf8 xdelta1DataRecordName)
     dataSegmentBytes  = xdelta1DataSegment patch
     dataSegmentLength = ByteString.length dataSegmentBytes
     dataMD5 = case xdelta1Verification patch of
@@ -123,24 +131,40 @@ makeXDelta1DataRecordText patch =
 -- | Render the file-source section from the patch's flat
 -- @xdelta1Source*@ fields.
 makeXDelta1FileSourceText :: XDelta1Patch -> AnalysisSection
-makeXDelta1FileSourceText patch =
-  renderSourceLine 1 "file"
-    (unXDelta1FromName (xdelta1SourceName patch))
-    (xdelta1SourceLength patch)
-    (xdelta1SourceOffsetMode patch)
-    (xdelta1SourceMD5 patch)
+makeXDelta1FileSourceText patch = SectionText $
+  "  [1] " ++ renderName (unXDelta1FromName (xdelta1SourceName patch))
+  ++ " (file)"
+  ++ (case xdelta1SourceOffsetMode patch of
+        SequentialOffsets -> " seq"
+        AbsoluteOffsets   -> "")
+  ++ "  " ++ show (unFileSize (xdelta1SourceLength patch)) ++ " bytes"
+  ++ (case xdelta1SourceMD5 patch of
+        Just hash -> "  MD5:" ++ hexByteString (unMD5Hash hash)
+        Nothing   -> "")
 
+-- | Render one EDSIO source-record row from its typed-text name,
+-- length, offset-mode, and optional MD5. Shared between the data
+-- record and any other source row that decides to route through it;
+-- file-source rows inline the same layout in 'makeXDelta1FileSourceText'
+-- because the @\"(file)\"@ kind label and the source-length\/offset-
+-- mode reads come from a different patch field.
 renderSourceLine
-  :: Int -> String -> ByteString -> FileSize -> XDelta1OffsetMode
+  :: Int -> String -> EncodedText -> FileSize -> XDelta1OffsetMode
   -> Maybe MD5Hash -> AnalysisSection
 renderSourceLine index kindLabel sourceName sourceLength offsetMode md5Hash = SectionText $
-  "  [" ++ show index ++ "] " ++ decodeLocaleField sourceName
+  "  [" ++ show index ++ "] " ++ renderName sourceName
   ++ " (" ++ kindLabel ++ ")"
   ++ (case offsetMode of SequentialOffsets -> " seq"; AbsoluteOffsets -> "")
   ++ "  " ++ show (unFileSize sourceLength) ++ " bytes"
   ++ (case md5Hash of
         Just hash -> "  MD5:" ++ hexByteString (unMD5Hash hash)
         Nothing   -> "")
+
+-- | Render an 'EncodedText'-shaped xdelta1 name as a plain 'String'
+-- for the info-line lane. The decoded codepoints come straight off
+-- the typed field; no per-call locale decode is needed.
+renderName :: EncodedText -> String
+renderName = Text.unpack . encodedTextContent
 
 makeXDelta1Region :: XDelta1Instruction -> AnalysisRegion
 makeXDelta1Region instruction = AnalysisRegion

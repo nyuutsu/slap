@@ -68,10 +68,15 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Status (SlapError, CreateResult(..))
+import Slap.FieldName (FieldName(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..), byteFileSize)
+import Slap.Text (EncodedText,
+                  encodedTextContent, encodedTextEncoding,
+                  encodeTextLenient, encodeLossAdvisories)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -121,8 +126,8 @@ createXDelta1 inclusion compression resolvedNames inputContents outputContents =
       targetBytes = unOutputFileContents outputContents
       patch = assemblePatch inclusion compression resolvedNames
                             sourceBytes targetBytes diff
-      wireBytes = encodeXDelta1 patch
-  Right (CreateResult (PatchFileContents wireBytes) [])
+      (wireBytes, nameAdvisories) = encodeXDelta1 patch
+  Right (CreateResult (PatchFileContents wireBytes) nameAdvisories)
 
 ----------------------------------------------------------------------------
 -- Differ output → XDelta1Patch
@@ -203,21 +208,32 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
 --                           gzip stream)
 --   7. Control offset:      uint32 BE (file offset where segment 6 begins)
 --   8. Trailing magic:      @%XDZ004%@ (8 bytes)
-encodeXDelta1 :: XDelta1Patch -> ByteString
-encodeXDelta1 patch = ByteString.concat
-  [ magicBytes
-  , headerBytes
-  , fromNameBytes
-  , toNameBytes
-  , dataSegment
-  , controlSegment
-  , word32BEBytes controlOffset
-  , magicBytes
-  ]
+encodeXDelta1 :: XDelta1Patch -> (ByteString, [SlapAdvisory])
+encodeXDelta1 patch =
+  ( ByteString.concat
+      [ magicBytes
+      , headerBytes
+      , fromNameBytes
+      , toNameBytes
+      , dataSegment
+      , controlSegment
+      , word32BEBytes controlOffset
+      , magicBytes
+      ]
+  , fromNameAdvisories ++ toNameAdvisories
+    -- The source-record name shares its bytes with the from-name
+    -- ('assemblePatch' pipes one value into both); re-encoding the
+    -- 'EncodedText' for the source-record slot would surface the
+    -- same substitution advisories twice, so 'encodeFileSourceRecord'
+    -- discards its notice list and the from-name's advisories speak
+    -- for the mirrored value.
+  )
   where
     magicBytes     = "%XDZ004%"
-    fromNameBytes  = unXDelta1FromName (xdelta1FromName patch)
-    toNameBytes    = unXDelta1ToName   (xdelta1ToName   patch)
+    (fromNameBytes, fromNameAdvisories) =
+      encodeXDelta1Name FieldXDelta1FromName (unXDelta1FromName (xdelta1FromName patch))
+    (toNameBytes, toNameAdvisories) =
+      encodeXDelta1Name FieldXDelta1ToName   (unXDelta1ToName   (xdelta1ToName   patch))
     fromNameLength = ByteString.length fromNameBytes
     toNameLength   = ByteString.length toNameBytes
 
@@ -379,7 +395,15 @@ encodeFileSourceRecord patch =
   <> word8 0  -- kind: file source
   <> word8 (offsetModeByte (xdelta1SourceOffsetMode patch))
   where
-    sourceNameBytes = unXDelta1FromName (xdelta1SourceName patch)
+    -- Re-encode the source-record name from its 'EncodedText' under
+    -- the value's tag. The notice list is discarded here because
+    -- 'encodeXDelta1' has already surfaced the same substitution
+    -- advisories via the header from-name slot (the two slots share
+    -- one value; see 'assemblePatch').
+    (sourceNameBytes, _notices) =
+      encodeTextLenient (encodedTextEncoding sourceName)
+                        (encodedTextContent sourceName)
+    sourceName = unXDelta1FromName (xdelta1SourceName patch)
     sourceMD5Bytes = case xdelta1SourceMD5 patch of
       Just md5Hash -> md5Hash
       Nothing      -> xdelta1EmptyInputMD5Sentinel
@@ -419,3 +443,18 @@ offsetModeByte AbsoluteOffsets   = 0
 instructionTargetWireIndex :: XDelta1InstructionTarget -> Word64
 instructionTargetWireIndex FromDataSource = 0
 instructionTargetWireIndex FromFileSource = 1
+
+-- | Re-encode an xdelta1 header name from its typed 'EncodedText' to
+-- the wire bytes that go between the header and the data segment.
+-- Lenient: codepoints the target encoding can't represent become
+-- the encoding's substitute character and surface as a single
+-- 'FieldEncodedSubstituted' advisory carrying the substitution
+-- count. The byte length is not re-checked here; the resolver in
+-- "Slap.XDelta1.Types" cap-checks the lenient-encoded byte count at
+-- construction of 'ResolvedXDelta1FileNames', so by the time
+-- 'encodeXDelta1' runs the bytes are known to fit the u16 slot.
+encodeXDelta1Name :: FieldName -> EncodedText -> (ByteString, [SlapAdvisory])
+encodeXDelta1Name field text =
+  let (bytes, notices) = encodeTextLenient (encodedTextEncoding text)
+                                           (encodedTextContent text)
+  in (bytes, encodeLossAdvisories LabelXDelta1 field notices)

@@ -15,10 +15,10 @@ import Slap.Display.Analysis
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Measure (Length(..), FileSize(..), byteLength)
-
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (EncodedText, encodedTextContent)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Info
@@ -35,8 +35,15 @@ dpsMeta patch = concat
   , [InfoLine "enclosed" (show enclosedCount)]
   ]
   where
-    fieldPair _ value | ByteString.null value = []
-    fieldPair label value = [InfoLine label (decodeLocaleField value)]
+    -- The decoded text comes off the typed field directly; empty
+    -- fields suppress their info line. Trailing null bytes (the
+    -- wire's 64-byte field is null-padded) are dropped before render.
+    fieldPair :: String -> EncodedText -> [InfoLine]
+    fieldPair label value
+      | Text.null trimmed = []
+      | otherwise         = [InfoLine label (Text.unpack trimmed)]
+      where
+        trimmed = Text.dropWhileEnd (== '\NUL') (encodedTextContent value)
     copyCount = length [() | DPSCopyFromROM {} <- dpsRecords patch]
     enclosedCount = length [() | DPSEnclosedData {} <- dpsRecords patch]
 

@@ -18,11 +18,13 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            apsN64RecordHeaderSize)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, atEnd, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
+import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -65,8 +67,12 @@ parseN64 :: APSPatchType -> ByteParser APSN64ParseWalk
 parseN64 patchType = do
   skip (byteLength apsN64MagicBytes)  -- "APS10"
   skip (Length 1)                     -- patch-type byte (pre-validated)
-  encodingMethod <- toAPSRecordEncoding <$> getByte
-  description    <- getBytes (Length apsN64DescriptionWidth)
+  encodingMethod    <- toAPSRecordEncoding <$> getByte
+  descriptionBytes  <- getBytes (Length apsN64DescriptionWidth)
+  let (description, descriptionNotices) =
+        decodeTextLenient EncodingLocale descriptionBytes
+      descriptionAdvisories =
+        decodeLossAdvisories LabelAPSN64 FieldDescription descriptionNotices
   case patchType of
     APSSimple -> do
       destinationSize <- FileSize . fromIntegral <$> word32LE
@@ -80,7 +86,7 @@ parseN64 patchType = do
             (Vector.fromList records)
       pure APSN64ParseWalk
         { apsN64ParseWalkPatch    = patch
-        , apsN64ParseWalkWarnings = []
+        , apsN64ParseWalkWarnings = descriptionAdvisories
         }
     APSN64Specific -> do
       imageFormat <- toAPSImageFormat <$> getByte
@@ -103,7 +109,7 @@ parseN64 patchType = do
             (Vector.fromList records)
       pure APSN64ParseWalk
         { apsN64ParseWalkPatch    = patch
-        , apsN64ParseWalkWarnings = countryWarnings
+        , apsN64ParseWalkWarnings = descriptionAdvisories ++ countryWarnings
         }
 
 parseN64Records :: ByteParser [APSN64Record]

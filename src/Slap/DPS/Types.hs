@@ -3,7 +3,7 @@
 module Slap.DPS.Types
   ( DPSPatch(..)
   , DPSRecord(..)
-  , DPSMetadata(..)
+  , DPSCreateMetadata(..)
   , DPSStability(..)
   , DPSFormatVersion(..)
   , toDPSStability
@@ -44,6 +44,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..), FoundVersion(..),
                      advance, byteLength, offsetToFileSize)
 import Slap.Narrow (narrowToWord32)
+import Slap.Text (EncodedText)
 
 data DPSStability = DPSStable | DPSUnstable
   deriving (Show, Eq)
@@ -67,19 +68,26 @@ toDPSFormatVersion byte = Left (BadVersion LabelDPS (FoundVersion byte))
 fromDPSFormatVersion :: DPSFormatVersion -> Word8
 fromDPSFormatVersion DPSVersion1 = 1
 
--- | Metadata fields for a DPS patch's header. Each field is
--- locale-encoded and truncated/padded to 'dpsFieldWidth' bytes
--- on create, with a 'FieldTruncated' warning emitted on overflow.
-data DPSMetadata = DPSMetadata
-  { dpsMetadataName    :: !String
-  , dpsMetadataAuthor  :: !String
-  , dpsMetadataVersion :: !String
+-- | The three header fields a DPS create call supplies: name, author,
+-- and version. Each is typed 'EncodedText' so the encoding decision
+-- (locale today; declared-on-the-wire when DPS gains an encoding
+-- flag) travels with the value. Replaces the stage-3a-era
+-- @DPSMetadata@ record of three 'String' fields, whose redundancy
+-- with the per-field 'ByteString' selectors on 'DPSPatch' was the
+-- specific dual-shape that stage 3b retires.
+data DPSCreateMetadata = DPSCreateMetadata
+  { dpsCreateMetadataName    :: !EncodedText
+  , dpsCreateMetadataAuthor  :: !EncodedText
+  , dpsCreateMetadataVersion :: !EncodedText
   } deriving (Show, Eq)
 
 data DPSPatch = DPSPatch
-  { dpsName       :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
-  , dpsAuthor     :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
-  , dpsVersion    :: ByteString   -- wire format: 64 bytes, null-padded; parsed: trimmed
+  { dpsName       :: !EncodedText
+    -- ^ Wire format: 64-byte null-padded field, decoded at parse time
+    -- under the process locale. Re-encoded under the same locale on
+    -- create via 'Slap.DPS.Create.encodeField'.
+  , dpsAuthor     :: !EncodedText
+  , dpsVersion    :: !EncodedText
   , dpsStability       :: DPSStability
   , dpsFormatVersion :: DPSFormatVersion
   , dpsOriginalSize   :: !DPSSourceSize  -- original ROM size, narrowed to the wire field's 4-byte LE Word32

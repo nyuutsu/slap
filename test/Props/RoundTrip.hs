@@ -760,7 +760,11 @@ prop_ninja1SourcelessSentinelRejected = once $
 prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
   case createDPS (InputFileContents source) (OutputFileContents target)
-         (DPS.DPSMetadata { DPS.dpsMetadataName = "", DPS.dpsMetadataAuthor = "", DPS.dpsMetadataVersion = "" })
+         (DPS.DPSCreateMetadata
+            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            })
          DPS.DPSStable of
     Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
     Right (CreateResult patch _) -> case DPS.parseDPS patch of
@@ -1175,10 +1179,11 @@ parsePchtxtSphinx = do
 -- constructor isn't exported from "Slap.XDelta1.Types".
 xdelta1FixtureNames :: ResolvedXDelta1FileNames
 xdelta1FixtureNames =
-  case resolveXDelta1FileNames (Just "source") (Just "target")
-                               "ignored-source-path" "ignored-target-path" of
-    Right resolved -> resolved
-    Left err -> error ("xdelta1FixtureNames: " ++ renderSlapError err)
+  let asLocale = SlapText.EncodedText SlapText.EncodingLocale
+  in case resolveXDelta1FileNames (Just (asLocale "source")) (Just (asLocale "target"))
+                                  "ignored-source-path" "ignored-target-path" of
+       Right resolved -> resolved
+       Left err -> error ("xdelta1FixtureNames: " ++ renderSlapError err)
 
 prop_xdelta1RoundTrips :: Property
 prop_xdelta1RoundTrips =

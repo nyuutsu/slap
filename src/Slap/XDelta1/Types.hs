@@ -38,6 +38,7 @@ module Slap.XDelta1.Types
 import Data.Bits (shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
 import Data.Word (Word32)
 import Slap.Checksum (MD5Hash(..))
 import Slap.Status (SlapError(..))
@@ -46,7 +47,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), FileSize(..),
                      Length(..), EncodedLength(..), MaxLength(..),
                      byteLength)
-import Slap.TextEncoding (encodeLocaleField)
+import Slap.Text (EncodedText(..), EncodingName(..),
+                  encodedTextContent, encodeTextLenient)
 import System.FilePath (takeFileName)
 
 -- | Per-source wire convention for how instruction offsets are
@@ -105,11 +107,11 @@ data XDelta1Patch = XDelta1Patch
 -- display label for the source file at create time. Distinct from
 -- 'XDelta1ToName' so transposition at any call site (encoder,
 -- parser, resolver, test fixture) is a type error rather than a
--- silent wire-byte swap. The bytes themselves are locale-encoded:
--- canonical xdelta does @memcpy@ from @argv@ and slap matches that
--- convention; the conversion to and from 'String' for display
--- routes through 'Slap.TextEncoding.encodeLocaleField' /
--- 'Slap.TextEncoding.decodeLocaleField'.
+-- silent wire-byte swap. The wrapped 'EncodedText' carries the
+-- decoded codepoints alongside the encoding tag they were decoded
+-- under; locale today (matching canonical xdelta's @memcpy@-from-
+-- @argv@ convention), but the tag rides along so a future re-encode
+-- under a different encoding picks the right encoder.
 --
 -- The u16 byte-length cap that the wire's packed name-lengths
 -- header word imposes is enforced at construction of
@@ -119,7 +121,7 @@ data XDelta1Patch = XDelta1Patch
 -- for at-rest type discipline; the cap-check is at-edge validation
 -- that lives at the resolver.
 newtype XDelta1FromName = XDelta1FromName
-  { unXDelta1FromName :: ByteString
+  { unXDelta1FromName :: EncodedText
   } deriving (Eq, Show)
 
 -- | The to-name an xdelta 1.1.x patch carries in its header — the
@@ -127,7 +129,7 @@ newtype XDelta1FromName = XDelta1FromName
 -- 'XDelta1FromName' for the rationale on the newtype boundary and
 -- the locale-encoding convention.
 newtype XDelta1ToName = XDelta1ToName
-  { unXDelta1ToName :: ByteString
+  { unXDelta1ToName :: EncodedText
   } deriving (Eq, Show)
 
 -- | The two file-name fields an xdelta 1.1.x patch carries (the
@@ -152,25 +154,32 @@ data ResolvedXDelta1FileNames = ResolvedXDelta1FileNames
 
 -- | Create-time resolver. For each of the two name slots, the CLI
 -- override (if any) wins; otherwise the slot is filled with the
--- locale-encoded basename of the corresponding file path. The
--- resulting bytes are then cap-checked.
+-- basename of the corresponding file path, tagged 'EncodingLocale'.
+-- The resulting encoded bytes are then cap-checked.
 --
--- The CLI inputs are 'Maybe' 'ByteString' (already locale-encoded
--- at the CLI boundary), not 'Maybe' 'XDelta1FromName'\/'ToName' —
--- the newtype wrap is part of what this resolver does, so callers
--- pass raw bytes and the smart-constructor pattern is the only
--- way to obtain the wrapped, validated values.
+-- The CLI inputs are 'Maybe' 'EncodedText' (already wrapped at the
+-- CLI boundary), not 'Maybe' 'XDelta1FromName'\/'ToName' — the
+-- newtype wrap is part of what this resolver does, so callers pass
+-- typed text and the smart-constructor pattern is the only way to
+-- obtain the wrapped, validated values.
 resolveXDelta1FileNames
-  :: Maybe ByteString  -- ^ CLI @--from-name@ override; 'Nothing' falls back to @takeFileName@ of the source path.
-  -> Maybe ByteString  -- ^ CLI @--to-name@   override; 'Nothing' falls back to @takeFileName@ of the target path.
-  -> FilePath          -- ^ source file path (basename feeds the from-name default)
-  -> FilePath          -- ^ target file path (basename feeds the to-name   default)
+  :: Maybe EncodedText  -- ^ CLI @--from-name@ override; 'Nothing' falls back to @takeFileName@ of the source path.
+  -> Maybe EncodedText  -- ^ CLI @--to-name@   override; 'Nothing' falls back to @takeFileName@ of the target path.
+  -> FilePath           -- ^ source file path (basename feeds the from-name default)
+  -> FilePath           -- ^ target file path (basename feeds the to-name   default)
   -> Either SlapError ResolvedXDelta1FileNames
 resolveXDelta1FileNames cliFromName cliToName sourcePath targetPath =
-  buildResolvedXDelta1FileNames fromBytes toBytes
+  buildResolvedXDelta1FileNames fromText toText
   where
-    fromBytes = maybe (encodeLocaleField (takeFileName sourcePath)) id cliFromName
-    toBytes   = maybe (encodeLocaleField (takeFileName targetPath)) id cliToName
+    fromText = maybe (basenameAsLocaleText sourcePath) id cliFromName
+    toText   = maybe (basenameAsLocaleText targetPath) id cliToName
+
+-- | Wrap the basename of a 'FilePath' as a locale-tagged 'EncodedText'.
+-- Used for the create-side filepath defaulting when neither CLI flag
+-- nor inherited source patch supplies a name. GHC delivers 'FilePath'
+-- as 'String' (codepoints), so wrapping is one 'Text.pack' away.
+basenameAsLocaleText :: FilePath -> EncodedText
+basenameAsLocaleText = EncodedText EncodingLocale . Text.pack . takeFileName
 
 -- | Convert-time resolver. Takes the already-merged CLI-or-inherited
 -- pair (the porcelain runs 'Slap.Convert.mergeRequestedMetadata'
@@ -178,43 +187,54 @@ resolveXDelta1FileNames cliFromName cliToName sourcePath targetPath =
 -- source patch's field). If either slot is still 'Nothing', refuses
 -- with 'XDelta1ConvertRequiresNames' naming the source format so
 -- the user sees \"BPS doesn't carry these fields\" rather than a
--- bare \"names required\". Otherwise cap-checks both bytes and
--- bundles them.
+-- bare \"names required\". Otherwise cap-checks both encoded byte
+-- counts and bundles them.
 requireXDelta1FileNames
-  :: Maybe ByteString  -- ^ merged from-name (CLI > inherited > 'Nothing')
-  -> Maybe ByteString  -- ^ merged to-name
-  -> FormatLabel       -- ^ source format the convert originated from
+  :: Maybe EncodedText  -- ^ merged from-name (CLI > inherited > 'Nothing')
+  -> Maybe EncodedText  -- ^ merged to-name
+  -> FormatLabel        -- ^ source format the convert originated from
   -> Either SlapError ResolvedXDelta1FileNames
 requireXDelta1FileNames mergedFromName mergedToName sourceLabel =
   case (mergedFromName, mergedToName) of
-    (Just fromBytes, Just toBytes) ->
-      buildResolvedXDelta1FileNames fromBytes toBytes
+    (Just fromText, Just toText) ->
+      buildResolvedXDelta1FileNames fromText toText
     _ -> Left (XDelta1ConvertRequiresNames sourceLabel)
 
 -- | The one place where the u16 byte-length cap is enforced. Both
 -- exported resolvers funnel through here. Construction of
 -- 'ResolvedXDelta1FileNames' anywhere else in slap is a type error
--- (the constructor is module-private).
+-- (the constructor is module-private). The cap-check runs against
+-- the encoded byte count under the value's encoding tag: a
+-- 'EncodingLocale' value re-encodes (lenient) under the running
+-- locale to count bytes; substitution events at encode time are
+-- accepted silently here (the resolver returns 'Either', with no
+-- advisory channel — the create-time re-encoder in
+-- 'Slap.XDelta1.Create.encodeXDelta1' surfaces them through its
+-- 'CreateResult' channel).
 buildResolvedXDelta1FileNames
-  :: ByteString -> ByteString
+  :: EncodedText -> EncodedText
   -> Either SlapError ResolvedXDelta1FileNames
-buildResolvedXDelta1FileNames fromBytes toBytes = do
-  () <- checkNameLength FieldXDelta1FromName fromBytes
-  () <- checkNameLength FieldXDelta1ToName   toBytes
-  Right (ResolvedXDelta1FileNames (XDelta1FromName fromBytes) (XDelta1ToName toBytes))
+buildResolvedXDelta1FileNames fromText toText = do
+  () <- checkNameLength FieldXDelta1FromName fromText
+  () <- checkNameLength FieldXDelta1ToName   toText
+  Right (ResolvedXDelta1FileNames (XDelta1FromName fromText) (XDelta1ToName toText))
 
 -- | Refuse a name whose encoded byte length exceeds the u16 cap that
 -- the xdelta1 header's packed name-lengths word imposes (top 16 bits
 -- = from-name length, bottom 16 = to-name length; see
--- 'Slap.XDelta1.Create.encodeXDelta1'\'s @nameLengthsWord@). Both
--- names are checked independently so the offender's identity reaches
--- the user verbatim.
-checkNameLength :: FieldName -> ByteString -> Either SlapError ()
-checkNameLength field bytes
+-- 'Slap.XDelta1.Create.encodeXDelta1'\'s @nameLengthsWord@). The
+-- count is computed against the lenient encode under the value's
+-- tag; both names are checked independently so the offender's
+-- identity reaches the user verbatim.
+checkNameLength :: FieldName -> EncodedText -> Either SlapError ()
+checkNameLength field text
   | ByteString.length bytes <= xdelta1NameByteCap = Right ()
   | otherwise = Left $ FieldTooLong LabelXDelta1 field
       (EncodedLength (byteLength bytes))
       (MaxLength     (Length xdelta1NameByteCap))
+  where
+    (bytes, _notices) =
+      encodeTextLenient (encodedTextEncoding text) (encodedTextContent text)
 
 -- | Maximum byte count that fits in a 16-bit name-length slot of the
 -- xdelta1 header's packed name-lengths word.

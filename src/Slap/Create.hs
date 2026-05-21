@@ -37,7 +37,7 @@ import qualified Slap.BPS.Create as BPS
 import Slap.BPS.Types (BPSMetadata(..))
 import Slap.UPS.Create (createUPS)
 import qualified Slap.DPS.Create as DPS
-import Slap.DPS.Types (DPSMetadata, DPSStability)
+import Slap.DPS.Types (DPSCreateMetadata, DPSStability)
 import qualified Slap.NINJA2.Create as NINJA2
 import Slap.NINJA2.Types (NINJA2Metadata)
 import Slap.APSGBA.Create (createAPSGBA)
@@ -66,13 +66,15 @@ createBPS
 createBPS source target (BPSMetadata metadataBytes) =
   BPS.createBPS source target metadataBytes
 
--- | Create a DPS patch. 'DPSMetadata' carries the three header
--- fields (name, author, version) as structured 'String's;
--- 'DPSStability' names the stable-vs-unstable flag byte.
+-- | Create a DPS patch. 'DPSCreateMetadata' carries the three header
+-- fields (name, author, version) as typed 'EncodedText' values
+-- (locale-tagged on the create path, but the type carries the
+-- encoding decision); 'DPSStability' names the stable-vs-unstable
+-- flag byte.
 createDPS
   :: InputFileContents
   -> OutputFileContents
-  -> DPSMetadata
+  -> DPSCreateMetadata
   -> DPSStability
   -> Either SlapError CreateResult
 createDPS = DPS.createDPS

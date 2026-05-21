@@ -5,7 +5,6 @@ module Slap.APSN64.Types
   ( APSN64Patch(..)
   , APSN64Record(..)
   , APSN64Header(..)
-  , APSN64Description(..)
   , N64CartId(..)
   , N64ChecksumPair(..)
   , APSPatchType(..)
@@ -36,12 +35,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (FileSize, Length(..), Offset(..))
 import Slap.Narrow (EncodingLimits(..))
 import Slap.Status (APSN64HeaderMalformation(..))
-
--- | The description field of an APS-N64 patch header. Locale-encoded
--- and truncated to 'apsN64DescriptionWidth' bytes on create, with a
--- 'FieldTruncated' warning emitted on overflow.
-newtype APSN64Description = APSN64Description { unAPSN64Description :: String }
-  deriving (Show, Eq)
+import Slap.Text (EncodedText)
 
 -- | The 2-byte cart ID copied from the N64 ROM header at offset 0x3C
 -- (the "game code" portion of the cartridge ID, e.g. @"SM"@ for
@@ -185,7 +179,10 @@ data APSN64Patch = APSN64Patch APSN64Header !(Vector APSN64Record)
 data APSN64Header = APSN64Header
   { apsN64PatchType   :: APSPatchType
   , apsN64Encoding    :: APSRecordEncoding
-  , apsN64Description :: ByteString   -- 50 bytes
+  , apsN64Description :: EncodedText
+    -- ^ 50-byte description field, decoded at parse time under the
+    -- process locale. Same encoding model as PPF1\/PPF2\/PPF3\/PPF4;
+    -- the wire field is null-padded on encode.
   , apsN64ImageFormat :: Maybe APSImageFormat
   , apsN64CartId      :: Maybe N64CartId
   , apsN64Country     :: Maybe APSN64Country

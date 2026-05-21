@@ -41,6 +41,7 @@ import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
                     SlapAdvisory(..),
                     XDelta1KnownUnsupportedVersion(..),
                     XDelta1ShapeViolation(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, edsioVarint, word32BE)
@@ -49,6 +50,7 @@ import Slap.Measure (Length(..), FileSize(..), Offset(..),
                      ActualMagic(..), ExpectedMagic(..),
                      ExpectedSize(..), ActualSize(..), byteLength)
 import Slap.Compression.Stream (gzipInflate)
+import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
 
 import Control.Monad (unless)
 import Data.ByteString (ByteString)
@@ -131,14 +133,20 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
+      let (fromText, fromNotices) = decodeTextLenient EncodingLocale fromNameBytes
+          (toText,   toNotices)   = decodeTextLenient EncodingLocale toNameBytes
+          headerNameAdvisories =
+            decodeLossAdvisories LabelXDelta1 FieldXDelta1FromName fromNotices
+            ++ decodeLossAdvisories LabelXDelta1 FieldXDelta1ToName toNotices
       Parsed patch warnings <-
         parseControl noVerifyFlag
                      compressionPosture
                      (XDelta1ControlSegment decompressedControl)
                      (XDelta1DataSegment    decompressedData)
-                     (XDelta1FromName       fromName)
-                     (XDelta1ToName         toName)
-      Right (Parsed (recordInputPreCompression patch) warnings)
+                     (XDelta1FromName       fromText)
+                     (XDelta1ToName         toText)
+      Right (Parsed (recordInputPreCompression patch)
+                    (headerNameAdvisories ++ warnings))
   where
     -- | Bits 1 and 2 of the flags word record whether the canonical
     -- tool transparently decompressed gzip-magic input files at
@@ -164,8 +172,8 @@ parseVersion1Point1 (PatchFileContents input) expectedMagic
     nameLengths = getWord32BE 12 input
     fromNameLength = fromIntegral (nameLengths `shiftR` 16) :: Int
     toNameLength   = fromIntegral (nameLengths .&. 0xFFFF) :: Int
-    fromName = ByteString.take fromNameLength (ByteString.drop 32 input)
-    toName   = ByteString.take toNameLength (ByteString.drop (32 + fromNameLength) input)
+    fromNameBytes = ByteString.take fromNameLength (ByteString.drop 32 input)
+    toNameBytes   = ByteString.take toNameLength (ByteString.drop (32 + fromNameLength) input)
     headerOffset = 32 + fromNameLength + toNameLength
 
     -- Trailer: last 12 bytes = control_offset (4B) + magic (8B)
@@ -306,7 +314,11 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
           in unless (computedDataMD5 == declaredDataMD5) $
                Left $ XDelta1DataRecordMD5Mismatch declaredDataMD5 computedDataMD5
       translatedInstructions <- traverse translateInstruction parsedInstrs
-      let fixedInstructions =
+      let (sourceNameText, sourceNameNotices) =
+            decodeTextLenient EncodingLocale (parsedSourceName parsedFileRec)
+          sourceNameAdvisories =
+            decodeLossAdvisories LabelXDelta1 FieldXDelta1FromName sourceNameNotices
+          fixedInstructions =
             fixSequentialOffsets dataOffsetMode fileOffsetMode translatedInstructions
           patch = XDelta1Patch
             { xdelta1FromName         = fromName
@@ -321,7 +333,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
             , xdelta1FromAtDeltaTime  = FileWasRawBytes
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = targetLength
-            , xdelta1SourceName       = XDelta1FromName (parsedSourceName parsedFileRec)
+            , xdelta1SourceName       = XDelta1FromName sourceNameText
             , xdelta1SourceMD5        = fileSourceMD5
             , xdelta1SourceLength     = parsedSourceLength parsedFileRec
             , xdelta1SourceOffsetMode = fileOffsetMode
@@ -346,7 +358,8 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
                   -> []
               | otherwise
                   -> [XDelta1NoVerifyWithDivergentSentinel]
-      Right (Parsed patch (dataNameNotices ++ postureWarnings ++ curioWarnings))
+      Right (Parsed patch (sourceNameAdvisories ++ dataNameNotices
+                             ++ postureWarnings ++ curioWarnings))
   where
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment

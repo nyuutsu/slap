@@ -43,6 +43,8 @@ import Slap.XDelta1.Parse
   , XDelta1NoVerifyFlag(..)
   )
 import qualified Slap.XDelta1.Apply as XDelta1
+import Slap.Text (EncodedText(..), EncodingName(..))
+import qualified Data.Text as Text
 import Slap.XDelta1.Types
   ( XDelta1Patch(..)
   , XDelta1FromName(..), XDelta1ToName(..)
@@ -749,8 +751,8 @@ xdelta1ShapeRejectionTests =
       case parseControl NoVerifyFlagClear UncompressedPatch
                         (XDelta1ControlSegment controlBytes)
                         (XDelta1DataSegment ByteString.empty)
-                        (XDelta1FromName ByteString.empty)
-                        (XDelta1ToName ByteString.empty) of
+                        (XDelta1FromName (EncodedText EncodingLocale Text.empty))
+                        (XDelta1ToName   (EncodedText EncodingLocale Text.empty)) of
         Left slapError         -> Left (renderSlapError slapError)
         Right (Parsed patch _) -> Right patch
 
@@ -865,15 +867,16 @@ xdelta1InputPreCompressionTests fixturePath =
   -- before its target-length guards, which is independent of the
   -- parse pipeline.
   , testCase "xdelta1/empty target with FROM_COMPRESSED refuses apply" $ do
-      let patch = XDelta1Patch
-            { xdelta1FromName         = XDelta1FromName ByteString.empty
-            , xdelta1ToName           = XDelta1ToName   ByteString.empty
+      let emptyName = EncodedText EncodingLocale Text.empty
+          patch = XDelta1Patch
+            { xdelta1FromName         = XDelta1FromName emptyName
+            , xdelta1ToName           = XDelta1ToName   emptyName
             , xdelta1Verification     = CreatorOptedOutOfVerification
             , xdelta1PatchCompression = UncompressedPatch
             , xdelta1FromAtDeltaTime  = FileWasGzipStream
             , xdelta1ToAtDeltaTime    = FileWasRawBytes
             , xdelta1TargetLength     = FileSize 0
-            , xdelta1SourceName       = XDelta1FromName ByteString.empty
+            , xdelta1SourceName       = XDelta1FromName emptyName
             , xdelta1SourceMD5        = Nothing
             , xdelta1SourceLength     = FileSize 0
             , xdelta1SourceOffsetMode = AbsoluteOffsets

@@ -227,10 +227,17 @@ data CreateFormat
 -- block plus 'requestedGenre', 'requestedLanguage', 'requestedDate',
 -- 'requestedWebsite', 'requestedRomType', and 'requestedPatchEncoding'.
 data RequestedPatchMetadata = RequestedPatchMetadata
-  { requestedTitle                :: Maybe String
-  , requestedAuthor               :: Maybe String
-  , requestedDescription          :: Maybe String
-  , requestedVersion              :: Maybe String
+  { requestedTitle                :: Maybe EncodedText
+    -- ^ Typed across the convert seam end-to-end: the CLI parser
+    -- wraps incoming 'String' as @'EncodedText' 'EncodingLocale'@,
+    -- and 'parseSomePatchFromDPS' \/ similar extractors hand off the
+    -- already-typed field directly from the parsed patch. NINJA2's
+    -- string-shaped metadata-record consumer ('NINJA2Metadata')
+    -- unwraps back to 'String' at the createPatch boundary until
+    -- stage 3c lands the same migration there.
+  , requestedAuthor               :: Maybe EncodedText
+  , requestedDescription          :: Maybe EncodedText
+  , requestedVersion              :: Maybe EncodedText
   , requestedUndoInclusion        :: Maybe UndoInclusion
   , requestedVerificationInclusion :: Maybe VerificationInclusion
   , requestedPatchCompression     :: Maybe XDelta1PatchCompression
@@ -280,6 +287,11 @@ data PatchStability
 stabilityToDPS :: PatchStability -> DPS.DPSStability
 stabilityToDPS UnstablePatch = DPS.DPSUnstable
 stabilityToDPS StablePatch   = DPS.DPSStable
+
+-- | Empty 'EncodedText' tagged 'EncodingLocale', for fallbacks when a
+-- 'Maybe EncodedText' slot in 'RequestedPatchMetadata' is 'Nothing'.
+emptyLocaleText :: EncodedText
+emptyLocaleText = EncodedText EncodingLocale Text.empty
 
 noMetadataRequested :: RequestedPatchMetadata
 noMetadataRequested = RequestedPatchMetadata
@@ -912,15 +924,25 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- Pass through raw EBP JSON when metadata values match what the JSON
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
-    let passthrough = case contentsEBPMeta contents of
+    --
+    -- The CLI values are typed 'EncodedText' under stage 3b; the
+    -- EBP-view side is 'String' (parsed from JSON). Compare on
+    -- 'String' by unwrapping the CLI side, since the EBP encoder
+    -- consumes 'String' downstream and the JSON values are the
+    -- authoritative shape for the passthrough check.
+    let cliDescriptionString = fmap (Text.unpack . encodedTextContent) cliDescription
+        cliTitleString       = fmap (Text.unpack . encodedTextContent) cliTitle
+        cliAuthorString      = fmap (Text.unpack . encodedTextContent) cliAuthor
+        descriptionString    = Text.unpack (encodedTextContent descriptionTyped)
+        passthrough = case contentsEBPMeta contents of
           Nothing -> Nothing
           Just raw ->
             let view = parseEBPMetadata raw
                 normalizeEmpty (Just value) = if null value then Nothing else Just value
                 normalizeEmpty Nothing  = Nothing
-            in if cliDescription == normalizeEmpty (view >>= ebpMetadataViewDescription)
-                  && cliTitle == normalizeEmpty (view >>= ebpMetadataViewTitle)
-                  && cliAuthor == normalizeEmpty (view >>= ebpMetadataViewAuthor)
+            in if cliDescriptionString == normalizeEmpty (view >>= ebpMetadataViewDescription)
+                  && cliTitleString    == normalizeEmpty (view >>= ebpMetadataViewTitle)
+                  && cliAuthorString   == normalizeEmpty (view >>= ebpMetadataViewAuthor)
                then Just raw
                else Nothing
         ebpMetadataBytes = case passthrough of
@@ -1026,7 +1048,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
     case contentsDestinationSize contents of
       Just targetSize ->
-        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) (APSN64.APSN64Description apsDescription))
+        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
       Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
   where
     narrow :: [SplitHunk] -> Either SlapError [EncodedHunk]
@@ -1050,27 +1072,29 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     cliDescription   = requestedDescription meta
     cliTitle  = requestedTitle meta
     cliAuthor = requestedAuthor meta
-    descriptionString = resolveDescription DescriptionSources
+    -- The shared description resolver returns a typed 'EncodedText'
+    -- under the migration; PPF/APSN64 consume it directly, EBP and
+    -- PCHTXT unwrap to 'String' at their format-local seams until
+    -- their own migrations (stages 3c/4) move them off raw String.
+    descriptionTyped = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMeta   = contentsEBPMeta contents
       , descriptionSourceTypedText = contentsDescription contents
-      , descriptionSourceFallback  = ""
+      , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
       }
-    -- | PPF1/PPF2/PPF3 emit their descriptions through 'encodeTextBounded'
-    -- under the running locale, so the resolved 'String' wraps as a
-    -- locale-tagged 'EncodedText' at the encoder seam. APSN64's
-    -- 'APSN64Description' still consumes a 'String' at this stage —
-    -- its migration to 'EncodedText' belongs to stage 3b alongside the
-    -- DPS field rewrites.
-    descriptionTyped = EncodedText EncodingLocale (Text.pack descriptionString)
+    -- APSN64's create-side fallback is a 50-byte space-padded string
+    -- in the pre-migration code; the padding belongs to the format
+    -- encoder (PPF3-style null-padding via 'padDescription'), so the
+    -- fallback here is just empty 'EncodedText' and the encoder pads.
     apsDescription = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMeta   = Nothing
       , descriptionSourceTypedText = contentsDescription contents
-      , descriptionSourceFallback  = replicate 50 ' '
+      , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
       }
-    pchtxtDescription = cliDescription
-      <|> fmap (Text.unpack . encodedTextContent) (contentsDescription contents)
+    -- PCHTXT (stage 4) still consumes a 'String'; unwrap at the seam.
+    pchtxtDescription = fmap (Text.unpack . encodedTextContent)
+                             (cliDescription <|> contentsDescription contents)
     ebpView   = contentsEBPMeta contents >>= parseEBPMetadata
     ebpTitle  = resolveEBPField cliTitle  (ebpView >>= ebpMetadataViewTitle)
     ebpAuthor = resolveEBPField cliAuthor (ebpView >>= ebpMetadataViewAuthor)
@@ -1121,10 +1145,10 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta so
   CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
-                    (DPS.DPSMetadata
-                      { DPS.dpsMetadataName    = fromMaybe "" (requestedTitle meta)
-                      , DPS.dpsMetadataAuthor  = fromMaybe "" (requestedAuthor meta)
-                      , DPS.dpsMetadataVersion = fromMaybe "" (requestedVersion meta)
+                    (DPS.DPSCreateMetadata
+                      { DPS.dpsCreateMetadataName    = fromMaybe emptyLocaleText (requestedTitle meta)
+                      , DPS.dpsCreateMetadataAuthor  = fromMaybe emptyLocaleText (requestedAuthor meta)
+                      , DPS.dpsCreateMetadataVersion = fromMaybe emptyLocaleText (requestedVersion meta)
                       })
                     (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
@@ -1140,15 +1164,20 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta so
                                          (encodedTextContent sourceDescription)))) ->
                   PatchEncodingSystem
             _ -> fromMaybe PatchEncodingUTF8 (requestedPatchEncoding meta)
+        -- Stage 3b: 'requestedTitle'\/'Author'\/'Description'\/'Version'
+        -- are now typed 'EncodedText'; NINJA2's metadata record still
+        -- consumes 'Maybe String' (stage 3c lands the matching
+        -- migration there). Unwrap at the seam.
+        unwrapEncoded = fmap (Text.unpack . encodedTextContent)
         ninja2Meta = NINJA2.NINJA2Metadata
-          { NINJA2.ninja2MetadataAuthor      = requestedAuthor meta
-          , NINJA2.ninja2MetadataVersion     = requestedVersion meta
-          , NINJA2.ninja2MetadataTitle       = requestedTitle meta
+          { NINJA2.ninja2MetadataAuthor      = unwrapEncoded (requestedAuthor meta)
+          , NINJA2.ninja2MetadataVersion     = unwrapEncoded (requestedVersion meta)
+          , NINJA2.ninja2MetadataTitle       = unwrapEncoded (requestedTitle meta)
           , NINJA2.ninja2MetadataGenre       = requestedGenre meta
           , NINJA2.ninja2MetadataLanguage    = requestedLanguage meta
           , NINJA2.ninja2MetadataDate        = requestedDate meta
           , NINJA2.ninja2MetadataWebsite     = requestedWebsite meta
-          , NINJA2.ninja2MetadataDescription = requestedDescription meta
+          , NINJA2.ninja2MetadataDescription = unwrapEncoded (requestedDescription meta)
           , NINJA2.ninja2MetadataEncoding    = detectedEncoding
           , NINJA2.ninja2MetadataPlatform    = requestedRomType meta
           }
@@ -1250,35 +1279,39 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
 -- CLI flag wins over EBP metadata, EBP metadata wins over typed
 -- source description, source wins over fallback.
 data DescriptionSources = DescriptionSources
-  { descriptionSourceCLI       :: !(Maybe String)
+  { descriptionSourceCLI       :: !(Maybe EncodedText)
   , descriptionSourceEBPMeta   :: !(Maybe ByteString.ByteString)
   , descriptionSourceTypedText :: !(Maybe EncodedText)
-  , descriptionSourceFallback  :: !String
+  , descriptionSourceFallback  :: !EncodedText
   }
 
 -- | Resolve a description from CLI flag, EBP metadata, source patch's
--- typed description, or default. Returns a plain 'String'; PPF and
--- APSN64 emit sites that need an 'EncodedText' wrap the result back
--- at their own boundary so the encoding-tag choice is format-local
--- rather than smuggled through this resolver.
-resolveDescription :: DescriptionSources -> String
+-- typed description, or default. Returns 'EncodedText'; the typed
+-- value travels end-to-end so the format-specific encoder can route
+-- a re-encode through the tag the source declared (UTF-8 for EBP
+-- JSON, locale everywhere else today).
+resolveDescription :: DescriptionSources -> EncodedText
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description
   | Just meta <- descriptionSourceEBPMeta sources
   , Just view <- parseEBPMetadata meta
   , Just description <- ebpMetadataViewDescription view
-  , not (null description) = description
+  , not (null description)
+  = EncodedText EncodingUtf8 (Text.pack description)
   | Just typed <- descriptionSourceTypedText sources =
-      trimNullSpace (Text.unpack (encodedTextContent typed))
+      EncodedText (encodedTextEncoding typed)
+                  (Text.pack (trimNullSpace (Text.unpack (encodedTextContent typed))))
   | otherwise = descriptionSourceFallback sources
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the
 -- value extracted from the EBP metadata view, then to the empty
 -- string. The two callers feed in the title and author fields
--- respectively.
-resolveEBPField :: Maybe String -> Maybe String -> String
+-- respectively. The CLI side arrives as 'EncodedText'; the EBP-view
+-- side stays 'String' since the EBP JSON serializer
+-- ('IPS.buildEBPMetadataJSON') is the consumer and reads String.
+resolveEBPField :: Maybe EncodedText -> Maybe String -> String
 resolveEBPField cliValue ebpValue
-  | Just provided <- cliValue  = provided
+  | Just provided <- cliValue  = Text.unpack (encodedTextContent provided)
   | Just value    <- ebpValue  = value
   | otherwise                  = ""
 

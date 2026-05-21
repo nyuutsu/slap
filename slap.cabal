@@ -170,6 +170,7 @@ executable slap
     , filepath             >= 1.4
     , optparse-applicative  >= 0.16
     , slap:slap-internal
+    , text                 >= 2.0
 
 test-suite props
   type:             exitcode-stdio-1.0
@@ -241,6 +242,7 @@ test-suite integration
     , tasty         >= 1.4
     , tasty-hunit   >= 0.10
     , tasty-stats   >= 0.2
+    , text          >= 2.0
     , time          >= 1.12
     , mmap          >= 0.5
     , slap:slap-internal
