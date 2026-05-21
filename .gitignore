@@ -25,7 +25,6 @@ test-results/
 # External reference tools (moved in, not tracked)
 tools/
 roms/
-docs/
 
 # Large ROM files (test ROMs placed by user)
 *.z64
@@ -41,12 +40,5 @@ docs/
 *.img
 *.cue
 
-# User-provided test material staging area
-Suikoden*/
-zelda-*/
-dx-btusc/
-rosy_retrospection*/
-Final Fantasy*
-FFTA_*
-Banjo-Tooie*
-Tetris*
+# Local scratch directory for ad-hoc material; not used by the build
+scratch/

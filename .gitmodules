@@ -1,3 +1,6 @@
 [submodule "test/data"]
 	path = test/data
 	url = git@github.com:nyuutsu/slap-test-patches.git
+[submodule "docs"]
+	path = docs
+	url = git@github.com:nyuutsu/slap-format-documentation.git
