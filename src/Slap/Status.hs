@@ -881,8 +881,6 @@ data SlapAdvisory
   -- substitution event.
   | FieldEncodedSubstituted FormatLabel FieldName SubstitutionCount
 
-  | EncodingGap FormatLabel FormatLabel
-
   -- | The process's locale encoding name (as reported by
   -- 'GHC.IO.Encoding.getLocaleEncoding') did not resolve to a
   -- known encoder via the 'encoding' library, and 'Slap.Text''s
@@ -1771,12 +1769,6 @@ renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)
   ++ show count ++ plural count " codepoint was" " codepoints were"
   ++ " not representable in the target encoding; substituted"
 
-renderSlapAdvisory (EncodingGap fromLabel toLabel) =
-  formatLabelName fromLabel
-  ++ " text was stored with known encoding; "
-  ++ formatLabelName toLabel
-  ++ " has no encoding flag; writing bytes as-is"
-
 renderSlapAdvisory (LocaleEncoderUnresolved localeName) =
   "process locale " ++ show localeName
   ++ " not recognized by the encoding library;"
@@ -2238,7 +2230,6 @@ slapAdvisorySeverity advisory = case advisory of
   FieldTruncated{}                     -> SeverityNote
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
-  EncodingGap{}                        -> SeverityNote
   LocaleEncoderUnresolved{}            -> SeverityNote
   PlatformNotAvailable{}               -> SeverityNote
   NINJA2SMSGameGearAmbiguity           -> SeverityNote

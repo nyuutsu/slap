@@ -12,8 +12,10 @@ import Slap.Measure (FileSize(..), byteLength)
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..))
+import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Info
@@ -21,21 +23,23 @@ import qualified Data.ByteString as ByteString
 
 ninja2Meta :: NINJA2Patch -> [InfoLine]
 ninja2Meta patch = concat
-  [ optionalField "title"       (ninja2Title (ninja2Header patch))
-  , optionalField "author"      (ninja2Author (ninja2Header patch))
-  , optionalField "version"     (ninja2Version (ninja2Header patch))
-  , optionalField "date"        (ninja2Date (ninja2Header patch))
-  , optionalField "genre"       (ninja2Genre (ninja2Header patch))
-  , optionalField "language"    (ninja2Language (ninja2Header patch))
-  , optionalField "website"     (ninja2Website (ninja2Header patch))
-  , optionalField "description" (ninja2Description (ninja2Header patch))
+  [ optionalField "title"       (ninja2Title       header)
+  , optionalField "author"      (ninja2Author      header)
+  , optionalField "version"     (ninja2Version     header)
+  , optionalField "date"        (ninja2Date        header)
+  , optionalField "genre"       (ninja2Genre       header)
+  , optionalField "language"    (ninja2Language    header)
+  , optionalField "website"     (ninja2Website     header)
+  , optionalField "description" (ninja2Description header)
   , openNewFileFields
   , overflowField
   ]
   where
-    encoding = ninja2PatchEncoding patch
-    optionalField _ Nothing = []
-    optionalField label (Just value) = [InfoLine label (decodeNINJA2Field encoding value)]
+    header = ninja2Header patch
+
+    optionalField _     Nothing      = []
+    optionalField label (Just value) =
+      [InfoLine label (Text.unpack (encodedTextContent value))]
 
     openNewFileFields = case ninja2OpenNewFile patch of
       Nothing -> []

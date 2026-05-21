@@ -318,7 +318,6 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
-          , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (PPF1.applyPPF1 patch source)) }
@@ -376,7 +375,6 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
-          , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (PPF2.applyPPF2 patch source)) }
@@ -444,7 +442,6 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
-          , contentsPatchEncoding = Nothing
           })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (PPF3.applyPPF3 patch source)) }
@@ -856,30 +853,16 @@ parseSomePatchFromNINJA2 patchContents = do
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
     , patchExtractedMeta  =
-        let patchEncoding = NINJA2.ninja2PatchEncoding patch
-            decode        = NINJA2.decodeNINJA2Field patchEncoding
-            tag           = case patchEncoding of
-              NINJA2.PatchEncodingUTF8   -> EncodingUtf8
-              NINJA2.PatchEncodingSystem -> EncodingLocale
-            -- Stage-3b: 'requestedTitle' \/ 'Author' \/ 'Version' \/
-            -- 'Description' are typed 'EncodedText'; the encoding tag
-            -- comes from NINJA2's PATCH_ENC byte. The remaining
-            -- string-shaped fields (genre, language, date, website)
-            -- stay 'String' until stage 3c.
-            nonEmptyField fieldBytes = let decoded = decode fieldBytes
-                                       in if null decoded then Nothing else Just decoded
-            nonEmptyEncoded fieldBytes =
-              fmap (EncodedText tag . Text.pack) (nonEmptyField fieldBytes)
-            info = NINJA2.ninja2Header patch
+        let info = NINJA2.ninja2Header patch
         in noMetadataRequested
-            { requestedTitle       = NINJA2.ninja2Title       info >>= nonEmptyEncoded
-            , requestedAuthor      = NINJA2.ninja2Author      info >>= nonEmptyEncoded
-            , requestedVersion     = NINJA2.ninja2Version     info >>= nonEmptyEncoded
-            , requestedGenre       = NINJA2.ninja2Genre       info >>= nonEmptyField
-            , requestedLanguage    = NINJA2.ninja2Language    info >>= nonEmptyField
-            , requestedDate        = NINJA2.ninja2Date        info >>= nonEmptyField
-            , requestedWebsite     = NINJA2.ninja2Website     info >>= nonEmptyField
-            , requestedDescription = NINJA2.ninja2Description info >>= nonEmptyEncoded
+            { requestedTitle       = NINJA2.ninja2Title       info
+            , requestedAuthor      = NINJA2.ninja2Author      info
+            , requestedVersion     = NINJA2.ninja2Version     info
+            , requestedGenre       = NINJA2.ninja2Genre       info
+            , requestedLanguage    = NINJA2.ninja2Language    info
+            , requestedDate        = NINJA2.ninja2Date        info
+            , requestedWebsite     = NINJA2.ninja2Website     info
+            , requestedDescription = NINJA2.ninja2Description info
             , requestedRomType     = Just platformType
             }
     }

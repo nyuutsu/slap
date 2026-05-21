@@ -39,7 +39,7 @@ import Slap.UPS.Create (createUPS)
 import qualified Slap.DPS.Create as DPS
 import Slap.DPS.Types (DPSCreateMetadata, DPSStability)
 import qualified Slap.NINJA2.Create as NINJA2
-import Slap.NINJA2.Types (NINJA2Metadata)
+import Slap.NINJA2.Types (NINJA2CreateMetadata)
 import Slap.APSGBA.Create (createAPSGBA)
 import Slap.GDIFF.Create (createGDIFF)
 import qualified Slap.XDelta1.Create as XDelta1
@@ -79,12 +79,14 @@ createDPS
   -> Either SlapError CreateResult
 createDPS = DPS.createDPS
 
--- | Create a NINJA2 patch. 'NINJA2Metadata' is the large record
--- covering the fixed-header fields and the platform type.
+-- | Create a NINJA2 patch. 'NINJA2CreateMetadata' is the large record
+-- covering the eight fixed-header text fields (each typed as
+-- 'Slap.Text.EncodedText'), the @PATCH_ENC@ wire choice, and the
+-- platform type.
 createNINJA2
   :: InputFileContents
   -> OutputFileContents
-  -> NINJA2Metadata
+  -> NINJA2CreateMetadata
   -> Either SlapError CreateResult
 createNINJA2 = NINJA2.createNINJA2
 

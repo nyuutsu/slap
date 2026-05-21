@@ -80,7 +80,8 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      byteLength, splitHunks, splitPayload)
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
-import Slap.Convert (DirectCreate(..), CreateFormat(..),
+import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
+                     RequestedPatchMetadata(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                      RequestedDialects(..),
                      VerificationInclusion(..),
@@ -91,12 +92,14 @@ import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextEncoding
 import qualified Slap.Text as SlapText
 import Data.Bits (shiftL)
 import qualified Data.Bits as Bits
 import Data.ByteString.Builder (word8, byteString, toLazyByteString)
 import Data.List (isInfixOf)
 import Slap.Binary (getWord32BE)
+import qualified Data.Word as Word
 import Test.Tasty
 import Test.Tasty.HUnit (testCase, assertBool, assertEqual, assertFailure, Assertion)
 import Test.Tasty.QuickCheck
@@ -181,6 +184,20 @@ roundTripTests = testGroup "RoundTrip"
       , testCase "single-file sentinel is one zero byte" ninja2SingleFileSentinelIsZero
       , testCase "field-truncation-warning-reports-actual-stored-length"
           ninja2FieldTruncationWarningReportsActualStoredLength
+      , testCase "mode-1 UTF-8 non-ASCII title round-trips byte-faithfully"
+          ninja2Mode1Utf8NonAsciiTitleRoundTrips
+      , testCase "parse tags mode-1 fields as EncodingUtf8"
+          ninja2ParseTagsMode1FieldsAsUtf8
+      , testCase "parse tags mode-0 fields as EncodingLocale"
+          ninja2ParseTagsMode0FieldsAsLocale
+      , testCase "detection inherits EncodingUtf8 source tag as PATCH_ENC=1"
+          ninja2DetectionInheritsUtf8FromSourceTag
+      , testCase "detection inherits EncodingLocale source tag as PATCH_ENC=0"
+          ninja2DetectionInheritsLocaleFromSourceTag
+      , testCase "CLI --patch-encoding overrides source tag"
+          ninja2DetectionCliOverridesSourceTag
+      , testCase "detection without source or CLI defaults to PATCH_ENC=1"
+          ninja2DetectionDefaultsToUtf8
       ]
   , testGroup "APS-N64"
       [ testProperty "round-trip" prop_apsN64
@@ -837,7 +854,7 @@ ninja2SingleFileSentinelIsZero =
 -- about; the round-trip body is exercised exhaustively by 'prop_ninja2'.
 ninja2EncodingRoundTrips :: NINJA2.PatchEncoding -> Assertion
 ninja2EncodingRoundTrips encoding =
-  let metadata = emptyNINJA2Metadata { NINJA2.ninja2MetadataEncoding = encoding }
+  let metadata = emptyNINJA2Metadata { NINJA2.ninja2CreateMetadataEncoding = encoding }
   in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailure ("create: " ++ renderSlapError createError)
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
@@ -860,12 +877,13 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
   let asciiPrefixLength       = unLength NINJA2.ninja2DescriptionWidth - 3
       asciiPrefix             = replicate asciiPrefixLength 'a'
       fourByteCodepoint       = '\x1F3AE'   -- 🎮 (U+1F3AE), encodes to 4 UTF-8 bytes
-      description             = asciiPrefix ++ [fourByteCodepoint]
+      descriptionText         = Text.pack (asciiPrefix ++ [fourByteCodepoint])
+      descriptionEncoded      = SlapText.EncodedText SlapText.EncodingUtf8 descriptionText
       expectedOriginalLength  = Length (asciiPrefixLength + 4)
       expectedStoredLength    = Length asciiPrefixLength
       metadata                = emptyNINJA2Metadata
-        { NINJA2.ninja2MetadataDescription = Just description
-        , NINJA2.ninja2MetadataEncoding    = NINJA2.PatchEncodingUTF8
+        { NINJA2.ninja2CreateMetadataDescription = Just descriptionEncoded
+        , NINJA2.ninja2CreateMetadataEncoding    = NINJA2.PatchEncodingUTF8
         }
   in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailure ("create: " ++ renderSlapError createError)
@@ -887,9 +905,167 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
            Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
            Right (Parsed parsed _) -> case NINJA2.ninja2Description (NINJA2.ninja2Header parsed) of
              Nothing -> assertFailure "parsed description was Nothing; expected the truncated bytes"
-             Just storedBytes ->
-               assertEqual "parsed-back stored byte count matches the warning"
-                 (byteLength storedBytes) reportedTruncated
+             Just storedEncoded ->
+               let storedBytes = TextEncoding.encodeUtf8
+                                   (SlapText.encodedTextContent storedEncoded)
+               in assertEqual "parsed-back stored byte count matches the warning"
+                    (byteLength storedBytes) reportedTruncated
+
+-- | UTF-8 (mode 1) NINJA2 patches with non-ASCII text in the metadata
+-- round-trip byte-faithfully on a host of any locale: the wire bytes
+-- are well-defined Unicode, and slap's parse path decodes them back
+-- to the same 'Text' regardless of the running process locale. Pins
+-- the typed encode\/decode pipeline through 'encodeTextBounded' \/
+-- 'decodeTextLenient' end-to-end on a real codepoint payload, not
+-- just the ASCII-only fixtures that 'prop_ninja2' exercises.
+ninja2Mode1Utf8NonAsciiTitleRoundTrips :: Assertion
+ninja2Mode1Utf8NonAsciiTitleRoundTrips =
+  let titleText = Text.pack "\x65E5\x672C\x8A9E"   -- "Japanese language"
+      titleEncoded = SlapText.EncodedText SlapText.EncodingUtf8 titleText
+      metadata = emptyNINJA2Metadata
+        { NINJA2.ninja2CreateMetadataTitle    = Just titleEncoded
+        , NINJA2.ninja2CreateMetadataEncoding = NINJA2.PatchEncodingUTF8
+        }
+  in case createNINJA2 (InputFileContents ByteString.empty)
+                       (OutputFileContents ByteString.empty) metadata of
+       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+         Right (Parsed parsed _) ->
+           case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
+             Nothing -> assertFailure "parsed title was Nothing"
+             Just parsedTitle -> do
+               assertEqual "title tag is EncodingUtf8"
+                 SlapText.EncodingUtf8 (SlapText.encodedTextEncoding parsedTitle)
+               assertEqual "title text round-trips"
+                 titleText (SlapText.encodedTextContent parsedTitle)
+
+-- | A mode-1 (UTF-8) NINJA2 patch decoded by 'parseNINJA2' tags each
+-- non-empty metadata field's 'EncodedText' with 'EncodingUtf8',
+-- because the wire byte at offset 6 declares UTF-8. The tag is the
+-- typed signal downstream conversion sites read instead of consulting
+-- a side-channel.
+ninja2ParseTagsMode1FieldsAsUtf8 :: Assertion
+ninja2ParseTagsMode1FieldsAsUtf8 = do
+  parsed <- createAndParseNINJA2 NINJA2.PatchEncodingUTF8
+  case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
+    Nothing -> assertFailure "parsed title was Nothing"
+    Just titled -> assertEqual "mode-1 title tag is UTF-8"
+      SlapText.EncodingUtf8 (SlapText.encodedTextEncoding titled)
+
+-- | A mode-0 (system locale) NINJA2 patch decoded by 'parseNINJA2'
+-- tags each non-empty metadata field's 'EncodedText' with
+-- 'EncodingLocale'. Counterpart to 'ninja2ParseTagsMode1FieldsAsUtf8'
+-- for the system-locale side of the per-patch encoding switch.
+ninja2ParseTagsMode0FieldsAsLocale :: Assertion
+ninja2ParseTagsMode0FieldsAsLocale = do
+  parsed <- createAndParseNINJA2 NINJA2.PatchEncodingSystem
+  case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
+    Nothing -> assertFailure "parsed title was Nothing"
+    Just titled -> assertEqual "mode-0 title tag is Locale"
+      SlapText.EncodingLocale (SlapText.encodedTextEncoding titled)
+
+-- | Helper for the parse-tag tests: create a NINJA2 patch with an
+-- ASCII title under the given wire encoding, parse it back, and
+-- return the parsed patch. ASCII is representable in both UTF-8 and
+-- every byte-compatible system locale slap supports, so the create
+-- side never substitutes or truncates and the resulting wire bytes
+-- are stable across hosts.
+createAndParseNINJA2 :: NINJA2.PatchEncoding -> IO NINJA2.NINJA2Patch
+createAndParseNINJA2 encoding =
+  let titleEncoded = SlapText.EncodedText
+        (NINJA2.patchEncodingToTag encoding) (Text.pack "demo")
+      metadata = emptyNINJA2Metadata
+        { NINJA2.ninja2CreateMetadataTitle    = Just titleEncoded
+        , NINJA2.ninja2CreateMetadataEncoding = encoding
+        }
+  in case createNINJA2 (InputFileContents ByteString.empty)
+                       (OutputFileContents ByteString.empty) metadata of
+       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+                          >> error "unreachable"
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+                          >> error "unreachable"
+         Right (Parsed parsed _) -> pure parsed
+
+-- | Convert-path detection: when the merged metadata's first
+-- non-empty text field carries an 'EncodingUtf8' tag and no
+-- @--patch-encoding@ flag is set, the NINJA2 create arm writes
+-- @PATCH_ENC=1@ to byte 6 of the output. This is the typed-tag
+-- replacement for the pre-stage-3c heuristic that re-encoded the
+-- description bytes through 'isValidUtf8' to decide.
+ninja2DetectionInheritsUtf8FromSourceTag :: Assertion
+ninja2DetectionInheritsUtf8FromSourceTag =
+  assertCreatedNINJA2PatchEnc
+    "expected PATCH_ENC=1 (UTF-8 inherited from tag)"
+    (metadataWithTitleTag SlapText.EncodingUtf8 Nothing)
+    1
+
+-- | Convert-path detection: an 'EncodingLocale'-tagged source field
+-- with no CLI override produces a @PATCH_ENC=0@ output. Together
+-- with 'ninja2DetectionInheritsUtf8FromSourceTag' this pins the
+-- tag-as-source-of-truth half of the detection rewrite.
+ninja2DetectionInheritsLocaleFromSourceTag :: Assertion
+ninja2DetectionInheritsLocaleFromSourceTag =
+  assertCreatedNINJA2PatchEnc
+    "expected PATCH_ENC=0 (system inherited from tag)"
+    (metadataWithTitleTag SlapText.EncodingLocale Nothing)
+    0
+
+-- | Convert-path detection: a CLI @--patch-encoding system@ wins
+-- against an 'EncodingUtf8'-tagged source field, writing
+-- @PATCH_ENC=0@ regardless of inheritance. This pins the precedence
+-- correction that stage 3c lands: the CLI is the override, not the
+-- source patch.
+ninja2DetectionCliOverridesSourceTag :: Assertion
+ninja2DetectionCliOverridesSourceTag =
+  assertCreatedNINJA2PatchEnc
+    "expected PATCH_ENC=0 (CLI override wins over UTF-8 source tag)"
+    (metadataWithTitleTag SlapText.EncodingUtf8 (Just NINJA2.PatchEncodingSystem))
+    0
+
+-- | Convert-path detection: with no source text fields and no CLI
+-- flag, the encoder defaults to @PATCH_ENC=1@ (UTF-8 is the portable
+-- choice; locale-targeting requires either a source field tag or an
+-- explicit CLI declaration).
+ninja2DetectionDefaultsToUtf8 :: Assertion
+ninja2DetectionDefaultsToUtf8 =
+  assertCreatedNINJA2PatchEnc
+    "expected PATCH_ENC=1 (UTF-8 default with no source and no CLI)"
+    noMetadataRequested
+    1
+
+-- | Build a 'RequestedPatchMetadata' carrying a title with the given
+-- 'EncodingName' tag plus an optional CLI @--patch-encoding@ choice.
+-- The title text is ASCII so the create side never substitutes
+-- under any encoding the test exercises.
+metadataWithTitleTag
+  :: SlapText.EncodingName
+  -> Maybe NINJA2.PatchEncoding
+  -> RequestedPatchMetadata
+metadataWithTitleTag tag cliEncoding = noMetadataRequested
+  { requestedTitle         = Just (SlapText.EncodedText tag (Text.pack "demo"))
+  , requestedPatchEncoding = cliEncoding
+  }
+
+-- | Drive the differential @CreateNINJA2@ arm of 'createPatch' with
+-- the given metadata, parse the output's byte at offset 6, and
+-- assert it matches the expected @PATCH_ENC@ wire value. Empty
+-- source\/target keep the test focused on the header byte.
+assertCreatedNINJA2PatchEnc
+  :: String
+  -> RequestedPatchMetadata
+  -> Word.Word8
+  -> Assertion
+assertCreatedNINJA2PatchEnc messagePrefix metadata expectedByte =
+  case createPatch (CreateDifferential CreateNINJA2) Nothing
+                   (InputFileContents ByteString.empty)
+                   (OutputFileContents ByteString.empty)
+                   metadata Nothing
+                   noConstraintsRequested noDialectsRequested of
+    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Right (CreateResult (PatchFileContents bytes) _) ->
+      assertEqual messagePrefix expectedByte (ByteString.index bytes 6)
 
 ----------------------------------------------------------------------------
 -- PPF1/2/3 description text-encoding round-trip and truncation

@@ -18,13 +18,13 @@ module Slap.NINJA2.Create
 import Slap.NINJA2.Types
 import Slap.Binary (diffHunks, md5)
 import Slap.Checksum (MD5Hash(..))
-import Slap.Measure (Offset(..), Length(..), Hunk(..),
-                     OriginalLength(..), TruncatedLength(..))
-import Slap.Status (SlapError, SlapAdvisory(..), CreateResult(..))
+import Slap.Measure (Offset(..), Length(..), Hunk(..))
+import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Platform (platformToNINJA2)
-import Slap.TextEncoding (BoundedResult(..), TruncationInfo(..))
+import Slap.Text (EncodedText, encodedTextContent,
+                  encodeTextBounded, encodeLossAdvisories)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
@@ -35,59 +35,62 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 
 
--- | Encode one fixed-header metadata field. A 'Nothing' value
--- yields a zero-padded slot of @fieldWidth@ bytes and no warning;
--- a 'Just' value runs through 'encodeBoundedNINJA2' under the
--- patch's declared 'PatchEncoding', and any reported
--- 'TruncationInfo' is lifted into a single 'FieldTruncated' warning
--- carrying the field's pre-truncation byte count and the
--- actually-stored byte count. The actually-stored value (not the
--- field width) is what 'parseFixedHeader' reads back from the same
--- patch; reporting it via 'TruncatedLength' matches DPS, APSN64,
--- and PPF3.
-encodeBoundedField :: PatchEncoding -> FieldName -> Length -> Maybe String
+-- | Encode one fixed-header metadata field under the target wire
+-- encoding. A 'Nothing' value yields a zero-padded slot of
+-- @fieldWidth@ bytes and no advisories; a 'Just' value runs through
+-- 'encodeTextBounded' tagged with the target encoding, and any
+-- substitution or truncation events surface as 'SlapAdvisory'
+-- values via 'encodeLossAdvisories'. The actually-stored value (not
+-- the requested codepoint count) is what 'parseFixedHeader' reads
+-- back from the same patch; the @0x00@ padding matches NINJA2's
+-- reference encoder.
+encodeBoundedField :: PatchEncoding -> FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
 encodeBoundedField encoding fieldName fieldWidth = \case
   Nothing -> (ByteString.replicate (unLength fieldWidth) 0, [])
   Just inputText ->
-    let bounded  = encodeBoundedNINJA2 encoding fieldWidth inputText
-        warnings = case boundedTruncation bounded of
-          Nothing -> []
-          Just truncationInfo ->
-            [FieldTruncated LabelNINJA2 fieldName
-              (OriginalLength (truncatedFrom truncationInfo))
-              (TruncatedLength (truncatedTo truncationInfo))]
-    in (boundedField bounded, warnings)
+    let (encodedBytes, notices) =
+          encodeTextBounded (patchEncodingToTag encoding)
+                            (unLength fieldWidth)
+                            (encodedTextContent inputText)
+        padded     = encodedBytes
+                  <> ByteString.replicate
+                       (max 0 (unLength fieldWidth - ByteString.length encodedBytes))
+                       0x00
+        advisories = encodeLossAdvisories LabelNINJA2 fieldName notices
+    in (padded, advisories)
 
 
 -- | Create a NINJA2 patch from original and modified ByteStrings.
 -- XOR-based records with VLV encoding; handles size changes via overflow.
--- Field-truncation warnings (from fields too long to fit the fixed
--- header) and platform warnings (from 'PlatformType' values NINJA2
--- can't express) are both folded into 'CreateResult.resultAdvisories'
--- so the caller doesn't have to remember to collect them separately.
-createNINJA2 :: InputFileContents -> OutputFileContents -> NINJA2Metadata
+-- Field-truncation and field-substitution advisories (from fields
+-- that overflow the fixed header, or that contain codepoints the
+-- target encoding can't represent) and platform advisories (from
+-- 'PlatformType' values NINJA2 can't express) are all folded into
+-- 'CreateResult.resultAdvisories' so the caller doesn't have to
+-- remember to collect them separately.
+createNINJA2 :: InputFileContents -> OutputFileContents -> NINJA2CreateMetadata
              -> Either SlapError CreateResult
 createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata =
     Right (CreateResult (PatchFileContents patchBytes)
-                        (fieldWarnings ++ platformAdvisories))
+                        (fieldAdvisories ++ platformAdvisories))
   where
-    encoding              = ninja2MetadataEncoding metadata
+    encoding              = ninja2CreateMetadataEncoding metadata
     encodeMetadataField   = encodeBoundedField encoding
-    (authorBytes,      authorWarnings)      = encodeMetadataField FieldAuthor      ninja2AuthorWidth      (ninja2MetadataAuthor      metadata)
-    (versionBytes,     versionWarnings)     = encodeMetadataField FieldVersion     ninja2VersionWidth     (ninja2MetadataVersion     metadata)
-    (titleBytes,       titleWarnings)       = encodeMetadataField FieldTitle       ninja2TitleWidth       (ninja2MetadataTitle       metadata)
-    (genreBytes,       genreWarnings)       = encodeMetadataField FieldGenre       ninja2GenreWidth       (ninja2MetadataGenre       metadata)
-    (languageBytes,    languageWarnings)    = encodeMetadataField FieldLanguage    ninja2LanguageWidth    (ninja2MetadataLanguage    metadata)
-    (dateBytes,        dateWarnings)        = encodeMetadataField FieldDate        ninja2DateWidth        (ninja2MetadataDate        metadata)
-    (websiteBytes,     websiteWarnings)     = encodeMetadataField FieldWebsite     ninja2WebsiteWidth     (ninja2MetadataWebsite     metadata)
-    (descriptionBytes, descriptionAdvisories) = encodeMetadataField FieldDescription ninja2DescriptionWidth (ninja2MetadataDescription metadata)
+    (authorBytes,      authorAdvisories)      = encodeMetadataField FieldAuthor      ninja2AuthorWidth      (ninja2CreateMetadataAuthor      metadata)
+    (versionBytes,     versionAdvisories)     = encodeMetadataField FieldVersion     ninja2VersionWidth     (ninja2CreateMetadataVersion     metadata)
+    (titleBytes,       titleAdvisories)       = encodeMetadataField FieldTitle       ninja2TitleWidth       (ninja2CreateMetadataTitle       metadata)
+    (genreBytes,       genreAdvisories)       = encodeMetadataField FieldGenre       ninja2GenreWidth       (ninja2CreateMetadataGenre       metadata)
+    (languageBytes,    languageAdvisories)    = encodeMetadataField FieldLanguage    ninja2LanguageWidth    (ninja2CreateMetadataLanguage    metadata)
+    (dateBytes,        dateAdvisories)        = encodeMetadataField FieldDate        ninja2DateWidth        (ninja2CreateMetadataDate        metadata)
+    (websiteBytes,     websiteAdvisories)     = encodeMetadataField FieldWebsite     ninja2WebsiteWidth     (ninja2CreateMetadataWebsite     metadata)
+    (descriptionBytes, descriptionAdvisories) = encodeMetadataField FieldDescription ninja2DescriptionWidth (ninja2CreateMetadataDescription metadata)
     fixedHeaderBytes  = authorBytes <> versionBytes <> titleBytes <> genreBytes
                      <> languageBytes <> dateBytes <> websiteBytes <> descriptionBytes
-    fieldWarnings     = authorWarnings ++ versionWarnings ++ titleWarnings ++ genreWarnings
-                     ++ languageWarnings ++ dateWarnings ++ websiteWarnings ++ descriptionAdvisories
+    fieldAdvisories   = authorAdvisories ++ versionAdvisories ++ titleAdvisories ++ genreAdvisories
+                     ++ languageAdvisories ++ dateAdvisories ++ websiteAdvisories ++ descriptionAdvisories
     (romType, platformAdvisories) =
-      maybe (NINJA2Raw, []) platformToNINJA2 (ninja2MetadataPlatform metadata)
+      maybe (NINJA2Raw, []) platformToNINJA2 (ninja2CreateMetadataPlatform metadata)
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)
       <> word8 (fromPatchEncoding encoding)    -- text encoding (1 byte)

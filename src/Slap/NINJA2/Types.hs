@@ -5,7 +5,7 @@ module Slap.NINJA2.Types
   ( NINJA2Patch(..)
   , NINJA2Record(..)
   , NINJA2Info(..)
-  , NINJA2Metadata(..)
+  , NINJA2CreateMetadata(..)
   , NINJA2OpenNewFile(..)
   , XorRecord(..)
   , OverflowMode(..)
@@ -15,12 +15,12 @@ module Slap.NINJA2.Types
   , toPatchEncoding
   , fromPatchEncoding
   , patchEncodingName
+  , patchEncodingToTag
+  , tagToPatchEncoding
   , NINJA2RomType(..)
   , toNINJA2RomType
   , fromNINJA2RomType
   , ninja2RomTypeName
-  , encodeBoundedNINJA2
-  , decodeNINJA2Field
   , parsePackedInteger
   , parsePackedByteString
   , encodeVariableLengthValue
@@ -60,9 +60,7 @@ import Slap.ByteParser (ByteParser, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Display.Primitives (padHex)
 import Slap.PlatformType (PlatformType)
-
-import Slap.TextEncoding (BoundedResult, encodeBoundedUtf8, encodeBoundedLocale,
-                          decodeUtf8Field, decodeLocaleField)
+import Slap.Text (EncodedText, EncodingName(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -117,6 +115,26 @@ fromPatchEncoding PatchEncodingSystem = 0
 patchEncodingName :: PatchEncoding -> String
 patchEncodingName PatchEncodingUTF8   = "UTF-8"
 patchEncodingName PatchEncodingSystem = "system"
+
+-- | Translate NINJA2's per-patch 'PatchEncoding' to 'Slap.Text''s
+-- per-value 'EncodingName' tag. The two enums encode the same choice
+-- under different vocabularies: 'PatchEncoding' is the wire-byte's
+-- name (\"the patch declares UTF-8\" vs \"the patch declares system
+-- locale\"); 'EncodingName' is the typed-value's tag (\"this
+-- 'EncodedText' is UTF-8\" vs \"this 'EncodedText' follows the
+-- process locale\"). The parse path uses this to stamp the wire's
+-- declaration onto each decoded field; the create path uses
+-- 'tagToPatchEncoding' to round-trip the choice back to a wire byte.
+patchEncodingToTag :: PatchEncoding -> EncodingName
+patchEncodingToTag PatchEncodingUTF8   = EncodingUtf8
+patchEncodingToTag PatchEncodingSystem = EncodingLocale
+
+-- | Inverse of 'patchEncodingToTag'. Used by the create path to map
+-- the chosen target encoding back to a wire 'PatchEncoding' for the
+-- @PATCH_ENC@ byte.
+tagToPatchEncoding :: EncodingName -> PatchEncoding
+tagToPatchEncoding EncodingUtf8   = PatchEncodingUTF8
+tagToPatchEncoding EncodingLocale = PatchEncodingSystem
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
 -- documented; NINJA2UnknownRomType preserves any future/unknown value.
@@ -174,24 +192,6 @@ ninja2RomTypeName NINJA2PCEngine               = "PC Engine"
 ninja2RomTypeName NINJA2Lynx                   = "Lynx"
 ninja2RomTypeName (NINJA2UnknownRomType value) = "unknown (" ++ show value ++ ")"
 
--- | Encode a 'String' into a fixed-width NINJA2 metadata field
--- under the patch's declared encoding, choosing the codepoint-boundary
--- truncator (UTF-8) or the byte-boundary one (system locale).
--- The 'BoundedResult' carries the padded field bytes (always exactly
--- @fieldWidth@ bytes) and an optional 'TruncationInfo' that the
--- create path lifts into a 'FieldTruncated' warning when truncation
--- occurred. Width is held as 'Length' so callers stay in
--- 'Length'-space; the unwrap to 'Int' happens once at this seam.
-encodeBoundedNINJA2 :: PatchEncoding -> Length -> String -> BoundedResult
-encodeBoundedNINJA2 PatchEncodingUTF8   = encodeBoundedUtf8   . unLength
-encodeBoundedNINJA2 PatchEncodingSystem = encodeBoundedLocale . unLength
-
--- | Decode a raw field ByteString to String based on the patch encoding.
--- UTF-8 decodes leniently (invalid bytes become U+FFFD).
-decodeNINJA2Field :: PatchEncoding -> ByteString -> String
-decodeNINJA2Field PatchEncodingUTF8   = decodeUtf8Field
-decodeNINJA2Field PatchEncodingSystem = decodeLocaleField
-
 data NINJA2Patch = NINJA2Patch
   { ninja2Header         :: NINJA2Info
   , ninja2OpenNewFile    :: Maybe NINJA2OpenNewFile
@@ -217,41 +217,48 @@ data NINJA2OpenNewFile = NINJA2OpenNewFile
   , openNewFileRomType    :: !NINJA2RomType
   } deriving (Show)
 
--- | The parsed fixed-header fields from a NINJA2 patch, as raw
--- pre-decoded bytes in whatever encoding the wire declares.
--- Create-path callers should use 'NINJA2Metadata' instead; this type
--- is for the parse side, which reads bytes and surfaces them for later
--- decoding via 'decodeNINJA2Field'.
+-- | The parsed fixed-header fields from a NINJA2 patch, decoded under
+-- the patch's declared 'PatchEncoding'. Each field carries its
+-- encoding tag on the value, so downstream conversion and display
+-- sites read the encoding directly off the value rather than
+-- consulting a side-channel. Because NINJA2 declares a single
+-- @PATCH_ENC@ byte for the whole patch, every field of any given
+-- parsed 'NINJA2Info' shares the same tag — but the type stays
+-- honest about that being a per-field property, which keeps the
+-- seam clean when the fields flow into formats whose encoding model
+-- is per-field rather than per-patch.
 data NINJA2Info = NINJA2Info
-  { ninja2Author      :: Maybe ByteString
-  , ninja2Version     :: Maybe ByteString
-  , ninja2Title       :: Maybe ByteString
-  , ninja2Genre       :: Maybe ByteString
-  , ninja2Language    :: Maybe ByteString
-  , ninja2Date        :: Maybe ByteString
-  , ninja2Website     :: Maybe ByteString
-  , ninja2Description :: Maybe ByteString
+  { ninja2Author      :: Maybe EncodedText
+  , ninja2Version     :: Maybe EncodedText
+  , ninja2Title       :: Maybe EncodedText
+  , ninja2Genre       :: Maybe EncodedText
+  , ninja2Language    :: Maybe EncodedText
+  , ninja2Date        :: Maybe EncodedText
+  , ninja2Website     :: Maybe EncodedText
+  , ninja2Description :: Maybe EncodedText
   } deriving (Show)
 
--- | User-intent input for 'Slap.NINJA2.Create.createNINJA2'.
--- Strings are held as 'String' (not pre-encoded bytes) so the chosen
--- 'PatchEncoding' travels with the strings that will be encoded under
--- it, and encoding happens exactly once — inside 'createNINJA2'.
--- Platform is held as 'Maybe' 'PlatformType' (not 'NINJA2RomType')
--- so the lossy shared-to-NINJA2 translation, and the warnings it
--- produces for platforms NINJA2 cannot express, also live inside
--- 'createNINJA2'.
-data NINJA2Metadata = NINJA2Metadata
-  { ninja2MetadataAuthor      :: Maybe String
-  , ninja2MetadataVersion     :: Maybe String
-  , ninja2MetadataTitle       :: Maybe String
-  , ninja2MetadataGenre       :: Maybe String
-  , ninja2MetadataLanguage    :: Maybe String
-  , ninja2MetadataDate        :: Maybe String
-  , ninja2MetadataWebsite     :: Maybe String
-  , ninja2MetadataDescription :: Maybe String
-  , ninja2MetadataEncoding    :: PatchEncoding
-  , ninja2MetadataPlatform    :: Maybe PlatformType
+-- | User-intent input for 'Slap.NINJA2.Create.createNINJA2'. Each
+-- text field is 'EncodedText', so the value's encoding decision
+-- travels with the text into the encoder; the per-patch
+-- 'ninja2CreateMetadataEncoding' picks the target wire encoding (the
+-- byte slap writes for @PATCH_ENC@), and 'createNINJA2' transcodes
+-- each field's content under that target before writing it to the
+-- fixed-width header slot. Platform is held as 'Maybe' 'PlatformType'
+-- (not 'NINJA2RomType') so the lossy shared-to-NINJA2 translation,
+-- and the warnings it produces for platforms NINJA2 cannot express,
+-- both live inside 'createNINJA2'.
+data NINJA2CreateMetadata = NINJA2CreateMetadata
+  { ninja2CreateMetadataAuthor      :: Maybe EncodedText
+  , ninja2CreateMetadataVersion     :: Maybe EncodedText
+  , ninja2CreateMetadataTitle       :: Maybe EncodedText
+  , ninja2CreateMetadataGenre       :: Maybe EncodedText
+  , ninja2CreateMetadataLanguage    :: Maybe EncodedText
+  , ninja2CreateMetadataDate        :: Maybe EncodedText
+  , ninja2CreateMetadataWebsite     :: Maybe EncodedText
+  , ninja2CreateMetadataDescription :: Maybe EncodedText
+  , ninja2CreateMetadataEncoding    :: PatchEncoding
+  , ninja2CreateMetadataPlatform    :: Maybe PlatformType
   } deriving (Show)
 
 -- | A NINJA2 binary record: an offset followed by the XOR payload
@@ -315,12 +322,12 @@ ninja2DescriptionOffset = Offset 0x3CE
 
 -- | Per-field widths in the NINJA2 fixed-header region per
 -- ninja2-filespec20.txt §2. Held as 'Length' because every use site
--- treats them as region sizes: parsers slice 'fieldWidth' bytes via
--- 'extractField'; the create path passes them to 'encodeBoundedNINJA2'
--- as the truncation budget. Sum of the eight widths equals
--- @headerSize - 7@ (84+11+256+48+48+8+512+1074 = 2041 = 0x800 - 7);
--- this is the byte length of the fixed-header region after the
--- 6-byte magic and 1-byte PATCH_ENC prefix.
+-- treats them as region sizes: parsers slice 'fieldWidth' bytes off
+-- the header buffer; the create path passes them to
+-- 'Slap.Text.encodeTextBounded' as the truncation budget. Sum of the
+-- eight widths equals @headerSize - 7@ (84+11+256+48+48+8+512+1074 =
+-- 2041 = 0x800 - 7); this is the byte length of the fixed-header
+-- region after the 6-byte magic and 1-byte PATCH_ENC prefix.
 ninja2AuthorWidth, ninja2VersionWidth, ninja2TitleWidth, ninja2GenreWidth :: Length
 ninja2LanguageWidth, ninja2DateWidth, ninja2WebsiteWidth, ninja2DescriptionWidth :: Length
 ninja2AuthorWidth      = Length 84

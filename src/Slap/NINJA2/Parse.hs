@@ -10,7 +10,8 @@ module Slap.NINJA2.Parse
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Status (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, atEnd)
@@ -18,6 +19,7 @@ import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import Slap.Display.Primitives (padHex)
+import Slap.Text (EncodedText, decodeTextLenient, decodeLossAdvisories)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -30,26 +32,50 @@ import qualified Data.ByteString as ByteString
 
 -- | Parse the fixed header region. Field offsets/widths per
 -- ninja2-filespec20.txt §2; the eight named constants in
--- 'Slap.NINJA2.Types' are the single source of truth.
-parseFixedHeader :: ByteString -> NINJA2Info
-parseFixedHeader input = NINJA2Info
-  { ninja2Author      = extractField ninja2AuthorOffset      ninja2AuthorWidth
-  , ninja2Version     = extractField ninja2VersionOffset     ninja2VersionWidth
-  , ninja2Title       = extractField ninja2TitleOffset       ninja2TitleWidth
-  , ninja2Genre       = extractField ninja2GenreOffset       ninja2GenreWidth
-  , ninja2Language    = extractField ninja2LanguageOffset    ninja2LanguageWidth
-  , ninja2Date        = extractField ninja2DateOffset        ninja2DateWidth
-  , ninja2Website     = extractField ninja2WebsiteOffset     ninja2WebsiteWidth
-  , ninja2Description = extractField ninja2DescriptionOffset ninja2DescriptionWidth
-  }
+-- 'Slap.NINJA2.Types' are the single source of truth. The patch's
+-- declared 'PatchEncoding' selects each field's decoder; per-field
+-- substitution events surface as 'Slap.Status.FieldDecodedSubstituted'
+-- advisories tagged with the field name. An empty (all-zero-padded)
+-- slot decodes to 'Nothing' and never emits an advisory.
+parseFixedHeader :: PatchEncoding -> ByteString -> (NINJA2Info, [SlapAdvisory])
+parseFixedHeader patchEncoding input =
+  let (authorField,      authorAdvisories)      = extractField FieldAuthor      ninja2AuthorOffset      ninja2AuthorWidth
+      (versionField,     versionAdvisories)     = extractField FieldVersion     ninja2VersionOffset     ninja2VersionWidth
+      (titleField,       titleAdvisories)       = extractField FieldTitle       ninja2TitleOffset       ninja2TitleWidth
+      (genreField,       genreAdvisories)       = extractField FieldGenre       ninja2GenreOffset       ninja2GenreWidth
+      (languageField,    languageAdvisories)    = extractField FieldLanguage    ninja2LanguageOffset    ninja2LanguageWidth
+      (dateField,        dateAdvisories)        = extractField FieldDate        ninja2DateOffset        ninja2DateWidth
+      (websiteField,     websiteAdvisories)     = extractField FieldWebsite     ninja2WebsiteOffset     ninja2WebsiteWidth
+      (descriptionField, descriptionAdvisories) = extractField FieldDescription ninja2DescriptionOffset ninja2DescriptionWidth
+      info = NINJA2Info
+        { ninja2Author      = authorField
+        , ninja2Version     = versionField
+        , ninja2Title       = titleField
+        , ninja2Genre       = genreField
+        , ninja2Language    = languageField
+        , ninja2Date        = dateField
+        , ninja2Website     = websiteField
+        , ninja2Description = descriptionField
+        }
+      advisories = authorAdvisories ++ versionAdvisories ++ titleAdvisories
+                ++ genreAdvisories ++ languageAdvisories ++ dateAdvisories
+                ++ websiteAdvisories ++ descriptionAdvisories
+  in (info, advisories)
   where
-    extractField :: Offset -> Length -> Maybe ByteString
-    extractField fieldOffset fieldWidth =
+    tag = patchEncodingToTag patchEncoding
+
+    extractField :: FieldName -> Offset -> Length
+                 -> (Maybe EncodedText, [SlapAdvisory])
+    extractField fieldName fieldOffset fieldWidth =
       let dropCount = unOffset fieldOffset
           takeCount = unLength fieldWidth
-          field     = ByteString.take takeCount (ByteString.drop dropCount input)
-          trimmed   = ByteString.takeWhile (/= 0) field
-      in if ByteString.null trimmed then Nothing else Just trimmed
+          fieldBytes = ByteString.take takeCount (ByteString.drop dropCount input)
+          trimmedBytes = ByteString.takeWhile (/= 0) fieldBytes
+      in if ByteString.null trimmedBytes
+           then (Nothing, [])
+           else
+             let (decoded, notices) = decodeTextLenient tag trimmedBytes
+             in (Just decoded, decodeLossAdvisories LabelNINJA2 fieldName notices)
 
 ----------------------------------------------------------------------------
 -- Command stream (starts at offset 0x800)
@@ -70,17 +96,18 @@ parseNINJA2 (PatchFileContents input)
       Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
       Right encoding -> case runByteParser (parseNINJA2Body encoding) input of
         Left parserError -> Left (ParseError LabelNINJA2 parserError)
-        Right patch -> Right (Parsed patch [])
+        Right (patch, headerAdvisories) ->
+          Right (Parsed patch headerAdvisories)
   where
-    parseNINJA2Body :: PatchEncoding -> ByteParser NINJA2Patch
+    parseNINJA2Body :: PatchEncoding -> ByteParser (NINJA2Patch, [SlapAdvisory])
     parseNINJA2Body encoding = do
       headerBytes <- getBytes headerSize
-      let meta = parseFixedHeader headerBytes
-      patch <- parseCommands (emptyPatch meta encoding)
-      pure patch { ninja2Records = reverse (ninja2Records patch) }
+      let (info, headerAdvisories) = parseFixedHeader encoding headerBytes
+      patch <- parseCommands (emptyPatch info encoding)
+      pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
 
-    emptyPatch meta encoding = NINJA2Patch
-      { ninja2Header = meta, ninja2Records = [], ninja2Overflow = Nothing
+    emptyPatch info encoding = NINJA2Patch
+      { ninja2Header = info, ninja2Records = [], ninja2Overflow = Nothing
       , ninja2OverflowType = Nothing, ninja2OpenNewFile = Nothing
       , ninja2PatchEncoding = encoding
       }

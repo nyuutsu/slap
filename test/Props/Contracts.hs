@@ -81,7 +81,6 @@ fullContents = PatchContents
   , contentsPCHTXTBlocks = Nothing
   , contentsNINJA1Compressed = Nothing
   , contentsMetadata = Nothing
-  , contentsPatchEncoding = Nothing
   }
 
 -- | canConvert succeeds for every direct format when all fields it

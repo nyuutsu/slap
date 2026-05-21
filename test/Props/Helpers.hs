@@ -153,18 +153,18 @@ narrowOne limits offset payload =
 -- NINJA2 helpers
 ----------------------------------------------------------------------------
 
-emptyNINJA2Metadata :: NINJA2.NINJA2Metadata
-emptyNINJA2Metadata = NINJA2.NINJA2Metadata
-  { NINJA2.ninja2MetadataAuthor      = Nothing
-  , NINJA2.ninja2MetadataVersion     = Nothing
-  , NINJA2.ninja2MetadataTitle       = Nothing
-  , NINJA2.ninja2MetadataGenre       = Nothing
-  , NINJA2.ninja2MetadataLanguage    = Nothing
-  , NINJA2.ninja2MetadataDate        = Nothing
-  , NINJA2.ninja2MetadataWebsite     = Nothing
-  , NINJA2.ninja2MetadataDescription = Nothing
-  , NINJA2.ninja2MetadataEncoding    = NINJA2.PatchEncodingUTF8
-  , NINJA2.ninja2MetadataPlatform    = Nothing
+emptyNINJA2Metadata :: NINJA2.NINJA2CreateMetadata
+emptyNINJA2Metadata = NINJA2.NINJA2CreateMetadata
+  { NINJA2.ninja2CreateMetadataAuthor      = Nothing
+  , NINJA2.ninja2CreateMetadataVersion     = Nothing
+  , NINJA2.ninja2CreateMetadataTitle       = Nothing
+  , NINJA2.ninja2CreateMetadataGenre       = Nothing
+  , NINJA2.ninja2CreateMetadataLanguage    = Nothing
+  , NINJA2.ninja2CreateMetadataDate        = Nothing
+  , NINJA2.ninja2CreateMetadataWebsite     = Nothing
+  , NINJA2.ninja2CreateMetadataDescription = Nothing
+  , NINJA2.ninja2CreateMetadataEncoding    = NINJA2.PatchEncodingUTF8
+  , NINJA2.ninja2CreateMetadataPlatform    = Nothing
   }
 
 ----------------------------------------------------------------------------

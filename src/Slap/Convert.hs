@@ -102,9 +102,8 @@ import Slap.MetadataInclusion (UndoInclusion(..), VerificationInclusion(..))
 import Slap.PatchField (PatchField(..), affectsApplyOutput)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
-import Slap.TextEncoding (isValidUtf8)
 import Slap.Text (EncodedText(..), EncodingName(..),
-                  encodedTextContent, encodeTextLenient)
+                  encodedTextContent)
 
 import Control.Applicative ((<|>))
 import Data.Bifunctor (first)
@@ -163,10 +162,6 @@ data PatchContents = PatchContents
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
-  , contentsPatchEncoding :: Maybe PatchEncoding
-    -- ^ Text encoding of description/metadata fields, when the source
-    -- format carries an encoding flag (e.g. NINJA2 PATCH_ENC).  Nothing
-    -- for formats with opaque byte fields (DPS, APSN64).
   }
 
 -- | Direct creation target.  Some format families have multiple creation
@@ -231,10 +226,11 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ Typed across the convert seam end-to-end: the CLI parser
     -- wraps incoming 'String' as @'EncodedText' 'EncodingLocale'@,
     -- and 'parseSomePatchFromDPS' \/ similar extractors hand off the
-    -- already-typed field directly from the parsed patch. NINJA2's
-    -- string-shaped metadata-record consumer ('NINJA2Metadata')
-    -- unwraps back to 'String' at the createPatch boundary until
-    -- stage 3c lands the same migration there.
+    -- already-typed field directly from the parsed patch. The
+    -- create-side encoders (DPS, NINJA2) consume the 'EncodedText'
+    -- directly via 'Slap.Text.encodeTextBounded', so no
+    -- 'String'\/'ByteString' detour is needed between the seam and
+    -- the wire.
   , requestedAuthor               :: Maybe EncodedText
   , requestedDescription          :: Maybe EncodedText
   , requestedVersion              :: Maybe EncodedText
@@ -251,11 +247,21 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNINJA1, platformToNINJA2) handles lossy mappings.
   , requestedImageType            :: Maybe PPF3ImageType
-  , requestedGenre                :: Maybe String
-  , requestedLanguage             :: Maybe String
-  , requestedDate                 :: Maybe String
-  , requestedWebsite              :: Maybe String
+  , requestedGenre                :: Maybe EncodedText
+    -- ^ NINJA2-only metadata text. Typed across the convert seam so
+    -- the source-patch's encoding tag rides through into the
+    -- NINJA2 create path, where 'Slap.Text.encodeTextBounded'
+    -- transcodes it under whichever 'PatchEncoding' the target
+    -- declares for the new patch.
+  , requestedLanguage             :: Maybe EncodedText
+  , requestedDate                 :: Maybe EncodedText
+  , requestedWebsite              :: Maybe EncodedText
   , requestedPatchEncoding        :: Maybe PatchEncoding
+    -- ^ NINJA2 wire encoding the user wants the output patch to
+    -- declare. CLI-provided value overrides whatever the source
+    -- patch's metadata fields tagged themselves as; absent means
+    -- \"inherit from the source if its tags agree, otherwise UTF-8\"
+    -- (see the @CreateNINJA2@ arm of 'createPatch').
   , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
     -- ^ Contents of the user's @--metadata FILE@ flag.  Today only BPS
     -- consumes this; the name keeps the concept ("a raw blob to embed")
@@ -361,7 +367,6 @@ emptyContents records = PatchContents
   , contentsPCHTXTBlocks = Nothing
   , contentsNINJA1Compressed = Nothing
   , contentsMetadata = Nothing
-  , contentsPatchEncoding = Nothing
   }
 
 provides :: PatchContents -> Set.Set PatchField
@@ -741,18 +746,7 @@ conversionNotes contents target contract meta =
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
       defaultAdvisories = defaultAssumptionAdvisories target meta (contentsRomType contents) (contentsImageType contents)
       hashAdvisories = ninja1HashAdvisories contents target
-      encodingNotes = encodingGapNotes contents target
-  in droppedNotes ++ defaultAdvisories ++ hashAdvisories ++ encodingNotes
-
--- | Warn when converting from a format with known text encoding to one
--- without an encoding flag.  The bytes are copied unchanged — but the
--- target has no way to record what encoding they are.
-encodingGapNotes :: PatchContents -> DirectCreate -> [SlapAdvisory]
-encodingGapNotes contents target = case contentsPatchEncoding contents of
-  Just _ | isJust (contentsDescription contents)
-         , target `elem` [CreatePPF3, CreateAPSN64]
-         -> [EncodingGap LabelNINJA2 (directLabel target)]
-  _ -> []
+  in droppedNotes ++ defaultAdvisories ++ hashAdvisories
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
@@ -1132,7 +1126,7 @@ createPatch :: CreateFormat
 createPatch (CreateDirect format) _resolvedNames source target meta sourceContents constraints dialects =
   let contents = buildContents format source target meta sourceContents
   in encodeDirect contents source format meta (encodingLimits format) constraints dialects
-createPatch (CreateDifferential format) maybeResolvedNames source target meta sourceContents _constraints _dialects = case format of
+createPatch (CreateDifferential format) maybeResolvedNames source target meta _sourceContents _constraints _dialects = case format of
   -- The constraints parameter is unused on the differential arm: today
   -- no differential format honors any constraint ('acceptedConstraints'
   -- returns 'Set.empty' for every 'CreateDifferential' constructor),
@@ -1152,34 +1146,36 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta so
                       })
                     (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
-    -- When source patch has opaque description bytes, detect encoding
-    -- via isValidUtf8: valid → PATCH_ENC=1, invalid → PATCH_ENC=0.
-    -- If source already has known encoding, respect it.
-    let detectedEncoding = case sourceContents >>= contentsPatchEncoding of
-          Just patchEncoding -> patchEncoding
-          Nothing  -> case sourceContents >>= contentsDescription of
-            Just sourceDescription
-              | EncodingLocale <- encodedTextEncoding sourceDescription
-              , not (isValidUtf8 (fst (encodeTextLenient EncodingLocale
-                                         (encodedTextContent sourceDescription)))) ->
-                  PatchEncodingSystem
-            _ -> fromMaybe PatchEncodingUTF8 (requestedPatchEncoding meta)
-        -- Stage 3b: 'requestedTitle'\/'Author'\/'Description'\/'Version'
-        -- are now typed 'EncodedText'; NINJA2's metadata record still
-        -- consumes 'Maybe String' (stage 3c lands the matching
-        -- migration there). Unwrap at the seam.
-        unwrapEncoded = fmap (Text.unpack . encodedTextContent)
-        ninja2Meta = NINJA2.NINJA2Metadata
-          { NINJA2.ninja2MetadataAuthor      = unwrapEncoded (requestedAuthor meta)
-          , NINJA2.ninja2MetadataVersion     = unwrapEncoded (requestedVersion meta)
-          , NINJA2.ninja2MetadataTitle       = unwrapEncoded (requestedTitle meta)
-          , NINJA2.ninja2MetadataGenre       = requestedGenre meta
-          , NINJA2.ninja2MetadataLanguage    = requestedLanguage meta
-          , NINJA2.ninja2MetadataDate        = requestedDate meta
-          , NINJA2.ninja2MetadataWebsite     = requestedWebsite meta
-          , NINJA2.ninja2MetadataDescription = unwrapEncoded (requestedDescription meta)
-          , NINJA2.ninja2MetadataEncoding    = detectedEncoding
-          , NINJA2.ninja2MetadataPlatform    = requestedRomType meta
+    -- Pick the wire @PATCH_ENC@ byte for the output patch. The CLI
+    -- flag wins outright; otherwise the first non-empty source field's
+    -- 'EncodedText' tag decides (NINJA2 source preserves the original
+    -- mode through the field tags); otherwise UTF-8 (the portable
+    -- default).
+    let sourceFieldEncoding = encodedTextEncoding <$>
+          (   requestedDescription meta
+          <|> requestedTitle       meta
+          <|> requestedAuthor      meta
+          <|> requestedVersion     meta
+          <|> requestedGenre       meta
+          <|> requestedLanguage    meta
+          <|> requestedDate        meta
+          <|> requestedWebsite     meta )
+        detectedEncoding = case requestedPatchEncoding meta of
+          Just cliChoice -> cliChoice
+          Nothing -> case sourceFieldEncoding of
+            Just tag -> NINJA2.tagToPatchEncoding tag
+            Nothing  -> PatchEncodingUTF8
+        ninja2Meta = NINJA2.NINJA2CreateMetadata
+          { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta
+          , NINJA2.ninja2CreateMetadataVersion     = requestedVersion     meta
+          , NINJA2.ninja2CreateMetadataTitle       = requestedTitle       meta
+          , NINJA2.ninja2CreateMetadataGenre       = requestedGenre       meta
+          , NINJA2.ninja2CreateMetadataLanguage    = requestedLanguage    meta
+          , NINJA2.ninja2CreateMetadataDate        = requestedDate        meta
+          , NINJA2.ninja2CreateMetadataWebsite     = requestedWebsite     meta
+          , NINJA2.ninja2CreateMetadataDescription = requestedDescription meta
+          , NINJA2.ninja2CreateMetadataEncoding    = detectedEncoding
+          , NINJA2.ninja2CreateMetadataPlatform    = requestedRomType     meta
           }
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
@@ -1235,7 +1231,6 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsMetadata    = Nothing
-  , contentsPatchEncoding = Nothing
   }
   where
     patchHunks = case format of

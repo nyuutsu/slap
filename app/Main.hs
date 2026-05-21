@@ -744,7 +744,10 @@ requestedMetadataParser = do
     website           <- optional (option str (long "website" <> metavar "URL"
                             <> help "Website (NINJA2)"))
     patchEncoding     <- optional (option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
-                            <> help "Text encoding for NINJA2 metadata: utf8, system (default: utf8 unless source patch declares otherwise)"))
+                            <> help ("Wire text encoding for NINJA2 metadata: utf8, system."
+                                  ++ " Overrides any encoding declared by the source patch when supplied."
+                                  ++ " When omitted: inherit from the source patch's metadata encoding"
+                                  ++ " if one is available, otherwise utf8.")))
     xdelta1FromName   <- optional (option str (long "from-name" <> metavar "TEXT"
                             <> help ("Embedded source-file display label (xdelta1 only;"
                                   ++ " default: basename of input/source ROM on create,"
@@ -762,10 +765,10 @@ requestedMetadataParser = do
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType
-      , requestedGenre               = genre
-      , requestedLanguage            = language
-      , requestedDate                = date
-      , requestedWebsite             = website
+      , requestedGenre               = fmap wrapLocale genre
+      , requestedLanguage            = fmap wrapLocale language
+      , requestedDate                = fmap wrapLocale date
+      , requestedWebsite             = fmap wrapLocale website
       , requestedPatchEncoding       = patchEncoding
       , requestedEmbeddedBlob        = Nothing
       , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapLocale) xdelta1FromName
