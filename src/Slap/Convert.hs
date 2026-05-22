@@ -78,8 +78,6 @@ import qualified Slap.NINJA1.Types as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import Slap.PlatformType (PlatformType(..))
 import Slap.Platform (platformToNINJA1)
-import qualified Slap.PCHTXT.Types as PCHTXT
-import qualified Slap.PCHTXT.Create as PCHTXT
 import Slap.Binary (diffHunks, md5, sha1)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FFI (crc32)
@@ -158,7 +156,6 @@ data PatchContents = PatchContents
     -- length-field width (PPF2: 4 bytes; PPF3: 2 bytes) and apply the
     -- length check after re-encoding at the format's @encodeFileIdDiz@
     -- site.
-  , contentsPCHTXTBlocks :: Maybe [PCHTXT.PCHTXTBlock]
   , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
@@ -169,7 +166,7 @@ data PatchContents = PatchContents
 -- and metadata; PPF exposes only version 3.
 data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF2 | CreatePPF3
-  | CreateNINJA1 | CreatePMSR | CreatePCHTXT | CreateAPSN64
+  | CreateNINJA1 | CreatePMSR | CreateAPSN64
   deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
@@ -205,8 +202,7 @@ data CreateFormat
 -- 'CreateNINJA1' consumes 'requestedRomType' (mapped through
 -- 'Slap.Platform.platformToNINJA1'); the compression flag rides in
 -- 'PatchContents' rather than this record.  'CreatePMSR' consumes
--- nothing.  'CreatePCHTXT' consumes 'requestedDescription'.
--- 'CreateAPSN64' consumes 'requestedDescription' (50-byte header
+-- nothing.  'CreateAPSN64' consumes 'requestedDescription' (50-byte header
 -- field).
 --
 -- Differential-format consumption is read directly out of 'createPatch'\'s
@@ -364,7 +360,6 @@ emptyContents records = PatchContents
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
-  , contentsPCHTXTBlocks = Nothing
   , contentsNINJA1Compressed = Nothing
   , contentsMetadata = Nothing
   }
@@ -383,7 +378,6 @@ provides contents = Set.fromList $ [FieldRecords]
   ++ [FieldRomType      | isJust (contentsRomType contents)]
   ++ [FieldImageType    | isJust (contentsImageType contents)]
   ++ [FieldFileIdDiz    | isJust (contentsFileIdDiz contents)]
-  ++ [FieldPCHTXTBlocks | isJust (contentsPCHTXTBlocks contents)]
   ++ [FieldMetadata     | isJust (contentsMetadata contents)]
 
 -- | Which 'UndoInclusion' a 'PatchContents' carries today.  Used on the
@@ -428,7 +422,6 @@ directConversionContract target undoChoice verificationChoice = case target of
                              (acceptedFields [FieldDescription, FieldImageType, FieldFileIdDiz])
   CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldSourceCRC32, FieldSourceMD5, FieldSourceSHA1, FieldRomType])
   CreatePMSR    -> DirectConversionContract (requiredFields []) (acceptedFields [])
-  CreatePCHTXT  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldDescription, FieldPCHTXTBlocks])
   CreateAPSN64  -> DirectConversionContract (requiredFields [FieldDestinationSize]) (acceptedFields [FieldDescription])
   where
     requiredFields extra = Set.fromList (FieldRecords : extra)
@@ -460,7 +453,6 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataVerificationInclusion]
   CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
-  CreatePCHTXT -> Set.fromList [MetadataDescription]
   CreateAPSN64 -> Set.fromList [MetadataDescription]
 acceptedMetadataFields (CreateDifferential format) = case format of
   CreateBPS     -> Set.fromList [MetadataEmbeddedBlob]
@@ -559,7 +551,6 @@ acceptedConstraints (CreateDirect format) = case format of
   CreatePPF3   -> Set.empty
   CreateNINJA1 -> Set.empty
   CreatePMSR   -> Set.empty
-  CreatePCHTXT -> Set.empty
   CreateAPSN64 -> Set.empty
 acceptedConstraints (CreateDifferential format) = case format of
   CreateBPS     -> Set.empty
@@ -651,7 +642,6 @@ acceptedDialects LabelGDIFF   = Set.empty
 acceptedDialects LabelXDelta1 = Set.empty
 acceptedDialects LabelDPS     = Set.empty
 acceptedDialects LabelPMSR    = Set.empty
-acceptedDialects LabelPCHTXT  = Set.empty
 
 -- | Reject any dialect axis the user toggled that the given accepted
 -- set doesn't admit. Caller computes the accepted set: a single label's
@@ -818,16 +808,6 @@ fieldNote contents field = case field of
   FieldRomType -> [FieldDropped FieldRomType DroppedEmpty | isJust (contentsRomType contents)]
   FieldImageType -> [FieldDropped FieldImageType DroppedEmpty | isJust (contentsImageType contents)]
   FieldFileIdDiz -> [FieldDropped FieldFileIdDiz DroppedEmpty | isJust (contentsFileIdDiz contents)]
-  FieldPCHTXTBlocks -> case contentsPCHTXTBlocks contents of
-    Just blocks ->
-      let disabled = sum (map (length . PCHTXT.pchtxtBlockEntries)
-                              (filter (not . PCHTXT.pchtxtBlockEnabled) blocks))
-          hasDescriptions = any (isJust . PCHTXT.pchtxtBlockDescription) blocks
-      in concat
-        [ [DisabledEntriesDropped disabled | disabled > 0]
-        , [BlockDescriptionsDropped | hasDescriptions]
-        ]
-    Nothing -> []
   FieldMetadata -> case contentsMetadata contents of
     Just metadataBlob | not (ByteString.null metadataBlob) -> [MetadataDropped (ByteString.length metadataBlob)]
     _ -> []
@@ -876,7 +856,6 @@ encodingLimits CreateIPS     = Just ipsLimits
 encodingLimits CreateIPS32   = Just ips32Limits
 encodingLimits CreateEBP     = Just ebpLimits
 encodingLimits CreateAPSN64  = Just APSN64.apsN64Limits
-encodingLimits CreatePCHTXT  = Just PCHTXT.pchtxtLimits
 encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
 encodingLimits CreatePPF1    = Just ppf1Limits
 encodingLimits CreatePPF2    = Just ppf2Limits
@@ -1031,13 +1010,6 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
     Right (CreateResult (PMSR.encodePMSR count records) [])
-  CreatePCHTXT -> case contentsPCHTXTBlocks contents of
-    Just blocks -> Right (CreateResult (PCHTXT.encodePCHTXTBlocks blocks pchtxtDescription) [])
-    Nothing -> do
-      -- PCHTXT is text with no per-record length field; payloads
-      -- have no wire-format cap, so split is the unbounded opt-out.
-      records <- narrow (splitHunksUnbounded (contentsRecords contents))
-      Right (CreateResult (PCHTXT.encodePCHTXT records pchtxtDescription) [])
   CreateAPSN64 -> do
     records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
     case contentsDestinationSize contents of
@@ -1067,9 +1039,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     cliTitle  = requestedTitle meta
     cliAuthor = requestedAuthor meta
     -- The shared description resolver returns a typed 'EncodedText'
-    -- under the migration; PPF/APSN64 consume it directly, EBP and
-    -- PCHTXT unwrap to 'String' at their format-local seams until
-    -- their own migrations (stages 3c/4) move them off raw String.
+    -- under the migration; PPF/APSN64 consume it directly, EBP
+    -- unwraps to 'String' at its format-local seam until its own
+    -- migration (stage 3c) moves it off raw String.
     descriptionTyped = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMeta   = contentsEBPMeta contents
@@ -1086,9 +1058,6 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       , descriptionSourceTypedText = contentsDescription contents
       , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
       }
-    -- PCHTXT (stage 4) still consumes a 'String'; unwrap at the seam.
-    pchtxtDescription = fmap (Text.unpack . encodedTextContent)
-                             (cliDescription <|> contentsDescription contents)
     ebpView   = contentsEBPMeta contents >>= parseEBPMetadata
     ebpTitle  = resolveEBPField cliTitle  (ebpView >>= ebpMetadataViewTitle)
     ebpAuthor = resolveEBPField cliAuthor (ebpView >>= ebpMetadataViewAuthor)
@@ -1104,7 +1073,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
 -- direct pipeline (universal 'PatchContents' assembly, then 'encodeDirect')
 -- or to the appropriate per-format differential creator. The optional
 -- 'PatchContents' carries structural data from the source patch (EBP JSON,
--- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) for inheritance in
+-- File_ID.diz, NINJA1 compression flag) for inheritance in
 -- the @--with@ conversion path.
 --
 -- The 'Maybe' 'ResolvedXDelta1FileNames' is the porcelain's resolved
@@ -1196,8 +1165,8 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
 
 -- | Build PatchContents from source and target bytes for a direct format.
 -- The optional source 'PatchContents' carries structural data (EBP JSON,
--- File_ID.diz, PCHTXT blocks, NINJA1 compression flag) from the original
--- patch for inheritance during @--with@ conversion.
+-- File_ID.diz, NINJA1 compression flag) from the original patch for
+-- inheritance during @--with@ conversion.
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
 buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents
@@ -1226,7 +1195,6 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   -- Structural inheritance: preserve format-specific data from the source patch
   , contentsEBPMeta          = sourceContents >>= contentsEBPMeta
   , contentsFileIdDiz        = sourceContents >>= contentsFileIdDiz
-  , contentsPCHTXTBlocks     = sourceContents >>= contentsPCHTXTBlocks
   , contentsNINJA1Compressed = sourceContents >>= contentsNINJA1Compressed
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
@@ -1242,7 +1210,6 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreatePPF3   -> diffHunks inputFileContents outputFileContents
       CreateNINJA1 -> diffHunks inputFileContents outputFileContents
       CreatePMSR   -> diffHunks inputFileContents outputFileContents
-      CreatePCHTXT -> diffHunks inputFileContents outputFileContents
       CreateAPSN64 -> diffHunks inputFileContents outputFileContents
     ipsHunks width = IPS.optimalIPSRecords width
                        inputFileContents outputFileContents
@@ -1255,7 +1222,6 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreatePPF3   -> source
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       CreatePMSR   -> source
-      CreatePCHTXT -> source
       CreateAPSN64 -> source
     validationOffset = case requestedImageType meta of
                          Just GI -> 0x80A0
@@ -1345,7 +1311,6 @@ directFormatInfo CreatePPF2   = FormatInfo ".ppf"    "PPF2"      LabelPPF2
 directFormatInfo CreatePPF3   = FormatInfo ".ppf"    "PPF3"      LabelPPF3
 directFormatInfo CreateNINJA1 = FormatInfo ".rup"    "NINJA1"    LabelNINJA1
 directFormatInfo CreatePMSR   = FormatInfo ".pmsr"   "PMSR"      LabelPMSR
-directFormatInfo CreatePCHTXT = FormatInfo ".pchtxt" "PCHTXT"    LabelPCHTXT
 directFormatInfo CreateAPSN64 = FormatInfo ".aps"    "APS (N64)" LabelAPSN64
 
 differentialFormatInfo :: DifferentialCreate -> FormatInfo

@@ -60,7 +60,6 @@ data PatchAnalysis = PatchAnalysis
 
 data AnalysisSection
   = SectionRegions [AnalysisRegion]              -- flat numbered list
-  | SectionBlock String [AnalysisRegion]         -- labeled block + entries (PCHTXT)
   | SectionLabeled String [InfoLine]             -- labeled block + kv pairs (VCDIFF)
   | SectionText String                           -- free text line
 
@@ -93,8 +92,7 @@ data SummaryInfo = SummaryInfo
   }
 
 data Annotation
-  = AnnotationNone                          -- no annotation (PCHTXT)
-  | AnnotationAt { annotationOffsetKind :: !OffsetKind
+  = AnnotationAt { annotationOffsetKind :: !OffsetKind
                  , annotationOffset     :: !Offset
                  , annotationDetails    :: ![AnnotDetail]
                  }
@@ -139,9 +137,6 @@ renderAnalysisFull info analysis mSource = unlines $ joinSections
     renderSection (SectionRegions regions) =
       zipWith renderRegion [1..] regions
 
-    renderSection (SectionBlock label regions) =
-      label : map renderBlockEntry regions
-
     renderSection (SectionLabeled label fields) =
       label : map renderLabeledField fields
 
@@ -149,14 +144,6 @@ renderAnalysisFull info analysis mSource = unlines $ joinSections
 
     renderLabeledField (InfoLine key value) =
       "  " ++ key ++ ":" ++ replicate (max 1 (18 - length key - 3)) ' ' ++ value
-
-    renderBlockEntry region =
-      "    " ++ padHex 8 (unOffset (regionOffset region)) ++ "  " ++ regionLabel region
-      ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
-      ++ "\n" ++ hexDump (payloadBytes (regionPayload region))
-
-    payloadBytes (PayloadWrite writeData) = writeData
-    payloadBytes _ = ByteString.empty
 
     annotation = renderAnnotation . regionAnnotation
 
@@ -200,7 +187,6 @@ renderSummaryLine summary =
        Just byteCount -> ", " ++ renderByteCount byteCount
 
 renderAnnotation :: Annotation -> String
-renderAnnotation AnnotationNone = ""
 renderAnnotation (AnnotationBSDiff BSDiffInstruction { controlAdd, controlCopy, controlSeek }) =
   "add " ++ padRight 10 (show (unLength controlAdd) ++ " B")
   ++ "  copy " ++ padRight 10 (show (unLength controlCopy) ++ " B")
@@ -285,7 +271,6 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
     totalRecords = length allRegions
 
     sectionRegions (SectionRegions regions)  = regions
-    sectionRegions (SectionBlock _ regions)  = regions
     sectionRegions (SectionLabeled _ _) = []
     sectionRegions (SectionText _)      = []
 

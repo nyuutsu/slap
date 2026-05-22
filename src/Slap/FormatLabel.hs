@@ -23,7 +23,6 @@ data FormatLabel
   | LabelXDelta1
   | LabelDPS
   | LabelPMSR
-  | LabelPCHTXT
   deriving (Show, Eq, Enum, Bounded)
 
 formatLabelName :: FormatLabel -> String
@@ -46,4 +45,3 @@ formatLabelName LabelGDIFF   = "GDIFF"
 formatLabelName LabelXDelta1 = "xdelta1"
 formatLabelName LabelDPS     = "DPS"
 formatLabelName LabelPMSR    = "PMSR"
-formatLabelName LabelPCHTXT  = "PCHTXT"

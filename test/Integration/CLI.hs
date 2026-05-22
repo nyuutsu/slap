@@ -24,7 +24,6 @@ import Integration.Skip
   )
 import Slap.Status (renderSlapError, renderSlapAdvisory)
 import Slap.Display.Analysis (renderAnalysisSummary)
-import Slap.FormatLabel (formatLabelName)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
 import Slap.Convert (noDialectsRequested)
@@ -47,8 +46,7 @@ cliTests :: Tier -> IO GroupPlan
 cliTests tier = do
   repo <- repoDir
   let inProcessMaybes = map WillRun (corruptTests
-                                  ++ warningTests repo
-                                  ++ pchtxtDetectTests)
+                                  ++ warningTests repo)
 
   subprocessMaybes <- requireSlapBinary $ \_slap -> do
     let dm4yBase = repo </> "test/data/dm4y/base.gbc"
@@ -543,17 +541,6 @@ customCodetableTests =
       , 0x01,0x08,0x00,0x0a,0x0a,0x00,0x02,0x02,0x01,0x45,0x45,0x18,0x03,0x00
       ]
 
-pchtxtDetectTests :: [TestTree]
-pchtxtDetectTests =
-  [ testCase "pchtxt-detect/single-slash before directive" $ do
-      let pchtxtBytes = ByteString.pack (map (fromIntegral . fromEnum)
-            "/ block comment\n/ another line\n@enabled\n00000000 FF\n")
-      case parseSome noDialectsRequested (PatchFileContents pchtxtBytes) of
-        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
-        Right parsed -> assertBool "expected 'PCHTXT' in format"
-                     ("PCHTXT" `isInfixOf` formatLabelName (patchFormat parsed))
-  ]
-
 -- | NINJA1 source-verification CLI coverage. The first two cases just
 -- exercise the create+info+apply happy path on dm4y; the last two are
 -- gated to 'Full' because they each materialise a 4 MB garbage source
@@ -619,43 +606,6 @@ descriptionTests base bps =
                   base, target, patch]
           "desc/aps-n64" "wrote"
         expectOk ["info", patch] "desc/aps-n64 info" "Test description"
-
-  , testCase "desc/pchtxt create --description hex nsobid" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
-        let hexId = "AABBCCDD00112233445566778899AABB"
-        expectOk ["create", "--format", "pchtxt", "--description", hexId,
-                  base, target, patch]
-          "desc/pchtxt hex" "wrote"
-        patchString <- ByteString8.unpack <$> ByteString.readFile patch
-        assertBool "expected @nsobid" ("@nsobid" `isInfixOf` patchString)
-
-  , testCase "desc/pchtxt create --description comment" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch" $ \patch -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
-        expectOk ["create", "--format", "pchtxt", "--description", "My cool patch",
-                  base, target, patch]
-          "desc/pchtxt comment" "wrote"
-        patchString <- ByteString8.unpack <$> ByteString.readFile patch
-        assertBool "expected // comment" ("// My cool patch" `isInfixOf` patchString)
-
-  , testCase "desc/pchtxt convert --description override" $
-      withTempFile "slap-target" $ \target ->
-      withTempFile "slap-patch1" $ \patch1 ->
-      withTempFile "slap-patch2" $ \patch2 -> do
-        ByteString.readFile base >>= ByteString.writeFile target
-        _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
-        _ <- runExternal SlapBinary ["create", "--format", "pchtxt", "--description", "original",
-                                     base, target, patch1] Nothing ""
-        expectOk ["convert", patch1, "--to", "pchtxt", "--description", "override",
-                  "-o", patch2]
-          "desc/pchtxt convert" "converted"
-        patchString <- ByteString8.unpack <$> ByteString.readFile patch2
-        assertBool "expected override comment" ("// override" `isInfixOf` patchString)
   ]
 
 -- | Slap rejects metadata flags that the target format won't carry.

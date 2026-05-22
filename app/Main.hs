@@ -720,7 +720,7 @@ requestedMetadataParser = do
     author            <- optional (option str (long "author" <> metavar "TEXT"
                             <> help "Patch author (EBP/DPS/NINJA2)"))
     description       <- optional (option str (long "description" <> metavar "TEXT"
-                            <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2/PCHTXT)"))
+                            <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2)"))
     version           <- optional (option str (long "patch-version" <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
     includeUndo         <- optional (flag' OmitUndoData     (long "no-undo"
@@ -852,7 +852,6 @@ createFormatTokens =
   , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
   , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
   , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
-  , ("pchtxt",  CreateDirect       CreatePCHTXT, Canonical)
   ]
 
 -- | The canonical create-format tokens 'parseCreateFormat'

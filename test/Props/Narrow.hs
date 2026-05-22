@@ -13,7 +13,6 @@ import qualified Data.ByteString as ByteString
 
 import Slap.APSN64.Types  (apsN64Limits)
 import Slap.IPS.Types     (ipsLimits, ips32Limits)
-import Slap.PCHTXT.Types  (pchtxtLimits)
 import Slap.PMSR.Types    (pmsrLimits)
 import Slap.PPF1.Types    (ppf1Limits)
 import Slap.PPF2.Types    (ppf2Limits)
@@ -32,7 +31,6 @@ import Test.Tasty.HUnit
 narrowTests :: TestTree
 narrowTests = testGroup "Slap.Narrow rejection cases"
   [ testCase "APSN64 rejects offset 2^32"   apsN64RejectsOverflow
-  , testCase "PCHTXT rejects offset 2^32"   pchtxtRejectsOverflow
   , testCase "PMSR rejects offset 2^32"     pmsrRejectsOverflow
   , testCase "PPF1 rejects offset 2^32"     ppf1RejectsOverflow
   , testCase "PPF2 rejects offset 2^32"     ppf2RejectsOverflow
@@ -54,14 +52,6 @@ apsN64RejectsOverflow =
             (ActualOffset (Offset 0x100000000))
             (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
     other -> assertFailure ("expected APSN64 OffsetExceedsBound, got " ++ show other)
-
-pchtxtRejectsOverflow :: Assertion
-pchtxtRejectsOverflow =
-  case narrowHunks pchtxtLimits (splitHunksUnbounded overflowingHunk) of
-    Left (OffsetExceedsBound LabelPCHTXT
-            (ActualOffset (Offset 0x100000000))
-            (MaxOffset    (Offset 0xFFFFFFFF))) -> pure ()
-    other -> assertFailure ("expected PCHTXT OffsetExceedsBound, got " ++ show other)
 
 pmsrRejectsOverflow :: Assertion
 pmsrRejectsOverflow =

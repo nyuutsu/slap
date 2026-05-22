@@ -13,8 +13,6 @@
 #
 # Offset overflow (>16 MB offsets → IPS)
 ppf3       | ips     | test/data/stadium2/fair-heavy/patch.ppf     |                                 |          | reject:exceeds maximum offset      |  |
-# Hash-less source (→NINJA1) — spec allows zero hashes, conversion succeeds with note
-pchtxt     | ninja1  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept | input verification hashes not available |
 # Differential format without --with
 bps        | ips     | test/data/stadium2/fair-heavy/patch.bps     |                                 |          | reject:requires the original ROM   |  |
 #
@@ -28,8 +26,6 @@ ppf3       | ips32   | test/data/stadium2/fair-heavy/patch.ppf     | test/data/s
 ppf3       | ppf3    | test/data/stadium2/fair-heavy/patch.ppf     | test/data/stadium2/base.z64     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | accept |  |
 # APS-N64 encoder — self-convert preserves dest_size
 aps-n64    | aps-n64 | test/data/stadium2/fair-heavy/patch.aps     | test/data/stadium2/base.z64     | f3b9f582c97d644c023622973ca04ef3b5a87dfc | accept |  |
-# PCHTXT self-convert — contentsPCHTXTBlocks preservation
-pchtxt     | pchtxt  | test/data/pchtxt/ipswitch-splat310.pchtxt   |                                 |          | accept |  |
 #
 # ============================================================================
 # Supplementary: PPF2 fileSize satisfies APS-N64 dest_size

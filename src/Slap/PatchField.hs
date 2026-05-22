@@ -19,7 +19,6 @@ data PatchField
   | FieldRomType
   | FieldImageType
   | FieldFileIdDiz
-  | FieldPCHTXTBlocks
   | FieldMetadata
   deriving (Eq, Ord, Show)
 
@@ -37,7 +36,6 @@ fieldName FieldEBPMeta         = "EBP metadata"
 fieldName FieldRomType         = "ROM type"
 fieldName FieldImageType       = "image type"
 fieldName FieldFileIdDiz       = "File_ID.diz"
-fieldName FieldPCHTXTBlocks    = "PCHTXT blocks"
 fieldName FieldMetadata        = "metadata"
 
 -- | Whether dropping a field changes the output bytes that the

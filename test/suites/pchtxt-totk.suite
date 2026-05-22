@@ -1,8 +1,0 @@
-# TotK v1.1.0 — 70 MB decompressed NSO
-# Wollnashorn PCHTXT, ARM disassembly inline comments, unknown @ directive
-
-base:   test/data/totk/base.nso
-sha1:   c6958522911bd767831c63bf457bfdb76f810f6f
-desc:   TotK v1.1.0 PCHTXT (Wollnashorn)
-
-PCHTXT   | test/data/totk/totk.pchtxt           | real | Wollnashorn

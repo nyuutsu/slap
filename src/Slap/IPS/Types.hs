@@ -414,9 +414,9 @@ ipsVariantMaxRecordEnd variant =
 -- | 'StandardIPS''s wire-format offset cap, paired with 'LabelIPS' for
 -- error tagging. Consumed by 'Slap.Convert.encodingLimits' and by the
 -- narrow-layer rejection tests; sibling to 'apsN64Limits',
--- 'pchtxtLimits', 'pmsrLimits', 'ppf1Limits', 'ppf2Limits' — every
--- direct format with a per-record offset bound exports its
--- 'EncodingLimits' from its own @Types@ module.
+-- 'pmsrLimits', 'ppf1Limits', 'ppf2Limits' — every direct format with
+-- a per-record offset bound exports its 'EncodingLimits' from its own
+-- @Types@ module.
 ipsLimits :: EncodingLimits
 ipsLimits = EncodingLimits
   { maximumOffset = ipsVariantMaxAddressableOffset (variantSpec StandardIPS)

@@ -17,7 +17,6 @@ data DirectFormat
   | FormatPPF4
   | FormatNINJA1
   | FormatPMSR
-  | FormatPCHTXT
   | FormatAPSN64
   deriving (Show, Eq)
 

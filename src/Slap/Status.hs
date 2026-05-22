@@ -56,13 +56,10 @@ module Slap.Status
   , VCDIFFCodeTableMalformation(..)
   , BSDiffHeaderMalformation(..)
   , APSN64HeaderMalformation(..)
-  , PCHTXTMalformation(..)
   , NINJA1Malformation(..)
   , NINJA1SubformatConversion(..)
   , LineText(..)
   , OffsetTokenText(..)
-  , HexDigitsText(..)
-  , FlagErrorText(..)
   , ByteParserError(..)
   , ByteParserOperation(..)
   , DroppedDescriptionText(..)
@@ -482,15 +479,10 @@ data SlapError
   -- decoded and slap has no honest answer for an undefined value.
   | NINJA2UnrecognizedPatchEncoding !Word8
 
-  -- | A structurally malformed text field in a PCHTXT patch — every
-  -- shape of "the bytes do not parse as the format expects" is a
-  -- constructor of 'PCHTXTMalformation', enumerated as the failure
+  -- | A structurally malformed text field in a NINJA1 textual patch —
+  -- every shape of "the bytes do not parse as the format expects" is
+  -- a constructor of 'NINJA1Malformation', enumerated as the failure
   -- space is finite per the format spec.
-  | MalformedPCHTXTContent PCHTXTMalformation
-  -- | A structurally malformed text field in a NINJA1 textual patch.
-  -- Same shape and rationale as 'MalformedPCHTXTContent'; per-format
-  -- so the constructors track exactly what each format's text-mode
-  -- parser rejects.
   | MalformedNINJA1Content NINJA1Malformation
 
   -- | A byte-parser failure surfaced from a per-format parser. The
@@ -925,7 +917,6 @@ data SlapAdvisory
   -- parse time; the wire bytes the user reads will still describe
   -- the same patch but the in-memory shape is the binary one.
   | SubformatConverted NINJA1SubformatConversion
-  | OffsetShiftApplied
 
   -- Verification: source/target integrity check mismatches
   --
@@ -1355,16 +1346,6 @@ renderSlapError (NINJA2UnrecognizedPatchEncoding byte) =
   "NINJA2 PATCH_ENC byte is 0x" ++ padHex 2 byte
     ++ " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
     ++ "and slap will not guess how to decode text fields under an undefined encoding"
-
-renderSlapError (MalformedPCHTXTContent malformation) =
-  formatLabelName LabelPCHTXT ++ ": " ++ case malformation of
-    PCHTXTExpectedHexOffset    (LineText line)        -> "malformed text: expected hex offset: " ++ line
-    PCHTXTInvalidHexOffset     (OffsetTokenText t)    -> "malformed text: invalid hex offset: " ++ t
-    PCHTXTNoDataAfterOffset    (LineText line)        -> "malformed text: no data after offset: " ++ line
-    PCHTXTOddHexDigitCount     (HexDigitsText digits) -> "malformed text: odd number of hex digits: " ++ digits
-    PCHTXTUnterminatedQuotedString                    -> "malformed text: unterminated quoted string"
-    PCHTXTFlagParseError       (FlagErrorText msg)    -> "malformed text: " ++ msg
-    PCHTXTEntryOutsideBlock    (LineText line)        -> "entry outside block: " ++ line
 
 renderSlapError (MalformedNINJA1Content malformation) =
   formatLabelName LabelNINJA1 ++ ": malformed text: " ++ case malformation of
@@ -1798,9 +1779,6 @@ renderSlapAdvisory (SubformatConverted conversion) = case conversion of
   NINJA1CompressedTextToCompressedBinary   ->
     formatLabelName LabelNINJA1 ++ " text (TZ) converted to compressed binary (BZ)"
 
-renderSlapAdvisory OffsetShiftApplied =
-  "PCHTXT offset_shift applied to absolute offsets; output has no @flag directive"
-
 ----------------------------------------------------------------------------
 -- Verification: source/target integrity check mismatches
 ----------------------------------------------------------------------------
@@ -2017,22 +1995,10 @@ data APSN64HeaderMalformation
   = APSN64UnknownPatchType !Word8
   deriving (Eq, Show)
 
--- | The PCHTXT-format-specific malformations a parser can refuse.
--- Each constructor names a structural failure mode of the textual
--- patch grammar; the labeled newtypes (e.g. 'LineText') carry the
--- offending wire bytes verbatim for the renderer.
-data PCHTXTMalformation
-  = PCHTXTExpectedHexOffset    LineText
-  | PCHTXTInvalidHexOffset     OffsetTokenText
-  | PCHTXTNoDataAfterOffset    LineText
-  | PCHTXTOddHexDigitCount     HexDigitsText
-  | PCHTXTUnterminatedQuotedString
-  | PCHTXTFlagParseError       FlagErrorText
-  | PCHTXTEntryOutsideBlock    LineText
-  deriving (Eq, Show)
-
 -- | The NINJA1-format-specific malformations a textual-patch parser
--- can refuse. Same shape and rationale as 'PCHTXTMalformation'.
+-- can refuse. Each constructor names a structural failure mode of
+-- the textual patch grammar; the labeled newtypes (e.g. 'LineText')
+-- carry the offending wire bytes verbatim for the renderer.
 data NINJA1Malformation
   = NINJA1EmptyTextualPatch
   | NINJA1InvalidOffsetInTextRecord OffsetTokenText
@@ -2067,17 +2033,6 @@ newtype LineText = LineText { unLineText :: String }
 newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: String }
   deriving (Eq, Show)
 
--- | A hex-digits slice from a textual-patch line, carried verbatim
--- for inclusion in a malformation diagnostic.
-newtype HexDigitsText = HexDigitsText { unHexDigitsText :: String }
-  deriving (Eq, Show)
-
--- | A flag-parser error message bubbled up from the PCHTXT @flag@-
--- directive parser, carried verbatim for inclusion in a malformation
--- diagnostic.
-newtype FlagErrorText = FlagErrorText { unFlagErrorText :: String }
-  deriving (Eq, Show)
-
 ----------------------------------------------------------------------------
 -- ByteParserError
 ----------------------------------------------------------------------------
@@ -2103,8 +2058,8 @@ data ByteParserOperation
 -- @runByteParser@ seam.
 --
 -- Constructors are 'ByteParser'-prefixed to match slap's per-domain
--- convention ('ApplyError' constructors are @Apply*@, 'PCHTXTMalformation'
--- are @PCHTXT*@, and so on). Shared underflow shape is parameterized
+-- convention ('ApplyError' constructors are @Apply*@, 'NINJA1Malformation'
+-- are @NINJA1*@, and so on). Shared underflow shape is parameterized
 -- over 'ByteParserOperation' rather than split into a constructor per
 -- primitive — the axes the consumer wants to dispatch on are the
 -- failure kind and the surfacing primitive, in that order.
@@ -2234,4 +2189,3 @@ slapAdvisorySeverity advisory = case advisory of
   PlatformNotAvailable{}               -> SeverityNote
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
   SubformatConverted{}                 -> SeverityNote
-  OffsetShiftApplied                   -> SeverityNote

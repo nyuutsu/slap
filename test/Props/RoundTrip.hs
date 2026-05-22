@@ -65,9 +65,6 @@ import qualified Slap.PPF3.Create as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PPF3.Types as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
-import qualified Slap.PCHTXT.Parse as PCHTXT
-import qualified Slap.PCHTXT.Apply as PCHTXT
-import qualified Slap.PCHTXT.Types as PCHTXT
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
@@ -213,11 +210,6 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "planCopy chunk offsets chain without gaps"     prop_planCopyOffsetsChain
       , testProperty "planCopy above-threshold yields only Copy255"  prop_planCopyAboveThresholdAllCopy255
       , testProperty "planCopy round-trips through parseGDIFF"       prop_planCopyRoundTrips
-      ]
-  , testGroup "PCHTXT"
-      [ testProperty "round-trip" prop_pchtxt
-      , testCase "parse-escapes" parsePchtxtEscapes
-      , testCase "parse-sphinx" parsePchtxtSphinx
       ]
   , testGroup "XDelta1"
       [ testProperty "round-trip"                       prop_xdelta1RoundTrips
@@ -1250,16 +1242,6 @@ ppf3FileIdDizRoundTrip =
              ppfFileIdDizSampleText
              (SlapText.encodedTextContent (PPF3.unPPF3FileId fid))
 
--- PCHTXT: pure direct, no truncation
-prop_pchtxt :: Property
-prop_pchtxt = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePCHTXT) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
-    Right (CreateResult patch _) -> case PCHTXT.parsePCHTXT patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
-       Right (Parsed parsed _parseWarnings) ->
-         PCHTXT.applyPCHTXT parsed (InputFileContents source) === Right (OutputFileContents target)
-
 -- APS-N64: pure direct, no truncation
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
@@ -1311,29 +1293,6 @@ prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
       in counterexample ("patch size: " ++ show patchSize
                           ++ ", max: " ++ show maxPatchSize) $
          patchSize <= maxPatchSize
-
-----------------------------------------------------------------------------
--- PCHTXT parse unit tests
-----------------------------------------------------------------------------
-
-parsePchtxtEscapes :: IO ()
-parsePchtxtEscapes = do
-  raw <- ByteString.readFile "test/data/pchtxt/escapes.pchtxt"
-  case PCHTXT.parsePCHTXT (PatchFileContents raw) of
-    Left slapError -> assertEqual ("parse failed: " ++ renderSlapError slapError) True False
-    Right (Parsed parsed _parseWarnings) -> assertEqual "expected 2 entries" 2
-      (length (concatMap PCHTXT.pchtxtBlockEntries (PCHTXT.pchtxtBlocks parsed)))
-
-parsePchtxtSphinx :: IO ()
-parsePchtxtSphinx = do
-  raw <- ByteString.readFile "test/data/pchtxt/sphinx.pchtxt"
-  case PCHTXT.parsePCHTXT (PatchFileContents raw) of
-    Left slapError -> assertEqual ("parse failed: " ++ renderSlapError slapError) True False
-    Right (Parsed parsed _parseWarnings) -> do
-      assertEqual "expected nsobid" True (PCHTXT.pchtxtNsobid parsed /= Nothing)
-      case PCHTXT.pchtxtBlocks parsed of
-        [block] -> assertEqual "block should be disabled" False (PCHTXT.pchtxtBlockEnabled block)
-        blocks  -> assertEqual ("expected 1 block, got " ++ show (length blocks)) 1 (length blocks)
 
 ----------------------------------------------------------------------------
 -- XDelta1 round-trip

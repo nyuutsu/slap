@@ -45,7 +45,6 @@ Direct formats carry literal replacement bytes; differential formats carry instr
 | PPF4    | Direct       | No                     |
 | NINJA1  | Direct       | Yes                    |
 | PMSR    | Direct       | Yes                    |
-| PCHTXT  | Direct       | Yes                    |
 | APSN64  | Direct       | Yes                    |
 | BPS     | Differential | Yes                    |
 | UPS     | Differential | Yes                    |

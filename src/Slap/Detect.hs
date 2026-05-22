@@ -4,7 +4,6 @@ module Slap.Detect (detectFormat) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Char8 as ByteString8
 import Data.List (find)
 import qualified Slap.APSGBA.Parse as APSGBA (apsGbaStructure)
 import Slap.APSGBA.Types (apsGbaMagicBytes)
@@ -53,8 +52,8 @@ data FormatProbe = FormatProbe
 -- irrelevant.
 --
 -- Formats whose detection requires structural inspection rather
--- than a leading byte sequence (PCHTXT, DPS) are not in this table
--- and are handled as fallbacks in 'detectFormat'.
+-- than a leading byte sequence (DPS) are not in this table and are
+-- handled as fallbacks in 'detectFormat'.
 magicProbes :: [FormatProbe]
 magicProbes =
   [ FormatProbe (MagicPrefix bsdiffMagicBytes)  (PatchDifferential FormatBSDiff)
@@ -87,18 +86,15 @@ probeMatches (PatchFileContents fileBytes) probe =
 
 -- | Detect patch format.  Most formats are identified by a magic byte
 -- sequence at the start of the file, matched against the
--- 'magicProbes' table.  Two formats require structural inspection
--- instead: DPS has no magic and is detected by a heuristic walk
--- ('Slap.DPS.Parse.isDPS'), and PCHTXT is detected by scanning for
--- a known directive on the first non-comment non-blank line.
+-- 'magicProbes' table.  DPS is the lone exception: it has no magic
+-- and is detected by a heuristic walk ('Slap.DPS.Parse.isDPS').
 detectFormat :: PatchFileContents -> Maybe PatchFormat
 detectFormat patchFile =
   case find (probeMatches patchFile) magicProbes of
     Just probe -> Just (resolveAmbiguity (probeFormat probe))
     Nothing
-      | detectPCHTXT fileBytes -> Just (PatchDirect FormatPCHTXT)
-      | DPS.isDPS fileBytes    -> Just (PatchDifferential FormatDPS)
-      | otherwise              -> Nothing
+      | DPS.isDPS fileBytes -> Just (PatchDifferential FormatDPS)
+      | otherwise           -> Nothing
   where
     PatchFileContents fileBytes = patchFile
 
@@ -113,25 +109,3 @@ detectFormat patchFile =
     resolveAmbiguity (PatchDirect FormatAPSN64)
       | APSGBA.apsGbaStructure fileBytes = PatchDifferential FormatAPSGBA
     resolveAmbiguity format = format
-
-----------------------------------------------------------------------------
--- PCHTXT directives
-----------------------------------------------------------------------------
-
-pchtxtDirectives :: [ByteString]
-pchtxtDirectives = ["@nsobid", "@flag ", "@enabled", "@disabled"]
-
--- | Detect PCHTXT by scanning for a known directive on the first
--- non-comment non-blank line.  Scans the full input (directives
--- appear very early in real PCHTXT files).
-detectPCHTXT :: ByteString -> Bool
-detectPCHTXT inputBytes = scanLines (ByteString8.lines inputBytes)
-  where
-    scanLines [] = False
-    scanLines (line:rest)
-      | ByteString.null trimmed          = scanLines rest
-      | ByteString.take 1 trimmed == "#" = scanLines rest
-      | ByteString.take 1 trimmed == "/" = scanLines rest
-      | any (`ByteString.isPrefixOf` trimmed) pchtxtDirectives = True
-      | otherwise                = False
-      where trimmed = ByteString8.dropWhile (\char -> char == ' ' || char == '\t' || char == '\r') line

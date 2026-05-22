@@ -83,11 +83,6 @@ library slap-internal
     , Slap.Create
     , Slap.Platform
     , Slap.PlatformType
-    , Slap.PCHTXT.Apply
-    , Slap.PCHTXT.Create
-    , Slap.PCHTXT.Describe
-    , Slap.PCHTXT.Parse
-    , Slap.PCHTXT.Types
     , Slap.PMSR.Apply
     , Slap.PMSR.Create
     , Slap.PMSR.Describe

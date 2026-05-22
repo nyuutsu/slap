@@ -1,8 +1,0 @@
-# Splatoon 2 v5.0.0 — 45 MB decompressed NSO
-# OatmealDome's PCHTXT patches, single-slash comments
-
-base:   test/data/splatoon2/base.nso
-sha1:   31d02d20d9047968826cf99559a51165900045fa
-desc:   Splatoon 2 v5.0.0 PCHTXT (OatmealDome)
-
-PCHTXT   | test/data/splatoon2/splatoon2.pchtxt  | real | OatmealDome

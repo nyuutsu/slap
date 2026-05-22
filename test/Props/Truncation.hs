@@ -20,7 +20,6 @@ import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSGBA.Parse as APSGBA
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.PPF3.Parse as PPF3
-import qualified Slap.PCHTXT.Parse as PCHTXT
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.BSDiff.Parse as BSDiff
 import qualified Slap.Text as SlapText
@@ -54,7 +53,6 @@ truncationTests = testGroup "Truncation"
   , testProperty "APS-N64" prop_apsN64Trunc
   , testProperty "APS-GBA" prop_apsGbaTrunc
   , testProperty "GDIFF"   prop_gdiffTrunc
-  , testProperty "PCHTXT"  prop_pchtxtTrunc
   , testProperty "VCDIFF"  prop_vcdiffTrunc
   , testProperty "BSDiff"  prop_bsdiffTrunc
   , testProperty "XDelta1" prop_xdelta1Trunc
@@ -143,12 +141,6 @@ prop_gdiffTrunc = forAll genPair $ \(source, target) ->
   case createGDIFF (InputFileContents source) (OutputFileContents target) of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated GDIFF.parseGDIFF patch
-
-prop_pchtxtTrunc :: Property
-prop_pchtxtTrunc = forAll genPairNoShrink $ \(source, target) ->
-  case createPatch (CreateDirect CreatePCHTXT) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left _ -> discard
-    Right (CreateResult patch _) -> truncated PCHTXT.parsePCHTXT patch
 
 -- Consume-only formats: truncation on real test data
 

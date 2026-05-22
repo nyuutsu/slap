@@ -1,8 +1,8 @@
 -- | Cross-format math primitives via rusty-slap, plus the shared
 -- buffer-handling helpers every rusty-slap binding reaches back
 -- into. The math kernels are used by more than one format family
--- ('crc32' lands in BPS, IPS32, PCHTXT, …; 'adler32' is the UPS
--- footer); one-format-uses-this differs live next to their format
+-- ('crc32' lands in BPS and UPS; 'adler32' is the UPS footer);
+-- one-format-uses-this differs live next to their format
 -- ('Slap.BPS.FFI', 'Slap.XDelta1.FFI'), but they all marshal Rust-
 -- allocated buffers home through 'readByteString' / 'readString'
 -- and hand input bytes across through 'withByteString' — the FFI-

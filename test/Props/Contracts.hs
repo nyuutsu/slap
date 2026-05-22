@@ -60,7 +60,7 @@ contractTests = testGroup "Contracts"
 -- | Direct formats that go through buildContents -> encodeDirect.
 directFormats :: [DirectCreate]
 directFormats =
-  [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3, CreateNINJA1, CreatePMSR, CreatePCHTXT, CreateAPSN64]
+  [CreateIPS, CreateIPS32, CreateEBP, CreatePPF3, CreateNINJA1, CreatePMSR, CreateAPSN64]
 
 -- | PatchContents with every field populated.
 fullContents :: PatchContents
@@ -78,7 +78,6 @@ fullContents = PatchContents
   , contentsRomType     = Just PlatformRaw
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
-  , contentsPCHTXTBlocks = Nothing
   , contentsNINJA1Compressed = Nothing
   , contentsMetadata = Nothing
   }

@@ -1,8 +1,0 @@
-# Splatoon 3 v7.0.0 — 119 MB decompressed NSO
-# Coxxs PCHTXT patches, mixed enabled/disabled, 40-char nsobid
-
-base:   test/data/splatoon3/base.nso
-sha1:   9c4d10995dc1ccca52cfed77dbf55b89312cb6ba
-desc:   Splatoon 3 v7.0.0 PCHTXT (Coxxs)
-
-PCHTXT   | test/data/splatoon3/splatoon3.pchtxt  | real | Coxxs

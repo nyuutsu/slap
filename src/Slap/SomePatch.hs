@@ -86,10 +86,6 @@ import qualified Slap.PMSR.Types as PMSR
 import qualified Slap.PMSR.Parse as PMSR
 import qualified Slap.PMSR.Apply as PMSR
 import qualified Slap.PMSR.Describe as PMSR
-import qualified Slap.PCHTXT.Types as PCHTXT
-import qualified Slap.PCHTXT.Parse as PCHTXT
-import qualified Slap.PCHTXT.Apply as PCHTXT
-import qualified Slap.PCHTXT.Describe as PCHTXT
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
 import qualified Slap.DPS.Apply as DPS
@@ -262,7 +258,6 @@ parseSome dialects patchContents = case detectFormat patchContents of
   Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 patchContents
   Just (PatchDirect       FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
   Just (PatchDirect       FormatPMSR)           -> parseSomePatchFromPMSR patchContents
-  Just (PatchDirect       FormatPCHTXT)         -> parseSomePatchFromPCHTXT patchContents
   Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS patchContents
   Just (PatchDifferential FormatUPS)            -> parseSomePatchFromUPS patchContents
   Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF patchContents
@@ -315,7 +310,6 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , contentsRomType     = Nothing
           , contentsImageType   = Nothing
           , contentsFileIdDiz   = Nothing
-          , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
           })
@@ -372,7 +366,6 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , contentsRomType     = Nothing
           , contentsImageType   = Nothing
           , contentsFileIdDiz   = fmap PPF2.unPPF2FileId (PPF2.ppf2FileId patch)
-          , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
           })
@@ -439,7 +432,6 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , contentsRomType     = Nothing
           , contentsImageType   = Just (PPF3.ppf3ImageType patch)
           , contentsFileIdDiz   = fmap PPF3.unPPF3FileId (PPF3.ppf3FileId patch)
-          , contentsPCHTXTBlocks = Nothing
           , contentsNINJA1Compressed = Nothing
           , contentsMetadata = Nothing
           })
@@ -1052,41 +1044,6 @@ parseSomePatchFromPMSR patchContents = do
   where
     recordToHunk record = Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)
 
-parseSomePatchFromPCHTXT :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromPCHTXT patchContents = do
-  Parsed patch parseAdvisories <- PCHTXT.parsePCHTXT patchContents
-  let allBlocks = PCHTXT.pchtxtBlocks patch
-      enabledBlocks = filter PCHTXT.pchtxtBlockEnabled allBlocks
-      entries = concatMap PCHTXT.pchtxtBlockEntries enabledBlocks
-      contentRecords = map (\entry -> Hunk (PCHTXT.pchtxtOffset entry) (PCHTXT.pchtxtData entry)) entries
-      sourceAdvisories = [OffsetShiftApplied | PCHTXT.pchtxtHasShift patch]
-  Right SomePatch
-    { patchFormat         = LabelPCHTXT
-    , patchAnalysis       = PCHTXT.analyzePCHTXT patch
-    , patchKind           = Direct (Just (emptyContents contentRecords)
-        { contentsDescription = fmap (EncodedText EncodingUtf8 . Text.pack)
-                                     (PCHTXT.pchtxtNsobid patch)
-        , contentsPCHTXTBlocks = Just allBlocks
-        })
-    , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noAdvisories (PCHTXT.applyPCHTXT patch source)) }
-    , patchUndo           = Nothing
-    , patchVerification   = noVerification
-    , patchAdvisories       = parseAdvisories
-                            ++ [EmptyPatch LabelPCHTXT EmptyEntries | null entries]
-    , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelPCHTXT Nothing
-        , infoLines  = PCHTXT.pchtxtMeta patch
-        , infoTally  = Tally (length entries)
-        , infoUnit   = Entries
-        , infoBytes  = Just (TotalPayloadBytes (Length
-            (sum (map (ByteString.length . PCHTXT.pchtxtData) entries))))
-        , infoRange  = PCHTXT.pchtxtEntriesRange entries
-        }
-    , patchSourceAdvisories    = sourceAdvisories
-    , patchMetadata       = Nothing
-    , patchExtractedMeta  = noMetadataRequested
-    }
 
 parseSomePatchFromAPSGBA :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSGBA patchContents = do

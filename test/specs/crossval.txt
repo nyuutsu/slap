@@ -60,7 +60,7 @@ pmsr   | paper-mario-pmmq | test/data/paper-mario/base.z64 | test/data/paper-mar
 #   GDIFF — applier available via javaxdelta (com.nothome.delta.GDiffPatcher)
 #
 # No external applier available at all:
-#   NINJA1, DPS, PCHTXT — no widely available CLI applier
+#   NINJA1, DPS — no widely available CLI applier
 #   This claim about Ninja1 isn't actually true. There is such a tool. But this was a
 #   fairly recent discovery. I'll set it up eventually.
 #
