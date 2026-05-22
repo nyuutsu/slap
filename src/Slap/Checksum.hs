@@ -12,6 +12,8 @@ module Slap.Checksum
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Word (Word16, Word32, Word64)
 import Numeric (showHex)
 
@@ -38,20 +40,20 @@ newtype ExpectedCRC32 = ExpectedCRC32 { unExpectedCRC32 :: CRC32 }
 newtype ActualCRC32 = ActualCRC32 { unActualCRC32 :: CRC32 }
   deriving (Eq, Show)
 
--- | "0x001A3B4C" — 8-digit zero-padded hex.
-showCRC32 :: CRC32 -> String
+-- | "001A3B4C" — 8-digit zero-padded hex.
+showCRC32 :: CRC32 -> Text
 showCRC32 (CRC32 value) =
   let digits = showHex (fromIntegral value :: Word64) ""
-  in replicate (8 - length digits) '0' ++ digits
+  in Text.pack (replicate (8 - length digits) '0' ++ digits)
 
--- | "0x1A3B" — 4-digit zero-padded hex.
-showCRC16 :: CRC16 -> String
+-- | "1A3B" — 4-digit zero-padded hex.
+showCRC16 :: CRC16 -> Text
 showCRC16 (CRC16 value) =
   let digits = showHex (fromIntegral value :: Word64) ""
-  in replicate (4 - length digits) '0' ++ digits
+  in Text.pack (replicate (4 - length digits) '0' ++ digits)
 
--- | "0x001A3B4C" — 8-digit zero-padded hex.
-showAdler32 :: Adler32 -> String
+-- | "001A3B4C" — 8-digit zero-padded hex.
+showAdler32 :: Adler32 -> Text
 showAdler32 (Adler32 value) =
   let digits = showHex (fromIntegral value :: Word64) ""
-  in replicate (8 - length digits) '0' ++ digits
+  in Text.pack (replicate (8 - length digits) '0' ++ digits)

@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.PMSR.Describe
   ( pmsrMeta
   , analyzePMSR

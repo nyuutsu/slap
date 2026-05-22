@@ -124,7 +124,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsRomType     = if FieldRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
             , contentsImageType   = if FieldImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
-          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map renderSlapAdvisory (conversionNotes trimmed format contract noMetadataRequested))
+          droppedNotes = filter ("note: dropping" `isPrefixOf`) (map (Text.unpack . renderSlapAdvisory) (conversionNotes trimmed format contract noMetadataRequested))
       in droppedNotes === []
   | format <- directFormats
   ]
@@ -200,7 +200,7 @@ assertSentinelUnfixable expectedLabel expectedSentinel result = case result of
   Left (SentinelCollisionUnfixable actualLabel actualSentinel) ->
     (actualLabel, actualSentinel) === (expectedLabel, expectedSentinel)
   Left other ->
-    counterexample ("unexpected error: " ++ renderSlapError other) (property False)
+    counterexample ("unexpected error: " ++ Text.unpack (renderSlapError other)) (property False)
   Right _ ->
     counterexample "expected SentinelCollisionUnfixable, got successful conversion"
       (property False)
@@ -212,9 +212,9 @@ prop_ipsSentinelWithSource =
       source = ByteString.replicate (eofOffset + 1) 0
       target = ByteString.replicate eofOffset 0 <> ByteString.pack [0xFF]
   in case createPatch (CreateDirect CreateIPS) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-       Left slapError -> counterexample ("create should succeed: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("create should succeed: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
-         Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+         Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
          Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
            fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
              === Right (OutputFileContents target)

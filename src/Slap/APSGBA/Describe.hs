@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.APSGBA.Describe
   ( apsGBAMeta
   , analyzeAPSGBA
@@ -8,13 +10,13 @@ import Slap.APSGBA.Types
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Length(..), FileSize(..))
 
 apsGBAMeta :: APSGBAPatch -> [InfoLine]
 apsGBAMeta (APSGBAPatch header _) =
-  [ InfoLine "source size" (show (unFileSize (apsGbaSourceSize header)))
-  , InfoLine "target size" (show (unFileSize (apsGbaTargetSize header)))
+  [ InfoLine "source size" (renderAsText (unFileSize (apsGbaSourceSize header)))
+  , InfoLine "target size" (renderAsText (unFileSize (apsGbaTargetSize header)))
   ]
 
 analyzeAPSGBA :: APSGBAPatch -> PatchAnalysis

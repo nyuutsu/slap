@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
   , analyzeVCDIFF
@@ -18,10 +20,11 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showAdler32)
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
 import Slap.Display.Primitives (padHex)
 import Slap.Measure (Offset(..), FileSize(..), Delta(..), displace, byteLength)
 
+import Data.Text (Text)
 import qualified Data.ByteString as ByteString
 
 ----------------------------------------------------------------------------
@@ -33,18 +36,18 @@ vcdiffMeta patch = concat
   [ [InfoLine "version" (displayVersion (vcdiffVersion (vcdiffHeader patch)))]
   , case vcdiffCompressorId (vcdiffHeader patch) of
       Nothing -> []
-      Just compressor  -> [InfoLine "compressor" (show compressor)]
+      Just compressor  -> [InfoLine "compressor" (renderAsText compressor)]
   , if vcdiffHasCodeTable (vcdiffHeader patch)
-    then [InfoLine "code table" ("custom (near=" ++ show (unVCDIFFNearCacheSize (vcdiffNearSize patch))
-          ++ ", same=" ++ show (unVCDIFFSameCacheSize (vcdiffSameSize patch)) ++ ")")]
+    then [InfoLine "code table" ("custom (near=" <> renderAsText (unVCDIFFNearCacheSize (vcdiffNearSize patch))
+          <> ", same=" <> renderAsText (unVCDIFFSameCacheSize (vcdiffSameSize patch)) <> ")")]
     else []
-  , [InfoLine "target size" (show (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
+  , [InfoLine "target size" (renderAsText (sum (map (unFileSize . vcdiffTargetLength) (vcdiffWindows patch))))]
   , if any ((/= Nothing) . vcdiffAdler32) (vcdiffWindows patch)
     then [InfoLine "checksums" "Adler32 (xdelta3)"]
     else []
   ]
 
-displayVersion :: VCDIFFVersion -> String
+displayVersion :: VCDIFFVersion -> Text
 displayVersion VCDIFFStandard = "0 (standard)"
 displayVersion VCDIFFXDelta3  = "0x53 (xdelta3)"
 
@@ -73,13 +76,13 @@ analyzeVCDIFF patch = PatchAnalysis
 makeVCDIFFSection :: Int -> Offset -> VCDIFFWindow -> [VCDIFFDecodedInstruction]
                 -> [AnalysisSection]
 makeVCDIFFSection index globalOffset window instructions =
-  [ SectionLabeled ("window " ++ show index ++ ":")
-      ( [ InfoLine "target size" (show (unFileSize (vcdiffTargetLength window)))
-        , InfoLine "source segment" (show (unFileSize (vcdiffSourceLength window)) ++ " bytes at 0x"
-            ++ padHex 6 (unOffset (vcdiffSourcePosition window)))
-        , InfoLine "add/run data" (show (ByteString.length (vcdiffAddRunData window)) ++ " bytes")
-        , InfoLine "instructions" (show (ByteString.length (vcdiffInstructions window)) ++ " bytes")
-        , InfoLine "addresses" (show (ByteString.length (vcdiffAddresses window)) ++ " bytes")
+  [ SectionLabeled ("window " <> renderAsText index <> ":")
+      ( [ InfoLine "target size" (renderAsText (unFileSize (vcdiffTargetLength window)))
+        , InfoLine "source segment" (renderAsText (unFileSize (vcdiffSourceLength window)) <> " bytes at 0x"
+            <> padHex 6 (unOffset (vcdiffSourcePosition window)))
+        , InfoLine "add/run data" (renderAsText (ByteString.length (vcdiffAddRunData window)) <> " bytes")
+        , InfoLine "instructions" (renderAsText (ByteString.length (vcdiffInstructions window)) <> " bytes")
+        , InfoLine "addresses" (renderAsText (ByteString.length (vcdiffAddresses window)) <> " bytes")
         ] ++ adlerPair
       )
   , SectionRegions (map (decodedToRegion globalOffset) instructions)
@@ -87,7 +90,7 @@ makeVCDIFFSection index globalOffset window instructions =
   where
     adlerPair = case vcdiffAdler32 window of
       Nothing      -> []
-      Just adler   -> [InfoLine "adler32" ("0x" ++ showAdler32 adler)]
+      Just adler   -> [InfoLine "adler32" ("0x" <> showAdler32 adler)]
 
 decodedToRegion :: Offset -> VCDIFFDecodedInstruction -> AnalysisRegion
 decodedToRegion globalOffset instruction = case instruction of

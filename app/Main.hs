@@ -16,7 +16,7 @@ import Slap.SomePatch
   , AdvisoryExpectedBytes(..)
   , parseSome
   )
-import Slap.Display.Common (renderInfoLine)
+import Slap.Display.Common (renderInfoLine, pathText)
 import Slap.Display.Info (renderPatchInfo, renderActionLine)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -45,7 +45,9 @@ import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
 import Slap.Text (EncodedText(..), EncodingName(..))
+import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text.IO as TextIO
 -- The CLI parsers below wrap incoming 'String' as 'EncodedText'
 -- tagged 'EncodingLocale' at the boundary, matching how slap models
 -- locale-tied user input throughout the convert seam.
@@ -75,7 +77,7 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (TextEncoding, hPutStr, hPutStrLn, hSetEncoding,
+import System.IO (TextEncoding, hSetEncoding,
                   localeEncoding, mkTextEncoding, stderr, stdout)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
 import System.IO.Unsafe (unsafePerformIO)
@@ -645,7 +647,7 @@ convertParser = do
 constraintsParser :: Parser RequestedConstraints
 constraintsParser = do
   smcShape <- flag AllowAnyTruncationShape RequireSMCShapedTruncation
-    ( long (constraintFlagName SMCShapeConstraint)
+    ( long (Text.unpack (constraintFlagName SMCShapeConstraint))
    <> help ("Refuse to emit an IPS truncation marker whose declared size"
          ++ " doesn't satisfy SNESTool's (size & 0xFFF) == 0x200 shape filter")
     )
@@ -660,7 +662,7 @@ constraintsParser = do
 dialectsParser :: Parser RequestedDialects
 dialectsParser = do
   ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
-    ( long (dialectFlagName PPF1OriginAxis)
+    ( long (Text.unpack (dialectFlagName PPF1OriginAxis))
    <> help ("Decode (apply/undo/info/explain/convert) or encode (create/convert)"
          ++ " PPF1 offsets as big-endian rather than little-endian. PPF1 has no"
          ++ " on-disk endianness marker; the reference applier reads offsets in"
@@ -963,7 +965,7 @@ readUnwrap path = do
       case result of
         Left errorMessage -> bail errorMessage
         Right (unwrappedBytes, entryName) -> do
-          hPutStrLn stderr ("slap: unwrapped " ++ path ++ spacePaddedRightwardsArrow ++ entryName)
+          TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> Text.pack entryName)
           pure unwrappedBytes
 
 -- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
@@ -1007,15 +1009,15 @@ doInfo parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (infoDialects parsedCommand))
-  mapM_ (putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
+  mapM_ (TextIO.putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
   emitAdvisories (patchAdvisories parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
     Just outPath -> case patchMetadata parsed of
-      Nothing   -> hPutStrLn stderr "slap: no metadata in this patch"
+      Nothing   -> TextIO.hPutStrLn stderr "slap: no metadata in this patch"
       Just metadataBytes -> do
         ByteString.writeFile outPath metadataBytes
-        putStrLn ("wrote metadata to " ++ outPath)
+        TextIO.putStrLn ("wrote metadata to " <> pathText outPath)
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
@@ -1030,7 +1032,7 @@ doExplain parsedCommand = do
   let renderFunction = case explainVerbosity parsedCommand of
         Summary     -> renderAnalysisSummary
         FullRecords -> renderAnalysisFull
-  putStr (renderFunction (patchInfo parsed) (patchAnalysis parsed) maybeSource)
+  TextIO.putStr (renderFunction (patchInfo parsed) (patchAnalysis parsed) maybeSource)
   emitAdvisories (patchAdvisories parsed)
 
 ----------------------------------------------------------------------------
@@ -1059,20 +1061,20 @@ doApply parsedCommand = do
         let target = outcomeValue outcome
         verifyTarget verificationPolicy verification target
         ByteString.writeFile outputPath (unOutputFileContents target)
-        putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
+        TextIO.putStrLn (renderActionLine "applied" (patchInfo parsed) outputPath)
 
   case applyOutput parsedCommand of
     ApplyDryRun -> do
       let reportedPath = deriveOutput (applyPatch parsedCommand) (applySource parsedCommand)
-      putStrLn (renderActionLine "would apply" (patchInfo parsed) reportedPath)
+      TextIO.putStrLn (renderActionLine "would apply" (patchInfo parsed) reportedPath)
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
           let actual = crc32 sourceBytes
-          putStrLn $ "input CRC: " ++ formatCRC actual
-            ++ if actual == expected
-                 then [' ', checkMark]
-                 else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
+          TextIO.putStrLn $ "input CRC: " <> formatCRC actual
+            <> if actual == expected
+                 then Text.pack [' ', checkMark]
+                 else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
         Nothing -> pure ()
       exitSuccess
     ApplyInPlace backupBehavior -> do
@@ -1080,7 +1082,7 @@ doApply parsedCommand = do
         WriteBackup -> do
           let backupPath = applySource parsedCommand ++ ".bak"
           copyFile (applySource parsedCommand) backupPath
-          hPutStrLn stderr ("slap: backup: " ++ backupPath)
+          TextIO.hPutStrLn stderr ("slap: backup: " <> pathText backupPath)
         NoBackup -> pure ()
       applyAndWriteTo (applySource parsedCommand)
     ApplyToExplicitFile outputPath overwritePolicy -> do
@@ -1119,20 +1121,20 @@ doUndo parsedCommand = do
             verifySource verificationPolicy verification revertedSource
             let InputFileContents result = revertedSource
             ByteString.writeFile outputPath result
-            putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
+            TextIO.putStrLn (renderActionLine "reverted" (patchInfo parsed) outputPath)
 
       case undoOutput parsedCommand of
         UndoDryRun -> do
           let reportedPath = deriveUndoOutput (undoSource parsedCommand)
-          putStrLn (renderActionLine "would revert" (patchInfo parsed) reportedPath)
+          TextIO.putStrLn (renderActionLine "would revert" (patchInfo parsed) reportedPath)
           case verifyTargetCRC32 verification of
             Just expected -> do
               modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
               let actual = crc32 modifiedBytes
-              putStrLn $ "output CRC: " ++ formatCRC actual
-                ++ if actual == expected
-                     then [' ', checkMark]
-                     else [' ', ballotX] ++ " (expected " ++ formatCRC expected ++ ")"
+              TextIO.putStrLn $ "output CRC: " <> formatCRC actual
+                <> if actual == expected
+                     then Text.pack [' ', checkMark]
+                     else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
             Nothing -> pure ()
           exitSuccess
         UndoInPlace backupBehavior -> do
@@ -1140,7 +1142,7 @@ doUndo parsedCommand = do
             WriteBackup -> do
               let backupPath = undoSource parsedCommand ++ ".bak"
               copyFile (undoSource parsedCommand) backupPath
-              hPutStrLn stderr ("slap: backup: " ++ backupPath)
+              TextIO.hPutStrLn stderr ("slap: backup: " <> pathText backupPath)
             NoBackup -> pure ()
           undoAndWriteTo (undoSource parsedCommand)
         UndoToExplicitFile outputPath overwritePolicy -> do
@@ -1179,7 +1181,7 @@ doCreate parsedCommand = do
                      (createDialects parsedCommand))
   emitAdvisories (resultAdvisories result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
-  putStrLn ("wrote " ++ createOutput parsedCommand)
+  TextIO.putStrLn ("wrote " <> pathText (createOutput parsedCommand))
 
 -- | Resolve the xdelta1 file-name pair for @slap create@, falling
 -- back to @basename@ of the source\/target file paths when CLI flags
@@ -1285,12 +1287,12 @@ doConvert parsedCommand = do
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
                         ++ resultAdvisories createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
-      putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
+      TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
     SourceLessConvert contents -> do
       convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) (convertDialects parsedCommand))
       emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
-      putStrLn ("converted to " ++ formatName (convertTo parsedCommand) ++ ": " ++ outputFile)
+      TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
     ConvertRequiresSource somePatch ->
       bail (needSourceMessage somePatch)
 
@@ -1326,8 +1328,8 @@ applyForConvert somePatch source = do
 -- | Local helper for 'needSourceMessage' — the cause/consequence pair
 -- of why source-less convert fails for a given 'PatchKind'.
 data SourceRequiredReason = SourceRequiredReason
-  { sourceRequiredCause       :: String
-  , sourceRequiredConsequence :: String
+  { sourceRequiredCause       :: Text
+  , sourceRequiredConsequence :: Text
   }
 
 -- | Error message when --with is required but not provided.
@@ -1335,21 +1337,21 @@ data SourceRequiredReason = SourceRequiredReason
 -- the two strings for one 'PatchKind' arm sit visually adjacent at
 -- the construction site, and a future third 'PatchKind' constructor
 -- fires '-Wincomplete-patterns' once instead of in two parallel cases.
-needSourceMessage :: SomePatch -> String
+needSourceMessage :: SomePatch -> Text
 needSourceMessage somePatch =
-  "converting from " ++ name ++ " requires the original ROM (--with INPUT)\n"
-  ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
-  ++ sourceRequiredConsequence reason
+  "converting from " <> name <> " requires the original ROM (--with INPUT)\n"
+  <> name <> " " <> sourceRequiredCause reason <> ". "
+  <> sourceRequiredConsequence reason
   where
     name   = formatLabelName (patchFormat somePatch)
     reason = case patchKind somePatch of
       Differential -> SourceRequiredReason
         { sourceRequiredCause       = "tells us what to change in the input ROM, not what the result should be"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " ++ [emDash] ++ " which is why we need the input."
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
         }
       Direct _ -> SourceRequiredReason
         { sourceRequiredCause       = "can't be converted directly into another patch format"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " ++ [emDash] ++ " which is why we need the input."
+        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
         }
 
 -- | Warn when the source patch carries embedded BPS metadata bytes and
@@ -1398,7 +1400,7 @@ refuseOverwrite ForceOverwrite  _          = pure ()
 refuseOverwrite RefuseOverwrite outputPath = do
   exists <- doesFileExist outputPath
   when exists $
-    bail (outputPath ++ " already exists (use --force to overwrite)")
+    bail (pathText outputPath <> " already exists (use --force to overwrite)")
 
 ----------------------------------------------------------------------------
 -- Verification helpers
@@ -1505,8 +1507,8 @@ noteSourceBytes label checkOffset expectedData sourceBytes =
   in when (actual /= expectedData) $
        noteMismatch (VerificationSourceBytesMismatch label checkOffset)
 
-formatCRC :: CRC32 -> String
-formatCRC crcValue = "0x" ++ showCRC32 crcValue
+formatCRC :: CRC32 -> Text
+formatCRC crcValue = "0x" <> showCRC32 crcValue
 
 -- | Render the full per-record analysis to stderr, but only when
 -- verbosity is 'Verbose'. Used by 'doApply' and 'doUndo' to share
@@ -1514,7 +1516,7 @@ formatCRC crcValue = "0x" ++ showCRC32 crcValue
 -- and the 'Verbosity' value from its own command record.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()
 emitVerboseAnalysis Verbose parsed =
-  hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
+  TextIO.hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
 emitVerboseAnalysis Quiet _ = pure ()
 
 -- | Read a patch file, parse it, return the parsed 'SomePatch'. Terminates

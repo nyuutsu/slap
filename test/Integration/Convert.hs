@@ -1,6 +1,9 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.Convert (convertTests) where
 
 import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -49,6 +52,7 @@ import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit (Assertion, testCase, assertFailure, assertBool, assertEqual)
+import qualified Data.Text as Text
 
 -- | The convert group walks @test/specs/convert.txt@ and registers
 -- one test per row. Rows whose @result@ field starts with @skip:@ are
@@ -109,7 +113,7 @@ runConvertTest
 runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
   case parseSome noDialectsRequested (PatchFileContents patchBytes) of
-    Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
     Right parsed -> do
       let flags = words flagsString
           useWith = "--with" `elem` flags
@@ -147,7 +151,7 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
           case convResult of
             Left errorMessage -> assertFailure ("conversion failed: " ++ errorMessage)
             Right (CreateResult convertedBytes warnings) -> do
-              checkWarnings warningsString (map renderSlapAdvisory warnings)
+              checkWarnings warningsString (map (Text.unpack . renderSlapAdvisory) warnings)
               when (not (null targetSha) && not (null baseRel)) $ do
                 let basePath = repo </> baseRel
                 baseExists <- doesFileExist basePath
@@ -155,12 +159,12 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
                   baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
                   case parseSome noDialectsRequested convertedBytes of
                     Left slapError ->
-                      assertFailure ("re-parse converted failed: " ++ renderSlapError slapError)
+                      assertFailureT ("re-parse converted failed: " <> renderSlapError slapError)
                     Right convertedParsed -> do
                       applied <- applyPatch convertedParsed (InputFileContents baseBytes)
                       case applied of
                         Left slapError ->
-                          assertFailure ("apply converted failed: " ++ renderSlapError slapError)
+                          assertFailureT ("apply converted failed: " <> renderSlapError slapError)
                         Right (OutputFileContents output) ->
                           assertEqual "SHA1 mismatch" targetSha (sha1Hex output)
 
@@ -212,10 +216,10 @@ makeTruncatingIPSPatch =
          (InputFileContents sourceBytes) (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError ->
-         error ("setup: create truncating IPS failed: " ++ renderSlapError slapError)
+         error ("setup: create truncating IPS failed: " ++ Text.unpack (renderSlapError slapError))
        Right createResult -> case parseSome noDialectsRequested (resultBytes createResult) of
          Left slapError ->
-           error ("setup: parse truncating IPS failed: " ++ renderSlapError slapError)
+           error ("setup: parse truncating IPS failed: " ++ Text.unpack (renderSlapError slapError))
          Right parsed -> pure parsed
 
 -- | Assert that converting a truncating IPS patch to @target@ is

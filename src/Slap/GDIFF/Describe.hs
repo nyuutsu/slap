@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.GDIFF.Describe
   ( gdiffMeta
   , analyzeGDIFF
@@ -10,7 +12,7 @@ import Slap.Display.Analysis
     , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Offset(..), Length(..), advance, byteLength)
 
 import qualified Data.ByteString as ByteString
@@ -18,9 +20,9 @@ import Data.List (mapAccumL)
 
 gdiffMeta :: GDiffPatch -> [InfoLine]
 gdiffMeta patch =
-  [ InfoLine "data cmds"   (show dataCount ++ " (" ++ show dataBytes ++ " bytes)")
-  , InfoLine "copy cmds"   (show copyCount ++ " (" ++ show copyBytes ++ " bytes)")
-  , InfoLine "output size" (show totalOut)
+  [ InfoLine "data cmds"   (renderAsText dataCount <> " (" <> renderAsText dataBytes <> " bytes)")
+  , InfoLine "copy cmds"   (renderAsText copyCount <> " (" <> renderAsText copyBytes <> " bytes)")
+  , InfoLine "output size" (renderAsText totalOut)
   ]
   where
     commands  = gdiffCommands patch

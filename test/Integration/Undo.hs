@@ -1,5 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.Undo (undoTests) where
 
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -61,12 +64,12 @@ mkUndoTest basePath patchPath expectedBaseSha label =
     patchBytes <- ByteString.readFile patchPath
     case parseSome noDialectsRequested (PatchFileContents patchBytes) of
       Left slapError ->
-        assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+        assertFailureT ("parseSome failed: " <> renderSlapError slapError)
       Right parsed -> do
         applied <- applyPatch parsed (InputFileContents baseBytes)
         case applied of
           Left slapError ->
-            assertFailure ("apply failed: " ++ renderSlapError slapError)
+            assertFailureT ("apply failed: " <> renderSlapError slapError)
           Right target -> do
             undone <- undoPatch parsed target
             case undone of

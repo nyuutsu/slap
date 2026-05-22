@@ -19,7 +19,7 @@ import Slap.Measure (Offset(..), Length(..), OffsetRange(..),
                      advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
-                            ByteCount(TotalPayloadBytes))
+                            ByteCount(TotalPayloadBytes), renderAsText, renderHexAsText)
 import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
@@ -36,30 +36,27 @@ import Slap.Text (encodedTextContent)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 import Data.Word (Word64)
-import Numeric (showHex)
 
 ppf3Meta :: PPF3Patch -> [InfoLine]
 ppf3Meta patch = concat
-  [ let description = Text.unpack
-                        (stripTrailing (encodedTextContent (ppf3Description patch)))
-    in [InfoLine "description" description | not (null description)]
+  [ let description = stripTrailing (encodedTextContent (ppf3Description patch))
+    in [InfoLine "description" description | not (Text.null description)]
   , [InfoLine "validation" validationLine]
   , [InfoLine "undo data" (if ppf3HasUndo patch then "yes" else "no")]
   , case ppf3FileId patch of
       Nothing  -> []
       Just fid -> [InfoLine "file_id.diz"
-                     (show (Text.length (encodedTextContent (unPPF3FileId fid)))
-                       ++ " characters")]
+                     (renderAsText (Text.length (encodedTextContent (unPPF3FileId fid)))
+                       <> " characters")]
   ]
   where
     validationLine = case ppf3ValidationBlock patch of
       Nothing -> "none"
       Just (PPF3ValidationBlock blockBytes) ->
-        show (ppf3ImageType patch)
-        ++ " block at 0x"
-        ++ showHex (fromIntegral
-                     (unOffset (ppf3ValidationOffset (ppf3ImageType patch))) :: Word64) ""
-        ++ " (" ++ show (ByteString.length blockBytes) ++ " bytes)"
+        renderAsText (ppf3ImageType patch)
+        <> " block at 0x"
+        <> renderHexAsText (fromIntegral (unOffset (ppf3ValidationOffset (ppf3ImageType patch))) :: Word64)
+        <> " (" <> renderAsText (ByteString.length blockBytes) <> " bytes)"
 
 stripTrailing :: Text.Text -> Text.Text
 stripTrailing =

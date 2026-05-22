@@ -13,10 +13,13 @@ module Slap.Display.Info
   , renderActionLine
   ) where
 
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit, ByteCount,
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
-                             renderByteCount, renderOffsetRange)
+                             renderByteCount, renderOffsetRange,
+                             renderAsText)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Measure (OffsetRange)
 
@@ -29,7 +32,7 @@ import Slap.Measure (OffsetRange)
 --
 -- * the format-name with optional elaboration ('infoFormat'),
 -- * the format-specific metadata fields ('infoLines') already
---   rendered to display strings,
+--   rendered to display text,
 -- * a 'Tally' of items in the patch with optional 'ByteCount',
 -- * an optional 'OffsetRange' surfacing where the patch operates,
 --   populated only when computing it is cheap (formats whose records
@@ -54,10 +57,10 @@ renderPatchInfo info =
   where
     tally       = infoTally info
     countUnit   = infoUnit  info
-    countPhrase = show (unTally tally) ++ " " ++ renderCountUnit tally countUnit
+    countPhrase = renderAsText (unTally tally) <> " " <> renderCountUnit tally countUnit
     countValue = case infoBytes info of
       Nothing    -> countPhrase
-      Just bytes -> countPhrase ++ ", " ++ renderByteCount bytes
+      Just bytes -> countPhrase <> ", " <> renderByteCount bytes
     countLine = InfoLine (pluralCountUnit countUnit) countValue
     rangeLineList = case infoRange info of
       Nothing    -> []
@@ -65,14 +68,16 @@ renderPatchInfo info =
 
 -- | Render a one-line action announcement: @"\<verb\> \<count and
 -- bytes\> → \<path\>"@. Used by 'doApply' for both the success path
--- (@"applied"@) and dry-run (@"would apply"@).
-renderActionLine :: String -> PatchInfo -> FilePath -> String
+-- (@"applied"@) and dry-run (@"would apply"@). The path is taken as
+-- 'FilePath' (slap's filename type) and lifted into 'Text' here so
+-- the action line is uniformly 'Text'.
+renderActionLine :: Text -> PatchInfo -> FilePath -> Text
 renderActionLine actionVerb info outputPath =
   let tally       = infoTally info
       countUnit   = infoUnit  info
-      countPhrase = show (unTally tally) ++ " " ++ renderCountUnit tally countUnit
+      countPhrase = renderAsText (unTally tally) <> " " <> renderCountUnit tally countUnit
       bytesSuffix = case infoBytes info of
         Nothing    -> ""
-        Just bytes -> ", " ++ renderByteCount bytes
-  in actionVerb ++ " " ++ countPhrase ++ bytesSuffix
-     ++ spacePaddedRightwardsArrow ++ outputPath
+        Just bytes -> ", " <> renderByteCount bytes
+  in actionVerb <> " " <> countPhrase <> bytesSuffix
+     <> spacePaddedRightwardsArrow <> Text.pack outputPath

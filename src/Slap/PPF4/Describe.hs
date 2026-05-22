@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.PPF4.Describe
   ( ppf4Meta, analyzePPF4
   , ppf4ReplacesRange
@@ -29,9 +31,8 @@ import qualified Data.Text as Text
 -- undo, no image type, no File_ID.diz.
 ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
-  let description = Text.unpack
-                      (stripTrailing (encodedTextContent (ppf4Description patch)))
-  in [InfoLine "description" description | not (null description)]
+  let description = stripTrailing (encodedTextContent (ppf4Description patch))
+  in [InfoLine "description" description | not (Text.null description)]
 
 totalPayloadBytes :: PPF4Patch -> Int
 totalPayloadBytes patch =

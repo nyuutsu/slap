@@ -18,6 +18,8 @@ module Props.Helpers
   , emptyNINJA2Metadata
     -- * Warning helpers
   , isFieldTruncatedFor
+    -- * Text-shaped assertions
+  , assertFailureT
     -- * Re-exports for convenience
   , isLeft
   , isRight
@@ -33,7 +35,25 @@ import Slap.SomePatch (SomePatch(..), ApplyStrategy(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Test.Tasty.HUnit (assertFailure)
 import Test.Tasty.QuickCheck
+
+----------------------------------------------------------------------------
+-- Text-shaped assertions
+----------------------------------------------------------------------------
+
+-- | HUnit's 'assertFailure' takes 'String'; slap's renderers all
+-- produce 'Text'. This wrapper does the one 'Text.unpack' at the
+-- 'Test.Tasty.HUnit' boundary so test bodies can write
+-- @assertFailureT (\"parseSome: \" <> renderSlapError err)@ instead
+-- of inline-unpacking at every call site. Mirror of
+-- 'Integration.Helpers.assertFailureT' for the prop-test suite.
+-- Polymorphic in the return type for the same reason 'assertFailure'
+-- is: it never returns, so any 'IO' shape will type-check.
+assertFailureT :: Text -> IO a
+assertFailureT = assertFailure . Text.unpack
 
 ----------------------------------------------------------------------------
 -- Generators

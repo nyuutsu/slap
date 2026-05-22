@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
@@ -17,7 +19,8 @@ import Slap.BSDiff.Types (BSDiffInstruction(..))
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display.Common (InfoLine(..), renderInfoLine,
                              Tally(..), CountUnit, ByteCount,
-                             renderCountUnit, renderByteCount)
+                             renderCountUnit, renderByteCount,
+                             renderAsText)
 import Slap.Display.Info (PatchInfo(..), renderPatchInfo)
 import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
@@ -29,8 +32,10 @@ import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (isDigit)
-import Data.List (find, sort, intercalate, partition)
+import Data.List (find, intercalate, sort, partition)
 import Data.Int (Int64)
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -60,13 +65,13 @@ data PatchAnalysis = PatchAnalysis
 
 data AnalysisSection
   = SectionRegions [AnalysisRegion]              -- flat numbered list
-  | SectionLabeled String [InfoLine]             -- labeled block + kv pairs (VCDIFF)
-  | SectionText String                           -- free text line
+  | SectionLabeled Text [InfoLine]               -- labeled block + kv pairs (VCDIFF)
+  | SectionText Text                             -- free text line
 
 data AnalysisRegion = AnalysisRegion
   { regionOffset     :: Offset             -- primary offset (output or target)
   , regionSize       :: Length             -- bytes affected
-  , regionLabel      :: String             -- operation label with trailing space
+  , regionLabel      :: Text               -- operation label with trailing space
   , regionPayload    :: AnalysisPayload
   , regionAnnotation :: Annotation         -- structured trailing metadata
   }
@@ -124,8 +129,8 @@ data PayloadCounts = PayloadCounts
 -- Renderer
 ----------------------------------------------------------------------------
 
-renderAnalysisFull :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> String
-renderAnalysisFull info analysis mSource = unlines $ joinSections
+renderAnalysisFull :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> Text
+renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
   [ map renderInfoLine (renderPatchInfo info)
   , concatMap renderSection (analysisSections analysis)
   , summaryLines (analysisSummary analysis)
@@ -143,86 +148,86 @@ renderAnalysisFull info analysis mSource = unlines $ joinSections
     renderSection (SectionText text) = [text]
 
     renderLabeledField (InfoLine key value) =
-      "  " ++ key ++ ":" ++ replicate (max 1 (18 - length key - 3)) ' ' ++ value
+      "  " <> key <> ":" <> Text.replicate (max 1 (18 - Text.length key - 3)) " " <> value
 
     annotation = renderAnnotation . regionAnnotation
 
     renderRegion index region = case regionPayload region of
       PayloadWrite writeData ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
-        ++ annotation region
-        ++ "\n" ++ hexDump writeData
+        padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
+        <> annotation region
+        <> "\n" <> hexDump writeData
       PayloadFill fillByte fillCount ->
-        padNum index ++ "  " ++ regionLabel region ++ show (unLength fillCount) ++ " x 0x"
-        ++ padHex 2 fillByte
-        ++ annotation region
+        padNum index <> "  " <> regionLabel region <> renderAsText (unLength fillCount) <> " x 0x"
+        <> padHex 2 fillByte
+        <> annotation region
       PayloadCopy _ ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
-        ++ annotation region
-        ++ renderCopySource mSource region
+        padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
+        <> annotation region
+        <> renderCopySource mSource region
       PayloadXOR (Just deltaBytes) ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
-        ++ annotation region
-        ++ "\n" ++ labeledHexDump "delta" deltaBytes
-        ++ renderResolvedXOR mSource (unOffset (regionOffset region)) deltaBytes
+        padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
+        <> annotation region
+        <> "\n" <> labeledHexDump "delta" deltaBytes
+        <> renderResolvedXOR mSource (unOffset (regionOffset region)) deltaBytes
       PayloadXOR Nothing ->
-        padNum index ++ "  " ++ regionLabel region ++ padRight 10 (show (unLength (regionSize region)) ++ " B")
-        ++ annotation region
+        padNum index <> "  " <> regionLabel region <> padRight 10 (renderAsText (unLength (regionSize region)) <> " B")
+        <> annotation region
       PayloadMeta _ ->
-        padNum index ++ "  " ++ regionLabel region ++ annotation region
+        padNum index <> "  " <> regionLabel region <> annotation region
 
 -- | Stitch a list of section blocks into a single line stream with a
 -- blank line separating each non-empty block. Empty blocks are dropped
 -- so the output never carries adjacent blanks. Defined once here and
 -- shared by 'renderAnalysisFull' and 'renderAnalysisSummary' so
 -- blank-line semantics live in one named place.
-joinSections :: [[String]] -> [String]
+joinSections :: [[Text]] -> [Text]
 joinSections = intercalate [""] . filter (not . null)
 
-renderSummaryLine :: SummaryInfo -> String
+renderSummaryLine :: SummaryInfo -> Text
 renderSummaryLine summary =
-  show (unTally (summaryTally summary)) ++ " " ++ renderCountUnit (summaryTally summary) (summaryUnit summary)
-  ++ case summaryBytes summary of
+  renderAsText (unTally (summaryTally summary)) <> " " <> renderCountUnit (summaryTally summary) (summaryUnit summary)
+  <> case summaryBytes summary of
        Nothing        -> ""
-       Just byteCount -> ", " ++ renderByteCount byteCount
+       Just byteCount -> ", " <> renderByteCount byteCount
 
-renderAnnotation :: Annotation -> String
+renderAnnotation :: Annotation -> Text
 renderAnnotation (AnnotationBSDiff BSDiffInstruction { controlAdd, controlCopy, controlSeek }) =
-  "add " ++ padRight 10 (show (unLength controlAdd) ++ " B")
-  ++ "  copy " ++ padRight 10 (show (unLength controlCopy) ++ " B")
-  ++ "  seek " ++ showSigned (unDelta controlSeek)
+  "add " <> padRight 10 (renderAsText (unLength controlAdd) <> " B")
+  <> "  copy " <> padRight 10 (renderAsText (unLength controlCopy) <> " B")
+  <> "  seek " <> showSigned (unDelta controlSeek)
 renderAnnotation (AnnotationAt kind offset details) =
-  sourcePrefix ++ "  " ++ kindString kind ++ "0x" ++ padHex 6 (unOffset offset)
-  ++ concatMap renderDetail remaining
+  sourcePrefix <> "  " <> kindString kind <> "0x" <> padHex 6 (unOffset offset)
+  <> Text.concat (map renderDetail remaining)
   where
     (sourceIndices, remaining) = partition isSourceIndex details
     isSourceIndex (DetailSourceIndex _) = True
     isSourceIndex _                     = False
     sourcePrefix = case sourceIndices of
-      (DetailSourceIndex sourceIndex : _) -> "  from source " ++ show sourceIndex
+      (DetailSourceIndex sourceIndex : _) -> "  from source " <> renderAsText sourceIndex
       _                                   -> ""
     kindString AtOffset = "at "
     kindString AtOutput = "at output "
 
-renderDetail :: AnnotDetail -> String
+renderDetail :: AnnotDetail -> Text
 renderDetail DetailRLE                      = "  (RLE)"
 renderDetail DetailUndo                     = "  (undo data)"
-renderDetail (DetailDelta delta)            = "  (delta " ++ showSigned (unDelta delta) ++ ")"
-renderDetail (DetailSkip skipAmount)        = "  (skip " ++ show (unLength skipAmount) ++ ")"
-renderDetail (DetailSource sourceOffset)    = "  (source 0x" ++ padHex 6 (unOffset sourceOffset) ++ ")"
+renderDetail (DetailDelta delta)            = "  (delta " <> showSigned (unDelta delta) <> ")"
+renderDetail (DetailSkip skipAmount)        = "  (skip " <> renderAsText (unLength skipAmount) <> ")"
+renderDetail (DetailSource sourceOffset)    = "  (source 0x" <> padHex 6 (unOffset sourceOffset) <> ")"
 renderDetail (DetailSourceIndex _)          = ""
 renderDetail (DetailCRC16 sourceCrc targetCrc) =
-  "  (src CRC16 " ++ showCRC16 sourceCrc ++ ", tgt CRC16 " ++ showCRC16 targetCrc ++ ")"
+  "  (src CRC16 " <> showCRC16 sourceCrc <> ", tgt CRC16 " <> showCRC16 targetCrc <> ")"
 renderDetail (DetailCursorUnderflow cursorKind underflowedCursor) =
-  "  *** " ++ renderCursorKind cursorKind ++ " cursor underflow: "
-  ++ show (unSignedOffset underflowedCursor) ++ " (patch invalid here) ***"
+  "  *** " <> renderCursorKind cursorKind <> " cursor underflow: "
+  <> renderAsText (unSignedOffset underflowedCursor) <> " (patch invalid here) ***"
 
 ----------------------------------------------------------------------------
 -- Source-aware helpers
 ----------------------------------------------------------------------------
 
-labeledHexDump :: String -> ByteString -> String
-labeledHexDump label bytes = "      " ++ label ++ ":\n" ++ hexDump bytes
+labeledHexDump :: Text -> ByteString -> Text
+labeledHexDump label bytes = "      " <> label <> ":\n" <> hexDump bytes
 
 resolveXOR :: ByteString -> Int -> ByteString -> ByteString
 resolveXOR source offset deltaBytes =
@@ -239,26 +244,26 @@ findSourceOffset (AnnotationAt _ _ details) = searchDetails details
     searchDetails (_:remaining)                = searchDetails remaining
 findSourceOffset _ = Nothing
 
-renderResolvedXOR :: Maybe ByteString -> Int -> ByteString -> String
+renderResolvedXOR :: Maybe ByteString -> Int -> ByteString -> Text
 renderResolvedXOR Nothing _ _ = ""
 renderResolvedXOR (Just source) offset deltaBytes =
-  "\n" ++ labeledHexDump "resolved" (resolveXOR source offset deltaBytes)
+  "\n" <> labeledHexDump "resolved" (resolveXOR source offset deltaBytes)
 
-renderCopySource :: Maybe ByteString -> AnalysisRegion -> String
+renderCopySource :: Maybe ByteString -> AnalysisRegion -> Text
 renderCopySource Nothing _ = ""
 renderCopySource (Just source) region =
   case findSourceOffset (regionAnnotation region) of
     Nothing          -> ""
     Just sourceOffset ->
       let slice = ByteString.take (unLength (regionSize region)) (ByteString.drop (unOffset sourceOffset) source)
-      in "\n" ++ labeledHexDump "source data" slice
+      in "\n" <> labeledHexDump "source data" slice
 
 ----------------------------------------------------------------------------
 -- Summary renderer
 ----------------------------------------------------------------------------
 
-renderAnalysisSummary :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> String
-renderAnalysisSummary info analysis mSource = unlines $ joinSections
+renderAnalysisSummary :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> Text
+renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
   [ map renderInfoLine (renderPatchInfo info)
   , modifiedLine ++ rangeLine ++ sizeChangeLine
   , regionsBlock ++ recordSizeLine
@@ -285,20 +290,20 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
       PayloadMeta _   -> counts { metaCount  = metaCount  counts + 1 }
     breakdownString =
       let parts = filter ((/= 0) . fst)
-            [ (writeCount payloadCounts, "writes")
+            [ (writeCount payloadCounts, "writes" :: Text)
             , (fillCount  payloadCounts, "fills")
             , (copyCount  payloadCounts, "copies")
             , (xorCount   payloadCounts, "XOR")
             , (metaCount  payloadCounts, "structural") ]
       in case parts of
            [] -> ""
-           items -> " (" ++ intercalate ", "
-                   (map (\(count,label) -> commaNum count ++ " " ++ label) items)
-                 ++ ")"
+           items -> " (" <> Text.intercalate ", "
+                   (map (\(count,label) -> commaNum count <> " " <> label) items)
+                 <> ")"
     modifiedLine
       | totalRecords == 0 = []
-      | otherwise = ["modified:    " ++ commaNum totalModified
-                     ++ " bytes" ++ breakdownString]
+      | otherwise = ["modified:    " <> commaNum totalModified
+                     <> " bytes" <> breakdownString]
 
     -- Offset range (Nothing for empty patches — no partial minimum/maximum)
     offsetRange :: Maybe OffsetRange
@@ -314,8 +319,8 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
               }
     rangeLine = case offsetRange of
       Nothing    -> ["range:       (empty patch)"]
-      Just range -> ["range:       0x" ++ padHex 6 (unOffset (rangeStart range))
-                     ++ spacePaddedEnDash ++ "0x" ++ padHex 6 (unOffset (rangeLastByte range))]
+      Just range -> ["range:       0x" <> padHex 6 (unOffset (rangeStart range))
+                     <> spacePaddedEnDash <> "0x" <> padHex 6 (unOffset (rangeLastByte range))]
 
     -- Size change from header
     sizeChangeLine = case (lookupHeader "source size", lookupHeader "target size",
@@ -332,14 +337,14 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
           let diff = targetSize - sourceSize
               sign = if diff >= 0 then "+" else ""
               truncNote = case lookupHeader "truncation" of
-                Just truncation -> " (truncation at " ++ truncation ++ ")"
+                Just truncation -> " (truncation at " <> truncation <> ")"
                 Nothing         -> ""
-          in ["size change: " ++ sign ++ commaNum diff
-              ++ " bytes" ++ truncNote]
+          in ["size change: " <> sign <> commaNum diff
+              <> " bytes" <> truncNote]
         _ -> []
 
     parseSize input =
-      let digits = filter isDigit (takeWhile (\character -> isDigit character || character == ',') input)
+      let digits = filter isDigit (Text.unpack (Text.takeWhile (\character -> isDigit character || character == ',') input))
       in case reads digits of
            [(number, "")] -> Just (number :: Int)
            _              -> Nothing
@@ -400,48 +405,48 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
                     percentage = if totalModified > 0
                           then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
                           else 0
-                in "  0x" ++ padHex 6 startOffset ++ spacePaddedEnDash ++ "0x" ++ padHex 6 endOffset
-                   ++ "   " ++ padRight 5 (show recordsInRun) ++ " records"
-                   ++ "   " ++ padRight 10 (commaNum bytesInRun ++ " B")
-                   ++ "   " ++ showPercent percentage
+                in "  0x" <> padHex 6 startOffset <> spacePaddedEnDash <> "0x" <> padHex 6 endOffset
+                   <> "   " <> padRight 5 (renderAsText recordsInRun) <> " records"
+                   <> "   " <> padRight 10 (commaNum bytesInRun <> " B")
+                   <> "   " <> showPercent percentage
           in case runs of
                [] -> []
                _  -> "regions:" : map formatRun runs
 
-    showPercent :: Double -> String
+    showPercent :: Double -> Text
     showPercent percent =
       let formatted = show (round (percent * 10) :: Int)
           (whole, fractional) = splitAt (length formatted - 1) formatted
           wholeString = if null whole then "0" else whole
-      in padRight 6 (wholeString ++ "." ++ fractional ++ "%")
+      in padRight 6 (Text.pack (wholeString ++ "." ++ fractional ++ "%"))
 
     -- Record size distribution
     sizes = sort (map (unLength . regionSize) allRegions)
     recordSizeLine = case sizes of
       []        -> []
       (uniform:_) | all (== uniform) sizes ->
-          ["record sizes: " ++ commaNum uniform ++ " B"]
+          ["record sizes: " <> commaNum uniform <> " B"]
       (smallest:_) ->
           let largest = last sizes
               medianSize = sizes !! (length sizes `div` 2)
               meanSize   = totalModified `div` totalRecords
-          in ["record sizes: " ++ commaNum smallest ++ spacePaddedEnDash
-              ++ commaNum largest ++ " B"
-              ++ " (median " ++ commaNum medianSize
-              ++ ", mean " ++ commaNum meanSize ++ ")"]
+          in ["record sizes: " <> commaNum smallest <> spacePaddedEnDash
+              <> commaNum largest <> " B"
+              <> " (median " <> commaNum medianSize
+              <> ", mean " <> commaNum meanSize <> ")"]
 
     -- Sparkline
     sparkline = case offsetRange of
       Nothing -> []
       Just range ->
           let chars = map (\entry -> if entry > 0 then '#' else '.') bucketSums
-              leftLabel = "0x" ++ padHex 6 (unOffset (rangeStart range))
-              rightLabel = "0x" ++ padHex 6 (unOffset (rangeLastByte range))
-              barLine = "[" ++ chars ++ "]"
+              leftLabel = "0x" <> padHex 6 (unOffset (rangeStart range))
+              rightLabel = "0x" <> padHex 6 (unOffset (rangeLastByte range))
+              barLine = "[" <> Text.pack chars <> "]"
               -- right-align rightLabel to closing bracket
-              gap = max 1 (length barLine - length leftLabel - length rightLabel)
-              labelLine = " " ++ leftLabel
-                          ++ replicate gap ' ' ++ rightLabel
+              gap = max 1 (Text.length barLine - Text.length leftLabel - Text.length rightLabel)
+              labelLine = " " <> leftLabel
+                          <> Text.replicate gap " " <> rightLabel
           in [barLine, labelLine]
 
     -- Capability notes
@@ -456,11 +461,13 @@ renderAnalysisSummary info analysis mSource = unlines $ joinSections
            _               -> []
 
 -- | Format an integer with comma grouping.
-commaNum :: Int -> String
+commaNum :: Int -> Text
 commaNum number
-  | number < 0     = "-" ++ commaNum (negate number)
-  | otherwise = reverse (insertCommas (reverse (show number)))
+  | number < 0     = "-" <> commaNum (negate number)
+  | otherwise = Text.reverse (insertCommas (Text.reverse (renderAsText number)))
   where
-    insertCommas [] = []
-    insertCommas digits = let (group, rest) = splitAt 3 digits
-            in group ++ if null rest then "" else "," ++ insertCommas rest
+    insertCommas digits
+      | Text.null digits = ""
+      | otherwise =
+          let (group, rest) = Text.splitAt 3 digits
+          in group <> if Text.null rest then "" else "," <> insertCommas rest

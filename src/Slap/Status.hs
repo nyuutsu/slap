@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 module Slap.Status
@@ -71,12 +72,12 @@ module Slap.Status
   , renderSlapAdvisory
   ) where
 
-import Numeric (showHex)
 import Slap.FileContents (PatchFileContents)
 import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
+import Slap.Display.Common (renderAsText, renderHexAsText)
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.PlatformType (PlatformType, platformName)
 import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
@@ -108,9 +109,12 @@ import Data.Foldable (traverse_)
 import Data.Int (Int64)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Text.IO as TextIO
 import Data.Word (Word8)
 import System.Exit (exitFailure)
-import System.IO (hPutStrLn, stderr)
+import System.IO (stderr)
 
 ----------------------------------------------------------------------------
 -- Severity and emit pipeline
@@ -128,7 +132,7 @@ data Severity = SeverityError | SeverityWarning | SeverityNote
 -- | The user-facing label for each severity. Bare word; the
 -- delimiters that surround it on the wire ('emitToStderr' adds
 -- @": "@ after) are the formatter's responsibility.
-severityLabel :: Severity -> String
+severityLabel :: Severity -> Text
 severityLabel SeverityError   = "error"
 severityLabel SeverityWarning = "warning"
 severityLabel SeverityNote    = "note"
@@ -137,9 +141,9 @@ severityLabel SeverityNote    = "note"
 -- warning, or note the program emits routes through this. The
 -- program-name prefix @"slap: "@ and the severity-prefix delimiter
 -- @": "@ are the only places those literals appear in the codebase.
-emitToStderr :: Severity -> String -> IO ()
+emitToStderr :: Severity -> Text -> IO ()
 emitToStderr severity body =
-  hPutStrLn stderr ("slap: " ++ severityLabel severity ++ ": " ++ body)
+  TextIO.hPutStrLn stderr ("slap: " <> severityLabel severity <> ": " <> body)
 
 -- | Emit a single advisory at its declared severity.
 emitAdvisory :: SlapAdvisory -> IO ()
@@ -154,7 +158,7 @@ emitAdvisories = traverse_ emitAdvisory
 -- | Emit an ad-hoc error message and exit. Used at the IO boundary
 -- for failures that don't yet have a typed 'SlapError' constructor
 -- (e.g., file-system preconditions in @Main@).
-bail :: String -> IO a
+bail :: Text -> IO a
 bail body = emitToStderr SeverityError body >> exitFailure
 
 -- | Emit a typed 'SlapError' and exit.
@@ -183,15 +187,15 @@ data DroppedValue
 -- non-pattern-matchable at the type level — peer to
 -- 'DecompressionCause' and 'XDelta1DiffCause' in spirit.
 newtype DroppedDescriptionText = DroppedDescriptionText
-  { unDroppedDescriptionText :: String }
+  { unDroppedDescriptionText :: Text }
   deriving (Show, Eq)
 
-renderDroppedValue :: DroppedValue -> String
-renderDroppedValue (DroppedCRC crc)                                = "0x" ++ showCRC32 crc
+renderDroppedValue :: DroppedValue -> Text
+renderDroppedValue (DroppedCRC crc)                                = "0x" <> showCRC32 crc
 renderDroppedValue (DroppedMD5 hash)                               = hexByteString (unMD5Hash hash)
 renderDroppedValue (DroppedSHA1 hash)                              = hexByteString (unSHA1Hash hash)
-renderDroppedValue (DroppedDescription (DroppedDescriptionText t)) = "\"" ++ t ++ "\""
-renderDroppedValue (DroppedSize size)                              = show (unFileSize size) ++ " bytes"
+renderDroppedValue (DroppedDescription (DroppedDescriptionText t)) = "\"" <> t <> "\""
+renderDroppedValue (DroppedSize size)                              = renderAsText (unFileSize size) <> " bytes"
 renderDroppedValue DroppedEmpty                                    = ""
 
 ----------------------------------------------------------------------------
@@ -337,13 +341,13 @@ data DecompressionFailure
 data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
   deriving (Show, Eq)
 
--- | The decompressor's diagnostic message.  Carried verbatim from
+-- | The decompressor's diagnostic message. Carried verbatim from
 -- flate2 / bzip2-rs / slap's own Yay0 implementation; slap relays
 -- the underlying library's 'Display' rather than re-classifying.
--- Across the FFI seam, the bytes are decoded as UTF-8 (see
--- 'Slap.Compression.Stream.readRustString'), so the 'String' here
--- carries real Unicode code points, not latin1 byte-Chars.
-newtype DecompressionCause = DecompressionCause { unDecompressionCause :: String }
+-- Across the FFI seam the bytes are decoded as UTF-8 (see
+-- 'Slap.FFI.readText'), so the 'Text' here carries real Unicode
+-- codepoints from the moment it lands.
+newtype DecompressionCause = DecompressionCause { unDecompressionCause :: Text }
   deriving (Show, Eq)
 
 -- | The cause of an xdelta1 differ failure, carried verbatim from
@@ -352,7 +356,7 @@ newtype DecompressionCause = DecompressionCause { unDecompressionCause :: String
 -- seam so consumers of 'SlapError' don't have to know about FFI;
 -- raised by "Slap.XDelta1.FFI" and lifted into 'SlapError' via
 -- 'XDelta1DiffFailed'.
-newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: String }
+newtype XDelta1DiffCause = XDelta1DiffCause { unXDelta1DiffCause :: Text }
   deriving (Show, Eq)
 
 -- | Which input file(s) the patch expected to be gzip streams at
@@ -1096,7 +1100,7 @@ data ApplyDirection
 -- (rather than @"forward"@ and @"reverse"@) because those are the
 -- words slap uses elsewhere in user-facing text, including the CLI
 -- subcommands that drive each direction.
-directionVerb :: ApplyDirection -> String
+directionVerb :: ApplyDirection -> Text
 directionVerb Forward = "apply"
 directionVerb Reverse = "undo"
 
@@ -1113,7 +1117,7 @@ directionVerb Reverse = "undo"
 data VerificationSide = SourceSide | TargetSide
   deriving (Show, Eq)
 
-verificationSideLabel :: VerificationSide -> String
+verificationSideLabel :: VerificationSide -> Text
 verificationSideLabel SourceSide = "input"
 verificationSideLabel TargetSide = "output"
 
@@ -1123,7 +1127,7 @@ verificationSideLabel TargetSide = "output"
 data HashAlgorithm = MD5 | SHA1
   deriving (Show, Eq)
 
-hashAlgorithmLabel :: HashAlgorithm -> String
+hashAlgorithmLabel :: HashAlgorithm -> Text
 hashAlgorithmLabel MD5  = "MD5"
 hashAlgorithmLabel SHA1 = "SHA1"
 
@@ -1141,78 +1145,78 @@ newtype ActualAdler32 = ActualAdler32 { unActualAdler32 :: Adler32 }
 -- "N64 country", "N64 CRC", \[future\] ...). Carried by
 -- 'VerificationSourceBytesMismatch' so the renderer names the check
 -- without callers passing bare strings.
-newtype ByteCheckLabel = ByteCheckLabel { unByteCheckLabel :: String }
+newtype ByteCheckLabel = ByteCheckLabel { unByteCheckLabel :: Text }
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
 -- renderApplyError
 ----------------------------------------------------------------------------
 
-renderCursorKind :: CursorKind -> String
+renderCursorKind :: CursorKind -> Text
 renderCursorKind SourceCursor = "source-relative"
 renderCursorKind TargetCursor = "target-relative"
 
-renderApplyError :: ApplyError -> String
+renderApplyError :: ApplyError -> Text
 
 renderApplyError (ApplyCursorUnderflow cursorKind actionIndex cursor) =
-  "at step #" ++ show (unActionIndex actionIndex) ++ ": "
-  ++ renderCursorKind cursorKind ++ " cursor underflowed (value "
-  ++ show (unSignedOffset cursor) ++ ")"
+  "at step #" <> renderAsText (unActionIndex actionIndex) <> ": "
+  <> renderCursorKind cursorKind <> " cursor underflowed (value "
+  <> renderAsText (unSignedOffset cursor) <> ")"
 
 renderApplyError (ApplySourceReadOutOfBounds actionIndex readEndOffset sourceSize) =
-  "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": input read would end at offset 0x"
-  ++ showHex (unOffset readEndOffset) ""
-  ++ " but input is " ++ show (unFileSize sourceSize) ++ " bytes"
+  "at step #" <> renderAsText (unActionIndex actionIndex)
+  <> ": input read would end at offset 0x"
+  <> renderHexAsText (unOffset readEndOffset)
+  <> " but input is " <> renderAsText (unFileSize sourceSize) <> " bytes"
 
 renderApplyError (ApplyTargetReadUnwritten actionIndex (ReadOffset readOffset) (WritePosition writePosition)) =
-  "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": TargetCopy read at offset 0x"
-  ++ showHex (unOffset readOffset) ""
-  ++ " references position at or past current write position 0x"
-  ++ showHex (unOffset writePosition) ""
+  "at step #" <> renderAsText (unActionIndex actionIndex)
+  <> ": TargetCopy read at offset 0x"
+  <> renderHexAsText (unOffset readOffset)
+  <> " references position at or past current write position 0x"
+  <> renderHexAsText (unOffset writePosition)
 
 renderApplyError (ApplyWritesPastTarget actionIndex (RequestedLength requestedLength) (RemainingLength remainingLength)) =
-  "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": action of length " ++ show (unLength requestedLength)
-  ++ " would write past output ("
-  ++ show (unLength remainingLength) ++ " bytes remaining)"
+  "at step #" <> renderAsText (unActionIndex actionIndex)
+  <> ": action of length " <> renderAsText (unLength requestedLength)
+  <> " would write past output ("
+  <> renderAsText (unLength remainingLength) <> " bytes remaining)"
 
 renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize expectedSize)) =
   "output under-filled ("
-  ++ show (unOffset cursor) ++ " of "
-  ++ show (unFileSize expectedSize) ++ " bytes written before action stream exhausted)"
+  <> renderAsText (unOffset cursor) <> " of "
+  <> renderAsText (unFileSize expectedSize) <> " bytes written before action stream exhausted)"
 
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
-  "record " ++ show (unActionIndex actionIndex)
-  ++ " has negative offset " ++ show (unOffset offset)
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " has negative offset " <> renderAsText (unOffset offset)
 
 renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payloadLength) sourceSize) =
-  "record " ++ show (unActionIndex actionIndex)
-  ++ ": Replace at offset 0x" ++ showHex (unOffset offset) ""
-  ++ " writes " ++ show (unLength payloadLength) ++ " bytes"
-  ++ ", which would extend past the source size of "
-  ++ show (unFileSize sourceSize) ++ " bytes"
-  ++ " (PPF4 Replaces cannot grow the file; use Append records)"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> ": Replace at offset 0x" <> renderHexAsText (unOffset offset)
+  <> " writes " <> renderAsText (unLength payloadLength) <> " bytes"
+  <> ", which would extend past the source size of "
+  <> renderAsText (unFileSize sourceSize) <> " bytes"
+  <> " (PPF4 Replaces cannot grow the file; use Append records)"
 
 renderApplyError (ApplyDiffReadOutOfBounds actionIndex readEndOffset diffSize) =
-  "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": diff-stream read would end at offset 0x"
-  ++ showHex (unOffset readEndOffset) ""
-  ++ " but diff stream is " ++ show (unFileSize diffSize) ++ " bytes"
+  "at step #" <> renderAsText (unActionIndex actionIndex)
+  <> ": diff-stream read would end at offset 0x"
+  <> renderHexAsText (unOffset readEndOffset)
+  <> " but diff stream is " <> renderAsText (unFileSize diffSize) <> " bytes"
 
 renderApplyError (ApplyExtraReadOutOfBounds actionIndex readEndOffset extraSize) =
-  "at step #" ++ show (unActionIndex actionIndex)
-  ++ ": extra-stream read would end at offset 0x"
-  ++ showHex (unOffset readEndOffset) ""
-  ++ " but extra stream is " ++ show (unFileSize extraSize) ++ " bytes"
+  "at step #" <> renderAsText (unActionIndex actionIndex)
+  <> ": extra-stream read would end at offset 0x"
+  <> renderHexAsText (unOffset readEndOffset)
+  <> " but extra stream is " <> renderAsText (unFileSize extraSize) <> " bytes"
 
 renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (RequestedLength payloadLength) targetSize) =
-  "record " ++ show (unActionIndex actionIndex)
-  ++ ": write at offset 0x" ++ showHex (unOffset writeStart) ""
-  ++ " of " ++ show (unLength payloadLength) ++ " bytes"
-  ++ " would extend past the target size of "
-  ++ show (unFileSize targetSize) ++ " bytes"
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> ": write at offset 0x" <> renderHexAsText (unOffset writeStart)
+  <> " of " <> renderAsText (unLength payloadLength) <> " bytes"
+  <> " would extend past the target size of "
+  <> renderAsText (unFileSize targetSize) <> " bytes"
 
 ----------------------------------------------------------------------------
 -- renderByteParserError
@@ -1220,13 +1224,13 @@ renderApplyError (ApplyAbsoluteWritePastTarget actionIndex writeStart (Requested
 
 -- | Human-readable name for the primitive that surfaced an error.
 -- Renderer-private; no consumer dispatches on the string form.
-byteParserOperationLabel :: ByteParserOperation -> String
+byteParserOperationLabel :: ByteParserOperation -> Text
 byteParserOperationLabel GetBytesOperation        = "getBytes"
 byteParserOperationLabel SkipOperation            = "skip"
 byteParserOperationLabel FixedWidthReadOperation  = "fixed-width read"
 byteParserOperationLabel VarintReadOperation      = "varint read"
 
-renderByteParserError :: ByteParserError -> String
+renderByteParserError :: ByteParserError -> Text
 
 renderByteParserError
   (ByteParserUnderflow
@@ -1235,146 +1239,146 @@ renderByteParserError
       (RemainingLength (Length available))
       (Position cursor)) =
   byteParserOperationLabel operation
-  ++ ": need " ++ show requested ++ " bytes at offset " ++ show cursor
-  ++ " but only " ++ show available ++ " available"
+  <> ": need " <> renderAsText requested <> " bytes at offset " <> renderAsText cursor
+  <> " but only " <> renderAsText available <> " available"
 
 renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cursor)) =
-  "getUntilByte: terminator 0x" ++ padHex 2 terminatorByte
-  ++ " not found from offset " ++ show cursor
+  "getUntilByte: terminator 0x" <> padHex 2 terminatorByte
+  <> " not found from offset " <> renderAsText cursor
 
 renderByteParserError
   (ByteParserPositionOutOfBounds (Position target) (ActualLength (Length inputLength))) =
-  "setPosition: " ++ show target
-  ++ " out of bounds (input length " ++ show inputLength ++ ")"
+  "setPosition: " <> renderAsText target
+  <> " out of bounds (input length " <> renderAsText inputLength <> ")"
 
 renderByteParserError
   (ByteParserNegativeLengthRequestedInGetBytes (Length amount)) =
-  "getBytes: negative length " ++ show amount
+  "getBytes: negative length " <> renderAsText amount
 
 renderByteParserError
   (ByteParserNegativeLengthRequestedInSkip (Length amount)) =
-  "skip: negative length " ++ show amount
+  "skip: negative length " <> renderAsText amount
 
 renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
-  "varint read overran buffer at offset " ++ show cursor
+  "varint read overran buffer at offset " <> renderAsText cursor
 
 renderByteParserError ByteParserVarintExceededWidth =
   "varint overflow (too many continuation bytes)"
 
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
-  "internal: do-pattern match failed in slap's parser: " ++ message
+  "internal: do-pattern match failed in slap's parser: " <> Text.pack message
 
 ----------------------------------------------------------------------------
 -- renderSlapError
 ----------------------------------------------------------------------------
 
-renderSlapError :: SlapError -> String
+renderSlapError :: SlapError -> Text
 
 renderSlapError (MissingInputFile path) =
-  "cannot read " ++ path ++ ": file not found"
+  "cannot read " <> Text.pack path <> ": file not found"
 
 renderSlapError (UnreadableInputFile path reason) =
-  "cannot read " ++ path ++ ": " ++ reason
+  "cannot read " <> Text.pack path <> ": " <> Text.pack reason
 
 renderSlapError UnrecognizedFormat =
   "unknown patch format"
 
 renderSlapError (AmbiguousDetection labels) =
   "ambiguous format: could be "
-  ++ commaList (map formatLabelName labels)
+  <> commaList (map formatLabelName labels)
 
 renderSlapError (InputTooShort label (RequiredLength needed) (ActualLength actual)) =
-  formatLabelName label ++ ": input too short (need "
-  ++ show (unLength needed) ++ " bytes, have "
-  ++ show (unLength actual) ++ ")"
+  formatLabelName label <> ": input too short (need "
+  <> renderAsText (unLength needed) <> " bytes, have "
+  <> renderAsText (unLength actual) <> ")"
 
 renderSlapError (BadMagic label (ActualMagic actualBytes)) =
-  "not a " ++ formatLabelName label ++ " file (bad magic: "
-  ++ show actualBytes ++ ")"
+  "not a " <> formatLabelName label <> " file (bad magic: "
+  <> renderAsText actualBytes <> ")"
 
 renderSlapError (BadVersion label (FoundVersion versionByte)) =
-  formatLabelName label ++ ": unsupported version "
-  ++ show versionByte
+  formatLabelName label <> ": unsupported version "
+  <> renderAsText versionByte
 
 renderSlapError (UnsupportedXDelta1Subformat version) =
-  formatLabelName LabelXDelta1 ++ ": unsupported subformat: "
-  ++ case version of
+  formatLabelName LabelXDelta1 <> ": unsupported subformat: "
+  <> case version of
        XDelta1_1_0_4 -> "version 1.0.4"
        XDelta1_1_0   -> "version 1.0"
        XDelta1_0_14  -> "version 0.14"
 
 renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
-  formatLabelName LabelNINJA1 ++ ": unsupported subformat: "
-  ++ show subformatBytes
+  formatLabelName LabelNINJA1 <> ": unsupported subformat: "
+  <> renderAsText subformatBytes
 
 renderSlapError (TruncatedRecord label recordIndex needed available) =
-  formatLabelName label ++ ": record " ++ show recordIndex
-  ++ " truncated (need " ++ show (unLength needed)
-  ++ " bytes, have " ++ show (unLength available) ++ ")"
+  formatLabelName label <> ": record " <> renderAsText recordIndex
+  <> " truncated (need " <> renderAsText (unLength needed)
+  <> " bytes, have " <> renderAsText (unLength available) <> ")"
 
 renderSlapError (NegativeSize label name (ParsedSizeValue value)) =
-  formatLabelName label ++ ": negative "
-  ++ fieldNameLabel name ++ ": " ++ show value
+  formatLabelName label <> ": negative "
+  <> fieldNameLabel name <> ": " <> renderAsText value
 
 renderSlapError (DecompressionFailed failure) =
   renderDecompressionFailure failure
 
 renderSlapError (XDelta1DiffFailed (XDelta1DiffCause causeMessage)) =
-  "xdelta1 differ failed: " ++ causeMessage
+  "xdelta1 differ failed: " <> causeMessage
 
 renderSlapError (RecordExceedsAddressableRange label recordIndex (ActualOffset endOffset) (MaxOffset maxEndOffset)) =
-  formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
-  ++ " ends at offset 0x" ++ showHex (unOffset endOffset) ""
-  ++ ", exceeding the variant's maximum addressable end 0x"
-  ++ showHex (unOffset maxEndOffset) ""
+  formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " ends at offset 0x" <> renderHexAsText (unOffset endOffset)
+  <> ", exceeding the variant's maximum addressable end 0x"
+  <> renderHexAsText (unOffset maxEndOffset)
 
 renderSlapError (MalformedRecordField label recordIndex name) =
-  formatLabelName label ++ ": record " ++ show (unActionIndex recordIndex)
-  ++ " has malformed " ++ fieldNameLabel name
+  formatLabelName label <> ": record " <> renderAsText (unActionIndex recordIndex)
+  <> " has malformed " <> fieldNameLabel name
 
 renderSlapError (UnrecognizedTrailer label (TrailerMarker markerBytes) (ActualLength actualLength)) =
-  formatLabelName label ++ ": unrecognized trailing bytes after "
-  ++ renderTrailerMarkerName markerBytes ++ " marker ("
-  ++ show (unLength actualLength) ++ " bytes)"
+  formatLabelName label <> ": unrecognized trailing bytes after "
+  <> renderTrailerMarkerName markerBytes <> " marker ("
+  <> renderAsText (unLength actualLength) <> " bytes)"
 
 renderSlapError (PatchCRCMismatch label (ExpectedCRC32 stored) (ActualCRC32 computed)) =
-  formatLabelName label ++ ": patch CRC mismatch (stored "
-  ++ showCRC32 stored ++ ", computed " ++ showCRC32 computed ++ ")"
+  formatLabelName label <> ": patch CRC mismatch (stored "
+  <> showCRC32 stored <> ", computed " <> showCRC32 computed <> ")"
 
 renderSlapError (TrailingMagicMismatch label (ExpectedMagic expected) (ActualMagic actual)) =
-  formatLabelName label ++ ": trailing magic mismatch (expected "
-  ++ show expected ++ ", found " ++ show actual ++ ")"
+  formatLabelName label <> ": trailing magic mismatch (expected "
+  <> renderAsText expected <> ", found " <> renderAsText actual <> ")"
 
 renderSlapError (UnknownFlag label name (RawFlagByte flagByte)) =
-  formatLabelName label ++ ": unknown "
-  ++ fieldNameLabel name ++ " flag: 0x"
-  ++ showHex flagByte ""
+  formatLabelName label <> ": unknown "
+  <> fieldNameLabel name <> " flag: 0x"
+  <> renderHexAsText flagByte
 
 renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)) =
-  formatLabelName label ++ ": unsupported encoding method: 0x"
-  ++ showHex methodByte ""
+  formatLabelName label <> ": unsupported encoding method: 0x"
+  <> renderHexAsText methodByte
 
 renderSlapError (NINJA2UnrecognizedPatchEncoding byte) =
-  "NINJA2 PATCH_ENC byte is 0x" ++ padHex 2 byte
-    ++ " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
-    ++ "and slap will not guess how to decode text fields under an undefined encoding"
+  "NINJA2 PATCH_ENC byte is 0x" <> padHex 2 byte
+    <> " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
+    <> "and slap will not guess how to decode text fields under an undefined encoding"
 
 renderSlapError (MalformedNINJA1Content malformation) =
-  formatLabelName LabelNINJA1 ++ ": malformed text: " ++ case malformation of
+  formatLabelName LabelNINJA1 <> ": malformed text: " <> case malformation of
     NINJA1EmptyTextualPatch                          -> "empty textual patch"
-    NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " ++ t
-    NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " ++ line
-    NINJA1UnknownTextualRomType     name             -> "unknown ROM type name in text header: " ++ name
+    NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " <> t
+    NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " <> line
+    NINJA1UnknownTextualRomType     name             -> "unknown ROM type name in text header: " <> name
 
 renderSlapError (ParseError label parserError) =
-  formatLabelName label ++ ": " ++ renderByteParserError parserError
+  formatLabelName label <> ": " <> renderByteParserError parserError
 
 renderSlapError (UnsupportedXDelta1Shape violation) =
   formatLabelName LabelXDelta1
-  ++ ": source list is not canonical [data segment, file source]: "
-  ++ describeViolation violation
-  ++ " (xdelta1 patches carry exactly two sources in that order;"
-  ++ " any other count or ordering is off-spec)"
+  <> ": source list is not canonical [data segment, file source]: "
+  <> describeViolation violation
+  <> " (xdelta1 patches carry exactly two sources in that order;"
+  <> " any other count or ordering is off-spec)"
   where
     describeViolation XDelta1TwoDataSources        = "[data, data]"
     describeViolation XDelta1ReversedDataFileOrder = "[file, data]"
@@ -1382,181 +1386,181 @@ renderSlapError (UnsupportedXDelta1Shape violation) =
     describeViolation XDelta1ZeroSources           = "0 sources"
     describeViolation XDelta1OneDataSource         = "1 source: data"
     describeViolation XDelta1OneFileSource         = "1 source: file"
-    describeViolation (XDelta1TooManySources n)    = show n ++ " sources"
+    describeViolation (XDelta1TooManySources n)    = renderAsText n <> " sources"
 
 renderSlapError (UnsupportedVCDIFFShape violation) =
-  formatLabelName LabelVCDIFF ++ ": " ++ case violation of
+  formatLabelName LabelVCDIFF <> ": " <> case violation of
     VCDIFFNestedCustomCodeTable ->
       "nested custom code tables are not allowed (RFC 3284 §4.1)"
     VCDIFFNegativeWindowTargetSize rawValue ->
-      "negative window target size (decoded as " ++ show rawValue ++ ")"
+      "negative window target size (decoded as " <> renderAsText rawValue <> ")"
     VCDIFFSecondaryCompressionUnsupportedInDataSections ->
       "secondary compression in data sections is not supported"
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
-  formatLabelName LabelVCDIFF ++ ": " ++ case malformation of
+  formatLabelName LabelVCDIFF <> ": " <> case malformation of
     VCDIFFCodeTableWrongLength (ActualLength (Length actualLength)) ->
-      "code table must be 1536 bytes, got " ++ show actualLength
+      "code table must be 1536 bytes, got " <> renderAsText actualLength
     VCDIFFCodeTableInvalidInstructionType typeCode ->
-      "invalid instruction type in code table: " ++ show typeCode
+      "invalid instruction type in code table: " <> renderAsText typeCode
     VCDIFFCodeTableHeaderTooShort ->
       "custom code table data too short"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize diffSize targetSize)) =
   formatLabelName LabelBSDiff
-  ++ ": invalid header (negative size: control="
-  ++ show controlSize ++ ", diff=" ++ show diffSize
-  ++ ", target=" ++ show targetSize ++ ")"
+  <> ": invalid header (negative size: control="
+  <> renderAsText controlSize <> ", diff=" <> renderAsText diffSize
+  <> ", target=" <> renderAsText targetSize <> ")"
 
 renderSlapError (MalformedAPSN64Header malformation) =
-  formatLabelName LabelAPSN64 ++ ": " ++ case malformation of
-    APSN64UnknownPatchType byte -> "unknown patch type: " ++ show byte
+  formatLabelName LabelAPSN64 <> ": " <> case malformation of
+    APSN64UnknownPatchType byte -> "unknown patch type: " <> renderAsText byte
 
 renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   formatLabelName LabelXDelta1
-  ++ ": instruction references source index " ++ show wireIndex
-  ++ "; xdelta1 patches carry exactly two sources, so valid indices are"
-  ++ " 0 (data segment) or 1 (file source)"
+  <> ": instruction references source index " <> renderAsText wireIndex
+  <> "; xdelta1 patches carry exactly two sources, so valid indices are"
+  <> " 0 (data segment) or 1 (file source)"
 
 renderSlapError (XDelta1DataRecordLengthMismatch (ExpectedSize declared) (ActualSize actual)) =
   formatLabelName LabelXDelta1
-  ++ ": data-record declares length " ++ show (unFileSize declared)
-  ++ " bytes but the patch's data segment is " ++ show (unFileSize actual)
-  ++ " bytes (structural inconsistency; the two fields describe the same bytes and slap cannot pick a winner)"
+  <> ": data-record declares length " <> renderAsText (unFileSize declared)
+  <> " bytes but the patch's data segment is " <> renderAsText (unFileSize actual)
+  <> " bytes (structural inconsistency; the two fields describe the same bytes and slap cannot pick a winner)"
 
 renderSlapError (XDelta1DataRecordMD5Mismatch declared computed) =
   formatLabelName LabelXDelta1
-  ++ ": data-record declares MD5 " ++ hexByteString (unMD5Hash declared)
-  ++ " but the patch's data segment hashes to " ++ hexByteString (unMD5Hash computed)
-  ++ " (structural inconsistency; the two values describe the same bytes and slap cannot pick a winner)"
+  <> ": data-record declares MD5 " <> hexByteString (unMD5Hash declared)
+  <> " but the patch's data segment hashes to " <> hexByteString (unMD5Hash computed)
+  <> " (structural inconsistency; the two values describe the same bytes and slap cannot pick a winner)"
 
 renderSlapError (XDelta1InputPreCompressionUnsupported sides) =
   formatLabelName LabelXDelta1
-  ++ ": apply refused — patch expects " ++ describeSides sides
-  ++ " to be a gzip stream at apply time, which slap doesn't currently"
-  ++ " implement (canonical xdelta-1.x decompresses gzip-magic inputs"
-  ++ " transparently before delta and recompresses after apply; this"
-  ++ " patch's FROM_COMPRESSED / TO_COMPRESSED header bits record"
-  ++ " that the original delta did so)"
+  <> ": apply refused — patch expects " <> describeSides sides
+  <> " to be a gzip stream at apply time, which slap doesn't currently"
+  <> " implement (canonical xdelta-1.x decompresses gzip-magic inputs"
+  <> " transparently before delta and recompresses after apply; this"
+  <> " patch's FROM_COMPRESSED / TO_COMPRESSED header bits record"
+  <> " that the original delta did so)"
   where
     describeSides OnlyFromFileWasGzipStream = "the source (from) file"
     describeSides OnlyToFileWasGzipStream   = "the target (to) file"
     describeSides BothFilesWereGzipStreams  = "both the source (from) and target (to) files"
 
 renderSlapError (NegativeTargetSize label size) =
-  formatLabelName label ++ ": negative output size: "
-  ++ show (unFileSize size)
+  formatLabelName label <> ": negative output size: "
+  <> renderAsText (unFileSize size)
 
 renderSlapError (ApplyFailed label applyErr) =
-  formatLabelName label ++ " apply: " ++ renderApplyError applyErr
+  formatLabelName label <> " apply: " <> renderApplyError applyErr
 
 renderSlapError (UndoFailed label applyErr) =
-  formatLabelName label ++ " undo: " ++ renderApplyError applyErr
+  formatLabelName label <> " undo: " <> renderApplyError applyErr
 
 renderSlapError (CannotExpressTargetShrinkage label (ActualSize sourceSize) (ExpectedSize targetSize)) =
-  formatLabelName label ++ ": cannot express an output file smaller than the input"
-  ++ " (input: 0x" ++ showHex (unFileSize sourceSize) ""
-  ++ " bytes, output: 0x" ++ showHex (unFileSize targetSize) ""
-  ++ " bytes); this format has no truncation marker"
+  formatLabelName label <> ": cannot express an output file smaller than the input"
+  <> " (input: 0x" <> renderHexAsText (unFileSize sourceSize)
+  <> " bytes, output: 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " bytes); this format has no truncation marker"
 
 renderSlapError (UPSUnencodeablePair label reason) =
-  formatLabelName label ++ ": cannot encode pair: "
-  ++ renderUnencodeabilityReason reason
+  formatLabelName label <> ": cannot encode pair: "
+  <> renderUnencodeabilityReason reason
 
 renderSlapError (NarrowingError nf) = renderNarrowingFailure nf
 
 renderSlapError (FileExceedsAddressableRange label (ActualSize actualSize) (MaxAddressableSize maxSize)) =
-  formatLabelName label ++ ": input file is "
-  ++ show (unFileSize actualSize) ++ " bytes, exceeding the host platform's "
-  ++ show (unFileSize maxSize) ++ "-byte addressable range"
+  formatLabelName label <> ": input file is "
+  <> renderAsText (unFileSize actualSize) <> " bytes, exceeding the host platform's "
+  <> renderAsText (unFileSize maxSize) <> "-byte addressable range"
 
 renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
-  formatLabelName label ++ ": hunk offset 0x"
-  ++ showHex (unOffset sentinel) ""
-  ++ " collides with trailer sentinel and cannot be shifted"
-  ++ " (no preceding source byte available to prepend)"
+  formatLabelName label <> ": hunk offset 0x"
+  <> renderHexAsText (unOffset sentinel)
+  <> " collides with trailer sentinel and cannot be shifted"
+  <> " (no preceding source byte available to prepend)"
 
 renderSlapError (SourceTooSmallForPPF2Validation label
                                                  (ActualSize sourceSize)
                                                  (ExpectedSize minimumSize)) =
-  formatLabelName label ++ ": source file is "
-  ++ show (unFileSize sourceSize) ++ " bytes; PPF2 requires at least "
-  ++ show (unFileSize minimumSize) ++ " bytes ("
-  ++ "the validation block samples 1024 bytes from offset 0x9320,"
-  ++ " so anything below 0x9720 has no block to embed)"
+  formatLabelName label <> ": source file is "
+  <> renderAsText (unFileSize sourceSize) <> " bytes; PPF2 requires at least "
+  <> renderAsText (unFileSize minimumSize) <> " bytes ("
+  <> "the validation block samples 1024 bytes from offset 0x9320,"
+  <> " so anything below 0x9720 has no block to embed)"
 
 renderSlapError (FieldTooLong label name (EncodedLength encodedLength) (MaxLength maxLength)) =
-  formatLabelName label ++ ": " ++ fieldNameLabel name
-  ++ " too long (" ++ show (unLength encodedLength)
-  ++ " bytes, maximum " ++ show (unLength maxLength) ++ ")"
+  formatLabelName label <> ": " <> fieldNameLabel name
+  <> " too long (" <> renderAsText (unLength encodedLength)
+  <> " bytes, maximum " <> renderAsText (unLength maxLength) <> ")"
 
 renderSlapError (MissingRequiredField label field) =
-  formatLabelName label ++ " requires " ++ fieldName field
-  ++ " but source patch doesn't provide it"
+  formatLabelName label <> " requires " <> fieldName field
+  <> " but source patch doesn't provide it"
 
 renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
-  "cannot convert to " ++ formatLabelName label ++ ": "
-  ++ renderApplyOutputDrops label drops
+  "cannot convert to " <> formatLabelName label <> ": "
+  <> renderApplyOutputDrops label drops
 
 renderSlapError (DiffRequiresSource label) =
   formatLabelName label
-  ++ " requires source+target diff data\nuse --with INPUT"
+  <> " requires source+target diff data\nuse --with INPUT"
 
 renderSlapError (MetadataFieldRejected fields target) =
   let renderOne field =
-        "--" ++ metadataFieldFlagName field
-        ++ " (" ++ metadataFieldName field ++ ")"
+        "--" <> metadataFieldFlagName field
+        <> " (" <> metadataFieldName field <> ")"
   in case NonEmpty.toList fields of
        [single] ->
-         "--" ++ metadataFieldFlagName single ++ " is not accepted by "
-         ++ formatLabelName target
-         ++ " (the " ++ metadataFieldName single ++ " field is not part of this format)"
+         "--" <> metadataFieldFlagName single <> " is not accepted by "
+         <> formatLabelName target
+         <> " (the " <> metadataFieldName single <> " field is not part of this format)"
        many ->
          formatLabelName target
-         ++ " does not accept these flags:"
-         ++ concatMap (\field -> "\n  - " ++ renderOne field) many
+         <> " does not accept these flags:"
+         <> Text.concat (map (\field -> "\n  - " <> renderOne field) many)
 
 renderSlapError (ConstraintNotSupported constraints target) =
   let renderOne c =
-        "--" ++ constraintFlagName c ++ " (" ++ constraintName c ++ ")"
+        "--" <> constraintFlagName c <> " (" <> constraintName c <> ")"
   in case NonEmpty.toList constraints of
        [single] ->
-         "the " ++ formatLabelName target
-         ++ " format does not support --" ++ constraintFlagName single
-         ++ " (" ++ constraintName single ++ ")"
+         "the " <> formatLabelName target
+         <> " format does not support --" <> constraintFlagName single
+         <> " (" <> constraintName single <> ")"
        many ->
-         "the " ++ formatLabelName target
-         ++ " format does not support these constraints:"
-         ++ concatMap (\c -> "\n  - " ++ renderOne c) many
+         "the " <> formatLabelName target
+         <> " format does not support these constraints:"
+         <> Text.concat (map (\c -> "\n  - " <> renderOne c) many)
 
 renderSlapError (DialectNotSupported axes target) =
   let renderOne d =
-        "--" ++ dialectFlagName d ++ " (" ++ dialectName d ++ ")"
+        "--" <> dialectFlagName d <> " (" <> dialectName d <> ")"
   in case NonEmpty.toList axes of
        [single] ->
-         "the " ++ formatLabelName target
-         ++ " format does not have a " ++ dialectName single
-         ++ " axis (--" ++ dialectFlagName single ++ ")"
+         "the " <> formatLabelName target
+         <> " format does not have a " <> dialectName single
+         <> " axis (--" <> dialectFlagName single <> ")"
        many ->
-         "the " ++ formatLabelName target
-         ++ " format does not have these dialect axes:"
-         ++ concatMap (\d -> "\n  - " ++ renderOne d) many
+         "the " <> formatLabelName target
+         <> " format does not have these dialect axes:"
+         <> Text.concat (map (\d -> "\n  - " <> renderOne d) many)
 
 renderSlapError (XDelta1ConvertRequiresNames sourceLabel) =
-  "cannot convert from " ++ formatLabelName sourceLabel
-  ++ " to " ++ formatLabelName LabelXDelta1
-  ++ ": xdelta1 patches carry a from-name and a to-name in the header,"
-  ++ " and " ++ formatLabelName sourceLabel ++ " has no equivalent fields to inherit from."
-  ++ "\n  pass --from-name TEXT and --to-name TEXT to supply them explicitly"
+  "cannot convert from " <> formatLabelName sourceLabel
+  <> " to " <> formatLabelName LabelXDelta1
+  <> ": xdelta1 patches carry a from-name and a to-name in the header,"
+  <> " and " <> formatLabelName sourceLabel <> " has no equivalent fields to inherit from."
+  <> "\n  pass --from-name TEXT and --to-name TEXT to supply them explicitly"
 
 renderSlapError (TruncationViolatesSMCShape size) =
-  "--" ++ constraintFlagName SMCShapeConstraint
-  ++ ": output size " ++ show (unFileSize size)
-  ++ " bytes does not satisfy (size & 0xFFF) == 0x200; "
-  ++ "the resulting IPS patch's truncation marker would be rejected by SNESTool"
+  "--" <> constraintFlagName SMCShapeConstraint
+  <> ": output size " <> renderAsText (unFileSize size)
+  <> " bytes does not satisfy (size & 0xFFF) == 0x200; "
+  <> "the resulting IPS patch's truncation marker would be rejected by SNESTool"
 
 renderSlapError (VerificationFatal advisory) =
-  renderSlapAdvisory advisory ++ "\n  use --no-verify to proceed anyway"
+  renderSlapAdvisory advisory <> "\n  use --no-verify to proceed anyway"
 
 ----------------------------------------------------------------------------
 -- renderDecompressionFailure
@@ -1580,7 +1584,7 @@ decompressionAlgorithm BSDiffSectionFailed{}      = Bzip2
 -- description.  Exhaustive over 'CompressionAlgorithm' so that
 -- adding a new compression algorithm fires '-Wincomplete-patterns'
 -- here.
-compressionAlgorithmName :: CompressionAlgorithm -> String
+compressionAlgorithmName :: CompressionAlgorithm -> Text
 compressionAlgorithmName Zlib  = "zlib"
 compressionAlgorithmName Gzip  = "gzip"
 compressionAlgorithmName Bzip2 = "bzip2"
@@ -1589,7 +1593,7 @@ compressionAlgorithmName DJW   = "DJW"
 compressionAlgorithmName LZMA  = "LZMA"
 compressionAlgorithmName FGK   = "FGK"
 
-bsDiffSectionName :: BSDiffSection -> String
+bsDiffSectionName :: BSDiffSection -> Text
 bsDiffSectionName BSDiffControl = "control"
 bsDiffSectionName BSDiffDiff    = "diff"
 bsDiffSectionName BSDiffExtra   = "extra"
@@ -1602,139 +1606,139 @@ bsDiffSectionName BSDiffExtra   = "extra"
 -- lands its arm will need 'compressionAlgorithmName' because the
 -- algorithm genuinely varies; today's four arms have fixed
 -- algorithms and read more directly with literals.
-renderDecompressionFailure :: DecompressionFailure -> String
+renderDecompressionFailure :: DecompressionFailure -> Text
 renderDecompressionFailure failure = case failure of
   Yay0WrapperFailed       cause -> render "Yay0 wrapper"        cause
   NINJA1Failed            cause -> render "NINJA1 zlib payload" cause
   XDelta1Failed           cause -> render "XDelta1 gzip body"   cause
   BSDiffSectionFailed sec cause -> render
-    ("BSDiff " ++ bsDiffSectionName sec ++ " bzip2 section") cause
+    ("BSDiff " <> bsDiffSectionName sec <> " bzip2 section") cause
   where
     render siteName (DecompressionCause msg) =
-      siteName ++ ": decompression failed: " ++ msg
+      siteName <> ": decompression failed: " <> msg
 
 ----------------------------------------------------------------------------
 -- renderNarrowingFailure
 ----------------------------------------------------------------------------
 
-renderNarrowingFailure :: NarrowingFailure -> String
+renderNarrowingFailure :: NarrowingFailure -> Text
 renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffset maxOffset)) =
-  formatLabelName label ++ ": hunk offset 0x"
-  ++ showHex (unOffset actual) ""
-  ++ " exceeds maximum offset 0x"
-  ++ showHex (unOffset maxOffset) ""
+  formatLabelName label <> ": hunk offset 0x"
+  <> renderHexAsText (unOffset actual)
+  <> " exceeds maximum offset 0x"
+  <> renderHexAsText (unOffset maxOffset)
 renderNarrowingFailure (FieldValueExceedsBound label field actual maxValue) =
   formatLabelName label
-  ++ " " ++ fieldNameLabel field
-  ++ " field value " ++ show actual
-  ++ " exceeds the wire-format maximum of " ++ show maxValue
+  <> " " <> fieldNameLabel field
+  <> " field value " <> renderAsText actual
+  <> " exceeds the wire-format maximum of " <> renderAsText maxValue
 
 ----------------------------------------------------------------------------
 -- renderSlapAdvisory
 ----------------------------------------------------------------------------
 
-renderSlapAdvisory :: SlapAdvisory -> String
+renderSlapAdvisory :: SlapAdvisory -> Text
 
 renderSlapAdvisory (EmptyPatch _label unit) =
-  "empty patch (0 " ++ emptyUnitLabel unit ++ ")"
+  "empty patch (0 " <> emptyUnitLabel unit <> ")"
 
 renderSlapAdvisory (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
 
 renderSlapAdvisory (ZeroCountRLERecord label actionIndex) =
   formatLabelName label
-  ++ ": zero-count RLE record at position " ++ show (unActionIndex actionIndex)
-  ++ " (accepted as no-op)"
+  <> ": zero-count RLE record at position " <> renderAsText (unActionIndex actionIndex)
+  <> " (accepted as no-op)"
 
 renderSlapAdvisory NegativeZeroInBPS =
   formatLabelName LabelBPS
-  ++ ": signed-delta varint encoded zero as 0x81 (non-canonical;"
-  ++ " 0x80 is the canonical form)"
+  <> ": signed-delta varint encoded zero as 0x81 (non-canonical;"
+  <> " 0x80 is the canonical form)"
 
 renderSlapAdvisory (OverlappingRecords label (OverlapCount pairCount)) =
   formatLabelName label
-  ++ ": " ++ show pairCount
-  ++ (if pairCount == 1 then " overlapping record pair"
+  <> ": " <> renderAsText pairCount
+  <> (if pairCount == 1 then " overlapping record pair"
                         else " overlapping record pairs")
-  ++ " (later writes clobber earlier; unusual)"
+  <> " (later writes clobber earlier; unusual)"
 
 renderSlapAdvisory (UnsortedRecords label actionIndex) =
   formatLabelName label
-  ++ ": record at position " ++ show (unActionIndex actionIndex)
-  ++ " has a lower offset than the record before it"
-  ++ " (unsorted records; applied in wire order)"
+  <> ": record at position " <> renderAsText (unActionIndex actionIndex)
+  <> " has a lower offset than the record before it"
+  <> " (unsorted records; applied in wire order)"
 
 renderSlapAdvisory (IPS32TrailingBytes label (Length n)) =
   formatLabelName label
-  ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
+  <> ": dropped " <> renderAsText n <> " trailing bytes after EEOF marker"
 
 renderSlapAdvisory (EBPMetadataMalformed label) =
   formatLabelName label
-  ++ ": metadata trailer is not valid JSON (or its root is not an object);"
-  ++ " the patch's records are unaffected and apply/convert proceed,"
-  ++ " but no title, author, description, or patcher could be extracted"
-  ++ " (supply --title / --author / --description on convert-to-EBP to populate the target's metadata)"
+  <> ": metadata trailer is not valid JSON (or its root is not an object);"
+  <> " the patch's records are unaffected and apply/convert proceed,"
+  <> " but no title, author, description, or patcher could be extracted"
+  <> " (supply --title / --author / --description on convert-to-EBP to populate the target's metadata)"
 
 renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
-  ++ " apply: honored truncation marker (declared "
-  ++ show (unFileSize declared) ++ " bytes, natural "
-  ++ show (unFileSize natural) ++ " bytes)"
+  <> " apply: honored truncation marker (declared "
+  <> renderAsText (unFileSize declared) <> " bytes, natural "
+  <> renderAsText (unFileSize natural) <> " bytes)"
 
 renderSlapAdvisory (IPSRecordsClippedByMarker label
     (ClippedRecordCount count) firstIndex (MarkerOvershootBytes overshoot)) =
-  formatLabelName label ++ " apply: "
-  ++ show count ++ plural count " record" " records"
-  ++ " clipped by truncation marker (first at step #"
-  ++ show (unActionIndex firstIndex) ++ ", "
-  ++ show (unLength overshoot)
-  ++ plural (unLength overshoot) " byte" " bytes"
-  ++ " total clipped)"
+  formatLabelName label <> " apply: "
+  <> renderAsText count <> plural count " record" " records"
+  <> " clipped by truncation marker (first at step #"
+  <> renderAsText (unActionIndex firstIndex) <> ", "
+  <> renderAsText (unLength overshoot)
+  <> plural (unLength overshoot) " byte" " bytes"
+  <> " total clipped)"
 
 renderSlapAdvisory (IPSTruncationMarkerIgnored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
-  ++ " apply: ignored truncation marker (declared "
-  ++ show (unFileSize declared) ++ " bytes, natural "
-  ++ show (unFileSize natural) ++ " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
+  <> " apply: ignored truncation marker (declared "
+  <> renderAsText (unFileSize declared) <> " bytes, natural "
+  <> renderAsText (unFileSize natural) <> " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
 
 renderSlapAdvisory (APSN64UnrecognizedCountry byte) =
   formatLabelName LabelAPSN64
-  ++ ": country code 0x" ++ padHex 2 byte
-  ++ " is not a recognized N64 region code; preserving the byte verbatim"
+  <> ": country code 0x" <> padHex 2 byte
+  <> " is not a recognized N64 region code; preserving the byte verbatim"
 
 renderSlapAdvisory XDelta1NoVerifyWithDivergentSentinel =
   "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
 
 renderSlapAdvisory (XDelta1DataRecordNameDiverges observedName) =
   formatLabelName LabelXDelta1
-  ++ ": data-record name is " ++ show observedName
-  ++ " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"
+  <> ": data-record name is " <> renderAsText observedName
+  <> " (canonical xdelta writes \"(patch data)\"; the field is a display label only, so slap proceeds normally)"
 
 renderSlapAdvisory (FieldDropped field droppedValue) =
   let rendered = renderDroppedValue droppedValue
-  in if null rendered
-     then "dropping " ++ fieldName field
-     else "dropping " ++ fieldName field ++ ": " ++ rendered
+  in if Text.null rendered
+     then "dropping " <> fieldName field
+     else "dropping " <> fieldName field <> ": " <> rendered
 
 renderSlapAdvisory (UndoDataDropped recordCount) =
-  "dropping undo data (" ++ show recordCount
-  ++ plural recordCount " record" " records" ++ ")"
+  "dropping undo data (" <> renderAsText recordCount
+  <> plural recordCount " record" " records" <> ")"
 
 renderSlapAdvisory ValidationBlockDropped =
   "dropping validation block (1024 bytes)"
 
 renderSlapAdvisory (DisabledEntriesDropped entryCount) =
-  "dropping " ++ show entryCount
-  ++ plural entryCount " disabled entry" " disabled entries"
+  "dropping " <> renderAsText entryCount
+  <> plural entryCount " disabled entry" " disabled entries"
 
 renderSlapAdvisory BlockDescriptionsDropped =
   "dropping block descriptions"
 
 renderSlapAdvisory (MetadataDropped byteCount) =
-  "dropping metadata (" ++ show byteCount
-  ++ plural byteCount " byte" " bytes" ++ ")"
+  "dropping metadata (" <> renderAsText byteCount
+  <> plural byteCount " byte" " bytes" <> ")"
 
 renderSlapAdvisory (DefaultRomType _label) =
   "assuming ROM type RAW (override with --rom-type)"
@@ -1752,89 +1756,89 @@ renderSlapAdvisory (SourceHashesMissing _label) =
   "input verification hashes not available (populate with --with INPUT)"
 
 renderSlapAdvisory (FieldTruncated label name (OriginalLength original) (TruncatedLength truncated)) =
-  formatLabelName label ++ " "
-  ++ fieldNameLabel name ++ " truncated to fit "
-  ++ show (unLength truncated) ++ "-byte field (was "
-  ++ show (unLength original) ++ " bytes)"
+  formatLabelName label <> " "
+  <> fieldNameLabel name <> " truncated to fit "
+  <> renderAsText (unLength truncated) <> "-byte field (was "
+  <> renderAsText (unLength original) <> " bytes)"
 
 renderSlapAdvisory (FieldDecodedSubstituted label name (SubstitutionCount count)) =
-  formatLabelName label ++ " "
-  ++ fieldNameLabel name ++ ": "
-  ++ show count ++ plural count " byte sequence" " byte sequences"
-  ++ " did not decode under the declared encoding; substituted U+FFFD"
+  formatLabelName label <> " "
+  <> fieldNameLabel name <> ": "
+  <> renderAsText count <> plural count " byte sequence" " byte sequences"
+  <> " did not decode under the declared encoding; substituted U+FFFD"
 
 renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)) =
-  formatLabelName label ++ " "
-  ++ fieldNameLabel name ++ ": "
-  ++ show count ++ plural count " codepoint was" " codepoints were"
-  ++ " not representable in the target encoding; substituted"
+  formatLabelName label <> " "
+  <> fieldNameLabel name <> ": "
+  <> renderAsText count <> plural count " codepoint was" " codepoints were"
+  <> " not representable in the target encoding; substituted"
 
 renderSlapAdvisory (LocaleEncoderUnresolved localeName) =
-  "process locale " ++ show localeName
-  ++ " not recognized by the encoding library;"
-  ++ " falling back to UTF-8 for locale-encoded fields"
+  "process locale " <> renderAsText localeName
+  <> " not recognized by the encoding library;"
+  <> " falling back to UTF-8 for locale-encoded fields"
 
 renderSlapAdvisory (PlatformNotAvailable label platform) =
-  "platform " ++ platformName platform
-  ++ " not available in " ++ formatLabelName label ++ "; using Raw"
+  "platform " <> platformName platform
+  <> " not available in " <> formatLabelName label <> "; using Raw"
 
 renderSlapAdvisory NINJA2SMSGameGearAmbiguity =
-  formatLabelName LabelNINJA2 ++ " ROM type SMS/Game Gear"
-  ++ " is ambiguous; defaults to SMS"
-  ++ " on conversion (override with --rom-type gg)"
+  formatLabelName LabelNINJA2 <> " ROM type SMS/Game Gear"
+  <> " is ambiguous; defaults to SMS"
+  <> " on conversion (override with --rom-type gg)"
 
 renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
-  formatLabelName label ++ " " ++ directionVerb direction ++ ": "
-  ++ show count ++ plural count " block writes" " blocks write"
-  ++ " past declared output size ("
-  ++ show (unFileSize declaredSize) ++ " bytes); first at step #"
-  ++ show (unActionIndex firstIndex) ++ ", "
-  ++ show (unLength overshoot) ++ plural (unLength overshoot) " byte" " bytes"
-  ++ " total overshoot — clipped to output bounds"
+  formatLabelName label <> " " <> directionVerb direction <> ": "
+  <> renderAsText count <> plural count " block writes" " blocks write"
+  <> " past declared output size ("
+  <> renderAsText (unFileSize declaredSize) <> " bytes); first at step #"
+  <> renderAsText (unActionIndex firstIndex) <> ", "
+  <> renderAsText (unLength overshoot) <> plural (unLength overshoot) " byte" " bytes"
+  <> " total overshoot — clipped to output bounds"
 
 renderSlapAdvisory (SubformatConverted conversion) = case conversion of
   NINJA1TextToBinary                       ->
-    formatLabelName LabelNINJA1 ++ " text (T) converted to binary (B)"
+    formatLabelName LabelNINJA1 <> " text (T) converted to binary (B)"
   NINJA1CompressedTextToCompressedBinary   ->
-    formatLabelName LabelNINJA1 ++ " text (TZ) converted to compressed binary (BZ)"
+    formatLabelName LabelNINJA1 <> " text (TZ) converted to compressed binary (BZ)"
 
 ----------------------------------------------------------------------------
 -- Verification: source/target integrity check mismatches
 ----------------------------------------------------------------------------
 
 renderSlapAdvisory (VerificationCRCMismatch side (ExpectedCRC32 expected) (ActualCRC32 actual)) =
-  verificationSideLabel side ++ " CRC mismatch (expected 0x"
-  ++ showCRC32 expected ++ ", got 0x" ++ showCRC32 actual ++ ")"
+  verificationSideLabel side <> " CRC mismatch (expected 0x"
+  <> showCRC32 expected <> ", got 0x" <> showCRC32 actual <> ")"
 
 renderSlapAdvisory (VerificationHashMismatch side algorithm) =
-  verificationSideLabel side ++ " " ++ hashAlgorithmLabel algorithm ++ " mismatch"
+  verificationSideLabel side <> " " <> hashAlgorithmLabel algorithm <> " mismatch"
 
 renderSlapAdvisory (VerificationAdler32Mismatch windowOffset (ExpectedAdler32 expected) (ActualAdler32 actual)) =
-  "Adler32 mismatch at window 0x" ++ padHex 8 (unOffset windowOffset)
-  ++ " (expected 0x" ++ showAdler32 expected
-  ++ ", got 0x" ++ showAdler32 actual ++ ")"
+  "Adler32 mismatch at window 0x" <> padHex 8 (unOffset windowOffset)
+  <> " (expected 0x" <> showAdler32 expected
+  <> ", got 0x" <> showAdler32 actual <> ")"
 
 renderSlapAdvisory (VerificationFileSizeMismatch side (ExpectedSize expectedSize) (ActualSize actualSize)) =
-  verificationSideLabel side ++ " file size mismatch (expected "
-  ++ show (unFileSize expectedSize) ++ " bytes, got "
-  ++ show (unFileSize actualSize) ++ " bytes)"
+  verificationSideLabel side <> " file size mismatch (expected "
+  <> renderAsText (unFileSize expectedSize) <> " bytes, got "
+  <> renderAsText (unFileSize actualSize) <> " bytes)"
 
 renderSlapAdvisory (VerificationBlockCRC16Mismatch side blockOffset) =
-  verificationSideLabel side ++ " CRC16 mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
+  verificationSideLabel side <> " CRC16 mismatch at 0x" <> padHex 8 (unOffset blockOffset)
 
 renderSlapAdvisory (VerificationPPFBlockMismatch blockOffset) =
-  "validation block mismatch at 0x" ++ padHex 8 (unOffset blockOffset)
+  "validation block mismatch at 0x" <> padHex 8 (unOffset blockOffset)
 
 renderSlapAdvisory (VerificationFileSizeAdvisory (ExpectedSize expectedSize) (ActualSize actualSize)) =
-  "file size mismatch (expected " ++ show (unFileSize expectedSize)
-  ++ ", got " ++ show (unFileSize actualSize) ++ ")"
+  "file size mismatch (expected " <> renderAsText (unFileSize expectedSize)
+  <> ", got " <> renderAsText (unFileSize actualSize) <> ")"
 
 renderSlapAdvisory (VerificationSourceBytesMismatch (ByteCheckLabel label) checkOffset) =
-  label ++ " mismatch at 0x" ++ padHex 8 (unOffset checkOffset)
+  label <> " mismatch at 0x" <> padHex 8 (unOffset checkOffset)
 
 renderSlapAdvisory (VerificationOptedOutByCreator label) =
   formatLabelName label
-    ++ ": creator opted out of verification (--no-verify); slap cannot attest the output matches the creator's intent"
+    <> ": creator opted out of verification (--no-verify); slap cannot attest the output matches the creator's intent"
 
 ----------------------------------------------------------------------------
 -- Helpers
@@ -1847,13 +1851,13 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 -- the number is followed by @" record"@ \/ @" records"@ or @" byte"@
 -- \/ @" bytes"@. Used by every 'renderSlapAdvisory' equation whose
 -- prose carries a count.
-plural :: Int -> String -> String -> String
+plural :: Int -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 
-renderUnencodeabilityReason :: UnencodeabilityReason -> String
+renderUnencodeabilityReason :: UnencodeabilityReason -> Text
 renderUnencodeabilityReason UPSSourceTailNonZero =
   "source has non-zero bytes past target size;"
-  ++ " these cannot be represented bi-directionally in a UPS patch"
+  <> " these cannot be represented bi-directionally in a UPS patch"
 
 -- | Render a trailer marker's raw bytes for inclusion in an error
 -- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable
@@ -1861,41 +1865,41 @@ renderUnencodeabilityReason UPSSourceTailNonZero =
 -- a hypothetical future trailer marker that contained any non-
 -- printable byte, the renderer falls back to a hex dump rather than
 -- emitting raw control characters into the error stream.
-renderTrailerMarkerName :: ByteString -> String
+renderTrailerMarkerName :: ByteString -> Text
 renderTrailerMarkerName = renderPrintableASCIIOrHex
 
 -- | Render the apply-output-field-drop refusal body. The single-drop
 -- case (today's only case, 'FieldTruncation') produces one clean sentence;
 -- the multi-drop case (trivially available if 'affectsApplyOutput'
 -- grows) bullets each field on its own line so nothing gets lost.
-renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> String
+renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> Text
 renderApplyOutputDrops target [singleDrop] = renderOneDrop target singleDrop
 renderApplyOutputDrops target manyDrops =
-  concatMap (\drop_ -> "\n  - " ++ renderOneDrop target drop_) manyDrops
+  Text.concat (map (\drop_ -> "\n  - " <> renderOneDrop target drop_) manyDrops)
 
-renderOneDrop :: FormatLabel -> (PatchField, [FormatLabel]) -> String
+renderOneDrop :: FormatLabel -> (PatchField, [FormatLabel]) -> Text
 renderOneDrop target (field, preservers) =
-  "the source patch declares a " ++ fieldName field
-  ++ ", and " ++ formatLabelName target
-  ++ " has no representation for it. " ++ renderPreservers field preservers
+  "the source patch declares a " <> fieldName field
+  <> ", and " <> formatLabelName target
+  <> " has no representation for it. " <> renderPreservers field preservers
 
-renderPreservers :: PatchField -> [FormatLabel] -> String
+renderPreservers :: PatchField -> [FormatLabel] -> Text
 renderPreservers field [] =
-  "No target format preserves " ++ fieldName field ++ "."
+  "No target format preserves " <> fieldName field <> "."
 renderPreservers field preservers =
-  "Targets that preserve " ++ fieldName field ++ ": "
-  ++ commaSeparated (map formatLabelName preservers) ++ "."
+  "Targets that preserve " <> fieldName field <> ": "
+  <> commaSeparated (map formatLabelName preservers) <> "."
 
-commaSeparated :: [String] -> String
+commaSeparated :: [Text] -> Text
 commaSeparated []      = ""
 commaSeparated [x]     = x
-commaSeparated (x:xs)  = x ++ ", " ++ commaSeparated xs
+commaSeparated (x:xs)  = x <> ", " <> commaSeparated xs
 
-commaList :: [String] -> String
+commaList :: [Text] -> Text
 commaList []     = ""
 commaList [x]    = x
-commaList [x, y] = x ++ " or " ++ y
-commaList items  = concatMap (++ ", ") (init items) ++ "or " ++ last items
+commaList [x, y] = x <> " or " <> y
+commaList items  = Text.concat (map (<> ", ") (init items)) <> "or " <> last items
 
 ----------------------------------------------------------------------------
 -- Restructured payload types
@@ -1916,7 +1920,7 @@ data EmptyUnit
   | EmptyEntries
   deriving (Eq, Show)
 
-emptyUnitLabel :: EmptyUnit -> String
+emptyUnitLabel :: EmptyUnit -> Text
 emptyUnitLabel EmptyRecords      = "records"
 emptyUnitLabel EmptyActions      = "actions"
 emptyUnitLabel EmptyBlocks       = "blocks"
@@ -2026,10 +2030,10 @@ data NINJA1Malformation
   -- name slap doesn't recognize. The NINJA1 spec
   -- (@docs\/ninja1\/upstream\/ninja1-filespec10.txt@, §"SYSTEM
   -- SPECIFIC") says implementations encountering an unsupported
-  -- mode "print an error message and exit"; the carried 'String'
+  -- mode "print an error message and exit"; the carried 'Text'
   -- is the offending name from the wire so the renderer can name
   -- it.
-  | NINJA1UnknownTextualRomType String
+  | NINJA1UnknownTextualRomType Text
   deriving (Eq, Show)
 
 -- | The shape of a NINJA1 subformat conversion noticed at parse time.
@@ -2044,12 +2048,12 @@ data NINJA1SubformatConversion
 -- | A line of textual-patch input, carried verbatim for inclusion in
 -- a malformation diagnostic. Labeled so the wire content stays
 -- non-pattern-matchable at the type level.
-newtype LineText = LineText { unLineText :: String }
+newtype LineText = LineText { unLineText :: Text }
   deriving (Eq, Show)
 
 -- | A hex-offset token slice from a textual-patch line, carried
 -- verbatim for inclusion in a malformation diagnostic.
-newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: String }
+newtype OffsetTokenText = OffsetTokenText { unOffsetTokenText :: Text }
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------

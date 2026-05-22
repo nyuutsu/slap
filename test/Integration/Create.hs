@@ -1,7 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.Create (createTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
 import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -31,7 +34,8 @@ import Slap.SomePatch (parseSome)
 import Data.ByteString (ByteString)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree)
-import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
+import Test.Tasty.HUnit (testCase, assertEqual)
+import qualified Data.Text as Text
 
 -- | Create-and-round-trip in-memory: build a patch in each format
 -- listed by @test/specs/create.txt@, parse it back, apply, and assert
@@ -97,15 +101,15 @@ roundTrip format basePath bootPath baseBytes targetBytes expectedSha = do
          (OutputFileContents targetBytes)
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError ->
-      assertFailure ("create failed: " ++ renderSlapError slapError)
+      assertFailureT ("create failed: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _) -> case parseSome noDialectsRequested patchBytes of
       Left slapError ->
-        assertFailure ("re-parse failed: " ++ renderSlapError slapError)
+        assertFailureT ("re-parse failed: " <> renderSlapError slapError)
       Right parsed -> do
         result <- applyPatch parsed (InputFileContents baseBytes)
         case result of
           Left slapError ->
-            assertFailure ("re-apply failed: " ++ renderSlapError slapError)
+            assertFailureT ("re-apply failed: " <> renderSlapError slapError)
           Right (OutputFileContents output) ->
             assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)
 
@@ -123,5 +127,5 @@ resolveXDelta1NamesForRoundTrip (CreateDifferential CreateXDelta1) basePath boot
   case resolveXDelta1FileNames Nothing Nothing basePath bootPath of
     Right resolved  -> Just resolved
     Left slapError  -> error ("resolveXDelta1NamesForRoundTrip: "
-                              ++ renderSlapError slapError)
+                              ++ Text.unpack (renderSlapError slapError))
 resolveXDelta1NamesForRoundTrip _ _ _ = Nothing

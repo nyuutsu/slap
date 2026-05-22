@@ -22,8 +22,16 @@ module Slap.Display.Common
   , renderFormatHeader
     -- * Range rendering
   , renderOffsetRange
+    -- * Show-to-Text
+  , renderAsText
+  , renderHexAsText
+    -- * FilePath ↔ Text boundary
+  , pathText
   ) where
 
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Numeric (showHex)
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -34,22 +42,22 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 ----------------------------------------------------------------------------
 
 -- | A label-value display row. Rendered by 'renderInfoLine' with
--- column-13 alignment ("source size:  1024"). Both fields are bare
--- 'String' by convention — the label set across formats is open and
--- proliferates (~30 distinct labels), so a closed sum or newtype
--- wouldn't pay for the constructor surface or wrapping ceremony, and
--- the value has been rendered to display form by the time it lands
--- here. Labels are lowercase with no trailing colon — 'renderInfoLine'
--- adds the colon and the alignment padding.
+-- column-13 alignment ("source size:  1024"). Both fields are 'Text'
+-- by convention — the label set across formats is open and proliferates
+-- (~30 distinct labels), so a closed sum or newtype wouldn't pay for
+-- the constructor surface or wrapping ceremony, and the value has been
+-- rendered to display form by the time it lands here. Labels are
+-- lowercase with no trailing colon — 'renderInfoLine' adds the colon
+-- and the alignment padding.
 data InfoLine = InfoLine
-  { infoLineLabel :: !String
-  , infoLineValue :: !String
+  { infoLineLabel :: !Text
+  , infoLineValue :: !Text
   } deriving (Eq, Show)
 
 -- | Render an 'InfoLine' with column-13 alignment.
-renderInfoLine :: InfoLine -> String
+renderInfoLine :: InfoLine -> Text
 renderInfoLine (InfoLine label value) =
-  label ++ ":" ++ replicate (max 1 (13 - length label - 1)) ' ' ++ value
+  label <> ":" <> Text.replicate (max 1 (13 - Text.length label - 1)) " " <> value
 
 ----------------------------------------------------------------------------
 -- Tally and CountUnit
@@ -82,7 +90,7 @@ data CountUnit
 -- | Render a 'CountUnit' inflected by count: 1 returns the singular
 -- form, anything else returns the plural. Used as the suffix in the
 -- count line ("23 records" vs. "1 record").
-renderCountUnit :: Tally -> CountUnit -> String
+renderCountUnit :: Tally -> CountUnit -> Text
 renderCountUnit (Tally 1) Records       = "record"
 renderCountUnit _         Records       = "records"
 renderCountUnit (Tally 1) Actions       = "action"
@@ -104,7 +112,7 @@ renderCountUnit _         EnabledEntries = "enabled entries"
 -- when the unit name appears as a label rather than a count suffix
 -- ("records:  23" — the label is plural even when the count happens
 -- to be 1, matching slap's display convention).
-pluralCountUnit :: CountUnit -> String
+pluralCountUnit :: CountUnit -> Text
 pluralCountUnit Records       = "records"
 pluralCountUnit Actions       = "actions"
 pluralCountUnit Blocks        = "blocks"
@@ -138,11 +146,11 @@ data ByteCount
   | TotalPayloadBytes !Length
   deriving (Eq, Show)
 
-renderByteCount :: ByteCount -> String
+renderByteCount :: ByteCount -> Text
 renderByteCount (TotalOutputBytes (FileSize n)) =
-  show n ++ " bytes total output"
+  renderAsText n <> " bytes total output"
 renderByteCount (TotalPayloadBytes (Length n)) =
-  show n ++ " bytes total"
+  renderAsText n <> " bytes total"
 
 ----------------------------------------------------------------------------
 -- OffsetRange rendering
@@ -152,11 +160,11 @@ renderByteCount (TotalPayloadBytes (Length n)) =
 -- inclusive last byte ('rangeLastByte'). The hex literal is six
 -- digits wide, matching the convention used by
 -- 'Slap.Display.Analysis''s summary range line.
-renderOffsetRange :: OffsetRange -> String
+renderOffsetRange :: OffsetRange -> Text
 renderOffsetRange range =
-  "0x" ++ padHex 6 (unOffset (rangeStart range))
-  ++ " - 0x"
-  ++ padHex 6 (unOffset (rangeLastByte range))
+  "0x" <> padHex 6 (unOffset (rangeStart range))
+  <> " - 0x"
+  <> padHex 6 (unOffset (rangeLastByte range))
 
 ----------------------------------------------------------------------------
 -- FormatHeader
@@ -168,14 +176,45 @@ renderOffsetRange range =
 -- parsed-value facts the label doesn't carry — VCDIFF's xdelta3
 -- variant, NINJA1's sub-format string, xdelta1's version, the
 -- @"\/Yay0"@ suffix added when the patch arrived inside a Yay0
--- envelope. The renderer composes them by simple string concatenation,
+-- envelope. The renderer composes them by simple text concatenation,
 -- so 'formatExtra' includes its own leading separator (e.g.
 -- @Just \" (xdelta3)\"@, @Just \"\/Yay0\"@).
 data FormatHeader = FormatHeader
   { formatLabel :: !FormatLabel
-  , formatExtra :: !(Maybe String)
+  , formatExtra :: !(Maybe Text)
   } deriving (Eq, Show)
 
-renderFormatHeader :: FormatHeader -> String
+renderFormatHeader :: FormatHeader -> Text
 renderFormatHeader (FormatHeader label extra) =
-  formatLabelName label ++ maybe "" id extra
+  formatLabelName label <> maybe "" id extra
+
+----------------------------------------------------------------------------
+-- Show-to-Text
+----------------------------------------------------------------------------
+
+-- | The @'show' :: Show a => a -> 'String'@ to 'Text' bridge. Used
+-- wherever an 'Int' or other 'Show' value is interpolated into
+-- display text; inlining @'Text.pack' . 'show'@ everywhere would
+-- be noise.
+renderAsText :: Show a => a -> Text
+renderAsText = Text.pack . show
+
+-- | Render an unsigned hex value as 'Text' without prefix or padding —
+-- the unpadded peer of 'Slap.Display.Primitives.padHex'. Use when a
+-- @0x@ literal needs the natural width of the underlying value rather
+-- than a fixed column. Wraps 'Numeric.showHex' so call sites stop
+-- restating the @Text.pack (showHex value "")@ shape.
+renderHexAsText :: Integral a => a -> Text
+renderHexAsText value = Text.pack (showHex value "")
+
+----------------------------------------------------------------------------
+-- FilePath ↔ Text boundary
+----------------------------------------------------------------------------
+
+-- | Lift a 'FilePath' (slap honours it as 'String') into 'Text' for
+-- interpolation into a 'Text' diagnostic. The lift is named so the
+-- 'FilePath' → 'Text' boundary is visible at every site it crosses,
+-- rather than hidden behind an 'OverloadedStrings'-style implicit
+-- conversion.
+pathText :: FilePath -> Text
+pathText = Text.pack

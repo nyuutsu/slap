@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | The shared bootstrap targets the integration suite consumes.
 --
 -- Several test groups (create, crossval, failure-mode round-trips)
@@ -49,6 +51,7 @@ import qualified System.IO.Temp as Temp
 import System.IO (hPutStrLn, stderr)
 import Test.Tasty (TestTree, withResource)
 import Text.Printf (printf)
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Bootstrap pairs and targets
@@ -120,13 +123,13 @@ buildBootstrapTargets tempDir pairs = do
       case parseSome noDialectsRequested (PatchFileContents patchBytes) of
         Left slapError ->
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
-                 ++ ": " ++ renderSlapError slapError)
+                 ++ ": " ++ Text.unpack (renderSlapError slapError))
         Right parsed -> do
           result <- applyPatch parsed (InputFileContents baseBytes)
           case result of
             Left slapError ->
               error ("bootstrap apply failed for " ++ bootstrapPatch pair
-                     ++ ": " ++ renderSlapError slapError)
+                     ++ ": " ++ Text.unpack (renderSlapError slapError))
             Right (OutputFileContents targetBytes) -> do
               let targetFile = tempDir </> ("target-" ++ show index ++ ".bin")
               ByteString.writeFile targetFile targetBytes

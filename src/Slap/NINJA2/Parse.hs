@@ -18,6 +18,7 @@ import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(..), FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
+import qualified Data.Text as Text
 import Slap.Display.Primitives (padHex)
 import Slap.Text (EncodedText, decodeTextLenient, decodeLossAdvisories)
 
@@ -122,7 +123,7 @@ parseCommands patch = do
       0x01 -> parseFileCommand patch >>= parseCommands
       0x02 -> parseXorRecord patch >>= parseCommands
       0x00 -> pure patch  -- END marker
-      _    -> fail ("unknown command code: 0x" ++ padHex 2 code)
+      _    -> fail ("unknown command code: 0x" ++ Text.unpack (padHex 2 code))
 
 -- | Command 0x01: OPEN_NEW_FILE
 parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch

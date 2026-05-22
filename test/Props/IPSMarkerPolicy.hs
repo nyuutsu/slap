@@ -1,9 +1,13 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Properties for the IPS truncation-marker honor-only-when-shrinking
 -- policy. Three groups: pure tests for 'decideMarkerDisposition'
 -- (totality, per-case correctness, reference agreement), apply-side
 -- unit tests for buffer sizing per disposition, apply-side unit
 -- tests for record clipping when 'MarkerHonored' fires.
 module Props.IPSMarkerPolicy (ipsMarkerPolicyTests) where
+
+import Props.Helpers (assertFailureT)
 
 import qualified Slap.IPS.Apply as IPS
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
@@ -22,7 +26,7 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 
 import Test.Tasty
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
 import Test.Tasty.QuickCheck
 
 ipsMarkerPolicyTests :: TestTree
@@ -196,7 +200,7 @@ runApplyOrFail
   :: InputFileContents -> IPSPatch -> IO (Outcome OutputFileContents)
 runApplyOrFail source patch =
   case IPS.applyIPS source patch of
-    Left slapError -> assertFailure ("apply: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("apply: " <> renderSlapError slapError)
     Right outcome  -> pure outcome
 
 -- | Assert that an apply produced a target of the given size and

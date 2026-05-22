@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.DPS.Describe
   ( dpsMeta
   , analyzeDPS
@@ -13,10 +15,11 @@ import Slap.Display.Analysis
     , Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Display.Common (InfoLine(..),
-                     Tally(..), CountUnit(..), ByteCount(..))
+                     Tally(..), CountUnit(..), ByteCount(..), renderAsText)
 import Slap.Measure (Length(..), FileSize(..), byteLength)
 import Slap.Text (EncodedText, encodedTextContent)
 
+import Data.Text (Text)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 
@@ -29,19 +32,19 @@ dpsMeta patch = concat
   [ fieldPair "name"    (dpsName patch)
   , fieldPair "author"  (dpsAuthor patch)
   , fieldPair "version" (dpsVersion patch)
-  , [InfoLine "orig size" (show (unFileSize (dpsSourceSizeAsFileSize (dpsOriginalSize patch))))]
+  , [InfoLine "orig size" (renderAsText (unFileSize (dpsSourceSizeAsFileSize (dpsOriginalSize patch))))]
   , [InfoLine "flag" "unstable" | dpsStability patch == DPSUnstable]
-  , [InfoLine "copy" (show copyCount)]
-  , [InfoLine "enclosed" (show enclosedCount)]
+  , [InfoLine "copy" (renderAsText copyCount)]
+  , [InfoLine "enclosed" (renderAsText enclosedCount)]
   ]
   where
     -- The decoded text comes off the typed field directly; empty
     -- fields suppress their info line. Trailing null bytes (the
     -- wire's 64-byte field is null-padded) are dropped before render.
-    fieldPair :: String -> EncodedText -> [InfoLine]
+    fieldPair :: Text -> EncodedText -> [InfoLine]
     fieldPair label value
       | Text.null trimmed = []
-      | otherwise         = [InfoLine label (Text.unpack trimmed)]
+      | otherwise         = [InfoLine label trimmed]
       where
         trimmed = Text.dropWhileEnd (== '\NUL') (encodedTextContent value)
     copyCount = length [() | DPSCopyFromROM {} <- dpsRecords patch]

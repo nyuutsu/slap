@@ -34,9 +34,8 @@ import qualified Data.Text as Text
 
 ppf1Meta :: PPF1Patch -> [InfoLine]
 ppf1Meta patch =
-  let description = Text.unpack
-                      (stripTrailing (encodedTextContent (ppf1Description patch)))
-  in [InfoLine "description" description | not (null description)]
+  let description = stripTrailing (encodedTextContent (ppf1Description patch))
+  in [InfoLine "description" description | not (Text.null description)]
 
 stripTrailing :: Text.Text -> Text.Text
 stripTrailing =

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StrictData #-}
 
 -- | Names of header, trailer, and per-record fields used across slap's
@@ -9,6 +10,8 @@ module Slap.FieldName
   ( FieldName(..)
   , fieldNameLabel
   ) where
+
+import Data.Text (Text)
 
 data FieldName
   -- Metadata fields
@@ -54,7 +57,7 @@ data FieldName
   | FieldXDelta1ToName
   deriving (Show, Eq, Enum, Bounded)
 
-fieldNameLabel :: FieldName -> String
+fieldNameLabel :: FieldName -> Text
 fieldNameLabel FieldTitle            = "title"
 fieldNameLabel FieldAuthor           = "author"
 fieldNameLabel FieldDescription      = "description"

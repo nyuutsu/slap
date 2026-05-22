@@ -10,6 +10,8 @@
 -- The FFI module has one downstream caller ('Slap.XDelta1.Create'),
 -- so the narrower 'Slap.Status.XDelta1DiffCause' is wrapped here
 -- rather than being threaded further out.
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.XDelta1.FFI
   ( XDelta1DiffOutput(..)
   , xdelta1Diff
@@ -18,6 +20,7 @@ module Slap.XDelta1.FFI
 import Data.Bits ((.|.), shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Text (Text)
 import Data.Word (Word8, Word64)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
@@ -25,9 +28,10 @@ import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
+import Slap.Display.Common (renderAsText)
 import Slap.Display.Primitives (padHex)
 import Slap.Status (SlapError(..), XDelta1DiffCause(..))
-import Slap.FFI (readByteString, readString, withByteString)
+import Slap.FFI (readByteString, readText, withByteString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..))
 import Slap.XDelta1.Types
@@ -91,7 +95,7 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
         errorCauseAddressPointer    errorCauseLengthPointer
       if returnCode /= 0
         then do
-          rustMessage <- readString errorCauseAddressPointer errorCauseLengthPointer
+          rustMessage <- readText errorCauseAddressPointer errorCauseLengthPointer
           pure $ Left (XDelta1DiffFailed (XDelta1DiffCause rustMessage))
         else do
           targetTagBytes     <- readByteString targetsAddressPointer       targetsLengthPointer
@@ -127,14 +131,14 @@ parseParallelInstructions
 parseParallelInstructions targetTags sourceOffsetBytes lengthBytes
   | ByteString.length sourceOffsetBytes /= 8 * instructionCount =
       Left $ ffiInvariantFailure $
-        "instruction-source-offsets buffer is " ++ show (ByteString.length sourceOffsetBytes)
-        ++ " bytes, expected " ++ show (8 * instructionCount)
-        ++ " (8 LE bytes per instruction × " ++ show instructionCount ++ " instructions)"
+        "instruction-source-offsets buffer is " <> renderAsText (ByteString.length sourceOffsetBytes)
+        <> " bytes, expected " <> renderAsText (8 * instructionCount)
+        <> " (8 LE bytes per instruction × " <> renderAsText instructionCount <> " instructions)"
   | ByteString.length lengthBytes /= 8 * instructionCount =
       Left $ ffiInvariantFailure $
-        "instruction-lengths buffer is " ++ show (ByteString.length lengthBytes)
-        ++ " bytes, expected " ++ show (8 * instructionCount)
-        ++ " (8 LE bytes per instruction × " ++ show instructionCount ++ " instructions)"
+        "instruction-lengths buffer is " <> renderAsText (ByteString.length lengthBytes)
+        <> " bytes, expected " <> renderAsText (8 * instructionCount)
+        <> " (8 LE bytes per instruction × " <> renderAsText instructionCount <> " instructions)"
   | otherwise =
       traverse decodeOneInstruction [0 .. instructionCount - 1]
   where
@@ -154,8 +158,8 @@ parseParallelInstructions targetTags sourceOffsetBytes lengthBytes
       0 -> Right FromDataSource
       1 -> Right FromFileSource
       _ -> Left $ ffiInvariantFailure $
-             "invalid instruction target tag byte 0x" ++ padHex 2 tagByte
-             ++ " (expected 0 = data source or 1 = file source)"
+             "invalid instruction target tag byte 0x" <> padHex 2 tagByte
+             <> " (expected 0 = data source or 1 = file source)"
 
 -- | Decode the FFI byte that carries the differ's choice of
 -- per-instruction-offset encoding for the file source. Inverse of
@@ -168,12 +172,12 @@ decodeOffsetModeByte modeByte = case modeByte of
   0 -> Right AbsoluteOffsets
   1 -> Right SequentialOffsets
   _ -> Left $ ffiInvariantFailure $
-         "invalid file-source offset-mode byte 0x" ++ padHex 2 modeByte
-         ++ " (expected 0 = absolute or 1 = sequential)"
+         "invalid file-source offset-mode byte 0x" <> padHex 2 modeByte
+         <> " (expected 0 = absolute or 1 = sequential)"
 
-ffiInvariantFailure :: String -> SlapError
+ffiInvariantFailure :: Text -> SlapError
 ffiInvariantFailure detail =
-  XDelta1DiffFailed (XDelta1DiffCause ("FFI invariant violation: " ++ detail))
+  XDelta1DiffFailed (XDelta1DiffCause ("FFI invariant violation: " <> detail))
 
 readWord64LE :: ByteString -> Int -> Word64
 readWord64LE buffer offset =

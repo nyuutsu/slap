@@ -4,7 +4,7 @@
 -- ('crc32' lands in BPS and UPS; 'adler32' is the UPS footer);
 -- one-format-uses-this differs live next to their format
 -- ('Slap.BPS.FFI', 'Slap.XDelta1.FFI'), but they all marshal Rust-
--- allocated buffers home through 'readByteString' / 'readString'
+-- allocated buffers home through 'readByteString' / 'readText'
 -- and hand input bytes across through 'withByteString' — the FFI-
 -- marshalling helper trio.
 module Slap.FFI
@@ -12,13 +12,13 @@ module Slap.FFI
   , adler32
   , withByteString
   , readByteString
-  , readString
+  , readText
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
-import qualified Data.Text as Text
+import Data.Text (Text)
 import qualified Data.Text.Encoding as TextEncoding
 import Data.Word (Word8, Word32)
 import Foreign.C.Types (CSize(..))
@@ -86,13 +86,16 @@ readByteString addressPointer lengthPointer = do
       rustyFree bufferAddress bufferLength
       pure bytes
 
--- | Pack a Rust-allocated string (UTF-8 bytes) into a Haskell 'String',
+-- | Pack a Rust-allocated string (UTF-8 bytes) into a Haskell 'Text',
 -- decoded leniently — invalid byte sequences become U+FFFD rather
 -- than throwing, so a corrupt-bytes-from-FFI event cannot raise
 -- during the rendering of an unrelated error. Built on
 -- 'readByteString'; same null-pointer semantics. Used for diagnostic
--- message channels.
-readString :: Ptr (Ptr Word8) -> Ptr CSize -> IO String
-readString addressPointer lengthPointer = do
+-- message channels. Rust's 'String' is UTF-8 by language guarantee,
+-- so the leniency is defense-in-depth: at this seam the bytes are
+-- UTF-8 by Rust's contract, and a buffer-corruption event in the FFI
+-- channel can't raise a decode exception during error rendering.
+readText :: Ptr (Ptr Word8) -> Ptr CSize -> IO Text
+readText addressPointer lengthPointer = do
   messageBytes <- readByteString addressPointer lengthPointer
-  pure (Text.unpack (TextEncoding.decodeUtf8Lenient messageBytes))
+  pure (TextEncoding.decodeUtf8Lenient messageBytes)

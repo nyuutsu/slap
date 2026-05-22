@@ -33,6 +33,8 @@ module Integration.Helpers
     -- * String helpers
   , trim
   , ciContains
+    -- * Text-shaped assertions
+  , assertFailureT
     -- * File helpers
   , removeIfExists
     -- * Temp helpers
@@ -66,6 +68,8 @@ import System.IO.MMap (mmapFileByteString)
 import Test.Tasty.HUnit (assertBool, assertFailure)
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile, withSystemTempDirectory)
+import Data.Text (Text)
+import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Test tier
@@ -120,7 +124,7 @@ mmapRomFile filePath = mmapFileByteString filePath Nothing
 sha1Hex :: ByteString -> String
 sha1Hex inputBytes =
   let digest = sha1 inputBytes
-  in concatMap (\byte -> padHex 2 (fromIntegral byte :: Int64)) (ByteString.unpack (unSHA1Hash digest))
+  in concatMap (\byte -> Text.unpack (padHex 2 (fromIntegral byte :: Int64))) (ByteString.unpack (unSHA1Hash digest))
 
 ----------------------------------------------------------------------------
 -- Spec/suite parsing
@@ -228,7 +232,7 @@ undoPatch :: SomePatch -> OutputFileContents -> IO (Either String InputFileConte
 undoPatch somePatch target = case patchUndo somePatch of
   Nothing -> pure (Left "undo not supported")
   Just undo -> case runUndo undo target of
-    Left err -> pure (Left (renderSlapError err))
+    Left err -> pure (Left (Text.unpack (renderSlapError err)))
     Right outcome -> pure (Right (outcomeValue outcome))
 
 removeIfExists :: FilePath -> IO ()
@@ -267,14 +271,14 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
   Just baseBytes -> do
     targetResult <- applyPatch somePatch (InputFileContents baseBytes)
     case targetResult of
-      Left slapError -> pure (Left (renderSlapError slapError))
+      Left slapError -> pure (Left (Text.unpack (renderSlapError slapError)))
       Right target ->
         case createPatch targetFormat Nothing (InputFileContents baseBytes) target meta (patchContentsOf somePatch) noConstraintsRequested noDialectsRequested of
-          Left slapErr -> pure (Left (renderSlapError slapErr))
+          Left slapErr -> pure (Left (Text.unpack (renderSlapError slapErr)))
           Right result -> pure (Right result)
   Nothing -> case patchKind somePatch of
     Direct (Just patchContent) -> pure $ case convertDirect patchContent targetFormat meta noConstraintsRequested noDialectsRequested of
-      Left slapErr -> Left (renderSlapError slapErr)
+      Left slapErr -> Left (Text.unpack (renderSlapError slapErr))
       Right result -> Right result
     Direct Nothing             -> pure (Left (needWithMsg somePatch))
     Differential               -> pure (Left (needWithMsg somePatch))
@@ -284,7 +288,7 @@ attemptConvert somePatch targetFormat maybeBase meta = case maybeBase of
       ++ name ++ " " ++ sourceRequiredCause reason ++ ". "
       ++ sourceRequiredConsequence reason
       where
-        name   = formatLabelName (patchFormat thePatch)
+        name   = Text.unpack (formatLabelName (patchFormat thePatch))
         reason = case patchKind thePatch of
           Differential -> SourceRequiredReason
             { sourceRequiredCause       = "tells us what to change in the source ROM, not what the result should be"
@@ -421,3 +425,17 @@ writeGarbage filePath count = ByteString.writeFile filePath bytes
 -- | Case-insensitive substring check.
 ciContains :: String -> String -> Bool
 ciContains needle haystack = map toLower needle `isInfixOf` map toLower haystack
+
+----------------------------------------------------------------------------
+-- Text-shaped assertions
+----------------------------------------------------------------------------
+
+-- | HUnit's 'assertFailure' takes 'String'; slap's renderers all
+-- produce 'Text'. This wrapper does the one 'Text.unpack' at the
+-- 'Test.Tasty.HUnit' boundary so test bodies can write
+-- @assertFailureT (\"parseSome: \" <> renderSlapError err)@ instead
+-- of inline-unpacking at every call site. Polymorphic in the
+-- return type for the same reason 'assertFailure' is: it never
+-- returns, so any 'IO' shape will type-check.
+assertFailureT :: Text -> IO a
+assertFailureT = assertFailure . Text.unpack

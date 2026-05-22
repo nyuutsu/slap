@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.UPS.Describe
   ( upsMeta
   , analyzeUPS
@@ -11,15 +13,15 @@ import Slap.Display.Analysis
     , SummaryInfo(..), Annotation(..), OffsetKind(..), AnnotDetail(..)
     )
 import Slap.Checksum (showCRC32)
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Offset(..), FileSize(..), advance, byteLength)
 
 import qualified Data.Vector as Vector
 
 upsMeta :: UPSPatch -> [InfoLine]
 upsMeta patch =
-  [ InfoLine "source size" (show (unFileSize (upsSourceSize patch)))
-  , InfoLine "target size" (show (unFileSize (upsTargetSize patch)))
+  [ InfoLine "source size" (renderAsText (unFileSize (upsSourceSize patch)))
+  , InfoLine "target size" (renderAsText (unFileSize (upsTargetSize patch)))
   , InfoLine "source CRC" (showCRC32 (upsSourceCRC patch))
   , InfoLine "target CRC" (showCRC32 (upsTargetCRC patch))
   , InfoLine "patch CRC" (showCRC32 (upsPatchCRC patch))

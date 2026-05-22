@@ -18,6 +18,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 
 import Props.Helpers
+import qualified Data.Text as Text
 
 identityTests :: TestTree
 identityTests = testGroup "Identity"
@@ -48,9 +49,9 @@ prop_identity format = forAll genByteString $ \source -> not (ByteString.null so
   case createPatch format Nothing (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case parseSome noDialectsRequested patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right parsed -> ioProperty $ do
         result <- applySomePatch parsed (InputFileContents source)
         pure $ case result of
-          Left slapError -> counterexample ("apply: " ++ renderSlapError slapError) $ property False
+          Left slapError -> counterexample ("apply: " ++ Text.unpack (renderSlapError slapError)) $ property False
           Right (OutputFileContents out) -> out === source

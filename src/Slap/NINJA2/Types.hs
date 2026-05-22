@@ -67,6 +67,8 @@ import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
@@ -83,7 +85,7 @@ data OverflowMode = OverflowAppend | OverflowTruncate
 toOverflowMode :: Word8 -> Either String OverflowMode
 toOverflowMode 0x41 = Right OverflowAppend
 toOverflowMode 0x4D = Right OverflowTruncate
-toOverflowMode byte = Left ("unknown overflow type: 0x" ++ padHex 2 byte)
+toOverflowMode byte = Left ("unknown overflow type: 0x" ++ Text.unpack (padHex 2 byte))
 
 fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'
@@ -112,7 +114,7 @@ fromPatchEncoding :: PatchEncoding -> Word8
 fromPatchEncoding PatchEncodingUTF8   = 1
 fromPatchEncoding PatchEncodingSystem = 0
 
-patchEncodingName :: PatchEncoding -> String
+patchEncodingName :: PatchEncoding -> Text
 patchEncodingName PatchEncodingUTF8   = "UTF-8"
 patchEncodingName PatchEncodingSystem = "system"
 
@@ -179,7 +181,7 @@ fromNINJA2RomType NINJA2PCEngine                 = 8
 fromNINJA2RomType NINJA2Lynx                     = 9
 fromNINJA2RomType (NINJA2UnknownRomType value)   = value
 
-ninja2RomTypeName :: NINJA2RomType -> String
+ninja2RomTypeName :: NINJA2RomType -> Text
 ninja2RomTypeName NINJA2Raw                    = "Raw Binary"
 ninja2RomTypeName NINJA2NES                    = "NES"
 ninja2RomTypeName NINJA2FDS                    = "FDS"
@@ -190,7 +192,7 @@ ninja2RomTypeName NINJA2SMSGameGear            = "SMS/Game Gear"
 ninja2RomTypeName NINJA2Genesis                = "Genesis"
 ninja2RomTypeName NINJA2PCEngine               = "PC Engine"
 ninja2RomTypeName NINJA2Lynx                   = "Lynx"
-ninja2RomTypeName (NINJA2UnknownRomType value) = "unknown (" ++ show value ++ ")"
+ninja2RomTypeName (NINJA2UnknownRomType value) = "unknown (" <> Text.pack (show value) <> ")"
 
 data NINJA2Patch = NINJA2Patch
   { ninja2Header         :: NINJA2Info

@@ -40,6 +40,7 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (toLower)
 import Data.Int (Int64)
+import qualified Data.Text as Text
 import Data.Word (Word8, Word32)
 import Numeric (readHex)
 
@@ -175,8 +176,8 @@ parseTextHeader line = do
   romType <- case tokens of
     (formatName:_) -> case romTypeFromName formatName of
       Just typed -> Right typed
-      Nothing    -> Left (MalformedNINJA1Content (NINJA1UnknownTextualRomType formatName))
-    _              -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (ByteString8.unpack line))))
+      Nothing    -> Left (MalformedNINJA1Content (NINJA1UnknownTextualRomType (Text.pack formatName)))
+    _              -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
   Right NINJA1TextHeader
     { ninja1TextRomType    = romType
     , ninja1TextSourceCRC  = parsedCRC
@@ -204,8 +205,8 @@ parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
       [(offset, "")] -> Right (NINJA1Record (Offset (fromIntegral offset)) (hexToBS (concatMap ByteString8.unpack dataParts)))
-      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (ByteString8.unpack offsetString))))
-  _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (ByteString8.unpack line))))
+      _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (Text.pack (ByteString8.unpack offsetString)))))
+  _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
 
 hexToBS :: String -> ByteString
 hexToBS text = ByteString.pack (parseHexPairs text)

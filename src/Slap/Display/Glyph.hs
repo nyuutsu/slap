@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.Display.Glyph
   ( -- * Display glyphs
     rightwardsArrow
@@ -7,6 +9,9 @@ module Slap.Display.Glyph
   , spacePaddedRightwardsArrow
   , spacePaddedEnDash
   ) where
+
+import Data.Text (Text)
+import qualified Data.Text as Text
 
 -- The codepoints below are domain symbols in slap's CLI output
 -- (output redirection, verification status, range separators,
@@ -38,10 +43,10 @@ emDash = '\8212'
 
 -- | 'rightwardsArrow' flanked by single spaces; the recurring shape
 -- in CLI status lines like @INPUT → OUTPUT@.
-spacePaddedRightwardsArrow :: String
-spacePaddedRightwardsArrow = [' ', rightwardsArrow, ' ']
+spacePaddedRightwardsArrow :: Text
+spacePaddedRightwardsArrow = Text.pack [' ', rightwardsArrow, ' ']
 
 -- | 'enDash' flanked by single spaces; the recurring shape in
 -- Explain range output like @0x000000 – 0x00FFFF@.
-spacePaddedEnDash :: String
-spacePaddedEnDash = [' ', enDash, ' ']
+spacePaddedEnDash :: Text
+spacePaddedEnDash = Text.pack [' ', enDash, ' ']

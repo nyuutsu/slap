@@ -1,8 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.MetadataField
   ( MetadataField(..)
   , metadataFieldName
   , metadataFieldFlagName
   ) where
+
+import Data.Text (Text)
 
 -- | The user-requestable metadata concepts a patch format may consume
 -- at creation time.  Independent of 'Slap.PatchField.PatchField',
@@ -33,7 +37,7 @@ data MetadataField
   deriving (Eq, Ord, Show)
 
 -- | Human-readable name for prose contexts in error and help messages.
-metadataFieldName :: MetadataField -> String
+metadataFieldName :: MetadataField -> Text
 metadataFieldName MetadataTitle               = "title"
 metadataFieldName MetadataAuthor              = "author"
 metadataFieldName MetadataDescription         = "description"
@@ -56,7 +60,7 @@ metadataFieldName MetadataXDelta1ToName       = "xdelta1 to-name"
 -- | The CLI flag name (without leading dashes) that sets each field.
 -- Used in rejection messages so the user sees the exact flag they
 -- typed in slap's response.
-metadataFieldFlagName :: MetadataField -> String
+metadataFieldFlagName :: MetadataField -> Text
 metadataFieldFlagName MetadataTitle               = "title"
 metadataFieldFlagName MetadataAuthor              = "author"
 metadataFieldFlagName MetadataDescription         = "description"

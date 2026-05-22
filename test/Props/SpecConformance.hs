@@ -13,6 +13,8 @@
 --   - UPS: https://www.romhacking.net/documents/392/ (byuu spec)
 module Props.SpecConformance (specConformanceTests) where
 
+import Props.Helpers (assertFailureT)
+
 import Slap.Binary (putByuuVarint, putWord32LE, getByuuVarint, VarintResult(..))
 import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
@@ -49,6 +51,7 @@ import Data.Word (Word8, Word32)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
+import qualified Data.Text as Text
 
 specConformanceTests :: TestTree
 specConformanceTests = testGroup "SpecConformance"
@@ -351,15 +354,15 @@ assertParseApply
   -> PatchFileContents -> ByteString -> ByteString -> Assertion
 assertParseApply parseApply patchBytes sourceBytes expectedTarget =
   case parseApply patchBytes sourceBytes of
-    Left slapError -> assertFailure ("parse/apply failed: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse/apply failed: " <> renderSlapError slapError)
     Right actualTarget -> assertEqual "target mismatch" expectedTarget actualTarget
 
 assertParseRejects :: (PatchFileContents -> Either SlapError (Parsed a)) -> PatchFileContents -> String -> Assertion
 assertParseRejects parseFunction patchBytes expectedSubstring =
   case parseFunction patchBytes of
     Left slapError ->
-      assertBool ("expected '" ++ expectedSubstring ++ "' in: " ++ renderSlapError slapError)
-                 (expectedSubstring == "" || expectedSubstring `isInfixOf` renderSlapError slapError)
+      assertBool ("expected '" ++ expectedSubstring ++ "' in: " ++ Text.unpack (renderSlapError slapError))
+                 (expectedSubstring == "" || expectedSubstring `isInfixOf` Text.unpack (renderSlapError slapError))
     Right _ -> assertFailure "expected parse to reject, but it succeeded"
   where
     isInfixOf needle haystack = any (isPrefixOf needle) (tails haystack)
@@ -376,11 +379,11 @@ assertApplyError
   -> PatchFileContents -> ByteString -> (SlapError -> Bool) -> String -> Assertion
 assertApplyError parseFunction applyFunction patchBytes sourceBytes errorPredicate errorLabel = do
   case parseFunction patchBytes of
-    Left slapError -> assertFailure ("parse failed (expected parse success): " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse failed (expected parse success): " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) ->
       case applyFunction parsed (InputFileContents sourceBytes) of
         Left slapError ->
-          assertBool (errorLabel ++ ": got " ++ renderSlapError slapError)
+          assertBool (errorLabel ++ ": got " ++ Text.unpack (renderSlapError slapError))
                      (errorPredicate slapError)
         Right _ -> assertFailure (errorLabel ++ ": expected apply to fail, but it succeeded")
 
@@ -516,7 +519,7 @@ bpsMetadataPreserved =
       body = bpsBody 1 1 metadata actions
       patch = buildBPS body source target
   in case parseBPS patch of
-    Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> do
       assertEqual "metadata" metadata (unBPSMetadata (bpsMetadata parsed))
       assertEqual "source size" (FileSize 1) (bpsSourceSize parsed)
@@ -591,7 +594,7 @@ bpsNegativeSourceSize =
   let body = bpsBody 0 0 ByteString.empty mempty
       patch = buildBPS body ByteString.empty ByteString.empty
   in case parseBPS patch of
-    Left slapError -> assertFailure ("unexpected rejection: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("unexpected rejection: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "source size" (FileSize 0) (bpsSourceSize parsed)
 
 bpsNegativeTargetSize :: Assertion
@@ -869,10 +872,10 @@ upsApplyBlockPastTarget =
       expectedOutput = ByteString.pack [0xAA, 0xBB]
       patch = buildUPS body source expectedOutput
   in case parseUPS patch of
-       Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
+       Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
        Right (Parsed parsed _parseWarnings) ->
          case applyUPS parsed (InputFileContents source) of
-           Left slapError -> assertFailure ("apply failed (expected success with OOB clipping): " ++ renderSlapError slapError)
+           Left slapError -> assertFailureT ("apply failed (expected success with OOB clipping): " <> renderSlapError slapError)
            Right (Outcome (OutputFileContents result) _applyWarnings) ->
              assertEqual "OOB-clipped output" expectedOutput result
 
@@ -910,7 +913,7 @@ ipsApplyZeroTargetWithRecordsClipped =
            [expectedHonored, expectedClipped] warnings
        Left slapError -> assertFailure
          ("expected successful clipped apply, got error: "
-          ++ renderSlapError slapError)
+          ++ Text.unpack (renderSlapError slapError))
 
 ----------------------------------------------------------------------------
 -- BPS apply cursor-underflow errors
@@ -1022,7 +1025,7 @@ bpsSourceCRCReadLiterally =
       wrongSourceCRC = CRC32 0xDEADBEEF
       patch = buildBPSWithCRCs body wrongSourceCRC (crc32 target)
   in case parseBPS patch of
-    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "source CRC field" wrongSourceCRC (bpsSourceCRC parsed)
 
 bpsTargetCRCReadLiterally :: Assertion
@@ -1033,7 +1036,7 @@ bpsTargetCRCReadLiterally =
       wrongTargetCRC = CRC32 0xCAFEBABE
       patch = buildBPSWithCRCs body (crc32 source) wrongTargetCRC
   in case parseBPS patch of
-    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "target CRC field" wrongTargetCRC (bpsTargetCRC parsed)
 
 -- | 'applyBPS' is a low-level executor: it trusts the caller to have
@@ -1087,7 +1090,7 @@ bpsNegativeZeroSignedVarintWarns =
       patch = buildBPS body source target
   in case parseBPS patch of
        Left slapError ->
-         assertFailure ("expected parse to succeed: " ++ renderSlapError slapError)
+         assertFailureT ("expected parse to succeed: " <> renderSlapError slapError)
        Right (Parsed _parsed parseAdvisories) ->
          assertBool ("expected NegativeZeroInBPS in: " ++ show parseAdvisories)
                     (NegativeZeroInBPS `elem` parseAdvisories)
@@ -1107,7 +1110,7 @@ bpsVerificationCarriesDeclaredSize =
       body = bpsBody 4 4 ByteString.empty actions
       patch = buildBPS body source target
   in case parseSome noDialectsRequested patch of
-    Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
         (verifyFileSizeAdvisory (patchVerification somePatch))
@@ -1146,7 +1149,7 @@ upsSourceCRCReadLiterally =
       wrongSourceCRC = CRC32 0xDEADBEEF
       patch = buildUPSWithCRCs body wrongSourceCRC (crc32 target)
   in case parseUPS patch of
-    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "source CRC field" wrongSourceCRC (upsSourceCRC parsed)
 
 upsTargetCRCReadLiterally :: Assertion
@@ -1156,7 +1159,7 @@ upsTargetCRCReadLiterally =
       wrongTargetCRC = CRC32 0xCAFEBABE
       patch = buildUPSWithCRCs body (crc32 source) wrongTargetCRC
   in case parseUPS patch of
-    Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
     Right (Parsed parsed _parseWarnings) -> assertEqual "target CRC field" wrongTargetCRC (upsTargetCRC parsed)
 
 -- | Same apply-layer contract as BPS: 'applyUPS' uses the actual
@@ -1191,7 +1194,7 @@ upsVerificationCarriesDeclaredSize =
       body = upsBody 4 4 mempty
       patch = buildUPS body source target
   in case parseSome noDialectsRequested patch of
-    Left slapError -> assertFailure ("parseSome: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
         (verifyFileSizeAdvisory (patchVerification somePatch))
@@ -1319,7 +1322,7 @@ ninja2RejectsUnrecognizedPatchEncoding =
          assertEqual "preserved byte" unrecognizedByte actualByte
        Left otherError ->
          assertFailure ("expected NINJA2UnrecognizedPatchEncoding, got: "
-                        ++ renderSlapError otherError)
+                        ++ Text.unpack (renderSlapError otherError))
        Right _ ->
          assertFailure "expected parse to reject unrecognized PATCH_ENC, but it succeeded"
 

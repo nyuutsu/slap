@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.NINJA1.Describe
   ( ninja1Meta
   , analyzeNINJA1
@@ -13,7 +15,7 @@ import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRe
 import Slap.Checksum (showCRC32, MD5Hash(..), SHA1Hash(..))
 import Slap.Display.Common (InfoLine(..),
                      Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Display.Primitives (padHex)
+import Slap.Display.Primitives (hexByteString)
 import Slap.Measure (Length(..),
                      OffsetRange(..), advance, byteLength, distance)
 
@@ -28,13 +30,13 @@ ninja1Meta patch = concat
   [ [InfoLine "ROM type" (romTypeName (ninja1RomType patch))]
   , case ninja1SourceCRC patch of
       Nothing  -> []
-      Just crc -> [InfoLine "source CRC" ("0x" ++ showCRC32 crc)]
+      Just crc -> [InfoLine "source CRC" ("0x" <> showCRC32 crc)]
   , case ninja1SourceMD5 patch of
       Nothing              -> []
-      Just (MD5Hash hash)  -> [InfoLine "source MD5" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+      Just (MD5Hash hash)  -> [InfoLine "source MD5" (hexByteString hash)]
   , case ninja1SourceSHA1 patch of
       Nothing              -> []
-      Just (SHA1Hash hash) -> [InfoLine "source SHA1" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack hash))]
+      Just (SHA1Hash hash) -> [InfoLine "source SHA1" (hexByteString hash)]
   ]
 
 ----------------------------------------------------------------------------

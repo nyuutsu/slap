@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.BSDiff.Describe
   ( bsdiffMeta
   , analyzeBSDiff
@@ -14,7 +16,7 @@ import Slap.Display.Analysis
   , SummaryInfo(..)
   , Annotation(..)
   )
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Offset(..), FileSize(..), advance)
 import Data.List (mapAccumL)
 
@@ -24,10 +26,10 @@ import Data.List (mapAccumL)
 
 bsdiffMeta :: BSDiffPatch -> [InfoLine]
 bsdiffMeta patch =
-  [ InfoLine "new size" (show (unFileSize (bsdiffTargetSize patch)))
-  , InfoLine "ctrl block" (show (unFileSize (bsdiffControlSize patch)) ++ " bytes (compressed)")
-  , InfoLine "diff block" (show (unFileSize (bsdiffDiffSize patch)) ++ " bytes (compressed)")
-  , InfoLine "extra block" (show (unFileSize (bsdiffExtraSize patch)) ++ " bytes (compressed)")
+  [ InfoLine "new size" (renderAsText (unFileSize (bsdiffTargetSize patch)))
+  , InfoLine "ctrl block" (renderAsText (unFileSize (bsdiffControlSize patch)) <> " bytes (compressed)")
+  , InfoLine "diff block" (renderAsText (unFileSize (bsdiffDiffSize patch)) <> " bytes (compressed)")
+  , InfoLine "extra block" (renderAsText (unFileSize (bsdiffExtraSize patch)) <> " bytes (compressed)")
   ]
 
 ----------------------------------------------------------------------------

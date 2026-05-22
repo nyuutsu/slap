@@ -1,5 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.Apply (applyTests) where
 
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , isHeavySuiteName
@@ -29,7 +32,7 @@ import Data.List (sort)
 import System.Directory (doesFileExist, listDirectory)
 import System.FilePath ((</>), takeExtension)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, assertFailure, assertEqual)
+import Test.Tasty.HUnit (testCase, assertEqual)
 
 -- | The apply group walks every @.suite@ file under @test/suites/@ and
 -- registers one test per non-broken entry. A suite whose base ROM is
@@ -80,11 +83,11 @@ mkPatchTest repo basePath expectedSha entry =
         patchBytes <- ByteString.readFile patchPath
         case parseSome noDialectsRequested (PatchFileContents patchBytes) of
           Left slapError ->
-            assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+            assertFailureT ("parseSome failed: " <> renderSlapError slapError)
           Right parsed -> do
             result <- applyPatch parsed (InputFileContents baseBytes)
             case result of
               Left slapError ->
-                assertFailure ("apply failed: " ++ renderSlapError slapError)
+                assertFailureT ("apply failed: " <> renderSlapError slapError)
               Right (OutputFileContents output) ->
                 assertEqual "SHA1 mismatch" expectedSha (sha1Hex output)

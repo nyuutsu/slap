@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.CrossVal (crossValTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
@@ -9,6 +11,7 @@ import Integration.External
   , runExternal
   )
 import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier(..)
   , repoDir
@@ -96,7 +99,7 @@ mkCrossValTest getTargets label format tool basePath bootPath expectedTargetSha 
            (OutputFileContents targetBytes)
            noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
       Left slapError ->
-        assertFailure ("create failed: " ++ renderSlapError slapError)
+        assertFailureT ("create failed: " <> renderSlapError slapError)
       Right (CreateResult patchBytes _) ->
         withTempFile "slap-xv-patch" $ \patchFile ->
         withTempFile "slap-xv-base"  $ \baseFile ->

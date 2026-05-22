@@ -23,6 +23,7 @@ import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories)
 
 import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
 
 -- | Intermediate result of running the PPF4 body parser: the typed
 -- description, any advisories from the description's lenient decode,
@@ -127,7 +128,7 @@ parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
                 replacesAcc (PPF4Append payload : appendsAcc)
             _ ->
               fail ("record " ++ show (unActionIndex recordIndex)
-                    ++ " has unknown command byte: 0x" ++ padHex 2 commandByte)
+                    ++ " has unknown command byte: 0x" ++ Text.unpack (padHex 2 commandByte))
 
 -- | Format a truncated-record error message (PPF4 copy; the wording
 -- matches Common's 'truncatedMessage' but lives here so PPF4 does not

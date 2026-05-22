@@ -1,5 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.Metadata (metadataTests) where
 
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , isHeavyPath
@@ -35,10 +38,11 @@ import Slap.BPS.Types (BPSMetadata(..))
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
 import Data.Char (isSpace, toLower)
-import Data.List (isPrefixOf, isInfixOf, find)
+import Data.List (isPrefixOf, find)
 import System.FilePath ((</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertFailure, assertEqual, assertBool)
+import qualified Data.Text as Text
 
 -- | The metadata group exercises field-by-field round-tripping
 -- through self-convert: take a real patch, convert to its own format,
@@ -82,7 +86,7 @@ mkFieldTest :: FilePath -> CreateFormat -> String -> TestTree
 mkFieldTest patchPath format fieldName = testCase fieldName $ do
   patchBytes <- ByteString.readFile patchPath
   case parseSome noDialectsRequested (PatchFileContents patchBytes) of
-    Left slapError -> assertFailure ("parseSome original failed: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parseSome original failed: " <> renderSlapError slapError)
     Right original -> do
       -- Self-convert: convert to same format
       let meta = case format of
@@ -95,10 +99,10 @@ mkFieldTest patchPath format fieldName = testCase fieldName $ do
       case convResult of
         Left errorMessage -> assertFailure ("self-convert failed: " ++ errorMessage)
         Right (CreateResult convertedBytes _) -> case parseSome noDialectsRequested convertedBytes of
-          Left slapError -> assertFailure ("parseSome converted failed: " ++ renderSlapError slapError)
+          Left slapError -> assertFailureT ("parseSome converted failed: " <> renderSlapError slapError)
           Right converted -> do
-            let originalInfo = renderAnalysisSummary (patchInfo original) (patchAnalysis original) Nothing
-                convertedInfo = renderAnalysisSummary (patchInfo converted) (patchAnalysis converted) Nothing
+            let originalInfo = Text.unpack (renderAnalysisSummary (patchInfo original) (patchAnalysis original) Nothing)
+                convertedInfo = Text.unpack (renderAnalysisSummary (patchInfo converted) (patchAnalysis converted) Nothing)
                 originalValue = extractField fieldName originalInfo
                 convertedValue = extractField fieldName convertedInfo
             assertEqual ("field '" ++ fieldName ++ "' mismatch") originalValue convertedValue
@@ -133,7 +137,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           meta   = ByteString8.pack "<patch><title>Test</title></patch>"
       patchBytes <- createBPSOrFail source target meta
       case parseSome noDialectsRequested patchBytes of
-        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" (Just meta) (patchMetadata parsed)
 
   , testCase "empty metadata gives Nothing" $ do
@@ -141,7 +145,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
           target = ByteString.pack [16..31]
       patchBytes <- createBPSOrFail source target ByteString.empty
       case parseSome noDialectsRequested patchBytes of
-        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
   , testCase "info shows metadata preview" $ do
@@ -150,22 +154,22 @@ bpsMetadataGroup = testGroup "bps-metadata"
           meta   = ByteString8.pack "hello-world-metadata"
       patchBytes <- createBPSOrFail source target meta
       case parseSome noDialectsRequested patchBytes of
-        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> do
           let info = renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing
           assertBool "info mentions metadata content"
-            ("hello-world-metadata" `isInfixOf` info)
+            ("hello-world-metadata" `Text.isInfixOf` info)
           assertBool "info shows byte count"
-            ("20 bytes" `isInfixOf` info)
+            ("20 bytes" `Text.isInfixOf` info)
 
   , testCase "info shows (none) without metadata" $ do
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
       patchBytes <- createBPSOrFail source target ByteString.empty
       case parseSome noDialectsRequested patchBytes of
-        Left slapError -> assertFailure ("parseSome failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed ->
-          assertBool "info shows (none)" ("(none)" `isInfixOf` renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
+          assertBool "info shows (none)" ("(none)" `Text.isInfixOf` renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
   ]
 
 -- | Run 'createBPS' and unwrap. Test inputs are small and well-formed,
@@ -174,5 +178,5 @@ createBPSOrFail :: ByteString.ByteString -> ByteString.ByteString -> ByteString.
 createBPSOrFail source target meta =
   case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata meta) of
     Left slapError ->
-      assertFailure ("createBPS failed: " ++ renderSlapError slapError)
+      assertFailureT ("createBPS failed: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _) -> pure patchBytes

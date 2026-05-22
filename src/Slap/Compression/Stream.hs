@@ -16,8 +16,9 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
+import qualified Data.Text as Text
 import Slap.Status (DecompressionCause(..))
-import Slap.FFI (readByteString, readString, withByteString)
+import Slap.FFI (readByteString, readText, withByteString)
 
 foreign import ccall unsafe "rusty_zlib_inflate"
   rustyZlibInflate
@@ -86,7 +87,7 @@ callDecompressor decompress input = unsafeDupablePerformIO $
         errorAddressPointer  errorLengthPointer
       if returnCode /= 0
         then do
-          rustMessage <- readString errorAddressPointer errorLengthPointer
+          rustMessage <- readText errorAddressPointer errorLengthPointer
           pure $ Left (DecompressionCause rustMessage)
         else
           Right <$> readByteString resultAddressPointer resultLengthPointer
@@ -119,8 +120,8 @@ zlibDeflate input
             errorAddressPointer  errorLengthPointer
           if returnCode /= 0
             then do
-              rustMessage <- readString errorAddressPointer errorLengthPointer
-              error ("zlibDeflate: internal error: " ++ rustMessage)
+              rustMessage <- readText errorAddressPointer errorLengthPointer
+              error ("zlibDeflate: internal error: " ++ Text.unpack rustMessage)
             else
               readByteString resultAddressPointer resultLengthPointer
 

@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.Convert
   ( PatchContents(..)
   , DirectCreate(..)
@@ -798,7 +800,7 @@ fieldNote contents field = case field of
       in if Text.null trimmed
            then []
            else [FieldDropped FieldDescription
-                  (DroppedDescription (DroppedDescriptionText (Text.unpack trimmed)))]
+                  (DroppedDescription (DroppedDescriptionText trimmed))]
     Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
@@ -1283,7 +1285,7 @@ formatExtension :: CreateFormat -> String
 formatExtension (CreateDirect format) = directExtension format
 formatExtension (CreateDifferential format) = differentialExtension format
 
-formatName :: CreateFormat -> String
+formatName :: CreateFormat -> Text.Text
 formatName (CreateDirect format) = directName format
 formatName (CreateDifferential format) = differentialName format
 
@@ -1292,9 +1294,13 @@ formatName (CreateDifferential format) = differentialName format
 -- offending format. Both 'directFormatInfo' and 'differentialFormatInfo'
 -- return this same shape; the type-level distinction between
 -- 'DirectCreate' and 'DifferentialCreate' lives at the input.
+--
+-- 'formatInfoExtension' stays 'String' because it threads through
+-- 'System.FilePath.replaceExtension'; 'formatInfoName' is display
+-- text and is typed 'Text'.
 data FormatInfo = FormatInfo
   { formatInfoExtension :: String
-  , formatInfoName      :: String
+  , formatInfoName      :: Text.Text
   , formatInfoLabel     :: FormatLabel
   }
 
@@ -1321,7 +1327,7 @@ differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXD
 directExtension :: DirectCreate -> String
 directExtension = formatInfoExtension . directFormatInfo
 
-directName :: DirectCreate -> String
+directName :: DirectCreate -> Text.Text
 directName = formatInfoName . directFormatInfo
 
 directLabel :: DirectCreate -> FormatLabel
@@ -1330,7 +1336,7 @@ directLabel = formatInfoLabel . directFormatInfo
 differentialExtension :: DifferentialCreate -> String
 differentialExtension = formatInfoExtension . differentialFormatInfo
 
-differentialName :: DifferentialCreate -> String
+differentialName :: DifferentialCreate -> Text.Text
 differentialName = formatInfoName . differentialFormatInfo
 
 differentialLabel :: DifferentialCreate -> FormatLabel

@@ -14,6 +14,7 @@
 -- the porcelain composes rather than on its string-rendered output.
 module Integration.XDelta1Names (xdelta1NamesTests) where
 
+import Integration.Helpers (assertFailureT)
 import Integration.Skip (GroupPlan, MaybeTest(..), namedGroup)
 
 import Slap.Convert
@@ -153,10 +154,10 @@ createXDelta1WithNames
 createXDelta1WithNames fromText toText = do
   resolved <- case resolveExplicit fromText toText of
     Right res -> pure res
-    Left err  -> assertFailure ("resolveXDelta1FileNames: " ++ renderSlapError err)
+    Left err  -> assertFailureT ("resolveXDelta1FileNames: " <> renderSlapError err)
   case createXDelta1 IncludeVerification CompressedPatch resolved
          (InputFileContents sampleSource) (OutputFileContents sampleTarget) of
-    Left err -> assertFailure ("createXDelta1: " ++ renderSlapError err)
+    Left err -> assertFailureT ("createXDelta1: " <> renderSlapError err)
     Right (CreateResult (PatchFileContents wireBytes) _warnings) ->
       pure wireBytes
 
@@ -177,7 +178,7 @@ withRoundTrippedNames fromText toText check = do
 parseAndExtractNames :: ByteString -> IO ParsedXDelta1Names
 parseAndExtractNames wireBytes =
   case parseXDelta1 (PatchFileContents wireBytes) of
-    Left err -> assertFailure ("parseXDelta1: " ++ renderSlapError err)
+    Left err -> assertFailureT ("parseXDelta1: " <> renderSlapError err)
     Right (Parsed patch _warnings) -> pure ParsedXDelta1Names
       { parsedXDelta1FromName         = xdelta1FromName   patch
       , parsedXDelta1ToName           = xdelta1ToName     patch
@@ -193,10 +194,10 @@ defaultBasenamesCarry = do
   resolved <- case resolveXDelta1FileNames Nothing Nothing
                      "/some/where/source.gba" "/elsewhere/target.gba" of
     Right res -> pure res
-    Left err  -> assertFailure ("resolveXDelta1FileNames: " ++ renderSlapError err)
+    Left err  -> assertFailureT ("resolveXDelta1FileNames: " <> renderSlapError err)
   case createXDelta1 IncludeVerification CompressedPatch resolved
          (InputFileContents sampleSource) (OutputFileContents sampleTarget) of
-    Left err -> assertFailure ("createXDelta1: " ++ renderSlapError err)
+    Left err -> assertFailureT ("createXDelta1: " <> renderSlapError err)
     Right (CreateResult (PatchFileContents wireBytes) _warnings) -> do
       parsed <- parseAndExtractNames wireBytes
       assertEqual "from-name basename" (XDelta1FromName (localeName "source.gba"))
@@ -331,7 +332,7 @@ convertFromBPSWithNamesAccepted =
   case requireXDelta1FileNames (Just (localeName "user-from")) (Just (localeName "user-to")) LabelBPS of
     Right _ -> pure ()
     Left err -> assertFailure
-      ("expected acceptance, got: " ++ renderSlapError err)
+      ("expected acceptance, got: " ++ Text.unpack (renderSlapError err))
 
 convertXDeltaToXDeltaInherits :: Assertion
 convertXDeltaToXDeltaInherits = do
@@ -349,7 +350,7 @@ convertXDeltaToXDeltaInherits = do
          LabelXDelta1 of
     Right _ -> pure ()
     Left err -> assertFailure
-      ("requireXDelta1FileNames refused inheritance: " ++ renderSlapError err)
+      ("requireXDelta1FileNames refused inheritance: " ++ Text.unpack (renderSlapError err))
   assertEqual "merge inherited from-name"
     (Just (XDelta1FromName (localeName "old-from"))) (requestedXDelta1FromName merged)
   assertEqual "merge inherited to-name"

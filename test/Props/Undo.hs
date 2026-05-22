@@ -24,6 +24,7 @@ import Test.Tasty
 import Test.Tasty.QuickCheck
 
 import Props.Helpers
+import qualified Data.Text as Text
 
 undoTests :: TestTree
 undoTests = testGroup "Undo"
@@ -47,11 +48,11 @@ prop_upsUndo = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
-          counterexample ("parse: " ++ renderSlapError parseError) $ property False
+          counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) $ property False
         Right (Parsed parsed _parseWarnings) ->
           case UPS.applyUPS parsed (InputFileContents source) of
             Left applyError ->
-              counterexample ("apply: " ++ renderSlapError applyError) $ property False
+              counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) $ property False
             Right (Outcome intermediate _applyWarnings) ->
               fmap outcomeValue (UPS.undoUPS parsed intermediate)
                 === Right (InputFileContents source)
@@ -64,7 +65,7 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         case PPF3.applyPPF3 parsed (InputFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False

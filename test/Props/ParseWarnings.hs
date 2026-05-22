@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Per-warning coverage for parse-time structural-warning channels
 -- across the IPS family and APSN64. Each test constructs a minimal
 -- format-specific patch that triggers exactly one parse-time warning
@@ -9,6 +11,8 @@
 -- point of the warnings is to flag input patches that arrived from
 -- elsewhere.
 module Props.ParseWarnings (parseWarningsTests) where
+
+import Props.Helpers (assertFailureT)
 
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Types as APSN64
@@ -27,7 +31,7 @@ import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 
 import Test.Tasty
-import Test.Tasty.HUnit (Assertion, assertEqual, assertFailure, testCase)
+import Test.Tasty.HUnit (Assertion, assertEqual, testCase)
 
 parseWarningsTests :: TestTree
 parseWarningsTests = testGroup "ParseWarnings"
@@ -217,7 +221,7 @@ assertParseWarnings :: ByteString -> [SlapAdvisory] -> Assertion
 assertParseWarnings patchBytes expectedWarnings =
   case IPS.parseIPS (PatchFileContents patchBytes) of
     Left slapError ->
-      assertFailure ("parse failed: " ++ renderSlapError slapError)
+      assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed _parseResult actualWarnings) ->
       assertEqual "surfaced warnings" expectedWarnings actualWarnings
 
@@ -278,7 +282,7 @@ withParsedAPSN64 :: ByteString -> (APSN64.APSN64Header -> [SlapAdvisory] -> Asse
 withParsedAPSN64 patchBytes inspect =
   case APSN64.parseAPSN64 (PatchFileContents patchBytes) of
     Left slapError ->
-      assertFailure ("parse failed: " ++ renderSlapError slapError)
+      assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed (APSN64.APSN64Patch header _records) actualWarnings) ->
       inspect header actualWarnings
 
@@ -336,7 +340,7 @@ ppf1DescriptionDecodeSubstitutionEmitsAdvisory :: Assertion
 ppf1DescriptionDecodeSubstitutionEmitsAdvisory =
   case PPF1.parsePPF1 PPF1OriginPC
          (PatchFileContents ppf1PatchWithInvalidDescriptionByte) of
-    Left slapError -> assertFailure ("parse failed: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed _ advisories) ->
       assertEqual "surfaced advisories"
         [FieldDecodedSubstituted LabelPPF1 FieldDescription

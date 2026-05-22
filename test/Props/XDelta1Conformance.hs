@@ -20,6 +20,8 @@
 -- byte layouts, source-record byte order) belong here too.
 module Props.XDelta1Conformance (xdelta1ConformanceTests) where
 
+import Props.Helpers (assertFailureT)
+
 import Slap.Binary (putEdsioVarint)
 import Slap.ByteParser (runByteParser, edsioVarint)
 import Slap.Status (ByteParserError, renderByteParserError)
@@ -69,6 +71,6 @@ edsioVarintCase value expectedBytes = do
   assertEqual ("encode " ++ show value) expected encoded
   case decodeEdsioVarint encoded of
     Left parserError ->
-      assertFailure ("decode failed: " ++ renderByteParserError parserError)
+      assertFailureT ("decode failed: " <> renderByteParserError parserError)
     Right decoded ->
       assertEqual ("decode " ++ show value) (fromIntegral value) decoded

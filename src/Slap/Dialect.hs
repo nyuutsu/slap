@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Wire-format configuration the user supplies that affects how a
 -- format's bytes are interpreted at parse or written at create.
 -- Distinct from 'Slap.Constraint.Constraint' (which is a slap-side
@@ -16,6 +18,8 @@ module Slap.Dialect
   , dialectFlagName
   ) where
 
+import Data.Text (Text)
+
 data Dialect
   = PPF1OriginAxis
     -- ^ PPF1's offset-field endianness. PPF1's reference applier
@@ -31,11 +35,11 @@ data Dialect
   deriving (Show, Eq, Ord)
 
 -- | Display name for prose contexts in error and help messages.
-dialectName :: Dialect -> String
+dialectName :: Dialect -> Text
 dialectName PPF1OriginAxis = "PPF1 offset endianness"
 
 -- | The CLI flag spelling for a 'Dialect' axis, without the leading
 -- @--@. Single source of truth shared by 'Slap.Status' renderers and
 -- the parser declaration in @app\/Main.hs@.
-dialectFlagName :: Dialect -> String
+dialectFlagName :: Dialect -> Text
 dialectFlagName PPF1OriginAxis = "is-amiga-patch"

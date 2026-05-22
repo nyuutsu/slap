@@ -1,8 +1,12 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.PatchField
   ( PatchField(..)
   , fieldName
   , affectsApplyOutput
   ) where
+
+import Data.Text (Text)
 
 -- | Fields a patch format can provide or require.
 data PatchField
@@ -22,7 +26,7 @@ data PatchField
   | FieldMetadata
   deriving (Eq, Ord, Show)
 
-fieldName :: PatchField -> String
+fieldName :: PatchField -> Text
 fieldName FieldRecords         = "records"
 fieldName FieldDescription     = "description"
 fieldName FieldSourceCRC32     = "source CRC32"

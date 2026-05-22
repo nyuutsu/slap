@@ -1,7 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.PlatformType
   ( PlatformType(..)
   , platformName
   ) where
+
+import Data.Text (Text)
 
 -- | Platform type representing the union of all platforms known to
 -- NINJA1 and NINJA2.  Used as the lingua franca for cross-format
@@ -41,7 +45,7 @@ data PlatformType
 -- readable form. The strings track the names slap surfaces in CLI
 -- output and error messages — distinct from any format-specific
 -- wire encoding (NINJA1's 'RomNES', NINJA2's 'NINJA2NES', etc.).
-platformName :: PlatformType -> String
+platformName :: PlatformType -> Text
 platformName PlatformRaw            = "Raw"
 platformName PlatformNES            = "NES"
 platformName PlatformFDS            = "FDS"

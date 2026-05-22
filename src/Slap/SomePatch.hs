@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.SomePatch
   ( SomePatch(..)
   , PatchKind(..)
@@ -21,6 +23,7 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      RequestedDialects(..),
                      noMetadataRequested)
 import Slap.Text (EncodedText, encodedTextContent)
+import Data.Text (Text)
 import qualified Data.Text as Text
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      splitUndoHunkFromParsed)
@@ -164,7 +167,7 @@ data WindowCheck = WindowCheck !Offset !Length !Adler32
 
 -- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
 -- Three fields in order: source-file offset, expected bytes, label.
-data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !String
+data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !Text
   deriving (Show)
 
 -- | The bytes an advisory 'ByteCheck' expects to find at its offset in
@@ -893,7 +896,7 @@ parseSomePatchFromNINJA1 patchContents = do
     , patchAdvisories       = warnings
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelNINJA1
-            (Just (" (" ++ NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) ++ ")"))
+            (Just (" (" <> NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) <> ")"))
         , infoLines  = NINJA1.ninja1Meta patch
         , infoTally  = Tally (length records)
         , infoUnit   = Records
@@ -1127,7 +1130,7 @@ parseSomePatchFromYay0 dialects (PatchFileContents input) = case Stream.yay0Deco
     Left slapError -> Left slapError
     Right parsed ->
       let innerHeader = infoFormat (patchInfo parsed)
-          wrappedExtra = Just (maybe "/Yay0" (++ "/Yay0") (formatExtra innerHeader))
+          wrappedExtra = Just (maybe "/Yay0" (<> "/Yay0") (formatExtra innerHeader))
       in Right parsed
         { patchInfo = (patchInfo parsed)
             { infoFormat = innerHeader { formatExtra = wrappedExtra } }

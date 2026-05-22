@@ -10,6 +10,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower)
 import Data.List (isPrefixOf, isSuffixOf)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import Slap.Display.Common (pathText, renderAsText)
 import System.Directory (findExecutable, createDirectoryIfMissing,
                          removeDirectoryRecursive, removeFile, doesFileExist)
 import System.Exit (ExitCode(..))
@@ -33,7 +36,7 @@ detectArchive input
 
 -- | Unwrap a single-entry archive → (content bytes, entry name).
 -- Filters out chaff (readmes, images, docs), extracts the sole candidate.
-unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either String (ByteString, String))
+unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either Text (ByteString, String))
 unwrapArchive format path = do
   entries <- listEntries format path
   case entries of
@@ -41,16 +44,16 @@ unwrapArchive format path = do
     Right names -> do
       let candidates = filter isCandidate names
       case candidates of
-        []  -> pure (Left ("no usable file found in " ++ formatString format ++ " archive "
-                           ++ path ++ " (" ++ show (length names) ++ " entries, all filtered)\n"
-                           ++ "If this isn't actually an archive, use --raw."))
+        []  -> pure (Left ("no usable file found in " <> formatString format <> " archive "
+                           <> pathText path <> " (" <> renderAsText (length names) <> " entries, all filtered)\n"
+                           <> "If this isn't actually an archive, use --raw."))
         [name] -> extractEntry format path name
-        _ -> pure (Left (path ++ " is a " ++ formatString format ++ " archive with "
-                         ++ show (length candidates) ++ " candidate files:\n"
-                         ++ unlines (map ("  " ++) candidates)
-                         ++ "Extract the one you want and pass it directly."))
+        _ -> pure (Left (pathText path <> " is a " <> formatString format <> " archive with "
+                         <> renderAsText (length candidates) <> " candidate files:\n"
+                         <> Text.unlines (map (\candidate -> "  " <> Text.pack candidate) candidates)
+                         <> "Extract the one you want and pass it directly."))
 
-formatString :: ArchiveFormat -> String
+formatString :: ArchiveFormat -> Text
 formatString ArchiveZIP = "ZIP"
 formatString ArchiveRAR = "RAR"
 formatString Archive7z  = "7z"
@@ -74,7 +77,7 @@ chaffExtensions =
 -- Listing
 ----------------------------------------------------------------------------
 
-listEntries :: ArchiveFormat -> FilePath -> IO (Either String [String])
+listEntries :: ArchiveFormat -> FilePath -> IO (Either Text [String])
 listEntries ArchiveZIP path = do
   maybeTool <- findExecutable "unzip"
   case maybeTool of
@@ -83,7 +86,7 @@ listEntries ArchiveZIP path = do
       (exitCode, stdout, stderr) <- readProcessWithExitCode "unzip" ["-Z1", path] ""
       pure $ case exitCode of
         ExitSuccess -> Right (filter (not . null) (lines stdout))
-        _           -> Left ("unzip -Z1 failed: " ++ stderr)
+        _           -> Left ("unzip -Z1 failed: " <> Text.pack stderr)
 
 listEntries ArchiveRAR path = do
   maybeUnrar <- findExecutable "unrar"
@@ -92,7 +95,7 @@ listEntries ArchiveRAR path = do
       (exitCode, stdout, stderr) <- readProcessWithExitCode "unrar" ["lb", path] ""
       pure $ case exitCode of
         ExitSuccess -> Right (filter (not . null) (lines stdout))
-        _           -> Left ("unrar lb failed: " ++ stderr)
+        _           -> Left ("unrar lb failed: " <> Text.pack stderr)
     Nothing -> do
       maybe7z <- findExecutable "7z"
       case maybe7z of
@@ -106,12 +109,12 @@ listEntries Archive7z path = do
     Just _  -> list7z path
 
 -- | List entries using 7z's machine-readable output.
-list7z :: FilePath -> IO (Either String [String])
+list7z :: FilePath -> IO (Either Text [String])
 list7z path = do
   (exitCode, stdout, stderr) <- readProcessWithExitCode "7z" ["l", "-ba", "-slt", path] ""
   pure $ case exitCode of
     ExitSuccess -> Right (parse7zList stdout)
-    _           -> Left ("7z l failed: " ++ stderr)
+    _           -> Left ("7z l failed: " <> Text.pack stderr)
 
 -- | Parse 7z -slt output, extracting Path= lines.
 parse7zList :: String -> [String]
@@ -121,7 +124,7 @@ parse7zList = map (drop 5) . filter ("Path=" `isPrefixOf`) . lines
 -- Extraction
 ----------------------------------------------------------------------------
 
-extractEntry :: ArchiveFormat -> FilePath -> String -> IO (Either String (ByteString, String))
+extractEntry :: ArchiveFormat -> FilePath -> String -> IO (Either Text (ByteString, String))
 extractEntry format archivePath entryName = do
   (temporaryFile, handle) <- openBinaryTempFile "/tmp" "slap-archive"
   hClose handle
@@ -164,13 +167,13 @@ findExtracted temporaryDirectory entryName = do
 takeFileNamePortable :: String -> String
 takeFileNamePortable = reverse . takeWhile (\char -> char /= '/' && char /= '\\') . reverse
 
-doExtract :: ArchiveFormat -> FilePath -> String -> FilePath -> IO (Either String ())
+doExtract :: ArchiveFormat -> FilePath -> String -> FilePath -> IO (Either Text ())
 doExtract ArchiveZIP archivePath entryName temporaryDirectory = do
   (exitCode, _, stderr) <- readProcessWithExitCode "unzip"
     ["-o", "-j", archivePath, entryName, "-d", temporaryDirectory] ""
   pure $ case exitCode of
     ExitSuccess -> Right ()
-    _           -> Left ("unzip extract failed: " ++ stderr)
+    _           -> Left ("unzip extract failed: " <> Text.pack stderr)
 
 doExtract ArchiveRAR archivePath entryName temporaryDirectory = do
   maybeUnrar <- findExecutable "unrar"
@@ -180,17 +183,17 @@ doExtract ArchiveRAR archivePath entryName temporaryDirectory = do
         ["e", "-o+", archivePath, entryName, temporaryDirectory ++ "/"] ""
       pure $ case exitCode of
         ExitSuccess -> Right ()
-        _           -> Left ("unrar extract failed: " ++ stderr)
+        _           -> Left ("unrar extract failed: " <> Text.pack stderr)
     Nothing -> do
       (exitCode, _, stderr) <- readProcessWithExitCode "7z"
         ["e", "-o" ++ temporaryDirectory, "-y", archivePath, entryName] ""
       pure $ case exitCode of
         ExitSuccess -> Right ()
-        _           -> Left ("7z extract failed: " ++ stderr)
+        _           -> Left ("7z extract failed: " <> Text.pack stderr)
 
 doExtract Archive7z archivePath entryName temporaryDirectory = do
   (exitCode, _, stderr) <- readProcessWithExitCode "7z"
     ["e", "-o" ++ temporaryDirectory, "-y", archivePath, entryName] ""
   pure $ case exitCode of
     ExitSuccess -> Right ()
-    _           -> Left ("7z extract failed: " ++ stderr)
+    _           -> Left ("7z extract failed: " <> Text.pack stderr)

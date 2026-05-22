@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.BPS.Describe
   ( bpsMeta
   , analyzeBPS
@@ -15,7 +17,7 @@ import Slap.Display.Analysis
     )
 import Slap.Checksum (showCRC32)
 import Slap.Status (CursorKind(SourceCursor))
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
 import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),
@@ -31,8 +33,8 @@ import qualified Data.Vector as Vector
 
 bpsMeta :: BPSPatch -> [InfoLine]
 bpsMeta patch = concat
-  [ [InfoLine "source size" (show (unFileSize (bpsSourceSize patch)))]
-  , [InfoLine "target size" (show (unFileSize (bpsTargetSize patch)))]
+  [ [InfoLine "source size" (renderAsText (unFileSize (bpsSourceSize patch)))]
+  , [InfoLine "target size" (renderAsText (unFileSize (bpsTargetSize patch)))]
   , [InfoLine "metadata" metadataDisplay]
   , [InfoLine "source CRC" (showCRC32 (bpsSourceCRC patch))]
   , [InfoLine "target CRC" (showCRC32 (bpsTargetCRC patch))]
@@ -46,7 +48,7 @@ bpsMeta patch = concat
           let (decodedMetadata, _lossNotices) = decodeTextLenient EncodingLocale metadata
               previewSafeCodepoints = Text.filter isPreviewSafe
                                         (encodedTextContent decodedMetadata)
-          in show (ByteString.length metadata) ++ " bytes: " ++ Text.unpack previewSafeCodepoints
+          in renderAsText (ByteString.length metadata) <> " bytes: " <> previewSafeCodepoints
     isPreviewSafe character = not (isControl character) || character == '\t'
 
 analyzeBPS :: BPSPatch -> PatchAnalysis

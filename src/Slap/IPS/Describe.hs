@@ -25,6 +25,8 @@
 -- whichever fields are present — and surfaces a single placeholder
 -- line when none are, the shape an all-absent malformed-metadata
 -- patch produces.
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.IPS.Describe
   ( -- * Plain IPS
     ipsMeta
@@ -62,7 +64,7 @@ import Slap.Display.Analysis
   , OffsetKind(..)
   , AnnotDetail(..)
   )
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
 import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(Offset), FileSize(..),
                      OffsetRange(..), advance, distance)
@@ -71,7 +73,7 @@ import Data.Vector (Vector)
 
 import Data.ByteString (ByteString)
 import Data.Maybe (isNothing)
-import qualified Data.Text as Text
+import Data.Text (Text)
 import qualified Data.Vector as Vector
 
 ----------------------------------------------------------------------------
@@ -110,7 +112,7 @@ truncationInfoLine :: Maybe FileSize -> [InfoLine]
 truncationInfoLine Nothing =
   []
 truncationInfoLine (Just truncatedTargetSize) =
-  [InfoLine "truncate" (show (unFileSize truncatedTargetSize) ++ " bytes")]
+  [InfoLine "truncate" (renderAsText (unFileSize truncatedTargetSize) <> " bytes")]
 
 ----------------------------------------------------------------------------
 -- ebpMeta — EBP-wrapped IPSPatch
@@ -161,10 +163,10 @@ ebpMetadataInfoLines metadata
 -- 'Text' content verbatim — the encoding tag has already done its
 -- job by the time the value reaches Describe (JSON was decoded as
 -- UTF-8 at parse time), so the user sees real codepoints.
-renderField :: String -> Maybe EncodedText -> [InfoLine]
+renderField :: Text -> Maybe EncodedText -> [InfoLine]
 renderField _      Nothing      = []
 renderField label  (Just value) =
-  [InfoLine label (Text.unpack (encodedTextContent value))]
+  [InfoLine label (encodedTextContent value)]
 
 ----------------------------------------------------------------------------
 -- analyze — structured analysis for the explain renderer
@@ -242,7 +244,7 @@ makeIPSRegion record = AnalysisRegion
 -- a bare @3@ byte count. The 3 / 4 byte-count mapping still lives
 -- only in 'Slap.IPS.Types.offsetWidthByteCount'; this helper is a
 -- parallel display mapping that never touches the byte count.
-renderOffsetWidth :: OffsetWidth -> String
+renderOffsetWidth :: OffsetWidth -> Text
 renderOffsetWidth Offset24 = "24-bit"
 renderOffsetWidth Offset32 = "32-bit"
 
@@ -251,8 +253,8 @@ renderOffsetWidth Offset32 = "32-bit"
 -- 'IPS32' ceiling (@0xFFFFFFFF@); 'StandardIPS''s smaller
 -- @0xFFFFFF@ gets the same eight-digit padding for visual
 -- alignment across variants.
-renderMaxOffset :: Offset -> String
-renderMaxOffset (Offset offsetValue) = "0x" ++ padHex 8 offsetValue
+renderMaxOffset :: Offset -> Text
+renderMaxOffset (Offset offsetValue) = "0x" <> padHex 8 offsetValue
 
 ----------------------------------------------------------------------------
 -- Display range
@@ -291,7 +293,7 @@ ipsRecordsRange records
 -- outside that range. The fallback exists so a hypothetical future
 -- variant with a non-ASCII marker still renders legibly instead of
 -- smuggling control bytes into the info stream.
-renderMarkerBytes :: ByteString -> String
+renderMarkerBytes :: ByteString -> Text
 renderMarkerBytes = renderPrintableASCIIOrHex
 
 

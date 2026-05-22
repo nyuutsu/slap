@@ -232,18 +232,18 @@ roundTripTests = testGroup "RoundTrip"
 prop_bps :: Property
 prop_bps = forAll genPair $ \(source, target) ->
   case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case BPS.parseBPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_bpsMetadata :: Property
 prop_bpsMetadata = forAll genPair $ \(source, target) ->
   forAll genByteString $ \meta ->
     case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata meta) of
-      Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+      Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
       Right (CreateResult patch _) -> case BPS.parseBPS patch of
-        Left slapError -> counterexample (renderSlapError slapError) $ property False
+        Left slapError -> counterexample (Text.unpack (renderSlapError slapError)) $ property False
         Right (Parsed parsed _parseWarnings) -> BPS.unBPSMetadata (BPS.bpsMetadata parsed) === meta
 
 prop_ups :: Property
@@ -253,7 +253,7 @@ prop_ups = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
-          counterexample (renderSlapError parseError) $ property False
+          counterexample (Text.unpack (renderSlapError parseError)) $ property False
         Right (Parsed parsed _parseWarnings) ->
           fmap outcomeValue (UPS.applyUPS parsed (InputFileContents source))
             === Right (OutputFileContents target)
@@ -261,9 +261,9 @@ prop_ups = forAll genPair $ \(source, target) ->
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
   case createPatch (CreateDirect CreateIPS) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
           === Right (OutputFileContents target)
@@ -275,9 +275,9 @@ prop_ips = forAll genPair $ \(source, target) ->
 prop_ipsEofCollision :: Property
 prop_ipsEofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
   case createPatch (CreateDirect CreateIPS) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
           === Right (OutputFileContents target)
@@ -335,7 +335,7 @@ prop_sourcelessSentinelRejected = once $
        Left (SentinelCollisionUnfixable LabelIPS offset) ->
          offset === ipsSentinelOffset
        Left other ->
-         counterexample ("unexpected error: " ++ renderSlapError other) $
+         counterexample ("unexpected error: " ++ Text.unpack (renderSlapError other)) $
            property False
        Right _ ->
          counterexample "expected Left SentinelCollisionUnfixable, got Right" $
@@ -364,17 +364,17 @@ ipsSentinelMaxPayloadRoundTrips =
                       noMetadataRequested Nothing
                       noConstraintsRequested noDialectsRequested of
        Left slapError ->
-         assertFailure ("create: " ++ renderSlapError slapError)
+         assertFailureT ("create: " <> renderSlapError slapError)
        Right (CreateResult patch _) -> case IPS.parseIPS patch of
          Left slapError ->
-           assertFailure ("parse: " ++ renderSlapError slapError)
+           assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed (IPSParseCleanIPS ipsPatch) _) ->
            case IPS.applyIPS (InputFileContents source) ipsPatch of
              Right outcome ->
                assertEqual "round-trip"
                  (OutputFileContents target) (outcomeValue outcome)
              Left slapError ->
-               assertFailure ("apply: " ++ renderSlapError slapError)
+               assertFailureT ("apply: " <> renderSlapError slapError)
          Right (Parsed (IPSParseCleanEBP _) _) ->
            assertFailure "unexpectedly parsed as EBP"
          Right (Parsed (IPSParseTruncated _ _) _) ->
@@ -407,12 +407,12 @@ prop_dpIPS32NotLarger = forAll genPair $ \(source, target) ->
 prop_gdiff :: Property
 prop_gdiff = forAll genPair $ \(source, target) ->
   case createGDIFF (InputFileContents source) (OutputFileContents target) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case GDIFF.parseGDIFF patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         case GDIFF.applyGDIFF parsed (InputFileContents source) of
-          Left applyError       -> counterexample ("apply: " ++ renderSlapError applyError) $ property False
+          Left applyError       -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) $ property False
           Right outputContents  -> outputContents === OutputFileContents target
 
 ----------------------------------------------------------------------------
@@ -538,7 +538,7 @@ prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
           <> word8 0
     in case GDIFF.parseGDIFF (PatchFileContents patchBytes) of
       Left parseError ->
-        counterexample (renderSlapError parseError) (property False)
+        counterexample (Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _parseWarnings) ->
         let parsedCommands = GDIFF.gdiffCommands parsed
             parsedCopies =
@@ -556,9 +556,9 @@ prop_planCopyRoundTrips = forAll genCopyOffset $ \initialOffset ->
 prop_apsGba :: Property
 prop_apsGba = forAll genPair $ \(source, target) ->
   case createAPSGBA (InputFileContents source) (OutputFileContents target) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case APSGBA.parseAPSGBA patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         APSGBA.applyAPSGBA parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -569,9 +569,9 @@ prop_apsGba = forAll genPair $ \(source, target) ->
 prop_ips32 :: Property
 prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateIPS32) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
         fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch)
           === Right (OutputFileContents target)
@@ -583,9 +583,9 @@ prop_ips32 = forAll genPairNoShrink $ \(source, target) ->
 prop_ebp :: Property
 prop_ebp = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateEBP) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case IPS.parseIPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed (IPSParseCleanEBP ebpPatch) _parseWarnings) ->
         fmap outcomeValue (IPS.applyIPS (InputFileContents source) (ebpBasePatch ebpPatch))
           === Right (OutputFileContents target)
@@ -603,9 +603,9 @@ prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
   forAll (elements [PPF1OriginPC, PPF1OriginAmiga]) $ \origin ->
     let dialects = noDialectsRequested { requestedPPF1Origin = origin }
     in case createPatch (CreateDirect CreatePPF1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested dialects of
-         Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+         Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
          Right (CreateResult patch _) -> case PPF1.parsePPF1 origin patch of
-            Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+            Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
             Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 -- | PPF2 needs the source ROM to be at least 'ppf2ValidationOffset +
@@ -614,9 +614,9 @@ prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
 prop_ppf2 :: Property
 prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (OutputFileContents target)
   where
     -- 0x9720 is the absolute minimum; bump to 0xA000 so QuickCheck-shrunk
@@ -692,26 +692,26 @@ apsGbaSourceSizeAdversarial =
 prop_ppf3 :: Property
 prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreatePMSR) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case PMSR.parsePMSR patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) ->
          PMSR.applyPMSR parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja1 :: Property
 prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) ->
          NINJA1.applyNINJA1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -719,9 +719,9 @@ prop_ninja1Hashes :: Property
 prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
   not (ByteString.null source) ==>
   case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) ->
          NINJA1.ninja1SourceCRC parsed === Just (crc32 source) .&&.
          NINJA1.ninja1SourceMD5 parsed === Just (md5 source) .&&.
@@ -739,9 +739,9 @@ prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
 prop_ninja1EofCollision :: Property
 prop_ninja1EofCollision = withNumTests 20 $ forAll genEofPair $ \(source, target) ->
   case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         NINJA1.applyNINJA1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -759,7 +759,7 @@ prop_ninja1SourcelessSentinelRejected = once $
        Left (SentinelCollisionUnfixable LabelNINJA1 offset) ->
          offset === ninja1Sentinel
        Left other ->
-         counterexample ("unexpected error: " ++ renderSlapError other) $
+         counterexample ("unexpected error: " ++ Text.unpack (renderSlapError other)) $
            property False
        Right _ ->
          counterexample "expected Left SentinelCollisionUnfixable, got Right" $
@@ -775,17 +775,17 @@ prop_dps = forAll genPairNoShrink $ \(source, target) ->
             , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingLocale Text.empty
             })
          DPS.DPSStable of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case DPS.parseDPS patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) -> DPS.applyDPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -798,18 +798,18 @@ prop_ninja2 = forAll genPair $ \(source, target) ->
 prop_ninja2Truncate :: Property
 prop_ninja2Truncate = forAll genShrinkingPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-      Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         fmap NINJA2.openNewFileSourceMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 source) .&&.
         fmap NINJA2.openNewFileTargetMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 target)
@@ -832,7 +832,7 @@ prop_ninja2Hashes = forAll genPair $ \(source, target) ->
 ninja2SingleFileSentinelIsZero :: Assertion
 ninja2SingleFileSentinelIsZero =
   case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) emptyNINJA2Metadata of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents bytes) _) -> do
       assertEqual "OPEN_NEW_FILE opcode at 0x800"  0x01 (ByteString.index bytes 0x800)
       assertEqual "FILE_N_MUL single-file sentinel at 0x801" 0x00 (ByteString.index bytes 0x801)
@@ -848,9 +848,9 @@ ninja2EncodingRoundTrips :: NINJA2.PatchEncoding -> Assertion
 ninja2EncodingRoundTrips encoding =
   let metadata = emptyNINJA2Metadata { NINJA2.ninja2CreateMetadataEncoding = encoding }
   in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
-       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _parseWarnings) ->
            assertEqual "PATCH_ENC round-trip" encoding (NINJA2.ninja2PatchEncoding parsed)
 
@@ -878,7 +878,7 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
         , NINJA2.ninja2CreateMetadataEncoding    = NINJA2.PatchEncodingUTF8
         }
   in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
-       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult patch warnings) -> do
          (reportedOriginalLength, reportedTruncatedLength) <-
            case [(originalLen, truncatedLen)
@@ -894,7 +894,7 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
          assertEqual "warning's TruncatedLength == actual stored byte count"
            expectedStoredLength reportedTruncated
          case NINJA2.parseNINJA2 patch of
-           Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+           Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
            Right (Parsed parsed _) -> case NINJA2.ninja2Description (NINJA2.ninja2Header parsed) of
              Nothing -> assertFailure "parsed description was Nothing; expected the truncated bytes"
              Just storedEncoded ->
@@ -920,9 +920,9 @@ ninja2Mode1Utf8NonAsciiTitleRoundTrips =
         }
   in case createNINJA2 (InputFileContents ByteString.empty)
                        (OutputFileContents ByteString.empty) metadata of
-       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _) ->
            case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
              Nothing -> assertFailure "parsed title was Nothing"
@@ -973,10 +973,10 @@ createAndParseNINJA2 encoding =
         }
   in case createNINJA2 (InputFileContents ByteString.empty)
                        (OutputFileContents ByteString.empty) metadata of
-       Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
                           >> error "unreachable"
        Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
-         Left slapError -> assertFailure ("parse: " ++ renderSlapError slapError)
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
                           >> error "unreachable"
          Right (Parsed parsed _) -> pure parsed
 
@@ -1055,7 +1055,7 @@ assertCreatedNINJA2PatchEnc messagePrefix metadata expectedByte =
                    (OutputFileContents ByteString.empty)
                    metadata Nothing
                    noConstraintsRequested noDialectsRequested of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents bytes) _) ->
       assertEqual messagePrefix expectedByte (ByteString.index bytes 6)
 
@@ -1104,7 +1104,7 @@ ppfDescriptionRoundTripsByteFaithfully
 ppfDescriptionRoundTripsByteFaithfully
     (CreateResult originalBytes _) parseFn descriptionOf reEncode formatName =
   case parseFn originalBytes of
-    Left slapError -> assertFailure (formatName ++ " parse: " ++ renderSlapError slapError)
+    Left slapError -> assertFailureT (Text.pack formatName <> " parse: " <> renderSlapError slapError)
     Right (Parsed parsed _) ->
       let CreateResult reEncodedBytes _ = reEncode (descriptionOf parsed)
       in assertEqual (formatName ++ " parse-then-re-create produces byte-identical wire bytes")
@@ -1152,7 +1152,7 @@ ppf2DescriptionUtf8RoundTrip =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
-        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
       validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
       patchResult      = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       reEncodePPF2 d   = PPF2.encodePPF2 [] d sourceSize validation
@@ -1167,7 +1167,7 @@ ppf2DescriptionCodepointAwareTruncation =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
-        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
       validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
       CreateResult _ advisories =
         PPF2.encodePPF2 [] descriptionTyped sourceSize validation
@@ -1203,18 +1203,18 @@ ppf2FileIdDizRoundTrip =
   let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale Text.empty
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
-        Left  err  -> error ("narrowPPF2SourceSize: " ++ renderSlapError err)
+        Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
       validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
       fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
       fileId = case narrowPPF2FileId fileIdText of
         Right value -> value
-        Left  err   -> error ("narrowPPF2FileId: " ++ renderSlapError err)
+        Left  err   -> error ("narrowPPF2FileId: " ++ Text.unpack (renderSlapError err))
       CreateResult patchBytes _ =
         PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       (trailerBytes, _trailerAdv) = PPF2.encodeFileIdDiz fileId
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
   in case PPF2.parsePPF2 stitched of
-       Left slapError -> assertFailure ("PPF2 parse: " ++ renderSlapError slapError)
+       Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
          Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
          Just fid ->
@@ -1228,13 +1228,13 @@ ppf3FileIdDizRoundTrip =
       fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
       fileId = case narrowPPF3FileId fileIdText of
         Right value -> value
-        Left  err   -> error ("narrowPPF3FileId: " ++ renderSlapError err)
+        Left  err   -> error ("narrowPPF3FileId: " ++ Text.unpack (renderSlapError err))
       CreateResult patchBytes _ =
         PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
       (trailerBytes, _trailerAdv) = PPF3.encodeFileIdDiz fileId
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
   in case PPF3.parsePPF3 stitched of
-       Left slapError -> assertFailure ("PPF3 parse: " ++ renderSlapError slapError)
+       Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
          Nothing  -> assertFailure "PPF3 parsed file_id.diz was Nothing; expected trailer"
          Just fid ->
@@ -1246,9 +1246,9 @@ ppf3FileIdDizRoundTrip =
 prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateAPSN64) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left slapError -> counterexample ("create: " ++ renderSlapError slapError) $ property False
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
-       Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) ->
          APSN64.applyAPSN64 parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -1269,13 +1269,13 @@ prop_bpsBlockMove = once $
       source = ByteString.replicate padding1 0 <> block <> ByteString.replicate (sourceLength - padding1 - blockSize) 0
       target = ByteString.replicate padding2 0 <> block
   in case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
-       Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+       Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
        Right (CreateResult patch _) ->
          counterexample ("patch size: " ++ show (ByteString.length (unPatchFileContents patch))
                           ++ " (block: " ++ show blockSize ++ ")") $
          conjoin
            [ case BPS.parseBPS patch of
-               Left slapError -> counterexample ("parse: " ++ renderSlapError slapError) $ property False
+               Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
                Right (Parsed parsed _parseWarnings) -> BPS.applyBPS parsed (InputFileContents source) === Right (OutputFileContents target)
            , property (ByteString.length (unPatchFileContents patch) < 1024)
            ]
@@ -1286,7 +1286,7 @@ prop_bpsBlockMove = once $
 prop_bpsNoSizeRegression :: Property
 prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
   case createBPS (InputFileContents source) (OutputFileContents target) (BPSMetadata ByteString.empty) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) $ property False
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) ->
       let maxPatchSize = ByteString.length target + 100
           patchSize = ByteString.length (unPatchFileContents patch)
@@ -1318,18 +1318,18 @@ xdelta1FixtureNames =
   in case resolveXDelta1FileNames (Just (asLocale "source")) (Just (asLocale "target"))
                                   "ignored-source-path" "ignored-target-path" of
        Right resolved -> resolved
-       Left err -> error ("xdelta1FixtureNames: " ++ renderSlapError err)
+       Left err -> error ("xdelta1FixtureNames: " ++ Text.unpack (renderSlapError err))
 
 prop_xdelta1RoundTrips :: Property
 prop_xdelta1RoundTrips =
   forAll genPair $ \(sourceBytes, targetBytes) ->
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
-      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
-        Left applyError    -> counterexample ("apply: " ++ renderSlapError applyError) (property False)
+        Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
         Right outputBytes  -> outputBytes === OutputFileContents targetBytes
 
 -- | The compression posture round-trips: parsing a created patch back
@@ -1339,9 +1339,9 @@ prop_xdelta1CompressionPostureRoundTrips =
   forAll genPair $ \(sourceBytes, targetBytes) ->
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
-      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> XDelta1.xdelta1PatchCompression parsed === compression
 
 prop_xdelta1CreateProducesVerifyPosture :: Property
@@ -1349,9 +1349,9 @@ prop_xdelta1CreateProducesVerifyPosture =
   forAll genPair $ \(sourceBytes, targetBytes) ->
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
-      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> case XDelta1.xdelta1Verification parsed of
         XDelta1.VerifyAgainstStoredMD5s _     -> property True
         XDelta1.CreatorOptedOutOfVerification ->
@@ -1366,16 +1366,16 @@ prop_xdelta1NoVerifyRoundTrip =
   forAll genPair $ \(sourceBytes, targetBytes) ->
   forAll genCompression $ \compression ->
   case createXDelta1 OmitVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
-    Left createError -> counterexample ("create: " ++ renderSlapError createError) (property False)
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
-      Left parseError -> counterexample ("parse: " ++ renderSlapError parseError) (property False)
+      Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed warnings) ->
         let postureCheck = XDelta1.xdelta1Verification parsed === XDelta1.CreatorOptedOutOfVerification
             warningCheck = counterexample
               ("expected VerificationOptedOutByCreator warning, got: " ++ show warnings)
               (any isOptedOutByCreatorWarning warnings)
             applyCheck = case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
-              Left applyError    -> counterexample ("apply: " ++ renderSlapError applyError) (property False)
+              Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
               Right outputBytes  -> outputBytes === OutputFileContents targetBytes
         in postureCheck .&&. warningCheck .&&. applyCheck
   where
@@ -1399,11 +1399,11 @@ xdelta1TargetEqualsSource = xdelta1RoundTripCase payload payload
 xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assertion
 xdelta1RoundTripCase sourceBytes targetBytes =
   case createXDelta1 IncludeVerification CompressedPatch xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
-      Left parseError -> assertFailure ("parse: " ++ renderSlapError parseError)
+      Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
       Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
-        Left applyError -> assertFailure ("apply: " ++ renderSlapError applyError)
+        Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
         Right outputBytes -> assertEqual "round-trip target" (OutputFileContents targetBytes) outputBytes
 
 -- | The wire bit for @FLAG_NO_VERIFY@ is bit 0 of the first 32-bit
@@ -1412,7 +1412,7 @@ xdelta1RoundTripCase sourceBytes targetBytes =
 xdelta1NoVerifySetsFlagBit :: Assertion
 xdelta1NoVerifySetsFlagBit =
   case createXDelta1 OmitVerification CompressedPatch xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool ("patch must be at least 12 bytes, got " ++ show (ByteString.length patchBytes))
         (ByteString.length patchBytes >= 12)
@@ -1423,7 +1423,7 @@ xdelta1NoVerifySetsFlagBit =
 xdelta1IncludeVerifyClearsFlagBit :: Assertion
 xdelta1IncludeVerifyClearsFlagBit =
   case createXDelta1 IncludeVerification CompressedPatch xdelta1FixtureNames (InputFileContents "abcdef") (OutputFileContents "ghijkl") of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) -> do
       assertBool "patch must be at least 12 bytes"
         (ByteString.length patchBytes >= 12)
@@ -1448,7 +1448,7 @@ xdelta1RejectsWrongControlTypeTag =
                      xdelta1FixtureNames
                      (InputFileContents "abcdef")
                      (OutputFileContents "ghijkl") of
-    Left createError -> assertFailure ("create: " ++ renderSlapError createError)
+    Left createError -> assertFailureT ("create: " <> renderSlapError createError)
     Right (CreateResult (PatchFileContents patchBytes) _) ->
       let totalLength    = ByteString.length patchBytes
           controlOffset  = fromIntegral (getWord32BE (totalLength - 12) patchBytes) :: Int
@@ -1461,7 +1461,7 @@ xdelta1RejectsWrongControlTypeTag =
         Right _ -> assertFailure
           "expected parser to reject corrupted control type tag; parse succeeded"
         Left parseError ->
-          let rendered = renderSlapError parseError
+          let rendered = Text.unpack (renderSlapError parseError)
           in assertBool
                ("rejection should name the type tag (got: " ++ rendered ++ ")")
                (   "type tag"        `isInfixOf` rendered

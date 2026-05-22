@@ -1,7 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.FormatLabel
   ( FormatLabel(..)
   , formatLabelName
   ) where
+
+import Data.Text (Text)
 
 data FormatLabel
   = LabelIPS
@@ -25,7 +29,7 @@ data FormatLabel
   | LabelPMSR
   deriving (Show, Eq, Enum, Bounded)
 
-formatLabelName :: FormatLabel -> String
+formatLabelName :: FormatLabel -> Text
 formatLabelName LabelIPS     = "IPS"
 formatLabelName LabelIPS32   = "IPS32"
 formatLabelName LabelEBP     = "EBP"

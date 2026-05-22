@@ -1,8 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Integration.FailureMode (failureModeTests) where
 
 import Integration.Bootstrap (BootstrapTargets, lookupBootstrapTarget)
 import Integration.External (ExternalRun(..), ExternalTool(..), runExternal)
 import Integration.HeavyTests (FixtureName(..), bpsCreateIsExpensive)
+import Integration.Helpers (assertFailureT)
 import Integration.Helpers
   ( Tier
   , onlyAtFull
@@ -302,7 +305,7 @@ corruptPatchCRCTests bps ups =
       let corrupted = flipByte 10 patchBytes
       case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (renderSlapError slapError))
+          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/UPS flipped byte" $ do
@@ -310,7 +313,7 @@ corruptPatchCRCTests bps ups =
       let corrupted = flipByte 10 patchBytes
       case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (renderSlapError slapError))
+          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected UPS parse failure for corrupted patch"
 
   , testCase "corrupt-crc/BPS last data byte" $ do
@@ -320,7 +323,7 @@ corruptPatchCRCTests bps ups =
       let corrupted = flipByte position patchBytes
       case parseSome noDialectsRequested (PatchFileContents corrupted) of
         Left slapError -> assertBool "expected 'patch CRC mismatch'"
-          (ciContains "patch CRC mismatch" (renderSlapError slapError))
+          (ciContains "patch CRC mismatch" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected BPS parse failure for corrupted patch"
   ]
   where
@@ -395,33 +398,33 @@ crossFormatRoundTripTests base bps =
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
-        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parse BPS failed: " <> renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
-            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
+            Left slapError -> assertFailureT ("apply BPS failed: " <> renderSlapError slapError)
             Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ebp" "ips"
 
   , testCase "round-trip/IPS -> PPF3 -> IPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
-        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parse BPS failed: " <> renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
-            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
+            Left slapError -> assertFailureT ("apply BPS failed: " <> renderSlapError slapError)
             Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "ips" "ppf3" "ips"
 
   , testCase "round-trip/BPS -> UPS -> BPS" $ do
       baseBytes <- mmapRomFile base
       bpsBytes <- ByteString.readFile bps
       case parseSome noDialectsRequested (PatchFileContents bpsBytes) of
-        Left slapError -> assertFailure ("parse BPS failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("parse BPS failed: " <> renderSlapError slapError)
         Right bpsParsed -> do
           targetResult <- applyPatch bpsParsed (InputFileContents baseBytes)
           case targetResult of
-            Left slapError -> assertFailure ("apply BPS failed: " ++ renderSlapError slapError)
+            Left slapError -> assertFailureT ("apply BPS failed: " <> renderSlapError slapError)
             Right (OutputFileContents targetBytes) -> roundTripVia baseBytes targetBytes "bps" "ups" "bps"
   ]
   where
@@ -431,40 +434,40 @@ crossFormatRoundTripTests base bps =
       -- Step 1: create in format A
       createFormatA <- parseFormat formatA
       case createPatch createFormatA Nothing (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-        Left slapError -> assertFailure ("create " ++ formatA ++ " failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("create " <> Text.pack formatA <> " failed: " <> renderSlapError slapError)
         Right (CreateResult patchA _) -> do
           -- Step 2: parse A, apply to get target, create in format B
           case parseSome noDialectsRequested patchA of
-            Left slapError -> assertFailure ("re-parse " ++ formatA ++ " failed: " ++ renderSlapError slapError)
+            Left slapError -> assertFailureT ("re-parse " <> Text.pack formatA <> " failed: " <> renderSlapError slapError)
             Right parsedA -> do
               resultA <- applyPatch parsedA (InputFileContents baseBytes)
               case resultA of
-                Left slapError -> assertFailure ("re-apply " ++ formatA ++ " failed: " ++ renderSlapError slapError)
+                Left slapError -> assertFailureT ("re-apply " <> Text.pack formatA <> " failed: " <> renderSlapError slapError)
                 Right (OutputFileContents outputA) -> do
                   assertEqual (formatA ++ " round-trip fidelity") expectedSha (sha1Hex outputA)
                   createFormatB <- parseFormat formatB
                   case createPatch createFormatB Nothing (InputFileContents baseBytes) (OutputFileContents outputA) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-                    Left slapError -> assertFailure ("create " ++ formatB ++ " failed: " ++ renderSlapError slapError)
+                    Left slapError -> assertFailureT ("create " <> Text.pack formatB <> " failed: " <> renderSlapError slapError)
                     Right (CreateResult patchB _) -> do
                       -- Step 3: parse B, apply to get target, create in format C
                       case parseSome noDialectsRequested patchB of
-                        Left slapError -> assertFailure ("re-parse " ++ formatB ++ " failed: " ++ renderSlapError slapError)
+                        Left slapError -> assertFailureT ("re-parse " <> Text.pack formatB <> " failed: " <> renderSlapError slapError)
                         Right parsedB -> do
                           resultB <- applyPatch parsedB (InputFileContents baseBytes)
                           case resultB of
-                            Left slapError -> assertFailure ("re-apply " ++ formatB ++ " failed: " ++ renderSlapError slapError)
+                            Left slapError -> assertFailureT ("re-apply " <> Text.pack formatB <> " failed: " <> renderSlapError slapError)
                             Right (OutputFileContents outputB) -> do
                               assertEqual (formatB ++ " round-trip fidelity") expectedSha (sha1Hex outputB)
                               createFormatC <- parseFormat formatC
                               case createPatch createFormatC Nothing (InputFileContents baseBytes) (OutputFileContents outputB) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-                                Left slapError -> assertFailure ("create " ++ formatC ++ " failed: " ++ renderSlapError slapError)
+                                Left slapError -> assertFailureT ("create " <> Text.pack formatC <> " failed: " <> renderSlapError slapError)
                                 Right (CreateResult patchC _) -> do
                                   case parseSome noDialectsRequested patchC of
-                                    Left slapError -> assertFailure ("re-parse " ++ formatC ++ " failed: " ++ renderSlapError slapError)
+                                    Left slapError -> assertFailureT ("re-parse " <> Text.pack formatC <> " failed: " <> renderSlapError slapError)
                                     Right parsedC -> do
                                       resultC <- applyPatch parsedC (InputFileContents baseBytes)
                                       case resultC of
-                                        Left slapError -> assertFailure ("re-apply " ++ formatC ++ " failed: " ++ renderSlapError slapError)
+                                        Left slapError -> assertFailureT ("re-apply " <> Text.pack formatC <> " failed: " <> renderSlapError slapError)
                                         Right (OutputFileContents outputC) ->
                                           assertEqual (formatA ++ " -> " ++ formatB ++ " -> " ++ formatC ++ " output SHA1")
                                             expectedSha (sha1Hex outputC)
@@ -525,14 +528,14 @@ createRoundTripTests getTargets dm4yBase dm4yBps
         Just format -> pure format
         Nothing -> assertFailure ("unknown format: " ++ formatString) >> error "unreachable"
       case createPatch createFormat Nothing (InputFileContents baseBytes) (OutputFileContents targetBytes) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-        Left slapError -> assertFailure ("create " ++ formatString ++ " failed: " ++ renderSlapError slapError)
+        Left slapError -> assertFailureT ("create " <> Text.pack formatString <> " failed: " <> renderSlapError slapError)
         Right (CreateResult patchBytes _) ->
           case parseSome noDialectsRequested patchBytes of
-            Left slapError -> assertFailure ("re-parse " ++ formatString ++ " failed: " ++ renderSlapError slapError)
+            Left slapError -> assertFailureT ("re-parse " <> Text.pack formatString <> " failed: " <> renderSlapError slapError)
             Right parsed -> do
               result <- applyPatch parsed (InputFileContents baseBytes)
               case result of
-                Left slapError -> assertFailure ("re-apply " ++ formatString ++ " failed: " ++ renderSlapError slapError)
+                Left slapError -> assertFailureT ("re-apply " <> Text.pack formatString <> " failed: " <> renderSlapError slapError)
                 Right (OutputFileContents output) ->
                   assertEqual "round-trip SHA1" (sha1Hex targetBytes) (sha1Hex output)
 
@@ -565,11 +568,11 @@ smcShapeConstraintTests =
           target = ByteString.replicate 0x1200 0xFF
       case createWithSMC source target of
         Left slapError -> assertFailure
-          ("expected success, got: " ++ renderSlapError slapError)
+          ("expected success, got: " ++ Text.unpack (renderSlapError slapError))
         Right (CreateResult patchBytes _) ->
           case parseSome noDialectsRequested patchBytes of
             Left slapError -> assertFailure
-              ("re-parse: " ++ renderSlapError slapError)
+              ("re-parse: " ++ Text.unpack (renderSlapError slapError))
             Right _ -> pure ()
 
   , testCase "smc-shape/IPS non-smc-sized target rejected with flag" $ do
@@ -579,7 +582,7 @@ smcShapeConstraintTests =
       case createWithSMC source target of
         Left (TruncationViolatesSMCShape _) -> pure ()
         Left other -> assertFailure
-          ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
+          ("expected TruncationViolatesSMCShape, got: " ++ Text.unpack (renderSlapError other))
         Right _ -> assertFailure
           "expected refusal, got successful create"
 
@@ -589,7 +592,7 @@ smcShapeConstraintTests =
           target = ByteString.replicate 0x2000 0xFF
       case createWithSMC source target of
         Left slapError -> assertFailure
-          ("expected success (no truncation), got: " ++ renderSlapError slapError)
+          ("expected success (no truncation), got: " ++ Text.unpack (renderSlapError slapError))
         Right _ -> pure ()
 
   , testCase "smc-shape/BPS rejected at constraint-acceptance layer" $
@@ -600,7 +603,7 @@ smcShapeConstraintTests =
       case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
         Left (ConstraintNotSupported (SMCShapeConstraint :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
-          ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
+          ("expected ConstraintNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
           "expected refusal at create entry"
 
@@ -613,7 +616,7 @@ smcShapeConstraintTests =
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
-          ("expected success (no flag), got: " ++ renderSlapError slapError)
+          ("expected success (no flag), got: " ++ Text.unpack (renderSlapError slapError))
         Right _ -> pure ()
 
   , testCase "smc-shape/convert --to bps rejected at constraint layer" $
@@ -624,7 +627,7 @@ smcShapeConstraintTests =
       case rejectIncompatibleConstraints (CreateDifferential CreateBPS) smcConstraints of
         Left (ConstraintNotSupported (SMCShapeConstraint :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
-          ("expected ConstraintNotSupported, got: " ++ renderSlapError other)
+          ("expected ConstraintNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
           "expected refusal at convert entry"
 
@@ -636,7 +639,7 @@ smcShapeConstraintTests =
                  noMetadataRequested smcConstraints noDialectsRequested of
             Left (TruncationViolatesSMCShape _) -> pure ()
             Left other -> assertFailure
-              ("expected TruncationViolatesSMCShape, got: " ++ renderSlapError other)
+              ("expected TruncationViolatesSMCShape, got: " ++ Text.unpack (renderSlapError other))
             Right _ -> assertFailure
               "expected refusal at encode gate"
         _ -> assertFailure "test fixture should expose PatchContents"
@@ -662,12 +665,12 @@ smcShapeConstraintTests =
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
         Left slapError -> assertFailure
-          ("setup: create failed: " ++ renderSlapError slapError)
+          ("setup: create failed: " ++ Text.unpack (renderSlapError slapError))
           >> error "unreachable"
         Right (CreateResult patchBytes _) ->
           case parseSome noDialectsRequested patchBytes of
             Left slapError -> assertFailure
-              ("setup: parse failed: " ++ renderSlapError slapError)
+              ("setup: parse failed: " ++ Text.unpack (renderSlapError slapError))
               >> error "unreachable"
             Right parsed -> pure parsed
 
@@ -753,7 +756,7 @@ xdelta1ShapeRejectionTests =
                         (XDelta1DataSegment ByteString.empty)
                         (XDelta1FromName (EncodedText EncodingLocale Text.empty))
                         (XDelta1ToName   (EncodedText EncodingLocale Text.empty)) of
-        Left slapError         -> Left (renderSlapError slapError)
+        Left slapError         -> Left (Text.unpack (renderSlapError slapError))
         Right (Parsed patch _) -> Right patch
 
 ----------------------------------------------------------------------------
@@ -778,7 +781,7 @@ xdelta1NoVerifyTests fixturePath =
       originalBytes <- ByteString.readFile fixturePath
       let flippedBytes = flipNoVerifyBit originalBytes
       case parseXDelta1 (PatchFileContents flippedBytes) of
-        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Left err -> assertFailureT ("expected successful parse, got: " <> renderSlapError err)
         Right (Parsed patch warnings) -> do
           assertEqual "posture is CreatorOptedOutOfVerification"
             CreatorOptedOutOfVerification (xdelta1Verification patch)
@@ -791,7 +794,7 @@ xdelta1NoVerifyTests fixturePath =
       originalBytes <- ByteString.readFile fixturePath
       let flippedBytes = flipNoVerifyBit originalBytes
       case parseSome noDialectsRequested (PatchFileContents flippedBytes) of
-        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Left err -> assertFailureT ("expected successful parse, got: " <> renderSlapError err)
         Right somePatch -> do
           let verification = patchVerification somePatch
           assertEqual "verifySourceMD5 is Nothing" Nothing (verifySourceMD5 verification)
@@ -804,7 +807,7 @@ xdelta1NoVerifyTests fixturePath =
   , testCase "xdelta1/unflipped fixture parses with VerifyAgainstStoredMD5s" $ do
       originalBytes <- ByteString.readFile fixturePath
       case parseXDelta1 (PatchFileContents originalBytes) of
-        Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+        Left err -> assertFailureT ("expected successful parse, got: " <> renderSlapError err)
         Right (Parsed patch warnings) -> do
           case xdelta1Verification patch of
             VerifyAgainstStoredMD5s _      -> pure ()
@@ -887,7 +890,7 @@ xdelta1InputPreCompressionTests fixturePath =
         Left (XDelta1InputPreCompressionUnsupported OnlyFromFileWasGzipStream) -> pure ()
         Left other -> assertFailure
           ("expected XDelta1InputPreCompressionUnsupported OnlyFromFileWasGzipStream, got: "
-           ++ renderSlapError other)
+           ++ Text.unpack (renderSlapError other))
         Right _ -> assertFailure
           "expected apply refusal even at target_length=0; got successful apply"
   ]
@@ -897,7 +900,7 @@ xdelta1InputPreCompressionTests fixturePath =
         originalBytes <- ByteString.readFile fixturePath
         let flippedBytes = setFlagBits flagBits originalBytes
         case parseXDelta1 (PatchFileContents flippedBytes) of
-          Left err -> assertFailure ("expected successful parse, got: " ++ renderSlapError err)
+          Left err -> assertFailureT ("expected successful parse, got: " <> renderSlapError err)
           Right (Parsed patch _) -> do
             assertEqual "(xdelta1FromAtDeltaTime, xdelta1ToAtDeltaTime) match the flipped bits"
               expectedFields
@@ -907,7 +910,7 @@ xdelta1InputPreCompressionTests fixturePath =
                 assertEqual "apply refuses with the expected XDelta1GzipStreamInputs"
                   expectedSides sides
               Left other -> assertFailure
-                ("expected XDelta1InputPreCompressionUnsupported, got: " ++ renderSlapError other)
+                ("expected XDelta1InputPreCompressionUnsupported, got: " ++ Text.unpack (renderSlapError other))
               Right _ -> assertFailure
                 "expected apply refusal, got successful apply"
 
@@ -1027,7 +1030,7 @@ dialectAxisRejectionTests =
              (acceptedDialects LabelBPS) LabelBPS amigaDialects of
         Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
-          ("expected DialectNotSupported, got: " ++ renderSlapError other)
+          ("expected DialectNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
           "expected refusal at apply entry"
 
@@ -1041,7 +1044,7 @@ dialectAxisRejectionTests =
              amigaDialects of
         Left (DialectNotSupported (PPF1OriginAxis :| []) LabelBPS) -> pure ()
         Left other -> assertFailure
-          ("expected DialectNotSupported, got: " ++ renderSlapError other)
+          ("expected DialectNotSupported, got: " ++ Text.unpack (renderSlapError other))
         Right () -> assertFailure
           "expected refusal at create entry"
 
@@ -1057,11 +1060,11 @@ dialectAxisRejectionTests =
              (InputFileContents source) (OutputFileContents target)
              noMetadataRequested Nothing noConstraintsRequested amigaDialects of
         Left slapError -> assertFailure
-          ("amiga create failed: " ++ renderSlapError slapError)
+          ("amiga create failed: " ++ Text.unpack (renderSlapError slapError))
         Right (CreateResult patchBytes _) ->
           case parseSome amigaDialects patchBytes of
             Left slapError -> assertFailure
-              ("amiga parse failed: " ++ renderSlapError slapError)
+              ("amiga parse failed: " ++ Text.unpack (renderSlapError slapError))
             Right parsed ->
               case patchKind parsed of
                 Direct (Just _) ->
@@ -1073,7 +1076,7 @@ dialectAxisRejectionTests =
                          LabelBPS amigaDialects of
                     Right () -> pure ()
                     Left slapError -> assertFailure
-                      ("union check rejected: " ++ renderSlapError slapError)
+                      ("union check rejected: " ++ Text.unpack (renderSlapError slapError))
                 _ -> assertFailure "expected Direct (Just _) for PPF1 patch"
   ]
   where

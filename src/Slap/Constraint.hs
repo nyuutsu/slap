@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | User-opt-in refuse-gates that slap honors at create or convert
 -- time. Distinct from 'Slap.MetadataField.MetadataField' because a
 -- 'Constraint' is not a property the user requests be embedded in
@@ -16,17 +18,19 @@ module Slap.Constraint
   , constraintFlagName
   ) where
 
+import Data.Text (Text)
+
 data Constraint
   = SMCShapeConstraint
   deriving (Show, Eq, Ord)
 
 -- | Display name for a 'Constraint'. Used by 'Slap.Status' renderers.
-constraintName :: Constraint -> String
+constraintName :: Constraint -> Text
 constraintName SMCShapeConstraint = "SMC-shaped target size"
 
 -- | The CLI flag spelling for a 'Constraint', without the leading
 -- @--@. The renderer in 'Slap.Status' adds the prefix when emitting
 -- error messages; the parser declaration in @app\/Main.hs@ uses this
 -- string as its 'long' option name. Single source of truth.
-constraintFlagName :: Constraint -> String
+constraintFlagName :: Constraint -> Text
 constraintFlagName SMCShapeConstraint = "require-smc-shaped-target-size"

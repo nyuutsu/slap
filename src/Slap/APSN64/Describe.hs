@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Slap.APSN64.Describe
   ( apsN64Meta
   , analyzeAPSN64
@@ -8,25 +10,24 @@ import Slap.APSN64.Types
 import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..),
                      AnalysisPayload(..), AnalysisSummary(..), SummaryInfo(..),
                      Annotation(..), OffsetKind(..), AnnotDetail(..))
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..))
-import Slap.Display.Primitives (padHex)
+import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
+import Slap.Display.Primitives (hexByteString, padHex)
 import Slap.Measure (Length(..), FileSize(..), byteLength)
 import Slap.Text (encodedTextContent)
 
-import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 apsN64Meta :: APSN64Patch -> [InfoLine]
 apsN64Meta (APSN64Patch header _) = concat
   [ [InfoLine "patch type" (patchTypeName (apsN64PatchType header))]
-  , [InfoLine "encoding" (show (fromAPSRecordEncoding (apsN64Encoding header)))
+  , [InfoLine "encoding" (renderAsText (fromAPSRecordEncoding (apsN64Encoding header)))
     | apsN64Encoding header /= APSDefaultRecordEncoding]
   , descriptionField (apsN64Description header)
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)
   , countryField (apsN64Country header)
-  , [InfoLine "dest size" (show (unFileSize (apsN64DestinationSize header)))]
+  , [InfoLine "dest size" (renderAsText (unFileSize (apsN64DestinationSize header)))]
   ]
   where
     -- Read the decoded text directly off the typed field. The
@@ -40,16 +41,16 @@ apsN64Meta (APSN64Patch header _) = concat
     -- the wire field was blank padding") is preserved.
     descriptionField description
       | Text.all (\c -> c == ' ' || c == '\NUL') text = []
-      | otherwise = [InfoLine "description" (Text.unpack (Text.takeWhile (/= '\NUL') text))]
+      | otherwise = [InfoLine "description" (Text.takeWhile (/= '\NUL') text)]
       where text = encodedTextContent description
     patchTypeName APSSimple      = "simple"
     patchTypeName APSN64Specific = "N64-specific"
     formatField Nothing                       = []
     formatField (Just V64Format)              = [InfoLine "image" "V64 (byteswapped)"]
     formatField (Just Z64Format)              = [InfoLine "image" "Z64 (big-endian)"]
-    formatField (Just (UnknownImageFormat format)) = [InfoLine "image" ("unknown (" ++ show format ++ ")")]
+    formatField (Just (UnknownImageFormat format)) = [InfoLine "image" ("unknown (" <> renderAsText format <> ")")]
     cartField Nothing                   = []
-    cartField (Just (N64CartId cartId)) = [InfoLine "cart ID" (concatMap (\byte -> padHex 2 byte) (ByteString.unpack cartId))]
+    cartField (Just (N64CartId cartId)) = [InfoLine "cart ID" (hexByteString cartId)]
     countryField Nothing        = []
     countryField (Just country) = [InfoLine "country" (renderAPSN64Country country)]
     renderAPSN64Country APSN64CountryBeta            = "Beta"
@@ -73,7 +74,7 @@ apsN64Meta (APSN64Patch header _) = concat
     renderAPSN64Country APSN64CountryEuropeX         = "Europe (X)"
     renderAPSN64Country APSN64CountryEuropeY         = "Europe (Y)"
     renderAPSN64Country (APSN64CountryUnrecognized byte) =
-      "unrecognized (0x" ++ padHex 2 byte ++ ")"
+      "unrecognized (0x" <> padHex 2 byte <> ")"
 
 analyzeAPSN64 :: APSN64Patch -> PatchAnalysis
 analyzeAPSN64 (APSN64Patch _header records) = PatchAnalysis

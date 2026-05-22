@@ -23,6 +23,8 @@ module Slap.NINJA1.Types
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Word (Word8)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
 import Slap.Measure (Offset(..), SentinelOffset(..))
@@ -168,7 +170,7 @@ ninja1BinaryEOFMarkerBytes = "EOF"
 ninja1BinaryEOFMarkerWidth :: Int
 ninja1BinaryEOFMarkerWidth = 3
 
-romTypeName :: NINJA1RomType -> String
+romTypeName :: NINJA1RomType -> Text
 romTypeName RomRAW            = "RAW"
 romTypeName RomNES            = "NES"
 romTypeName RomSNES           = "SNES"
@@ -187,9 +189,9 @@ romTypeName RomWonderSwanColor = "WonderSwan Color"
 romTypeName RomLynx           = "Lynx"
 romTypeName RomJaguar         = "Jaguar"
 romTypeName RomGP32           = "GP32"
-romTypeName (RomUnknown value) = "unknown (" ++ show value ++ ")"
+romTypeName (RomUnknown value) = "unknown (" <> Text.pack (show value) <> ")"
 
-subFormatName :: NINJA1SubFormat -> String
+subFormatName :: NINJA1SubFormat -> Text
 subFormatName NINJA1Binary           = "binary"
 subFormatName NINJA1BinaryCompressed = "binary, compressed"
 subFormatName NINJA1Text             = "text"
