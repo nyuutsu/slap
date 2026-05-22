@@ -46,7 +46,6 @@ import Slap.FileContents
   , InputFileContents(..)
   , unPatchFileContents
   )
-import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Optimize (optimalIPSRecords)
 import Slap.IPS.Types
@@ -57,6 +56,7 @@ import Slap.IPS.Types
   , EBPMetadataFields(..)
   , variantSpec
   )
+import Slap.Text (encodedTextContent)
 import Slap.Measure
   ( FileSize(..)
   , Delta(..)
@@ -84,8 +84,10 @@ import Data.ByteString.Builder
   , word8
   )
 import qualified Data.ByteString.Lazy as LazyByteString
+import qualified Data.Aeson as Aeson
+import Data.Aeson ((.=))
+import qualified Data.Aeson.Encoding as AesonEncoding
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
 
 ----------------------------------------------------------------------------
 -- Parameterized wire encoder
@@ -312,31 +314,19 @@ resolveSentinelCollisions label sentinel (InputFileContents source) =
 -- EBPatcher and every long-standing community tool emits. slap
 -- fixes @patcher@ to @"slap"@ to identify itself as the source.
 --
--- The encoding is a hand-rolled minimal JSON object — only the
--- two characters @"@ and @\\@ get escaped, and control bytes
--- below @0x20@ are emitted as @\\u00XX@ escapes. Pulling in
--- @aeson@ for what is effectively four string interpolations
--- would be wildly disproportionate.
+-- EBP metadata is JSON, so the emitter goes through @aeson@: the
+-- field values arrive as 'EncodedText' (each tagged with whichever
+-- encoding it came in under — CLI-locale or JSON-extracted UTF-8),
+-- and the 'Text' content lands in the JSON string slots verbatim.
+-- @aeson@'s 'Aeson.pairs' builds an 'Encoding' in declared order, so
+-- the four-key sequence reaches the wire as @{patcher,title,author,description}@.
 buildEBPMetadataJSON :: EBPMetadataFields -> ByteString
 buildEBPMetadataJSON fields =
-  TextEncoding.encodeUtf8 (Text.pack jsonText)
+  LazyByteString.toStrict (AesonEncoding.encodingToLazyByteString jsonEncoding)
   where
-    jsonText =
-      "{\"patcher\":\"slap\",\"title\":\""
-        ++ escapeJSONString (ebpMetadataTitle fields)
-        ++ "\",\"author\":\""
-        ++ escapeJSONString (ebpMetadataAuthor fields)
-        ++ "\",\"description\":\""
-        ++ escapeJSONString (ebpMetadataDescription fields)
-        ++ "\"}"
-
-    escapeJSONString [] = []
-    escapeJSONString ('"'  : rest) = '\\' : '"'  : escapeJSONString rest
-    escapeJSONString ('\\' : rest) = '\\' : '\\' : escapeJSONString rest
-    escapeJSONString (currentChar : rest)
-      | currentChar < ' ' =
-          "\\u00"
-            ++ padHex 2 (fromEnum currentChar)
-            ++ escapeJSONString rest
-      | otherwise =
-          currentChar : escapeJSONString rest
+    jsonEncoding = Aeson.pairs
+      (  "patcher"     .= ("slap" :: Text.Text)
+      <> "title"       .= encodedTextContent (ebpMetadataTitle       fields)
+      <> "author"      .= encodedTextContent (ebpMetadataAuthor      fields)
+      <> "description" .= encodedTextContent (ebpMetadataDescription fields)
+      )

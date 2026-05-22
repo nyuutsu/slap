@@ -1,19 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | Tests for 'Slap.JSON': the aeson-backed parser for EBP
--- metadata blobs. Exercises the things the previous hand-rolled
--- scanner got wrong (escaped Unicode, nested objects, non-string
--- siblings, malformed input), plus the case-insensitive lookup
--- that real-world EBP producers depend on.
+-- | Tests for slap's EBP-metadata JSON layer. The bulk exercises
+-- 'Slap.JSON', the aeson-backed parser: things the previous
+-- hand-rolled scanner got wrong (escaped Unicode, nested objects,
+-- non-string siblings, malformed input), plus the case-insensitive
+-- lookup that real-world EBP producers depend on. A final group
+-- covers the build/parse round-trip through
+-- 'Slap.IPS.Create.buildEBPMetadataJSON' — the other half of slap's
+-- JSON surface — with non-ASCII content, since that's where the
+-- type-level UTF-8 contract earns its keep.
 module Props.JSON (jsonTests) where
 
 import Slap.JSON
   ( EBPMetadataView(..)
   , parseEBPMetadata
   )
+import qualified Slap.IPS.Create as IPS
+import Slap.IPS.Types (EBPMetadataFields(..))
+import Slap.Text (EncodedText(..), EncodingName(..))
 
 import Data.ByteString (ByteString)
+import qualified Data.Text as Text
 import Test.Tasty
 import Test.Tasty.HUnit
+
+-- | Wrap a literal for an EBP metadata field. JSON values come out
+-- of @aeson@ tagged 'EncodingUtf8', so test expectations carry the
+-- same tag — the helper keeps the test bodies focused on the value
+-- and not on the wrapping ceremony.
+asUtf8 :: String -> EncodedText
+asUtf8 = EncodedText EncodingUtf8 . Text.pack
 
 jsonTests :: TestTree
 jsonTests = testGroup "Slap.JSON"
@@ -45,6 +60,10 @@ jsonTests = testGroup "Slap.JSON"
       , testCase "empty input returns Nothing"
           test_emptyReturnsNothing
       ]
+  , testGroup "Build/parse round-trip"
+      [ testCase "non-ASCII title survives buildEBPMetadataJSON \\u2192 parseEBPMetadata"
+          test_nonAsciiRoundTrip
+      ]
   ]
 
 ----------------------------------------------------------------------------
@@ -56,10 +75,10 @@ test_lowercaseAllFour =
   parseEBPMetadata
     "{\"patcher\":\"slap\",\"title\":\"FE6\",\"author\":\"nyuu\",\"description\":\"hi\"}"
     @?= Just EBPMetadataView
-          { ebpMetadataViewTitle       = Just "FE6"
-          , ebpMetadataViewAuthor      = Just "nyuu"
-          , ebpMetadataViewDescription = Just "hi"
-          , ebpMetadataViewPatcher     = Just "slap"
+          { ebpMetadataViewTitle       = Just (asUtf8 "FE6")
+          , ebpMetadataViewAuthor      = Just (asUtf8 "nyuu")
+          , ebpMetadataViewDescription = Just (asUtf8 "hi")
+          , ebpMetadataViewPatcher     = Just (asUtf8 "slap")
           }
 
 test_lowercaseEmptyStringPreserved :: Assertion
@@ -69,10 +88,10 @@ test_lowercaseEmptyStringPreserved =
   parseEBPMetadata
     "{\"patcher\":\"slap\",\"title\":\"\",\"author\":\"\",\"description\":\"\"}"
     @?= Just EBPMetadataView
-          { ebpMetadataViewTitle       = Just ""
-          , ebpMetadataViewAuthor      = Just ""
-          , ebpMetadataViewDescription = Just ""
-          , ebpMetadataViewPatcher     = Just "slap"
+          { ebpMetadataViewTitle       = Just (asUtf8 "")
+          , ebpMetadataViewAuthor      = Just (asUtf8 "")
+          , ebpMetadataViewDescription = Just (asUtf8 "")
+          , ebpMetadataViewPatcher     = Just (asUtf8 "slap")
           }
 
 ----------------------------------------------------------------------------
@@ -84,10 +103,10 @@ test_capitalisedKeysMatched =
   parseEBPMetadata
     "{\"Title\":\"FE6\",\"Author\":\"nyuu\",\"Description\":\"hi\",\"patcher\":\"romp.js\"}"
     @?= Just EBPMetadataView
-          { ebpMetadataViewTitle       = Just "FE6"
-          , ebpMetadataViewAuthor      = Just "nyuu"
-          , ebpMetadataViewDescription = Just "hi"
-          , ebpMetadataViewPatcher     = Just "romp.js"
+          { ebpMetadataViewTitle       = Just (asUtf8 "FE6")
+          , ebpMetadataViewAuthor      = Just (asUtf8 "nyuu")
+          , ebpMetadataViewDescription = Just (asUtf8 "hi")
+          , ebpMetadataViewPatcher     = Just (asUtf8 "romp.js")
           }
 
 test_capitalisedSomeFieldsMissing :: Assertion
@@ -99,10 +118,10 @@ test_capitalisedSomeFieldsMissing =
   parseEBPMetadata
     "{\"Title\":\"FE6\",\"patcher\":\"romp.js\"}"
     @?= Just EBPMetadataView
-          { ebpMetadataViewTitle       = Just "FE6"
+          { ebpMetadataViewTitle       = Just (asUtf8 "FE6")
           , ebpMetadataViewAuthor      = Nothing
           , ebpMetadataViewDescription = Nothing
-          , ebpMetadataViewPatcher     = Just "romp.js"
+          , ebpMetadataViewPatcher     = Just (asUtf8 "romp.js")
           }
 
 ----------------------------------------------------------------------------
@@ -117,7 +136,7 @@ test_escapedUnicode =
   let blob :: ByteString
       blob = "{\"title\":\"caf\\u00e9\"}"
   in case parseEBPMetadata blob of
-       Just view -> ebpMetadataViewTitle view @?= Just "caf\233"
+       Just view -> ebpMetadataViewTitle view @?= Just (asUtf8 "caf\233")
        Nothing   -> assertFailure "expected valid JSON to parse"
 
 test_nestedObjectSibling :: Assertion
@@ -128,7 +147,7 @@ test_nestedObjectSibling =
   let blob :: ByteString
       blob = "{\"extra\":{\"deep\":\"value\"},\"title\":\"FE6\"}"
   in case parseEBPMetadata blob of
-       Just view -> ebpMetadataViewTitle view @?= Just "FE6"
+       Just view -> ebpMetadataViewTitle view @?= Just (asUtf8 "FE6")
        Nothing   -> assertFailure "expected valid JSON to parse"
 
 test_nonStringSiblings :: Assertion
@@ -142,8 +161,8 @@ test_nonStringSiblings =
              \\"title\":\"FE6\",\"author\":\"nyuu\"}"
   in case parseEBPMetadata blob of
        Just view -> do
-         ebpMetadataViewTitle  view @?= Just "FE6"
-         ebpMetadataViewAuthor view @?= Just "nyuu"
+         ebpMetadataViewTitle  view @?= Just (asUtf8 "FE6")
+         ebpMetadataViewAuthor view @?= Just (asUtf8 "nyuu")
        Nothing -> assertFailure "expected valid JSON to parse"
 
 ----------------------------------------------------------------------------
@@ -163,3 +182,30 @@ test_arrayRootReturnsNothing =
 test_emptyReturnsNothing :: Assertion
 test_emptyReturnsNothing =
   parseEBPMetadata "" @?= Nothing
+
+----------------------------------------------------------------------------
+-- Build/parse round-trip
+----------------------------------------------------------------------------
+
+test_nonAsciiRoundTrip :: Assertion
+test_nonAsciiRoundTrip =
+  -- A Japanese title and a Cyrillic author and description. The
+  -- builder emits via aeson, which escapes nothing that isn't
+  -- mandated by RFC 8259 — non-ASCII codepoints land verbatim as
+  -- UTF-8 in the output bytes. The parser pulls them back as
+  -- EncodingUtf8-tagged 'EncodedText'. Equality on EncodedText then
+  -- includes tag equality, which catches a regression where the
+  -- builder lost provenance (e.g. by re-encoding via latin1).
+  let fields = EBPMetadataFields
+        { ebpMetadataTitle       = asUtf8 "\12486\12473\12488\12497\12483\12481"
+        , ebpMetadataAuthor      = asUtf8 "\1085\1102\1091"
+        , ebpMetadataDescription = asUtf8 "\26085\26412\35486\12486\12473\12488"
+        }
+      blob = IPS.buildEBPMetadataJSON fields
+  in case parseEBPMetadata blob of
+       Nothing   -> assertFailure "buildEBPMetadataJSON produced JSON parseEBPMetadata could not read"
+       Just view -> do
+         ebpMetadataViewTitle       view @?= Just (ebpMetadataTitle       fields)
+         ebpMetadataViewAuthor      view @?= Just (ebpMetadataAuthor      fields)
+         ebpMetadataViewDescription view @?= Just (ebpMetadataDescription fields)
+         ebpMetadataViewPatcher     view @?= Just (asUtf8 "slap")

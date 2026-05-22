@@ -21,7 +21,13 @@
 -- Missing fields are tolerated for the same reason: RomPatcher.js's
 -- writer skips empty fields entirely, so a real-world EBP patch can
 -- arrive with only some of the four keys present. Each field on the
--- returned 'EBPMetadataView' is therefore a 'Maybe' 'String'.
+-- returned 'EBPMetadataView' is therefore a 'Maybe' 'EncodedText'.
+--
+-- Extracted values carry an explicit @EncodingUtf8@ tag: JSON is
+-- UTF-8 by RFC 8259, aeson enforces that at the parse boundary, and
+-- the tag travels with the value so the convert seam knows the
+-- encoding without having to remember the JSON-source provenance
+-- out-of-band.
 --
 -- A malformed blob (not valid JSON, or valid JSON whose root is not
 -- an object) yields 'Nothing' from 'parseEBPMetadata'. This is the
@@ -37,6 +43,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as AesonKeyMap
 import qualified Data.Text as Text
+import Slap.Text (EncodedText(..), EncodingName(..))
 
 -- | The four EBP metadata fields extracted from an EBP patch's
 -- trailing JSON blob. Each field is 'Just' the field's value when
@@ -44,14 +51,18 @@ import qualified Data.Text as Text
 -- value is a JSON string; 'Nothing' when the key is absent or the
 -- value is some other JSON type (a number, an object, a null).
 --
--- An empty-string value remains @'Just' ""@ here. Callers that
--- treat empty as absent perform that collapse themselves; this
--- module reports what the JSON actually said.
+-- An empty-string value remains @'Just' (EncodedText _ "")@ here.
+-- Callers that treat empty as absent perform that collapse
+-- themselves; this module reports what the JSON actually said.
+--
+-- The encoding tag on each extracted value is @'EncodingUtf8'@:
+-- aeson parses JSON as UTF-8 (RFC 8259), so the text content is
+-- known-UTF-8 at the moment of extraction.
 data EBPMetadataView = EBPMetadataView
-  { ebpMetadataViewTitle       :: !(Maybe String)
-  , ebpMetadataViewAuthor      :: !(Maybe String)
-  , ebpMetadataViewDescription :: !(Maybe String)
-  , ebpMetadataViewPatcher     :: !(Maybe String)
+  { ebpMetadataViewTitle       :: !(Maybe EncodedText)
+  , ebpMetadataViewAuthor      :: !(Maybe EncodedText)
+  , ebpMetadataViewDescription :: !(Maybe EncodedText)
+  , ebpMetadataViewPatcher     :: !(Maybe EncodedText)
   } deriving (Eq, Show)
 
 -- | Parse the bytes of an EBP metadata blob. Returns 'Just' a view
@@ -60,10 +71,10 @@ data EBPMetadataView = EBPMetadataView
 parseEBPMetadata :: ByteString -> Maybe EBPMetadataView
 parseEBPMetadata bytes = case Aeson.eitherDecodeStrict bytes of
   Right (Aeson.Object obj) -> Just EBPMetadataView
-    { ebpMetadataViewTitle       = lookupTopLevelString "title"       obj
-    , ebpMetadataViewAuthor      = lookupTopLevelString "author"      obj
-    , ebpMetadataViewDescription = lookupTopLevelString "description" obj
-    , ebpMetadataViewPatcher     = lookupTopLevelString "patcher"     obj
+    { ebpMetadataViewTitle       = lookupTopLevelStringField "title"       obj
+    , ebpMetadataViewAuthor      = lookupTopLevelStringField "author"      obj
+    , ebpMetadataViewDescription = lookupTopLevelStringField "description" obj
+    , ebpMetadataViewPatcher     = lookupTopLevelStringField "patcher"     obj
     }
   _ -> Nothing
 
@@ -71,12 +82,13 @@ parseEBPMetadata bytes = case Aeson.eitherDecodeStrict bytes of
 -- The expected key name is given in lowercase; each key in the
 -- parsed object is folded to lowercase before comparison so a
 -- producer using either lowercase or capitalised keys lands the
--- same value.
-lookupTopLevelString :: Text.Text -> Aeson.Object -> Maybe String
-lookupTopLevelString expectedLowercaseKey obj =
+-- same value. The extracted text is tagged 'EncodingUtf8' — aeson
+-- already decoded it under JSON's UTF-8 wire contract.
+lookupTopLevelStringField :: Text.Text -> Aeson.Object -> Maybe EncodedText
+lookupTopLevelStringField expectedLowercaseKey obj =
   let folded = [ (Text.toLower (AesonKey.toText actualKey), actualValue)
                | (actualKey, actualValue) <- AesonKeyMap.toList obj
                ]
   in case lookup expectedLowercaseKey folded of
-       Just (Aeson.String text) -> Just (Text.unpack text)
+       Just (Aeson.String text) -> Just (EncodedText EncodingUtf8 text)
        _                        -> Nothing

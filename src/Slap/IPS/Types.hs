@@ -48,6 +48,7 @@ import Data.Vector (Vector)
 import Data.Word (Word8)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Narrow (EncodingLimits(..))
+import Slap.Text (EncodedText)
 import Slap.Measure
   ( Offset(..)
   , Length(..)
@@ -214,10 +215,16 @@ newtype EBPMetadata = EBPMetadata { unEBPMetadata :: ByteString }
 -- slap emits in EBP metadata blobs, following the EBPatcher
 -- convention. The @patcher@ field is always set to @"slap"@ by
 -- 'buildEBPMetadataJSON' itself and is not exposed here.
+--
+-- Each field is a typed 'EncodedText': EBP metadata is JSON, JSON is
+-- UTF-8 by RFC 8259, and the encoder reads the 'Text' content
+-- directly. The encoding tag travels with the value across the
+-- convert seam so the field's provenance — CLI-locale or
+-- JSON-extracted UTF-8 — stays legible at the type level.
 data EBPMetadataFields = EBPMetadataFields
-  { ebpMetadataTitle       :: !String
-  , ebpMetadataAuthor      :: !String
-  , ebpMetadataDescription :: !String
+  { ebpMetadataTitle       :: !EncodedText
+  , ebpMetadataAuthor      :: !EncodedText
+  , ebpMetadataDescription :: !EncodedText
   } deriving (Show, Eq)
 
 -- | An EBP patch. Structurally, EBP is a 'StandardIPS' patch with a

@@ -898,24 +898,30 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- already provides.  This detects CLI overrides: if the user changed
     -- a field, the values diverge and we rebuild the JSON.
     --
-    -- The CLI values are typed 'EncodedText' under stage 3b; the
-    -- EBP-view side is 'String' (parsed from JSON). Compare on
-    -- 'String' by unwrapping the CLI side, since the EBP encoder
-    -- consumes 'String' downstream and the JSON values are the
-    -- authoritative shape for the passthrough check.
-    let cliDescriptionString = fmap (Text.unpack . encodedTextContent) cliDescription
-        cliTitleString       = fmap (Text.unpack . encodedTextContent) cliTitle
-        cliAuthorString      = fmap (Text.unpack . encodedTextContent) cliAuthor
-        descriptionString    = Text.unpack (encodedTextContent descriptionTyped)
+    -- The comparison projects both sides to their 'Text' content: the
+    -- CLI side is tagged 'EncodingLocale' (CLI boundary) and the
+    -- JSON side is tagged 'EncodingUtf8' (JSON wire), so structural
+    -- 'EncodedText' equality would always disagree even on identical
+    -- content. Codepoint equality on the 'Text' content is the
+    -- semantic check the passthrough optimization actually wants.
+    --
+    -- Empty-value asymmetry: 'normalizeEmpty' collapses the embedded
+    -- side's @Just ""@ to 'Nothing' but leaves the CLI side alone.
+    -- An explicit @--title ""@ means "force this field empty" and
+    -- correctly fails to match an embedded @""@; an embedded @""@
+    -- matches an absent CLI flag (the user didn't override, so reuse).
+    let contentOf               = fmap encodedTextContent
         passthrough = case contentsEBPMeta contents of
           Nothing -> Nothing
           Just raw ->
             let view = parseEBPMetadata raw
-                normalizeEmpty (Just value) = if null value then Nothing else Just value
-                normalizeEmpty Nothing  = Nothing
-            in if cliDescriptionString == normalizeEmpty (view >>= ebpMetadataViewDescription)
-                  && cliTitleString    == normalizeEmpty (view >>= ebpMetadataViewTitle)
-                  && cliAuthorString   == normalizeEmpty (view >>= ebpMetadataViewAuthor)
+                normalizeEmpty (Just value) | Text.null value = Nothing
+                                            | otherwise       = Just value
+                normalizeEmpty Nothing      = Nothing
+                viewField fieldAccessor     = contentOf (view >>= fieldAccessor)
+            in if contentOf cliDescription == normalizeEmpty (viewField ebpMetadataViewDescription)
+                  && contentOf cliTitle    == normalizeEmpty (viewField ebpMetadataViewTitle)
+                  && contentOf cliAuthor   == normalizeEmpty (viewField ebpMetadataViewAuthor)
                then Just raw
                else Nothing
         ebpMetadataBytes = case passthrough of
@@ -923,7 +929,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
           Nothing  -> IPS.buildEBPMetadataJSON EBPMetadataFields
                         { ebpMetadataTitle       = ebpTitle
                         , ebpMetadataAuthor      = ebpAuthor
-                        , ebpMetadataDescription = descriptionString
+                        , ebpMetadataDescription = descriptionTyped
                         }
     Right (CreateResult
             (IPS.encodeEBPPatch records (EBPMetadata ebpMetadataBytes))
@@ -1039,9 +1045,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     cliTitle  = requestedTitle meta
     cliAuthor = requestedAuthor meta
     -- The shared description resolver returns a typed 'EncodedText'
-    -- under the migration; PPF/APSN64 consume it directly, EBP
-    -- unwraps to 'String' at its format-local seam until its own
-    -- migration (stage 3c) moves it off raw String.
+    -- that every direct format consumes without further unwrapping.
     descriptionTyped = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMeta   = contentsEBPMeta contents
@@ -1257,8 +1261,8 @@ resolveDescription sources
   | Just meta <- descriptionSourceEBPMeta sources
   , Just view <- parseEBPMetadata meta
   , Just description <- ebpMetadataViewDescription view
-  , not (null description)
-  = EncodedText EncodingUtf8 (Text.pack description)
+  , not (Text.null (encodedTextContent description))
+  = description
   | Just typed <- descriptionSourceTypedText sources =
       EncodedText (encodedTextEncoding typed)
                   (Text.pack (trimNullSpace (Text.unpack (encodedTextContent typed))))
@@ -1267,14 +1271,16 @@ resolveDescription sources
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the
 -- value extracted from the EBP metadata view, then to the empty
 -- string. The two callers feed in the title and author fields
--- respectively. The CLI side arrives as 'EncodedText'; the EBP-view
--- side stays 'String' since the EBP JSON serializer
--- ('IPS.buildEBPMetadataJSON') is the consumer and reads String.
-resolveEBPField :: Maybe EncodedText -> Maybe String -> String
+-- respectively. Both sides are 'EncodedText' under the migration:
+-- CLI-origin values are tagged 'EncodingLocale', JSON-origin values
+-- are tagged 'EncodingUtf8'. The empty-value fallback is tagged
+-- 'EncodingUtf8' because the consumer ('IPS.buildEBPMetadataJSON')
+-- emits JSON, which is UTF-8 by spec.
+resolveEBPField :: Maybe EncodedText -> Maybe EncodedText -> EncodedText
 resolveEBPField cliValue ebpValue
-  | Just provided <- cliValue  = Text.unpack (encodedTextContent provided)
+  | Just provided <- cliValue  = provided
   | Just value    <- ebpValue  = value
-  | otherwise                  = ""
+  | otherwise                  = EncodedText EncodingUtf8 Text.empty
 
 trimNullSpace :: String -> String
 trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . reverse

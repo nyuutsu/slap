@@ -20,8 +20,7 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      RequestedDialects(..),
                      noMetadataRequested)
-import Slap.Text (EncodedText(..), EncodingName(..),
-                  encodedTextContent)
+import Slap.Text (EncodedText, encodedTextContent)
 import qualified Data.Text as Text
 import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
@@ -551,17 +550,17 @@ parseSomePatchFromIPS variant patchContents = do
       let basePatch = IPS.ebpBasePatch ebpPatch
           records = IPS.ipsRecords basePatch
           ebpView = parseEBPMetadata (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
-          -- EBP metadata is JSON, decoded as UTF-8 by the JSON parser;
-          -- wrap each extracted 'String' as 'EncodedText' tagged
-          -- 'EncodingUtf8' so the convert seam carries the encoding
-          -- truthfully forward.
-          nonEmptyUtf8 decoded
-            | null decoded = Nothing
-            | otherwise    = Just (EncodedText EncodingUtf8 (Text.pack decoded))
+          -- The JSON parser already tags extracted values 'EncodingUtf8';
+          -- this collapse just drops empty strings so an EBP patch with
+          -- blank fields reads as "no metadata requested" downstream
+          -- rather than as "empty values explicitly requested".
+          nonEmpty encoded
+            | Text.null (encodedTextContent encoded) = Nothing
+            | otherwise                              = Just encoded
           extractedMeta = noMetadataRequested
-            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmptyUtf8
-            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmptyUtf8
-            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmptyUtf8
+            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmpty
+            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmpty
+            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmpty
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
