@@ -1,7 +1,7 @@
--- | Typed text values that carry their own encoding. The foundation
--- for slap's text-encoding migration: where 'Slap.TextEncoding' threads
--- the encoding decision implicitly through which function happened to
--- get called ('encodeLocaleField' vs 'encodeUtf8Field'), this module
+-- | Typed text values that carry their own encoding. Where the
+-- predecessor scheme threaded the encoding decision implicitly
+-- through which function happened to get called (an
+-- @encodeLocaleField@ vs an @encodeUtf8Field@), this module
 -- represents the encoding decision in the value itself.
 --
 -- An 'EncodedText' bundles an 'EncodingName' tag with a 'Text' payload.
@@ -527,8 +527,7 @@ encodeLossAdvisories label field notices =
 -- an optional advisory naming the unresolved locale if the lookup
 -- failed and slap fell back to UTF-8.
 --
--- Computed once at module init via 'unsafePerformIO' + @NOINLINE@,
--- matching the pattern in 'Slap.TextEncoding.lenientLocaleEncoding'.
+-- Computed once at module init via 'unsafePerformIO' + @NOINLINE@.
 -- Reads the running process locale via 'getLocaleEncoding', extracts
 -- the encoding name, and asks the @encoding@ library to resolve it
 -- via 'Encoding.encodingFromStringExplicit'. The resolver tries the

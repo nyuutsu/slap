@@ -95,7 +95,6 @@ library slap-internal
     , Slap.NINJA2.Types
     , Slap.SomePatch
     , Slap.Text
-    , Slap.TextEncoding
     , Slap.PatchFormat
     , Slap.UPS.Apply
     , Slap.UPS.Create
@@ -182,7 +181,6 @@ test-suite props
                   , Props.RoundTrip
                   , Props.SpecConformance
                   , Props.Text
-                  , Props.TextEncoding
                   , Props.Truncation
                   , Props.Undo
                   , Props.XDelta1Conformance

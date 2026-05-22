@@ -29,7 +29,6 @@ module Slap.Convert
   , createPatch
   , createDefaultAdvisories
   , mergeRequestedMetadata
-  , trimNullSpace
   , formatExtension
   , formatName
   , createFormatLabel
@@ -795,11 +794,11 @@ fieldNote contents field = case field of
     _ -> []
   FieldDescription -> case contentsDescription contents of
     Just description ->
-      let trimmed = trimNullSpace (Text.unpack (encodedTextContent description))
-      in if null trimmed
+      let trimmed = trimTrailingNullSpace (encodedTextContent description)
+      in if Text.null trimmed
            then []
            else [FieldDropped FieldDescription
-                  (DroppedDescription (DroppedDescriptionText trimmed))]
+                  (DroppedDescription (DroppedDescriptionText (Text.unpack trimmed)))]
     Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
@@ -1247,7 +1246,7 @@ resolveDescription sources
   = description
   | Just typed <- descriptionSourceTypedText sources =
       EncodedText (encodedTextEncoding typed)
-                  (Text.pack (trimNullSpace (Text.unpack (encodedTextContent typed))))
+                  (trimTrailingNullSpace (encodedTextContent typed))
   | otherwise = descriptionSourceFallback sources
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the
@@ -1272,8 +1271,9 @@ resolveEBPField cliValue ebpValue
 slapPatcherIdentity :: EncodedText
 slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
 
-trimNullSpace :: String -> String
-trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . reverse
+-- | Drop trailing spaces and null bytes from a description.
+trimTrailingNullSpace :: Text.Text -> Text.Text
+trimTrailingNullSpace = Text.dropWhileEnd (\char -> char == ' ' || char == '\0')
 
 ----------------------------------------------------------------------------
 -- Format metadata

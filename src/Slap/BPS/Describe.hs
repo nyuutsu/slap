@@ -21,10 +21,12 @@ import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffsetSign(..), Cursor(..),
                      examineSignedOffset, byteLength)
 
-import Slap.TextEncoding (decodeLocaleField)
+import Slap.Text (EncodingName(..), encodedTextContent, decodeTextLenient)
 
 import qualified Data.ByteString as ByteString
+import Data.Char (isControl)
 import Data.List (mapAccumL)
+import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 bpsMeta :: BPSPatch -> [InfoLine]
@@ -40,12 +42,12 @@ bpsMeta patch = concat
     metadata = unBPSMetadata (bpsMetadata patch)
     metadataDisplay
       | ByteString.null metadata = "(none)"
-      | otherwise        = show (ByteString.length metadata) ++ " bytes: "
-                        ++ map sanitize (decodeLocaleField (ByteString.take metadataPreviewBytes metadata))
-                        ++ if ByteString.length metadata > metadataPreviewBytes then "..." else ""
-    sanitize character
-      | character >= ' ' && character <= '~' = character
-      | otherwise                            = '.'
+      | otherwise =
+          let (decodedMetadata, _lossNotices) = decodeTextLenient EncodingLocale metadata
+              previewSafeCodepoints = Text.filter isPreviewSafe
+                                        (encodedTextContent decodedMetadata)
+          in show (ByteString.length metadata) ++ " bytes: " ++ Text.unpack previewSafeCodepoints
+    isPreviewSafe character = not (isControl character) || character == '\t'
 
 analyzeBPS :: BPSPatch -> PatchAnalysis
 analyzeBPS patch = PatchAnalysis
@@ -58,11 +60,6 @@ analyzeBPS patch = PatchAnalysis
   }
   where
     actionCount = Vector.length (bpsActions patch)
-
--- | Maximum number of metadata bytes shown in 'bpsMeta' output before
--- truncation. Larger metadata blobs are truncated with an ellipsis.
-metadataPreviewBytes :: Int
-metadataPreviewBytes = 200
 
 -- | The accumulator state threaded through 'makeBPSRegion' as the
 -- BPS action stream is walked for explain output. 'regionSourceRelative'

@@ -18,7 +18,6 @@
 --                                  sentinel collision detection.
 --   * 'Props.Text'               — typed text values with encoding tags;
 --                                  the foundation 'Slap.Text' module.
---   * 'Props.TextEncoding'       — UTF-8 and locale encoding primitives.
 --   * 'Props.Detection'          — DPS detection heuristic.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.
@@ -44,7 +43,6 @@ import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
 import qualified Props.Text as Text
-import qualified Props.TextEncoding as TextEncoding
 import qualified Props.Truncation as Truncation
 import qualified Props.Undo as Undo
 import qualified Props.XDelta1Conformance as XDelta1Conformance
@@ -60,7 +58,6 @@ main = defaultMain $ testGroup "Properties"
   , Undo.undoTests
   , Contracts.contractTests
   , Text.textTests
-  , TextEncoding.textEncodingTests
   , Detection.detectionTests
   , ClassifyTargetCopy.classifyTargetCopyTests
   , ParseWarnings.parseWarningsTests

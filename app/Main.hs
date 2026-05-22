@@ -44,7 +44,6 @@ import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.TextEncoding (makeStdoutAndStderrLenient)
 import Slap.Text (EncodedText(..), EncodingName(..))
 import qualified Data.Text as Text
 -- The CLI parsers below wrap incoming 'String' as 'EncodedText'
@@ -76,8 +75,10 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (hPutStr, hPutStrLn, stderr)
+import System.IO (TextEncoding, hPutStr, hPutStrLn, hSetEncoding,
+                  localeEncoding, mkTextEncoding, stderr, stdout)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
+import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Types
@@ -380,12 +381,6 @@ data ExplainCommand = ExplainCommand
 
 main :: IO ()
 main = do
-  -- Make stdout and stderr forgiving about characters the strict
-  -- locale codec couldn't represent — most often a U+FFFD that
-  -- 'decodeLocaleField' inserted while reading a foreign-locale
-  -- NINJA2 mode-0 metadata field. Without this, printing the
-  -- decoded String would crash with an "invalid argument" iconv
-  -- error, hiding the rest of @slap info@'s output.
   makeStdoutAndStderrLenient
   customExecParser (prefs showHelpOnEmpty) options >>= \case
     Apply   parsedCommand -> doApply   parsedCommand
@@ -1534,3 +1529,30 @@ readAndParsePatch :: RequestedDialects -> FilePath -> IO SomePatch
 readAndParsePatch dialects path = do
   patchBytes <- readUnwrap path
   orBail (parseSome dialects (PatchFileContents patchBytes))
+
+----------------------------------------------------------------------------
+-- Output encoding setup
+----------------------------------------------------------------------------
+
+-- | Re-bind 'stdout' and 'stderr' to the lenient locale encoding so
+-- that printing a codepoint the strict locale codec can't represent
+-- substitutes a placeholder byte instead of crashing the program with
+-- @hPutChar: invalid argument (Invalid or incomplete multibyte or
+-- wide character)@. This matters on non-UTF-8 locales: a U+FFFD that
+-- a lenient decode produced upstream — or any other codepoint outside
+-- the locale's representable range — would otherwise abort the
+-- process at the first attempt to print it. Slap holds full Unicode
+-- internally, so any such codepoint can reach the output path. Called
+-- once at slap startup, before any I\/O.
+makeStdoutAndStderrLenient :: IO ()
+makeStdoutAndStderrLenient = do
+  hSetEncoding stdout lenientLocaleEncoding
+  hSetEncoding stderr lenientLocaleEncoding
+
+-- | The process's locale encoding with iconv's @\/\/TRANSLIT@ suffix
+-- applied: unrepresentable output characters encode to a substitution
+-- placeholder rather than throwing. Computed once at module init.
+lenientLocaleEncoding :: TextEncoding
+lenientLocaleEncoding = unsafePerformIO $
+  mkTextEncoding (show localeEncoding ++ "//TRANSLIT")
+{-# NOINLINE lenientLocaleEncoding #-}

@@ -131,9 +131,9 @@ test_utf8AsciiPin =
     (encodeText EncodingUtf8 (Text.pack "slap"))
 
 -- | Pinned Japanese UTF-8 output: \"日本語\" encodes to its
--- 3-codepoint × 3-byte representation. Same wire bytes that
--- 'Slap.TextEncoding.encodeUtf8Field' would produce — the migration
--- preserves byte identity for the UTF-8 path.
+-- 3-codepoint × 3-byte representation. Pinning the exact bytes
+-- guards the UTF-8 path against any future refactor that would
+-- accidentally drift byte identity on multibyte codepoints.
 test_utf8JapanesePin :: IO ()
 test_utf8JapanesePin =
   assertEqual "Japanese UTF-8 byte shape"
