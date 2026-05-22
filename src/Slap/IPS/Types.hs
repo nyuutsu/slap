@@ -8,7 +8,7 @@ module Slap.IPS.Types
   , recordPayloadLength
   , IPSPatch(..)
   , EBPMetadata(..)
-  , EBPMetadataFields(..)
+  , emptyEBPMetadata
   , EBPPatch(..)
   , IPSParseResult(..)
   , SMCShapeRequirement(..)
@@ -201,31 +201,52 @@ data IPSPatch = IPSPatch
     -- is 'IPS32', 'ipsTruncatedTargetSize' is always 'Nothing'.
   } deriving (Show)
 
--- | The raw JSON metadata blob that trails an EBP patch. These are
--- the UTF-8 bytes of an EBPatcher-style JSON object, stored
--- verbatim — slap does not parse or validate the JSON at this
--- layer. The reference implementation emits exactly four fields
--- (@patcher@, @title@, @author@, @description@); slap's Describe
--- pass extracts the three user-facing fields leniently, but
--- everything below Describe treats the blob as opaque bytes.
-newtype EBPMetadata = EBPMetadata { unEBPMetadata :: ByteString }
-  deriving (Eq, Show)
-
--- | Structured input for 'buildEBPMetadataJSON'. The three fields
--- slap emits in EBP metadata blobs, following the EBPatcher
--- convention. The @patcher@ field is always set to @"slap"@ by
--- 'buildEBPMetadataJSON' itself and is not exposed here.
+-- | The parsed content of the JSON metadata trailer carried by an
+-- EBP patch. EBP's format is "IPS records followed by a JSON object
+-- containing these four fields", so the metadata is structured data
+-- the format itself defines — not opaque bytes for someone else to
+-- handle. 'Slap.IPS.Parse' decodes the trailing bytes through
+-- 'Slap.JSON.parseEBPMetadata' before the patch leaves the parse
+-- layer; everything downstream reads the four fields directly.
 --
--- Each field is a typed 'EncodedText': EBP metadata is JSON, JSON is
--- UTF-8 by RFC 8259, and the encoder reads the 'Text' content
--- directly. The encoding tag travels with the value across the
--- convert seam so the field's provenance — CLI-locale or
--- JSON-extracted UTF-8 — stays legible at the type level.
-data EBPMetadataFields = EBPMetadataFields
-  { ebpMetadataTitle       :: !EncodedText
-  , ebpMetadataAuthor      :: !EncodedText
-  , ebpMetadataDescription :: !EncodedText
+-- Each field is a 'Maybe' 'EncodedText': 'Nothing' when the wire
+-- JSON did not contain the key (or carried a non-string value),
+-- 'Just' the field's content when it did. Field lookup is
+-- case-insensitive at parse time — EBPatcher (the Python reference)
+-- writes lowercase keys, RomPatcher.js writes capitalised ones for
+-- the user-facing three — and absent fields are tolerated because
+-- RomPatcher.js's writer skips empty fields entirely.
+--
+-- Encoding tag on extracted values is always 'EncodingUtf8': JSON
+-- is UTF-8 by RFC 8259, and aeson enforces that at the parse
+-- boundary. The tag travels with the value across the convert
+-- seam so a downstream re-encode through, say, a locale-encoded
+-- text field can see the value's provenance at the type level.
+--
+-- If the wire bytes were malformed (not valid JSON, or a JSON root
+-- that is not an object), 'Slap.JSON.parseEBPMetadata' returns the
+-- all-'Nothing' value and surfaces an 'EBPMetadataMalformed'
+-- advisory alongside the parse result. The patch's records are
+-- unaffected; apply and convert paths proceed normally with empty
+-- metadata.
+data EBPMetadata = EBPMetadata
+  { ebpMetadataTitle       :: !(Maybe EncodedText)
+  , ebpMetadataAuthor      :: !(Maybe EncodedText)
+  , ebpMetadataDescription :: !(Maybe EncodedText)
+  , ebpMetadataPatcher     :: !(Maybe EncodedText)
   } deriving (Show, Eq)
+
+-- | An 'EBPMetadata' value with every field set to 'Nothing'. The
+-- shape produced by 'Slap.JSON.parseEBPMetadata' on malformed input,
+-- and the natural starting point on the create side when no metadata
+-- has been supplied yet.
+emptyEBPMetadata :: EBPMetadata
+emptyEBPMetadata = EBPMetadata
+  { ebpMetadataTitle       = Nothing
+  , ebpMetadataAuthor      = Nothing
+  , ebpMetadataDescription = Nothing
+  , ebpMetadataPatcher     = Nothing
+  }
 
 -- | An EBP patch. Structurally, EBP is a 'StandardIPS' patch with a
 -- trailing JSON metadata blob, so the type is a wrapper: an

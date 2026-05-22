@@ -22,7 +22,6 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      noMetadataRequested)
 import Slap.Text (EncodedText, encodedTextContent)
 import qualified Data.Text as Text
-import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
@@ -305,7 +304,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , contentsValidation  = Nothing
           , contentsUndoData    = Nothing
           , contentsTruncation  = Nothing
-          , contentsEBPMeta     = Nothing
+          , contentsEBPMetadata = Nothing
           , contentsRomType     = Nothing
           , contentsImageType   = Nothing
           , contentsFileIdDiz   = Nothing
@@ -361,7 +360,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , contentsValidation  = Just validationBytes
           , contentsUndoData    = Nothing
           , contentsTruncation  = Nothing
-          , contentsEBPMeta     = Nothing
+          , contentsEBPMetadata = Nothing
           , contentsRomType     = Nothing
           , contentsImageType   = Nothing
           , contentsFileIdDiz   = fmap PPF2.unPPF2FileId (PPF2.ppf2FileId patch)
@@ -427,7 +426,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
                                       | record <- records ]
                             else Nothing
           , contentsTruncation  = Nothing
-          , contentsEBPMeta     = Nothing
+          , contentsEBPMetadata = Nothing
           , contentsRomType     = Nothing
           , contentsImageType   = Just (PPF3.ppf3ImageType patch)
           , contentsFileIdDiz   = fmap PPF3.unPPF3FileId (PPF3.ppf3FileId patch)
@@ -526,7 +525,7 @@ parseSomePatchFromIPS variant patchContents = do
         , patchAnalysis       = IPS.analyzeIPS ipsPatch
         , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
             { contentsTruncation = IPS.ipsTruncatedTargetSize ipsPatch
-            , contentsEBPMeta    = Nothing
+            , contentsEBPMetadata = Nothing
             })
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source ipsPatch) }
@@ -549,7 +548,7 @@ parseSomePatchFromIPS variant patchContents = do
     IPS.IPSParseCleanEBP ebpPatch ->
       let basePatch = IPS.ebpBasePatch ebpPatch
           records = IPS.ipsRecords basePatch
-          ebpView = parseEBPMetadata (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+          metadata = IPS.ebpMetadata ebpPatch
           -- The JSON parser already tags extracted values 'EncodingUtf8';
           -- this collapse just drops empty strings so an EBP patch with
           -- blank fields reads as "no metadata requested" downstream
@@ -558,16 +557,16 @@ parseSomePatchFromIPS variant patchContents = do
             | Text.null (encodedTextContent encoded) = Nothing
             | otherwise                              = Just encoded
           extractedMeta = noMetadataRequested
-            { requestedTitle       = (ebpView >>= ebpMetadataViewTitle)       >>= nonEmpty
-            , requestedAuthor      = (ebpView >>= ebpMetadataViewAuthor)      >>= nonEmpty
-            , requestedDescription = (ebpView >>= ebpMetadataViewDescription) >>= nonEmpty
+            { requestedTitle       = IPS.ebpMetadataTitle       metadata >>= nonEmpty
+            , requestedAuthor      = IPS.ebpMetadataAuthor      metadata >>= nonEmpty
+            , requestedDescription = IPS.ebpMetadataDescription metadata >>= nonEmpty
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
         , patchAnalysis       = IPS.analyzeEBP ebpPatch
         , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
             { contentsTruncation = IPS.ipsTruncatedTargetSize basePatch
-            , contentsEBPMeta    = Just (IPS.unEBPMetadata (IPS.ebpMetadata ebpPatch))
+            , contentsEBPMetadata = Just metadata
             })
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source basePatch) }
@@ -598,7 +597,7 @@ parseSomePatchFromIPS variant patchContents = do
         , patchAnalysis       = IPS.analyzeIPS truncatedPatch
         , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
             { contentsTruncation = Nothing
-            , contentsEBPMeta    = Nothing
+            , contentsEBPMetadata = Nothing
             })
         , patchApply          = ApplyStrategy
               { runApply = \source -> pure (IPS.applyIPS source truncatedPatch) }

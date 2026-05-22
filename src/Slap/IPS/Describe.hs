@@ -18,12 +18,13 @@
 --
 -- Describe trusts its inputs. Every value reaching this module has
 -- already been validated by 'Slap.IPS.Parse', so there are no error
--- paths here — only rendering. In particular, EBP metadata is
--- treated as an opaque byte blob for display purposes: the
--- @title@/@author@/@description@ extraction the old Describe layer
--- did is gone on purpose, because it reached past the
--- "shape-recognize, don't schema-validate" boundary that
--- 'Slap.IPS.Parse' draws.
+-- paths here — only rendering. EBP metadata reaches Describe as a
+-- structured 'EBPMetadata' record: the JSON parsing happens in
+-- 'Slap.IPS.Parse' (via 'Slap.JSON.parseEBPMetadata') so every
+-- consumer reads the four fields directly. Describe then renders
+-- whichever fields are present — and surfaces a single placeholder
+-- line when none are, the shape an all-absent malformed-metadata
+-- patch produces.
 module Slap.IPS.Describe
   ( -- * Plain IPS
     ipsMeta
@@ -49,6 +50,7 @@ import Slap.IPS.Types
   , recordPayloadLength
   , variantSpec
   )
+import Slap.Text (EncodedText, encodedTextContent)
 import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(..)
@@ -61,14 +63,15 @@ import Slap.Display.Analysis
   , AnnotDetail(..)
   )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..))
-import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex, renderUTF8OrByteCount)
+import Slap.Display.Primitives (padHex, renderPrintableASCIIOrHex)
 import Slap.Measure (Offset(Offset), FileSize(..),
                      OffsetRange(..), advance, distance)
 
 import Data.Vector (Vector)
 
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as ByteString
+import Data.Maybe (isNothing)
+import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 ----------------------------------------------------------------------------
@@ -115,16 +118,53 @@ truncationInfoLine (Just truncatedTargetSize) =
 
 -- | One-line-per-field metadata for an 'EBPPatch'. Delegates the
 -- wire-fact fields to 'ipsMeta' on the underlying 'IPSPatch', then
--- appends a single @metadata@ line carrying the blob byte count and
--- a shape-recognized preview. Shape-only: the preview is either the
--- raw bytes decoded as ASCII (when every previewed byte is
--- printable) or a hex dump (when any byte is not). The JSON is
--- never parsed past that.
+-- appends one line per populated metadata field — @title@, @author@,
+-- @description@, @patcher@, in that declared order. Absent fields
+-- (the 'Nothing' arm of each 'Maybe') produce no line.
+--
+-- The all-'Nothing' shape is also what 'Slap.JSON.parseEBPMetadata'
+-- returns when the wire metadata bytes were malformed; in that case
+-- a single @metadata@ line surfaces the absence directly. The
+-- companion 'EBPMetadataMalformed' advisory has already told the
+-- user why at parse time, so this line just notes that there is
+-- nothing readable to show.
 ebpMeta :: EBPPatch -> [InfoLine]
 ebpMeta patch =
   ipsMeta (ebpBasePatch patch)
-  ++ [ InfoLine "metadata"
-         (renderEBPMetadata (unEBPMetadata (ebpMetadata patch))) ]
+  ++ ebpMetadataInfoLines (ebpMetadata patch)
+
+-- | One 'InfoLine' per populated EBP metadata field. The field
+-- ordering matches the JSON wire shape (@patcher@ first on emit,
+-- but title / author / description first in user-facing display);
+-- here we lead with the user-facing three and trail with @patcher@
+-- so the patch's authorship reads top-to-bottom and the producer
+-- identity sits at the bottom. The all-absent case collapses to a
+-- single placeholder line — see the 'ebpMeta' Haddock for why.
+ebpMetadataInfoLines :: EBPMetadata -> [InfoLine]
+ebpMetadataInfoLines metadata
+  | allAbsent =
+      [InfoLine "metadata" "(no readable fields; see parse-time advisory if malformed)"]
+  | otherwise = concat
+      [ renderField "title"       (ebpMetadataTitle       metadata)
+      , renderField "author"      (ebpMetadataAuthor      metadata)
+      , renderField "description" (ebpMetadataDescription metadata)
+      , renderField "patcher"     (ebpMetadataPatcher     metadata)
+      ]
+  where
+    allAbsent = isNothing (ebpMetadataTitle       metadata)
+             && isNothing (ebpMetadataAuthor      metadata)
+             && isNothing (ebpMetadataDescription metadata)
+             && isNothing (ebpMetadataPatcher     metadata)
+
+-- | Emit one 'InfoLine' for a populated EBP metadata field, or
+-- nothing for an absent one. The displayed text is the field's
+-- 'Text' content verbatim — the encoding tag has already done its
+-- job by the time the value reaches Describe (JSON was decoded as
+-- UTF-8 at parse time), so the user sees real codepoints.
+renderField :: String -> Maybe EncodedText -> [InfoLine]
+renderField _      Nothing      = []
+renderField label  (Just value) =
+  [InfoLine label (Text.unpack (encodedTextContent value))]
 
 ----------------------------------------------------------------------------
 -- analyze — structured analysis for the explain renderer
@@ -254,27 +294,4 @@ ipsRecordsRange records
 renderMarkerBytes :: ByteString -> String
 renderMarkerBytes = renderPrintableASCIIOrHex
 
--- | Render a raw EBP metadata blob for the @metadata:@ header field:
--- the byte count followed by a shape-recognized preview of the
--- leading 'metadataPreviewBytes' bytes. EBP metadata is UTF-8 by
--- convention (per the EBPatcher reference implementation), so the
--- preview decodes as UTF-8 when valid and falls back to a byte count
--- description when not. The function deliberately does not parse,
--- validate, or extract fields from the JSON — that line is drawn in
--- 'Slap.IPS.Parse' and Describe honors it.
-renderEBPMetadata :: ByteString -> String
-renderEBPMetadata metadataBytes
-  | ByteString.null metadataBytes =
-      "(none)"
-  | otherwise =
-      show (ByteString.length metadataBytes) ++ " bytes: "
-      ++ renderUTF8OrByteCount metadataPreviewBytes metadataBytes
-
--- | Maximum number of EBP metadata bytes shown in 'renderEBPMetadata'
--- before the preview is truncated with an ellipsis. Matches BPS's
--- 'Slap.BPS.Describe.metadataPreviewBytes' for consistency — both
--- formats cap metadata previews at the same length so @slap info@
--- output doesn't flood the terminal on a large blob.
-metadataPreviewBytes :: Int
-metadataPreviewBytes = 200
 

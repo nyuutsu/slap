@@ -774,6 +774,18 @@ data SlapAdvisory
   -- 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
+  -- | An EBP patch's metadata trailer existed (the post-@"EOF"@
+  -- byte stream began with @{@, the shape signature of an EBPatcher
+  -- JSON blob) but was not valid JSON, or its root was not an
+  -- object. The underlying IPS records are unaffected: apply and
+  -- convert paths proceed normally, only with empty metadata. The
+  -- user can supply @--title@, @--author@, @--description@ on a
+  -- convert-to-EBP to populate the target's metadata fields. The
+  -- 'FormatLabel' is always 'LabelEBP' at construction; the type
+  -- carries it for consistency with the rest of the advisory
+  -- family.
+  | EBPMetadataMalformed FormatLabel
+
   -- | A 'StandardIPS' patch's post-EOF truncation marker declared a
   -- target size smaller than the natural size, and slap honored it.
   -- Surfaces the truncation as a deliberate diagnostic even when no
@@ -1656,6 +1668,13 @@ renderSlapAdvisory (IPS32TrailingBytes label (Length n)) =
   formatLabelName label
   ++ ": dropped " ++ show n ++ " trailing bytes after EEOF marker"
 
+renderSlapAdvisory (EBPMetadataMalformed label) =
+  formatLabelName label
+  ++ ": metadata trailer is not valid JSON (or its root is not an object);"
+  ++ " the patch's records are unaffected and apply/convert proceed,"
+  ++ " but no title, author, description, or patcher could be extracted"
+  ++ " (supply --title / --author / --description on convert-to-EBP to populate the target's metadata)"
+
 renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
@@ -2169,6 +2188,7 @@ slapAdvisorySeverity advisory = case advisory of
   OverlappingRecords{}                 -> SeverityNote
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote
+  EBPMetadataMalformed{}               -> SeverityNote
   APSN64UnrecognizedCountry{}          -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote
   FieldDropped{}                       -> SeverityNote

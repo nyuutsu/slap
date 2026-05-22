@@ -1,11 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | JSON extraction for slap. The only JSON in the slap world is the
+-- | JSON parsing for slap. The only JSON in the slap world is the
 -- trailing metadata blob carried by EBP patches, so this module's
--- public surface is shaped to that one job: parse the blob and pull
--- out the four prespecified top-level string fields. Anything else
--- the JSON spec permits (nested objects, arrays, numbers, booleans,
--- nulls) is read by aeson under the hood but discarded here — slap
--- has nothing to do with it.
+-- public surface is shaped to that one job: turn the trailer bytes
+-- into a structured 'EBPMetadata' value. Anything else the JSON
+-- spec permits (nested objects, arrays, numbers, booleans, nulls)
+-- is read by aeson under the hood and discarded here — slap has
+-- nothing to do with it.
 --
 -- The four fields slap recognises are the ones EBPatcher established
 -- as the EBP metadata contract: @patcher@, @title@, @author@,
@@ -21,7 +21,7 @@
 -- Missing fields are tolerated for the same reason: RomPatcher.js's
 -- writer skips empty fields entirely, so a real-world EBP patch can
 -- arrive with only some of the four keys present. Each field on the
--- returned 'EBPMetadataView' is therefore a 'Maybe' 'EncodedText'.
+-- returned 'EBPMetadata' is therefore a 'Maybe' 'EncodedText'.
 --
 -- Extracted values carry an explicit @EncodingUtf8@ tag: JSON is
 -- UTF-8 by RFC 8259, aeson enforces that at the parse boundary, and
@@ -30,12 +30,12 @@
 -- out-of-band.
 --
 -- A malformed blob (not valid JSON, or valid JSON whose root is not
--- an object) yields 'Nothing' from 'parseEBPMetadata'. This is the
--- honest answer — there is no EBP metadata to extract — and is left
--- for callers to handle.
+-- an object) yields the all-'Nothing' 'EBPMetadata' value paired
+-- with an 'EBPMetadataMalformed' advisory. The patch's IPS records
+-- are unaffected — apply and convert paths proceed normally — but
+-- the user learns at parse time that the metadata couldn't be read.
 module Slap.JSON
-  ( EBPMetadataView(..)
-  , parseEBPMetadata
+  ( parseEBPMetadata
   ) where
 
 import Data.ByteString (ByteString)
@@ -43,40 +43,31 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as AesonKeyMap
 import qualified Data.Text as Text
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.IPS.Types (EBPMetadata(..), emptyEBPMetadata)
+import Slap.Status (SlapAdvisory(..))
 import Slap.Text (EncodedText(..), EncodingName(..))
 
--- | The four EBP metadata fields extracted from an EBP patch's
--- trailing JSON blob. Each field is 'Just' the field's value when
--- the key is present at the top level of the parsed object and its
--- value is a JSON string; 'Nothing' when the key is absent or the
--- value is some other JSON type (a number, an object, a null).
---
--- An empty-string value remains @'Just' (EncodedText _ "")@ here.
--- Callers that treat empty as absent perform that collapse
--- themselves; this module reports what the JSON actually said.
---
--- The encoding tag on each extracted value is @'EncodingUtf8'@:
--- aeson parses JSON as UTF-8 (RFC 8259), so the text content is
--- known-UTF-8 at the moment of extraction.
-data EBPMetadataView = EBPMetadataView
-  { ebpMetadataViewTitle       :: !(Maybe EncodedText)
-  , ebpMetadataViewAuthor      :: !(Maybe EncodedText)
-  , ebpMetadataViewDescription :: !(Maybe EncodedText)
-  , ebpMetadataViewPatcher     :: !(Maybe EncodedText)
-  } deriving (Eq, Show)
-
--- | Parse the bytes of an EBP metadata blob. Returns 'Just' a view
--- of the four EBP fields when the bytes are valid JSON whose root
--- is an object, 'Nothing' otherwise.
-parseEBPMetadata :: ByteString -> Maybe EBPMetadataView
+-- | Parse the bytes of an EBP metadata blob. On well-formed JSON
+-- whose root is an object, returns the four extracted fields (each
+-- 'Just' when present as a string-valued top-level key,
+-- case-insensitively, and 'Nothing' otherwise) with an empty
+-- advisory list. On malformed input, returns the all-'Nothing'
+-- 'EBPMetadata' paired with @['EBPMetadataMalformed' 'LabelEBP']@
+-- so the caller can surface the parse-time observation through the
+-- usual advisory channel.
+parseEBPMetadata :: ByteString -> (EBPMetadata, [SlapAdvisory])
 parseEBPMetadata bytes = case Aeson.eitherDecodeStrict bytes of
-  Right (Aeson.Object obj) -> Just EBPMetadataView
-    { ebpMetadataViewTitle       = lookupTopLevelStringField "title"       obj
-    , ebpMetadataViewAuthor      = lookupTopLevelStringField "author"      obj
-    , ebpMetadataViewDescription = lookupTopLevelStringField "description" obj
-    , ebpMetadataViewPatcher     = lookupTopLevelStringField "patcher"     obj
-    }
-  _ -> Nothing
+  Right (Aeson.Object obj) ->
+    ( EBPMetadata
+        { ebpMetadataTitle       = lookupTopLevelStringField "title"       obj
+        , ebpMetadataAuthor      = lookupTopLevelStringField "author"      obj
+        , ebpMetadataDescription = lookupTopLevelStringField "description" obj
+        , ebpMetadataPatcher     = lookupTopLevelStringField "patcher"     obj
+        }
+    , []
+    )
+  _ -> (emptyEBPMetadata, [EBPMetadataMalformed LabelEBP])
 
 -- | Case-insensitive lookup of a top-level string-valued field.
 -- The expected key name is given in lowercase; each key in the

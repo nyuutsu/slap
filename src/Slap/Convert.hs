@@ -51,11 +51,10 @@ import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         narrowPPF3FileId, ppf3MaxRecordPayload)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
-                       EBPMetadataFields(..), IPSVariantSpec(..),
+                       IPSVariantSpec(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec,
                        ipsLimits, ips32Limits, ebpLimits)
-import Slap.JSON (EBPMetadataView(..), parseEBPMetadata)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
@@ -147,7 +146,13 @@ data PatchContents = PatchContents
     -- so plain bytes; per-format role newtypes wrap on emit.
   , contentsUndoData    :: Maybe [SplitUndoHunk]
   , contentsTruncation  :: Maybe FileSize
-  , contentsEBPMeta     :: Maybe ByteString.ByteString
+  , contentsEBPMetadata :: Maybe EBPMetadata
+    -- ^ Parsed EBP metadata flowing across the convert seam. Populated
+    -- by 'Slap.SomePatch' when the source patch is EBP (so the source's
+    -- title/author/description/patcher carry into a convert-to-EBP),
+    -- 'Nothing' otherwise. The structured shape comes from
+    -- 'Slap.JSON.parseEBPMetadata' running at parse time; downstream
+    -- consumers read its fields directly rather than re-parsing bytes.
   , contentsRomType     :: Maybe PlatformType
   , contentsImageType   :: Maybe PPF3ImageType
   , contentsFileIdDiz   :: Maybe EncodedText
@@ -356,7 +361,7 @@ emptyContents records = PatchContents
   , contentsValidation  = Nothing
   , contentsUndoData    = Nothing
   , contentsTruncation  = Nothing
-  , contentsEBPMeta     = Nothing
+  , contentsEBPMetadata = Nothing
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
@@ -374,7 +379,7 @@ provides contents = Set.fromList $ [FieldRecords]
   ++ [FieldUndoData     | isJust (contentsUndoData contents)]
   ++ [FieldValidation   | isJust (contentsValidation contents)]
   ++ [FieldTruncation   | isJust (contentsTruncation contents)]
-  ++ [FieldEBPMeta      | isJust (contentsEBPMeta contents)]
+  ++ [FieldEBPMeta      | isJust (contentsEBPMetadata contents)]
   ++ [FieldRomType      | isJust (contentsRomType contents)]
   ++ [FieldImageType    | isJust (contentsImageType contents)]
   ++ [FieldFileIdDiz    | isJust (contentsFileIdDiz contents)]
@@ -804,7 +809,7 @@ fieldNote contents field = case field of
     Just targetSize -> [FieldDropped FieldDestinationSize (DroppedSize targetSize)]
     Nothing -> []
   FieldTruncation -> [FieldDropped FieldTruncation DroppedEmpty | isJust (contentsTruncation contents)]
-  FieldEBPMeta -> [FieldDropped FieldEBPMeta DroppedEmpty | isJust (contentsEBPMeta contents)]
+  FieldEBPMeta -> [FieldDropped FieldEBPMeta DroppedEmpty | isJust (contentsEBPMetadata contents)]
   FieldRomType -> [FieldDropped FieldRomType DroppedEmpty | isJust (contentsRomType contents)]
   FieldImageType -> [FieldDropped FieldImageType DroppedEmpty | isJust (contentsImageType contents)]
   FieldFileIdDiz -> [FieldDropped FieldFileIdDiz DroppedEmpty | isJust (contentsFileIdDiz contents)]
@@ -894,45 +899,23 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- resolveIPSSentinel LabelEBP StandardIPS
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
-    -- Pass through raw EBP JSON when metadata values match what the JSON
-    -- already provides.  This detects CLI overrides: if the user changed
-    -- a field, the values diverge and we rebuild the JSON.
-    --
-    -- The comparison projects both sides to their 'Text' content: the
-    -- CLI side is tagged 'EncodingLocale' (CLI boundary) and the
-    -- JSON side is tagged 'EncodingUtf8' (JSON wire), so structural
-    -- 'EncodedText' equality would always disagree even on identical
-    -- content. Codepoint equality on the 'Text' content is the
-    -- semantic check the passthrough optimization actually wants.
-    --
-    -- Empty-value asymmetry: 'normalizeEmpty' collapses the embedded
-    -- side's @Just ""@ to 'Nothing' but leaves the CLI side alone.
-    -- An explicit @--title ""@ means "force this field empty" and
-    -- correctly fails to match an embedded @""@; an embedded @""@
-    -- matches an absent CLI flag (the user didn't override, so reuse).
-    let contentOf               = fmap encodedTextContent
-        passthrough = case contentsEBPMeta contents of
-          Nothing -> Nothing
-          Just raw ->
-            let view = parseEBPMetadata raw
-                normalizeEmpty (Just value) | Text.null value = Nothing
-                                            | otherwise       = Just value
-                normalizeEmpty Nothing      = Nothing
-                viewField fieldAccessor     = contentOf (view >>= fieldAccessor)
-            in if contentOf cliDescription == normalizeEmpty (viewField ebpMetadataViewDescription)
-                  && contentOf cliTitle    == normalizeEmpty (viewField ebpMetadataViewTitle)
-                  && contentOf cliAuthor   == normalizeEmpty (viewField ebpMetadataViewAuthor)
-               then Just raw
-               else Nothing
-        ebpMetadataBytes = case passthrough of
-          Just raw -> raw
-          Nothing  -> IPS.buildEBPMetadataJSON EBPMetadataFields
-                        { ebpMetadataTitle       = ebpTitle
-                        , ebpMetadataAuthor      = ebpAuthor
-                        , ebpMetadataDescription = descriptionTyped
-                        }
+    -- EBP metadata is structured: build the typed value here and hand
+    -- it to the encoder, which calls 'IPS.buildEBPMetadataJSON'
+    -- internally. The resulting JSON is always slap-canonical
+    -- (four-field shape, @patcher@ first, our identity in the
+    -- patcher slot), since parse-finishes-its-job means the source
+    -- patch's exact wire bytes no longer flow through — only their
+    -- semantic content does, by way of 'resolveEBPField' /
+    -- 'resolveDescription' pulling the resolved values out of
+    -- 'contentsEBPMetadata'.
+    let metadata = EBPMetadata
+          { ebpMetadataTitle       = Just ebpTitle
+          , ebpMetadataAuthor      = Just ebpAuthor
+          , ebpMetadataDescription = Just descriptionTyped
+          , ebpMetadataPatcher     = Just slapPatcherIdentity
+          }
     Right (CreateResult
-            (IPS.encodeEBPPatch records (EBPMetadata ebpMetadataBytes))
+            (IPS.encodeEBPPatch records metadata)
             [])
   CreatePPF1 -> do
     rejectTruncation LabelPPF1 contents source
@@ -1048,7 +1031,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- that every direct format consumes without further unwrapping.
     descriptionTyped = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
-      , descriptionSourceEBPMeta   = contentsEBPMeta contents
+      , descriptionSourceEBPMetadata   = contentsEBPMetadata contents
       , descriptionSourceTypedText = contentsDescription contents
       , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
       }
@@ -1058,13 +1041,13 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     -- fallback here is just empty 'EncodedText' and the encoder pads.
     apsDescription = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
-      , descriptionSourceEBPMeta   = Nothing
+      , descriptionSourceEBPMetadata   = Nothing
       , descriptionSourceTypedText = contentsDescription contents
       , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
       }
-    ebpView   = contentsEBPMeta contents >>= parseEBPMetadata
-    ebpTitle  = resolveEBPField cliTitle  (ebpView >>= ebpMetadataViewTitle)
-    ebpAuthor = resolveEBPField cliAuthor (ebpView >>= ebpMetadataViewAuthor)
+    ebpSource = contentsEBPMetadata contents
+    ebpTitle  = resolveEBPField cliTitle  (ebpSource >>= ebpMetadataTitle)
+    ebpAuthor = resolveEBPField cliAuthor (ebpSource >>= ebpMetadataAuthor)
     -- CLI flag > PatchContents > format default
     (ninja1Type, platformAdvisories) = maybe (NINJA1.RomRAW, []) platformToNINJA1 (requestedRomType meta <|> contentsRomType contents)
     imageType   = fromMaybe BIN (requestedImageType meta <|> contentsImageType contents)
@@ -1197,7 +1180,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
                     then Just (byteFileSize target)
                     else Nothing
   -- Structural inheritance: preserve format-specific data from the source patch
-  , contentsEBPMeta          = sourceContents >>= contentsEBPMeta
+  , contentsEBPMetadata      = sourceContents >>= contentsEBPMetadata
   , contentsFileIdDiz        = sourceContents >>= contentsFileIdDiz
   , contentsNINJA1Compressed = sourceContents >>= contentsNINJA1Compressed
   , contentsRomType     = Nothing
@@ -1245,7 +1228,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
 -- source description, source wins over fallback.
 data DescriptionSources = DescriptionSources
   { descriptionSourceCLI       :: !(Maybe EncodedText)
-  , descriptionSourceEBPMeta   :: !(Maybe ByteString.ByteString)
+  , descriptionSourceEBPMetadata   :: !(Maybe EBPMetadata)
   , descriptionSourceTypedText :: !(Maybe EncodedText)
   , descriptionSourceFallback  :: !EncodedText
   }
@@ -1258,9 +1241,8 @@ data DescriptionSources = DescriptionSources
 resolveDescription :: DescriptionSources -> EncodedText
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description
-  | Just meta <- descriptionSourceEBPMeta sources
-  , Just view <- parseEBPMetadata meta
-  , Just description <- ebpMetadataViewDescription view
+  | Just ebp <- descriptionSourceEBPMetadata sources
+  , Just description <- ebpMetadataDescription ebp
   , not (Text.null (encodedTextContent description))
   = description
   | Just typed <- descriptionSourceTypedText sources =
@@ -1281,6 +1263,14 @@ resolveEBPField cliValue ebpValue
   | Just provided <- cliValue  = provided
   | Just value    <- ebpValue  = value
   | otherwise                  = EncodedText EncodingUtf8 Text.empty
+
+-- | The @patcher@ field slap writes into every EBP metadata blob it
+-- emits — the project's name, tagged 'EncodingUtf8' because EBP
+-- metadata is JSON and JSON is UTF-8 by RFC 8259. Constant rather
+-- than inlined at the one call site so the bytes that identify a
+-- slap-emitted EBP have a single named home.
+slapPatcherIdentity :: EncodedText
+slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
 
 trimNullSpace :: String -> String
 trimNullSpace = reverse . dropWhile (\char -> char == ' ' || char == '\0') . reverse

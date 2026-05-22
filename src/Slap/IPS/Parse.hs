@@ -11,7 +11,6 @@ import Slap.IPS.Types
   , IPSVariantSpec(..)
   , IPSRecord(..)
   , IPSPatch(..)
-  , EBPMetadata(..)
   , EBPPatch(..)
   , IPSParseResult(..)
   , ipsRecordOffset
@@ -24,6 +23,7 @@ import Slap.IPS.Types
   , ipsRleFillByteLength
   , offsetWidthByteCount
   )
+import Slap.JSON (parseEBPMetadata)
 import Slap.Binary (getWord24BE)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..), OverlapCount(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -696,12 +696,14 @@ assembleCleanResult StandardIPS recordVector trailingBytes
             , ipsRecords             = recordVector
             , ipsTruncatedTargetSize = Nothing
             }
+          (parsedMetadata, metadataAdvisories) =
+            parseEBPMetadata trailingBytes
       in Right IPSCleanResult
            { ipsCleanResult   = IPSParseCleanEBP EBPPatch
                                   { ebpBasePatch = basePatch
-                                  , ebpMetadata  = EBPMetadata trailingBytes
+                                  , ebpMetadata  = parsedMetadata
                                   }
-           , ipsCleanAdvisories = []
+           , ipsCleanAdvisories = metadataAdvisories
            }
   | otherwise =
       Left (UnrecognizedTrailer LabelIPS

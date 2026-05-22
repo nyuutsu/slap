@@ -53,7 +53,6 @@ import Slap.IPS.Types
   , OffsetWidth(..)
   , IPSVariantSpec(..)
   , EBPMetadata(..)
-  , EBPMetadataFields(..)
   , variantSpec
   )
 import Slap.Text (encodedTextContent)
@@ -87,7 +86,6 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.=))
 import qualified Data.Aeson.Encoding as AesonEncoding
-import qualified Data.Text as Text
 
 ----------------------------------------------------------------------------
 -- Parameterized wire encoder
@@ -163,10 +161,11 @@ encodeEBPPatch
   :: [EncodedHunk]
   -> EBPMetadata
   -> PatchFileContents
-encodeEBPPatch records (EBPMetadata metadataBytes) =
+encodeEBPPatch records metadata =
   let baseStandardIPSBytes =
         unPatchFileContents
           (encodeIPSPatch StandardIPS records Nothing)
+      metadataBytes = buildEBPMetadataJSON metadata
   in PatchFileContents (baseStandardIPSBytes <> metadataBytes)
 
 ----------------------------------------------------------------------------
@@ -308,25 +307,29 @@ resolveSentinelCollisions label sentinel (InputFileContents source) =
         recordOffset  = splitOffset record
         recordPayload = splitPayload record
 
--- | Build the EBP-style JSON metadata blob from CLI-supplied
--- title / author / description fields. The four-key shape
--- (@patcher@, @title@, @author@, @description@) matches what
--- EBPatcher and every long-standing community tool emits. slap
--- fixes @patcher@ to @"slap"@ to identify itself as the source.
+-- | Build the EBP-style JSON metadata blob from a structured
+-- 'EBPMetadata'. The four-key shape (@patcher@, @title@, @author@,
+-- @description@) matches what EBPatcher and every long-standing
+-- community tool emits. Each field is emitted only when 'Just';
+-- absent ('Nothing') fields simply do not appear in the JSON
+-- output.
 --
 -- EBP metadata is JSON, so the emitter goes through @aeson@: the
 -- field values arrive as 'EncodedText' (each tagged with whichever
 -- encoding it came in under — CLI-locale or JSON-extracted UTF-8),
 -- and the 'Text' content lands in the JSON string slots verbatim.
 -- @aeson@'s 'Aeson.pairs' builds an 'Encoding' in declared order, so
--- the four-key sequence reaches the wire as @{patcher,title,author,description}@.
-buildEBPMetadataJSON :: EBPMetadataFields -> ByteString
-buildEBPMetadataJSON fields =
+-- the four-key sequence reaches the wire as
+-- @{patcher,title,author,description}@ when all four are present.
+buildEBPMetadataJSON :: EBPMetadata -> ByteString
+buildEBPMetadataJSON metadata =
   LazyByteString.toStrict (AesonEncoding.encodingToLazyByteString jsonEncoding)
   where
     jsonEncoding = Aeson.pairs
-      (  "patcher"     .= ("slap" :: Text.Text)
-      <> "title"       .= encodedTextContent (ebpMetadataTitle       fields)
-      <> "author"      .= encodedTextContent (ebpMetadataAuthor      fields)
-      <> "description" .= encodedTextContent (ebpMetadataDescription fields)
+      (  optionalField "patcher"     (ebpMetadataPatcher     metadata)
+      <> optionalField "title"       (ebpMetadataTitle       metadata)
+      <> optionalField "author"      (ebpMetadataAuthor      metadata)
+      <> optionalField "description" (ebpMetadataDescription metadata)
       )
+    optionalField _       Nothing      = mempty
+    optionalField keyName (Just value) = keyName .= encodedTextContent value

@@ -28,6 +28,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       noMetadataRequested, noConstraintsRequested, noDialectsRequested,
                       directConversionContract,
                       emptyContents, canConvert, convertDirect, conversionNotes)
+import Slap.IPS.Types (emptyEBPMetadata)
 import Slap.Create (createPatch)
 import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
@@ -74,7 +75,7 @@ fullContents = PatchContents
   , contentsValidation  = Just (ByteString.replicate 1024 0)
   , contentsUndoData    = Just [splitUndoHunkFromParsed (Offset 0) (ByteString.pack [0x00]) (ByteString.pack [0xFF])]
   , contentsTruncation  = Just (FileSize 512)
-  , contentsEBPMeta     = Just (ByteString.pack [0x7B, 0x7D])
+  , contentsEBPMetadata = Just emptyEBPMetadata
   , contentsRomType     = Just PlatformRaw
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
@@ -119,7 +120,7 @@ prop_noSurplusNoNotes = conjoin
             , contentsValidation  = if FieldValidation  `Set.member` kept then contentsValidation  fullContents else Nothing
             , contentsUndoData    = if FieldUndoData    `Set.member` kept then contentsUndoData    fullContents else Nothing
             , contentsTruncation  = if FieldTruncation  `Set.member` kept then contentsTruncation  fullContents else Nothing
-            , contentsEBPMeta     = if FieldEBPMeta     `Set.member` kept then contentsEBPMeta     fullContents else Nothing
+            , contentsEBPMetadata = if FieldEBPMeta     `Set.member` kept then contentsEBPMetadata fullContents else Nothing
             , contentsRomType     = if FieldRomType     `Set.member` kept then contentsRomType     fullContents else Nothing
             , contentsImageType   = if FieldImageType   `Set.member` kept then contentsImageType   fullContents else Nothing
             }
