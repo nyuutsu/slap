@@ -9,10 +9,15 @@ module Slap.PPF4.Types
   , ppf4PreambleLength
   , ppf4DescriptionLength
   , ppf4PostDescriptionLength
+    -- * Source/target size-pair rule
+  , ppf4RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
-import Slap.Measure (Offset, Length(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Measure (Offset, Length(..), FileSize,
+                     ActualSize(..), ExpectedSize(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.Text (EncodedText)
 
 -- | A fully parsed PPF4 patch.
@@ -80,3 +85,20 @@ ppf4DescriptionLength = Length 50
 -- + undo_flag (1) + expansion (1).
 ppf4PostDescriptionLength :: Length
 ppf4PostDescriptionLength = Length 4
+
+-- | PPF4 declines (source, target) pairs whose target is shorter than
+-- the source. PPF4's wire vocabulary has two record kinds — Replace
+-- (bounded to the original target's byte range) and Append (grows the
+-- target past the original's end) — and no command for declaring or
+-- producing a shorter output. Growth is fine and is what Append
+-- exists for; shrinkage is not expressible. See @docs\/ppf\/spec.md@,
+-- "Size-changing patches" under PPF4, for the upstream picture.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreatePPF4' arm (added when PPF4 gains a create entry).
+ppf4RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ppf4RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelPPF4
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))

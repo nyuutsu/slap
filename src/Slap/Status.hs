@@ -214,18 +214,40 @@ data CursorKind = SourceCursor | TargetCursor
 -- UnencodeabilityReason
 ----------------------------------------------------------------------------
 
--- | Why a (source, target) pair cannot be encoded as a UPS patch.
--- The UPS spec sells bi-directional patching as a defining feature:
--- the same patch applied to either side recovers the other. Slap's
--- 'createUPS' refuses pairs that would silently break that guarantee.
+-- | Why a (source, target) pair cannot be encoded as a patch in some
+-- format. Carried by 'UnencodeablePair' alongside the offending
+-- format's 'FormatLabel'; the renderer reads both to compose the
+-- user-visible refusal message.
+--
+-- Each variant names a specific structural reason a particular kind
+-- of pair has no representation under at least one format slap can
+-- emit. The variant set grows as new format-level refusals land;
+-- adding one means adding a render arm in
+-- 'renderUnencodeabilityReason' and (usually) a call site in the
+-- format's create-path enforcer.
 data UnencodeabilityReason
-  = UPSSourceTailNonZero   -- ^ Source has non-zero bytes past target size.
-                           --   Refused to preserve UPS's bi-directional undo
-                           --   guarantee (spec §2): the block stream only
-                           --   covers @[0, target_size)@, so forward apply
-                           --   produces the correct target, but reverse apply
-                           --   reconstructs a source with zeros where the
-                           --   non-zero tail bytes used to be.
+  = UPSSourceTailNonZero
+    -- ^ UPS: source has non-zero bytes past target size. Refused to
+    -- preserve UPS's bi-directional undo guarantee (spec §2): the
+    -- block stream only covers @[0, target_size)@, so forward apply
+    -- produces the correct target, but reverse apply reconstructs a
+    -- source with zeros where the non-zero tail bytes used to be.
+  | TargetGrowsBeyondSource  !ActualSize !ExpectedSize
+    -- ^ Target file is larger than the source. Raised by formats
+    -- whose 'Slap.Measure.SizeChangePolicy' is
+    -- 'Slap.Measure.ForbidTargetSizeChange' — PPF1, PPF2, PPF3 —
+    -- where the upstream reference encoders refuse on size mismatch
+    -- and the wire format has no growth marker. The 'ActualSize' is
+    -- the source's size; the 'ExpectedSize' is the would-be target's
+    -- size.
+  | TargetShrinksBelowSource !ActualSize !ExpectedSize
+    -- ^ Target file is smaller than the source. Raised by formats
+    -- whose 'Slap.Measure.SizeChangePolicy' is
+    -- 'Slap.Measure.ForbidTargetShrinkage' (IPS32, EBP) or
+    -- 'Slap.Measure.ForbidTargetSizeChange' (PPF1, PPF2, PPF3) —
+    -- where the wire format has no truncation marker. The
+    -- 'ActualSize' is the source's size; the 'ExpectedSize' is the
+    -- would-be target's size.
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
@@ -603,8 +625,18 @@ data SlapError
   | UndoFailed FormatLabel ApplyError
 
   -- Create / Encode
-  | CannotExpressTargetShrinkage FormatLabel ActualSize ExpectedSize
-  | UPSUnencodeablePair FormatLabel UnencodeabilityReason
+
+  -- | A target format's create path refused this (source, target) pair
+  -- for the reason carried in the 'UnencodeabilityReason'. The single
+  -- carrier for every "this format cannot encode this pair, here's
+  -- why" refusal — formerly split between 'UPSUnencodeablePair' (UPS
+  -- only) and 'CannotExpressTargetShrinkage' (size-shrinkage only);
+  -- both have folded into this one. Raised by 'Slap.UPS.Create' for
+  -- the UPS-specific tail invariant, and by each format's per-format
+  -- @\<format\>RejectIncompatibleSizeChange@ smart-checker (called via
+  -- 'Slap.Convert.rejectIncompatibleSizeChange') for the cross-format
+  -- size-change refusals.
+  | UnencodeablePair FormatLabel UnencodeabilityReason
   | NarrowingError !NarrowingFailure
 
   -- | A create-path input (source or target) is larger than the
@@ -724,6 +756,16 @@ data SlapAdvisory
   -- Patch quality
   = EmptyPatch FormatLabel EmptyUnit
   | NoEOFMarker FormatLabel
+
+  -- | A PPF1/PPF2/PPF3 patch produced an output longer than the
+  -- source at apply time. The format's wire vocabulary has no
+  -- command for declaring growth; a patch that produces growth
+  -- anyway sits outside what the upstream tooling intends. Slap
+  -- applies it but raises this advisory so the user knows the patch
+  -- is shaped unusually. The 'FileSize' is the source's actual
+  -- length; the 'Length' is how many bytes past that length the
+  -- output extends.
+  | PPFApplyGrewPastSource FormatLabel FileSize Length
 
   -- | An IPS-family RLE record whose run-length field was zero was
   -- accepted verbatim as a no-op. The spec does not speak to the
@@ -1009,7 +1051,7 @@ data Outcome a = Outcome
   { outcomeValue      :: !a
   , outcomeAdvisories :: ![SlapAdvisory]
   }
-  deriving (Show, Functor)
+  deriving (Eq, Show, Functor)
 
 -- | Wrap an advisory-free value in the 'Outcome' envelope. Every
 -- wrap site at the apply/undo boundary uses this so the @[]@ list
@@ -1457,15 +1499,9 @@ renderSlapError (ApplyFailed label applyErr) =
 renderSlapError (UndoFailed label applyErr) =
   formatLabelName label <> " undo: " <> renderApplyError applyErr
 
-renderSlapError (CannotExpressTargetShrinkage label (ActualSize sourceSize) (ExpectedSize targetSize)) =
-  formatLabelName label <> ": cannot express an output file smaller than the input"
-  <> " (input: 0x" <> renderHexAsText (unFileSize sourceSize)
-  <> " bytes, output: 0x" <> renderHexAsText (unFileSize targetSize)
-  <> " bytes); this format has no truncation marker"
-
-renderSlapError (UPSUnencodeablePair label reason) =
-  formatLabelName label <> ": cannot encode pair: "
-  <> renderUnencodeabilityReason reason
+renderSlapError (UnencodeablePair label reason) =
+  formatLabelName label <> ": won't produce a patch for this input→output: "
+  <> renderUnencodeabilityReason label reason
 
 renderSlapError (NarrowingError nf) = renderNarrowingFailure nf
 
@@ -1644,6 +1680,19 @@ renderSlapAdvisory (EmptyPatch _label unit) =
 
 renderSlapAdvisory (NoEOFMarker _label) =
   "no EOF marker (patch may be truncated)"
+
+renderSlapAdvisory (PPFApplyGrewPastSource label (FileSize sourceSize) (Length overflow)) =
+  formatLabelName label
+  <> ": this patch makes the output longer than the input (input 0x"
+  <> renderHexAsText sourceSize <> " bytes, output extends 0x"
+  <> renderHexAsText overflow <> " bytes further)"
+  <> case label of
+       -- PPF2 permits growth (its size check is advisory), so this is
+       -- purely informational. PPF1/PPF3 are intended for same-size
+       -- patches, so growth there is worth flagging as unusual.
+       LabelPPF2 -> ""
+       _         -> "; growth is unusual for this format, which is"
+                    <> " intended for same-size patching"
 
 renderSlapAdvisory (ZeroCountRLERecord label actionIndex) =
   formatLabelName label
@@ -1854,10 +1903,27 @@ renderSlapAdvisory (VerificationOptedOutByCreator label) =
 plural :: Int -> Text -> Text -> Text
 plural n singular pluralForm = if n == 1 then singular else pluralForm
 
-renderUnencodeabilityReason :: UnencodeabilityReason -> Text
-renderUnencodeabilityReason UPSSourceTailNonZero =
-  "source has non-zero bytes past target size;"
-  <> " these cannot be represented bi-directionally in a UPS patch"
+-- | Render the reason a (source, target) pair was refused. Takes the
+-- 'FormatLabel' so an arm can vary its wording per format where the
+-- honest explanation differs; arms that don't need to differentiate
+-- ignore the label. Wording is deliberately plain here and refined
+-- per case as the need arises.
+renderUnencodeabilityReason :: FormatLabel -> UnencodeabilityReason -> Text
+renderUnencodeabilityReason _label UPSSourceTailNonZero =
+  "the input has non-zero bytes past the end of the output;"
+  <> " a UPS patch is bi-directional and cannot represent them"
+renderUnencodeabilityReason _label
+  (TargetGrowsBeyondSource (ActualSize sourceSize) (ExpectedSize targetSize)) =
+  "the output is larger than the input"
+  <> " (input 0x" <> renderHexAsText (unFileSize sourceSize)
+  <> " bytes, output 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " bytes); this format is intended for same-size patching"
+renderUnencodeabilityReason _label
+  (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)) =
+  "the output is smaller than the input"
+  <> " (input 0x" <> renderHexAsText (unFileSize sourceSize)
+  <> " bytes, output 0x" <> renderHexAsText (unFileSize targetSize)
+  <> " bytes); this format does not represent shrinking"
 
 -- | Render a trailer marker's raw bytes for inclusion in an error
 -- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable
@@ -2166,6 +2232,10 @@ slapAdvisorySeverity advisory = case advisory of
   -- time that altered output bytes vs the wire, or integrity checks
   -- that didn't agree with the patch's stored hashes.
   NoEOFMarker{}                        -> SeverityWarning
+  -- PPF2 permits growth, so its apply-grow advisory is a note; PPF1/PPF3
+  -- are intended same-size, so growth there warns.
+  PPFApplyGrewPastSource LabelPPF2 _ _ -> SeverityNote
+  PPFApplyGrewPastSource{}             -> SeverityWarning
   IPSTruncationMarkerHonored{}         -> SeverityWarning
   IPSRecordsClippedByMarker{}          -> SeverityWarning
   IPSTruncationMarkerIgnored{}         -> SeverityWarning

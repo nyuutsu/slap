@@ -32,7 +32,7 @@ import Data.Word (Word8)
 import Foreign.Storable (pokeByteOff)
 
 -- | Create a UPS patch from source and target bytestrings. Returns
--- 'Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)' when
+-- 'Left (UnencodeablePair LabelUPS UPSSourceTailNonZero)' when
 -- @source@ extends past @target@ with non-zero bytes: those bytes
 -- have nowhere to be encoded in the bi-directional XOR stream
 -- (the block stream only covers @[0, target_size)@), and accepting
@@ -83,7 +83,7 @@ encodeUPSBlock (UPSBlock skipLength xorData) =
 diffToBlocks :: InputFileContents -> OutputFileContents -> Either SlapError [UPSBlock]
 diffToBlocks (InputFileContents source) (OutputFileContents target)
   | not sourceTailAllZero =
-      Left (UPSUnencodeablePair LabelUPS UPSSourceTailNonZero)
+      Left (UnencodeablePair LabelUPS UPSSourceTailNonZero)
   | otherwise = Right (scan (Offset 0) (Length 0) [])
   where
     targetLength = ByteString.length target

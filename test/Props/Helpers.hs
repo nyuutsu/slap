@@ -93,8 +93,11 @@ genShrinkingPair = do
   target <- ByteString.pack <$> vectorOf targetLength arbitrary
   pure (source, target)
 
--- | (source, target) of equal length.  UPS undo is only lossless when
--- source and target sizes match (the normal ROM patching case).
+-- | (source, target) of equal length. Used by formats whose wire
+-- spec or upstream tooling permits only same-size patching: UPS undo
+-- (only lossless when source and target sizes match) and PPF1\/PPF2\/PPF3
+-- (whose @<format>RejectIncompatibleSizeChange@ checkers refuse any
+-- size mismatch to match the upstream MakePPF reference encoders).
 genSameSizePair :: Gen (ByteString, ByteString)
 genSameSizePair = do
   source <- genByteString

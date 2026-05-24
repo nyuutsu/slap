@@ -41,21 +41,26 @@ module Slap.Convert
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
-import Slap.PPF1.Types (PPF1Origin(..), ppf1Limits, ppf1MaxRecordPayload)
+import Slap.PPF1.Types (PPF1Origin(..), ppf1Limits, ppf1MaxRecordPayload,
+                        ppf1RejectIncompatibleSizeChange)
 import qualified Slap.PPF2.Create as PPF2
 import Slap.PPF2.Types (PPF2ValidationBlock(..),
                         narrowPPF2FileId, narrowPPF2SourceSize,
                         ppf2Limits, ppf2MaxRecordPayload,
-                        ppf2ValidationOffset, ppf2ValidationSize)
+                        ppf2ValidationOffset, ppf2ValidationSize,
+                        ppf2RejectIncompatibleSizeChange)
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
-                        narrowPPF3FileId, ppf3MaxRecordPayload)
+                        narrowPPF3FileId, ppf3MaxRecordPayload,
+                        ppf3RejectIncompatibleSizeChange)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        IPSVariantSpec(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec,
-                       ipsLimits, ips32Limits, ebpLimits)
+                       ipsLimits, ips32Limits, ebpLimits,
+                       ips32RejectIncompatibleSizeChange,
+                       ebpRejectIncompatibleSizeChange)
 import qualified Slap.BPS.Create as BPS
 import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
@@ -578,8 +583,8 @@ rejectIncompatibleConstraints format constraints =
 
 -- | Refuse to emit an IPS truncation marker whose declared size
 -- doesn't satisfy SNESTool's shape filter, when the user has opted
--- in. Parallel to 'rejectTruncation'. A no-op when constraints don't
--- request the gate or when 'contentsTruncation' is 'Nothing'.
+-- in. A no-op when constraints don't request the gate or when
+-- 'contentsTruncation' is 'Nothing'.
 rejectNonSMCShapedTruncation
   :: RequestedConstraints -> PatchContents -> Either SlapError ()
 rejectNonSMCShapedTruncation constraints contents
@@ -588,6 +593,47 @@ rejectNonSMCShapedTruncation constraints contents
       Nothing                          -> Right ()
       Just size | isSMCShapedSize size -> Right ()
                 | otherwise            -> Left (TruncationViolatesSMCShape size)
+
+----------------------------------------------------------------------------
+-- Source/target size-pair refusal (per-format wire-rule dispatch)
+----------------------------------------------------------------------------
+
+-- | Run the target format's source\/target size-pair rule. Pattern-
+-- matched exhaustively across 'DirectCreate' so adding a constructor
+-- fires @-Wincomplete-patterns@ and forces an explicit decision; each
+-- arm dispatches to the format's own
+-- @\<format\>RejectIncompatibleSizeChange@ checker, or routes to
+-- 'acceptsAnySizeChange' when the format imposes no size-pair
+-- refusal.
+--
+-- Differential formats are absent from this dispatcher by design.
+-- Every differential format slap can emit carries source and target
+-- sizes natively in its wire shape, so it would be unimaginable for
+-- one to refuse on size grounds: any (source, target) pair is
+-- representable.
+--
+-- Called as a precondition of 'createPatch'\'s 'CreateDirect' arm,
+-- once per create, with the actual source\/target byte counts in
+-- hand. Source-less convert ('convertDirect') does not invoke this
+-- dispatcher — it has no source bytes to size against.
+rejectIncompatibleSizeChange
+  :: DirectCreate -> FileSize -> FileSize -> Either SlapError ()
+rejectIncompatibleSizeChange CreatePPF1   = ppf1RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreatePPF2   = ppf2RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreatePPF3   = ppf3RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreateIPS32  = ips32RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreateEBP    = ebpRejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreateIPS    = acceptsAnySizeChange
+rejectIncompatibleSizeChange CreateNINJA1 = acceptsAnySizeChange
+rejectIncompatibleSizeChange CreatePMSR   = acceptsAnySizeChange
+rejectIncompatibleSizeChange CreateAPSN64 = acceptsAnySizeChange
+
+-- | Leaf consumed by 'rejectIncompatibleSizeChange' for formats that
+-- impose no source\/target size-pair refusal. Pulled out so the
+-- permissive rows of the dispatcher read declaratively instead of as
+-- anonymous lambdas.
+acceptsAnySizeChange :: FileSize -> FileSize -> Either SlapError ()
+acceptsAnySizeChange _sourceSize _targetSize = Right ()
 
 ----------------------------------------------------------------------------
 -- Dialects (parser/encoder wire-format configuration)
@@ -884,7 +930,6 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             (IPS.encodeIPSPatch StandardIPS records (contentsTruncation contents))
             [])
   CreateIPS32 -> do
-    rejectTruncation LabelIPS32 contents source
     resolvedRaw <- resolveIPSSentinel LabelIPS32 IPS32
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
@@ -896,7 +941,6 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             (IPS.encodeIPSPatch IPS32 records Nothing)
             [])
   CreateEBP -> do
-    rejectTruncation LabelEBP contents source
     resolvedRaw <- resolveIPSSentinel LabelEBP StandardIPS
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
@@ -919,11 +963,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
             (IPS.encodeEBPPatch records metadata)
             [])
   CreatePPF1 -> do
-    rejectTruncation LabelPPF1 contents source
     records <- narrow (splitHunks ppf1MaxRecordPayload (contentsRecords contents))
     Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records descriptionTyped)
   CreatePPF2 -> do
-    rejectTruncation LabelPPF2 contents source
     -- The validation block lives on 'contentsValidation' regardless
     -- of how it got there: 'buildContents' extracts it from source
     -- bytes for the create path, and 'parseSomePatchFromPPF2' carries
@@ -1017,14 +1059,6 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       IPS.resolveSentinelCollisions label
         (SentinelOffset (ipsVariantSentinel (variantSpec variant)))
         source
-    rejectTruncation :: FormatLabel -> PatchContents -> InputFileContents -> Either SlapError ()
-    rejectTruncation label patchContents (InputFileContents sourceBytes) =
-      case contentsTruncation patchContents of
-        Just truncatedTargetSize ->
-          Left (CannotExpressTargetShrinkage label
-                  (ActualSize (byteFileSize sourceBytes))
-                  (ExpectedSize truncatedTargetSize))
-        Nothing -> Right ()
     cliDescription   = requestedDescription meta
     cliTitle  = requestedTitle meta
     cliAuthor = requestedAuthor meta
@@ -1080,9 +1114,12 @@ createPatch :: CreateFormat
             -> RequestedPatchMetadata -> Maybe PatchContents
             -> RequestedConstraints -> RequestedDialects
             -> Either SlapError CreateResult
-createPatch (CreateDirect format) _resolvedNames source target meta sourceContents constraints dialects =
+createPatch (CreateDirect format) _resolvedNames source target meta sourceContents constraints dialects = do
+  rejectIncompatibleSizeChange format
+    (byteFileSize (unInputFileContents  source))
+    (byteFileSize (unOutputFileContents target))
   let contents = buildContents format source target meta sourceContents
-  in encodeDirect contents source format meta (encodingLimits format) constraints dialects
+  encodeDirect contents source format meta (encodingLimits format) constraints dialects
 createPatch (CreateDifferential format) maybeResolvedNames source target meta _sourceContents _constraints _dialects = case format of
   -- The constraints parameter is unused on the differential arm: today
   -- no differential format honors any constraint ('acceptedConstraints'
@@ -1172,11 +1209,15 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsUndoData    = if needs FieldUndoData
                     then Just (splitUndoHunks ppf3MaxRecordPayload source patchHunks)
                     else Nothing
-  -- Populated whenever the target is smaller than the source regardless
-  -- of whether the target format carries a truncation marker: formats
-  -- that can't express truncation (IPS32, EBP) rely on this field being
-  -- set so 'rejectTruncation' in 'encodeDirect' can refuse the encoding
-  -- rather than silently produce a non-truncating patch.
+  -- Carries the truncated target size when @target < source@. Today's
+  -- live consumers: 'encodeDirect's 'CreateIPS' arm, which threads the
+  -- value into 'IPS.encodeIPSPatch' as the post-EOF truncation marker;
+  -- 'rejectNonSMCShapedTruncation', which inspects it when the user has
+  -- opted into 'RequireSMCShapedTruncation'; and 'provides' \/
+  -- 'fieldNote', which surface 'FieldTruncation' presence and drops on
+  -- the convert seam. The format-level shrinkage refusal lives
+  -- elsewhere now — see 'rejectIncompatibleSizeChange' and each
+  -- format's own '<format>RejectIncompatibleSizeChange' checker.
   , contentsTruncation  = if ByteString.length target < ByteString.length source
                     then Just (byteFileSize target)
                     else Nothing

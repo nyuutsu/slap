@@ -315,7 +315,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
           , contentsMetadata = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noAdvisories (PPF1.applyPPF1 patch source)) }
+          { runApply = \source -> pure (PPF1.applyPPF1 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = noVerification
       , patchAdvisories       = parseAdvisories
@@ -371,7 +371,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
           , contentsMetadata = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noAdvisories (PPF2.applyPPF2 patch source)) }
+          { runApply = \source -> pure (PPF2.applyPPF2 patch source) }
       , patchUndo           = Nothing
       , patchVerification   = ppfVerification
       , patchAdvisories       = parseAdvisories
@@ -437,7 +437,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
           , contentsMetadata = Nothing
           })
       , patchApply          = ApplyStrategy
-          { runApply = \source -> pure (fmap noAdvisories (PPF3.applyPPF3 patch source)) }
+          { runApply = \source -> pure (PPF3.applyPPF3 patch source) }
       , patchUndo           = if PPF3.ppf3HasUndo patch
                                then Just (UndoStrategy (fmap noAdvisories . PPF3.undoPPF3 patch))
                                else Nothing

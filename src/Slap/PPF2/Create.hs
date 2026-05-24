@@ -8,10 +8,14 @@
 --
 -- Caller responsibilities (enforced upstream in 'Slap.Convert'):
 --
--- * Same-size or growing target. PPF2 cannot express truncation —
---   no truncation marker exists in the wire format. The convert
---   layer's 'rejectTruncation' refuses shrinking-target inputs
---   with 'CannotExpressTargetShrinkage'.
+-- * Same-size or growing target. PPF2 can shrink nothing — records
+--   only overwrite or add bytes — but growth is allowed, since PPF2's
+--   source-size header is an advisory identity check rather than an
+--   integrity rule. The convert layer's
+--   'Slap.Convert.rejectIncompatibleSizeChange' dispatches to
+--   'Slap.PPF2.Types.ppf2RejectIncompatibleSizeChange', which refuses
+--   only shrinkage. See @docs\/ppf\/spec.md@, "Size-changing patches"
+--   under PPF2.
 --
 -- * Source size ≥ 0x9720 bytes. Smaller sources can't supply a
 --   1024-byte validation block at offset 0x9320; the convert layer

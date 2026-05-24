@@ -69,5 +69,5 @@ prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.nu
       Right (Parsed parsed _parseWarnings) ->
         case PPF3.applyPPF3 parsed (InputFileContents source) of
           Left err -> counterexample ("apply failed: " ++ show err) $ property False
-          Right applied ->
+          Right (Outcome applied _advisories) ->
             PPF3.undoPPF3 parsed applied === Right (InputFileContents source)

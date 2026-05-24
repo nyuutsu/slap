@@ -39,6 +39,9 @@ module Slap.IPS.Types
   , ipsLimits
   , ips32Limits
   , ebpLimits
+    -- * Source/target size-pair rules
+  , ips32RejectIncompatibleSizeChange
+  , ebpRejectIncompatibleSizeChange
   ) where
 
 import Data.Bits ((.&.))
@@ -48,6 +51,7 @@ import Data.Vector (Vector)
 import Data.Word (Word8)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Narrow (EncodingLimits(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.Text (EncodedText)
 import Slap.Measure
   ( Offset(..)
@@ -56,6 +60,8 @@ import Slap.Measure
   , Cursor(..)
   , DeclaredTargetSize(..)
   , NaturalTargetSize(..)
+  , ActualSize(..)
+  , ExpectedSize(..)
   , byteLength
   , ipsSentinel
   , ips32Sentinel
@@ -466,6 +472,35 @@ ips32Limits = EncodingLimits
 -- with 'StandardIPS'.
 ebpLimits :: EncodingLimits
 ebpLimits = ipsLimits { formatLabel = LabelEBP }
+
+----------------------------------------------------------------------------
+-- Source/target size-pair rules
+----------------------------------------------------------------------------
+
+-- | IPS32 declines (source, target) pairs whose target is shorter
+-- than the source. IPS32 has no truncation extension in its wire
+-- vocabulary, so target shrinkage has no on-wire representation.
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through
+-- its 'CreateIPS32' arm.
+ips32RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ips32RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelIPS32
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
+
+-- | EBP declines (source, target) pairs whose target is shorter than
+-- the source. EBP is structurally a 'StandardIPS' patch with a JSON
+-- metadata trailer; the trailer slot is claimed by the JSON, leaving
+-- no room for a truncation marker. Consumed by
+-- 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreateEBP' arm.
+ebpRejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ebpRejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelEBP
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
 
 ----------------------------------------------------------------------------
 -- Truncation-marker disposition

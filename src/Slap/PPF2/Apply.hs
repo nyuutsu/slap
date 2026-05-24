@@ -9,7 +9,8 @@ module Slap.PPF2.Apply (applyPPF2) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..))
 import Slap.Binary (copyRegion)
-import Slap.Status (SlapError(..), ApplyError(..))
+import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
+                    Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
@@ -27,12 +28,12 @@ import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
 
-applyPPF2 :: PPF2Patch -> InputFileContents -> Either SlapError OutputFileContents
+applyPPF2 :: PPF2Patch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
 applyPPF2 patch (InputFileContents source)
   | unFileSize outputFileSize < 0 =
       Left (NegativeTargetSize LabelPPF2 outputFileSize)
   | unFileSize outputFileSize == 0 =
-      Right (OutputFileContents ByteString.empty)
+      Right (noAdvisories (OutputFileContents ByteString.empty))
   | otherwise = unsafePerformIO $ do
       (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
@@ -44,7 +45,7 @@ applyPPF2 patch (InputFileContents source)
         pure (0, unFileSize outputFileSize, maybeErr)
       pure $ case outcome of
         Just applyErr -> Left (ApplyFailed LabelPPF2 applyErr)
-        Nothing       -> Right (OutputFileContents result)
+        Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
   where
     sourceEnd      = Offset (ByteString.length source)
     outputEnd      = computeOutputEnd sourceEnd (ppf2Records patch)
@@ -52,6 +53,13 @@ applyPPF2 patch (InputFileContents source)
     initialCopyLength = minLength
                           (distance (Offset 0) sourceEnd)
                           (distance (Offset 0) outputEnd)
+
+    growthAdvisories
+      | outputEnd > sourceEnd =
+          [PPFApplyGrewPastSource LabelPPF2
+             (offsetToFileSize sourceEnd)
+             (distance sourceEnd outputEnd)]
+      | otherwise = []
 
     computeOutputEnd :: Offset -> [PPF2Record] -> Offset
     computeOutputEnd sourceBufferEnd = foldl' accumulateEnd sourceBufferEnd

@@ -68,6 +68,7 @@ import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
+                   noAdvisories,
                    SlapAdvisory(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -599,14 +600,14 @@ prop_ebp = forAll genPairNoShrink $ \(source, target) ->
 -- under both PC-origin (LE) and Amiga-origin (BE) settings, with the
 -- same origin used on both sides of the round-trip.
 prop_ppf1 :: Property
-prop_ppf1 = forAll genPairNoShrink $ \(source, target) ->
+prop_ppf1 = forAll genSameSizePair $ \(source, target) ->
   forAll (elements [PPF1OriginPC, PPF1OriginAmiga]) $ \origin ->
     let dialects = noDialectsRequested { requestedPPF1Origin = origin }
     in case createPatch (CreateDirect CreatePPF1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested dialects of
          Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
          Right (CreateResult patch _) -> case PPF1.parsePPF1 origin patch of
             Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
-            Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (OutputFileContents target)
+            Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
 
 -- | PPF2 needs the source ROM to be at least 'ppf2ValidationOffset +
 -- ppf2ValidationSize' = 0x9720 bytes for the validation block. Use a
@@ -617,16 +618,17 @@ prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (OutputFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
   where
     -- 0x9720 is the absolute minimum; bump to 0xA000 so QuickCheck-shrunk
     -- examples still fit, with a few KB of records-target headroom.
+    -- PPF2 also refuses size mismatch via 'ppf2RejectIncompatibleSizeChange'
+    -- to match its upstream MakePPF, so source and target share length.
     minimumPPF2Source = 0xA000
     genPPF2SizedPair = do
       sourceLen <- choose (minimumPPF2Source, minimumPPF2Source + 8192)
-      growth    <- choose (0, 1024)
       src <- ByteString.pack <$> vectorOf sourceLen arbitrary
-      tgt <- ByteString.pack <$> vectorOf (sourceLen + growth) arbitrary
+      tgt <- ByteString.pack <$> vectorOf sourceLen arbitrary
       pure (src, tgt)
 
 -- | A 'FileSize' one byte past the 'Word32' wire-field ceiling
@@ -690,12 +692,12 @@ apsGbaSourceSizeAdversarial =
                ("expected NarrowingError FieldValueExceedsBound, got " ++ show other)
 
 prop_ppf3 :: Property
-prop_ppf3 = forAll genPairNoShrink $ \(source, target) ->
+prop_ppf3 = forAll genSameSizePair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
-       Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (OutputFileContents target)
+       Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->

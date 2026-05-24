@@ -89,7 +89,7 @@ prop_upsTrunc = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> truncated UPS.parseUPS patch
 
 prop_ppf3Trunc :: Property
-prop_ppf3Trunc = forAll genPairNoShrink $ \(source, target) ->
+prop_ppf3Trunc = forAll genSameSizePair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> truncated PPF3.parsePPF3 patch

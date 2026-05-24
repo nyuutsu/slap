@@ -7,11 +7,11 @@
 -- either, and matching that gives byte-equivalent output for the
 -- common case.
 --
--- Same-size and growing-target patches are expressible. Truncating
--- patches are not (PPF1 has no size field, and the wire format
--- offers no way to declare that the target is shorter than the
--- source); the convert-layer caller refuses those before reaching
--- this encoder.
+-- Same-size patches only. PPF1's wire format has no command for
+-- declaring growth or shrinkage; see 'Slap.PPF1.Types.ppf1RejectIncompatibleSizeChange'
+-- for slap's enforcement and @docs\/ppf\/spec.md@ for the upstream
+-- picture. The convert layer's 'Slap.Convert.rejectIncompatibleSizeChange'
+-- runs the check before reaching this encoder.
 module Slap.PPF1.Create
   ( encodePPF1
   ) where

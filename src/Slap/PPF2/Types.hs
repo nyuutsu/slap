@@ -30,15 +30,18 @@ module Slap.PPF2.Types
   , ppf2FileIdFooterLength
     -- * Encoding limits
   , ppf2Limits
+    -- * Source/target size-pair rule
+  , ppf2RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word32)
-import Slap.Status (SlapError(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..), FileSize(..))
+import Slap.Measure (Length(..), Offset(..), FileSize(..),
+                     ActualSize(..), ExpectedSize(..))
 import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
@@ -172,3 +175,21 @@ ppf2Limits = EncodingLimits
   { maximumOffset = Offset 0xFFFFFFFF
   , formatLabel   = LabelPPF2
   }
+
+-- | PPF2 declines (source, target) pairs whose target is shorter than
+-- the source. Shrinking has no representation — PPF2 records only
+-- overwrite or add bytes, never remove them. Growth is allowed: PPF2's
+-- only same-size signal is the header source-size field, which its own
+-- reference applier treats as an advisory identity check, not an
+-- integrity rule — so a growing PPF2 patch is within the format's
+-- accepted behavior, unlike PPF1\/PPF3. See @docs\/ppf\/spec.md@,
+-- "Size-changing patches" under PPF2.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreatePPF2' arm.
+ppf2RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ppf2RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelPPF2
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))

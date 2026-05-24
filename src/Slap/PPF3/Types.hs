@@ -28,15 +28,18 @@ module Slap.PPF3.Types
   , ppf3FileIdLengthFieldWidth
   , ppf3FileIdMarkerLength
   , ppf3FileIdFooterLength
+    -- * Source/target size-pair rule
+  , ppf3RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
-import Slap.Status (SlapError(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (Length(..), Offset(..), FileSize,
+                     ActualSize(..), ExpectedSize(..))
 import Slap.Narrow (narrowToWord16)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextLenient)
@@ -158,3 +161,22 @@ ppf3FileIdMarkerLength = Length 18
 -- | Length of the @\"\@END_FILE_ID.DIZ\"@ marker following the content.
 ppf3FileIdFooterLength :: Length
 ppf3FileIdFooterLength = Length 16
+
+-- | PPF3 declines (source, target) pairs whose sizes differ. Shrinking
+-- has no representation — records only overwrite or add bytes, never
+-- remove them. Growth is refused too: PPF3 is built around same-size
+-- patching (its optional undo trail only coheres when the file's size
+-- is unchanged), so slap keeps to that shape on create. See
+-- @docs\/ppf\/spec.md@, "Size-changing patches" under PPF3, for the
+-- fuller picture.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreatePPF3' arm.
+ppf3RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ppf3RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize == targetSize = Right ()
+  | sourceSize <  targetSize = Left (UnencodeablePair LabelPPF3
+      (TargetGrowsBeyondSource  (ActualSize sourceSize) (ExpectedSize targetSize)))
+  | otherwise                = Left (UnencodeablePair LabelPPF3
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))

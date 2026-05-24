@@ -5,6 +5,13 @@
 -- is set) an equal-length undo payload after each write payload.
 -- Optional FILE_ID.DIZ trailer is appended verbatim by the caller
 -- after this function returns its bytes.
+--
+-- Same-size patches only. PPF3's wire format has no command for
+-- declaring growth or shrinkage; see
+-- 'Slap.PPF3.Types.ppf3RejectIncompatibleSizeChange' for slap's
+-- enforcement and @docs\/ppf\/spec.md@ for the upstream picture.
+-- The convert layer's 'Slap.Convert.rejectIncompatibleSizeChange'
+-- runs the check before reaching this encoder.
 module Slap.PPF3.Create
   ( encodePPF3
   , encodeFileIdDiz

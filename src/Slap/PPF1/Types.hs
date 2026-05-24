@@ -18,12 +18,16 @@ module Slap.PPF1.Types
   , ppf1MaxRecordPayload
     -- * Encoding limits
   , ppf1Limits
+    -- * Source/target size-pair rule
+  , ppf1RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (Length(..), Offset(..),
+                     FileSize, ActualSize(..), ExpectedSize(..))
 import Slap.Narrow (EncodingLimits(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.Text (EncodedText)
 
 -- | A single PPF1 record. Both literal and RLE forms expand to the
@@ -88,3 +92,21 @@ ppf1Limits = EncodingLimits
   { maximumOffset = Offset 0xFFFFFFFF
   , formatLabel   = LabelPPF1
   }
+
+-- | PPF1 declines (source, target) pairs whose sizes differ. PPF1's
+-- wire format has no command for declaring growth or shrinkage; the
+-- spec is silent on the question and the reference maker refuses
+-- size mismatch as a maker-side policy. Slap honors the maker-side
+-- intent on emit. See @docs\/ppf\/spec.md@, "Size-changing patches"
+-- under PPF1, for the full upstream picture.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreatePPF1' arm.
+ppf1RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ppf1RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize == targetSize = Right ()
+  | sourceSize <  targetSize = Left (UnencodeablePair LabelPPF1
+      (TargetGrowsBeyondSource  (ActualSize sourceSize) (ExpectedSize targetSize)))
+  | otherwise                = Left (UnencodeablePair LabelPPF1
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
