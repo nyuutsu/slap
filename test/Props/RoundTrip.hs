@@ -64,6 +64,8 @@ import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Create as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 import qualified Slap.PPF3.Types as PPF3
+import qualified Slap.PPF4.Apply as PPF4
+import qualified Slap.PPF4.Parse as PPF4
 import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 
 import Slap.Binary (md5, sha1, diffHunks)
@@ -147,6 +149,8 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2DescriptionCodepointAwareTruncation
       , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
                  ppf2FileIdDizRoundTrip
+      , testCase "growth: target longer than source round-trips with a grow note"
+                 ppf2GrowthRoundTrip
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
@@ -156,6 +160,11 @@ roundTripTests = testGroup "RoundTrip"
                  ppf3DescriptionCodepointAwareTruncation
       , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
                  ppf3FileIdDizRoundTrip
+      ]
+  , testGroup "PPF4"
+      [ testProperty "round-trip" prop_ppf4
+      , testCase "straddling hunk splits at the source boundary"
+                 ppf4StraddleRoundTrip
       ]
   , testGroup "PMSR"
       [ testProperty "round-trip" prop_pmsr
@@ -621,15 +630,38 @@ prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
        Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
   where
     -- 0x9720 is the absolute minimum; bump to 0xA000 so QuickCheck-shrunk
-    -- examples still fit, with a few KB of records-target headroom.
-    -- PPF2 also refuses size mismatch via 'ppf2RejectIncompatibleSizeChange'
-    -- to match its upstream MakePPF, so source and target share length.
+    -- examples still fit, with a few KB of records-target headroom. This
+    -- property stays same-size for a clean 'noAdvisories' assertion; the
+    -- growth path (which emits a note) is pinned by 'ppf2GrowthRoundTrip'.
     minimumPPF2Source = 0xA000
     genPPF2SizedPair = do
       sourceLen <- choose (minimumPPF2Source, minimumPPF2Source + 8192)
       src <- ByteString.pack <$> vectorOf sourceLen arbitrary
       tgt <- ByteString.pack <$> vectorOf sourceLen arbitrary
       pure (src, tgt)
+
+-- | PPF2 permits a growing target (its source-size header is an advisory
+-- identity check, not an integrity rule). The source must clear the
+-- 0x9720 validation-block threshold; the target grows past it. Apply
+-- reproduces the target and emits the grow note (a note for PPF2, since
+-- growth is within its accepted behavior). 'prop_ppf2' stays same-size
+-- to keep its 'noAdvisories' assertion clean, so this pins the grow path.
+ppf2GrowthRoundTrip :: Assertion
+ppf2GrowthRoundTrip =
+  case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
+      Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
+      Right (Parsed parsed _parseWarnings) -> case PPF2.applyPPF2 parsed (InputFileContents source) of
+        Left slapError -> assertFailure ("apply: " ++ Text.unpack (renderSlapError slapError))
+        Right (Outcome out advisories) -> do
+          assertEqual "PPF2 grow output reproduces the target" (OutputFileContents target) out
+          assertBool "PPF2 grow emits the grow advisory" (any isGrowNote advisories)
+  where
+    source = ByteString.pack (replicate 0xA000 0x41)
+    target = source <> ByteString.pack (replicate 0x10 0x42)
+    isGrowNote PPFApplyGrewPastSource{} = True
+    isGrowNote _                        = False
 
 -- | A 'FileSize' one byte past the 'Word32' wire-field ceiling
 -- ('0x100000000') is what the convert pipeline would have silently
@@ -698,6 +730,41 @@ prop_ppf3 = forAll genSameSizePair $ \(source, target) ->
     Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
+
+-- | PPF4 supports growth (via its Append phase) but not shrinkage, so
+-- the generator stays at @target >= source@ — exercising both the
+-- same-size (Replace-only) path and the growing (Replace + Append) path,
+-- including the straddling-hunk split at the source boundary.
+prop_ppf4 :: Property
+prop_ppf4 = forAll genPairNoShrink $ \(source, target) ->
+  case createPatch (CreateDirect CreatePPF4) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
+    Right (CreateResult patch _) -> case PPF4.parsePPF4 patch of
+       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+       Right (Parsed parsed _parseWarnings) -> PPF4.applyPPF4 parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | Deterministic regression for the straddling-hunk split. The change
+-- from "AAAABBBB" to "BBBB" runs to the source's last byte and the four
+-- "CCCC" bytes extend past it, so 'Slap.Binary.diffHunks' merges them
+-- into one hunk spanning [4, 12) that straddles the 8-byte source
+-- boundary. 'partitionPPF4Phases' must cut that hunk: [4, 8) is a
+-- Replace, [8, 12) an Append. A partition that classified the whole
+-- straddling hunk by its start offset would emit a Replace that grows
+-- the file, and apply would reject it. 'prop_ppf4' only hits this case
+-- when a random pair happens to differ at the boundary; this pins it.
+ppf4StraddleRoundTrip :: Assertion
+ppf4StraddleRoundTrip =
+  let source = ByteString.pack (replicate 8 0x41)                       -- AAAAAAAA
+      target = ByteString.pack (replicate 4 0x41 ++ replicate 4 0x42    -- AAAABBBB
+                                                  ++ replicate 4 0x43)   -- CCCC (grown)
+  in case createPatch (CreateDirect CreatePPF4) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
+       Right (CreateResult patch _) -> case PPF4.parsePPF4 patch of
+         Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
+         Right (Parsed parsed _parseWarnings) ->
+           assertEqual "straddle round-trip"
+             (Right (OutputFileContents target))
+             (PPF4.applyPPF4 parsed (InputFileContents source))
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->

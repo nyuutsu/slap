@@ -127,6 +127,7 @@ library slap-internal
     , Slap.PPF3.Parse
     , Slap.PPF3.Types
     , Slap.PPF4.Apply
+    , Slap.PPF4.Create
     , Slap.PPF4.Describe
     , Slap.PPF4.Parse
     , Slap.PPF4.Types

@@ -837,6 +837,7 @@ createFormatTokens =
   , ("ppf1",    CreateDirect       CreatePPF1,   Canonical)
   , ("ppf2",    CreateDirect       CreatePPF2,   Canonical)
   , ("ppf3",    CreateDirect       CreatePPF3,   Canonical)
+  , ("ppf4",    CreateDirect       CreatePPF4,   Canonical)
   , ("ppf",     CreateDirect       CreatePPF3,   Alias)
   , ("pmsr",    CreateDirect       CreatePMSR,   Canonical)
   , ("ninja1",  CreateDirect       CreateNINJA1, Canonical)

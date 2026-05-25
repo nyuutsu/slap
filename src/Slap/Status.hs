@@ -690,6 +690,16 @@ data SlapError
 
   | DiffRequiresSource FormatLabel
 
+  -- | The user asked to convert a patch to PPF4 without supplying the
+  -- original ROM. PPF4 splits its records into in-place writes (Replace)
+  -- and appended bytes (Append) by where each falls relative to the
+  -- source's size; a source-less conversion has the source patch's
+  -- records but not the source's size, so it cannot make that split.
+  -- The 'FormatLabel' is 'LabelPPF4'. Corrective action: supply the
+  -- original ROM with @--with INPUT@, which applies the source patch
+  -- and re-diffs against real bytes.
+  | PPF4ConvertRequiresSource FormatLabel
+
   -- | The user set one or more metadata fields via CLI flags that
   -- the target format doesn't consume.  Surfaced before any IO so
   -- the user learns what went wrong before their files are touched.
@@ -1541,6 +1551,14 @@ renderSlapError (ApplyOutputFieldsWouldBeDropped label drops) =
 renderSlapError (DiffRequiresSource label) =
   formatLabelName label
   <> " requires source+target diff data\nuse --with INPUT"
+
+renderSlapError (PPF4ConvertRequiresSource label) =
+  "converting to " <> formatLabelName label
+  <> " needs the original ROM (--with INPUT)\n"
+  <> formatLabelName label
+  <> " splits its records into in-place writes and appended bytes by"
+  <> " where they fall relative to the source's size, which a"
+  <> " source-less conversion can't determine"
 
 renderSlapError (MetadataFieldRejected fields target) =
   let renderOne field =

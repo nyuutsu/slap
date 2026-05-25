@@ -53,6 +53,9 @@ import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         narrowPPF3FileId, ppf3MaxRecordPayload,
                         ppf3RejectIncompatibleSizeChange)
+import qualified Slap.PPF4.Create as PPF4
+import Slap.PPF4.Types (PPF4Append(..), ppf4Limits, ppf4MaxRecordPayload,
+                        ppf4RejectIncompatibleSizeChange)
 import qualified Slap.IPS.Create as IPS
 import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        IPSVariantSpec(..),
@@ -91,7 +94,7 @@ import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
                       splitHunks, splitHunksUnbounded, splitUndoHunks,
-                      byteFileSize)
+                      splitPayload, byteFileSize)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowHunksUnbounded,
                     narrowUndoHunksUnbounded)
@@ -177,7 +180,7 @@ data PatchContents = PatchContents
 -- and metadata; PPF exposes only version 3.
 data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF2 | CreatePPF3
-  | CreateNINJA1 | CreatePMSR | CreateAPSN64
+  | CreatePPF4 | CreateNINJA1 | CreatePMSR | CreateAPSN64
   deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
@@ -431,6 +434,7 @@ directConversionContract target undoChoice verificationChoice = case target of
   CreatePPF3    -> DirectConversionContract (requiredFields $ [FieldUndoData     | undoChoice         == IncludeUndoData]
                                  ++ [FieldValidation | verificationChoice == IncludeVerification])
                              (acceptedFields [FieldDescription, FieldImageType, FieldFileIdDiz])
+  CreatePPF4    -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateNINJA1  -> DirectConversionContract (requiredFields []) (acceptedFields [FieldSourceCRC32, FieldSourceMD5, FieldSourceSHA1, FieldRomType])
   CreatePMSR    -> DirectConversionContract (requiredFields []) (acceptedFields [])
   CreateAPSN64  -> DirectConversionContract (requiredFields [FieldDestinationSize]) (acceptedFields [FieldDescription])
@@ -462,6 +466,7 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreatePPF1   -> Set.fromList [MetadataDescription]
   CreatePPF2   -> Set.fromList [MetadataDescription]
   CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataVerificationInclusion]
+  CreatePPF4   -> Set.empty
   CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
   CreateAPSN64 -> Set.fromList [MetadataDescription]
@@ -560,6 +565,7 @@ acceptedConstraints (CreateDirect format) = case format of
   CreatePPF1   -> Set.empty
   CreatePPF2   -> Set.empty
   CreatePPF3   -> Set.empty
+  CreatePPF4   -> Set.empty
   CreateNINJA1 -> Set.empty
   CreatePMSR   -> Set.empty
   CreateAPSN64 -> Set.empty
@@ -621,6 +627,7 @@ rejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePPF1   = ppf1RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePPF2   = ppf2RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePPF3   = ppf3RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreatePPF4   = ppf4RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateIPS32  = ips32RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateEBP    = ebpRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateIPS    = acceptsAnySizeChange
@@ -874,6 +881,12 @@ convertDirect :: PatchContents -> CreateFormat -> RequestedPatchMetadata
               -> RequestedDialects
               -> Either SlapError CreateResult
 convertDirect _ (CreateDifferential target) _ _ _ = Left (DiffRequiresSource (differentialLabel target))
+-- PPF4 splits its records into in-place writes and appended bytes by
+-- where they fall relative to the source's size. A source-less convert
+-- has the source patch's records but not the source's size, so it can't
+-- make that split; refuse and point at the --with path (which applies
+-- the source patch and re-diffs against real bytes via createPatch).
+convertDirect _ (CreateDirect CreatePPF4) _ _ _ = Left (PPF4ConvertRequiresSource LabelPPF4)
 convertDirect contents (CreateDirect target) meta constraints dialects = do
   let undoChoice         = fromMaybe (inferUndoInclusion         contents) (requestedUndoInclusion         meta)
       verificationChoice = fromMaybe (inferVerificationInclusion contents) (requestedVerificationInclusion meta)
@@ -912,6 +925,7 @@ encodingLimits CreatePMSR    = Just PMSR.pmsrLimits
 encodingLimits CreatePPF1    = Just ppf1Limits
 encodingLimits CreatePPF2    = Just ppf2Limits
 encodingLimits CreatePPF3    = Nothing  -- Int64-shaped offset, no per-record cap
+encodingLimits CreatePPF4    = Just ppf4Limits
 encodingLimits CreateNINJA1  = Nothing  -- variable-width length-of-offset, no per-record cap
 
 -- | Encode PatchContents into the target format.
@@ -1025,6 +1039,26 @@ encodeDirect contents source target meta limits constraints dialects = case targ
               (unPatchFileContents (resultBytes ppfResult) <> trailerBytes)
           , resultAdvisories = resultAdvisories ppfResult ++ trailerAdvisories
           }
+  CreatePPF4 -> do
+    -- PPF4's two phases come from where each hunk falls relative to the
+    -- source's length: hunks within @[0, sourceLength)@ overwrite source
+    -- bytes (Replace records), hunks at or past @sourceLength@ extend the
+    -- file (Append records). This split is valid only because these
+    -- hunks were produced by 'diffHunks' against this very source — the
+    -- create and @--with@-convert paths. Source-less convert to PPF4 is
+    -- refused upstream in 'convertDirect', because its records' offsets
+    -- are relative to a source we don't hold and so can't be split.
+    let (replaceHunks, appendHunks) =
+          PPF4.partitionPPF4Phases (byteFileSize (unInputFileContents source))
+                                   (contentsRecords contents)
+    -- Replace offsets are bounded ('encodingLimits' supplies 'ppf4Limits'),
+    -- so 'narrow' validates them. Append records carry no offset, so they
+    -- skip narrowing entirely — splitting caps their payloads at the
+    -- single-byte count, and 'PPF4Append' wraps the bare payload.
+    replaceRecords <- narrow (splitHunks ppf4MaxRecordPayload replaceHunks)
+    let appendRecords = map (PPF4Append . splitPayload)
+                            (splitHunks ppf4MaxRecordPayload appendHunks)
+    Right (PPF4.encodePPF4 replaceRecords appendRecords)
   CreateNINJA1 -> do
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
@@ -1237,6 +1271,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreatePPF1   -> diffHunks inputFileContents outputFileContents
       CreatePPF2   -> diffHunks inputFileContents outputFileContents
       CreatePPF3   -> diffHunks inputFileContents outputFileContents
+      CreatePPF4   -> diffHunks inputFileContents outputFileContents
       CreateNINJA1 -> diffHunks inputFileContents outputFileContents
       CreatePMSR   -> diffHunks inputFileContents outputFileContents
       CreateAPSN64 -> diffHunks inputFileContents outputFileContents
@@ -1249,6 +1284,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreatePPF1   -> source
       CreatePPF2   -> source
       CreatePPF3   -> source
+      CreatePPF4   -> source
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       CreatePMSR   -> source
       CreateAPSN64 -> source
@@ -1352,6 +1388,7 @@ directFormatInfo CreateEBP    = FormatInfo ".ebp"    "EBP"       LabelEBP
 directFormatInfo CreatePPF1   = FormatInfo ".ppf"    "PPF1"      LabelPPF1
 directFormatInfo CreatePPF2   = FormatInfo ".ppf"    "PPF2"      LabelPPF2
 directFormatInfo CreatePPF3   = FormatInfo ".ppf"    "PPF3"      LabelPPF3
+directFormatInfo CreatePPF4   = FormatInfo ".ppf"    "PPF4"      LabelPPF4
 directFormatInfo CreateNINJA1 = FormatInfo ".rup"    "NINJA1"    LabelNINJA1
 directFormatInfo CreatePMSR   = FormatInfo ".pmsr"   "PMSR"      LabelPMSR
 directFormatInfo CreateAPSN64 = FormatInfo ".aps"    "APS (N64)" LabelAPSN64

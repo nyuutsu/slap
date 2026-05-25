@@ -9,14 +9,18 @@ module Slap.PPF4.Types
   , ppf4PreambleLength
   , ppf4DescriptionLength
   , ppf4PostDescriptionLength
+  , ppf4MaxRecordPayload
+    -- * Encoding limits
+  , ppf4Limits
     -- * Source/target size-pair rule
   , ppf4RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Offset, Length(..), FileSize,
+import Slap.Measure (Offset(..), Length(..), FileSize,
                      ActualSize(..), ExpectedSize(..))
+import Slap.Narrow (EncodingLimits(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.Text (EncodedText)
 
@@ -34,11 +38,11 @@ import Slap.Text (EncodedText)
 data PPF4Patch = PPF4Patch
   { ppf4Description :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
-    -- process locale. Same encoding model as PPF1\/PPF2\/PPF3. Slap
-    -- parses, applies, and describes PPF4 patches but does not create
-    -- them; the typed-text representation here exists so the
-    -- describe-side rendering goes through the same 'Text' path as
-    -- the other PPFs.
+    -- process locale, so describe-side rendering goes through the same
+    -- 'Text' path as the other PPFs. The reference maker never populates
+    -- this field (it zero-fills it and takes no description input), so
+    -- 'Slap.PPF4.Create' writes it as zero and there is no create-side
+    -- description to carry here.
   , ppf4Replaces    :: ![PPF4Replace]
   , ppf4Appends     :: ![PPF4Append]
   } deriving (Show)
@@ -85,6 +89,23 @@ ppf4DescriptionLength = Length 50
 -- + undo_flag (1) + expansion (1).
 ppf4PostDescriptionLength :: Length
 ppf4PostDescriptionLength = Length 4
+
+-- | Maximum payload bytes a single PPF4 record (Replace or Append) can
+-- carry. The record format uses a single-byte count field, capping
+-- payload at @0xFF = 255@.
+ppf4MaxRecordPayload :: Length
+ppf4MaxRecordPayload = Length 255
+
+-- | PPF4's wire-format offset cap. The Replace record's offset field is
+-- 4 bytes; offsets ≥ 2^32 cannot be expressed. Append records carry no
+-- meaningful offset (the field is written as zero), so this bound only
+-- binds Replace records. Enforced at narrow time so
+-- 'Slap.PPF4.Create.encodePPF4' cannot silently emit a truncated offset.
+ppf4Limits :: EncodingLimits
+ppf4Limits = EncodingLimits
+  { maximumOffset = Offset 0xFFFFFFFF
+  , formatLabel   = LabelPPF4
+  }
 
 -- | PPF4 declines (source, target) pairs whose target is shorter than
 -- the source. PPF4's wire vocabulary has two record kinds — Replace
