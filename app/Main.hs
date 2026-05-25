@@ -38,13 +38,14 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                             resolveXDelta1FileNames,
                             requireXDelta1FileNames,
-                            XDelta1FromName(..), XDelta1ToName(..))
+                            XDelta1FromName(..), XDelta1ToName(..),
+                            XDelta1PatchCompression(..))
 import Slap.Constraint (Constraint(..), constraintFlagName)
 import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodedText(..), EncodingName(..))
+import Slap.Text (EncodedText(..), EncodingName(..), processLocaleEncoder)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
@@ -52,7 +53,6 @@ import qualified Data.Text.IO as TextIO
 -- tagged 'EncodingLocale' at the boundary, matching how slap models
 -- locale-tied user input throughout the convert seam.
 import Slap.PPF3.Types (PPF3ImageType(..))
-import Slap.XDelta1.Types (XDelta1PatchCompression(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
 import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
@@ -72,6 +72,7 @@ import Control.Exception (try)
 import Control.Monad (when, forM_)
 import Data.Char (toLower)
 import Data.List (intercalate)
+import Data.Maybe (maybeToList)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -384,13 +385,19 @@ data ExplainCommand = ExplainCommand
 main :: IO ()
 main = do
   makeStdoutAndStderrLenient
-  customExecParser (prefs showHelpOnEmpty) options >>= \case
-    Apply   parsedCommand -> doApply   parsedCommand
-    Undo    parsedCommand -> doUndo    parsedCommand
-    Create  parsedCommand -> doCreate  parsedCommand
-    Convert parsedCommand -> doConvert parsedCommand
-    Info    parsedCommand -> doInfo    parsedCommand
-    Explain parsedCommand -> doExplain parsedCommand
+  parsedCommand <- customExecParser (prefs showHelpOnEmpty) options
+  -- 'processLocaleEncoder' resolves the process locale once; its
+  -- advisory half is 'Just' only when the name didn't resolve (slap
+  -- then falls back to UTF-8 for locale-encoded fields). Emitted after
+  -- parsing, before dispatch: once per run, after --help has exited.
+  emitAdvisories (maybeToList (snd processLocaleEncoder))
+  case parsedCommand of
+    Apply   subcommand -> doApply   subcommand
+    Undo    subcommand -> doUndo    subcommand
+    Create  subcommand -> doCreate  subcommand
+    Convert subcommand -> doConvert subcommand
+    Info    subcommand -> doInfo    subcommand
+    Explain subcommand -> doExplain subcommand
 
 options :: ParserInfo Command
 options = info (commandParser <**> helper)
