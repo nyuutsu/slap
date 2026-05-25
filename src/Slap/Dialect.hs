@@ -30,6 +30,12 @@ data Dialect
     -- The two are mutually incompatible cross-platform. Default is
     -- PC-origin (LE); the @--is-amiga-patch@ flag selects BE.
     --
+    -- This axis is read-only: it selects how slap /decodes/ a PPF1
+    -- patch's offsets (apply, undo, info, explain, and convert from a
+    -- PPF1 source). It never affects writing — create and convert to
+    -- PPF1 always emit PC/LE. The general dialect plumbing can still
+    -- carry a write-affecting axis; this particular one just doesn't.
+    --
     -- Per @slap-format-documentation/ppf/spec.md@ §"Offset size and
     -- endianness".
   deriving (Show, Eq, Ord)

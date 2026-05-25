@@ -28,12 +28,12 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedConstraints(..),
                      rejectIncompatibleConstraints,
                      RequestedDialects(..),
+                     noDialectsRequested,
                      acceptedDialects,
                      rejectIncompatibleDialects,
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      PatchEncoding(..), createDefaultAdvisories, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
-                     createFormatLabel,
                      formatExtension, formatName)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                             resolveXDelta1FileNames,
@@ -67,7 +67,6 @@ import Slap.Display.Glyph (rightwardsArrow, checkMark, ballotX, emDash, spacePad
 import Slap.FormatLabel (formatLabelName)
 
 import qualified Data.ByteString as ByteString
-import qualified Data.Set as Set
 import Control.Exception (try)
 import Control.Monad (when, forM_)
 import Data.Char (toLower)
@@ -347,7 +346,6 @@ data CreateCommand = CreateCommand
   , createOutput      :: FilePath
   , createMetadata    :: CreateMetadataInputs
   , createConstraints :: RequestedConstraints
-  , createDialects    :: RequestedDialects
   }
 
 -- | The 'convertWithSource' field reuses the type name 'ConvertWithSource'
@@ -614,7 +612,6 @@ createParser = do
     outputFile         <- pathArgument (metavar "OUTPUT"   <> help "Output patch file")
     metadataInputs     <- createMetadataInputsParser
     constraints        <- constraintsParser
-    dialects           <- dialectsParser
     pure CreateCommand
       { createFormat      = format
       , createFileReading = fileReadingOptions
@@ -623,7 +620,6 @@ createParser = do
       , createOutput      = outputFile
       , createMetadata    = metadataInputs
       , createConstraints = constraints
-      , createDialects    = dialects
       }
 
 convertParser :: Parser ConvertCommand
@@ -670,7 +666,7 @@ dialectsParser :: Parser RequestedDialects
 dialectsParser = do
   ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
     ( long (Text.unpack (dialectFlagName PPF1OriginAxis))
-   <> help ("Decode (apply/undo/info/explain/convert) or encode (create/convert)"
+   <> help ("Decode (apply/undo/info/explain/convert)"
          ++ " PPF1 offsets as big-endian rather than little-endian. PPF1 has no"
          ++ " on-disk endianness marker; the reference applier reads offsets in"
          ++ " host-native byte order, making PC and Amiga PPF1 patches mutually"
@@ -1170,10 +1166,6 @@ doCreate parsedCommand = do
   createMeta    <- resolveCreateMetadata (createMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (createFormat parsedCommand) createMeta)
   orBail (rejectIncompatibleConstraints (createFormat parsedCommand) (createConstraints parsedCommand))
-  orBail (rejectIncompatibleDialects
-            (acceptedDialects (createFormatLabel (createFormat parsedCommand)))
-            (createFormatLabel (createFormat parsedCommand))
-            (createDialects parsedCommand))
   resolvedXDelta1Names <- orBail (resolveCreateXDelta1Names parsedCommand createMeta)
   originalBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createOriginal parsedCommand)
   modifiedBytes <- readMaybeUnwrap (createFileReading parsedCommand) (createModified parsedCommand)
@@ -1186,7 +1178,7 @@ doCreate parsedCommand = do
                      createMeta
                      Nothing
                      (createConstraints parsedCommand)
-                     (createDialects parsedCommand))
+                     noDialectsRequested)
   emitAdvisories (resultAdvisories result)
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   TextIO.putStrLn ("wrote " <> pathText (createOutput parsedCommand))
@@ -1261,11 +1253,10 @@ doConvert parsedCommand = do
   orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertDialects parsedCommand) (convertPatch parsedCommand)
-  let targetLabel = createFormatLabel (convertTo parsedCommand)
-      acceptedForChain = acceptedDialects (patchFormat parsed)
-                  `Set.union` acceptedDialects targetLabel
-  orBail (rejectIncompatibleDialects acceptedForChain targetLabel
-                                     (convertDialects parsedCommand))
+  orBail (rejectIncompatibleDialects
+            (acceptedDialects (patchFormat parsed))
+            (patchFormat parsed)
+            (convertDialects parsedCommand))
   emitAdvisories (patchAdvisories parsed)
   let outputFile = case convertOutput parsedCommand of
         ConvertToExplicitFile explicit -> explicit
@@ -1290,14 +1281,14 @@ doConvert parsedCommand = do
       let source = InputFileContents sourceBytes
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
-      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) (convertDialects parsedCommand))
+      createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed ++ bpsDropAdvisories
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
                         ++ resultAdvisories createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
     SourceLessConvert contents -> do
-      convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) (convertDialects parsedCommand))
+      convertResult <- orBail (convertDirect contents (convertTo parsedCommand) mergedMeta (convertConstraints parsedCommand) noDialectsRequested)
       emitAdvisories (patchSourceAdvisories parsed ++ resultAdvisories convertResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes convertResult))
       TextIO.putStrLn ("converted to " <> formatName (convertTo parsedCommand) <> ": " <> pathText outputFile)
