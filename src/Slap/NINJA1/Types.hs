@@ -19,6 +19,8 @@ module Slap.NINJA1.Types
   , ninja1SentinelOffset
   , ninja1BinaryEOFMarkerBytes
   , ninja1BinaryEOFMarkerWidth
+    -- * Source/target size-pair rule
+  , ninja1RejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
@@ -27,7 +29,10 @@ import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8)
 import Slap.Checksum (CRC32, MD5Hash, SHA1Hash)
-import Slap.Measure (Offset(..), SentinelOffset(..))
+import Slap.Measure (Offset(..), SentinelOffset(..),
+                     FileSize, ActualSize(..), ExpectedSize(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
+import Slap.FormatLabel (FormatLabel(..))
 
 data NINJA1SubFormat = NINJA1Binary | NINJA1BinaryCompressed | NINJA1Text | NINJA1TextCompressed
   deriving (Show, Eq)
@@ -196,3 +201,20 @@ subFormatName NINJA1Binary           = "binary"
 subFormatName NINJA1BinaryCompressed = "binary, compressed"
 subFormatName NINJA1Text             = "text"
 subFormatName NINJA1TextCompressed   = "text, compressed"
+
+-- | NINJA1 declines (source, target) pairs whose target is shorter than
+-- the source. NINJA1 records only write bytes at offsets; the reference
+-- maker emits a trailing record to grow a longer target but has no
+-- truncate directive and no output-size field, so a shorter output has
+-- no representation — applying the offset-writes to the source yields a
+-- file no smaller than the source. Growth is fine. See
+-- @docs\/ninja1\/upstream\/ninja1-filespec10.txt@.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreateNINJA1' arm.
+ninja1RejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ninja1RejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelNINJA1
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))

@@ -70,7 +70,7 @@ import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 
 import Slap.Binary (md5, sha1, diffHunks)
 import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
-                   noAdvisories,
+                   noAdvisories, UnencodeabilityReason(..),
                    SlapAdvisory(..), renderSlapError)
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -168,12 +168,14 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "PMSR"
       [ testProperty "round-trip" prop_pmsr
+      , testCase "shrinking target is refused" (assertShrinkRefused CreatePMSR LabelPMSR)
       ]
   , testGroup "NINJA1"
       [ testProperty "round-trip" prop_ninja1
       , testProperty "hashes" prop_ninja1Hashes
       , testProperty "eof-collision" prop_ninja1EofCollision
       , testProperty "source-less convert rejects sentinel" prop_ninja1SourcelessSentinelRejected
+      , testCase "shrinking target is refused" (assertShrinkRefused CreateNINJA1 LabelNINJA1)
       ]
   , testGroup "DPS"
       [ testProperty "round-trip" prop_dps
@@ -765,6 +767,24 @@ ppf4StraddleRoundTrip =
            assertEqual "straddle round-trip"
              (Right (OutputFileContents target))
              (PPF4.applyPPF4 parsed (InputFileContents source))
+
+-- | A format that can't represent shrinkage must refuse a shrinking
+-- (target shorter than source) create, with the shrink reason and its
+-- own label — not silently emit a patch that produces a source-sized
+-- output on apply. Shared by the NINJA1 and PMSR cases; both formats
+-- only write at offsets and have no truncate/output-size mechanism.
+assertShrinkRefused :: DirectCreate -> FormatLabel -> Assertion
+assertShrinkRefused format expectedLabel =
+  let source = ByteString.pack (replicate 16 0x41)
+      target = ByteString.pack (replicate 8 0x41)
+  in case createPatch (CreateDirect format) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left (UnencodeablePair refusedLabel (TargetShrinksBelowSource _ _))
+         | refusedLabel == expectedLabel -> pure ()
+       Left other -> assertFailure
+         ("expected a shrink refusal for " ++ show expectedLabel ++ ", got: "
+          ++ Text.unpack (renderSlapError other))
+       Right _ -> assertFailure
+         (show expectedLabel ++ " produced a patch for a shrinking pair instead of refusing")
 
 prop_pmsr :: Property
 prop_pmsr = forAll genPairNoShrink $ \(source, target) ->

@@ -78,11 +78,13 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..),
                            XDelta1PatchCompression(..))
 import qualified Slap.PMSR.Types as PMSR
-import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload)
+import Slap.PMSR.Types (narrowPMSRRecordCount, pmsrMaxRecordPayload,
+                       pmsrRejectIncompatibleSizeChange)
 import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
+import Slap.NINJA1.Types (ninja1RejectIncompatibleSizeChange)
 import qualified Slap.NINJA1.Create as NINJA1
 import Slap.PlatformType (PlatformType(..))
 import Slap.Platform (platformToNINJA1)
@@ -630,9 +632,9 @@ rejectIncompatibleSizeChange CreatePPF3   = ppf3RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePPF4   = ppf4RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateIPS32  = ips32RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateEBP    = ebpRejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreateNINJA1 = ninja1RejectIncompatibleSizeChange
+rejectIncompatibleSizeChange CreatePMSR   = pmsrRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateIPS    = acceptsAnySizeChange
-rejectIncompatibleSizeChange CreateNINJA1 = acceptsAnySizeChange
-rejectIncompatibleSizeChange CreatePMSR   = acceptsAnySizeChange
 rejectIncompatibleSizeChange CreateAPSN64 = acceptsAnySizeChange
 
 -- | Leaf consumed by 'rejectIncompatibleSizeChange' for formats that

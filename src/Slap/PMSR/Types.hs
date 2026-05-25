@@ -12,15 +12,18 @@ module Slap.PMSR.Types
   , pmsrMaxRecordPayload
     -- * Encoding limits
   , pmsrLimits
+    -- * Source/target size-pair rule
+  , pmsrRejectIncompatibleSizeChange
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
 import Data.Word (Word32)
-import Slap.Status (SlapError(..))
+import Slap.Status (SlapError(..), UnencodeabilityReason(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (Length(..), Offset(..))
+import Slap.Measure (Length(..), Offset(..),
+                     FileSize, ActualSize(..), ExpectedSize(..))
 import Slap.Narrow (EncodingLimits(..), narrowToWord32)
 
 -- | A single PMSR record: offset + data to write.
@@ -67,3 +70,19 @@ pmsrLimits = EncodingLimits
 -- cannot silently emit a truncated length.
 pmsrMaxRecordPayload :: Length
 pmsrMaxRecordPayload = Length 0xFFFFFFFF
+
+-- | PMSR declines (source, target) pairs whose target is shorter than
+-- the source. PMSR carries no output-size field; an applier derives the
+-- target size as the larger of the source size and the furthest record
+-- end, allocates a buffer of that size, copies the source in, then
+-- writes the records — so the output is never smaller than the source.
+-- Growth is fine; shrinkage has no representation.
+--
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
+-- 'CreatePMSR' arm.
+pmsrRejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+pmsrRejectIncompatibleSizeChange sourceSize targetSize
+  | sourceSize <= targetSize = Right ()
+  | otherwise                = Left (UnencodeablePair LabelPMSR
+      (TargetShrinksBelowSource (ActualSize sourceSize) (ExpectedSize targetSize)))
