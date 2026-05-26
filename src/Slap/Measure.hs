@@ -54,6 +54,7 @@ module Slap.Measure
   , lengthToFileSize
   , lengthToOffset
   , offsetToFileSize
+  , offsetFromParsed
     -- * Seeking
   , seekTo
     -- * Cursor typeclass
@@ -404,6 +405,24 @@ lengthToOffset (Length lengthValue) = Offset lengthValue
 -- meets that precondition.
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
+
+-- | Widen an integer just decoded by a parser into an 'Offset'. The
+-- named home for the parse-boundary 'fromIntegral': a format parser
+-- reads a raw 'Data.Word.Word32' (or 'Data.Int.Int64', or a varint)
+-- and wraps it here rather than inlining @Offset . fromIntegral@ at
+-- each call site. Sibling to 'splitUndoHunkFromParsed' — both are the
+-- one blessed way to cross from a parsed wire value into a typed
+-- position.
+--
+-- Pure widening, no validation. A negative value is preserved as-is:
+-- PPF1/PPF2/PPF3/PPF4 carry signed offsets on the wire, and an
+-- out-of-range one is the apply layer's to reject (via
+-- 'Slap.Status.ApplyNegativeRecordOffset'), not the parser's to
+-- pre-empt. The 'Integral' constraint lets one builder serve every
+-- wire width; the widening to host 'Int' is the same conversion the
+-- inline form performed.
+offsetFromParsed :: Integral a => a -> Offset
+offsetFromParsed = Offset . fromIntegral
 
 ----------------------------------------------------------------------------
 -- Seeking

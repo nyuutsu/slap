@@ -21,7 +21,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, atEnd, remaining, word32LE)
-import Slap.Measure (Length(..), FileSize(..), Offset(..),
+import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
@@ -124,7 +124,7 @@ parseN64Records = walkRecords []
         if remainingLength < apsN64RecordHeaderSize
           then pure (reverse accumulatedReversed)
           else do
-            recordOffset <- Offset . fromIntegral <$> word32LE
+            recordOffset <- offsetFromParsed <$> word32LE
             dataLength   <- getByte
             decodedRecord <- if dataLength == 0
               then do  -- RLE record

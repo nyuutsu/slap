@@ -18,7 +18,7 @@ import Slap.Status (SlapError(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining, word16LE, word32LE)
-import Slap.Measure (Length(..), FileSize(..), Offset(..),
+import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 
@@ -61,7 +61,7 @@ parseGBARecords = do
   remainingLength <- remaining
   if unLength remainingLength < apsGbaRecordSize then pure []
   else do
-    offset <- Offset . fromIntegral <$> word32LE
+    offset <- offsetFromParsed <$> word32LE
     sourceCrc <- CRC16 <$> word16LE
     targetCrc <- CRC16 <$> word16LE
     xorPayload <- getBytes (Length apsGbaBlockSize)

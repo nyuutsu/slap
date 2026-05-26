@@ -15,7 +15,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, remaining, word32LE)
-import Slap.Measure (Offset(..), Length(..),
+import Slap.Measure (offsetFromParsed, Length(..),
                      RequiredLength(..), ActualLength(..),
                      ActionIndex(unActionIndex), firstAction, nextAction,
                      byteLength)
@@ -113,7 +113,7 @@ parsePPF4Records recordIndex phase replacesAcc appendsAcc = do
             0 -> case phase of
               ReplacePhase ->
                 let replace = PPF4Replace
-                      { replaceOffset = Offset (fromIntegral wireOffset)
+                      { replaceOffset = offsetFromParsed wireOffset
                       , replaceData   = payload
                       }
                 in parsePPF4Records (nextAction recordIndex) ReplacePhase

@@ -23,7 +23,7 @@ import Slap.Status (SlapError(..), ByteParserError, Parsed(..),
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (runByteParser, getByte, getBytes, skip, getPosition, setPosition,
                          atEnd, vcdiffVarint, word32BE)
-import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(..),
+import Slap.Measure (Position(..), Length(..), FileSize(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 
@@ -100,7 +100,7 @@ parseVCDIFFWith allowCustom (PatchFileContents input)
       let windowSource = toVCDIFFWindowSource windowIndicator
           hasSource = windowSource /= WindowNoSource
       (sourceLength, sourcePosition) <- if hasSource
-        then (\rawLength rawPosition -> (FileSize (fromIntegral rawLength), Offset (fromIntegral rawPosition))) <$> vcdiffVarint <*> vcdiffVarint
+        then (\rawLength rawPosition -> (FileSize (fromIntegral rawLength), offsetFromParsed rawPosition)) <$> vcdiffVarint <*> vcdiffVarint
         else pure (FileSize 0, Offset 0)
       -- Delta encoding length
       deltaLength <- vcdiffVarint

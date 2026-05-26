@@ -45,7 +45,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, edsioVarint, word32BE)
-import Slap.Measure (Length(..), FileSize(..), Offset(..),
+import Slap.Measure (Length(..), FileSize(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..),
                      ActualMagic(..), ExpectedMagic(..),
                      ExpectedSize(..), ActualSize(..), byteLength)
@@ -482,7 +482,7 @@ parseInstructions :: Int -> ByteParser [ParsedInstruction]
 parseInstructions 0 = pure []
 parseInstructions count = do
   wireIndex <- edsioVarint
-  offset <- Offset . fromIntegral <$> edsioVarint
+  offset <- offsetFromParsed <$> edsioVarint
   instructionLength <- FileSize . fromIntegral <$> edsioVarint
   rest <- parseInstructions (count - 1)
   pure (ParsedInstruction wireIndex offset instructionLength : rest)

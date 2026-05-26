@@ -29,7 +29,7 @@ import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining)
-import Slap.Measure (Length(..), Offset(..),
+import Slap.Measure (Length(..), Offset(Offset), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import Slap.Compression.Stream (zlibInflate)
@@ -204,7 +204,7 @@ parseTextRecord :: ByteString -> Either SlapError NINJA1Record
 parseTextRecord line = case ByteString8.words line of
   (offsetString : dataParts@(_:_)) ->
     case (readHex (ByteString8.unpack offsetString) :: [(Int64, String)]) of
-      [(offset, "")] -> Right (NINJA1Record (Offset (fromIntegral offset)) (hexToBS (concatMap ByteString8.unpack dataParts)))
+      [(offset, "")] -> Right (NINJA1Record (offsetFromParsed offset) (hexToBS (concatMap ByteString8.unpack dataParts)))
       _ -> Left (MalformedNINJA1Content (NINJA1InvalidOffsetInTextRecord (OffsetTokenText (Text.pack (ByteString8.unpack offsetString)))))
   _ -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
 

@@ -41,12 +41,13 @@ import Slap.ByteParser
   , remaining
   )
 import Slap.Measure
-  ( Offset(..)
+  ( Offset(unOffset)
   , Length(..)
   , FileSize(..)
   , ActionIndex
   , Cursor(..)
   , byteLength
+  , offsetFromParsed
   , firstAction
   , nextAction
   , actionAtPosition
@@ -254,8 +255,8 @@ parseIPSBody variant = bodyLoop [] [] firstAction
 
     readRecordOffset :: ByteParser Offset
     readRecordOffset = case offsetWidth of
-      Offset24 -> Offset . fromIntegral <$> word24BE
-      Offset32 -> Offset . fromIntegral <$> word32BE
+      Offset24 -> offsetFromParsed <$> word24BE
+      Offset32 -> offsetFromParsed <$> word32BE
 
     truncatedFrom :: [IPSRecord] -> [SlapAdvisory] -> ByteParser IPSBodyShape
     truncatedFrom accumulatedReversed warningsReversed =

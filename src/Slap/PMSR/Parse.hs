@@ -15,7 +15,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining)
 import qualified Slap.ByteParser as ByteParser
-import Slap.Measure (Length(..), Offset(..),
+import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 
@@ -43,7 +43,7 @@ parsePMSRBody = do
 parseLoop :: Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
 parseLoop 0 accumulated = pure (reverse accumulated)
 parseLoop count accumulated = do
-  offset <- Offset . fromIntegral <$> ByteParser.word32BE
+  offset <- offsetFromParsed <$> ByteParser.word32BE
   dataLength <- fromIntegral <$> ByteParser.word32BE
   available <- remaining
   if dataLength > unLength available

@@ -21,7 +21,7 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining)
 import qualified Slap.ByteParser as ByteParser
-import Slap.Measure (Length(..), Offset(..),
+import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..),
                      RawFlagByte(..), byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
@@ -129,11 +129,11 @@ parseRecords = do
   if unLength available < dpsRecordHeaderSize then pure (Right [])
   else do
     mode <- getByte
-    outputOffset <- Offset . fromIntegral <$> ByteParser.word32LE
+    outputOffset <- offsetFromParsed <$> ByteParser.word32LE
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
     case mode of
       0 -> do  -- CopyFromROM: read offset + length from patch
-        sourceOffset <- Offset . fromIntegral <$> ByteParser.word32LE
+        sourceOffset <- offsetFromParsed <$> ByteParser.word32LE
         copyLength   <- Length . fromIntegral <$> ByteParser.word32LE
         let record = DPSCopyFromROM outputOffset sourceOffset copyLength
         rest <- parseRecords

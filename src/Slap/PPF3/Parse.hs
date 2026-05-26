@@ -19,7 +19,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, int64LE)
-import Slap.Measure (Offset(..), Length(..), EncodingMethodByte(..),
+import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
@@ -119,7 +119,7 @@ parsePPF3Records hasUndo recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 9 then pure []
   else do
-    recordOffset <- Offset . fromIntegral <$> int64LE
+    recordOffset <- offsetFromParsed <$> int64LE
     payloadLength <- fromIntegral <$> getByte
     let totalNeeded = 9 + payloadLength + (if hasUndo then payloadLength else 0)
     if totalNeeded > unLength remainingBytes

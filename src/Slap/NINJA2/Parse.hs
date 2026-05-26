@@ -15,7 +15,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, atEnd)
-import Slap.Measure (Length(..), Offset(..), FileSize(..),
+import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import qualified Data.Text as Text
@@ -157,6 +157,6 @@ parseFileCommand patch = do
 -- | Command 0x02: XOR record
 parseXorRecord :: NINJA2Patch -> ByteParser NINJA2Patch
 parseXorRecord patch = do
-  recordOffset <- Offset . fromIntegral <$> parsePackedInteger
+  recordOffset <- offsetFromParsed <$> parsePackedInteger
   xorPayload <- parsePackedByteString
   pure patch { ninja2Records = NINJA2Record recordOffset xorPayload : ninja2Records patch }

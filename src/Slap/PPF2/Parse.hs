@@ -22,7 +22,7 @@ import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, word32LE)
-import Slap.Measure (Offset(..), Length(..),
+import Slap.Measure (Offset, offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
                      ActionIndex, unActionIndex,
                      RequiredLength(..), ActualLength(..),
@@ -109,7 +109,7 @@ parsePPF2Records recordIndex = do
   remainingBytes <- remaining
   if unLength remainingBytes < 5 then pure []
   else do
-    recordOffset <- Offset . fromIntegral <$> word32LE
+    recordOffset <- offsetFromParsed <$> word32LE
     countByte <- fromIntegral <$> getByte
     remainingAfterHeader <- remaining
     record <- if countByte == 0
