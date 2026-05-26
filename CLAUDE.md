@@ -30,9 +30,7 @@ The heart of the program is the "format declarations". Each subfolder of `src/Sl
 
 The current polish references — modules to look at when deciding what slap-shaped looks like — are app/Main.hs, Slap.BPS, Slap.IPS, and Slap.UPS. Other format modules are in varying intermediate states.
 
-Adding a new format would be pleasantly mechanical: new directory with the standard module set, a detection case in `Detect.hs`, a block in `parseSome`, CLI wiring in `Main.hs`, and if the format does direct conversion, a `PatchContents` population plus a row in `directConversionContract` and the `acceptedMetadataFields` / `acceptedConstraints` matrices.
-
-Adding a new format would be pleasantly mechanical: new directory with the standard module set, a detection case in `Detect.hs`, a block in `parseSome`, CLI wiring in `Main.hs`, and if the format does direct conversion, a `PatchContents` population and `FormatSpecification`. The contract system handles everything else. You are almost certainly not going to be asked to add a format. But it serves as an example: most concepts are shaped as they are, in order to make "boundaries and relationships between things" legible, and to make interacting with them delightfully DRY-y.
+Adding a new format would be pleasantly mechanical: new directory with the standard module set, a detection case in `Detect.hs`, a block in `parseSome`, CLI wiring in `Main.hs`, and if the format does direct conversion, a `PatchContents` population plus a row in `directConversionContract` and the `acceptedMetadataFields` / `acceptedConstraints` / `acceptedDialects` matrices. The contract system handles everything else. You are almost certainly not going to be asked to add a format. But it serves as an example: most concepts are shaped as they are, in order to make "boundaries and relationships between things" legible, and to make interacting with them delightfully DRY-y.
 
 ## Warnings
 

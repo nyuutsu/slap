@@ -8,19 +8,19 @@ CLAUDE.md describes the values; this document covers the shape. If the document 
 
 Four layers, dependencies flowing strictly downward.
 
-1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `Format`, `Compress`, `FormatLabel`, `Checksum`, `Error`, `TextEncoding`, `JSON`, `PatchField`, `MetadataField`, `Constraint`, `Platform`, `PlatformType`.
+1. **Foundation.** No format-specific knowledge: `Measure`, `FileContents`, `FFI`, `Binary`, `ByteParser`, `PatchFormat`, `Compression.Stream`, `FormatLabel`, `Checksum`, `Status`, `Text`, `FieldName`, `JSON`, `PatchField`, `MetadataField`, `MetadataInclusion`, `Constraint`, `Dialect`, `Narrow`, `Platform`, `PlatformType`.
 
-2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` is the current example, hosting the DP partitioner that decides which copy and RLE records IPS create should emit. Some formats currently lack `Create` and some currently return `TargetFileContents` directly instead of `Either SlapError TargetFileContents`; both are gaps the project is closing, not design choices. No format module imports another format module; siblings share only the foundation.
+2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` is the current example, hosting the DP partitioner that decides which copy and RLE records IPS create should emit. Some formats currently lack `Create`; that's a gap the project is closing, not a design choice. No format module imports another format module; siblings share only the foundation.
 
-3. **Coordination.** `Types`, `Detect`, `Explain`, `Convert`, `SomePatch`, `Create`, `Archive`, `Yay0`. Bridges between format-specific code and the CLI.
+3. **Coordination.** `Detect`, `Convert`, `SomePatch`, `Create`, `Archive`, `Display`, `Compression.Yay0`. Bridges between format-specific code and the CLI.
 
 4. **Entry point.** `Main`: CLI via `optparse-applicative`, six subcommands (`apply`, `undo`, `create`, `convert`, `info`, `explain`).
 
 ## The spine: `SomePatch`
 
-`SomePatch` is the one place where format-specific types exist. Its fields are closures and format-agnostic data: apply and undo strategies, structured verification, `ExplainData`, warnings, a format label, and — for direct formats — a `PatchContents` for the conversion engine. `parseSome` is the only dispatch point; everything downstream works through closures.
+`SomePatch` is the one place where format-specific types exist. Its fields are closures and format-agnostic data: apply and undo strategies, structured verification, the info and analysis data that `info` and `explain` render, advisories, a format label, and a `PatchKind` — either `Differential`, or `Direct` carrying a `Maybe PatchContents` for the conversion engine (`Nothing` when the direct format can't be re-encoded source-lessly, as with PPF4's Append commands). `parseSome` is the only dispatch point; everything downstream works through closures.
 
-Adding a format is mechanical: a new `Slap/Foo/` directory, a case in `Detect`, a block in `parseSome`, CLI wiring in `Main`, and — if direct — `PatchContents` population plus a row in `directConversionContract`.
+Adding a format is mechanical: a new `Slap/Foo/` directory, a case in `Detect`, a block in `parseSome`, CLI wiring in `Main`, and — if direct — `PatchContents` population plus a row in `directConversionContract` and arms in the `acceptedMetadataFields` / `acceptedConstraints` / `acceptedDialects` matrices.
 
 ## Conversion
 
@@ -28,21 +28,23 @@ The conversion engine's posture is to refuse. Most format pairs cannot be honest
 
 Direct formats carry literal replacement bytes; differential formats carry instructions. Source-less conversion (`convert FROM TO`) only works between direct formats whose contracts agree; differential targets always need `--with SOURCE` (apply, then re-create from source and reconstructed target).
 
-`Convert.PatchContents` is the universal direct-patch bag. `directConversionContract` declares what each direct target requires and accepts; `canConvert` consults that against a `PatchContents`. `acceptedMetadataFields` and `acceptedConstraints` are exhaustive per-format matrices governing CLI flag rejection — the former for fields embedded in the patch, the latter for opt-in refuse-gates that change *whether* slap proceeds rather than *what* it emits. Both are pattern-matched exhaustively, so adding a new format or a new field/constraint fires `-Wincomplete-patterns` everywhere a decision is needed.
+`Convert.PatchContents` is the universal direct-patch bag. `directConversionContract` declares what each direct target requires and accepts; `canConvert` consults that against a `PatchContents`. Three exhaustive per-format matrices govern CLI flag rejection: `acceptedMetadataFields` (fields embedded in the patch), `acceptedConstraints` (opt-in refuse-gates that change *whether* slap proceeds rather than *what* it emits), and `acceptedDialects` (wire-interpretation choices the file alone can't disambiguate, so the user picks the reading — PPF1 offset endianness is the current axis). Constraints and dialects are companions: a constraint gates whether slap proceeds, a dialect changes how the bytes are read or written. All three are pattern-matched exhaustively, so adding a new format or a new field/constraint/dialect fires `-Wincomplete-patterns` everywhere a decision is needed.
 
 `Slap.Create` hosts per-format porcelain for differential creation only. Direct creation goes through `createPatch` and routes through `Convert`'s `PatchContents` pipeline (`buildContents` then `encodeDirect`); the pipeline is shared, so per-format porcelain would have nothing format-level to wrap.
 
 ## Type-level seams
 
-`Slap.Measure` holds the role newtypes (`Offset`, `Length`, `FileSize`, `Delta`, `Position`, plus error-context role newtypes and the `Cursor` typeclass. `Slap.FileContents` holds `SourceFileContents`, `TargetFileContents`, `PatchFileContents` so buffer roles can't be transposed. `Slap.Error` holds `SlapError` and `SlapWarning` as closed sums with typed fields, plus the narrower `ApplyError` vocabulary that lifts in via `ApplyFailed` / `UndoFailed`.
+`Slap.Measure` holds the role newtypes (`Offset`, `Length`, `FileSize`, `Delta`, `Position`), plus error-context role newtypes and the `Cursor` typeclass. `Slap.FileContents` holds `InputFileContents`, `OutputFileContents`, `PatchFileContents` so buffer roles can't be transposed. `Slap.Status` holds `SlapError` and `SlapAdvisory` as closed sums with typed fields, plus the narrower `ApplyError` vocabulary that lifts in via `ApplyFailed` / `UndoFailed`.
 
 ## The format roster
 
 | Module  | Class        | Create                 |
 |---------|--------------|------------------------|
 | IPS     | Direct       | Yes (IPS, IPS32, EBP)  |
-| PPF     | Direct       | Yes (PPF3) No (PPF1&2) |
-| PPF4    | Direct       | No                     |
+| PPF1    | Direct       | Yes                    |
+| PPF2    | Direct       | Yes                    |
+| PPF3    | Direct       | Yes                    |
+| PPF4    | Direct       | Yes                    |
 | NINJA1  | Direct       | Yes                    |
 | PMSR    | Direct       | Yes                    |
 | APSN64  | Direct       | Yes                    |
@@ -54,9 +56,9 @@ Direct formats carry literal replacement bytes; differential formats carry instr
 | GDIFF   | Differential | Yes                    |
 | VCDIFF  | Differential | No                     |
 | BSDiff  | Differential | No                     |
-| XDelta1 | Differential | No                     |
+| XDelta1 | Differential | Yes                    |
 
-`Apply`s return `Either SlapError TargetFileContents`.
+Appliers return `Either SlapError OutputFileContents`; some wrap the success side in `Outcome` to carry apply-time advisories.
 
 `Slap.BPS`, `Slap.UPS`, `Slap.IPS`, and `app/Main.hs` are the current polish references. `Slap.Display` is part of the way there.
 

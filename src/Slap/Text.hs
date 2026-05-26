@@ -537,9 +537,7 @@ encodeLossAdvisories label field notices =
 -- The advisory channel is value-based: callers that want to surface
 -- the locale-unresolved condition destructure the pair and route
 -- the @Just@ through their own pipeline. The resolver itself does
--- not emit; it just makes the signal available. Stage 1 has no
--- caller yet — the CAF sits ready for stages 3 and 4 to thread it
--- through the format Create paths.
+-- not emit; it just makes the signal available.
 processLocaleEncoder :: (Encoding.DynEncoding, Maybe SlapAdvisory)
 processLocaleEncoder = unsafePerformIO $ do
   localeName <- textEncodingName <$> getLocaleEncoding
