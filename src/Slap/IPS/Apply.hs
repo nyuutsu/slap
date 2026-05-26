@@ -267,21 +267,24 @@ applyIPS (InputFileContents source) patch
         applyRecordStream !recordIndex
           | recordIndex >= recordStreamEnd = pure Nothing
           | otherwise =
-              handleRecord recordIndex
+              selectedRecordHandler recordIndex
                 (Vector.unsafeIndex records (unActionIndex recordIndex))
 
-        -- | Per-record dispatch. Routes 'MarkerHonored' through
-        -- 'handleHonored' (clip-and-count) and the other three
-        -- dispositions through 'handleStrict' (defensive bounds
-        -- check). Explicit four-arm match: a future fifth
+        -- | The per-record handler, chosen once for the whole walk.
+        -- The disposition is loop-invariant, so the four-arm dispatch
+        -- runs when 'selectedRecordHandler' is first forced rather
+        -- than on every record. 'MarkerHonored' routes to
+        -- 'handleHonored' (clip-and-count); the other three route to
+        -- 'handleStrict' (defensive bounds check). The match is
+        -- explicit rather than a catch-all so a future fifth
         -- disposition fires '-Wincomplete-patterns' here and the
         -- author has to decide which class it belongs to.
-        handleRecord :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
-        handleRecord recordIndex record = case disposition of
-          MarkerHonored _declared _natural -> handleHonored recordIndex record
-          MarkerAbsent   _natural          -> handleStrict  recordIndex record
-          MarkerNoOp     _declared         -> handleStrict  recordIndex record
-          MarkerIgnored  _declared _natural -> handleStrict  recordIndex record
+        selectedRecordHandler :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
+        selectedRecordHandler = case disposition of
+          MarkerHonored _declared _natural  -> handleHonored
+          MarkerAbsent   _natural           -> handleStrict
+          MarkerNoOp     _declared          -> handleStrict
+          MarkerIgnored  _declared _natural -> handleStrict
 
         -- | Record handler for 'MarkerHonored'. Dispatches on
         -- 'classifyRecordPlacement' and either writes the record (in
