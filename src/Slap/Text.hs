@@ -477,12 +477,12 @@ takeChunksUnderCap
   -> ([(ByteString, a)], [(ByteString, a)])
 takeChunksUnderCap cap = walk 0 []
   where
-    walk _ acc [] = (reverse acc, [])
-    walk used acc (chunk@(bytes, _) : rest) =
+    walk _    takenReversed [] = (reverse takenReversed, [])
+    walk used takenReversed (chunk@(bytes, _) : rest) =
       let nextUsed = used + ByteString.length bytes
       in if nextUsed > cap
-           then (reverse acc, chunk : rest)
-           else walk nextUsed (chunk : acc) rest
+           then (reverse takenReversed, chunk : rest)
+           else walk nextUsed (chunk : takenReversed) rest
 
 ----------------------------------------------------------------------------
 -- Advisory adaptation

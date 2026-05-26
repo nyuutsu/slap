@@ -297,23 +297,8 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
   in Right SomePatch
       { patchFormat         = LabelPPF1
       , patchAnalysis       = PPF1.analyzePPF1 patch
-      , patchKind           = Direct (Just PatchContents
-          { contentsRecords     = map hunkOf records
-          , contentsDescription = Just (PPF1.ppf1Description patch)
-          , contentsSourceCRC32 = Nothing
-          , contentsSourceMD5   = Nothing
-          , contentsSourceSHA1  = Nothing
-          , contentsDestinationSize    = Nothing
-          , contentsValidation  = Nothing
-          , contentsUndoData    = Nothing
-          , contentsTruncation  = Nothing
-          , contentsEBPMetadata = Nothing
-          , contentsRomType     = Nothing
-          , contentsImageType   = Nothing
-          , contentsFileIdDiz   = Nothing
-          , contentsNINJA1Compressed = Nothing
-          , contentsMetadata = Nothing
-          })
+      , patchKind           = Direct (Just (emptyContents (map hunkOf records))
+          { contentsDescription = Just (PPF1.ppf1Description patch) })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (PPF1.applyPPF1 patch source) }
       , patchUndo           = Nothing
@@ -353,22 +338,11 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
   in Right SomePatch
       { patchFormat         = LabelPPF2
       , patchAnalysis       = PPF2.analyzePPF2 patch
-      , patchKind           = Direct (Just PatchContents
-          { contentsRecords     = map hunkOf records
-          , contentsDescription = Just (PPF2.ppf2Description patch)
-          , contentsSourceCRC32 = Nothing
-          , contentsSourceMD5   = Nothing
-          , contentsSourceSHA1  = Nothing
-          , contentsDestinationSize    = Just sourceFileSize
-          , contentsValidation  = Just validationBytes
-          , contentsUndoData    = Nothing
-          , contentsTruncation  = Nothing
-          , contentsEBPMetadata = Nothing
-          , contentsRomType     = Nothing
-          , contentsImageType   = Nothing
-          , contentsFileIdDiz   = fmap PPF2.unPPF2FileId (PPF2.ppf2FileId patch)
-          , contentsNINJA1Compressed = Nothing
-          , contentsMetadata = Nothing
+      , patchKind           = Direct (Just (emptyContents (map hunkOf records))
+          { contentsDescription     = Just (PPF2.ppf2Description patch)
+          , contentsDestinationSize = Just sourceFileSize
+          , contentsValidation      = Just validationBytes
+          , contentsFileIdDiz       = fmap PPF2.unPPF2FileId (PPF2.ppf2FileId patch)
           })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (PPF2.applyPPF2 patch source) }
@@ -413,13 +387,8 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
   in Right SomePatch
       { patchFormat         = LabelPPF3
       , patchAnalysis       = PPF3.analyzePPF3 patch
-      , patchKind           = Direct (Just PatchContents
-          { contentsRecords     = map hunkOf records
-          , contentsDescription = Just (PPF3.ppf3Description patch)
-          , contentsSourceCRC32 = Nothing
-          , contentsSourceMD5   = Nothing
-          , contentsSourceSHA1  = Nothing
-          , contentsDestinationSize    = Nothing
+      , patchKind           = Direct (Just (emptyContents (map hunkOf records))
+          { contentsDescription = Just (PPF3.ppf3Description patch)
           , contentsValidation  = validationBlockBytes
           , contentsUndoData    = if PPF3.ppf3HasUndo patch
                             then Just [ splitUndoHunkFromParsed
@@ -428,13 +397,8 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
                                           (fromMaybe ByteString.empty (PPF3.ppf3RecordUndo record))
                                       | record <- records ]
                             else Nothing
-          , contentsTruncation  = Nothing
-          , contentsEBPMetadata = Nothing
-          , contentsRomType     = Nothing
           , contentsImageType   = Just (PPF3.ppf3ImageType patch)
           , contentsFileIdDiz   = fmap PPF3.unPPF3FileId (PPF3.ppf3FileId patch)
-          , contentsNINJA1Compressed = Nothing
-          , contentsMetadata = Nothing
           })
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (PPF3.applyPPF3 patch source) }
