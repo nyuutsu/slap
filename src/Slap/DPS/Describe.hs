@@ -34,8 +34,7 @@ dpsMeta patch = concat
   , fieldPair "version" (dpsVersion patch)
   , [InfoLine "orig size" (renderAsText (unFileSize (dpsSourceSizeAsFileSize (dpsOriginalSize patch))))]
   , [InfoLine "flag" "unstable" | dpsStability patch == DPSUnstable]
-  , [InfoLine "copy" (renderAsText copyCount)]
-  , [InfoLine "enclosed" (renderAsText enclosedCount)]
+  , [InfoLine "breakdown" recordKindBreakdown]
   ]
   where
     -- The decoded text comes off the typed field directly; empty
@@ -47,7 +46,12 @@ dpsMeta patch = concat
       | otherwise         = [InfoLine label trimmed]
       where
         trimmed = Text.dropWhileEnd (== '\NUL') (encodedTextContent value)
-    copyCount = length [() | DPSCopyFromROM {} <- dpsRecords patch]
+    -- DPS records split into two kinds. The count line already states
+    -- the total ("401 records"), so this row breaks that total down
+    -- rather than spending a line apiece on two numbers that sum to it.
+    recordKindBreakdown =
+      renderAsText copyCount <> " copy, " <> renderAsText enclosedCount <> " enclosed"
+    copyCount     = length [() | DPSCopyFromROM {}  <- dpsRecords patch]
     enclosedCount = length [() | DPSEnclosedData {} <- dpsRecords patch]
 
 ----------------------------------------------------------------------------
