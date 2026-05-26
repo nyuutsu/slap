@@ -245,7 +245,7 @@ xdelta1NameByteCap = 0xFFFF
 -- verification posture — whether MD5 fields carry real verification
 -- data or are the canonical sentinel ('xdelta1EmptyInputMD5Sentinel')
 -- emitted by the canonical tool's @--noverify@. The round-trip
--- vehicle for the @--no-verify@ family in xdelta1: the parser
+-- vehicle for the @--omit-verification@ axis in xdelta1: the parser
 -- produces a value of this type from the wire; the encoder in
 -- "Slap.XDelta1.Create" consumes one (mapped from
 -- 'Slap.Convert.VerificationInclusion' at the porcelain boundary)

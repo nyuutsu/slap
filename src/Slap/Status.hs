@@ -1010,7 +1010,7 @@ data SlapAdvisory
   -- | The patch declares no verification data at the format level
   -- (e.g. xdelta1's @FLAG_NO_VERIFY@ header bit, set by canonical's
   -- @--noverify@; PPF3's absent validation block, set by slap's
-  -- create-side @--no-verify@). Slap honors the declaration by
+  -- create-side @--omit-verification@). Slap honors the declaration by
   -- skipping verification entirely; the warning
   -- reports that slap cannot attest the output matches the creator's
   -- intent. Family sibling of 'VerificationCRCMismatch' and the
@@ -1817,7 +1817,7 @@ renderSlapAdvisory IncludingUndoByDefault =
   "including undo data (omit with --no-undo)"
 
 renderSlapAdvisory IncludingVerificationByDefault =
-  "including verification data (omit with --no-verify)"
+  "including verification data (omit with --omit-verification)"
 
 renderSlapAdvisory (SourceHashesMissing _label) =
   "input verification hashes not available (populate with --with INPUT)"
@@ -1905,7 +1905,7 @@ renderSlapAdvisory (VerificationSourceBytesMismatch (ByteCheckLabel label) check
 
 renderSlapAdvisory (VerificationOptedOutByCreator label) =
   formatLabelName label
-    <> ": creator opted out of verification (--no-verify); slap cannot attest the output matches the creator's intent"
+    <> ": creator opted out of verification (--omit-verification); slap cannot attest the output matches the creator's intent"
 
 ----------------------------------------------------------------------------
 -- Helpers

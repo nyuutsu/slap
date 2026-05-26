@@ -43,4 +43,4 @@ bps        | ips32   | test/data/stadium2/fair-heavy/patch.bps     | test/data/s
 bps        | ips     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:exceeds maximum offset    |  | --with
 bps        | ips32   | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
 bps        | bps     | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     | 1155bbd39201617638aab3f3b1087d3a11413b08 | accept |  | --with
-bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:won't produce a patch for this input |  | --with --no-undo --no-verify
+bps        | ppf3    | test/data/stadium2/size-change/patch.bps    | test/data/stadium2/base.z64     |          | reject:won't produce a patch for this input |  | --with --no-undo --omit-verification

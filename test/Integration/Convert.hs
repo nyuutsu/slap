@@ -41,7 +41,7 @@ import Slap.Convert
   , noDialectsRequested
   )
 
--- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--no-verify`)
+-- NB: the spec file uses CLI-style flag strings (`--no-undo`, `--omit-verification`)
 -- but the flags get parsed here, not by 'requestedPatchMetadataInputsParser',
 -- so the harness controls which flag strings are recognized.
 
@@ -121,7 +121,7 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
             | "--no-undo" `elem` flags = Just OmitUndoData
             | otherwise                = Nothing
           includeVerification
-            | "--no-verify" `elem` flags = Just OmitVerification
+            | "--omit-verification" `elem` flags = Just OmitVerification
             | otherwise                  = Nothing
 
       maybeBase <- if useWith && not (null baseRel)

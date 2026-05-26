@@ -704,14 +704,14 @@ metadataRejectionTests base bps =
           ["create", "--format", "bps", base, target, patch, "--metadata", blob]
           "metadata-accept/bps" "wrote"
 
-  , testCase "metadata-accept/ppf3 takes --no-undo --no-verify --description" $
+  , testCase "metadata-accept/ppf3 takes --no-undo --omit-verification --description" $
       withTempFile "slap-target" $ \target ->
       withTempFile "slap-patch" $ \patch -> do
         ByteString.readFile base >>= ByteString.writeFile target
         _ <- runExternal SlapBinary ["apply", bps, target, "--in-place", "--no-backup"] Nothing ""
         expectOk
           ["create", "--format", "ppf3", base, target, patch,
-           "--description", "x", "--no-undo", "--no-verify"]
+           "--description", "x", "--no-undo", "--omit-verification"]
           "metadata-accept/ppf3" "wrote"
 
   , testCase "metadata-accept/convert inherits source metadata silently" $

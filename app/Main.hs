@@ -272,15 +272,17 @@ data OverwritePolicy
 -- downgrades the mismatch to a warning and applies anyway.
 -- Formats without source checksums are unaffected either way.
 --
--- This is the apply-side member of slap's @--no-verify@ family.
--- Family siblings:
+-- This is the enforcement axis, set by @--no-verify@ on apply,
+-- undo, and convert (the @--with INPUT@ check). It is distinct
+-- from the inclusion axis — whether a created patch embeds
+-- integrity data — set by @--omit-verification@. Related types:
 --
--- * 'Slap.Convert.VerificationInclusion' — the create-side
---   member: what 'slap create' embeds in the patch under
---   @--no-verify@. PPF3 and xdelta1 are the consuming formats
---   today (the 1024-byte validation block and the source/target
---   MD5s respectively); future formats with their own integrity-
---   check mechanisms will plug into the same flag.
+-- * 'Slap.Convert.VerificationInclusion' — the inclusion axis:
+--   what 'slap create' (and convert) embeds in the patch under
+--   @--omit-verification@. PPF3 and xdelta1 are the consuming
+--   formats today (the 1024-byte validation block and the
+--   source/target MD5s respectively); future formats with their
+--   own integrity-check mechanisms plug into the same flag.
 -- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
 --   side member: what a parsed xdelta1 patch declares about its
 --   own verification data.
@@ -716,17 +718,17 @@ convertToParser = option (eitherReader parseCreateFormat)
 requestedMetadataParser :: Parser RequestedPatchMetadata
 requestedMetadataParser = do
     title             <- optional (option str (long "title" <> metavar "TEXT"
-                            <> help "Patch title (EBP/NINJA2)"))
+                            <> help "Patch title (EBP/DPS/NINJA2)"))
     author            <- optional (option str (long "author" <> metavar "TEXT"
                             <> help "Patch author (EBP/DPS/NINJA2)"))
     description       <- optional (option str (long "description" <> metavar "TEXT"
-                            <> help "Patch description (DPS/PPF3/EBP/APS-N64/NINJA2)"))
+                            <> help "Patch description (EBP/PPF1/PPF2/PPF3/APS-N64/NINJA2)"))
     version           <- optional (option str (long "patch-version" <> metavar "TEXT"
                             <> help "Patch version (DPS/NINJA2)"))
     includeUndo         <- optional (flag' OmitUndoData     (long "no-undo"
                             <> help "Omit undo data (default: included when the format supports it)"))
-    includeVerification <- optional (flag' OmitVerification (long "no-verify"
-                            <> help "Omit source-integrity-checking data (default: included when the format supports it)"))
+    includeVerification <- optional (flag' OmitVerification (long "omit-verification"
+                            <> help "Omit source-integrity-checking data from the created patch (default: included when the format supports it)"))
     patchCompression  <- optional (flag' UncompressedPatch (long "no-compress"
                             <> help "Do not gzip-compress the output patch (xdelta1 only; default emits compressed)"))
     unstable          <- optional (flag' UnstablePatch (long "unstable"
