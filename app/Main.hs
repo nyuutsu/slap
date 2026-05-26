@@ -14,6 +14,7 @@ import Slap.SomePatch
   , WindowCheck(..)
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
+  , FileSizeCheck(..)
   , parseSome
   )
 import Slap.Display.Common (renderInfoLine, pathText)
@@ -1418,10 +1419,17 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
     noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
     notePPFBlock blockOffset expectedData sourceBytes
-  forM_ (verifyFileSizeAdvisory verification) $ \expectedSize ->
-    noteFileSize expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
   forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
     noteSourceBytes (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
+  -- File size sits at the advisory/fatal boundary: its severity rides
+  -- on the 'FileSizeCheck' value, so 'AdvisorySize' warns here with the
+  -- other diagnostics while 'RequiredSize' enforces like the fatal
+  -- checks below. Either way the warning prints before any fatal abort.
+  forM_ (verifyFileSize verification) $ \fileSizeCheck ->
+    let actualSize = FileSize (fromIntegral (ByteString.length sourceBytes))
+    in case fileSizeCheck of
+         AdvisorySize expectedSize -> noteFileSize expectedSize actualSize
+         RequiredSize expectedSize -> enforceFileSize verificationPolicy SourceSide expectedSize actualSize
   -- Fatal-class checks: under EnforceVerification a mismatch is
   -- fatal; under SkipVerification (--no-verify) it downgrades to a
   -- warning. The format's choice to populate these slots expresses
@@ -1432,8 +1440,6 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
     enforceHash verificationPolicy SourceSide MD5 expected (md5 preprocessed)
   forM_ (verifySourceSHA1 verification) $ \expected ->
     enforceHash verificationPolicy SourceSide SHA1 expected (sha1 preprocessed)
-  forM_ (verifyFileSizeRequired verification) $ \expectedSize ->
-    enforceFileSize verificationPolicy SourceSide expectedSize (FileSize (fromIntegral (ByteString.length sourceBytes)))
 
 verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
 verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do

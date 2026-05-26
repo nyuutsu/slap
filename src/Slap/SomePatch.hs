@@ -11,6 +11,7 @@ module Slap.SomePatch
   , WindowCheck(..)
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
+  , FileSizeCheck(..)
   , noVerification
   , parseSome
   ) where
@@ -138,14 +139,13 @@ data Verification = Verification
   , verifySourceBlocks  :: [BlockCheck]
   , verifyTargetBlocks  :: [BlockCheck]
   , verifyPPFBlock      :: Maybe ValidationBlock
-    -- | Advisory file-size check for formats that have a stronger
-    -- integrity gate (e.g. CRC32).  Mismatch emits a warning but does
-    -- not fail the apply — the CRC will catch real corruption.
-  , verifyFileSizeAdvisory :: Maybe FileSize
-    -- | Required file-size check for formats where file size is the
-    -- only integrity gate (no CRC, no hash).  Mismatch fails the
-    -- apply unless @--no-verify@ is set.
-  , verifyFileSizeRequired :: Maybe FileSize
+    -- | File-size check, when the format declares an expected source
+    -- size. The 'FileSizeCheck' carries its own severity: 'AdvisorySize'
+    -- for formats with a stronger gate (a CRC32, say), where a mismatch
+    -- only warns; 'RequiredSize' for formats where the declared size is
+    -- the sole gate, where a mismatch fails the apply unless
+    -- @--no-verify@ is set.
+  , verifyFileSize :: Maybe FileSizeCheck
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]
   , verifySourcePreHash :: ByteString.ByteString -> ByteString.ByteString -- transform source before hashing (NINJA1 sampling)
@@ -179,12 +179,28 @@ newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
   { unAdvisoryExpectedBytes :: ByteString.ByteString }
   deriving (Show, Eq)
 
+-- | A declared file-size expectation paired with how a mismatch is
+-- treated. File size is the one verification check whose severity
+-- varies by format, so the severity rides on the value here rather than
+-- on which field carries it: the apply-time verifier matches the
+-- constructor to route 'AdvisorySize' to a warning and 'RequiredSize'
+-- to a policy-gated failure.
+data FileSizeCheck
+  = AdvisorySize !FileSize
+    -- ^ The format has a stronger integrity gate (e.g. a CRC32), so a
+    -- size mismatch only warns; the stronger check catches real
+    -- corruption.
+  | RequiredSize !FileSize
+    -- ^ The declared size is the format's only integrity gate, so a
+    -- mismatch fails the apply unless @--no-verify@ is set.
+  deriving (Show, Eq)
+
 noVerification :: Verification
 noVerification = Verification
   { verifySourceCRC32 = Nothing, verifySourceMD5 = Nothing, verifySourceSHA1 = Nothing
   , verifyTargetCRC32 = Nothing, verifyTargetMD5 = Nothing
   , verifySourceBlocks = [], verifyTargetBlocks = []
-  , verifyPPFBlock = Nothing, verifyFileSizeAdvisory = Nothing, verifyFileSizeRequired = Nothing
+  , verifyPPFBlock = Nothing, verifyFileSize = Nothing
   , verifyWindowAdler32 = [], verifySourceBytes = []
   , verifySourcePreHash = id
   }
@@ -333,7 +349,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
       sourceFileSize = FileSize (fromIntegral (PPF2.unPPF2SourceSize (PPF2.ppf2SourceFileSize patch)))
       ppfVerification = noVerification
           { verifyPPFBlock = Just (ValidationBlock PPF2.ppf2ValidationOffset validationBytes)
-          , verifyFileSizeAdvisory = Just sourceFileSize
+          , verifyFileSize = Just (AdvisorySize sourceFileSize)
           }
   in Right SomePatch
       { patchFormat         = LabelPPF2
@@ -610,7 +626,7 @@ parseSomePatchFromBPS patchContents = do
         -- error semantics. A wrong-size source still fails via
         -- the source CRC check; the size warning just makes the
         -- diagnostic more specific before the CRC hard-errors.
-        , verifyFileSizeAdvisory = Just (BPS.bpsSourceSize patch)
+        , verifyFileSize = Just (AdvisorySize (BPS.bpsSourceSize patch))
         }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelBPS EmptyActions | Vector.null actions]
@@ -663,8 +679,8 @@ parseSomePatchFromUPS patchContents = do
         -- so this doesn't interfere with UPS's self-inverse
         -- property — undoing a patch where the "source" actually
         -- has target-size still works because undo never consults
-        -- verifyFileSizeAdvisory.
-        , verifyFileSizeAdvisory = Just (UPS.upsSourceSize patch)
+        -- verifyFileSize.
+        , verifyFileSize = Just (AdvisorySize (UPS.upsSourceSize patch))
         }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelUPS EmptyBlocks | Vector.null blocks]
@@ -1023,7 +1039,7 @@ parseSomePatchFromAPSGBA patchContents = do
     , patchVerification   = noVerification
           { verifySourceBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaSourceCRC record)) records
           , verifyTargetBlocks = map (\record -> BlockCheck (APSGBA.apsGbaOffset record) (APSGBA.apsGbaTargetCRC record)) records
-          , verifyFileSizeAdvisory = Just (APSGBA.apsGbaSourceSize header)
+          , verifyFileSize = Just (AdvisorySize (APSGBA.apsGbaSourceSize header))
           }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelAPSGBA EmptyBlocks | null records]
@@ -1051,7 +1067,7 @@ parseSomePatchFromDPS patchContents = do
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (fmap noAdvisories (DPS.applyDPS patch source)) }
     , patchVerification   = noVerification
-          { verifyFileSizeRequired = Just (DPS.dpsSourceSizeAsFileSize (DPS.dpsOriginalSize patch)) }
+          { verifyFileSize = Just (RequiredSize (DPS.dpsSourceSizeAsFileSize (DPS.dpsOriginalSize patch))) }
     , patchUndo           = Nothing
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelDPS EmptyRecords | null records]

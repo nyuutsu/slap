@@ -34,7 +34,7 @@ import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Parse as APSGBA
 import Slap.APSGBA.Types (apsGbaBlockSize)
-import Slap.SomePatch (parseSome, patchVerification, Verification(..))
+import Slap.SomePatch (parseSome, patchVerification, Verification(..), FileSizeCheck(..))
 import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
@@ -103,7 +103,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "target-crc-read-literally" bpsTargetCRCReadLiterally
           , testCase "apply-defers-source-size-check-to-verification-layer"
               bpsApplyDefersSourceSizeCheckToVerificationLayer
-          , testCase "parseSome-populates-verifyFileSizeAdvisory"
+          , testCase "parseSome-populates-verifyFileSize"
               bpsVerificationCarriesDeclaredSize
           , testCase "negative-zero-signed-varint-warns"
               bpsNegativeZeroSignedVarintWarns
@@ -157,7 +157,7 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "target-crc-read-literally" upsTargetCRCReadLiterally
           , testCase "apply-defers-source-size-check-to-verification-layer"
               upsApplyDefersSourceSizeCheckToVerificationLayer
-          , testCase "parseSome-populates-verifyFileSizeAdvisory"
+          , testCase "parseSome-populates-verifyFileSize"
               upsVerificationCarriesDeclaredSize
           ]
       , testGroup "spec-reject"
@@ -1051,7 +1051,7 @@ bpsTargetCRCReadLiterally =
 --
 -- The complementary 'bpsVerificationCarriesDeclaredSize' test below
 -- pins the other end of the contract: that 'parseSome' exposes the
--- declared size through 'verifyFileSizeAdvisory' so the Verification layer
+-- declared size through 'verifyFileSize' so the Verification layer
 -- has something to check.
 bpsApplyDefersSourceSizeCheckToVerificationLayer :: Assertion
 bpsApplyDefersSourceSizeCheckToVerificationLayer =
@@ -1095,7 +1095,7 @@ bpsNegativeZeroSignedVarintWarns =
          assertBool ("expected NegativeZeroInBPS in: " ++ show parseAdvisories)
                     (NegativeZeroInBPS `elem` parseAdvisories)
 
--- | 'parseSome' must populate 'verifyFileSizeAdvisory' with the declared
+-- | 'parseSome' must populate 'verifyFileSize' with the declared
 -- source size so the Verification layer can diagnose mismatches.
 -- The BPS spec declares source-size in the header; this test pins
 -- that the field survives through to the verification record.
@@ -1112,8 +1112,8 @@ bpsVerificationCarriesDeclaredSize =
   in case parseSome noDialectsRequested patch of
     Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
-      assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
-        (verifyFileSizeAdvisory (patchVerification somePatch))
+      assertEqual "verifyFileSize" (Just (AdvisorySize (FileSize 4)))
+        (verifyFileSize (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- UPS reject: too short for footer, missing block terminator
@@ -1186,7 +1186,7 @@ upsApplyDefersSourceSizeCheckToVerificationLayer =
   in assertParseApply parseAndApplyUPS patch actualSource target
 
 -- | Parallel to 'bpsVerificationCarriesDeclaredSize'. 'parseSome'
--- must expose UPS's declared source-size through 'verifyFileSizeAdvisory'.
+-- must expose UPS's declared source-size through 'verifyFileSize'.
 upsVerificationCarriesDeclaredSize :: Assertion
 upsVerificationCarriesDeclaredSize =
   let source = ByteString.pack [0x11, 0x22, 0x33, 0x44]
@@ -1196,8 +1196,8 @@ upsVerificationCarriesDeclaredSize =
   in case parseSome noDialectsRequested patch of
     Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
-      assertEqual "verifyFileSizeAdvisory" (Just (FileSize 4))
-        (verifyFileSizeAdvisory (patchVerification somePatch))
+      assertEqual "verifyFileSize" (Just (AdvisorySize (FileSize 4)))
+        (verifyFileSize (patchVerification somePatch))
 
 ----------------------------------------------------------------------------
 -- Varint canonicality and boundary value
