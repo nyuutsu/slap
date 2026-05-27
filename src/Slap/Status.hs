@@ -59,6 +59,7 @@ module Slap.Status
   , APSN64HeaderMalformation(..)
   , NINJA1Malformation(..)
   , NINJA1SubformatConversion(..)
+  , BPSMetadataDivergence(..)
   , LineText(..)
   , OffsetTokenText(..)
   , ByteParserError(..)
@@ -753,6 +754,25 @@ data SlapError
   deriving (Show, Eq)
 
 ----------------------------------------------------------------------------
+-- BPSMetadataDivergence
+----------------------------------------------------------------------------
+
+-- | How a BPS patch's metadata blob diverged from the spec-recommended
+-- UTF-8 XML, carried by 'BPSMetadataNonConformant'. The BPS spec
+-- recommends UTF-8 XML in the metadata field but explicitly permits
+-- "literally anything", so neither case is an error — both are
+-- spec-valid oddities slap remarks on, because a populated metadata
+-- field is rare and a non-conforming one rarer still.
+data BPSMetadataDivergence
+  = MetadataIsNotUTF8
+    -- ^ The bytes do not decode as UTF-8 at all.
+  | MetadataIsValidUTF8ButNonText
+    -- ^ The bytes are valid UTF-8 but carry control or format
+    -- codepoints, so they are not the plain text the field is meant
+    -- to hold.
+  deriving (Eq, Show)
+
+----------------------------------------------------------------------------
 -- SlapAdvisory
 ----------------------------------------------------------------------------
 
@@ -841,6 +861,17 @@ data SlapAdvisory
   -- carries it for consistency with the rest of the advisory
   -- family.
   | EBPMetadataMalformed FormatLabel
+
+  -- | A BPS patch carries embedded metadata that isn't the spec-
+  -- recommended UTF-8 XML. The BPS spec recommends UTF-8 XML in this
+  -- field but explicitly permits "literally anything", so this is a
+  -- spec-valid oddity, not an error: slap carries the blob byte-exact
+  -- on every payload path and only remarks here, because a populated
+  -- metadata field is rare and a non-conforming one rarer still. The
+  -- 'BPSMetadataDivergence' names how it diverged; the 'Length' is the
+  -- blob's byte count. The 'FormatLabel' is always 'LabelBPS', carried
+  -- for consistency with the rest of the advisory family.
+  | BPSMetadataNonConformant FormatLabel BPSMetadataDivergence Length
 
   -- | A 'StandardIPS' patch's post-EOF truncation marker declared a
   -- target size smaller than the natural size, and slap honored it.
@@ -1746,6 +1777,17 @@ renderSlapAdvisory (EBPMetadataMalformed label) =
   <> " but no title, author, description, or patcher could be extracted"
   <> " (supply --title / --author / --description on convert-to-EBP to populate the target's metadata)"
 
+renderSlapAdvisory (BPSMetadataNonConformant label divergence (Length byteCount)) =
+  formatLabelName label
+  <> ": metadata is " <> renderAsText byteCount
+  <> plural byteCount " byte" " bytes" <> " that " <> divergencePhrase
+  <> "; the spec recommends UTF-8 XML here but permits arbitrary bytes,"
+  <> " so this is unusual but valid"
+  where
+    divergencePhrase = case divergence of
+      MetadataIsNotUTF8             -> "aren't valid UTF-8"
+      MetadataIsValidUTF8ButNonText -> "are valid UTF-8 but carry non-text control codepoints"
+
 renderSlapAdvisory (IPSTruncationMarkerHonored label
     (DeclaredTargetSize declared) (NaturalTargetSize natural)) =
   formatLabelName label
@@ -2281,6 +2323,7 @@ slapAdvisorySeverity advisory = case advisory of
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
+  BPSMetadataNonConformant{}           -> SeverityNote
   APSN64UnrecognizedCountry{}          -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote
   FieldDropped{}                       -> SeverityNote

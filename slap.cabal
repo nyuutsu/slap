@@ -170,7 +170,8 @@ executable slap
 test-suite props
   type:             exitcode-stdio-1.0
   main-is:          Props.hs
-  other-modules:    Props.ClassifyTargetCopy
+  other-modules:    Props.BPSMetadata
+                  , Props.ClassifyTargetCopy
                   , Props.Contracts
                   , Props.Detection
                   , Props.Helpers

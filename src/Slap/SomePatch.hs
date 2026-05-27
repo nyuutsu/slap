@@ -630,6 +630,7 @@ parseSomePatchFromBPS patchContents = do
         }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelBPS EmptyActions | Vector.null actions]
+                            ++ BPS.bpsMetadataNotes patch
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelBPS Nothing
         , infoLines  = BPS.bpsMeta patch

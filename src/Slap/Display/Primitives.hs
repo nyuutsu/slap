@@ -12,11 +12,14 @@ module Slap.Display.Primitives
   , hexDump
     -- * Shape-recognized byte display
   , renderPrintableASCIIOrHex
+    -- * Safe text display
+  , renderEscapingNonPrintable
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Char8 as ByteString8
+import Data.Char (isPrint, ord)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.Word (Word8, Word64)
@@ -88,3 +91,35 @@ renderPrintableASCIIOrHex bytes
 -- inclusive).
 isPrintableAscii :: Word8 -> Bool
 isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
+
+----------------------------------------------------------------------------
+-- Safe text display
+----------------------------------------------------------------------------
+
+-- | Render 'Text' for safe terminal display: every printable codepoint
+-- passes through literally, every non-printable one becomes a visible
+-- @\<U+XXXX\>@ token. "Printable" is 'Data.Char.isPrint', which is
+-- false for control, format, surrogate, private-use, unassigned, and
+-- line- and paragraph-separator codepoints — so every flavor of
+-- newline (LF, CR, VT, FF, NEL, U+2028, U+2029), every terminal-escape
+-- introducer (ESC and the C1 range), and the bidi-override and
+-- zero-width spoofing characters all become inert tokens, while
+-- letters, marks, numbers, punctuation, symbols, and spaces render as
+-- themselves.
+--
+-- No codepoint is privileged: the safe-versus-escaped line is
+-- 'isPrint' and nothing else, so the several ways to spell a line
+-- break are all escaped identically rather than one being anointed as
+-- "the" newline. Nothing renderable as a terminal command reaches the
+-- terminal raw, and nothing is dropped — an odd or hostile blob is
+-- shown in full, just defanged. Suitable for previewing arbitrary
+-- text from an untrusted patch (the BPS metadata glance is the first
+-- caller).
+renderEscapingNonPrintable :: Text -> Text
+renderEscapingNonPrintable = Text.concatMap renderCodepoint
+  where
+    renderCodepoint codepoint
+      | isPrint codepoint = Text.singleton codepoint
+      | otherwise         = escapeCodepoint codepoint
+    escapeCodepoint codepoint =
+      "<U+" <> Text.toUpper (padHex 4 (ord codepoint)) <> ">"

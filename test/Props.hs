@@ -19,6 +19,11 @@
 --   * 'Props.Text'               — typed text values with encoding tags;
 --                                  the foundation 'Slap.Text' module.
 --   * 'Props.Detection'          — DPS detection heuristic.
+--   * 'Props.BPSMetadata'        — the BPS metadata glance: the
+--                                  UTF-8-or-not classifier, the
+--                                  non-printable-escaping display
+--                                  primitive, and the non-conformance
+--                                  remark.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.
 --   * 'Props.ParseWarnings'      — IPS parse-time structural warnings:
@@ -32,6 +37,7 @@
 -- Shared generators, helpers, and predicates live in 'Props.Helpers'.
 module Main (main) where
 
+import qualified Props.BPSMetadata as BPSMetadata
 import qualified Props.ClassifyTargetCopy as ClassifyTargetCopy
 import qualified Props.Contracts as Contracts
 import qualified Props.Detection as Detection
@@ -59,6 +65,7 @@ main = defaultMain $ testGroup "Properties"
   , Contracts.contractTests
   , Text.textTests
   , Detection.detectionTests
+  , BPSMetadata.bpsMetadataTests
   , ClassifyTargetCopy.classifyTargetCopyTests
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
