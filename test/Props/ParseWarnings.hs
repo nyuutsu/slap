@@ -47,8 +47,10 @@ parseWarningsTests = testGroup "ParseWarnings"
       truncatedIPS32NoEOFMarkerCarriesVariantLabel
   , testCase "APS-N64 type-1 with recognized country byte parses cleanly"
       apsN64RecognizedCountryEmitsNoWarning
-  , testCase "APS-N64 type-1 with unrecognized country byte warns and preserves the byte"
-      apsN64UnrecognizedCountryEmitsWarning
+  , testCase "APS-N64 type-1 region-free (0x00) country parses as a named value without warning"
+      apsN64RegionFreeCountryParsesNamed
+  , testCase "APS-N64 type-1 with an unrecognized country byte preserves it without warning"
+      apsN64UnrecognizedCountryPreservedWithoutWarning
   , testCase "APS-N64 type-0 (Simple) carries no country field and no country warning"
       apsN64SimplePatchHasNoCountryWarning
   , testCase "PPF1 description with bytes that do not decode under the locale surfaces a substitution advisory"
@@ -292,11 +294,17 @@ apsN64RecognizedCountryEmitsNoWarning =
     assertEqual "country field" (Just APSN64.APSN64CountryJapan) (APSN64.apsN64Country header)
     assertEqual "surfaced warnings" [] actualWarnings
 
-apsN64UnrecognizedCountryEmitsWarning :: Assertion
-apsN64UnrecognizedCountryEmitsWarning =
+apsN64RegionFreeCountryParsesNamed :: Assertion
+apsN64RegionFreeCountryParsesNamed =
   withParsedAPSN64 (apsN64Type1Patch 0x00) $ \header actualWarnings -> do
-    assertEqual "country field" (Just (APSN64.APSN64CountryUnrecognized 0x00)) (APSN64.apsN64Country header)
-    assertEqual "surfaced warnings" [APSN64UnrecognizedCountry 0x00] actualWarnings
+    assertEqual "country field" (Just APSN64.APSN64CountryRegionFree) (APSN64.apsN64Country header)
+    assertEqual "surfaced warnings" [] actualWarnings
+
+apsN64UnrecognizedCountryPreservedWithoutWarning :: Assertion
+apsN64UnrecognizedCountryPreservedWithoutWarning =
+  withParsedAPSN64 (apsN64Type1Patch 0xFF) $ \header actualWarnings -> do
+    assertEqual "country field" (Just (APSN64.APSN64CountryUnrecognized 0xFF)) (APSN64.apsN64Country header)
+    assertEqual "surfaced warnings" [] actualWarnings
 
 apsN64SimplePatchHasNoCountryWarning :: Assertion
 apsN64SimplePatchHasNoCountryWarning =

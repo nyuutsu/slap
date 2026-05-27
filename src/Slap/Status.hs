@@ -896,13 +896,6 @@ data SlapAdvisory
   -- the patch declared something slap chose not to act on.
   | IPSTruncationMarkerIgnored FormatLabel DeclaredTargetSize NaturalTargetSize
 
-  -- | An APS-N64 type-1 patch declares a country code byte that is
-  -- not one of the documented N64 cartridge ROM region codes. The
-  -- byte is preserved verbatim for round-tripping; slap proceeds
-  -- normally because the country byte is informational and gates no
-  -- decoding decision. The 'Word8' is the unrecognized byte.
-  | APSN64UnrecognizedCountry !Word8
-
   -- | An xdelta 1.1.x patch had bit 0 (@FLAG_NO_VERIFY@) of the
   -- header's flags word set, but at least one of its stored MD5
   -- slots (target MD5 in the control structure, or any source MD5
@@ -1812,11 +1805,6 @@ renderSlapAdvisory (IPSTruncationMarkerIgnored label
   <> renderAsText (unFileSize declared) <> " bytes, natural "
   <> renderAsText (unFileSize natural) <> " bytes; declared > natural means the marker would grow the output, which slap does not honor)"
 
-renderSlapAdvisory (APSN64UnrecognizedCountry byte) =
-  formatLabelName LabelAPSN64
-  <> ": country code 0x" <> padHex 2 byte
-  <> " is not a recognized N64 region code; preserving the byte verbatim"
-
 renderSlapAdvisory XDelta1NoVerifyWithDivergentSentinel =
   "xdelta1: FLAG_NO_VERIFY is set but stored MD5s are not the canonical empty-input sentinel (non-canonical producer or transit corruption)"
 
@@ -2324,7 +2312,6 @@ slapAdvisorySeverity advisory = case advisory of
   IPS32TrailingBytes{}                 -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote
-  APSN64UnrecognizedCountry{}          -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote
   FieldDropped{}                       -> SeverityNote
   UndoDataDropped{}                    -> SeverityNote

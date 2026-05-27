@@ -11,7 +11,6 @@ module Slap.APSN64.Parse
 
 import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            APSPatchType(..), N64CartId(..), N64ChecksumPair(..),
-                           APSN64Country(..),
                            toAPSPatchType, toAPSImageFormat,
                            toAPSRecordEncoding, toAPSN64Country,
                            apsN64MagicBytes, apsN64DescriptionWidth,
@@ -30,8 +29,8 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 -- | What 'parseN64' produces from the inner ByteParser walk: the decoded
--- patch plus walker-time warnings accumulated during the walk, in
--- wire order. Today only 'APSN64UnrecognizedCountry' is emitted
+-- patch plus walker-time advisories accumulated during the walk, in
+-- wire order. Today only description-decode advisories are emitted
 -- here; future parse-time observations (unrecognized image format,
 -- unrecognized record encoding, record-level oddities) accumulate
 -- through the same channel as APSN64's polish pass lands them.
@@ -92,10 +91,7 @@ parseN64 patchType = do
       imageFormat <- toAPSImageFormat <$> getByte
       cartId      <- N64CartId <$> getBytes (Length 2)
       countryByte <- getByte
-      let parsedCountry   = toAPSN64Country countryByte
-          countryWarnings = case parsedCountry of
-            APSN64CountryUnrecognized byte -> [APSN64UnrecognizedCountry byte]
-            _                              -> []
+      let parsedCountry = toAPSN64Country countryByte
       crcBytes        <- N64ChecksumPair <$> getBytes (Length 8)
       skip (Length 5)  -- padding (bytes 69-73)
       destinationSize <- FileSize . fromIntegral <$> word32LE
@@ -109,7 +105,7 @@ parseN64 patchType = do
             (Vector.fromList records)
       pure APSN64ParseWalk
         { apsN64ParseWalkPatch    = patch
-        , apsN64ParseWalkWarnings = descriptionAdvisories ++ countryWarnings
+        , apsN64ParseWalkWarnings = descriptionAdvisories
         }
 
 parseN64Records :: ByteParser [APSN64Record]
