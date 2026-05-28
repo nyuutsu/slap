@@ -1,10 +1,14 @@
 packages: .
-extra-lib-dirs: /home/nyuu/repos/slap/rusty-slap/target/release
 
--- tasty-stats 0.2.0.4 ships stale upper bounds on Hackage (tasty < 1.2,
--- containers < 0.6, directory < 1.4, stm < 2.6, tagged < 0.9, time < 1.9).
--- Its actual API surface is unchanged against tasty 1.5; the bounds are
--- ecosystem rot, not breakage. Wave them through for that one package.
+-- Two dependencies ship stale upper bounds that are ecosystem rot rather
+-- than real breakage; wave the offending caps through.
+--
+-- tasty-stats 0.2.0.4 caps tasty < 1.2, containers < 0.6, directory < 1.4,
+-- stm < 2.6, tagged < 0.9, time < 1.9 -- its API is unchanged against the
+-- current versions of all of them.
+--
+-- encoding caps containers < 0.8, but GHC 9.14 bundles containers 0.8.
+-- This is a no-op before 9.14, where the bundled containers is still 0.7.
 allow-newer:
     tasty-stats:tasty
   , tasty-stats:containers
@@ -12,3 +16,4 @@ allow-newer:
   , tasty-stats:stm
   , tasty-stats:tagged
   , tasty-stats:time
+  , encoding:containers

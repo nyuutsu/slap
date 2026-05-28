@@ -263,6 +263,8 @@ make
 make test
 ```
 
+slap uses the GHC2024 language edition, so it needs **GHC 9.10, 9.12, or 9.14** — anything older won't compile. ghcup's *recommended* GHC is currently older than that, so choose one of these explicitly, along with a cabal recent enough to drive it (cabal 3.16+ for GHC 9.14).
+
 # footnotes (👣)
 
 [^UNBLOB]: BPS has an unusual property: it supports metadata-as-in-arbitrary-data. The spec *suggests* a structure/format (XML; I don't recall the subflavor but it is largely immaterial), but makes it explicit that "anything goes". "Converting" from `BPS` to `BPS` is allowed (if a bit "why are you doing this?"). It is rare (and I'm being generous by calling it "rare", rather than "unheard of") for patches to have anything in the metadata blob area. If you want to re-encode a patch and drop the blob in one go, this flag could help.

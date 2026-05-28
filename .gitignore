@@ -6,9 +6,10 @@ rusty-slap/target/
 *.dyn_hi
 *.dyn_o
 
-# Per-machine cabal override (e.g. extra-lib-dirs for the local
-# rusty-slap path); cabal.project ships a single canonical path and
-# cabal.project.local overlays per-host changes on top of it.
+# Per-machine cabal override: `make` writes the rusty-slap link path here
+# (extra-lib-dirs, derived from the checkout location) so every cabal
+# invocation -- not just make -- can link rusty_slap. Regenerated when the
+# path changes; never committed.
 cabal.project.local
 
 # Claude Code local config
