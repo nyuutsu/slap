@@ -68,7 +68,7 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let width = unLength ppf1DescriptionLength
       (truncatedBytes, notices) =
-        encodeTextBounded EncodingLocale width (encodedTextContent description)
+        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
                  (max 0 (width - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF1 FieldDescription notices

@@ -1,12 +1,11 @@
 -- | Tests for 'Slap.Text': the typed-text-with-encoding foundation.
 -- Exercises the strict primitives ('encodeText' / 'decodeText'), the
 -- lenient primitives ('encodeTextLenient' / 'decodeTextLenient'),
--- bounded encoding ('encodeTextBounded'), and the locale resolver
--- ('processLocaleEncoder'). Format-independent — these tests do not
+-- bounded encoding ('encodeTextBounded'), and the name resolver
+-- ('resolveEncodingName'). Format-independent — these tests do not
 -- construct any patches.
 module Props.Text (textTests) where
 
-import Slap.Status (SlapAdvisory(..))
 import Slap.Text
   ( EncodingName(..)
   , EncodedText(..)
@@ -16,7 +15,8 @@ import Slap.Text
   , encodeTextLenient
   , decodeTextLenient
   , encodeTextBounded
-  , processLocaleEncoder
+  , resolveEncodingName
+  , displayNamedEncoding
   )
 
 import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..))
@@ -56,9 +56,9 @@ textTests = testGroup "Slap.Text"
       , testCase     "cap-0-yields-empty" test_boundedCapZero
       , testCase     "truncation-notice-byte-counts" test_boundedTruncationCounts
       ]
-  , testGroup "processLocaleEncoder"
-      [ testCase "resolves-to-something"      test_localeResolves
-      , testCase "advisory-shape-is-consistent" test_localeAdvisoryShape
+  , testGroup "resolveEncodingName"
+      [ testCase "known-name-resolves"  test_resolveKnownName
+      , testCase "unknown-name-is-Left" test_resolveUnknownName
       ]
   , testGroup "documentedLocaleAliases — library has these (table promises resolution)"
       -- Slap.Text's alias table claims certain names will resolve
@@ -289,43 +289,28 @@ test_boundedTruncationCounts =
           assertFailure (caseLabel ++ ": >1 truncation notice: " ++ show many)
 
 ----------------------------------------------------------------------------
--- Locale resolution
+-- Name resolution
 ----------------------------------------------------------------------------
 
--- | The resolver returns *some* encoder under whatever locale the
--- test host happens to have. Don't pin a specific encoder — CI
--- runners vary. Force evaluation of the pair so any 'undefined'
--- inside would be caught.
-test_localeResolves :: IO ()
-test_localeResolves = do
-  let (encoder, _advisory) = processLocaleEncoder
-  -- Evaluate the encoder by exercising it on an empty bytestring;
-  -- empty decodes successfully in every encoding, so the call
-  -- forces the CAF without depending on which encoder resolved.
-  case decodeText EncodingLocale ByteString.empty of
-    Right (EncodedText tag content) -> do
-      assertEqual "tag preserved" EncodingLocale tag
-      assertEqual "empty decodes empty" Text.empty content
+-- | A name the engine recognizes resolves to a 'NamedEncoding' that
+-- remembers the name it was handed. Don't pin the encoder — the point
+-- is that the name resolves and travels through verbatim.
+test_resolveKnownName :: IO ()
+test_resolveKnownName =
+  case resolveEncodingName (Text.pack "shift-jis") of
+    Right named ->
+      assertEqual "display name preserved"
+        (Text.pack "shift-jis") (displayNamedEncoding named)
     Left failure ->
-      assertFailure ("empty bytes should decode cleanly: " ++ show failure)
-  -- Reference the encoder so a use-once warning never appears in the
-  -- test module; the resolver returning at all is what we're checking.
-  _ <- pure encoder
-  pure ()
+      assertFailure ("shift-jis should resolve: " ++ show failure)
 
--- | If the resolver emitted a fallback advisory, it's exactly
--- 'LocaleEncoderUnresolved' carrying the unresolved locale name.
--- If it didn't, the advisory channel is 'Nothing'. Nothing else is
--- a valid shape for the pair.
-test_localeAdvisoryShape :: IO ()
-test_localeAdvisoryShape = do
-  let (_encoder, advisory) = processLocaleEncoder
-  case advisory of
-    Nothing                              -> pure ()  -- resolved cleanly
-    Just (LocaleEncoderUnresolved name) ->
-      assertBool "locale name is non-empty" (not (null name))
-    Just other ->
-      assertFailure ("unexpected advisory: " ++ show other)
+-- | A name the engine can't place returns 'Left' rather than falling
+-- back to a default — the boundary surfaces it, never decodes past it.
+test_resolveUnknownName :: IO ()
+test_resolveUnknownName =
+  case resolveEncodingName (Text.pack "not-a-real-encoding") of
+    Left _  -> pure ()
+    Right _ -> assertFailure "a bogus encoding name must not resolve"
 
 ----------------------------------------------------------------------------
 -- Library-resolution probes

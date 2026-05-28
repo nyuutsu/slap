@@ -45,7 +45,7 @@ encodeAPSN64 records destinationSize description =
 padDescription :: EncodedText -> (ByteString.ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
-        encodeTextBounded EncodingLocale apsN64DescriptionWidth
+        encodeTextBounded EncodingUtf8 apsN64DescriptionWidth
                           (encodedTextContent description)
       padded = truncatedBytes
             <> ByteString.replicate

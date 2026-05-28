@@ -23,7 +23,7 @@ import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
                      RequestedDialects(..),
                      noMetadataRequested)
-import Slap.Text (EncodedText, encodedTextContent)
+import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
@@ -261,29 +261,29 @@ data SomePatch = SomePatch
 -- Parse dispatch — the single point where format-specific types exist
 ----------------------------------------------------------------------------
 
-parseSome :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
-parseSome dialects patchContents = case detectFormat patchContents of
+parseSome :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSome dialects metadataEncoding patchContents = case detectFormat patchContents of
   Nothing
-    | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 dialects patchContents
+    | Yay0.isYay0 rawBytes -> parseSomePatchFromYay0 dialects metadataEncoding patchContents
     | otherwise            -> Left UnrecognizedFormat
 
-  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 (requestedPPF1Origin dialects) patchContents >>= parseSomePatchFromPPF1
-  Just (PatchDirect       FormatPPF2)           -> PPF2.parsePPF2 patchContents >>= parseSomePatchFromPPF2
-  Just (PatchDirect       FormatPPF3)           -> PPF3.parsePPF3 patchContents >>= parseSomePatchFromPPF3
-  Just (PatchDirect       FormatPPF4)           -> parseSomePatchFromPPF4 patchContents
+  Just (PatchDirect       FormatPPF1)           -> PPF1.parsePPF1 (requestedPPF1Origin dialects) metadataEncoding patchContents >>= parseSomePatchFromPPF1
+  Just (PatchDirect       FormatPPF2)           -> PPF2.parsePPF2 metadataEncoding patchContents >>= parseSomePatchFromPPF2
+  Just (PatchDirect       FormatPPF3)           -> PPF3.parsePPF3 metadataEncoding patchContents >>= parseSomePatchFromPPF3
+  Just (PatchDirect       FormatPPF4)           -> parseSomePatchFromPPF4 metadataEncoding patchContents
   Just (PatchDirect       (FormatIPS variant))  -> parseSomePatchFromIPS variant patchContents
-  Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 patchContents
+  Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 metadataEncoding patchContents
   Just (PatchDirect       FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
   Just (PatchDirect       FormatPMSR)           -> parseSomePatchFromPMSR patchContents
   Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS patchContents
   Just (PatchDifferential FormatUPS)            -> parseSomePatchFromUPS patchContents
   Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF patchContents
   Just (PatchDifferential FormatAPSGBA)         -> parseSomePatchFromAPSGBA patchContents
-  Just (PatchDifferential FormatNINJA2)         -> parseSomePatchFromNINJA2 patchContents
+  Just (PatchDifferential FormatNINJA2)         -> parseSomePatchFromNINJA2 metadataEncoding patchContents
   Just (PatchDifferential FormatBSDiff)         -> parseSomePatchFromBSDiff patchContents
   Just (PatchDifferential FormatGDIFF)          -> parseSomePatchFromGDIFF patchContents
-  Just (PatchDifferential FormatXDelta1)        -> parseSomePatchFromXDelta1 patchContents
-  Just (PatchDifferential FormatDPS)            -> parseSomePatchFromDPS patchContents
+  Just (PatchDifferential FormatXDelta1)        -> parseSomePatchFromXDelta1 metadataEncoding patchContents
+  Just (PatchDifferential FormatDPS)            -> parseSomePatchFromDPS metadataEncoding patchContents
   where
     rawBytes = unPatchFileContents patchContents
 
@@ -452,9 +452,9 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
 -- Source-less conversion is structurally possible only when the patch
 -- has no Append records (Appends carry no meaningful offset, and so
 -- can't be expressed as 'Hunk's).
-parseSomePatchFromPPF4 :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromPPF4 patchContents = do
-  Parsed patch parseAdvisories <- PPF4.parsePPF4 patchContents
+parseSomePatchFromPPF4 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromPPF4 metadataEncoding patchContents = do
+  Parsed patch parseAdvisories <- PPF4.parsePPF4 metadataEncoding patchContents
   let replaces = PPF4.ppf4Replaces patch
       appends  = PPF4.ppf4Appends patch
       totalRecords = length replaces + length appends
@@ -741,9 +741,9 @@ parseSomePatchFromVCDIFF patchContents = do
 -- N*65544 bytes, 64KB-aligned offsets) and re-routes structurally-GBA
 -- inputs to 'FormatAPSGBA' upstream of this function, so by the time
 -- 'parseSomePatchFromAPSN64' runs the bytes really are APSN64.
-parseSomePatchFromAPSN64 :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromAPSN64 patchContents = do
-  Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 patchContents
+parseSomePatchFromAPSN64 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromAPSN64 metadataEncoding patchContents = do
+  Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 metadataEncoding patchContents
   let expandN64 (APSN64.APSN64Normal recordOffset recordPayload) = Hunk recordOffset recordPayload
       expandN64 (APSN64.APSN64RLE recordOffset fillValue fillCount) = Hunk recordOffset (ByteString.replicate (fromIntegral fillCount) fillValue)
   Right SomePatch
@@ -790,9 +790,9 @@ parseSomePatchFromAPSN64 patchContents = do
              }
     }
 
-parseSomePatchFromNINJA2 :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromNINJA2 patchContents = do
-  Parsed patch parseAdvisories <- NINJA2.parseNINJA2 patchContents
+parseSomePatchFromNINJA2 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromNINJA2 metadataEncoding patchContents = do
+  Parsed patch parseAdvisories <- NINJA2.parseNINJA2 metadataEncoding patchContents
   let filterZeroMD5 (Just hash@(MD5Hash bytes))
         | ByteString.all (== 0) bytes = Nothing
         | otherwise                   = Just hash
@@ -943,9 +943,9 @@ parseSomePatchFromGDIFF patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
-parseSomePatchFromXDelta1 :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromXDelta1 patchContents = do
-  Parsed patch parseAdvisories <- XDelta1.parseXDelta1 patchContents
+parseSomePatchFromXDelta1 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromXDelta1 metadataEncoding patchContents = do
+  Parsed patch parseAdvisories <- XDelta1.parseXDelta1 metadataEncoding patchContents
   let xdeltaVerification = case XDelta1.xdelta1Verification patch of
         XDelta1.VerifyAgainstStoredMD5s targetMD5 -> noVerification
           { verifySourceMD5 = XDelta1.xdelta1SourceMD5 patch
@@ -1057,9 +1057,9 @@ parseSomePatchFromAPSGBA patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
-parseSomePatchFromDPS :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromDPS patchContents = do
-  Parsed patch parseAdvisories <- DPS.parseDPS patchContents
+parseSomePatchFromDPS :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromDPS metadataEncoding patchContents = do
+  Parsed patch parseAdvisories <- DPS.parseDPS metadataEncoding patchContents
   let records = DPS.dpsRecords patch
   Right SomePatch
     { patchFormat         = LabelDPS
@@ -1104,10 +1104,10 @@ parseSomePatchFromDPS patchContents = do
 -- 'patchAnalysis' no longer carries a format-name field, since
 -- 'renderAnalysisFull' and 'renderAnalysisSummary' read the format-name
 -- straight off 'patchInfo' now.
-parseSomePatchFromYay0 :: RequestedDialects -> PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromYay0 dialects (PatchFileContents input) = case Stream.yay0Decompress input of
+parseSomePatchFromYay0 :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromYay0 dialects metadataEncoding (PatchFileContents input) = case Stream.yay0Decompress input of
   Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))
-  Right decompressedBytes -> case parseSome dialects (PatchFileContents decompressedBytes) of
+  Right decompressedBytes -> case parseSome dialects metadataEncoding (PatchFileContents decompressedBytes) of
     Left slapError -> Left slapError
     Right parsed ->
       let innerHeader = infoFormat (patchInfo parsed)

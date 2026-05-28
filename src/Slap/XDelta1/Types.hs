@@ -154,7 +154,7 @@ data ResolvedXDelta1FileNames = ResolvedXDelta1FileNames
 
 -- | Create-time resolver. For each of the two name slots, the CLI
 -- override (if any) wins; otherwise the slot is filled with the
--- basename of the corresponding file path, tagged 'EncodingLocale'.
+-- basename of the corresponding file path, tagged 'EncodingUtf8'.
 -- The resulting encoded bytes are then cap-checked.
 --
 -- The CLI inputs are 'Maybe' 'EncodedText' (already wrapped at the
@@ -171,15 +171,15 @@ resolveXDelta1FileNames
 resolveXDelta1FileNames cliFromName cliToName sourcePath targetPath =
   buildResolvedXDelta1FileNames fromText toText
   where
-    fromText = maybe (basenameAsLocaleText sourcePath) id cliFromName
-    toText   = maybe (basenameAsLocaleText targetPath) id cliToName
+    fromText = maybe (basenameAsUtf8Text sourcePath) id cliFromName
+    toText   = maybe (basenameAsUtf8Text targetPath) id cliToName
 
--- | Wrap the basename of a 'FilePath' as a locale-tagged 'EncodedText'.
+-- | Wrap the basename of a 'FilePath' as a UTF-8-tagged 'EncodedText'.
 -- Used for the create-side filepath defaulting when neither CLI flag
 -- nor inherited source patch supplies a name. GHC delivers 'FilePath'
 -- as 'String' (codepoints), so wrapping is one 'Text.pack' away.
-basenameAsLocaleText :: FilePath -> EncodedText
-basenameAsLocaleText = EncodedText EncodingLocale . Text.pack . takeFileName
+basenameAsUtf8Text :: FilePath -> EncodedText
+basenameAsUtf8Text = EncodedText EncodingUtf8 . Text.pack . takeFileName
 
 -- | Convert-time resolver. Takes the already-merged CLI-or-inherited
 -- pair (the porcelain runs 'Slap.Convert.mergeRequestedMetadata'
@@ -204,13 +204,12 @@ requireXDelta1FileNames mergedFromName mergedToName sourceLabel =
 -- exported resolvers funnel through here. Construction of
 -- 'ResolvedXDelta1FileNames' anywhere else in slap is a type error
 -- (the constructor is module-private). The cap-check runs against
--- the encoded byte count under the value's encoding tag: a
--- 'EncodingLocale' value re-encodes (lenient) under the running
--- locale to count bytes; substitution events at encode time are
--- accepted silently here (the resolver returns 'Either', with no
--- advisory channel — the create-time re-encoder in
--- 'Slap.XDelta1.Create.encodeXDelta1' surfaces them through its
--- 'CreateResult' channel).
+-- the encoded byte count under the value's encoding tag: the value
+-- re-encodes (lenient) under whatever encoding it carries to count
+-- bytes; substitution events at encode time are accepted silently
+-- here (the resolver returns 'Either', with no advisory channel —
+-- the create-time re-encoder in 'Slap.XDelta1.Create.encodeXDelta1'
+-- surfaces them through its 'CreateResult' channel).
 buildResolvedXDelta1FileNames
   :: EncodedText -> EncodedText
   -> Either SlapError ResolvedXDelta1FileNames

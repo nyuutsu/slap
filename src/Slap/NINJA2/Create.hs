@@ -23,7 +23,7 @@ import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Platform (platformToNINJA2)
-import Slap.Text (EncodedText, encodedTextContent,
+import Slap.Text (EncodedText, EncodingName(..), encodedTextContent,
                   encodeTextBounded, encodeLossAdvisories)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -35,22 +35,24 @@ import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
 import Data.Bits (xor)
 
 
--- | Encode one fixed-header metadata field under the target wire
--- encoding. A 'Nothing' value yields a zero-padded slot of
--- @fieldWidth@ bytes and no advisories; a 'Just' value runs through
--- 'encodeTextBounded' tagged with the target encoding, and any
--- substitution or truncation events surface as 'SlapAdvisory'
--- values via 'encodeLossAdvisories'. The actually-stored value (not
--- the requested codepoint count) is what 'parseFixedHeader' reads
--- back from the same patch; the @0x00@ padding matches NINJA2's
--- reference encoder.
-encodeBoundedField :: TextMode -> FieldName -> Length -> Maybe EncodedText
+-- | Encode one fixed-header metadata field as UTF-8. A 'Nothing'
+-- value yields a zero-padded slot of @fieldWidth@ bytes and no
+-- advisories; a 'Just' value runs through 'encodeTextBounded' as
+-- UTF-8, and any substitution or truncation events surface as
+-- 'SlapAdvisory' values via 'encodeLossAdvisories'. The actually-
+-- stored value (not the requested codepoint count) is what
+-- 'parseFixedHeader' reads back from the same patch; the @0x00@
+-- padding matches NINJA2's reference encoder. The @PATCH_ENC@ byte
+-- slap writes is an independent choice ('fromTextMode'), so the field
+-- bytes are always UTF-8 while the declared byte is whatever the
+-- target 'TextMode' is.
+encodeBoundedField :: FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
-encodeBoundedField textMode fieldName fieldWidth = \case
+encodeBoundedField fieldName fieldWidth = \case
   Nothing -> (ByteString.replicate (unLength fieldWidth) 0, [])
   Just inputText ->
     let (encodedBytes, notices) =
-          encodeTextBounded (textModeToTag textMode)
+          encodeTextBounded EncodingUtf8
                             (unLength fieldWidth)
                             (encodedTextContent inputText)
         padded     = encodedBytes
@@ -76,7 +78,7 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
                         (fieldAdvisories ++ platformAdvisories))
   where
     textMode              = ninja2CreateTextMode metadata
-    encodeMetadataField   = encodeBoundedField textMode
+    encodeMetadataField   = encodeBoundedField
     (authorBytes,      authorAdvisories)      = encodeMetadataField FieldAuthor      ninja2AuthorWidth      (ninja2CreateMetadataAuthor      metadata)
     (versionBytes,     versionAdvisories)     = encodeMetadataField FieldVersion     ninja2VersionWidth     (ninja2CreateMetadataVersion     metadata)
     (titleBytes,       titleAdvisories)       = encodeMetadataField FieldTitle       ninja2TitleWidth       (ninja2CreateMetadataTitle       metadata)

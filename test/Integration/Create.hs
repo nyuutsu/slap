@@ -30,6 +30,7 @@ import Slap.Create (createPatch)
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 
 import Data.ByteString (ByteString)
 import System.FilePath ((</>))
@@ -102,7 +103,7 @@ roundTrip format basePath bootPath baseBytes targetBytes expectedSha = do
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError ->
       assertFailureT ("create failed: " <> renderSlapError slapError)
-    Right (CreateResult patchBytes _) -> case parseSome noDialectsRequested patchBytes of
+    Right (CreateResult patchBytes _) -> case parseSome noDialectsRequested EncodingUtf8 patchBytes of
       Left slapError ->
         assertFailureT ("re-parse failed: " <> renderSlapError slapError)
       Right parsed -> do

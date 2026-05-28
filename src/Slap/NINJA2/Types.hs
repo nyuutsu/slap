@@ -15,8 +15,6 @@ module Slap.NINJA2.Types
   , toTextMode
   , fromTextMode
   , ninja2TextModeName
-  , textModeToTag
-  , tagToTextMode
   , NINJA2RomType(..)
   , toNINJA2RomType
   , fromNINJA2RomType
@@ -60,7 +58,7 @@ import Slap.ByteParser (ByteParser, getByte, getBytes)
 import Slap.Measure (Length(..), Offset(..), FileSize(..))
 import Slap.Display.Primitives (padHex)
 import Slap.PlatformType (PlatformType)
-import Slap.Text (EncodedText, EncodingName(..))
+import Slap.Text (EncodedText)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -121,31 +119,6 @@ fromTextMode TextModeUndeclared = 0
 ninja2TextModeName :: TextMode -> Text
 ninja2TextModeName TextModeUTF8       = "UTF-8"
 ninja2TextModeName TextModeUndeclared = "undeclared"
-
--- | Translate NINJA2's per-patch 'TextMode' to 'Slap.Text''s per-value
--- 'EncodingName' tag. The two enums encode the same choice under
--- different vocabularies: 'TextMode' is the wire-byte's name (\"the
--- patch declares UTF-8\" vs \"the patch declares nothing\");
--- 'EncodingName' is the typed-value's tag (\"this 'EncodedText' is
--- UTF-8\" vs \"this 'EncodedText' follows the process locale\").
--- 'TextModeUndeclared' maps to 'EncodingLocale', which today interprets
--- such fields via the process locale: an undeclared patch is read
--- through whatever locale the reader happens to run under. That locale
--- dependence is transitional. The parse path uses this to stamp the
--- wire's declaration onto each decoded field; the create path uses
--- 'tagToTextMode' to round-trip the choice back to a wire byte.
-textModeToTag :: TextMode -> EncodingName
-textModeToTag TextModeUTF8       = EncodingUtf8
-textModeToTag TextModeUndeclared = EncodingLocale
-
--- | Inverse of 'textModeToTag'. Used by the create path to map the
--- chosen target encoding back to a wire 'TextMode' for the @PATCH_ENC@
--- byte. 'EncodingLocale' maps back to 'TextModeUndeclared': a value
--- that carries no declared encoding records nothing portable on the
--- wire.
-tagToTextMode :: EncodingName -> TextMode
-tagToTextMode EncodingUtf8   = TextModeUTF8
-tagToTextMode EncodingLocale = TextModeUndeclared
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
 -- documented; NINJA2UnknownRomType preserves any future/unknown value.

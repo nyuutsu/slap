@@ -92,7 +92,7 @@ prop_ppf3Trunc :: Property
 prop_ppf3Trunc = forAll genSameSizePair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> truncated PPF3.parsePPF3 patch
+    Right (CreateResult patch _) -> truncated (PPF3.parsePPF3 SlapText.EncodingUtf8) patch
 
 prop_pmsrTrunc :: Property
 prop_pmsrTrunc = forAll genPairNoShrink $ \(source, target) ->
@@ -110,25 +110,25 @@ prop_dpsTrunc :: Property
 prop_dpsTrunc = forAll genPairNoShrink $ \(source, target) ->
   case createDPS (InputFileContents source) (OutputFileContents target)
          (DPS.DPSCreateMetadata
-            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingLocale Text.empty
-            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingLocale Text.empty
-            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
             })
          DPS.DPSStable of
     Left _ -> discard
-    Right (CreateResult patch _) -> truncated DPS.parseDPS patch
+    Right (CreateResult patch _) -> truncated (DPS.parseDPS SlapText.EncodingUtf8) patch
 
 prop_ninja2Trunc :: Property
 prop_ninja2Trunc = forAll genPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left _ -> discard
-    Right (CreateResult patch _) -> truncated NINJA2.parseNINJA2 patch
+    Right (CreateResult patch _) -> truncated (NINJA2.parseNINJA2 SlapText.EncodingUtf8) patch
 
 prop_apsN64Trunc :: Property
 prop_apsN64Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateAPSN64) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> truncated APSN64.parseAPSN64 patch
+    Right (CreateResult patch _) -> truncated (APSN64.parseAPSN64 SlapText.EncodingUtf8) patch
 
 prop_apsGbaTrunc :: Property
 prop_apsGbaTrunc = forAll genPair $ \(source, target) ->
@@ -151,4 +151,4 @@ prop_bsdiffTrunc :: Property
 prop_bsdiffTrunc = truncatedFile BSDiff.parseBSDiff "test/data/dm4y/patch.bsdiff"
 
 prop_xdelta1Trunc :: Property
-prop_xdelta1Trunc = truncatedFile XDelta1.parseXDelta1 "test/data/dm4y/patch.xdelta1"
+prop_xdelta1Trunc = truncatedFile (XDelta1.parseXDelta1 SlapText.EncodingUtf8) "test/data/dm4y/patch.xdelta1"

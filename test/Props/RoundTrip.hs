@@ -147,7 +147,7 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2DescriptionUtf8RoundTrip
       , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
                  ppf2DescriptionCodepointAwareTruncation
-      , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
+      , testCase "file_id.diz: UTF-8-encoded body round-trips byte-faithfully"
                  ppf2FileIdDizRoundTrip
       , testCase "growth: target longer than source round-trips with a grow note"
                  ppf2GrowthRoundTrip
@@ -158,7 +158,7 @@ roundTripTests = testGroup "RoundTrip"
                  ppf3DescriptionUtf8RoundTrip
       , testCase "description: 4-byte codepoint at the 50-byte cap is dropped whole"
                  ppf3DescriptionCodepointAwareTruncation
-      , testCase "file_id.diz: locale-encoded body round-trips byte-faithfully"
+      , testCase "file_id.diz: UTF-8-encoded body round-trips byte-faithfully"
                  ppf3FileIdDizRoundTrip
       ]
   , testGroup "PPF4"
@@ -197,15 +197,11 @@ roundTripTests = testGroup "RoundTrip"
           ninja2Mode1Utf8NonAsciiTitleRoundTrips
       , testCase "parse tags mode-1 fields as EncodingUtf8"
           ninja2ParseTagsMode1FieldsAsUtf8
-      , testCase "parse tags mode-0 fields as EncodingLocale"
-          ninja2ParseTagsMode0FieldsAsLocale
-      , testCase "detection inherits EncodingUtf8 source tag as PATCH_ENC=1"
-          ninja2DetectionInheritsUtf8FromSourceTag
-      , testCase "detection inherits EncodingLocale source tag as PATCH_ENC=0"
-          ninja2DetectionInheritsLocaleFromSourceTag
-      , testCase "CLI --ninja2-text-mode overrides source tag"
-          ninja2DetectionCliOverridesSourceTag
-      , testCase "detection without source or CLI defaults to PATCH_ENC=1"
+      , testCase "parse tags mode-0 fields under the chosen metadata encoding"
+          ninja2ParseTagsMode0FieldsUnderChosenEncoding
+      , testCase "CLI --ninja2-text-mode selects PATCH_ENC"
+          ninja2DetectionCliSelectsTextMode
+      , testCase "detection without CLI defaults to PATCH_ENC=1"
           ninja2DetectionDefaultsToUtf8
       ]
   , testGroup "APS-N64"
@@ -616,7 +612,7 @@ prop_ppf1 = forAll genSameSizePair $ \(source, target) ->
     let dialects = noDialectsRequested { requestedPPF1Origin = origin }
     in case createPatch (CreateDirect CreatePPF1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested dialects of
          Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-         Right (CreateResult patch _) -> case PPF1.parsePPF1 origin patch of
+         Right (CreateResult patch _) -> case PPF1.parsePPF1 origin SlapText.EncodingUtf8 patch of
             Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
             Right (Parsed parsed _parseWarnings) -> PPF1.applyPPF1 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
 
@@ -627,7 +623,7 @@ prop_ppf2 :: Property
 prop_ppf2 = forAll genPPF2SizedPair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-    Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF2.applyPPF2 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
   where
@@ -652,7 +648,7 @@ ppf2GrowthRoundTrip :: Assertion
 ppf2GrowthRoundTrip =
   case createPatch (CreateDirect CreatePPF2) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
-    Right (CreateResult patch _) -> case PPF2.parsePPF2 patch of
+    Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
       Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
       Right (Parsed parsed _parseWarnings) -> case PPF2.applyPPF2 parsed (InputFileContents source) of
         Left slapError -> assertFailure ("apply: " ++ Text.unpack (renderSlapError slapError))
@@ -729,7 +725,7 @@ prop_ppf3 :: Property
 prop_ppf3 = forAll genSameSizePair $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-    Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
+    Right (CreateResult patch _) -> case PPF3.parsePPF3 SlapText.EncodingUtf8 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF3.applyPPF3 parsed (InputFileContents source) === Right (noAdvisories (OutputFileContents target))
 
@@ -741,7 +737,7 @@ prop_ppf4 :: Property
 prop_ppf4 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreatePPF4) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-    Right (CreateResult patch _) -> case PPF4.parsePPF4 patch of
+    Right (CreateResult patch _) -> case PPF4.parsePPF4 SlapText.EncodingUtf8 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) -> PPF4.applyPPF4 parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -761,7 +757,7 @@ ppf4StraddleRoundTrip =
                                                   ++ replicate 4 0x43)   -- CCCC (grown)
   in case createPatch (CreateDirect CreatePPF4) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
-       Right (CreateResult patch _) -> case PPF4.parsePPF4 patch of
+       Right (CreateResult patch _) -> case PPF4.parsePPF4 SlapText.EncodingUtf8 patch of
          Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
          Right (Parsed parsed _parseWarnings) ->
            assertEqual "straddle round-trip"
@@ -859,13 +855,13 @@ prop_dps :: Property
 prop_dps = forAll genPairNoShrink $ \(source, target) ->
   case createDPS (InputFileContents source) (OutputFileContents target)
          (DPS.DPSCreateMetadata
-            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingLocale Text.empty
-            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingLocale Text.empty
-            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+            { DPS.dpsCreateMetadataName    = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+            , DPS.dpsCreateMetadataAuthor  = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+            , DPS.dpsCreateMetadataVersion = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
             })
          DPS.DPSStable of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
-    Right (CreateResult patch _) -> case DPS.parseDPS patch of
+    Right (CreateResult patch _) -> case DPS.parseDPS SlapText.EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) -> DPS.applyDPS parsed (InputFileContents source) === Right (OutputFileContents target)
 
@@ -873,7 +869,7 @@ prop_ninja2 :: Property
 prop_ninja2 = forAll genPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
-    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
@@ -888,7 +884,7 @@ prop_ninja2Truncate :: Property
 prop_ninja2Truncate = forAll genShrinkingPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
-    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         NINJA2.applyNINJA2 parsed (InputFileContents source) === Right (OutputFileContents target)
@@ -897,7 +893,7 @@ prop_ninja2Hashes :: Property
 prop_ninja2Hashes = forAll genPair $ \(source, target) ->
   case createNINJA2 (InputFileContents source) (OutputFileContents target) emptyNINJA2Metadata of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
-    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+    Right (CreateResult patch _) -> case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         fmap NINJA2.openNewFileSourceMD5 (NINJA2.ninja2OpenNewFile parsed) === Just (md5 source) .&&.
@@ -938,7 +934,7 @@ ninja2EncodingRoundTrips textMode =
   let metadata = emptyNINJA2Metadata { NINJA2.ninja2CreateTextMode = textMode }
   in case createNINJA2 (InputFileContents ByteString.empty) (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
-       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
          Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _parseWarnings) ->
            assertEqual "PATCH_ENC round-trip" textMode (NINJA2.ninja2TextMode parsed)
@@ -982,7 +978,7 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
            expectedOriginalLength reportedOriginal
          assertEqual "warning's TruncatedLength == actual stored byte count"
            expectedStoredLength reportedTruncated
-         case NINJA2.parseNINJA2 patch of
+         case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
            Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
            Right (Parsed parsed _) -> case NINJA2.ninja2Description (NINJA2.ninja2Header parsed) of
              Nothing -> assertFailure "parsed description was Nothing; expected the truncated bytes"
@@ -993,9 +989,8 @@ ninja2FieldTruncationWarningReportsActualStoredLength =
                     (byteLength storedBytes) reportedTruncated
 
 -- | UTF-8 (mode 1) NINJA2 patches with non-ASCII text in the metadata
--- round-trip byte-faithfully on a host of any locale: the wire bytes
--- are well-defined Unicode, and slap's parse path decodes them back
--- to the same 'Text' regardless of the running process locale. Pins
+-- round-trip byte-faithfully: the wire bytes are well-defined Unicode,
+-- and slap's parse path decodes them back to the same 'Text'. Pins
 -- the typed encode\/decode pipeline through 'encodeTextBounded' \/
 -- 'decodeTextLenient' end-to-end on a real codepoint payload, not
 -- just the ASCII-only fixtures that 'prop_ninja2' exercises.
@@ -1010,7 +1005,7 @@ ninja2Mode1Utf8NonAsciiTitleRoundTrips =
   in case createNINJA2 (InputFileContents ByteString.empty)
                        (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
-       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 SlapText.EncodingUtf8 patch of
          Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _) ->
            case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
@@ -1028,34 +1023,37 @@ ninja2Mode1Utf8NonAsciiTitleRoundTrips =
 -- a side-channel.
 ninja2ParseTagsMode1FieldsAsUtf8 :: Assertion
 ninja2ParseTagsMode1FieldsAsUtf8 = do
-  parsed <- createAndParseNINJA2 NINJA2.TextModeUTF8
+  parsed <- createAndParseNINJA2 SlapText.EncodingUtf8 NINJA2.TextModeUTF8
   case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
     Nothing -> assertFailure "parsed title was Nothing"
     Just titled -> assertEqual "mode-1 title tag is UTF-8"
       SlapText.EncodingUtf8 (SlapText.encodedTextEncoding titled)
 
--- | A mode-0 (undeclared) NINJA2 patch decoded by 'parseNINJA2'
--- tags each non-empty metadata field's 'EncodedText' with
--- 'EncodingLocale'. Counterpart to 'ninja2ParseTagsMode1FieldsAsUtf8'
--- for the undeclared side of the per-patch text-mode switch.
-ninja2ParseTagsMode0FieldsAsLocale :: Assertion
-ninja2ParseTagsMode0FieldsAsLocale = do
-  parsed <- createAndParseNINJA2 NINJA2.TextModeUndeclared
-  case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
-    Nothing -> assertFailure "parsed title was Nothing"
-    Just titled -> assertEqual "mode-0 title tag is Locale"
-      SlapText.EncodingLocale (SlapText.encodedTextEncoding titled)
+-- | A mode-0 (undeclared) NINJA2 patch decoded by 'parseNINJA2' tags
+-- each non-empty metadata field's 'EncodedText' with the chosen
+-- metadata encoding, not a fixed one: the wire declined to declare an
+-- encoding, so the reader's @--metadata-encoding@ choice decides.
+-- Counterpart to 'ninja2ParseTagsMode1FieldsAsUtf8', where the wire's
+-- UTF-8 declaration overrides the choice.
+ninja2ParseTagsMode0FieldsUnderChosenEncoding :: Assertion
+ninja2ParseTagsMode0FieldsUnderChosenEncoding =
+  case SlapText.resolveEncodingName (Text.pack "ISO-8859-1") of
+    Left _ -> assertFailure "ISO-8859-1 should resolve in the encoding library"
+    Right chosen -> do
+      parsed <- createAndParseNINJA2 (SlapText.EncodingNamed chosen) NINJA2.TextModeUndeclared
+      case NINJA2.ninja2Title (NINJA2.ninja2Header parsed) of
+        Nothing -> assertFailure "parsed title was Nothing"
+        Just titled -> assertEqual "mode-0 title tag is the chosen encoding"
+          (SlapText.EncodingNamed chosen) (SlapText.encodedTextEncoding titled)
 
 -- | Helper for the parse-tag tests: create a NINJA2 patch with an
--- ASCII title under the given wire encoding, parse it back, and
--- return the parsed patch. ASCII is representable in both UTF-8 and
--- every byte-compatible system locale slap supports, so the create
--- side never substitutes or truncates and the resulting wire bytes
--- are stable across hosts.
-createAndParseNINJA2 :: NINJA2.TextMode -> IO NINJA2.NINJA2Patch
-createAndParseNINJA2 textMode =
-  let titleEncoded = SlapText.EncodedText
-        (NINJA2.textModeToTag textMode) (Text.pack "demo")
+-- ASCII title under the given wire 'TextMode', parse it back under the
+-- given metadata encoding, and return the parsed patch. ASCII is
+-- representable everywhere, so the create side (always UTF-8) never
+-- substitutes or truncates and the resulting wire bytes are stable.
+createAndParseNINJA2 :: SlapText.EncodingName -> NINJA2.TextMode -> IO NINJA2.NINJA2Patch
+createAndParseNINJA2 metadataEncoding textMode =
+  let titleEncoded = SlapText.EncodedText SlapText.EncodingUtf8 (Text.pack "demo")
       metadata = emptyNINJA2Metadata
         { NINJA2.ninja2CreateMetadataTitle    = Just titleEncoded
         , NINJA2.ninja2CreateTextMode         = textMode
@@ -1064,55 +1062,29 @@ createAndParseNINJA2 textMode =
                        (OutputFileContents ByteString.empty) metadata of
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
                           >> error "unreachable"
-       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 patch of
+       Right (CreateResult patch _) -> case NINJA2.parseNINJA2 metadataEncoding patch of
          Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
                           >> error "unreachable"
          Right (Parsed parsed _) -> pure parsed
 
--- | Convert-path detection: when the merged metadata's first
--- non-empty text field carries an 'EncodingUtf8' tag and no
--- @--ninja2-text-mode@ flag is set, the NINJA2 create arm writes
--- @PATCH_ENC=1@ to byte 6 of the output. This is the typed-tag
--- replacement for the pre-stage-3c heuristic that re-encoded the
--- description bytes through 'isValidUtf8' to decide.
-ninja2DetectionInheritsUtf8FromSourceTag :: Assertion
-ninja2DetectionInheritsUtf8FromSourceTag =
+-- | Convert-path detection: a CLI @--ninja2-text-mode undeclared@
+-- selects @PATCH_ENC=0@ for the output. The CLI flag is the only
+-- input that moves PATCH_ENC off the UTF-8 default — slap no longer
+-- inherits a text mode from any source field's encoding.
+ninja2DetectionCliSelectsTextMode :: Assertion
+ninja2DetectionCliSelectsTextMode =
   assertCreatedNINJA2PatchEnc
-    "expected PATCH_ENC=1 (UTF-8 inherited from tag)"
-    (metadataWithTitleTag SlapText.EncodingUtf8 Nothing)
-    1
-
--- | Convert-path detection: an 'EncodingLocale'-tagged source field
--- with no CLI override produces a @PATCH_ENC=0@ output. Together
--- with 'ninja2DetectionInheritsUtf8FromSourceTag' this pins the
--- tag-as-source-of-truth half of the detection rewrite.
-ninja2DetectionInheritsLocaleFromSourceTag :: Assertion
-ninja2DetectionInheritsLocaleFromSourceTag =
-  assertCreatedNINJA2PatchEnc
-    "expected PATCH_ENC=0 (undeclared inherited from tag)"
-    (metadataWithTitleTag SlapText.EncodingLocale Nothing)
-    0
-
--- | Convert-path detection: a CLI @--ninja2-text-mode undeclared@ wins
--- against an 'EncodingUtf8'-tagged source field, writing
--- @PATCH_ENC=0@ regardless of inheritance. This pins the precedence
--- correction that stage 3c lands: the CLI is the override, not the
--- source patch.
-ninja2DetectionCliOverridesSourceTag :: Assertion
-ninja2DetectionCliOverridesSourceTag =
-  assertCreatedNINJA2PatchEnc
-    "expected PATCH_ENC=0 (CLI override wins over UTF-8 source tag)"
+    "expected PATCH_ENC=0 (CLI --ninja2-text-mode undeclared selected)"
     (metadataWithTitleTag SlapText.EncodingUtf8 (Just NINJA2.TextModeUndeclared))
     0
 
--- | Convert-path detection: with no source text fields and no CLI
--- flag, the encoder defaults to @PATCH_ENC=1@ (UTF-8 is the portable
--- choice; locale-targeting requires either a source field tag or an
--- explicit CLI declaration).
+-- | Convert-path detection: with no CLI @--ninja2-text-mode@ flag, the
+-- encoder defaults to @PATCH_ENC=1@ (UTF-8 is the portable choice, and
+-- the field bytes are written UTF-8 regardless).
 ninja2DetectionDefaultsToUtf8 :: Assertion
 ninja2DetectionDefaultsToUtf8 =
   assertCreatedNINJA2PatchEnc
-    "expected PATCH_ENC=1 (UTF-8 default with no source and no CLI)"
+    "expected PATCH_ENC=1 (UTF-8 default with no CLI flag)"
     noMetadataRequested
     1
 
@@ -1153,20 +1125,18 @@ assertCreatedNINJA2PatchEnc messagePrefix metadata expectedByte =
 ----------------------------------------------------------------------------
 
 -- | A non-ASCII codepoint payload that takes 9 UTF-8 bytes and fits
--- comfortably inside the 50-byte PPF description field. Under a UTF-8
--- process locale the encode+decode round-trips byte-for-byte; under
--- a non-UTF-8 locale the test still expects the same Text back
--- because slap re-encodes through the same locale resolver on both
--- ends.
+-- comfortably inside the 50-byte PPF description field. The encode and
+-- decode both go through UTF-8 (slap writes UTF-8 and the test reads
+-- back under the default UTF-8 metadata encoding), so it round-trips
+-- byte-for-byte.
 ppfNonAsciiDescriptionText :: Text.Text
 ppfNonAsciiDescriptionText = Text.pack "\x65E5\x672C\x8A9E"  -- "Japanese language"
 
 -- | An overflow probe: 47 ASCII bytes plus a 4-byte UTF-8 codepoint
 -- (🎮, U+1F3AE) — encoded length 51, one byte past the 50-byte cap.
 -- 'encodeTextBounded' drops the 4-byte codepoint whole and keeps the
--- 47-byte prefix; pre-stage-3a 'encodeBoundedLocale' would have cut
--- at a raw byte boundary (it relied on iconv's locale-encoded
--- truncation which has no codepoint awareness for non-UTF-8 locales).
+-- 47-byte prefix, rather than cutting at a raw byte boundary mid-
+-- codepoint.
 ppfTruncationProbeText :: Text.Text
 ppfTruncationProbeText = Text.pack (replicate 47 'a' ++ ['\x1F3AE'])
 
@@ -1177,8 +1147,8 @@ ppfTruncationProbeExpectedTruncated :: Length
 ppfTruncationProbeExpectedTruncated = Length 47
 
 -- | A non-ASCII description round-trips byte-faithfully when re-encoding
--- the parsed-back text under the same locale produces wire bytes
--- identical to the original encode. Slap parses the description with
+-- the parsed-back text as UTF-8 produces wire bytes identical to the
+-- original encode. Slap parses the description with
 -- its padding bytes intact, so a text-level @==@ comparison would
 -- need format-specific padding-stripping; the byte-level identity
 -- check is the cleaner end-to-end claim: parse-then-re-create
@@ -1221,24 +1191,24 @@ assertPPFDescriptionTruncationWarning expectedLabel advisories =
 
 ppf1DescriptionUtf8RoundTrip :: Assertion
 ppf1DescriptionUtf8RoundTrip =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfNonAsciiDescriptionText
       patchResult      = PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
   in ppfDescriptionRoundTripsByteFaithfully patchResult
-       (PPF1.parsePPF1 PPF1OriginPC)
+       (PPF1.parsePPF1 PPF1OriginPC SlapText.EncodingUtf8)
        PPF1.ppf1Description
        (PPF1.encodePPF1 PPF1OriginPC [])
        "PPF1"
 
 ppf1DescriptionCodepointAwareTruncation :: Assertion
 ppf1DescriptionCodepointAwareTruncation =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfTruncationProbeText
       CreateResult _ advisories =
         PPF1.encodePPF1 PPF1OriginPC [] descriptionTyped
   in assertPPFDescriptionTruncationWarning LabelPPF1 advisories
 
 ppf2DescriptionUtf8RoundTrip :: Assertion
 ppf2DescriptionUtf8RoundTrip =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfNonAsciiDescriptionText
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
         Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
@@ -1246,14 +1216,14 @@ ppf2DescriptionUtf8RoundTrip =
       patchResult      = PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       reEncodePPF2 d   = PPF2.encodePPF2 [] d sourceSize validation
   in ppfDescriptionRoundTripsByteFaithfully patchResult
-       PPF2.parsePPF2
+       (PPF2.parsePPF2 SlapText.EncodingUtf8)
        PPF2.ppf2Description
        reEncodePPF2
        "PPF2"
 
 ppf2DescriptionCodepointAwareTruncation :: Assertion
 ppf2DescriptionCodepointAwareTruncation =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfTruncationProbeText
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
         Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
@@ -1264,37 +1234,37 @@ ppf2DescriptionCodepointAwareTruncation =
 
 ppf3DescriptionUtf8RoundTrip :: Assertion
 ppf3DescriptionUtf8RoundTrip =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfNonAsciiDescriptionText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfNonAsciiDescriptionText
       patchResult      = PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
       reEncodePPF3 d   = PPF3.encodePPF3 [] d Nothing Nothing BIN
   in ppfDescriptionRoundTripsByteFaithfully patchResult
-       PPF3.parsePPF3
+       (PPF3.parsePPF3 SlapText.EncodingUtf8)
        PPF3.ppf3Description
        reEncodePPF3
        "PPF3"
 
 ppf3DescriptionCodepointAwareTruncation :: Assertion
 ppf3DescriptionCodepointAwareTruncation =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale ppfTruncationProbeText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 ppfTruncationProbeText
       CreateResult _ advisories =
         PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
   in assertPPFDescriptionTruncationWarning LabelPPF3 advisories
 
--- | A FILE_ID.DIZ body that round-trips byte-faithfully under a
--- UTF-8 locale: the typed text encodes to identical bytes whether
--- read by parse or rewritten by create, so the trailer wraps and
--- unwraps cleanly with the format's wire-level marker/length frame.
+-- | A FILE_ID.DIZ body that round-trips byte-faithfully: the typed
+-- text encodes to identical UTF-8 bytes whether read by parse or
+-- rewritten by create, so the trailer wraps and unwraps cleanly with
+-- the format's wire-level marker/length frame.
 ppfFileIdDizSampleText :: Text.Text
 ppfFileIdDizSampleText = Text.pack "slap sample FILE_ID.DIZ\nline two\n"
 
 ppf2FileIdDizRoundTrip :: Assertion
 ppf2FileIdDizRoundTrip =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale Text.empty
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
       sourceSize       = case narrowPPF2SourceSize (FileSize 0x9720) of
         Right size -> size
         Left  err  -> error ("narrowPPF2SourceSize: " ++ Text.unpack (renderSlapError err))
       validation       = PPF2.PPF2ValidationBlock (ByteString.replicate 1024 0)
-      fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
+      fileIdText       = SlapText.EncodedText SlapText.EncodingUtf8 ppfFileIdDizSampleText
       fileId = case narrowPPF2FileId fileIdText of
         Right value -> value
         Left  err   -> error ("narrowPPF2FileId: " ++ Text.unpack (renderSlapError err))
@@ -1302,7 +1272,7 @@ ppf2FileIdDizRoundTrip =
         PPF2.encodePPF2 [] descriptionTyped sourceSize validation
       (trailerBytes, _trailerAdv) = PPF2.encodeFileIdDiz fileId
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
-  in case PPF2.parsePPF2 stitched of
+  in case PPF2.parsePPF2 SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF2 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF2.ppf2FileId parsed of
          Nothing  -> assertFailure "PPF2 parsed file_id.diz was Nothing; expected trailer"
@@ -1313,8 +1283,8 @@ ppf2FileIdDizRoundTrip =
 
 ppf3FileIdDizRoundTrip :: Assertion
 ppf3FileIdDizRoundTrip =
-  let descriptionTyped = SlapText.EncodedText SlapText.EncodingLocale Text.empty
-      fileIdText       = SlapText.EncodedText SlapText.EncodingLocale ppfFileIdDizSampleText
+  let descriptionTyped = SlapText.EncodedText SlapText.EncodingUtf8 Text.empty
+      fileIdText       = SlapText.EncodedText SlapText.EncodingUtf8 ppfFileIdDizSampleText
       fileId = case narrowPPF3FileId fileIdText of
         Right value -> value
         Left  err   -> error ("narrowPPF3FileId: " ++ Text.unpack (renderSlapError err))
@@ -1322,7 +1292,7 @@ ppf3FileIdDizRoundTrip =
         PPF3.encodePPF3 [] descriptionTyped Nothing Nothing BIN
       (trailerBytes, _trailerAdv) = PPF3.encodeFileIdDiz fileId
       stitched = PatchFileContents (unPatchFileContents patchBytes <> trailerBytes)
-  in case PPF3.parsePPF3 stitched of
+  in case PPF3.parsePPF3 SlapText.EncodingUtf8 stitched of
        Left slapError -> assertFailureT ("PPF3 parse: " <> renderSlapError slapError)
        Right (Parsed parsed _) -> case PPF3.ppf3FileId parsed of
          Nothing  -> assertFailure "PPF3 parsed file_id.diz was Nothing; expected trailer"
@@ -1336,7 +1306,7 @@ prop_apsN64 :: Property
 prop_apsN64 = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateAPSN64) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
-    Right (CreateResult patch _) -> case APSN64.parseAPSN64 patch of
+    Right (CreateResult patch _) -> case APSN64.parseAPSN64 SlapText.EncodingUtf8 patch of
        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
        Right (Parsed parsed _parseWarnings) ->
          APSN64.applyAPSN64 parsed (InputFileContents source) === Right (OutputFileContents target)
@@ -1403,7 +1373,7 @@ prop_bpsNoSizeRegression = forAll genPair $ \(source, target) ->
 -- constructor isn't exported from "Slap.XDelta1.Types".
 xdelta1FixtureNames :: ResolvedXDelta1FileNames
 xdelta1FixtureNames =
-  let asLocale = SlapText.EncodedText SlapText.EncodingLocale
+  let asLocale = SlapText.EncodedText SlapText.EncodingUtf8
   in case resolveXDelta1FileNames (Just (asLocale "source")) (Just (asLocale "target"))
                                   "ignored-source-path" "ignored-target-path" of
        Right resolved -> resolved
@@ -1415,7 +1385,7 @@ prop_xdelta1RoundTrips =
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
-    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
         Left applyError    -> counterexample ("apply: " ++ Text.unpack (renderSlapError applyError)) (property False)
@@ -1429,7 +1399,7 @@ prop_xdelta1CompressionPostureRoundTrips =
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
-    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> XDelta1.xdelta1PatchCompression parsed === compression
 
@@ -1439,7 +1409,7 @@ prop_xdelta1CreateProducesVerifyPosture =
   forAll genCompression $ \compression ->
   case createXDelta1 IncludeVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
-    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed _) -> case XDelta1.xdelta1Verification parsed of
         XDelta1.VerifyAgainstStoredMD5s _     -> property True
@@ -1456,7 +1426,7 @@ prop_xdelta1NoVerifyRoundTrip =
   forAll genCompression $ \compression ->
   case createXDelta1 OmitVerification compression xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) (property False)
-    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> counterexample ("parse: " ++ Text.unpack (renderSlapError parseError)) (property False)
       Right (Parsed parsed warnings) ->
         let postureCheck = XDelta1.xdelta1Verification parsed === XDelta1.CreatorOptedOutOfVerification
@@ -1489,7 +1459,7 @@ xdelta1RoundTripCase :: ByteString.ByteString -> ByteString.ByteString -> Assert
 xdelta1RoundTripCase sourceBytes targetBytes =
   case createXDelta1 IncludeVerification CompressedPatch xdelta1FixtureNames (InputFileContents sourceBytes) (OutputFileContents targetBytes) of
     Left createError -> assertFailureT ("create: " <> renderSlapError createError)
-    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 patch of
+    Right (CreateResult patch _) -> case XDelta1.parseXDelta1 SlapText.EncodingUtf8 patch of
       Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
       Right (Parsed parsed _) -> case XDelta1.applyXDelta1 parsed (InputFileContents sourceBytes) of
         Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
@@ -1546,7 +1516,7 @@ xdelta1RejectsWrongControlTypeTag =
             , ByteString.singleton 0xFF        -- flip high byte of type tag
             , ByteString.drop (controlOffset + 1) patchBytes
             ]
-      in case XDelta1.parseXDelta1 (PatchFileContents corruptedBytes) of
+      in case XDelta1.parseXDelta1 SlapText.EncodingUtf8 (PatchFileContents corruptedBytes) of
         Right _ -> assertFailure
           "expected parser to reject corrupted control type tag; parse succeeded"
         Left parseError ->

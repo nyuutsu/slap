@@ -76,7 +76,7 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let width = unLength ppf2DescriptionLength
       (truncatedBytes, notices) =
-        encodeTextBounded EncodingLocale width (encodedTextContent description)
+        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
                  (max 0 (width - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF2 FieldDescription notices
@@ -104,12 +104,12 @@ encodeRecord ehunk =
 -- Differs from PPF3's trailer only in the length field width
 -- (PPF2: 4 bytes; PPF3: 2 bytes). Returns the trailer bytes plus any
 -- substitution advisories from encoding the typed-text content
--- under the process locale.
+-- as UTF-8.
 encodeFileIdDiz :: PPF2FileId -> (ByteString, [SlapAdvisory])
 encodeFileIdDiz fid =
   let description = unPPF2FileId fid
       (content, notices) =
-        encodeTextLenient EncodingLocale (encodedTextContent description)
+        encodeTextLenient EncodingUtf8 (encodedTextContent description)
       advisories = encodeLossAdvisories LabelPPF2 FieldFileIdDiz notices
       trailer = LazyByteString.toStrict $ toLazyByteString $
                   byteString "@BEGIN_FILE_ID.DIZ"

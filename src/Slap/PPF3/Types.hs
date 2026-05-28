@@ -83,7 +83,7 @@ newtype PPF3ValidationBlock = PPF3ValidationBlock
 -- values come from one of two named producers:
 --
 -- * 'narrowPPF3FileId' — runtime check, encodes the typed text
---   under the locale (lenient) and refuses with
+--   as UTF-8 (lenient) and refuses with
 --   'Slap.Narrow.FieldValueExceedsBound' if the produced byte
 --   count exceeds @0xFFFF@.
 -- * 'ppf3FileIdFromParsed' — parse-time, trusts the wire format's
@@ -95,7 +95,7 @@ newtype PPF3FileId = PPF3FileId { unPPF3FileId :: EncodedText }
 narrowPPF3FileId :: EncodedText -> Either SlapError PPF3FileId
 narrowPPF3FileId description =
   let (encoded, _notices) =
-        encodeTextLenient EncodingLocale (encodedTextContent description)
+        encodeTextLenient EncodingUtf8 (encodedTextContent description)
   in case narrowToWord16 LabelPPF3 FieldFileIdDizLength
                          (ByteString.length encoded) of
        Left  failure -> Left (NarrowingError failure)
@@ -108,9 +108,10 @@ ppf3FileIdFromParsed = PPF3FileId
 data PPF3Patch = PPF3Patch
   { ppf3Description     :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
-    -- process locale. Same encoding model as PPF1/PPF2/PPF4; the
-    -- PPF3 wire field is null-padded on the encode side (vs PPF1/PPF2's
-    -- space-padding), preserved verbatim by 'Slap.PPF3.Create.padDescription'.
+    -- chosen metadata encoding. Same encoding model as PPF1/PPF2/PPF4;
+    -- the PPF3 wire field is null-padded on the encode side (vs
+    -- PPF1/PPF2's space-padding), preserved verbatim by
+    -- 'Slap.PPF3.Create.padDescription'.
   , ppf3ImageType       :: !PPF3ImageType
   , ppf3HasUndo         :: !Bool                -- ^ True iff each 'PPF3Record' carries an undo payload
   , ppf3ValidationBlock :: !(Maybe PPF3ValidationBlock)  -- ^ Present iff the block-check flag was set in the header

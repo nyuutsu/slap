@@ -51,7 +51,7 @@ padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let width = unLength ppf3DescriptionLength
       (truncatedBytes, notices) =
-        encodeTextBounded EncodingLocale width (encodedTextContent description)
+        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
                  (max 0 (width - ByteString.length truncatedBytes)) 0x00
       advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
@@ -111,12 +111,12 @@ encodePPF3 records description undoHunks validationBlock imageType =
 
 -- | Encode a FILE_ID.DIZ trailer in PPF3 format (2-byte LE length).
 -- Returns the trailer bytes plus any substitution advisories from
--- encoding the typed-text content under the process locale.
+-- encoding the typed-text content as UTF-8.
 encodeFileIdDiz :: PPF3FileId -> (ByteString, [SlapAdvisory])
 encodeFileIdDiz fid =
   let description = unPPF3FileId fid
       (content, notices) =
-        encodeTextLenient EncodingLocale (encodedTextContent description)
+        encodeTextLenient EncodingUtf8 (encodedTextContent description)
       advisories = encodeLossAdvisories LabelPPF3 FieldFileIdDiz notices
       trailer = LazyByteString.toStrict $ toLazyByteString $
                   byteString "@BEGIN_FILE_ID.DIZ"

@@ -46,13 +46,13 @@ import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodedText(..), EncodingName(..), processLocaleEncoder)
+import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
 -- The CLI parsers below wrap incoming 'String' as 'EncodedText'
--- tagged 'EncodingLocale' at the boundary, matching how slap models
--- locale-tied user input throughout the convert seam.
+-- tagged 'EncodingUtf8' at the boundary: text slap writes is always
+-- UTF-8, with no write-side encoding choice.
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
@@ -72,7 +72,6 @@ import Control.Exception (try)
 import Control.Monad (when, forM_)
 import Data.Char (toLower)
 import Data.List (intercalate)
-import Data.Maybe (maybeToList)
 import Options.Applicative
 import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
@@ -363,12 +362,14 @@ data ConvertCommand = ConvertCommand
   , convertMetadata    :: ConvertMetadataInputs
   , convertConstraints :: RequestedConstraints
   , convertDialects    :: RequestedDialects
+  , convertMetadataEncoding :: EncodingName
   }
 
 data InfoCommand = InfoCommand
   { infoPatch           :: FilePath
   , infoExtractMetadata :: Maybe FilePath
   , infoDialects        :: RequestedDialects
+  , infoMetadataEncoding :: EncodingName
   }
 
 data ExplainCommand = ExplainCommand
@@ -377,6 +378,7 @@ data ExplainCommand = ExplainCommand
   , explainSource      :: Maybe FilePath
   , explainFileReading :: FileReadingOptions
   , explainDialects    :: RequestedDialects
+  , explainMetadataEncoding :: EncodingName
   }
 
 ----------------------------------------------------------------------------
@@ -387,11 +389,6 @@ main :: IO ()
 main = do
   setStdoutAndStderrToLenientUtf8
   parsedCommand <- customExecParser (prefs showHelpOnEmpty) options
-  -- 'processLocaleEncoder' resolves the process locale once; its
-  -- advisory half is 'Just' only when the name didn't resolve (slap
-  -- then falls back to UTF-8 for locale-encoded fields). Emitted after
-  -- parsing, before dispatch: once per run, after --help has exited.
-  emitAdvisories (maybeToList (snd processLocaleEncoder))
   case parsedCommand of
     Apply   subcommand -> doApply   subcommand
     Undo    subcommand -> doUndo    subcommand
@@ -433,6 +430,32 @@ pathArgument modifiers = argument str (modifiers <> action "file")
 pathOption :: Mod OptionFields FilePath -> Parser FilePath
 pathOption modifiers = option str (modifiers <> action "file")
 
+-- | The @--metadata-encoding ENC@ option, shared by the commands that
+-- surface metadata text ('slap info', 'slap explain', 'slap convert').
+-- It sets how slap interprets text fields whose encoding the patch
+-- format leaves undeclared (PPF descriptions, XDelta1 names, DPS
+-- metadata, NINJA2 mode-0 fields). The name resolves at parse time via
+-- 'resolveEncodingName', so an unresolvable name fails the CLI parse
+-- rather than surprising the user mid-run; the default is UTF-8.
+metadataEncodingParser :: Parser EncodingName
+metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
+  ( long "metadata-encoding"
+ <> metavar "ENC"
+ <> value EncodingUtf8
+ <> help ("Interpret text fields whose encoding the patch format leaves"
+       ++ " undeclared (PPF descriptions, xdelta1 names, DPS metadata,"
+       ++ " NINJA2 mode-0 fields) as ENC (e.g. shift-jis, cp1252)."
+       ++ " Default: utf8.") )
+
+-- | Resolve a @--metadata-encoding@ value to an 'EncodingName', or
+-- name the value that didn't resolve. Wraps 'resolveEncodingName' for
+-- 'eitherReader'; write is always UTF-8, so this only ever feeds the
+-- read side.
+resolveMetadataEncoding :: String -> Either String EncodingName
+resolveMetadataEncoding raw = case resolveEncodingName (Text.pack raw) of
+  Right named -> Right (EncodingNamed named)
+  Left _      -> Left ("could not resolve encoding name: " ++ raw)
+
 explainParser :: Parser ExplainCommand
 explainParser = do
     patchFile          <- pathArgument (metavar "PATCH" <> help "Patch file to explain")
@@ -442,12 +465,14 @@ explainParser = do
                             <> help "Source file (resolves delta/copy operations in output)"))
     fileReadingOptions <- fileReadingOptionsParser
     dialects           <- dialectsParser
+    metadataEncoding   <- metadataEncodingParser
     pure ExplainCommand
       { explainPatch       = patchFile
       , explainVerbosity   = verbosity
       , explainSource      = maybeWithPath
       , explainFileReading = fileReadingOptions
       , explainDialects    = dialects
+      , explainMetadataEncoding = metadataEncoding
       }
 
 applyParser :: Parser ApplyCommand
@@ -635,6 +660,7 @@ convertParser = do
     metadataInputs     <- convertMetadataInputsParser
     constraints        <- constraintsParser
     dialects           <- dialectsParser
+    metadataEncoding   <- metadataEncodingParser
     pure ConvertCommand
       { convertPatch       = patchFile
       , convertTo          = targetFormat
@@ -644,6 +670,7 @@ convertParser = do
       , convertMetadata    = metadataInputs
       , convertConstraints = constraints
       , convertDialects    = dialects
+      , convertMetadataEncoding = metadataEncoding
       }
 
 -- | Parser for the 'RequestedConstraints' bag, shared between
@@ -758,28 +785,28 @@ requestedMetadataParser = do
     xdelta1ToName     <- optional (option str (long "to-name" <> metavar "TEXT"
                             <> help "Embedded target-file display label (xdelta1 only; same defaulting as --from-name)"))
     pure RequestedPatchMetadata
-      { requestedTitle               = fmap wrapLocale title
-      , requestedAuthor              = fmap wrapLocale author
-      , requestedDescription         = fmap wrapLocale description
-      , requestedVersion             = fmap wrapLocale version
+      { requestedTitle               = fmap wrapUtf8 title
+      , requestedAuthor              = fmap wrapUtf8 author
+      , requestedDescription         = fmap wrapUtf8 description
+      , requestedVersion             = fmap wrapUtf8 version
       , requestedUndoInclusion        = includeUndo
       , requestedVerificationInclusion = includeVerification
       , requestedPatchCompression    = patchCompression
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType
-      , requestedGenre               = fmap wrapLocale genre
-      , requestedLanguage            = fmap wrapLocale language
-      , requestedDate                = fmap wrapLocale date
-      , requestedWebsite             = fmap wrapLocale website
+      , requestedGenre               = fmap wrapUtf8 genre
+      , requestedLanguage            = fmap wrapUtf8 language
+      , requestedDate                = fmap wrapUtf8 date
+      , requestedWebsite             = fmap wrapUtf8 website
       , requestedTextMode            = textMode
       , requestedEmbeddedBlob        = Nothing
-      , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapLocale) xdelta1FromName
-      , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapLocale) xdelta1ToName
+      , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapUtf8) xdelta1FromName
+      , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapUtf8) xdelta1ToName
       }
   where
-    wrapLocale :: String -> EncodedText
-    wrapLocale = EncodedText EncodingLocale . Text.pack
+    wrapUtf8 :: String -> EncodedText
+    wrapUtf8 = EncodedText EncodingUtf8 . Text.pack
 
 -- | Create-side metadata: the parsed metadata fields plus an optional
 -- @--metadata FILE@ path whose bytes the resolver embeds as the patch's
@@ -936,10 +963,12 @@ patchInfoParser = do
     extractMetadataPath <- optional (pathOption (long "extract-metadata" <> metavar "FILE"
         <> help "Write embedded metadata to FILE (BPS)"))
     dialects <- dialectsParser
+    metadataEncoding <- metadataEncodingParser
     pure InfoCommand
       { infoPatch           = patchFile
       , infoExtractMetadata = extractMetadataPath
       , infoDialects        = dialects
+      , infoMetadataEncoding = metadataEncoding
       }
 
 ----------------------------------------------------------------------------
@@ -1011,7 +1040,7 @@ resolveConvertMetadata inputs = do
 
 doInfo :: InfoCommand -> IO ()
 doInfo parsedCommand = do
-  parsed <- readAndParsePatch (infoDialects parsedCommand) (infoPatch parsedCommand)
+  parsed <- readAndParsePatch (infoDialects parsedCommand) (infoMetadataEncoding parsedCommand) (infoPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -1028,7 +1057,7 @@ doInfo parsedCommand = do
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
-  parsed <- readAndParsePatch (explainDialects parsedCommand) (explainPatch parsedCommand)
+  parsed <- readAndParsePatch (explainDialects parsedCommand) (explainMetadataEncoding parsedCommand) (explainPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -1048,7 +1077,7 @@ doExplain parsedCommand = do
 
 doApply :: ApplyCommand -> IO ()
 doApply parsedCommand = do
-  parsed <- readAndParsePatch (applyDialects parsedCommand) (applyPatch parsedCommand)
+  parsed <- readAndParsePatch (applyDialects parsedCommand) EncodingUtf8 (applyPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -1106,7 +1135,7 @@ doApply parsedCommand = do
 
 doUndo :: UndoCommand -> IO ()
 doUndo parsedCommand = do
-  parsed <- readAndParsePatch (undoDialects parsedCommand) (undoPatch parsedCommand)
+  parsed <- readAndParsePatch (undoDialects parsedCommand) EncodingUtf8 (undoPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -1255,7 +1284,7 @@ doConvert parsedCommand = do
   cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
-  parsed <- readAndParsePatch (convertDialects parsedCommand) (convertPatch parsedCommand)
+  parsed <- readAndParsePatch (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
   orBail (rejectIncompatibleDialects
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
@@ -1534,10 +1563,10 @@ emitVerboseAnalysis Quiet _ = pure ()
 -- so the user sees the asked-for content unobstructed; others ('doApply',
 -- 'doUndo', 'doConvert') emit warnings immediately. The helper stays
 -- parse-only to leave that ordering to each caller.
-readAndParsePatch :: RequestedDialects -> FilePath -> IO SomePatch
-readAndParsePatch dialects path = do
+readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
+readAndParsePatch dialects metadataEncoding path = do
   patchBytes <- readUnwrap path
-  orBail (parseSome dialects (PatchFileContents patchBytes))
+  orBail (parseSome dialects metadataEncoding (PatchFileContents patchBytes))
 
 ----------------------------------------------------------------------------
 -- Stdout and stderr encoding setup
@@ -1556,16 +1585,15 @@ readAndParsePatch dialects path = do
 -- process at the first attempt to print. Called once at slap startup,
 -- before any I\/O.
 --
--- We deliberately do not consult the locale here. In slap, LANG and
--- LC_CTYPE are a lever for interpreting @EncodingLocale@-tagged patch
--- text fields (NINJA2 mode 0, PPF descriptions, XDelta1 names) — an
--- input-side concern, not a statement about the terminal. Every
--- realistic terminal slap runs in is UTF-8, and encoding our own
--- console output to whatever the locale claims would let that
--- input-side lever leak into the output channel: @LANG=ja_JP.SJIS slap
--- info patch.bps@, run to read shift-jis patch text on a UTF-8
--- terminal, would re-encode slap's own chatter as shift-jis and render
--- it as garbage. Stdout and stderr are UTF-8, full stop.
+-- We deliberately do not consult the locale here — slap does not
+-- consult it anywhere. Interpreting patch text fields whose encoding
+-- the format leaves undeclared is the @--metadata-encoding@ flag's
+-- job (an explicit input-side choice, not a statement about the
+-- terminal), and every realistic terminal slap runs in is UTF-8.
+-- Encoding our own console output to whatever the locale claims would
+-- only invite mojibake: @LANG=ja_JP.SJIS slap info patch.bps@ would
+-- re-encode slap's own chatter as shift-jis and render it as garbage
+-- on a UTF-8 terminal. Stdout and stderr are UTF-8, full stop.
 setStdoutAndStderrToLenientUtf8 :: IO ()
 setStdoutAndStderrToLenientUtf8 = do
   hSetEncoding stdout lenientUtf8

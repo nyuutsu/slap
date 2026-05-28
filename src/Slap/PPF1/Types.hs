@@ -43,10 +43,10 @@ data PPF1Record = PPF1Record
 data PPF1Patch = PPF1Patch
   { ppf1Description :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
-    -- process locale. The wire field is locale-unflagged on the PPF1
-    -- spec, so 'Slap.Text.EncodingLocale' carries forward the "follow
-    -- the running locale" semantics through the value's lifetime.
-    -- Encode-side padding (PPF1\/PPF2: @0x20@, PPF3: @0x00@) is
+    -- chosen metadata encoding. The PPF1 spec leaves the wire field's
+    -- encoding undeclared, so slap reads the bytes under the user's
+    -- @--metadata-encoding@ (default UTF-8) and writes them back as
+    -- UTF-8. Encode-side padding (PPF1\/PPF2: @0x20@, PPF3: @0x00@) is
     -- format-faithful and stays at the format's own @Create.hs@.
   , ppf1Records     :: ![PPF1Record]
   } deriving (Show)

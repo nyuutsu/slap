@@ -39,8 +39,8 @@ data APSN64ParseWalk = APSN64ParseWalk
   , apsN64ParseWalkWarnings :: ![SlapAdvisory]
   }
 
-parseAPSN64 :: PatchFileContents -> Either SlapError (Parsed APSN64Patch)
-parseAPSN64 (PatchFileContents input)
+parseAPSN64 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed APSN64Patch)
+parseAPSN64 metadataEncoding (PatchFileContents input)
   | ByteString.length input < magicLength =
       Left (InputTooShort LabelAPSN64
              (RequiredLength (Length magicLength))
@@ -55,21 +55,21 @@ parseAPSN64 (PatchFileContents input)
       patchType <- case toAPSPatchType (ByteString.index input magicLength) of
         Left malformation -> Left (MalformedAPSN64Header malformation)
         Right validatedType -> Right validatedType
-      case runByteParser (parseN64 patchType) input of
+      case runByteParser (parseN64 metadataEncoding patchType) input of
         Left parserError -> Left (ParseError LabelAPSN64 parserError)
         Right walk ->
           Right (Parsed (apsN64ParseWalkPatch walk) (apsN64ParseWalkWarnings walk))
   where
     magicLength = ByteString.length apsN64MagicBytes
 
-parseN64 :: APSPatchType -> ByteParser APSN64ParseWalk
-parseN64 patchType = do
+parseN64 :: EncodingName -> APSPatchType -> ByteParser APSN64ParseWalk
+parseN64 metadataEncoding patchType = do
   skip (byteLength apsN64MagicBytes)  -- "APS10"
   skip (Length 1)                     -- patch-type byte (pre-validated)
   encodingMethod    <- toAPSRecordEncoding <$> getByte
   descriptionBytes  <- getBytes (Length apsN64DescriptionWidth)
   let (description, descriptionNotices) =
-        decodeTextLenient EncodingLocale descriptionBytes
+        decodeTextLenient metadataEncoding descriptionBytes
       descriptionAdvisories =
         decodeLossAdvisories LabelAPSN64 FieldDescription descriptionNotices
   case patchType of

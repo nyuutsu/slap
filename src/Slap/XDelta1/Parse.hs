@@ -111,10 +111,10 @@ data ParsedSourceKind
 -- Parsing
 ----------------------------------------------------------------------------
 
-parseXDelta1 :: PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
-parseXDelta1 patchContents@(PatchFileContents input)
+parseXDelta1 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
+parseXDelta1 metadataEncoding patchContents@(PatchFileContents input)
   | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (byteLength input)))
-  | magic == "%XDZ004%" = parseVersion1Point1 patchContents (ExpectedMagic magic)
+  | magic == "%XDZ004%" = parseVersion1Point1 metadataEncoding patchContents (ExpectedMagic magic)
   | magic == "%XDZ003%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0_4)
   | magic == "%XDZ002%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0)
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedXDelta1Subformat XDelta1_0_14)
@@ -126,20 +126,21 @@ parseXDelta1 patchContents@(PatchFileContents input)
 -- slap currently supports. Sibling body parsers for other eras
 -- (1.0.4 under @%XDZ003%@, 1.0.x under @%XDZ002%@) would live
 -- alongside this one and be dispatched to by 'parseXDelta1'.
-parseVersion1Point1 :: PatchFileContents -> ExpectedMagic -> Either SlapError (Parsed XDelta1Patch)
-parseVersion1Point1 (PatchFileContents input) expectedMagic
+parseVersion1Point1 :: EncodingName -> PatchFileContents -> ExpectedMagic -> Either SlapError (Parsed XDelta1Patch)
+parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
   | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
   | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
       decompressedControl <- safeDecompressGZip controlSegmentRaw
-      let (fromText, fromNotices) = decodeTextLenient EncodingLocale fromNameBytes
-          (toText,   toNotices)   = decodeTextLenient EncodingLocale toNameBytes
+      let (fromText, fromNotices) = decodeTextLenient metadataEncoding fromNameBytes
+          (toText,   toNotices)   = decodeTextLenient metadataEncoding toNameBytes
           headerNameAdvisories =
             decodeLossAdvisories LabelXDelta1 FieldXDelta1FromName fromNotices
             ++ decodeLossAdvisories LabelXDelta1 FieldXDelta1ToName toNotices
       Parsed patch warnings <-
-        parseControl noVerifyFlag
+        parseControl metadataEncoding
+                     noVerifyFlag
                      compressionPosture
                      (XDelta1ControlSegment decompressedControl)
                      (XDelta1DataSegment    decompressedData)
@@ -274,14 +275,15 @@ data ParsedInstruction = ParsedInstruction
 -- 'VerificationOptedOutByCreator' under 'NoVerifyFlagSet', and the
 -- 'XDelta1NoVerifyWithDivergentSentinel' curio when the flag is set
 -- but the stored MD5 slots do not match 'xdelta1EmptyInputMD5Sentinel'.
-parseControl :: XDelta1NoVerifyFlag
+parseControl :: EncodingName
+             -> XDelta1NoVerifyFlag
              -> XDelta1PatchCompression
              -> XDelta1ControlSegment
              -> XDelta1DataSegment
              -> XDelta1FromName
              -> XDelta1ToName
              -> Either SlapError (Parsed XDelta1Patch)
-parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName toName
+parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dataSegment fromName toName
   | ByteString.length controlBytes < 28 =
       Left (TruncatedRecord LabelXDelta1 0 (Length 28) (byteLength controlBytes))
   | otherwise = do
@@ -315,7 +317,7 @@ parseControl noVerifyFlag compressionPosture controlSegment dataSegment fromName
                Left $ XDelta1DataRecordMD5Mismatch declaredDataMD5 computedDataMD5
       translatedInstructions <- traverse translateInstruction parsedInstrs
       let (sourceNameText, sourceNameNotices) =
-            decodeTextLenient EncodingLocale (parsedSourceName parsedFileRec)
+            decodeTextLenient metadataEncoding (parsedSourceName parsedFileRec)
           sourceNameAdvisories =
             decodeLossAdvisories LabelXDelta1 FieldXDelta1FromName sourceNameNotices
           fixedInstructions =

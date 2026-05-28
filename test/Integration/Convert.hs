@@ -29,6 +29,7 @@ import Slap.Status (CreateResult(..), renderSlapError, renderSlapAdvisory)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (SomePatch, parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert
   ( CreateFormat(..)
   , DifferentialCreate(..)
@@ -112,7 +113,7 @@ runConvertTest
   -> String -> String -> CreateFormat -> IO ()
 runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsString targetCreateFormat = do
   patchBytes <- ByteString.readFile patchPath
-  case parseSome noDialectsRequested (PatchFileContents patchBytes) of
+  case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
     Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
     Right parsed -> do
       let flags = words flagsString
@@ -157,7 +158,7 @@ runConvertTest repo patchPath baseRel targetSha verdict warningsString flagsStri
                 baseExists <- doesFileExist basePath
                 when baseExists $ do
                   baseBytes <- maybe (mmapRomFile basePath) pure maybeBase
-                  case parseSome noDialectsRequested convertedBytes of
+                  case parseSome noDialectsRequested EncodingUtf8 convertedBytes of
                     Left slapError ->
                       assertFailureT ("re-parse converted failed: " <> renderSlapError slapError)
                     Right convertedParsed -> do
@@ -217,7 +218,7 @@ makeTruncatingIPSPatch =
          noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
        Left slapError ->
          error ("setup: create truncating IPS failed: " ++ Text.unpack (renderSlapError slapError))
-       Right createResult -> case parseSome noDialectsRequested (resultBytes createResult) of
+       Right createResult -> case parseSome noDialectsRequested EncodingUtf8 (resultBytes createResult) of
          Left slapError ->
            error ("setup: parse truncating IPS failed: " ++ Text.unpack (renderSlapError slapError))
          Right parsed -> pure parsed

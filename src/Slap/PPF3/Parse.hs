@@ -42,8 +42,8 @@ data PPF3ParsedHeader = PPF3ParsedHeader
   , ppf3HeaderValidationBlock :: !(Maybe PPF3ValidationBlock)
   }
 
-parsePPF3 :: PatchFileContents -> Either SlapError (Parsed PPF3Patch)
-parsePPF3 (PatchFileContents input)
+parsePPF3 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF3Patch)
+parsePPF3 metadataEncoding (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF3ParseLength =
       Left (InputTooShort LabelPPF3
               (RequiredLength minimumPPF3ParseLength)
@@ -58,7 +58,7 @@ parsePPF3 (PatchFileContents input)
       let headerLength = if ppf3HeaderHasBlockCheck header
                            then ppf3MinHeaderLength <> ppf3ValidationSize
                            else ppf3MinHeaderLength
-          (detectedFileId, fileIdAdvisories) = detectFileId input
+          (detectedFileId, fileIdAdvisories) = detectFileId metadataEncoding input
           fileId     = fmap fst detectedFileId
           recordBody = stripFileId detectedFileId
                             (ByteString.drop (unLength headerLength) input)
@@ -81,7 +81,7 @@ parsePPF3 (PatchFileContents input)
       skip (Length 6)
       descriptionBytes <- getBytes ppf3DescriptionLength
       let (descriptionText, descriptionNotices) =
-            decodeTextLenient EncodingLocale descriptionBytes
+            decodeTextLenient metadataEncoding descriptionBytes
           descriptionAdvisories =
             decodeLossAdvisories LabelPPF3 FieldDescription descriptionNotices
       imageTypeByte <- getByte
@@ -151,8 +151,8 @@ truncatedMessage recordIndex
 -- the wire (alongside any decode advisories). The byte count is
 -- plumbed back to 'stripFileId' so the body-trim doesn't have to
 -- re-encode the typed text just to recover the on-wire size.
-detectFileId :: ByteString -> (Maybe (PPF3FileId, Int), [SlapAdvisory])
-detectFileId input
+detectFileId :: EncodingName -> ByteString -> (Maybe (PPF3FileId, Int), [SlapAdvisory])
+detectFileId metadataEncoding input
   | ByteString.length input < markerSize + lengthFieldSize = (Nothing, [])
   | ByteString.take markerSize trailerCandidate /= "@END_FILE_ID.DIZ" = (Nothing, [])
   | otherwise =
@@ -163,7 +163,7 @@ detectFileId input
       in if dizContentStart < 0 then (Nothing, [])
          else let dizContentBytes = ByteString.take dizContentLength
                                       (ByteString.drop dizContentStart input)
-                  (dizText, dizNotices) = decodeTextLenient EncodingLocale dizContentBytes
+                  (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
                   dizAdvisories = decodeLossAdvisories LabelPPF3 FieldFileIdDiz dizNotices
               in (Just (ppf3FileIdFromParsed dizText, dizContentLength), dizAdvisories)
   where

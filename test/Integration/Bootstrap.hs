@@ -34,6 +34,7 @@ import Slap.Status (renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 
 import Control.Monad (filterM)
@@ -120,7 +121,7 @@ buildBootstrapTargets tempDir pairs = do
     bootstrap (index, pair) = do
       baseBytes  <- mmapRomFile (bootstrapBase pair)
       patchBytes <- ByteString.readFile (bootstrapPatch pair)
-      case parseSome noDialectsRequested (PatchFileContents patchBytes) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
         Left slapError ->
           error ("bootstrap parse failed for " ++ bootstrapPatch pair
                  ++ ": " ++ Text.unpack (renderSlapError slapError))

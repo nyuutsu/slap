@@ -77,30 +77,31 @@ isDPS input
 -- Parse
 ----------------------------------------------------------------------------
 
-parseDPS :: PatchFileContents -> Either SlapError (Parsed DPSPatch)
-parseDPS (PatchFileContents input)
+parseDPS :: EncodingName -> PatchFileContents -> Either SlapError (Parsed DPSPatch)
+parseDPS metadataEncoding (PatchFileContents input)
   | ByteString.length input < dpsMinimumFileSize = Left (InputTooShort LabelDPS (RequiredLength (Length dpsMinimumFileSize)) (ActualLength (byteLength input)))
   | Left versionError <- toDPSFormatVersion (ByteString.index input dpsVersionOffset)
     = Left versionError
-  | otherwise = case runByteParser parseDPSBody input of
+  | otherwise = case runByteParser (parseDPSBody metadataEncoding) input of
       Left parserError                  -> Left (ParseError LabelDPS parserError)
       Right (Left slapError)            -> Left slapError
       Right (Right (patch, advisories)) -> Right (Parsed patch advisories)
 
--- | Decode one 64-byte metadata field under the process locale.
--- Lenient: substitution events surface as 'FieldDecodedSubstituted'
--- advisories tagged with the supplied 'FieldName'.
-parseMetadataField :: FieldName -> ByteParser (EncodedText, [SlapAdvisory])
-parseMetadataField fieldName = do
+-- | Decode one 64-byte metadata field under the chosen metadata
+-- encoding. Lenient: substitution events surface as
+-- 'FieldDecodedSubstituted' advisories tagged with the supplied
+-- 'FieldName'.
+parseMetadataField :: EncodingName -> FieldName -> ByteParser (EncodedText, [SlapAdvisory])
+parseMetadataField metadataEncoding fieldName = do
   bytes <- getBytes (Length dpsFieldWidth)
-  let (text, notices) = decodeTextLenient EncodingLocale bytes
+  let (text, notices) = decodeTextLenient metadataEncoding bytes
   pure (text, decodeLossAdvisories LabelDPS fieldName notices)
 
-parseDPSBody :: ByteParser (Either SlapError (DPSPatch, [SlapAdvisory]))
-parseDPSBody = do
-  (name,    nameAdvisories)    <- parseMetadataField FieldPatchName
-  (author,  authorAdvisories)  <- parseMetadataField FieldAuthor
-  (version, versionAdvisories) <- parseMetadataField FieldVersion
+parseDPSBody :: EncodingName -> ByteParser (Either SlapError (DPSPatch, [SlapAdvisory]))
+parseDPSBody metadataEncoding = do
+  (name,    nameAdvisories)    <- parseMetadataField metadataEncoding FieldPatchName
+  (author,  authorAdvisories)  <- parseMetadataField metadataEncoding FieldAuthor
+  (version, versionAdvisories) <- parseMetadataField metadataEncoding FieldVersion
   flagByte <- getByte
   case toDPSStability flagByte of
     Left errorMessage -> fail errorMessage

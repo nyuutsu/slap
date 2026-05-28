@@ -20,7 +20,7 @@ import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..
                      byteLength)
 import qualified Data.Text as Text
 import Slap.Display.Primitives (padHex)
-import Slap.Text (EncodedText, decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodedText, EncodingName(..), decodeTextLenient, decodeLossAdvisories)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -34,12 +34,15 @@ import qualified Data.ByteString as ByteString
 -- | Parse the fixed header region. Field offsets/widths per
 -- ninja2-filespec20.txt §2; the eight named constants in
 -- 'Slap.NINJA2.Types' are the single source of truth. The patch's
--- declared 'TextMode' selects each field's decoder; per-field
--- substitution events surface as 'Slap.Status.FieldDecodedSubstituted'
--- advisories tagged with the field name. An empty (all-zero-padded)
--- slot decodes to 'Nothing' and never emits an advisory.
-parseFixedHeader :: TextMode -> ByteString -> (NINJA2Info, [SlapAdvisory])
-parseFixedHeader textMode input =
+-- declared 'TextMode' and the chosen metadata encoding meet here to
+-- pick each field's decoder: a wire-declared UTF-8 patch decodes as
+-- UTF-8, an undeclared patch decodes under the user's choice. Per-
+-- field substitution events surface as
+-- 'Slap.Status.FieldDecodedSubstituted' advisories tagged with the
+-- field name. An empty (all-zero-padded) slot decodes to 'Nothing'
+-- and never emits an advisory.
+parseFixedHeader :: EncodingName -> TextMode -> ByteString -> (NINJA2Info, [SlapAdvisory])
+parseFixedHeader metadataEncoding textMode input =
   let (authorField,      authorAdvisories)      = extractField FieldAuthor      ninja2AuthorOffset      ninja2AuthorWidth
       (versionField,     versionAdvisories)     = extractField FieldVersion     ninja2VersionOffset     ninja2VersionWidth
       (titleField,       titleAdvisories)       = extractField FieldTitle       ninja2TitleOffset       ninja2TitleWidth
@@ -63,7 +66,12 @@ parseFixedHeader textMode input =
                 ++ websiteAdvisories ++ descriptionAdvisories
   in (info, advisories)
   where
-    tag = textModeToTag textMode
+    -- The wire's PATCH_ENC byte either declares UTF-8 outright or
+    -- declines to say; an undeclared patch defers to the user's
+    -- metadata-encoding choice.
+    effectiveEncoding = case textMode of
+      TextModeUTF8       -> EncodingUtf8
+      TextModeUndeclared -> metadataEncoding
 
     extractField :: FieldName -> Offset -> Length
                  -> (Maybe EncodedText, [SlapAdvisory])
@@ -75,7 +83,7 @@ parseFixedHeader textMode input =
       in if ByteString.null trimmedBytes
            then (Nothing, [])
            else
-             let (decoded, notices) = decodeTextLenient tag trimmedBytes
+             let (decoded, notices) = decodeTextLenient effectiveEncoding trimmedBytes
              in (Just decoded, decodeLossAdvisories LabelNINJA2 fieldName notices)
 
 ----------------------------------------------------------------------------
@@ -85,8 +93,8 @@ parseFixedHeader textMode input =
 --   0x00: END
 ----------------------------------------------------------------------------
 
-parseNINJA2 :: PatchFileContents -> Either SlapError (Parsed NINJA2Patch)
-parseNINJA2 (PatchFileContents input)
+parseNINJA2 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed NINJA2Patch)
+parseNINJA2 metadataEncoding (PatchFileContents input)
   | byteLength input < Length 7 =
       Left (InputTooShort LabelNINJA2 (RequiredLength (Length 7)) (ActualLength (byteLength input)))
   | ByteString.take 6 input /= ninja2MagicBytes =
@@ -103,7 +111,7 @@ parseNINJA2 (PatchFileContents input)
     parseNINJA2Body :: TextMode -> ByteParser (NINJA2Patch, [SlapAdvisory])
     parseNINJA2Body textMode = do
       headerBytes <- getBytes headerSize
-      let (info, headerAdvisories) = parseFixedHeader textMode headerBytes
+      let (info, headerAdvisories) = parseFixedHeader metadataEncoding textMode headerBytes
       patch <- parseCommands (emptyPatch info textMode)
       pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
 

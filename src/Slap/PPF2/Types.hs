@@ -71,8 +71,8 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
 -- against PPF2's 4-byte LE length field. Constructor private;
 -- values come from one of two named producers:
 --
--- * 'narrowPPF2FileId' — runtime check, encodes the typed text under
---   the locale (lenient) and refuses with
+-- * 'narrowPPF2FileId' — runtime check, encodes the typed text as
+--   UTF-8 (lenient) and refuses with
 --   'Slap.Narrow.FieldValueExceedsBound' if the produced byte count
 --   exceeds @0xFFFFFFFF@.
 -- * 'ppf2FileIdFromParsed' — parse-time, trusts the wire format's
@@ -84,7 +84,7 @@ newtype PPF2FileId = PPF2FileId { unPPF2FileId :: EncodedText }
 narrowPPF2FileId :: EncodedText -> Either SlapError PPF2FileId
 narrowPPF2FileId description =
   let (encoded, _notices) =
-        encodeTextLenient EncodingLocale (encodedTextContent description)
+        encodeTextLenient EncodingUtf8 (encodedTextContent description)
   in case narrowToWord32 LabelPPF2 FieldFileIdDizLength
                          (ByteString.length encoded) of
        Left  failure -> Left (NarrowingError failure)
@@ -113,9 +113,10 @@ ppf2SourceSizeFromParsed = PPF2SourceSize
 data PPF2Patch = PPF2Patch
   { ppf2Description     :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
-    -- process locale (same model as PPF1). The PPF2 spec is silent on
-    -- the description's encoding, so 'Slap.Text.EncodingLocale'
-    -- carries the "follow the running locale" semantics through.
+    -- chosen metadata encoding (same model as PPF1). The PPF2 spec is
+    -- silent on the description's encoding, so slap interprets the
+    -- bytes under the user's @--metadata-encoding@ (default UTF-8) and
+    -- writes them back as UTF-8.
   , ppf2SourceFileSize  :: !PPF2SourceSize   -- ^ 4-byte LE field at header offset 56; declares the source ROM's expected size
   , ppf2ValidationBlock :: !PPF2ValidationBlock
   , ppf2Records         :: ![PPF2Record]

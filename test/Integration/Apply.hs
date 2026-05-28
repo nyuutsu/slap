@@ -25,6 +25,7 @@ import Slap.Status (renderSlapError)
 import Slap.FileContents
   (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 
 import qualified Data.ByteString as ByteString
@@ -81,7 +82,7 @@ mkPatchTest repo basePath expectedSha entry =
       else do
         baseBytes  <- mmapRomFile basePath
         patchBytes <- ByteString.readFile patchPath
-        case parseSome noDialectsRequested (PatchFileContents patchBytes) of
+        case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
           Left slapError ->
             assertFailureT ("parseSome failed: " <> renderSlapError slapError)
           Right parsed -> do

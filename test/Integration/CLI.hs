@@ -29,6 +29,7 @@ import Slap.Status (renderSlapError, renderSlapAdvisory)
 import Slap.Display.Analysis (renderAnalysisSummary)
 import Slap.FileContents (PatchFileContents(..))
 import Slap.SomePatch (SomePatch(..), parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 
 import qualified Data.ByteString as ByteString
@@ -107,26 +108,26 @@ cliTests tier = do
 corruptTests :: [TestTree]
 corruptTests =
   [ testCase "corrupt/empty file" $
-      case parseSome noDialectsRequested (PatchFileContents ByteString.empty) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents ByteString.empty) of
         Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected parse failure for empty file"
 
   , testCase "corrupt/random garbage" $ do
       let garbageBytes = ByteString.pack $ take 256 $ map fromIntegral $
                  iterate (\seed -> (seed * 1103515245 + 12345) `mod` 256) (42 :: Int)
-      case parseSome noDialectsRequested (PatchFileContents garbageBytes) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents garbageBytes) of
         Left slapError -> assertBool "expected 'unknown'" (ciContains "unknown" (Text.unpack (renderSlapError slapError)))
         Right _ -> assertFailure "expected parse failure for random garbage"
 
   , testCase "corrupt/info truncated IPS (graceful)" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome noDialectsRequested (PatchFileContents truncatedIPS) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailureT ("parseSome rejected truncated IPS: " <> renderSlapError slapError)
         Right parsed -> assertBool "expected '0' in info" ("0" `Text.isInfixOf` renderAnalysisSummary (patchInfo parsed) (patchAnalysis parsed) Nothing)
 
   , testCase "corrupt/info truncated BPS" $ do
       let truncatedBPS = ByteString.pack [0x42,0x50,0x53,0x31]
-      case parseSome noDialectsRequested (PatchFileContents truncatedBPS) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedBPS) of
         Left _ -> pure ()
         Right _ -> assertFailure "expected parse failure for truncated BPS"
   ]
@@ -301,21 +302,21 @@ warningTests :: FilePath -> [TestTree]
 warningTests repo =
   [ testCase "warnings/truncated IPS no EOF" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome noDialectsRequested (PatchFileContents truncatedIPS) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> assertBool "expected 'no EOF marker' in warnings"
                      (any (ciContains "no EOF marker" . Text.unpack . renderSlapAdvisory) (patchAdvisories parsed))
 
   , testCase "warnings/truncated IPS empty" $ do
       let truncatedIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x01,0x02]
-      case parseSome noDialectsRequested (PatchFileContents truncatedIPS) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents truncatedIPS) of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> assertBool "expected 'empty patch' in info"
                      (ciContains "empty patch" (Text.unpack (renderAnalysisSummary (patchInfo parsed) (patchAnalysis parsed) Nothing)))
 
   , testCase "warnings/empty IPS warns empty only" $ do
       let emptyIPS = ByteString.pack [0x50,0x41,0x54,0x43,0x48,0x45,0x4F,0x46]
-      case parseSome noDialectsRequested (PatchFileContents emptyIPS) of
+      case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents emptyIPS) of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> do
           let info = renderAnalysisSummary (patchInfo parsed) (patchAnalysis parsed) Nothing
@@ -329,7 +330,7 @@ warningTests repo =
         then pure ()  -- in-process; no harness to skip via and not worth a fixture gate for one body
         else do
           patchBytes <- ByteString.readFile ipsPath
-          case parseSome noDialectsRequested (PatchFileContents patchBytes) of
+          case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
             Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
             Right parsed -> assertBool "unexpected warning" (null (patchAdvisories parsed))
   ]

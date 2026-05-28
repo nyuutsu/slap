@@ -236,7 +236,7 @@ data CreateFormat
 data RequestedPatchMetadata = RequestedPatchMetadata
   { requestedTitle                :: Maybe EncodedText
     -- ^ Typed across the convert seam end-to-end: the CLI parser
-    -- wraps incoming 'String' as @'EncodedText' 'EncodingLocale'@,
+    -- wraps incoming 'String' as @'EncodedText' 'EncodingUtf8'@,
     -- and 'parseSomePatchFromDPS' \/ similar extractors hand off the
     -- already-typed field directly from the parsed patch. The
     -- create-side encoders (DPS, NINJA2) consume the 'EncodedText'
@@ -306,10 +306,12 @@ stabilityToDPS :: PatchStability -> DPS.DPSStability
 stabilityToDPS UnstablePatch = DPS.DPSUnstable
 stabilityToDPS StablePatch   = DPS.DPSStable
 
--- | Empty 'EncodedText' tagged 'EncodingLocale', for fallbacks when a
+-- | Empty 'EncodedText' tagged 'EncodingUtf8', for fallbacks when a
 -- 'Maybe EncodedText' slot in 'RequestedPatchMetadata' is 'Nothing'.
-emptyLocaleText :: EncodedText
-emptyLocaleText = EncodedText EncodingLocale Text.empty
+-- Empty text is zero bytes under any encoding, so UTF-8 is the honest
+-- tag for "no content."
+emptyEncodedText :: EncodedText
+emptyEncodedText = EncodedText EncodingUtf8 Text.empty
 
 noMetadataRequested :: RequestedPatchMetadata
 noMetadataRequested = RequestedPatchMetadata
@@ -1104,7 +1106,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMetadata   = contentsEBPMetadata contents
       , descriptionSourceTypedText = contentsDescription contents
-      , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
+      , descriptionSourceFallback  = EncodedText EncodingUtf8 Text.empty
       }
     -- APSN64's create-side fallback is a 50-byte space-padded string
     -- in the pre-migration code; the padding belongs to the format
@@ -1114,7 +1116,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMetadata   = Nothing
       , descriptionSourceTypedText = contentsDescription contents
-      , descriptionSourceFallback  = EncodedText EncodingLocale Text.empty
+      , descriptionSourceFallback  = EncodedText EncodingUtf8 Text.empty
       }
     ebpSource = contentsEBPMetadata contents
     ebpTitle  = resolveEBPField cliTitle  (ebpSource >>= ebpMetadataTitle)
@@ -1170,31 +1172,17 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
                     (DPS.DPSCreateMetadata
-                      { DPS.dpsCreateMetadataName    = fromMaybe emptyLocaleText (requestedTitle meta)
-                      , DPS.dpsCreateMetadataAuthor  = fromMaybe emptyLocaleText (requestedAuthor meta)
-                      , DPS.dpsCreateMetadataVersion = fromMaybe emptyLocaleText (requestedVersion meta)
+                      { DPS.dpsCreateMetadataName    = fromMaybe emptyEncodedText (requestedTitle meta)
+                      , DPS.dpsCreateMetadataAuthor  = fromMaybe emptyEncodedText (requestedAuthor meta)
+                      , DPS.dpsCreateMetadataVersion = fromMaybe emptyEncodedText (requestedVersion meta)
                       })
                     (maybe DPS.DPSStable stabilityToDPS (requestedStability meta))
   CreateNINJA2 -> do
     -- Pick the wire @PATCH_ENC@ byte for the output patch. The CLI
-    -- flag wins outright; otherwise the first non-empty source field's
-    -- 'EncodedText' tag decides (NINJA2 source preserves the original
-    -- mode through the field tags); otherwise UTF-8 (the portable
-    -- default).
-    let sourceFieldEncoding = encodedTextEncoding <$>
-          (   requestedDescription meta
-          <|> requestedTitle       meta
-          <|> requestedAuthor      meta
-          <|> requestedVersion     meta
-          <|> requestedGenre       meta
-          <|> requestedLanguage    meta
-          <|> requestedDate        meta
-          <|> requestedWebsite     meta )
-        detectedTextMode = case requestedTextMode meta of
-          Just cliChoice -> cliChoice
-          Nothing -> case sourceFieldEncoding of
-            Just tag -> NINJA2.tagToTextMode tag
-            Nothing  -> TextModeUTF8
+    -- flag wins outright; otherwise UTF-8, the portable default (the
+    -- field bytes are written UTF-8 regardless, so a UTF-8 declaration
+    -- is the honest one).
+    let detectedTextMode = fromMaybe TextModeUTF8 (requestedTextMode meta)
         ninja2Meta = NINJA2.NINJA2CreateMetadata
           { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta
           , NINJA2.ninja2CreateMetadataVersion     = requestedVersion     meta
@@ -1317,7 +1305,8 @@ data DescriptionSources = DescriptionSources
 -- typed description, or default. Returns 'EncodedText'; the typed
 -- value travels end-to-end so the format-specific encoder can route
 -- a re-encode through the tag the source declared (UTF-8 for EBP
--- JSON, locale everywhere else today).
+-- JSON, and the chosen metadata encoding for fields read from a patch
+-- whose spec leaves the encoding undeclared).
 resolveDescription :: DescriptionSources -> EncodedText
 resolveDescription sources
   | Just description <- descriptionSourceCLI sources = description
@@ -1333,11 +1322,10 @@ resolveDescription sources
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the
 -- value extracted from the EBP metadata view, then to the empty
 -- string. The two callers feed in the title and author fields
--- respectively. Both sides are 'EncodedText' under the migration:
--- CLI-origin values are tagged 'EncodingLocale', JSON-origin values
--- are tagged 'EncodingUtf8'. The empty-value fallback is tagged
--- 'EncodingUtf8' because the consumer ('IPS.buildEBPMetadataJSON')
--- emits JSON, which is UTF-8 by spec.
+-- respectively. Both sides are 'EncodedText': CLI-origin values are
+-- tagged 'EncodingUtf8', as are JSON-origin values. The empty-value
+-- fallback is tagged 'EncodingUtf8' because the consumer
+-- ('IPS.buildEBPMetadataJSON') emits JSON, which is UTF-8 by spec.
 resolveEBPField :: Maybe EncodedText -> Maybe EncodedText -> EncodedText
 resolveEBPField cliValue ebpValue
   | Just provided <- cliValue  = provided

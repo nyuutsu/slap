@@ -14,6 +14,7 @@ import qualified Slap.PPF3.Apply as PPF3
 import qualified Slap.PPF3.Parse as PPF3
 
 import Slap.Status (CreateResult(..), Parsed(..), Outcome(..), renderSlapError)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (CreateFormat(..), DirectCreate(..), RequestedPatchMetadata(..),
                      UndoInclusion(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
@@ -64,7 +65,7 @@ prop_ppf3Undo :: Property
 prop_ppf3Undo = forAll genSameSizePair $ \(source, target) -> not (ByteString.null source) ==>
   case createPatch (CreateDirect CreatePPF3) Nothing (InputFileContents source) (OutputFileContents target) (noMetadataRequested { requestedUndoInclusion = Just IncludeUndoData }) Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> case PPF3.parsePPF3 patch of
+    Right (CreateResult patch _) -> case PPF3.parsePPF3 EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right (Parsed parsed _parseWarnings) ->
         case PPF3.applyPPF3 parsed (InputFileContents source) of

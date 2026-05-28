@@ -19,6 +19,7 @@ import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.IPS.Parse as IPS
 import qualified Slap.PPF1.Parse as PPF1
 import Slap.PPF1.Types (PPF1Origin(..))
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.FieldName (FieldName(..))
 import Slap.Status (Parsed(..), SlapAdvisory(..), OverlapCount(..),
                    renderSlapError)
@@ -282,7 +283,7 @@ apsN64Type0Patch =
 -- to the caller for further structural assertions.
 withParsedAPSN64 :: ByteString -> (APSN64.APSN64Header -> [SlapAdvisory] -> Assertion) -> Assertion
 withParsedAPSN64 patchBytes inspect =
-  case APSN64.parseAPSN64 (PatchFileContents patchBytes) of
+  case APSN64.parseAPSN64 EncodingUtf8 (PatchFileContents patchBytes) of
     Left slapError ->
       assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed (APSN64.APSN64Patch header _records) actualWarnings) ->
@@ -331,22 +332,19 @@ ppf1PatchWithInvalidDescriptionByte =
   in ByteString.pack [0x50, 0x50, 0x46, 0x31, 0x30, 0x00]  -- "PPF10" + encoding byte 0x00
      <> descriptionBytes
 
--- | When the description bytes don't decode cleanly under the
--- process locale, slap leniently substitutes 'U+FFFD' for each
--- offending sequence and surfaces a single
--- 'FieldDecodedSubstituted' advisory naming the format, the field,
--- and the substitution count. This test asserts that exact shape on
--- a hand-built PPF1 patch whose description holds one undecodable
--- byte.
+-- | When the description bytes don't decode cleanly under the chosen
+-- metadata encoding, slap leniently substitutes 'U+FFFD' for each
+-- offending sequence and surfaces a single 'FieldDecodedSubstituted'
+-- advisory naming the format, the field, and the substitution count.
+-- This test asserts that exact shape on a hand-built PPF1 patch whose
+-- description holds one undecodable byte.
 --
--- The test is locale-sensitive: a non-UTF-8 process locale (e.g.
--- ISO-8859-1) would decode @0x80@ to a single defined codepoint
--- rather than substituting, and the assertion would not match.
--- Slap's CI host uses UTF-8 by default, so this assertion is
--- meaningful in the environments the test suite normally runs in.
+-- The parse threads 'EncodingUtf8' explicitly, so the result is
+-- deterministic regardless of the host environment: @0x80@ is a lone
+-- UTF-8 continuation byte and always substitutes.
 ppf1DescriptionDecodeSubstitutionEmitsAdvisory :: Assertion
 ppf1DescriptionDecodeSubstitutionEmitsAdvisory =
-  case PPF1.parsePPF1 PPF1OriginPC
+  case PPF1.parsePPF1 PPF1OriginPC EncodingUtf8
          (PatchFileContents ppf1PatchWithInvalidDescriptionByte) of
     Left slapError -> assertFailureT ("parse failed: " <> renderSlapError slapError)
     Right (Parsed _ advisories) ->

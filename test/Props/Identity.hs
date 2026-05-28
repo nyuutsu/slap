@@ -9,6 +9,7 @@ module Props.Identity (identityTests) where
 import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.SomePatch (parseSome)
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
@@ -48,7 +49,7 @@ prop_identity :: CreateFormat -> Property
 prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
   case createPatch format Nothing (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
-    Right (CreateResult patch _) -> case parseSome noDialectsRequested patch of
+    Right (CreateResult patch _) -> case parseSome noDialectsRequested EncodingUtf8 patch of
       Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
       Right parsed -> ioProperty $ do
         result <- applySomePatch parsed (InputFileContents source)

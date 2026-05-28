@@ -965,28 +965,6 @@ data SlapAdvisory
   -- substitution event.
   | FieldEncodedSubstituted FormatLabel FieldName SubstitutionCount
 
-  -- | The process's locale encoding name (as reported by
-  -- 'GHC.IO.Encoding.getLocaleEncoding') did not resolve to a
-  -- known encoder via the 'encoding' library, and 'Slap.Text''s
-  -- locale-resolved primitive fell back to UTF-8 for any field
-  -- tagged 'EncodingLocale'. The 'String' is the unresolved
-  -- locale name verbatim — usually a value like @"ANSI_X3.4-1968"@
-  -- on a POSIX host whose iconv aliases don't match the encoding
-  -- library's name table. Informational: text under the locale
-  -- encoding still goes through (substituted via the UTF-8
-  -- fallback's lenient behavior), but the bytes won't match what
-  -- an iconv-driven tool would produce for the same locale name.
-  -- The user can fix by setting @LC_CTYPE@ to a name the encoding
-  -- library recognizes (e.g. @en_US.UTF-8@, @ja_JP.SJIS@,
-  -- @ru_RU.KOI8-R@, @zh_CN.GB18030@). Some locales — Korean
-  -- Wansung (@ko_KR.CP949@\/@.EUC-KR@), Big5
-  -- (@zh_TW.BIG5@\/@.BIG5-HKSCS@), and the EUC-CN\/EUC-TW
-  -- variants — currently have no encoder in slap's encoding
-  -- backend and stay unresolved until the backend is widened;
-  -- see "Slap.Text" 'documentedLocaleAliases' for the full list.
-  -- Fires at most once per slap invocation; the resolver is a CAF.
-  | LocaleEncoderUnresolved !String
-
   -- Platform conversion
   --
   -- | The source patch named a platform that the target format
@@ -1870,11 +1848,6 @@ renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)
   <> renderAsText count <> plural count " codepoint was" " codepoints were"
   <> " not representable in the target encoding; substituted"
 
-renderSlapAdvisory (LocaleEncoderUnresolved localeName) =
-  "process locale " <> renderAsText localeName
-  <> " not recognized by the encoding library;"
-  <> " falling back to UTF-8 for locale-encoded fields"
-
 renderSlapAdvisory (PlatformNotAvailable label platform) =
   "platform " <> platformName platform
   <> " not available in " <> formatLabelName label <> "; using Raw"
@@ -2327,7 +2300,6 @@ slapAdvisorySeverity advisory = case advisory of
   FieldTruncated{}                     -> SeverityNote
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
-  LocaleEncoderUnresolved{}            -> SeverityNote
   PlatformNotAvailable{}               -> SeverityNote
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
   SubformatConverted{}                 -> SeverityNote

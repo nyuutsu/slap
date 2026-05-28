@@ -67,7 +67,7 @@ directFormats =
 fullContents :: PatchContents
 fullContents = PatchContents
   { contentsRecords     = [Hunk (Offset 0) (ByteString.pack [0xFF])]
-  , contentsDescription = Just (EncodedText EncodingLocale (Text.pack "test"))
+  , contentsDescription = Just (EncodedText EncodingUtf8 (Text.pack "test"))
   , contentsSourceCRC32 = Just (CRC32 0xDEADBEEF)
   , contentsSourceMD5   = Just (MD5Hash (ByteString.replicate 16 0xAA))
   , contentsSourceSHA1  = Just (SHA1Hash (ByteString.replicate 20 0xBB))

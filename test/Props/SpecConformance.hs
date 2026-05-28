@@ -35,6 +35,7 @@ import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Parse as APSGBA
 import Slap.APSGBA.Types (apsGbaBlockSize)
 import Slap.SomePatch (parseSome, patchVerification, Verification(..), FileSizeCheck(..))
+import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
@@ -1109,7 +1110,7 @@ bpsVerificationCarriesDeclaredSize =
                 <> byteString target
       body = bpsBody 4 4 ByteString.empty actions
       patch = buildBPS body source target
-  in case parseSome noDialectsRequested patch of
+  in case parseSome noDialectsRequested EncodingUtf8 patch of
     Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSize" (Just (AdvisorySize (FileSize 4)))
@@ -1193,7 +1194,7 @@ upsVerificationCarriesDeclaredSize =
       target = ByteString.pack [0x11, 0x22, 0x33, 0x44]
       body = upsBody 4 4 mempty
       patch = buildUPS body source target
-  in case parseSome noDialectsRequested patch of
+  in case parseSome noDialectsRequested EncodingUtf8 patch of
     Left slapError -> assertFailureT ("parseSome: " <> renderSlapError slapError)
     Right somePatch ->
       assertEqual "verifyFileSize" (Just (AdvisorySize (FileSize 4)))
@@ -1317,7 +1318,7 @@ ninja2RejectsUnrecognizedTextMode =
         ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, unrecognizedByte]
         <> ByteString.replicate (2048 - 7) 0x00
       patchBytes = PatchFileContents headerWithBadEncoding
-  in case NINJA2.parseNINJA2 patchBytes of
+  in case NINJA2.parseNINJA2 EncodingUtf8 patchBytes of
        Left (NINJA2UnrecognizedTextMode actualByte) ->
          assertEqual "preserved byte" unrecognizedByte actualByte
        Left otherError ->
@@ -1350,7 +1351,7 @@ ninja2ApplyXorRecordPastTarget =
         , 0x00                          -- END opcode
         ]
       patch = PatchFileContents (header <> commandStream)
-  in assertApplyError NINJA2.parseNINJA2
+  in assertApplyError (NINJA2.parseNINJA2 EncodingUtf8)
        (\parsed src -> fmap (const ()) (NINJA2.applyNINJA2 parsed src))
        patch source isAbsoluteWritePastTarget
        "XOR record writes past target"

@@ -34,8 +34,8 @@ data PPF1ParsedBody = PPF1ParsedBody
   , ppf1BodyRecords               :: ![PPF1Record]
   }
 
-parsePPF1 :: PPF1Origin -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
-parsePPF1 origin (PatchFileContents input)
+parsePPF1 :: PPF1Origin -> EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF1Patch)
+parsePPF1 origin metadataEncoding (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF1ParseLength =
       Left (InputTooShort LabelPPF1
               (RequiredLength minimumPPF1ParseLength)
@@ -55,7 +55,7 @@ parsePPF1 origin (PatchFileContents input)
       skip (Length 6)                            -- magic + version + encoding byte
       descriptionBytes <- getBytes ppf1DescriptionLength
       let (descriptionText, descriptionNotices) =
-            decodeTextLenient EncodingLocale descriptionBytes
+            decodeTextLenient metadataEncoding descriptionBytes
           descriptionAdvisories =
             decodeLossAdvisories LabelPPF1 FieldDescription descriptionNotices
       records <- parsePPF1Records origin firstAction

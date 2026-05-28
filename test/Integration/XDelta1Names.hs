@@ -127,12 +127,12 @@ data ParsedXDelta1Names = ParsedXDelta1Names
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Wrap a 'Text' name as the locale-tagged 'EncodedText' the
--- resolvers now consume. Under stage 3b the resolvers take typed
--- text rather than raw bytes; CLI inputs and test fixtures both
--- arrive as 'String' \/ 'Text' from the user's perspective.
-localeName :: Text -> EncodedText
-localeName = EncodedText EncodingLocale
+-- | Wrap a 'Text' name as the UTF-8-tagged 'EncodedText' the
+-- resolvers consume. The resolvers take typed text rather than raw
+-- bytes; CLI inputs and test fixtures both arrive as 'String' \/
+-- 'Text' from the user's perspective.
+utf8Name :: Text -> EncodedText
+utf8Name = EncodedText EncodingUtf8
 
 -- | Resolve a pair of explicit override names into a
 -- 'ResolvedXDelta1FileNames'. Both 'Maybe' arguments are 'Just'
@@ -142,7 +142,7 @@ resolveExplicit
   :: Text -> Text
   -> Either SlapError ResolvedXDelta1FileNames
 resolveExplicit fromText toText =
-  resolveXDelta1FileNames (Just (localeName fromText)) (Just (localeName toText))
+  resolveXDelta1FileNames (Just (utf8Name fromText)) (Just (utf8Name toText))
                           "ignored-source-path" "ignored-target-path"
 
 -- | Build an xdelta1 patch from 'sampleSource' \/ 'sampleTarget' with
@@ -177,7 +177,7 @@ withRoundTrippedNames fromText toText check = do
 -- fields.
 parseAndExtractNames :: ByteString -> IO ParsedXDelta1Names
 parseAndExtractNames wireBytes =
-  case parseXDelta1 (PatchFileContents wireBytes) of
+  case parseXDelta1 EncodingUtf8 (PatchFileContents wireBytes) of
     Left err -> assertFailureT ("parseXDelta1: " <> renderSlapError err)
     Right (Parsed patch _warnings) -> pure ParsedXDelta1Names
       { parsedXDelta1FromName         = xdelta1FromName   patch
@@ -200,25 +200,25 @@ defaultBasenamesCarry = do
     Left err -> assertFailureT ("createXDelta1: " <> renderSlapError err)
     Right (CreateResult (PatchFileContents wireBytes) _warnings) -> do
       parsed <- parseAndExtractNames wireBytes
-      assertEqual "from-name basename" (XDelta1FromName (localeName "source.gba"))
+      assertEqual "from-name basename" (XDelta1FromName (utf8Name "source.gba"))
         (parsedXDelta1FromName parsed)
-      assertEqual "to-name basename"   (XDelta1ToName (localeName "target.gba"))
+      assertEqual "to-name basename"   (XDelta1ToName (utf8Name "target.gba"))
         (parsedXDelta1ToName parsed)
 
 explicitNamesCarry :: Assertion
 explicitNamesCarry =
   withRoundTrippedNames "Dragon Quest" "Dragon Quest patched" $ \parsed -> do
     assertEqual "from-name embedded verbatim"
-      (XDelta1FromName (localeName "Dragon Quest"))         (parsedXDelta1FromName parsed)
+      (XDelta1FromName (utf8Name "Dragon Quest"))         (parsedXDelta1FromName parsed)
     assertEqual "to-name embedded verbatim"
-      (XDelta1ToName   (localeName "Dragon Quest patched")) (parsedXDelta1ToName   parsed)
+      (XDelta1ToName   (utf8Name "Dragon Quest patched")) (parsedXDelta1ToName   parsed)
 
 explicitEmptyHonored :: Assertion
 explicitEmptyHonored = withRoundTrippedNames "" "target" $ \parsed -> do
   assertEqual "from-name: empty stays empty"
-    (XDelta1FromName (localeName ""))       (parsedXDelta1FromName parsed)
+    (XDelta1FromName (utf8Name ""))       (parsedXDelta1FromName parsed)
   assertEqual "to-name: unchanged"
-    (XDelta1ToName   (localeName "target")) (parsedXDelta1ToName parsed)
+    (XDelta1ToName   (utf8Name "target")) (parsedXDelta1ToName parsed)
 
 -- | xdelta1's EDSIO source list carries a per-source-record name on
 -- the file-source record (separate from the header from-name).
@@ -235,7 +235,7 @@ sourceRecordNameMirrorsFromName =
       (parsedXDelta1FromName parsed)
       (parsedXDelta1SourceRecordName parsed)
     assertEqual "source-record name is the real basename, not 'source'"
-      (XDelta1FromName (localeName "real-source.bin"))
+      (XDelta1FromName (utf8Name "real-source.bin"))
       (parsedXDelta1SourceRecordName parsed)
 
 ----------------------------------------------------------------------------
@@ -254,7 +254,7 @@ lengthAtBoundaryAccepted = do
   let huge = asciiText xdelta1NameByteCap  -- 'a' × 65535
   withRoundTrippedNames huge "target" $ \parsed ->
     assertEqual "boundary-length from-name round-trips"
-      (XDelta1FromName (localeName huge)) (parsedXDelta1FromName parsed)
+      (XDelta1FromName (utf8Name huge)) (parsedXDelta1FromName parsed)
 
 -- | Exercise the wire packing of both lengths into one Word32 (top
 -- 16 bits = from-name length, bottom 16 = to-name length); a buggy
@@ -265,9 +265,9 @@ bothNamesAtBoundaryAccepted = do
   let huge = asciiText xdelta1NameByteCap
   withRoundTrippedNames huge huge $ \parsed -> do
     assertEqual "from-name at boundary"
-      (XDelta1FromName (localeName huge)) (parsedXDelta1FromName parsed)
+      (XDelta1FromName (utf8Name huge)) (parsedXDelta1FromName parsed)
     assertEqual "to-name at boundary"
-      (XDelta1ToName   (localeName huge)) (parsedXDelta1ToName parsed)
+      (XDelta1ToName   (utf8Name huge)) (parsedXDelta1ToName parsed)
 
 -- | The source-record name shares its bytes with the header
 -- from-name. If from-name is at the cap, the source-record name is
@@ -277,7 +277,7 @@ sourceRecordNameAtBoundary = do
   let huge = asciiText xdelta1NameByteCap
   withRoundTrippedNames huge "target" $ \parsed -> do
     assertEqual "source-record name carries the same bytes"
-      (XDelta1FromName (localeName huge)) (parsedXDelta1SourceRecordName parsed)
+      (XDelta1FromName (utf8Name huge)) (parsedXDelta1SourceRecordName parsed)
 
 lengthOneByteOverRefused :: Assertion
 lengthOneByteOverRefused = do
@@ -320,7 +320,7 @@ convertFromBPSWithoutNamesRefused =
 
 convertFromBPSWithOnlyFromNameRefused :: Assertion
 convertFromBPSWithOnlyFromNameRefused =
-  case requireXDelta1FileNames (Just (localeName "user-from")) Nothing LabelBPS of
+  case requireXDelta1FileNames (Just (utf8Name "user-from")) Nothing LabelBPS of
     Right _ -> assertFailure
       "expected refusal: --from-name set but --to-name absent"
     Left (XDelta1ConvertRequiresNames LabelBPS) -> pure ()
@@ -329,7 +329,7 @@ convertFromBPSWithOnlyFromNameRefused =
 
 convertFromBPSWithNamesAccepted :: Assertion
 convertFromBPSWithNamesAccepted =
-  case requireXDelta1FileNames (Just (localeName "user-from")) (Just (localeName "user-to")) LabelBPS of
+  case requireXDelta1FileNames (Just (utf8Name "user-from")) (Just (utf8Name "user-to")) LabelBPS of
     Right _ -> pure ()
     Left err -> assertFailure
       ("expected acceptance, got: " ++ Text.unpack (renderSlapError err))
@@ -352,16 +352,16 @@ convertXDeltaToXDeltaInherits = do
     Left err -> assertFailure
       ("requireXDelta1FileNames refused inheritance: " ++ Text.unpack (renderSlapError err))
   assertEqual "merge inherited from-name"
-    (Just (XDelta1FromName (localeName "old-from"))) (requestedXDelta1FromName merged)
+    (Just (XDelta1FromName (utf8Name "old-from"))) (requestedXDelta1FromName merged)
   assertEqual "merge inherited to-name"
-    (Just (XDelta1ToName   (localeName "old-to")))   (requestedXDelta1ToName   merged)
+    (Just (XDelta1ToName   (utf8Name "old-to")))   (requestedXDelta1ToName   merged)
 
 convertXDeltaToXDeltaPartialOverride :: Assertion
 convertXDeltaToXDeltaPartialOverride = do
   wireBytes <- createXDelta1WithNames "old-from" "old-to"
   parsed <- parseAndExtractNames wireBytes
   let cliMeta = noMetadataRequested
-        { requestedXDelta1FromName = Just (XDelta1FromName (localeName "cli-from"))
+        { requestedXDelta1FromName = Just (XDelta1FromName (utf8Name "cli-from"))
         }
       sourceMeta = noMetadataRequested
         { requestedXDelta1FromName = Just (parsedXDelta1FromName parsed)
@@ -369,6 +369,6 @@ convertXDeltaToXDeltaPartialOverride = do
         }
       merged = mergeRequestedMetadata cliMeta sourceMeta
   assertEqual "CLI from-name overrides"
-    (Just (XDelta1FromName (localeName "cli-from"))) (requestedXDelta1FromName merged)
+    (Just (XDelta1FromName (utf8Name "cli-from"))) (requestedXDelta1FromName merged)
   assertEqual "to-name inherits from src"
-    (Just (XDelta1ToName (localeName "old-to")))     (requestedXDelta1ToName   merged)
+    (Just (XDelta1ToName (utf8Name "old-to")))     (requestedXDelta1ToName   merged)

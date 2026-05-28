@@ -45,15 +45,15 @@ data PPF2ParsedHeader = PPF2ParsedHeader
   , ppf2HeaderValidationBlock       :: !PPF2ValidationBlock
   }
 
-parsePPF2 :: PatchFileContents -> Either SlapError (Parsed PPF2Patch)
-parsePPF2 (PatchFileContents input)
+parsePPF2 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF2Patch)
+parsePPF2 metadataEncoding (PatchFileContents input)
   | ByteString.length input < unLength minimumPPF2ParseLength =
       Left (InputTooShort LabelPPF2
               (RequiredLength minimumPPF2ParseLength)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      let (detectedFileId, fileIdAdvisories) = detectFileId input
+      let (detectedFileId, fileIdAdvisories) = detectFileId metadataEncoding input
           fileId     = fmap fst detectedFileId
           recordBody = stripFileId detectedFileId
                           (ByteString.drop (unLength ppf2HeaderLength) input)
@@ -75,7 +75,7 @@ parsePPF2 (PatchFileContents input)
       skip (Length 6)
       descriptionBytes <- getBytes ppf2DescriptionLength
       let (descriptionText, descriptionNotices) =
-            decodeTextLenient EncodingLocale descriptionBytes
+            decodeTextLenient metadataEncoding descriptionBytes
           descriptionAdvisories =
             decodeLossAdvisories LabelPPF2 FieldDescription descriptionNotices
       fileSize <- ppf2SourceSizeFromParsed <$> word32LE
@@ -162,16 +162,16 @@ truncatedMessage recordIndex
 -- letting us walk backwards to find the start. Returns 'Nothing' if
 -- the @\"\@END_FILE_ID.DIZ\"@ marker isn't where the length suffix
 -- says it should be. When the trailer is present, the content bytes
--- are decoded leniently under the process locale; any decode
--- substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
+-- are decoded leniently under the chosen metadata encoding; any
+-- decode substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
 -- advisories alongside the typed 'PPF2FileId'.
 -- | If a trailer is present, returns both the typed FILE_ID.DIZ
 -- and the inner-content byte count as declared on the wire
 -- (alongside any decode advisories). The byte count is plumbed
 -- back to 'stripFileId' so the body-trim doesn't have to re-encode
 -- the typed text just to recover the on-wire size.
-detectFileId :: ByteString -> (Maybe (PPF2FileId, Int), [SlapAdvisory])
-detectFileId input
+detectFileId :: EncodingName -> ByteString -> (Maybe (PPF2FileId, Int), [SlapAdvisory])
+detectFileId metadataEncoding input
   | ByteString.length input < markerSize + lengthFieldSize = (Nothing, [])
   | ByteString.take markerSize trailerCandidate /= "@END_FILE_ID.DIZ" = (Nothing, [])
   | otherwise =
@@ -182,7 +182,7 @@ detectFileId input
       in if dizContentStart < 0 then (Nothing, [])
          else let dizContentBytes = ByteString.take dizContentLength
                                       (ByteString.drop dizContentStart input)
-                  (dizText, dizNotices) = decodeTextLenient EncodingLocale dizContentBytes
+                  (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
                   dizAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
               in (Just (ppf2FileIdFromParsed dizText, dizContentLength), dizAdvisories)
   where

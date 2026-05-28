@@ -45,8 +45,8 @@ data PPF4ParsePhase = ReplacePhase | AppendPhase
   deriving (Show, Eq)
 
 -- | Parse a PPF4 patch file from raw bytes.
-parsePPF4 :: PatchFileContents -> Either SlapError (Parsed PPF4Patch)
-parsePPF4 (PatchFileContents input)
+parsePPF4 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF4Patch)
+parsePPF4 metadataEncoding (PatchFileContents input)
   | ByteString.length input < unLength minPPF4Length =
       Left (InputTooShort LabelPPF4
               (RequiredLength minPPF4Length)
@@ -66,7 +66,7 @@ parsePPF4 (PatchFileContents input)
       skip ppf4PreambleLength
       descriptionBytes <- getBytes ppf4DescriptionLength
       let (descriptionText, descriptionNotices) =
-            decodeTextLenient EncodingLocale descriptionBytes
+            decodeTextLenient metadataEncoding descriptionBytes
           descriptionAdvisories =
             decodeLossAdvisories LabelPPF4 FieldDescription descriptionNotices
       skip ppf4PostDescriptionLength

@@ -58,7 +58,7 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
                 -> (ByteString.ByteString, [SlapAdvisory])
     encodeField fieldName fieldText =
       let (truncatedBytes, notices) =
-            encodeTextBounded EncodingLocale dpsFieldWidth (encodedTextContent fieldText)
+            encodeTextBounded EncodingUtf8 dpsFieldWidth (encodedTextContent fieldText)
           padded = truncatedBytes
                 <> ByteString.replicate
                      (max 0 (dpsFieldWidth - ByteString.length truncatedBytes))

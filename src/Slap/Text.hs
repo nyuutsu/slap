@@ -41,8 +41,9 @@
 --     truncation and substitution both surface through the
 --     'LossNotice' list.
 --
--- Plus 'processLocaleEncoder', the resolved encoder for the
--- @EncodingLocale@ tag (see below).
+-- Plus 'resolveEncodingName', which turns a user-supplied encoding
+-- name into a 'NamedEncoding' the 'EncodingNamed' tag carries (see
+-- below).
 --
 -- == UTF-8 vs everything-else asymmetry
 --
@@ -58,33 +59,28 @@
 -- without buying anything; routing the non-UTF-8 encodings through
 -- @text@ isn't possible.
 --
--- == The locale resolver
+-- == The name resolver
 --
--- 'EncodingLocale' is a catch-all tag meaning "whatever the process
--- locale was at parse or create time." Resolution from the GHC-
--- reported locale name to an @encoding@-library encoder happens once,
--- in the 'processLocaleEncoder' CAF, paired with an optional
--- 'Slap.Status.SlapAdvisory'. On the happy path the advisory is
--- 'Nothing' and the encoder is whatever the locale resolves to; on a
--- name the library doesn't recognize the encoder falls back to UTF-8
--- and the advisory is 'Just' 'Slap.Status.LocaleEncoderUnresolved'.
--- Advisory-as-value lets call sites decide when (and whether) to
--- surface it; the resolver does not 'emitAdvisory' on its own.
+-- 'EncodingNamed' carries a 'NamedEncoding': a user-facing encoding
+-- name paired with the @encoding@-library encoder it resolved to.
+-- 'resolveEncodingName' is the only way to build one — it feeds the
+-- name through the resolution engine (case- and separator-
+-- normalization variants, then the curated 'documentedLocaleAliases'
+-- table) and returns 'Left' 'UnresolvableEncodingName' for a name the
+-- library can't place. The name slap resolves is one it was handed
+-- (today, the @--metadata-encoding@ CLI value), no longer one read
+-- from the environment; a resolution failure is the caller's to
+-- surface, not a silent fallback.
 --
 -- == What the encoding tag remembers
 --
 -- When 'decodeText' produces an 'EncodedText', the tag is the
--- encoding the caller asked slap to decode as. For
--- 'EncodingLocale' that means "this value was decoded under the
--- process's locale, whatever the locale happens to be." A later
--- 'encodeText' or 'encodeTextLenient' under the same tag will route
--- through the locale resolver again — using whatever the locale is
--- at re-encode time, which may differ from decode time if the
--- process's locale changed in between. The tag preserves the
--- "this is locale, follow the running locale" semantics through
--- the value's lifetime; resolving to a concrete encoder at decode
--- time would lose that and force every later transcode site to
--- guess again.
+-- encoding the caller asked slap to decode as. For 'EncodingNamed'
+-- the 'NamedEncoding' carries the resolved encoder directly, so a
+-- later 'encodeText' or 'encodeTextLenient' under the same tag routes
+-- through that same encoder. The name-to-encoder decision was made
+-- once, at resolution time, and travels with the value rather than
+-- being re-derived at each transcode site.
 module Slap.Text
   ( -- * Encoding tag
     EncodingName(..)
@@ -106,8 +102,12 @@ module Slap.Text
     -- * Bounded encoding (fixed-width fields)
   , encodeTextBounded
 
-    -- * Locale resolution
-  , processLocaleEncoder
+    -- * Named-encoding resolution
+  , NamedEncoding
+  , resolveEncodingName
+  , displayNamedEncoding
+  , useNamedEncoding
+  , UnresolvableEncodingName(..)
 
     -- * Advisory adaptation
   , decodeLossAdvisories
@@ -123,28 +123,57 @@ import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as TextEncoding
-import GHC.IO.Encoding (getLocaleEncoding, textEncodingName)
 import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..),
                      SubstitutionCount(..))
 import Slap.Status (SlapAdvisory(..))
-import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
 -- Tag
 ----------------------------------------------------------------------------
 
 -- | Which encoding a text value's bytes are in (or are to be
--- interpreted as). Two cases at this stage: 'EncodingUtf8' for
--- the well-defined Unicode case, 'EncodingLocale' for "follow the
--- running process locale". Adding constructors here is the path
--- for future stages that need to honor specific declared encodings
--- on the wire (Shift-JIS, Big5, Latin-1, etc.).
+-- interpreted as). 'EncodingUtf8' is the well-defined Unicode case,
+-- routed through the @text@ package's fast native codec.
+-- 'EncodingNamed' carries any other encoding slap was asked to use —
+-- a 'NamedEncoding' resolved from a user-supplied name through the
+-- @encoding@ library (Shift-JIS, CP1252, KOI8-R, and the rest of the
+-- 'documentedLocaleAliases' table).
 data EncodingName
   = EncodingUtf8
-  | EncodingLocale
+  | EncodingNamed NamedEncoding
   deriving (Eq, Show)
+
+-- | A resolved encoding: the user-facing name slap was handed paired
+-- with the @encoding@-library encoder it resolved to. Constructable
+-- only through 'resolveEncodingName', so a 'NamedEncoding' in hand is
+-- always a name that resolved — there is no way to hold one whose
+-- name and encoder disagree.
+--
+-- The type is identified by its name. The smart constructor makes the
+-- encoder a function of the name (equal names resolve to equal
+-- encoders), so the hand-written 'Eq' over the name alone is exactly
+-- a derived 'Eq', and 'Show' reads as the encoding's name rather than
+-- dumping the library's internal 'Encoding.DynEncoding'.
+data NamedEncoding = NamedEncoding
+  { namedEncodingDisplay  :: !Text
+  , namedEncodingResolved :: !Encoding.DynEncoding
+  }
+
+instance Eq NamedEncoding where
+  left == right = namedEncodingDisplay left == namedEncodingDisplay right
+
+instance Show NamedEncoding where
+  show = Text.unpack . namedEncodingDisplay
+
+-- | The user-facing name a 'NamedEncoding' was resolved from.
+displayNamedEncoding :: NamedEncoding -> Text
+displayNamedEncoding = namedEncodingDisplay
+
+-- | The resolved @encoding@-library encoder a 'NamedEncoding' carries.
+useNamedEncoding :: NamedEncoding -> Encoding.DynEncoding
+useNamedEncoding = namedEncodingResolved
 
 ----------------------------------------------------------------------------
 -- Value
@@ -242,19 +271,19 @@ data LossNotice
 --
 -- 'EncodingUtf8' never fails — every Unicode codepoint has a UTF-8
 -- representation, and 'Text' values are by construction Unicode.
--- 'EncodingLocale' fails when the resolved encoder reports a
--- codepoint as not 'Encoding.encodeable' under it (e.g. a Japanese
--- ideograph under a Latin-1 locale).
+-- 'EncodingNamed' fails when the resolved encoder reports a codepoint
+-- as not 'Encoding.encodeable' under it (e.g. a Japanese ideograph
+-- under a Latin-1 encoding).
 encodeText :: EncodingName -> Text -> Either EncodeError ByteString
 encodeText EncodingUtf8 text = Right (TextEncoding.encodeUtf8 text)
-encodeText EncodingLocale text =
+encodeText (EncodingNamed named) text =
   case findFirstUnencodeable encoder (Text.unpack text) 0 of
     Just (badChar, position) ->
-      Left (EncodeError EncodingLocale badChar position)
+      Left (EncodeError (EncodingNamed named) badChar position)
     Nothing ->
       Right (Encoding.encodeStrictByteString encoder (Text.unpack text))
   where
-    (encoder, _advisory) = processLocaleEncoder
+    encoder = useNamedEncoding named
 
 -- | Walk a 'String' looking for the first character the encoder
 -- can't represent. The library's 'Encoding.encodeable' predicate is
@@ -278,12 +307,12 @@ decodeText :: EncodingName -> ByteString -> Either DecodeError EncodedText
 decodeText EncodingUtf8 bytes = case TextEncoding.decodeUtf8' bytes of
   Right text   -> Right (EncodedText EncodingUtf8 text)
   Left failure -> Left (DecodeError EncodingUtf8 (show failure))
-decodeText EncodingLocale bytes =
+decodeText (EncodingNamed named) bytes =
   case Encoding.decodeStrictByteStringExplicit encoder bytes of
-    Right decoded -> Right (EncodedText EncodingLocale (Text.pack decoded))
-    Left failure  -> Left (DecodeError EncodingLocale (show failure))
+    Right decoded -> Right (EncodedText (EncodingNamed named) (Text.pack decoded))
+    Left failure  -> Left (DecodeError (EncodingNamed named) (show failure))
   where
-    (encoder, _advisory) = processLocaleEncoder
+    encoder = useNamedEncoding named
 
 ----------------------------------------------------------------------------
 -- Lenient primitives
@@ -300,14 +329,14 @@ decodeText EncodingLocale bytes =
 encodeTextLenient :: EncodingName -> Text -> (ByteString, [LossNotice])
 encodeTextLenient EncodingUtf8 text =
   (TextEncoding.encodeUtf8 text, [])
-encodeTextLenient EncodingLocale text =
+encodeTextLenient (EncodingNamed named) text =
   let chars                = Text.unpack text
       substitute           = chooseSubstitute encoder
       (filtered, notices)  = substituteUnencodeable encoder substitute chars
       bytes                = Encoding.encodeStrictByteString encoder filtered
   in (bytes, notices)
   where
-    (encoder, _advisory) = processLocaleEncoder
+    encoder = useNamedEncoding named
 
 -- | Replace each character the encoder can't represent with the
 -- encoder's substitute character, recording each replacement. The
@@ -345,8 +374,8 @@ chooseSubstitute encoder
 --
 -- Each encoding plugs its own strict-decode primitive into the
 -- shared 'recoveringDecode' walk: 'EncodingUtf8' uses
--- 'TextEncoding.decodeUtf8'', 'EncodingLocale' uses the
--- locale-resolved 'Encoding.decodeStrictByteStringExplicit'. The
+-- 'TextEncoding.decodeUtf8'', 'EncodingNamed' uses the resolved
+-- encoder's 'Encoding.decodeStrictByteStringExplicit'. The
 -- recovery shape — strict-decode first, prefix-recover on failure,
 -- emit a single 'SubstitutedByteSequence' per substituted byte,
 -- recurse on the rest — is identical across both. The walk is O(n)
@@ -357,13 +386,13 @@ decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
 decodeTextLenient EncodingUtf8 bytes =
   let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes
   in (EncodedText EncodingUtf8 text, notices)
-decodeTextLenient EncodingLocale bytes =
-  let strictLocaleDecode = fmap Text.pack
-                         . Encoding.decodeStrictByteStringExplicit encoder
-      (text, notices)    = recoveringDecode strictLocaleDecode bytes
-  in (EncodedText EncodingLocale text, notices)
+decodeTextLenient (EncodingNamed named) bytes =
+  let strictNamedDecode = fmap Text.pack
+                        . Encoding.decodeStrictByteStringExplicit encoder
+      (text, notices)   = recoveringDecode strictNamedDecode bytes
+  in (EncodedText (EncodingNamed named) text, notices)
   where
-    (encoder, _advisory) = processLocaleEncoder
+    encoder = useNamedEncoding named
 
 -- | Lenient-decode primitive parameterised over the encoding's strict
 -- decoder. On strict success the whole input decodes cleanly and the
@@ -451,15 +480,15 @@ encodeTextBounded encodingName cap text =
 
 -- | Encode a single codepoint under the target encoding, returning
 -- the bytes plus an optional substitution notice. UTF-8 always
--- represents the codepoint and never substitutes; locale paths
--- substitute when the encoder can't represent the codepoint and
--- report the substitution at the codepoint's source position.
+-- represents the codepoint and never substitutes; a named encoding
+-- substitutes when its encoder can't represent the codepoint and
+-- reports the substitution at the codepoint's source position.
 encodeSingleCodepoint
   :: EncodingName -> Int -> Char -> (ByteString, Maybe LossNotice)
 encodeSingleCodepoint EncodingUtf8 _position char =
   (TextEncoding.encodeUtf8 (Text.singleton char), Nothing)
-encodeSingleCodepoint EncodingLocale position char =
-  let (encoder, _advisory) = processLocaleEncoder
+encodeSingleCodepoint (EncodingNamed named) position char =
+  let encoder = useNamedEncoding named
   in if Encoding.encodeable encoder char
        then (Encoding.encodeStrictByteString encoder [char], Nothing)
        else let substitute = chooseSubstitute encoder
@@ -520,57 +549,51 @@ encodeLossAdvisories label field notices =
   in substitutionAdvisory ++ truncationAdvisories
 
 ----------------------------------------------------------------------------
--- Locale resolution
+-- Name resolution
 ----------------------------------------------------------------------------
 
--- | The resolved encoder for the @EncodingLocale@ tag, paired with
--- an optional advisory naming the unresolved locale if the lookup
--- failed and slap fell back to UTF-8.
---
--- Computed once at module init via 'unsafePerformIO' + @NOINLINE@.
--- Reads the running process locale via 'getLocaleEncoding', extracts
--- the encoding name, and asks the @encoding@ library to resolve it
--- via 'Encoding.encodingFromStringExplicit'. The resolver tries the
--- name as reported, a few case-and-separator normalization variants,
--- and the curated 'documentedLocaleAliases' table.
---
--- The advisory channel is value-based: callers that want to surface
--- the locale-unresolved condition destructure the pair and route
--- the @Just@ through their own pipeline. The resolver itself does
--- not emit; it just makes the signal available.
-processLocaleEncoder :: (Encoding.DynEncoding, Maybe SlapAdvisory)
-processLocaleEncoder = unsafePerformIO $ do
-  localeName <- textEncodingName <$> getLocaleEncoding
-  pure $ case resolveEncoderByName localeName of
-    Just resolved -> (resolved, Nothing)
-    Nothing       ->
-      let utf8Fallback = Encoding.encodingFromString "UTF-8"
-      in (utf8Fallback, Just (LocaleEncoderUnresolved localeName))
-{-# NOINLINE processLocaleEncoder #-}
+-- | The name handed to 'resolveEncodingName' that the resolution
+-- engine couldn't place. Carries the offending name verbatim so the
+-- boundary can name it back to the user.
+newtype UnresolvableEncodingName = UnresolvableEncodingName
+  { unresolvableEncodingName :: Text }
+  deriving (Eq, Show)
 
--- | Try the @encoding@ library's lookup against the given locale
+-- | Resolve a user-supplied encoding name into a 'NamedEncoding', or
+-- refuse with the name that didn't resolve. The resolution engine
+-- ('resolveEncoderByName') tries the name as given, a few case- and
+-- separator-normalization variants, and the curated
+-- 'documentedLocaleAliases' table; the first that the @encoding@
+-- library recognizes wins. The 'Right' is the only constructor for a
+-- 'NamedEncoding', so a resolved name and its encoder can never drift
+-- apart.
+resolveEncodingName :: Text -> Either UnresolvableEncodingName NamedEncoding
+resolveEncodingName name = case resolveEncoderByName (Text.unpack name) of
+  Just encoder -> Right (NamedEncoding name encoder)
+  Nothing      -> Left (UnresolvableEncodingName name)
+
+-- | Try the @encoding@ library's lookup against the given encoding
 -- name and a small set of normalization variants. The first variant
 -- that resolves wins; if all fail, returns 'Nothing'. Variants
 -- handle case differences, dash\/underscore variations, and the
--- common Windows codepage names that GHC reports as @CPnnnn@.
+-- common Windows codepage names spelled as @CPnnnn@.
 resolveEncoderByName :: String -> Maybe Encoding.DynEncoding
 resolveEncoderByName name = foldr (<|>) Nothing
   [ Encoding.encodingFromStringExplicit variant
   | variant <- localeNameVariants name
   ]
 
--- | Normalization variants of a locale encoding name. Tried in
--- order against 'Encoding.encodingFromStringExplicit'; the first
--- variant that resolves is what we use.
+-- | Normalization variants of an encoding name. Tried in order
+-- against 'Encoding.encodingFromStringExplicit'; the first variant
+-- that resolves is what we use.
 --
 -- Two tiers: first the case\/separator normalizations (handle the
 -- @ISO-8859-1@ vs @iso88591@ vs @ISO_8859_1@ family without
 -- committing to a curated alias table), then the
--- 'documentedLocaleAliases' table for the named locale shapes
--- GHC reports on Windows hosts and on non-UTF-8 Unix locales.
--- Alias-table entries are tried before their cousin fallbacks,
--- so a library version that recognizes the locale's preferred
--- name directly skips the substitution.
+-- 'documentedLocaleAliases' table for the named locale-style shapes
+-- a Windows host or non-UTF-8 Unix locale spells. Alias-table entries
+-- are tried before their cousin fallbacks, so a library version that
+-- recognizes the preferred name directly skips the substitution.
 localeNameVariants :: String -> [String]
 localeNameVariants name =
   [ name
@@ -588,9 +611,9 @@ localeNameVariants name =
 stripDashesUnderscores :: String -> String
 stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 
--- | Curated alias table mapping the names GHC's 'getLocaleEncoding'
--- might report on a Windows host or a non-UTF-8 Unix locale to a
--- list of names to try against the @encoding@ library. Three
+-- | Curated alias table mapping the locale-style names a user might
+-- supply (the names a Windows host or non-UTF-8 Unix locale spells)
+-- to a list of names to try against the @encoding@ library. Three
 -- categories of entry:
 --
 --   * /Direct/ — the @encoding@ library ships an encoder under the
@@ -615,11 +638,11 @@ stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 --
 --   * /Documented gap/ — the @encoding@ library doesn't ship an
 --     encoder and there's no compatible superset in the library.
---     The entry has an empty list, so the lookup falls through to
---     'LocaleEncoderUnresolved' and the user sees an honest
---     advisory rather than mojibake from a near-miss decoder.
---     Listed by name so a future-self reading the code sees the
---     locale was considered. Korean Wansung (CP949), Big5 (CP950
+--     The entry has an empty list, so the lookup fails and
+--     'resolveEncodingName' returns 'Left' rather than mojibake from
+--     a near-miss decoder. Listed by name so a future-self reading
+--     the code sees the encoding was considered. Korean Wansung
+--     (CP949), Big5 (CP950
 --     and the bare-name variants), the EUC-* family, TIS-620
 --     (Thai), VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian),
 --     and TSCII (Tamil) all sit here. Closing any of them needs
@@ -707,10 +730,9 @@ documentedLocaleAliases name = case normalizeForLookup name of
   "GB2312"    -> ["GB18030"]                   -- GB2312 ⊂ GBK ⊂ GB18030
 
   -- Documented gaps — the encoding library doesn't ship an encoder
-  -- and there's no compatible superset. Empty list; the lookup
-  -- falls through to LocaleEncoderUnresolved and the user sees an
-  -- honest advisory. Closing any of these needs a different
-  -- encoding backend (text-icu) or a hand-rolled decoder.
+  -- and there's no compatible superset. Empty list; the lookup fails
+  -- and resolveEncodingName returns Left. Closing any of these needs
+  -- a different encoding backend (text-icu) or a hand-rolled decoder.
   "CP949"     -> []                            -- CP949 (Windows Korean Wansung)
   "CP950"     -> []                            -- CP950 (Windows Big5)
   "EUCJP"     -> []                            -- EUC-JP (Japanese)
