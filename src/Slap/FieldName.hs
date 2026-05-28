@@ -27,7 +27,7 @@ data FieldName
   -- Header fields
   | FieldRomType
   | FieldImageType
-  | FieldPatchEncoding
+  | FieldTextMode
   | FieldStability
   | FieldPatchType
   | FieldImageFormat
@@ -69,7 +69,7 @@ fieldNameLabel FieldDate             = "date"
 fieldNameLabel FieldWebsite          = "website"
 fieldNameLabel FieldRomType          = "ROM type"
 fieldNameLabel FieldImageType        = "image type"
-fieldNameLabel FieldPatchEncoding    = "patch encoding"
+fieldNameLabel FieldTextMode         = "NINJA2 text mode"
 fieldNameLabel FieldStability        = "stability flag"
 fieldNameLabel FieldPatchType        = "patch type"
 fieldNameLabel FieldImageFormat      = "image format"

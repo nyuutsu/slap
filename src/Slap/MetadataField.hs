@@ -30,7 +30,7 @@ data MetadataField
   | MetadataLanguage
   | MetadataDate
   | MetadataWebsite
-  | MetadataPatchEncoding
+  | MetadataTextMode
   | MetadataEmbeddedBlob
   | MetadataXDelta1FromName
   | MetadataXDelta1ToName
@@ -52,7 +52,7 @@ metadataFieldName MetadataGenre               = "genre"
 metadataFieldName MetadataLanguage            = "language"
 metadataFieldName MetadataDate                = "date"
 metadataFieldName MetadataWebsite             = "website"
-metadataFieldName MetadataPatchEncoding       = "patch encoding"
+metadataFieldName MetadataTextMode            = "NINJA2 text mode"
 metadataFieldName MetadataEmbeddedBlob        = "embedded metadata blob"
 metadataFieldName MetadataXDelta1FromName     = "xdelta1 from-name"
 metadataFieldName MetadataXDelta1ToName       = "xdelta1 to-name"
@@ -75,7 +75,7 @@ metadataFieldFlagName MetadataGenre               = "genre"
 metadataFieldFlagName MetadataLanguage            = "language"
 metadataFieldFlagName MetadataDate                = "date"
 metadataFieldFlagName MetadataWebsite             = "website"
-metadataFieldFlagName MetadataPatchEncoding       = "patch-encoding"
+metadataFieldFlagName MetadataTextMode            = "ninja2-text-mode"
 metadataFieldFlagName MetadataEmbeddedBlob        = "metadata"
 metadataFieldFlagName MetadataXDelta1FromName     = "from-name"
 metadataFieldFlagName MetadataXDelta1ToName       = "to-name"

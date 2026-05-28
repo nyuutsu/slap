@@ -173,7 +173,7 @@ specConformanceTests = testGroup "SpecConformance"
       ]
   , testGroup "NINJA2"
       [ testGroup "spec-reject"
-          [ testCase "unrecognized-PATCH_ENC-byte" ninja2RejectsUnrecognizedPatchEncoding
+          [ testCase "unrecognized-PATCH_ENC-byte" ninja2RejectsUnrecognizedTextMode
           ]
       , testGroup "apply-errors"
           [ testCase "xor-record-writes-past-target" ninja2ApplyXorRecordPastTarget
@@ -1304,24 +1304,24 @@ buildUPSWithCRCs bodyContent sourceCRC targetCRC =
 ----------------------------------------------------------------------------
 
 -- | A NINJA2 patch whose PATCH_ENC byte (offset 6 of the fixed header)
--- is neither 0 (system) nor 1 (UTF-8) must be rejected at parse time
--- with the structured 'NINJA2UnrecognizedPatchEncoding' error carrying
+-- is neither 0 (undeclared) nor 1 (UTF-8) must be rejected at parse time
+-- with the structured 'NINJA2UnrecognizedTextMode' error carrying
 -- the offending byte verbatim. The rest of the header is filled with
--- NULs and the command stream is empty: the encoding rejection fires
+-- NULs and the command stream is empty: the text-mode rejection fires
 -- before any of that is consulted, so its contents are immaterial to
 -- the test's invariant.
-ninja2RejectsUnrecognizedPatchEncoding :: Assertion
-ninja2RejectsUnrecognizedPatchEncoding =
+ninja2RejectsUnrecognizedTextMode :: Assertion
+ninja2RejectsUnrecognizedTextMode =
   let unrecognizedByte = 0x42 :: Word8
       headerWithBadEncoding =
         ByteString.pack [0x4E, 0x49, 0x4E, 0x4A, 0x41, 0x32, unrecognizedByte]
         <> ByteString.replicate (2048 - 7) 0x00
       patchBytes = PatchFileContents headerWithBadEncoding
   in case NINJA2.parseNINJA2 patchBytes of
-       Left (NINJA2UnrecognizedPatchEncoding actualByte) ->
+       Left (NINJA2UnrecognizedTextMode actualByte) ->
          assertEqual "preserved byte" unrecognizedByte actualByte
        Left otherError ->
-         assertFailure ("expected NINJA2UnrecognizedPatchEncoding, got: "
+         assertFailure ("expected NINJA2UnrecognizedTextMode, got: "
                         ++ Text.unpack (renderSlapError otherError))
        Right _ ->
          assertFailure "expected parse to reject unrecognized PATCH_ENC, but it succeeded"

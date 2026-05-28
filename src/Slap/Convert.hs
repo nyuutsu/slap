@@ -37,7 +37,7 @@ module Slap.Convert
   , acceptedMetadataFields
   , requestedMetadataFields
   , rejectIncompatibleMetadata
-  , PatchEncoding(..)
+  , TextMode(..)
   ) where
 
 import qualified Slap.PPF1.Create as PPF1
@@ -69,7 +69,7 @@ import qualified Slap.UPS.Create as UPS
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Create as APSN64
 import qualified Slap.APSGBA.Create as APSGBA
-import Slap.NINJA2.Types (PatchEncoding(..))
+import Slap.NINJA2.Types (TextMode(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
@@ -232,7 +232,7 @@ data CreateFormat
 -- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
 -- 'CreateNINJA2' consumes the full title\/author\/version\/description
 -- block plus 'requestedGenre', 'requestedLanguage', 'requestedDate',
--- 'requestedWebsite', 'requestedRomType', and 'requestedPatchEncoding'.
+-- 'requestedWebsite', 'requestedRomType', and 'requestedTextMode'.
 data RequestedPatchMetadata = RequestedPatchMetadata
   { requestedTitle                :: Maybe EncodedText
     -- ^ Typed across the convert seam end-to-end: the CLI parser
@@ -263,12 +263,12 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ NINJA2-only metadata text. Typed across the convert seam so
     -- the source-patch's encoding tag rides through into the
     -- NINJA2 create path, where 'Slap.Text.encodeTextBounded'
-    -- transcodes it under whichever 'PatchEncoding' the target
+    -- transcodes it under whichever 'TextMode' the target
     -- declares for the new patch.
   , requestedLanguage             :: Maybe EncodedText
   , requestedDate                 :: Maybe EncodedText
   , requestedWebsite              :: Maybe EncodedText
-  , requestedPatchEncoding        :: Maybe PatchEncoding
+  , requestedTextMode             :: Maybe TextMode
     -- ^ NINJA2 wire encoding the user wants the output patch to
     -- declare. CLI-provided value overrides whatever the source
     -- patch's metadata fields tagged themselves as; absent means
@@ -327,7 +327,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedLanguage            = Nothing
   , requestedDate                = Nothing
   , requestedWebsite             = Nothing
-  , requestedPatchEncoding       = Nothing
+  , requestedTextMode            = Nothing
   , requestedEmbeddedBlob        = Nothing
   , requestedXDelta1FromName     = Nothing
   , requestedXDelta1ToName       = Nothing
@@ -351,7 +351,7 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedLanguage            = requestedLanguage cli            <|> requestedLanguage source
   , requestedDate                = requestedDate cli                <|> requestedDate source
   , requestedWebsite             = requestedWebsite cli             <|> requestedWebsite source
-  , requestedPatchEncoding       = requestedPatchEncoding cli       <|> requestedPatchEncoding source
+  , requestedTextMode            = requestedTextMode cli            <|> requestedTextMode source
   , requestedEmbeddedBlob        = requestedEmbeddedBlob cli        <|> requestedEmbeddedBlob source
   , requestedXDelta1FromName     = requestedXDelta1FromName cli     <|> requestedXDelta1FromName source
   , requestedXDelta1ToName       = requestedXDelta1ToName cli       <|> requestedXDelta1ToName source
@@ -478,7 +478,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateDPS     -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataVersion, MetadataStability]
   CreateNINJA2  -> Set.fromList
     [ MetadataTitle, MetadataAuthor, MetadataVersion, MetadataDescription, MetadataGenre, MetadataLanguage
-    , MetadataDate, MetadataWebsite, MetadataRomType, MetadataPatchEncoding ]
+    , MetadataDate, MetadataWebsite, MetadataRomType, MetadataTextMode ]
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
@@ -502,7 +502,7 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataLanguage            | isJust (requestedLanguage            meta)]
   , [MetadataDate                | isJust (requestedDate                meta)]
   , [MetadataWebsite             | isJust (requestedWebsite             meta)]
-  , [MetadataPatchEncoding       | isJust (requestedPatchEncoding       meta)]
+  , [MetadataTextMode            | isJust (requestedTextMode            meta)]
   , [MetadataEmbeddedBlob        | isJust (requestedEmbeddedBlob        meta)]
   , [MetadataXDelta1FromName     | isJust (requestedXDelta1FromName     meta)]
   , [MetadataXDelta1ToName       | isJust (requestedXDelta1ToName       meta)]
@@ -1190,11 +1190,11 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
           <|> requestedLanguage    meta
           <|> requestedDate        meta
           <|> requestedWebsite     meta )
-        detectedEncoding = case requestedPatchEncoding meta of
+        detectedTextMode = case requestedTextMode meta of
           Just cliChoice -> cliChoice
           Nothing -> case sourceFieldEncoding of
-            Just tag -> NINJA2.tagToPatchEncoding tag
-            Nothing  -> PatchEncodingUTF8
+            Just tag -> NINJA2.tagToTextMode tag
+            Nothing  -> TextModeUTF8
         ninja2Meta = NINJA2.NINJA2CreateMetadata
           { NINJA2.ninja2CreateMetadataAuthor      = requestedAuthor      meta
           , NINJA2.ninja2CreateMetadataVersion     = requestedVersion     meta
@@ -1204,7 +1204,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
           , NINJA2.ninja2CreateMetadataDate        = requestedDate        meta
           , NINJA2.ninja2CreateMetadataWebsite     = requestedWebsite     meta
           , NINJA2.ninja2CreateMetadataDescription = requestedDescription meta
-          , NINJA2.ninja2CreateMetadataEncoding    = detectedEncoding
+          , NINJA2.ninja2CreateTextMode           = detectedTextMode
           , NINJA2.ninja2CreateMetadataPlatform    = requestedRomType     meta
           }
     NINJA2.createNINJA2 source target ninja2Meta

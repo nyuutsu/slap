@@ -111,9 +111,9 @@ The format is YYYYMMDD
 
 `--website`: `NINJA2`
 
-`--patch-encoding`: `NINJA2`:
+`--ninja2-text-mode`: `NINJA2`:
 
-The supported values are `utf8` and `system`. If left unspecified, `slap` goes with `utf8`. `system` means "'use' the locale/codepage of "the computer"[^CODEPAGE]. You likely want this to be `utf8`.
+The supported values are `utf8` and `undeclared`. If left unspecified, `slap` goes with `utf8`. `undeclared` means "'use' the locale/codepage of "the computer"[^CODEPAGE]. You likely want this to be `utf8`.
 
 #### PPF3
 
@@ -285,4 +285,4 @@ make test
 
 [^ONION]: Fun fact: in the USA, onions come with a *restrictive license*: it  is [illegal to trade onion futures](https://en.wikipedia.org/wiki/Onion_Futures_Act). In contrast, you're allowed to do almost anything with, or, to `slap`.
 
-[^CODEPAGE]: So, if you make your patch on (a computer that's) using [`Shift JIS`](https://en.wikipedia.org/wiki/Shift_JIS), it encodes as `Shift JIS`. If you then try to interpret it (on a computer that's) using [`Windows-1252`](https://en.wikipedia.org/wiki/Windows-1252), you'll get garbage. I don't (yet) know whether many or any real patches have this set to `system`. If they do, and you get garbage when trying to read the metadata, one thing you *could* try is to use an environment variable to run `slap` as though you're in a different locale.
+[^CODEPAGE]: So, if you make your patch on (a computer that's) using [`Shift JIS`](https://en.wikipedia.org/wiki/Shift_JIS), it encodes as `Shift JIS`. If you then try to interpret it (on a computer that's) using [`Windows-1252`](https://en.wikipedia.org/wiki/Windows-1252), you'll get garbage. I don't (yet) know whether many or any real patches have this set to `undeclared`. If they do, and you get garbage when trying to read the metadata, one thing you *could* try is to use an environment variable to run `slap` as though you're in a different locale.

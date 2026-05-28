@@ -32,6 +32,7 @@ ninja2Meta patch = concat
   , optionalField "language"    (ninja2Language    header)
   , optionalField "website"     (ninja2Website     header)
   , optionalField "description" (ninja2Description header)
+  , [InfoLine "text mode" (ninja2TextModeName (ninja2TextMode patch))]
   , openNewFileFields
   , overflowField
   ]

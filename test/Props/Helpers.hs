@@ -186,7 +186,7 @@ emptyNINJA2Metadata = NINJA2.NINJA2CreateMetadata
   , NINJA2.ninja2CreateMetadataDate        = Nothing
   , NINJA2.ninja2CreateMetadataWebsite     = Nothing
   , NINJA2.ninja2CreateMetadataDescription = Nothing
-  , NINJA2.ninja2CreateMetadataEncoding    = NINJA2.PatchEncodingUTF8
+  , NINJA2.ninja2CreateTextMode           = NINJA2.TextModeUTF8
   , NINJA2.ninja2CreateMetadataPlatform    = Nothing
   }
 

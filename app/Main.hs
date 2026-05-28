@@ -33,7 +33,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      acceptedDialects,
                      rejectIncompatibleDialects,
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
-                     PatchEncoding(..), createDefaultAdvisories, convertDirect,
+                     TextMode(..), createDefaultAdvisories, convertDirect,
                      mergeRequestedMetadata, rejectIncompatibleMetadata,
                      formatExtension, formatName)
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
@@ -746,8 +746,8 @@ requestedMetadataParser = do
                             <> help "Date (NINJA2)"))
     website           <- optional (option str (long "website" <> metavar "URL"
                             <> help "Website (NINJA2)"))
-    patchEncoding     <- optional (option (eitherReader parsePatchEncoding) (long "patch-encoding" <> metavar "ENC"
-                            <> help ("Wire text encoding for NINJA2 metadata: utf8, system."
+    textMode          <- optional (option (eitherReader parseTextMode) (long "ninja2-text-mode" <> metavar "MODE"
+                            <> help ("Wire text mode for NINJA2 metadata: utf8, undeclared."
                                   ++ " Overrides any encoding declared by the source patch when supplied."
                                   ++ " When omitted: inherit from the source patch's metadata encoding"
                                   ++ " if one is available, otherwise utf8.")))
@@ -772,7 +772,7 @@ requestedMetadataParser = do
       , requestedLanguage            = fmap wrapLocale language
       , requestedDate                = fmap wrapLocale date
       , requestedWebsite             = fmap wrapLocale website
-      , requestedPatchEncoding       = patchEncoding
+      , requestedTextMode            = textMode
       , requestedEmbeddedBlob        = Nothing
       , requestedXDelta1FromName     = fmap (XDelta1FromName . wrapLocale) xdelta1FromName
       , requestedXDelta1ToName       = fmap (XDelta1ToName   . wrapLocale) xdelta1ToName
@@ -874,11 +874,11 @@ parseCreateFormat input =
     Nothing     -> Left ("unknown format: " ++ input
                       ++ "\n  expected: " ++ intercalate ", " advertisedCreateFormats)
 
-parsePatchEncoding :: String -> Either String PatchEncoding
-parsePatchEncoding input = case map toLower input of
-  "utf8"   -> Right PatchEncodingUTF8
-  "system" -> Right PatchEncodingSystem
-  _        -> Left ("unknown patch encoding: " ++ input ++ "\n  expected: utf8, system")
+parseTextMode :: String -> Either String TextMode
+parseTextMode input = case map toLower input of
+  "utf8"       -> Right TextModeUTF8
+  "undeclared" -> Right TextModeUndeclared
+  _            -> Left ("unknown NINJA2 text mode: " ++ input ++ "\n  expected: utf8, undeclared")
 
 -- | The full set of CLI tokens 'parseRomType' accepts, paired with
 -- the 'PlatformType' each token resolves to and a 'TokenVisibility'

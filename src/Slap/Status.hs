@@ -500,11 +500,11 @@ data SlapError
   | UnsupportedEncodingMethod FormatLabel EncodingMethodByte
 
   -- | A NINJA2 patch's PATCH_ENC byte (offset 6 of the fixed header)
-  -- is not 0 (system) or 1 (UTF-8). The NINJA2 spec defines no other
+  -- is not 0 (undeclared) or 1 (UTF-8). The NINJA2 spec defines no other
   -- values; slap refuses rather than fabricate a fallback encoding,
   -- because PATCH_ENC governs how every text field in the patch is
   -- decoded and slap has no honest answer for an undefined value.
-  | NINJA2UnrecognizedPatchEncoding !Word8
+  | NINJA2UnrecognizedTextMode !Word8
 
   -- | A structurally malformed text field in a NINJA1 textual patch —
   -- every shape of "the bytes do not parse as the format expects" is
@@ -1434,9 +1434,9 @@ renderSlapError (UnsupportedEncodingMethod label (EncodingMethodByte methodByte)
   formatLabelName label <> ": unsupported encoding method: 0x"
   <> renderHexAsText methodByte
 
-renderSlapError (NINJA2UnrecognizedPatchEncoding byte) =
+renderSlapError (NINJA2UnrecognizedTextMode byte) =
   "NINJA2 PATCH_ENC byte is 0x" <> padHex 2 byte
-    <> " (expected 0 for system or 1 for UTF-8); the NINJA2 spec defines no other values, "
+    <> " (expected 0 for undeclared or 1 for UTF-8); the NINJA2 spec defines no other values, "
     <> "and slap will not guess how to decode text fields under an undefined encoding"
 
 renderSlapError (MalformedNINJA1Content malformation) =

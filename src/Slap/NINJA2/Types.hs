@@ -11,12 +11,12 @@ module Slap.NINJA2.Types
   , OverflowMode(..)
   , toOverflowMode
   , fromOverflowMode
-  , PatchEncoding(..)
-  , toPatchEncoding
-  , fromPatchEncoding
-  , patchEncodingName
-  , patchEncodingToTag
-  , tagToPatchEncoding
+  , TextMode(..)
+  , toTextMode
+  , fromTextMode
+  , ninja2TextModeName
+  , textModeToTag
+  , tagToTextMode
   , NINJA2RomType(..)
   , toNINJA2RomType
   , fromNINJA2RomType
@@ -91,52 +91,61 @@ fromOverflowMode :: OverflowMode -> Word8
 fromOverflowMode OverflowAppend   = 0x41  -- 'A'
 fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
--- | PATCH_ENC: how text fields in the fixed header are encoded.
--- 0 = system codepage (platform-dependent), 1 = UTF-8 (portable).
--- The NINJA2 spec defines no other values; an unrecognized byte is
--- rejected at parse time rather than represented in this type, so
--- every 'PatchEncoding' value we ever hold has a well-defined meaning
--- for downstream text decoding.
-data PatchEncoding
-  = PatchEncodingUTF8
-  | PatchEncodingSystem
+-- | PATCH_ENC: whether the patch declares its fixed-header text as
+-- UTF-8. Byte 1 means UTF-8 (portable); byte 0 is what the NINJA2 spec
+-- nominally calls \"system codepage,\" but that only instructs a reader
+-- to decode with its own codepage and keeps no portable record of the
+-- encoding the bytes are actually in — so slap names it
+-- 'TextModeUndeclared': from a portable standpoint the format simply
+-- declined to say. The spec defines no other values; an unrecognized
+-- byte is rejected at parse time rather than represented in this type,
+-- so every 'TextMode' value we ever hold has a well-defined meaning for
+-- downstream text decoding.
+data TextMode
+  = TextModeUTF8
+  | TextModeUndeclared
   deriving (Show, Eq)
 
 -- | Resolve a raw PATCH_ENC byte. 'Left' carries the unrecognized byte
 -- so the parse site can construct a structured rejection from it;
--- 'Right' carries the resolved encoding for the rest of the parse.
-toPatchEncoding :: Word8 -> Either Word8 PatchEncoding
-toPatchEncoding 0    = Right PatchEncodingSystem
-toPatchEncoding 1    = Right PatchEncodingUTF8
-toPatchEncoding byte = Left byte
+-- 'Right' carries the resolved text mode for the rest of the parse.
+toTextMode :: Word8 -> Either Word8 TextMode
+toTextMode 0    = Right TextModeUndeclared
+toTextMode 1    = Right TextModeUTF8
+toTextMode byte = Left byte
 
-fromPatchEncoding :: PatchEncoding -> Word8
-fromPatchEncoding PatchEncodingUTF8   = 1
-fromPatchEncoding PatchEncodingSystem = 0
+fromTextMode :: TextMode -> Word8
+fromTextMode TextModeUTF8       = 1
+fromTextMode TextModeUndeclared = 0
 
-patchEncodingName :: PatchEncoding -> Text
-patchEncodingName PatchEncodingUTF8   = "UTF-8"
-patchEncodingName PatchEncodingSystem = "system"
+ninja2TextModeName :: TextMode -> Text
+ninja2TextModeName TextModeUTF8       = "UTF-8"
+ninja2TextModeName TextModeUndeclared = "undeclared"
 
--- | Translate NINJA2's per-patch 'PatchEncoding' to 'Slap.Text''s
--- per-value 'EncodingName' tag. The two enums encode the same choice
--- under different vocabularies: 'PatchEncoding' is the wire-byte's
--- name (\"the patch declares UTF-8\" vs \"the patch declares system
--- locale\"); 'EncodingName' is the typed-value's tag (\"this
--- 'EncodedText' is UTF-8\" vs \"this 'EncodedText' follows the
--- process locale\"). The parse path uses this to stamp the wire's
--- declaration onto each decoded field; the create path uses
--- 'tagToPatchEncoding' to round-trip the choice back to a wire byte.
-patchEncodingToTag :: PatchEncoding -> EncodingName
-patchEncodingToTag PatchEncodingUTF8   = EncodingUtf8
-patchEncodingToTag PatchEncodingSystem = EncodingLocale
+-- | Translate NINJA2's per-patch 'TextMode' to 'Slap.Text''s per-value
+-- 'EncodingName' tag. The two enums encode the same choice under
+-- different vocabularies: 'TextMode' is the wire-byte's name (\"the
+-- patch declares UTF-8\" vs \"the patch declares nothing\");
+-- 'EncodingName' is the typed-value's tag (\"this 'EncodedText' is
+-- UTF-8\" vs \"this 'EncodedText' follows the process locale\").
+-- 'TextModeUndeclared' maps to 'EncodingLocale', which today interprets
+-- such fields via the process locale: an undeclared patch is read
+-- through whatever locale the reader happens to run under. That locale
+-- dependence is transitional. The parse path uses this to stamp the
+-- wire's declaration onto each decoded field; the create path uses
+-- 'tagToTextMode' to round-trip the choice back to a wire byte.
+textModeToTag :: TextMode -> EncodingName
+textModeToTag TextModeUTF8       = EncodingUtf8
+textModeToTag TextModeUndeclared = EncodingLocale
 
--- | Inverse of 'patchEncodingToTag'. Used by the create path to map
--- the chosen target encoding back to a wire 'PatchEncoding' for the
--- @PATCH_ENC@ byte.
-tagToPatchEncoding :: EncodingName -> PatchEncoding
-tagToPatchEncoding EncodingUtf8   = PatchEncodingUTF8
-tagToPatchEncoding EncodingLocale = PatchEncodingSystem
+-- | Inverse of 'textModeToTag'. Used by the create path to map the
+-- chosen target encoding back to a wire 'TextMode' for the @PATCH_ENC@
+-- byte. 'EncodingLocale' maps back to 'TextModeUndeclared': a value
+-- that carries no declared encoding records nothing portable on the
+-- wire.
+tagToTextMode :: EncodingName -> TextMode
+tagToTextMode EncodingUtf8   = TextModeUTF8
+tagToTextMode EncodingLocale = TextModeUndeclared
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
 -- documented; NINJA2UnknownRomType preserves any future/unknown value.
@@ -197,7 +206,7 @@ ninja2RomTypeName (NINJA2UnknownRomType value) = "unknown (" <> Text.pack (show 
 data NINJA2Patch = NINJA2Patch
   { ninja2Header         :: NINJA2Info
   , ninja2OpenNewFile    :: Maybe NINJA2OpenNewFile
-  , ninja2PatchEncoding  :: PatchEncoding      -- PATCH_ENC (text encoding, byte 6)
+  , ninja2TextMode       :: TextMode           -- PATCH_ENC (text mode, byte 6)
   , ninja2Records        :: [NINJA2Record]
   , ninja2Overflow       :: Maybe ByteString  -- on-disk overflow data (XOR'd with 0xFF)
   , ninja2OverflowType   :: Maybe OverflowMode
@@ -220,7 +229,7 @@ data NINJA2OpenNewFile = NINJA2OpenNewFile
   } deriving (Show)
 
 -- | The parsed fixed-header fields from a NINJA2 patch, decoded under
--- the patch's declared 'PatchEncoding'. Each field carries its
+-- the patch's declared 'TextMode'. Each field carries its
 -- encoding tag on the value, so downstream conversion and display
 -- sites read the encoding directly off the value rather than
 -- consulting a side-channel. Because NINJA2 declares a single
@@ -243,7 +252,7 @@ data NINJA2Info = NINJA2Info
 -- | User-intent input for 'Slap.NINJA2.Create.createNINJA2'. Each
 -- text field is 'EncodedText', so the value's encoding decision
 -- travels with the text into the encoder; the per-patch
--- 'ninja2CreateMetadataEncoding' picks the target wire encoding (the
+-- 'ninja2CreateTextMode' picks the target wire encoding (the
 -- byte slap writes for @PATCH_ENC@), and 'createNINJA2' transcodes
 -- each field's content under that target before writing it to the
 -- fixed-width header slot. Platform is held as 'Maybe' 'PlatformType'
@@ -259,7 +268,7 @@ data NINJA2CreateMetadata = NINJA2CreateMetadata
   , ninja2CreateMetadataDate        :: Maybe EncodedText
   , ninja2CreateMetadataWebsite     :: Maybe EncodedText
   , ninja2CreateMetadataDescription :: Maybe EncodedText
-  , ninja2CreateMetadataEncoding    :: PatchEncoding
+  , ninja2CreateTextMode            :: TextMode
   , ninja2CreateMetadataPlatform    :: Maybe PlatformType
   } deriving (Show)
 

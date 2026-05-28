@@ -28,18 +28,18 @@ import qualified Data.ByteString as ByteString
 ----------------------------------------------------------------------------
 -- Fixed header (2048 bytes): NINJA2 format
 -- Spec says "first sector of the patch (1024 bytes)" but actual total is 2048.
--- PATCH_ENC (1B text encoding at offset 6) is stored in ninja2PatchEncoding.
+-- PATCH_ENC (1B text mode at offset 6) is stored in ninja2TextMode.
 ----------------------------------------------------------------------------
 
 -- | Parse the fixed header region. Field offsets/widths per
 -- ninja2-filespec20.txt §2; the eight named constants in
 -- 'Slap.NINJA2.Types' are the single source of truth. The patch's
--- declared 'PatchEncoding' selects each field's decoder; per-field
+-- declared 'TextMode' selects each field's decoder; per-field
 -- substitution events surface as 'Slap.Status.FieldDecodedSubstituted'
 -- advisories tagged with the field name. An empty (all-zero-padded)
 -- slot decodes to 'Nothing' and never emits an advisory.
-parseFixedHeader :: PatchEncoding -> ByteString -> (NINJA2Info, [SlapAdvisory])
-parseFixedHeader patchEncoding input =
+parseFixedHeader :: TextMode -> ByteString -> (NINJA2Info, [SlapAdvisory])
+parseFixedHeader textMode input =
   let (authorField,      authorAdvisories)      = extractField FieldAuthor      ninja2AuthorOffset      ninja2AuthorWidth
       (versionField,     versionAdvisories)     = extractField FieldVersion     ninja2VersionOffset     ninja2VersionWidth
       (titleField,       titleAdvisories)       = extractField FieldTitle       ninja2TitleOffset       ninja2TitleWidth
@@ -63,7 +63,7 @@ parseFixedHeader patchEncoding input =
                 ++ websiteAdvisories ++ descriptionAdvisories
   in (info, advisories)
   where
-    tag = patchEncodingToTag patchEncoding
+    tag = textModeToTag textMode
 
     extractField :: FieldName -> Offset -> Length
                  -> (Maybe EncodedText, [SlapAdvisory])
@@ -93,24 +93,24 @@ parseNINJA2 (PatchFileContents input)
       Left (BadMagic LabelNINJA2 (ActualMagic (ByteString.take 6 input)))
   | byteLength input < headerSize =
       Left (InputTooShort LabelNINJA2 (RequiredLength headerSize) (ActualLength (byteLength input)))
-  | otherwise = case toPatchEncoding (ByteString.index input 6) of
-      Left unrecognizedByte -> Left (NINJA2UnrecognizedPatchEncoding unrecognizedByte)
-      Right encoding -> case runByteParser (parseNINJA2Body encoding) input of
+  | otherwise = case toTextMode (ByteString.index input 6) of
+      Left unrecognizedByte -> Left (NINJA2UnrecognizedTextMode unrecognizedByte)
+      Right textMode -> case runByteParser (parseNINJA2Body textMode) input of
         Left parserError -> Left (ParseError LabelNINJA2 parserError)
         Right (patch, headerAdvisories) ->
           Right (Parsed patch headerAdvisories)
   where
-    parseNINJA2Body :: PatchEncoding -> ByteParser (NINJA2Patch, [SlapAdvisory])
-    parseNINJA2Body encoding = do
+    parseNINJA2Body :: TextMode -> ByteParser (NINJA2Patch, [SlapAdvisory])
+    parseNINJA2Body textMode = do
       headerBytes <- getBytes headerSize
-      let (info, headerAdvisories) = parseFixedHeader encoding headerBytes
-      patch <- parseCommands (emptyPatch info encoding)
+      let (info, headerAdvisories) = parseFixedHeader textMode headerBytes
+      patch <- parseCommands (emptyPatch info textMode)
       pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
 
-    emptyPatch info encoding = NINJA2Patch
+    emptyPatch info textMode = NINJA2Patch
       { ninja2Header = info, ninja2Records = [], ninja2Overflow = Nothing
       , ninja2OverflowType = Nothing, ninja2OpenNewFile = Nothing
-      , ninja2PatchEncoding = encoding
+      , ninja2TextMode = textMode
       }
 
 parseCommands :: NINJA2Patch -> ByteParser NINJA2Patch

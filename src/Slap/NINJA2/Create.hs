@@ -44,13 +44,13 @@ import Data.Bits (xor)
 -- the requested codepoint count) is what 'parseFixedHeader' reads
 -- back from the same patch; the @0x00@ padding matches NINJA2's
 -- reference encoder.
-encodeBoundedField :: PatchEncoding -> FieldName -> Length -> Maybe EncodedText
+encodeBoundedField :: TextMode -> FieldName -> Length -> Maybe EncodedText
                    -> (ByteString, [SlapAdvisory])
-encodeBoundedField encoding fieldName fieldWidth = \case
+encodeBoundedField textMode fieldName fieldWidth = \case
   Nothing -> (ByteString.replicate (unLength fieldWidth) 0, [])
   Just inputText ->
     let (encodedBytes, notices) =
-          encodeTextBounded (patchEncodingToTag encoding)
+          encodeTextBounded (textModeToTag textMode)
                             (unLength fieldWidth)
                             (encodedTextContent inputText)
         padded     = encodedBytes
@@ -75,8 +75,8 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
     Right (CreateResult (PatchFileContents patchBytes)
                         (fieldAdvisories ++ platformAdvisories))
   where
-    encoding              = ninja2CreateMetadataEncoding metadata
-    encodeMetadataField   = encodeBoundedField encoding
+    textMode              = ninja2CreateTextMode metadata
+    encodeMetadataField   = encodeBoundedField textMode
     (authorBytes,      authorAdvisories)      = encodeMetadataField FieldAuthor      ninja2AuthorWidth      (ninja2CreateMetadataAuthor      metadata)
     (versionBytes,     versionAdvisories)     = encodeMetadataField FieldVersion     ninja2VersionWidth     (ninja2CreateMetadataVersion     metadata)
     (titleBytes,       titleAdvisories)       = encodeMetadataField FieldTitle       ninja2TitleWidth       (ninja2CreateMetadataTitle       metadata)
@@ -93,7 +93,7 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
       maybe (NINJA2Raw, []) platformToNINJA2 (ninja2CreateMetadataPlatform metadata)
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
       byteString ninja2MagicBytes              -- magic (6 bytes)
-      <> word8 (fromPatchEncoding encoding)    -- text encoding (1 byte)
+      <> word8 (fromTextMode textMode)         -- text mode (1 byte)
       <> byteString fixedHeaderBytes           -- fixed-header region (2041 bytes)
       <> word8 0x01                            -- OPEN_NEW_FILE command
       <> word8 0                               -- FILE_N_MUL=0: single-file sentinel
