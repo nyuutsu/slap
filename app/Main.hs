@@ -79,6 +79,7 @@ import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (hSetEncoding, stderr, stdout)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
+import GHC.IO.Encoding (setFileSystemEncoding, utf8)
 import GHC.IO.Encoding.UTF8 (mkUTF8)
 import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
 
@@ -387,6 +388,12 @@ data ExplainCommand = ExplainCommand
 
 main :: IO ()
 main = do
+  -- Slap is a UTF-8 program on both sides: setFileSystemEncoding utf8
+  -- pins argument decoding to UTF-8 and setStdoutAndStderrToLenientUtf8
+  -- pins output, so LANG/LC_CTYPE cannot change how slap reads its
+  -- arguments or what it prints. The filesystem pin must run first,
+  -- before customExecParser decodes argv.
+  setFileSystemEncoding utf8
   setStdoutAndStderrToLenientUtf8
   parsedCommand <- customExecParser (prefs showHelpOnEmpty) options
   case parsedCommand of
@@ -1577,12 +1584,15 @@ readAndParsePatch dialects metadataEncoding path = do
 -- substitutes a placeholder rather than crashing the program with
 -- @hPutChar: invalid argument (Invalid or incomplete multibyte or
 -- wide character)@. UTF-8 can encode every Unicode scalar value, so
--- the only thing it ever has to substitute is a lone surrogate — the
--- kind GHC's argv and filepath decoders hand back when they
--- surrogate-escape bytes that were not valid under the host locale.
--- Slap holds full Unicode internally, so such a codepoint can reach
--- the output path; transliterating it keeps it from aborting the
--- process at the first attempt to print. Called once at slap startup,
+-- the only thing it could ever fail on is a lone surrogate. With
+-- 'main' pinning the filesystem encoding to UTF-8, GHC's argv and
+-- filepath decoders now reject malformed bytes outright rather than
+-- surrogate-escaping them — the one route that used to hand a lone
+-- surrogate inward — and slap's own lenient decode substitutes
+-- U+FFFD, a scalar, never an escape. So no surrogate is expected to
+-- reach the output path; the transliteration stays as cheap defensive
+-- cover, keeping a stray one from aborting the process at the first
+-- attempt to print. Called once at slap startup,
 -- before any I\/O.
 --
 -- We deliberately do not consult the locale here — slap does not
