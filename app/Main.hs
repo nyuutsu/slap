@@ -78,10 +78,10 @@ import Options.Applicative.Help.Pretty (pretty, vcat)
 import System.Directory (copyFile, doesFileExist)
 import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
-import System.IO (TextEncoding, hSetEncoding,
-                  localeEncoding, mkTextEncoding, stderr, stdout)
+import System.IO (hSetEncoding, stderr, stdout)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
-import System.IO.Unsafe (unsafePerformIO)
+import GHC.IO.Encoding.UTF8 (mkUTF8)
+import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
 
 ----------------------------------------------------------------------------
 -- Types
@@ -385,7 +385,7 @@ data ExplainCommand = ExplainCommand
 
 main :: IO ()
 main = do
-  makeStdoutAndStderrLenient
+  setStdoutAndStderrToLenientUtf8
   parsedCommand <- customExecParser (prefs showHelpOnEmpty) options
   -- 'processLocaleEncoder' resolves the process locale once; its
   -- advisory half is 'Just' only when the name didn't resolve (slap
@@ -1540,28 +1540,35 @@ readAndParsePatch dialects path = do
   orBail (parseSome dialects (PatchFileContents patchBytes))
 
 ----------------------------------------------------------------------------
--- Output encoding setup
+-- Stdout and stderr encoding setup
 ----------------------------------------------------------------------------
 
--- | Re-bind 'stdout' and 'stderr' to the lenient locale encoding so
--- that printing a codepoint the strict locale codec can't represent
--- substitutes a placeholder byte instead of crashing the program with
+-- | Bind 'stdout' and 'stderr' to UTF-8 with transliteration on
+-- failure, so that printing a codepoint the encoder can't represent
+-- substitutes a placeholder rather than crashing the program with
 -- @hPutChar: invalid argument (Invalid or incomplete multibyte or
--- wide character)@. This matters on non-UTF-8 locales: a U+FFFD that
--- a lenient decode produced upstream — or any other codepoint outside
--- the locale's representable range — would otherwise abort the
--- process at the first attempt to print it. Slap holds full Unicode
--- internally, so any such codepoint can reach the output path. Called
--- once at slap startup, before any I\/O.
-makeStdoutAndStderrLenient :: IO ()
-makeStdoutAndStderrLenient = do
-  hSetEncoding stdout lenientLocaleEncoding
-  hSetEncoding stderr lenientLocaleEncoding
-
--- | The process's locale encoding with iconv's @\/\/TRANSLIT@ suffix
--- applied: unrepresentable output characters encode to a substitution
--- placeholder rather than throwing. Computed once at module init.
-lenientLocaleEncoding :: TextEncoding
-lenientLocaleEncoding = unsafePerformIO $
-  mkTextEncoding (show localeEncoding ++ "//TRANSLIT")
-{-# NOINLINE lenientLocaleEncoding #-}
+-- wide character)@. UTF-8 can encode every Unicode scalar value, so
+-- the only thing it ever has to substitute is a lone surrogate — the
+-- kind GHC's argv and filepath decoders hand back when they
+-- surrogate-escape bytes that were not valid under the host locale.
+-- Slap holds full Unicode internally, so such a codepoint can reach
+-- the output path; transliterating it keeps it from aborting the
+-- process at the first attempt to print. Called once at slap startup,
+-- before any I\/O.
+--
+-- We deliberately do not consult the locale here. In slap, LANG and
+-- LC_CTYPE are a lever for interpreting @EncodingLocale@-tagged patch
+-- text fields (NINJA2 mode 0, PPF descriptions, XDelta1 names) — an
+-- input-side concern, not a statement about the terminal. Every
+-- realistic terminal slap runs in is UTF-8, and encoding our own
+-- console output to whatever the locale claims would let that
+-- input-side lever leak into the output channel: @LANG=ja_JP.SJIS slap
+-- info patch.bps@, run to read shift-jis patch text on a UTF-8
+-- terminal, would re-encode slap's own chatter as shift-jis and render
+-- it as garbage. Stdout and stderr are UTF-8, full stop.
+setStdoutAndStderrToLenientUtf8 :: IO ()
+setStdoutAndStderrToLenientUtf8 = do
+  hSetEncoding stdout lenientUtf8
+  hSetEncoding stderr lenientUtf8
+  where
+    lenientUtf8 = mkUTF8 TransliterateCodingFailure
