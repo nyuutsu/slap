@@ -1,18 +1,39 @@
 # slap 👋
 
-To be honest this program isn't ready for prime-time just yet. There is some stuff that ain't right. The log of such things is: in my head. I will remove this message when I feel like it is ready for use. Until then: beware!
-
-For common tasks ("I want to make / create a patch in a normal format, using non-adversarial inputs": it ought to work fine. But: xdelta3 secondary compression is not present yet, which is a critical blocker to general usability. And, there are other issues that, frankly, you as a user are not going to encounter, but I would feel embarassed showcasing the program before these)
-
 ## In a nutshell 🌰
 
-`slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool. It knows how to work with a lot of patch formats. It probably knows (🎓) more than you'll actually need. Most people just need to apply patches; `slap` does this, and also creates them, converts between formats[^CONVERTS], and lets you look inside them.
+`slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool that is pathologically concerned with specification-accuracy[^ACCURACY] qua "literally everything that is spec-permitted is handled gracefully". This orientation is *wildly excessive* for the task of just applying patches to roms. But it doesn't hurt and was fun to think about.
+
+Most people just need to apply patches; `slap` does this, and also creates them, converts between formats[^CONVERTS], and lets you look inside them.
 
 On conversion: if a conversion would lose data, it tells you what's being left behind. If it can't do what you're asking, it says so. In most cases it also explains what is missing, and how to include it and have the operation succeed.
 
 `slap` understands[^UNDERSTANDS]: `IPS`, `IPS32`, `EBP`, `BPS`, `UPS`, `PPF1`, `PPF2`, `PPF3`, `PPF4`[^PPF4], `VCDIFF` (qua RFC 3284), `xdelta3`[^XDELTA3], `BSDiff`, `GDIFF`, `xdelta1`[^XDELTA1], `APS-N64`[^APS], `APS-GBA`[^APS], `NINJA2`[^NINJA], `NINJA1`[^NINJA], `PMSR`, and `DPS`.
 
 If your patch is tucked inside a `zip`, `rar`, or `7z` archive (📦), `slap` will attempt to find and retrieve it.
+
+Here is basically everything you are likely to care about:
+
+```
+slap apply patch.bps rom.gba
+slap create original.gba modified.gba patch.bps
+slap create --format ips original.gba modified.gba patch.ips
+slap info patch.ppf
+slap explain patch.ips
+```
+
+Here are some longer or more esoteric things that can be done:
+
+```
+slap explain patch.bps --records --with original.gba
+slap convert patch.ips --to bps --with original.gba
+slap convert patch.ips --to ebp --description "foo" --title "bar" --author "baz"
+slap convert patch.rup --metadata-encoding shift-jis --to ebp
+slap convert patch.ppf1 --to ppf3 --is-amiga-patch -o patch.ppf3
+slap create --format ninja2 --description "请输入描述" --title "my cool patch" --author "nyuu" --patch-version "69.420" --genre "😎" --language "unsure" --ninja2-text-mode "utf8" original.gba modified.gba
+```
+
+The rest of this document is very long since there are a lot of niche options.
 
 ## Shape 🧅
 
@@ -66,8 +87,6 @@ Declare something about how to interpret the patch. This is about information ne
 
 `--is-amiga-patch`: Correctly *interpret* a `PPF1` patch made on an Amiga computer.
 
-Why: leave no patch behind! 😤‼️ There is an Amiga-based `PPF1` tool. A patch made by this tool would be stored as [big-endian](https://en.wikipedia.org/wiki/Endianness). `slap` defaults to little-endian; this flag toggles endianness.
-
 This also works with `info`, `explain`, and `convert`. Regarding `convert`: our *outputs* are always little-endian.
 
 ### p.s. 📬
@@ -113,7 +132,7 @@ The format is YYYYMMDD
 
 `--ninja2-text-mode`: `NINJA2`:
 
-The supported values are `utf8` and `undeclared`. If left unspecified, `slap` goes with `utf8`. `undeclared` means "'use' the locale/codepage of "the computer"[^CODEPAGE]. You likely want this to be `utf8`.
+The supported values are `utf8` and `undeclared`. If left unspecified, `slap` goes with `utf8`. `undeclared` means "codepage of patch creator" (the patch does not write down which one that is, however). You likely want this to be `utf8`.
 
 #### PPF3
 
@@ -134,8 +153,6 @@ The non-`raw` modes are meant to correspond to *normalization procedures*. For e
 Of the subset that *do*: *we* don't implement the behaviors yet. This is considered pretty low priority since modern roms are in the normalized forms *anyway*.
 
 #### BPS
-
-This is *sick as hell*, *based*, *cool*, and other superlatives.
 
 `--metadata`: Nestle an arbitrary file ("often" XML) into the patch as a metadata payload.
 
@@ -185,7 +202,6 @@ If the conversion is impossible for structural reasons (e.g. `IPS` has a maximum
 `--with`: Show `slap` where the input rom is, thus making the vast majority of conversions work.[^CONVERTS] 
 
 `--with` and the metadata flags described in the section on `slap create` are your tools for making this work.
-
 
 If you are simultaneously using `--with` and using metadata flags, the metadata flags win.
 
@@ -256,20 +272,85 @@ Undo also works with some `PPF3` patches. When creating a `PPF3`, you can includ
 
 ## Building 🔨
 
+`slap` is written in Haskell and Rust; the latter is there mostly for heavy byte-crunching stuff. You will need a toolchain for each. Once those are present and working, building is straightforward:
+
+```sh
+make
+```
+
+At which point you could go find it in `dist-newstyle/`. Or use `cabal run slap --` to run it from the project root, e.g.: `cabal run slap -- info path/to/patch.ebp`. Or, and I like this one more: `make install`.
+
 Thank you for trying it out!
 
+### Digression: how to get the aforementioned toolchains
+
+For each language,
+
+1. install a version-manager tool
+
+2. use the tool to install a suitable version of the compiler
+
+Then, in Haskell's case, download the package list.
+
+In Haskell's case, the version-manager tool I know to work is [GHCup](https://www.haskell.org/ghcup/). This manages the (versions of) the compiler (ghc) and the build tool (cabal). `slap` is using GHC2024, so what's needed is GHC 9.10, 9.12, or 9.14, alongside a version of cabal compatible with the version of GHC.
+
 ```
-make
-make test
+ghcup install ghc 9.12.2 && ghcup set ghc 9.12.2
+ghcup install cabal 3.16.1.0 && ghcup set cabal 3.16.1.0
+cabal update
 ```
 
-slap uses the GHC2024 language edition, so it needs **GHC 9.10, 9.12, or 9.14** — anything older won't compile. ghcup's *recommended* GHC is currently older than that, so choose one of these explicitly, along with a cabal recent enough to drive it (cabal 3.16+ for GHC 9.14).
+In Rust's case, the version-manager is [rustup](https://rustup.rs); installing it gives you `cargo` and `rustc`. These two things are all you need. If you want to be thorough, though:
+
+```
+rustup default stable
+```
+
+*then* you can run `make`.
+
+## Running the tests 🧪
+
+`make test` runs the test suite. I would advise against doing this! If you want to do this anyway:
+
+1. get the test patches
+
+2. get the corresponding test roms
+
+3. run the tests
+
+To get the patches:
+
+```
+git submodule update --init
+```
+
+This populates `test/data/` with subfolders containing patches.
+
+To know what roms to get: see `test/data/README.md`
+
+The per-test durations logged to `test-results/` are unreliable when the tests are run in parallel. So, if curious how long a specific test took, run `make test-onecore`.
+
+The *vast* majority of this time is due to how the bps creation implementation uses a super greedy algo that has to do a lot of work before it decides it has found the best way to pack everything.
 
 # footnotes (👣)
 
+[^ACCURACY]: Four examples:
+
+1. IPS arguably allows for nonsequential records, partially overlapping records, and RLE segments of length 0. We oblige by not choking-on or misapplying in any of these cases. There are quite a lot of things that are at once *definitely not **not**-allowed* and "ought" to be handled gracefully, but also in practice are most likely a sign that either this is an adversarial input (why?) or that the patch is malformed. In all such cases we found, we try to handle them gracefully, and to also flag to the user that the thing they just applied is weird and why.
+
+2. The reference PPF1 software has a PC version and an Amiga version. The former is little endian; the latter is big endian. The patches made on PC cannot be applied on Amiga (nor vice versa), and, the patch doesn't tell you which flavor it is. It is fractally unlikely that you're actually trying to apply an Amiga-made PPF1 patch, but, you should be *allowed to do it*. So, we offer `--is-amiga-patch` as a "correct for big endianness" option: `slap apply patch.ppf rom.psx --is-amiga-patch`
+
+3. BPS explicitly allows *literally anything* to go in its metadata area. In practice it is most likely that there is no metadata. If there were data, it'd most likely be text. So `slap explain` does make an attempt to read the area and display the printable contents *if* it is text. But, if it was some arbitrary binary blob, you should be allowed to retrieve it. So, we offer `--extract-metadata` as an option: `slap info patch.bps --extract-metadata file.bin`
+
+4. Several formats do not say what encoding the metadata uses. In one case, a format has a toggle, where the two possible states are "UTF-8" or "system codepage" -- as in, the text encoding used by the OS of whoever made the patch. The patch doesn't know which encoding that was. In these unstated-encoding cases, occasionally the data isn't just ASCII, and also isn't just UTF-8.
+
+This matters: not *whatsoever* to anyone applying a patch. The user applies and is out in 30 seconds. If the patch has text in the fields, they don't care and will not know. But they should be able to ask, and the answer isn't useful if it comes out as mojibake.
+
+So: since it is *not quite correct* to go "if it is in an inconvenient format, it doesn't exist": we provide fifty alternate encodings that can be used for this decoding. The list of encodings can be viewed through `slap --encodings` and one can be used like so: `slap info patch.rup --metadata-encoding gb18030`
+
 [^UNBLOB]: BPS has an unusual property: it supports metadata-as-in-arbitrary-data. The spec *suggests* a structure/format (XML; I don't recall the subflavor but it is largely immaterial), but makes it explicit that "anything goes". "Converting" from `BPS` to `BPS` is allowed (if a bit "why are you doing this?"). It is rare (and I'm being generous by calling it "rare", rather than "unheard of") for patches to have anything in the metadata blob area. If you want to re-encode a patch and drop the blob in one go, this flag could help.
 
-[^TRUNCATION]: IPS has a "truncation marker" feature. This is a location in the patch where you can specify a size-value, and this is meant to indicate "drop all data in the file after this point". So, "shrink the file", hence the name. It isn't obvious to me what it would "mean" to set this value to something *larger* than the size of the input file. Like, if you do this *and* the patch is writing data past the end of the file, then this means "expand the file". But if it *just* says "file is larger" and doesn't put anything in some or all of that new space, what should happen? One tool (I *think* it is [rompatcher.js](https://github.com/marcrobledo/RomPatcher.js/)?) says "if that happens, the declared size is correct. Zero-fill the file until it reaches the size the truncation marker says to use". So, truncation marker can unilaterally grow the file. At the moment we're doing the same. I'm not really sure about this call on an aesthetic level and might do something else.
+[^TRUNCATION]: An IPS patch can have in it a "truncation marker". This is a location in the patch where you can specify a size-value, and this is meant to indicate "drop all data in the file after this point". So, "shrink the file", hence the name.
 
 [^CONVERTS]: Conversion is *pretty close to being* a special case, or "sugar" for "use the apply mode to apply `example.patch` to `input.rom`, yielding `output.rom`, then use create mode, `input.rom`, and `output.rom` to create a patch in the new format". It probably is not directly useful to most users but was extremely helpful as a whetstone for the program's design. Also it isn't *quite* the same, in that if there is a metadata field that's in both the input and output formats, it is safely transplanted into the new patch, and so doesn't need to be specified via a flag.
 
@@ -281,10 +362,8 @@ slap uses the GHC2024 language edition, so it needs **GHC 9.10, 9.12, or 9.14** 
 
 [^XDELTA1]: Entirely unrelated to `xdelta3` or `VCDIFF`. Your patch *probably* is not `xdelta1`. The versions we support are those with magics `%XDZ003%` or `%XDZ004%`. If you're trying to apply a pre-`%XDZ003%` patch, complain about my omission: [here](mailto:nyuu@nyuu.pate). I will *probably* implement the older versions upon request.
 
-[^APS]: The formats I'm calling "`APS-N64`" and "`APS-GBA`" are entirely unrelated, and only coincidentally share a name. In common practice people usually say "APS" without qualifiers, and do so to refer to the "GBA" format. The N64 one is comparatively obscure.
+[^APS]: The formats I'm calling "`APS-N64`" and "`APS-GBA`" are entirely unrelated, and only coincidentally share an acronym.
 
 [^NINJA]: There are two formats: `ninja1` and `ninja2`. Both use the file extension `.rup`. Your patch *probably* is not `ninja1`.
 
 [^ONION]: Fun fact: in the USA, onions come with a *restrictive license*: it  is [illegal to trade onion futures](https://en.wikipedia.org/wiki/Onion_Futures_Act). In contrast, you're allowed to do almost anything with, or, to `slap`.
-
-[^CODEPAGE]: So, if you make your patch on (a computer that's) using [`Shift JIS`](https://en.wikipedia.org/wiki/Shift_JIS), it encodes as `Shift JIS`. If you then try to interpret it (on a computer that's) using [`Windows-1252`](https://en.wikipedia.org/wiki/Windows-1252), you'll get garbage. I don't (yet) know whether many or any real patches have this set to `undeclared`. If they do, and you get garbage when trying to read the metadata, one thing you *could* try is to use an environment variable to run `slap` as though you're in a different locale.
