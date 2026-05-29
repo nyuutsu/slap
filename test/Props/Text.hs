@@ -17,6 +17,7 @@ import Slap.Text
   , encodeTextBounded
   , resolveEncodingName
   , displayNamedEncoding
+  , advertisedEncodingNames
   )
 
 import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..))
@@ -24,6 +25,7 @@ import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..))
 import qualified Data.ByteString as ByteString
 import qualified Data.Encoding as Encoding
 import qualified Data.Text as Text
+import Data.Either (isLeft)
 import Data.Maybe (isJust)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -59,6 +61,7 @@ textTests = testGroup "Slap.Text"
   , testGroup "resolveEncodingName"
       [ testCase "known-name-resolves"  test_resolveKnownName
       , testCase "unknown-name-is-Left" test_resolveUnknownName
+      , testCase "advertised-set-all-resolve" test_advertisedEncodingsResolve
       ]
   , testGroup "documentedLocaleAliases — library has these (table promises resolution)"
       -- Slap.Text's alias table claims certain names will resolve
@@ -311,6 +314,17 @@ test_resolveUnknownName =
   case resolveEncodingName (Text.pack "not-a-real-encoding") of
     Left _  -> pure ()
     Right _ -> assertFailure "a bogus encoding name must not resolve"
+
+-- | Every name slap advertises (via 'advertisedEncodings', surfaced by
+-- @--encodings@ and offered in shell completion) must actually resolve
+-- through 'resolveEncodingName' — otherwise the tool would advertise,
+-- and tab-complete, a name it then rejects.
+test_advertisedEncodingsResolve :: IO ()
+test_advertisedEncodingsResolve =
+  case filter (isLeft . resolveEncodingName . Text.pack) advertisedEncodingNames of
+    []         -> pure ()
+    unresolved ->
+      assertFailure ("advertised encodings that do not resolve: " ++ show unresolved)
 
 ----------------------------------------------------------------------------
 -- Library-resolution probes

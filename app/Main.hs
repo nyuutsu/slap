@@ -46,7 +46,8 @@ import Slap.Dialect (Dialect(..), dialectFlagName)
 import Slap.PPF1.Types (PPF1Origin(..))
 import Slap.IPS.Types (SMCShapeRequirement(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName)
+import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
+                  advertisedEncodingNames, renderAdvertisedEncodings)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
@@ -404,8 +405,15 @@ main = do
     Info    subcommand -> doInfo    subcommand
     Explain subcommand -> doExplain subcommand
 
+-- | The top-level @--encodings@ flag: print the text encodings slap can
+-- decode (for @--metadata-encoding@) and exit, like @--help@.
+encodingsInfo :: Parser (a -> a)
+encodingsInfo = infoOption renderAdvertisedEncodings
+  ( long "encodings"
+ <> help "List the text encodings slap can decode (for --metadata-encoding) and exit" )
+
 options :: ParserInfo Command
-options = info (commandParser <**> helper)
+options = info (commandParser <**> encodingsInfo <**> helper)
   (fullDesc <> header "slap - multi-format ROM patching tool"
             <> progDesc "Apply, undo, create, convert, and inspect ROM patches. Format is auto-detected."
             <> footerDoc (Just (vcat
@@ -449,10 +457,11 @@ metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
   ( long "metadata-encoding"
  <> metavar "ENC"
  <> value EncodingUtf8
+ <> completeWith advertisedEncodingNames
  <> help ("Interpret text fields whose encoding the patch format leaves"
        ++ " undeclared (PPF descriptions, xdelta1 names, DPS metadata,"
-       ++ " NINJA2 mode-0 fields) as ENC (e.g. shift-jis, cp1252)."
-       ++ " Default: utf8.") )
+       ++ " NINJA2 mode-0 fields) as ENC (e.g. shift-jis, cp1252; see"
+       ++ " --encodings). Default: utf8.") )
 
 -- | Resolve a @--metadata-encoding@ value to an 'EncodingName', or
 -- name the value that didn't resolve. Wraps 'resolveEncodingName' for
@@ -461,7 +470,8 @@ metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
 resolveMetadataEncoding :: String -> Either String EncodingName
 resolveMetadataEncoding raw = case resolveEncodingName (Text.pack raw) of
   Right named -> Right (EncodingNamed named)
-  Left _      -> Left ("could not resolve encoding name: " ++ raw)
+  Left _      -> Left ("unrecognized encoding " ++ show raw
+                        ++ "; run 'slap --encodings' to see the names slap accepts")
 
 explainParser :: Parser ExplainCommand
 explainParser = do

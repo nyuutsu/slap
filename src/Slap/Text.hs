@@ -112,12 +112,19 @@ module Slap.Text
     -- * Advisory adaptation
   , decodeLossAdvisories
   , encodeLossAdvisories
+
+    -- * Advertised encoding set
+  , AdvertisedEncodingFamily(..)
+  , advertisedEncodings
+  , advertisedEncodingNames
+  , renderAdvertisedEncodings
   ) where
 
 import Control.Applicative ((<|>))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower, toUpper)
+import Data.List (intercalate)
 import qualified Data.Encoding as Encoding
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
@@ -750,3 +757,67 @@ documentedLocaleAliases name = case normalizeForLookup name of
   _           -> []
   where
     normalizeForLookup = map toUpper . filter (\c -> c /= '-' && c /= '_')
+
+----------------------------------------------------------------------------
+-- Advertised encoding set
+----------------------------------------------------------------------------
+
+-- | A family of related text encodings, used only to group the set
+-- @--encodings@ prints and shell completion offers. Purely
+-- presentational; every member name resolves through
+-- 'resolveEncodingName' (the @advertised-set-all-resolve@ case in
+-- "Props.Text" guards that, so the advertised list can never promise a
+-- name the bundled library won't take).
+data AdvertisedEncodingFamily = AdvertisedEncodingFamily
+  { advertisedFamilyLabel   :: !String
+  , advertisedFamilyMembers :: ![String]
+  }
+  deriving (Eq, Show)
+
+-- | Every text encoding slap decodes, one canonical name per encoder,
+-- grouped for a legible @--encodings@ listing. This is the full set the
+-- bundled @encoding@ library provides as field encodings, not a curated
+-- subset: if a name is missing here, slap genuinely cannot decode it.
+-- slap additionally /accepts/ alternate spellings of these (case- and
+-- separator-insensitive, plus the 'documentedLocaleAliases' locale
+-- names), but each encoder appears here exactly once. The library's
+-- non-field internals — raw JIS X 0201\/0208\/0212, bare ISO-2022, and
+-- punycode — are deliberately omitted; they aren't sensible encodings
+-- to tag a metadata text field as.
+advertisedEncodings :: [AdvertisedEncodingFamily]
+advertisedEncodings =
+  [ AdvertisedEncodingFamily "Unicode"   ["utf-8", "utf-16", "utf-32"]
+  , AdvertisedEncodingFamily "ISO 8859"  ["iso-8859-1", "iso-8859-2", "iso-8859-3", "iso-8859-4", "iso-8859-5", "iso-8859-6", "iso-8859-7", "iso-8859-8", "iso-8859-9", "iso-8859-10", "iso-8859-11", "iso-8859-13", "iso-8859-14", "iso-8859-15", "iso-8859-16"]
+  , AdvertisedEncodingFamily "Windows"   ["cp1250", "cp1251", "cp1252", "cp1253", "cp1254", "cp1255", "cp1256", "cp1257", "cp1258"]
+  , AdvertisedEncodingFamily "DOS / OEM" ["cp437", "cp737", "cp775", "cp850", "cp852", "cp855", "cp857", "cp860", "cp861", "cp862", "cp863", "cp864", "cp865", "cp866", "cp869", "cp874"]
+  , AdvertisedEncodingFamily "Japanese"  ["shift-jis", "cp932", "iso-2022-jp"]
+  , AdvertisedEncodingFamily "Chinese"   ["gb18030"]
+  , AdvertisedEncodingFamily "Cyrillic"  ["koi8-r", "koi8-u"]
+  , AdvertisedEncodingFamily "Other"     ["macintosh", "ascii"]
+  ]
+
+-- | Every advertised encoding name, flattened — the candidate list for
+-- shell completion of @--metadata-encoding@.
+advertisedEncodingNames :: [String]
+advertisedEncodingNames = concatMap advertisedFamilyMembers advertisedEncodings
+
+-- | The @--encodings@ listing: the advertised set, one family per line
+-- with labels aligned, prefaced by a note that the accepted set is
+-- wider and platform-independent.
+renderAdvertisedEncodings :: String
+renderAdvertisedEncodings =
+  unlines (headerLines ++ concatMap renderFamily advertisedEncodings)
+  where
+    headerLines =
+      [ "Text encodings slap decodes (pass one to --metadata-encoding; default utf-8)."
+      , "Names match case- and separator-insensitively, and common aliases (latin1,"
+      , "sjis, windows-1252, ...) resolve too. Decoded natively, identically on every"
+      , "platform."
+      , ""
+      ]
+    -- Each family is a heading line, then its members indented beneath —
+    -- so the category never reads as if it were itself an encoding name.
+    renderFamily encodingFamily =
+      [ "  " ++ advertisedFamilyLabel encodingFamily ++ ":"
+      , "      " ++ intercalate "  " (advertisedFamilyMembers encodingFamily)
+      ]
