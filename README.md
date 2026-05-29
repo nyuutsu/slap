@@ -332,9 +332,9 @@ The per-test durations logged to `test-results/` are unreliable when the tests a
 
 The *vast* majority of this time is due to how the bps creation implementation uses a super greedy algo that has to do a lot of work before it decides it has found the best way to pack everything.
 
-# footnotes (👣)
+# that which didn't fit into a footnote
 
-[^ACCURACY]: Four examples:
+Four examples:
 
 1. IPS arguably allows for nonsequential records, partially overlapping records, and RLE segments of length 0. We oblige by not choking-on or misapplying in any of these cases. There are quite a lot of things that are at once *definitely not **not**-allowed* and "ought" to be handled gracefully, but also in practice are most likely a sign that either this is an adversarial input (why?) or that the patch is malformed. In all such cases we found, we try to handle them gracefully, and to also flag to the user that the thing they just applied is weird and why.
 
@@ -347,6 +347,10 @@ The *vast* majority of this time is due to how the bps creation implementation u
 This matters: not *whatsoever* to anyone applying a patch. The user applies and is out in 30 seconds. If the patch has text in the fields, they don't care and will not know. But they should be able to ask, and the answer isn't useful if it comes out as mojibake.
 
 So: since it is *not quite correct* to go "if it is in an inconvenient format, it doesn't exist": we provide fifty alternate encodings that can be used for this decoding. The list of encodings can be viewed through `slap --encodings` and one can be used like so: `slap info patch.rup --metadata-encoding gb18030`
+
+# footnotes (👣)
+
+[^ACCURACY]: see [§ that which didn't fit into a footnote](#that-which-didnt-fit-into-a-footnote)
 
 [^UNBLOB]: BPS has an unusual property: it supports metadata-as-in-arbitrary-data. The spec *suggests* a structure/format (XML; I don't recall the subflavor but it is largely immaterial), but makes it explicit that "anything goes". "Converting" from `BPS` to `BPS` is allowed (if a bit "why are you doing this?"). It is rare (and I'm being generous by calling it "rare", rather than "unheard of") for patches to have anything in the metadata blob area. If you want to re-encode a patch and drop the blob in one go, this flag could help.
 
