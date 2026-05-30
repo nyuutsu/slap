@@ -2,7 +2,9 @@
 
 ## In a nutshell 🌰
 
-`slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool that is pathologically concerned with specification-accuracy[^ACCURACY] qua "literally everything that is spec-permitted is handled gracefully". This orientation is *wildly excessive* for the task of just applying patches to roms. But it doesn't hurt and was fun to think about.
+`slap` is a [rom](https://en.wikipedia.org/wiki/ROM_image) [patching](https://en.wikipedia.org/wiki/Patch_(computing)#Binary_patching) (🩹) tool that, I think, *slaps*.
+
+`slap` is pathologically concerned with specification-accuracy[^ACCURACY] qua "literally everything that is spec-permitted is handled gracefully". This orientation is *wildly excessive* for the task of just applying patches to roms. But it doesn't hurt and was fun to think about.
 
 Most people just need to apply patches; `slap` does this, and also creates them, converts between formats[^CONVERTS], and lets you look inside them.
 
@@ -37,11 +39,11 @@ The rest of this document is very long since there are a lot of niche options.
 
 ## Shape 🧅
 
-`slap`, like an onion[^ONION], has layers. At its core is a library that describes formats, and, provides a common normalized representation of "a patch". The CLI wraps this library and tries to be useful to humans and scripts and frontends. Eventually I'll make a GUI, which will probably wrap the CLI. Three layers.
+`slap`, like an onion[^ONION], has layers. At its core is a library that describes formats, and, provides a common normalized representation of "a patch". The CLI wraps this library and tries to be useful to humans and scripts and frontends. Eventually I'll make a GUI, which will probably wrap the CLI. Three layers, eventually.
 
-Looking inside the core of that onion: each format is described declaratively. (i.e. what fields it carries), what it requires, and what it can provide. Conversion compatibility between formats *falls out* of these descriptions. If you like hearing about internals, `ARCHITECTURE.md` has *much* to say on the shape of the program.
+Looking inside the core of that onion: each format is described declaratively (i.e. what fields it carries, what it requires, and what it can provide). Conversion compatibility between formats *falls out* of these descriptions. If you like hearing about internals, `ARCHITECTURE.md` says a bit more about the broad shape of the program.
 
-`app/Main.hs`, `Slap.BPS`, `Slap.IPS`, and `Slap.UPS` are the components I'm most pleased with; I think they're quite pretty. The rest of the formats are still waiting their turn for that kind of care.
+`app/Main.hs`, `Slap.BPS`, `Slap.IPS`, `Slap.UPS`, and `Slap/Status.hs` are the components I'm most pleased with; I think they're quite pretty. The rest of the formats are still waiting their turn for that kind of care.
 
 ## Applying 🍄
 
@@ -176,9 +178,9 @@ Of the subset that *do*: *we* don't implement the behaviors yet. This is conside
 
 2. The size declared by that truncation marker *doesn't* satisfy this shape: `(size & 0xFFF) == 0x200`
 
-[SNESTool](https://www.romhacking.net/utilities/18/) is an early IPS patching tool. It refuses to apply patches that have a truncation marker, whose size doesn't pass the above test. If your patch is going to be applied by someone using this tool, then:
+[SNESTool](https://www.romhacking.net/utilities/18/) is an early IPS patching tool. It refuses to apply patches that have a truncation marker, whose size doesn't pass the above test. If your patch is going to be applied by someone using this SNESTool, then:
 
-1. `slap` will refuse to create a patch that SNESTool would reject for this reason
+1. Use this flag; `slap` will refuse to create a patch that SNESTool would reject-for-this-reason
 
 2. Tell me your story. Why do you need this feature? I can be reached [here](mailto:nyuu@nyuu.page)
 
@@ -190,6 +192,25 @@ Take your patch on a journey from one format to another.
 slap convert patch.bps --to ips32
 slap convert patch.rup --to bps --with original.gba
 ```
+
+### A digression on text encoding
+
+Several formats do not say what encoding the metadata uses. On the off chance that you're trying to read (and, converting-from is a kind of reading) metadata and the text is coming out wrong: the issue may be downstream of how by default we attempt to decode as UTF-8.
+
+It might be possible to retrieve whatever the text is by decoding it as not-UTF-8. We offer two levers for this:
+
+`slap --encodings`: list the 51 (🤯) supported encodings
+
+`--metadata-encoding`: use the specified encoding
+
+The latter is used like so:
+
+```
+slap info patch.rup --metadata-encoding gb18030`
+slap convert patch.rup --metadata-encoding shift-jis --to ebp
+```
+
+### Back to Converting ⏮️
 
 Every format describes what fields it carries, what it requires, and what it can accept. Conversion compares these descriptions and acts based on the gaps, or lack thereof, between the formats. Metadata is preserved, when this is possible.
 
@@ -344,9 +365,9 @@ Four examples:
 
 4. Several formats do not say what encoding the metadata uses. In one case, a format has a toggle, where the two possible states are "UTF-8" or "system codepage" -- as in, the text encoding used by the OS of whoever made the patch. The patch doesn't know which encoding that was. In these unstated-encoding cases, occasionally the data isn't just ASCII, and also isn't just UTF-8.
 
-This matters: not *whatsoever* to anyone applying a patch. The user applies and is out in 30 seconds. If the patch has text in the fields, they don't care and will not know. But they should be able to ask, and the answer isn't useful if it comes out as mojibake.
+    This matters: not *whatsoever* to anyone applying a patch. The user applies and is out in 30 seconds. If the patch has text in the fields, they don't care and will not know. But they should be able to ask, and the answer isn't useful if it comes out as mojibake.
 
-So: since it is *not quite correct* to go "if it is in an inconvenient format, it doesn't exist": we provide fifty alternate encodings that can be used for this decoding. The list of encodings can be viewed through `slap --encodings` and one can be used like so: `slap info patch.rup --metadata-encoding gb18030`
+    So: since it is *not quite correct* to go "if it is in an inconvenient format, it doesn't exist": we provide fifty alternate encodings that can be used for this decoding. The list of encodings can be viewed through `slap --encodings` and one can be used like so: `slap info patch.rup --metadata-encoding gb18030`
 
 # footnotes (👣)
 
