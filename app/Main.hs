@@ -1016,7 +1016,7 @@ readUnwrap path = do
     Just format -> do
       result <- unwrapArchive format path
       case result of
-        Left errorMessage -> bail errorMessage
+        Left unwrapError -> bailError (ArchiveUnwrapFailed path format unwrapError)
         Right (unwrappedBytes, entryName) -> do
           TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> Text.pack entryName)
           pure unwrappedBytes

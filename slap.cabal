@@ -15,6 +15,7 @@ tested-with:   GHC == 9.10.*, GHC == 9.12.*, GHC == 9.14.*
 library slap-internal
   exposed-modules:
       Slap.Archive
+    , Slap.Archive.Types
     , Slap.APSN64.Apply
     , Slap.Checksum
     , Slap.APSN64.Create

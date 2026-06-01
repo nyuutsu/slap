@@ -78,7 +78,11 @@ import Slap.FormatLabel (FormatLabel(..), formatLabelName)
 import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
-import Slap.Display.Common (renderAsText, renderHexAsText)
+import Slap.Display.Common (renderAsText, renderHexAsText, pathText)
+import Slap.Archive.Types (ArchiveFormat, archiveFormatName,
+                           ToolName(..), ToolDiagnostic(..),
+                           EntryName(..), SeenEntryCount(..),
+                           UnwrapError(..))
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.PlatformType (PlatformType, platformName)
 import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
@@ -424,6 +428,15 @@ data SlapError
   -- explanation ('System.IO.Error.ioeGetErrorString') so the user
   -- sees the same words their kernel would have said.
   | UnreadableInputFile FilePath String
+
+  -- | slap recognized the input as an archive and tried to unwrap the
+  -- single patch inside it, but couldn't. The 'FilePath' is the archive
+  -- the user pointed at and the 'ArchiveFormat' is what its magic bytes
+  -- identified; the 'UnwrapError' carries which of the finite unwrap
+  -- failure shapes occurred (no tool on PATH, the tool failed, no usable
+  -- entry, several candidate entries, or a vanished extraction). Raised
+  -- by 'Slap.Archive.unwrapArchive' and rendered at the boundary.
+  | ArchiveUnwrapFailed FilePath ArchiveFormat UnwrapError
 
   -- Detection
   | UnrecognizedFormat
@@ -1326,6 +1339,39 @@ renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
 -- renderSlapError
 ----------------------------------------------------------------------------
 
+-- | Render an archive-unwrap failure: name the archive and its format,
+-- and give the corrective action that fits each failure shape.
+renderUnwrapError :: FilePath -> ArchiveFormat -> UnwrapError -> Text
+renderUnwrapError path format (NoToolForArchive tools) =
+  archiveFormatName format <> " archive " <> pathText path
+    <> " needs " <> renderToolAlternatives tools <> " on PATH to unwrap; none were found."
+    <> " Install one, or pass --raw if this isn't really an archive."
+renderUnwrapError path format (ArchiveToolFailed (ToolName tool) (ToolDiagnostic diagnostic)) =
+  tool <> " failed while reading the " <> archiveFormatName format
+    <> " archive " <> pathText path <> ": " <> diagnostic
+renderUnwrapError path format (ArchiveHasNoCandidate (SeenEntryCount entryCount)) =
+  "no usable file in the " <> archiveFormatName format <> " archive " <> pathText path
+    <> " (" <> renderAsText entryCount <> " entries, all filtered as chaff)."
+    <> " If this isn't really an archive, pass --raw."
+renderUnwrapError path format (ArchiveHasManyCandidates names) =
+  pathText path <> " is a " <> archiveFormatName format <> " archive with "
+    <> renderAsText (length names) <> " candidate files:\n"
+    <> Text.unlines (map (\(EntryName name) -> "  " <> name) names)
+    <> "Extract the one you want and pass it directly."
+renderUnwrapError path format (ExtractedEntryMissing (EntryName name)) =
+  "extracted " <> name <> " from the " <> archiveFormatName format
+    <> " archive " <> pathText path <> " but it was not found afterwards"
+
+-- | The tools that could open a format, as a grammatical alternative: a
+-- lone tool stands alone, two are joined with "or", and any longer list
+-- (none arise today) gets an Oxford "a, b, or c".
+renderToolAlternatives :: [ToolName] -> Text
+renderToolAlternatives tools = case map unToolName tools of
+  []            -> "a supported tool"
+  [only]        -> only
+  [first, last'] -> first <> " or " <> last'
+  many          -> Text.intercalate ", " (init many) <> ", or " <> last many
+
 renderSlapError :: SlapError -> Text
 
 renderSlapError (MissingInputFile path) =
@@ -1333,6 +1379,9 @@ renderSlapError (MissingInputFile path) =
 
 renderSlapError (UnreadableInputFile path reason) =
   "cannot read " <> Text.pack path <> ": " <> Text.pack reason
+
+renderSlapError (ArchiveUnwrapFailed path format unwrapError) =
+  renderUnwrapError path format unwrapError
 
 renderSlapError UnrecognizedFormat =
   "unknown patch format"
