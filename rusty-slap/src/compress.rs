@@ -33,9 +33,14 @@ pub fn zlib_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
 /// Zlib (RFC 1950) deflate at the library's default compression level.
 /// The NINJA1 spec is mute on level — any zlib-deflate output round-trips
 /// through any decoder regardless of level — so slap pins the default
-/// rather than exposing a knob no caller currently turns.
-pub fn zlib_deflate(input: &[u8]) -> Result<Vec<u8>, String> {
+/// rather than exposing a knob no caller currently turns. In-memory
+/// deflate is total at the algorithm level (mirror of `gzip_deflate`);
+/// the `expect` documents that the only fail-shaped event is allocation
+/// failure, which Rust's default allocator handles by aborting before
+/// any error value reaches the caller.
+pub fn zlib_deflate(input: &[u8]) -> Vec<u8> {
     drain_to_vec(ZlibEncoder::new(input, Compression::default()))
+        .expect("in-memory zlib deflate cannot fail")
 }
 
 /// Gzip (RFC 1952) inflate.

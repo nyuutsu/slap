@@ -16,7 +16,6 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
-import qualified Data.Text as Text
 import Slap.Status (DecompressionCause(..))
 import Slap.FFI (readByteString, readText, withByteString)
 
@@ -30,9 +29,8 @@ foreign import ccall unsafe "rusty_zlib_inflate"
 foreign import ccall unsafe "rusty_zlib_deflate"
   rustyZlibDeflate
     :: Ptr Word8 -> CSize
-    -> Ptr (Ptr Word8) -> Ptr CSize     -- success buffer
-    -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
-    -> IO CInt
+    -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO ()
 
 foreign import ccall unsafe "rusty_gzip_inflate"
   rustyGzipInflate
@@ -103,27 +101,25 @@ zlibInflate = callDecompressor rustyZlibInflate
 -- | Zlib (RFC 1950) deflate at the library's default compression level.
 -- The NINJA1 spec is mute on level — any zlib-deflate output round-trips
 -- through any decoder regardless — so the rusty side pins the default
--- rather than exposing a knob no caller currently turns. Compression
--- cannot fail for valid input; crashes on internal error.
+-- rather than exposing a knob no caller currently turns. Pure, and total
+-- at the algorithm level for the same reason as 'gzipDeflate': in-memory
+-- deflate's only fail-shaped event is allocation failure, which Rust's
+-- allocator handles by aborting before any error reaches us.
+--
+-- The empty-input guard is deliberate and wire-affecting: NINJA1's
+-- compressed-binary payload round-trips an empty payload as empty bytes
+-- (paired with 'callDecompressor''s matching empty guard), rather than as
+-- the header+checksum a real deflate of empty would emit.
 zlibDeflate :: ByteString -> ByteString
 zlibDeflate input
   | ByteString.null input = ByteString.empty
   | otherwise = unsafeDupablePerformIO $
       withByteString input $ \dataPointer dataLength ->
         alloca $ \resultAddressPointer ->
-        alloca $ \resultLengthPointer ->
-        alloca $ \errorAddressPointer ->
-        alloca $ \errorLengthPointer -> do
-          returnCode <- rustyZlibDeflate
-            dataPointer dataLength
-            resultAddressPointer resultLengthPointer
-            errorAddressPointer  errorLengthPointer
-          if returnCode /= 0
-            then do
-              rustMessage <- readText errorAddressPointer errorLengthPointer
-              error ("zlibDeflate: internal error: " ++ Text.unpack rustMessage)
-            else
-              readByteString resultAddressPointer resultLengthPointer
+        alloca $ \resultLengthPointer -> do
+          rustyZlibDeflate dataPointer dataLength
+                           resultAddressPointer resultLengthPointer
+          readByteString   resultAddressPointer resultLengthPointer
 
 -- | Gzip (RFC 1952) inflate.
 gzipInflate :: ByteString -> Either DecompressionCause ByteString

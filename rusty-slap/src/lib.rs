@@ -301,32 +301,28 @@ pub unsafe extern "C" fn rusty_zlib_inflate(
 }
 
 /// Zlib (RFC 1950) deflate at the library default level. Rust
-/// allocates the output; caller frees with [`rusty_free`]. Returns 0
-/// on success, -1 on compression error.
+/// allocates the output; caller frees with [`rusty_free`]. No error
+/// channel: zlib-deflate of in-memory bytes is total at the algorithm
+/// level (mirror of [`rusty_gzip_deflate`]), and allocation failure
+/// aborts the process before any value reaches the caller.
 ///
 /// The level isn't exposed because no caller currently chooses one —
 /// see [`compress::zlib_deflate`] for the spec rationale.
 ///
 /// # Safety
 /// - `input_address` must point to `input_length` readable bytes.
-/// - All four out-pointers must be valid, aligned, and writable.
+/// - `output_address_pointer` and `output_length_pointer` must be
+///   valid, aligned, and writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_zlib_deflate(
     input_address:          *const u8,
     input_length:           usize,
     output_address_pointer: *mut *mut u8,
     output_length_pointer:  *mut usize,
-    error_address_pointer:  *mut *mut u8,
-    error_length_pointer:   *mut usize,
-) -> i32 {
+) {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
-    unsafe {
-        surface_outcome_to_caller(
-            compress::zlib_deflate(input),
-            output_address_pointer, output_length_pointer,
-            error_address_pointer,  error_length_pointer,
-        )
-    }
+    let compressed = compress::zlib_deflate(input);
+    unsafe { surface_buffer_to_caller(compressed, output_address_pointer, output_length_pointer) };
 }
 
 /// Gzip (RFC 1952) inflate. Rust allocates the output; caller frees

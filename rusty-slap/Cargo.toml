@@ -8,7 +8,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 crc32fast = "1"
-flate2 = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 bzip2-rs = "0.1"
 
 [profile.release]
