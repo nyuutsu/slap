@@ -82,7 +82,7 @@ import Slap.Display.Common (renderAsText, renderHexAsText, pathText)
 import Slap.Archive.Types (ArchiveFormat, archiveFormatName,
                            ToolName(..), ToolDiagnostic(..),
                            EntryName(..), SeenEntryCount(..),
-                           UnwrapError(..))
+                           UnreadableReason(..), UnwrapError(..))
 import Slap.Display.Primitives (hexByteString, padHex, renderPrintableASCIIOrHex)
 import Slap.PlatformType (PlatformType, platformName)
 import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
@@ -1361,6 +1361,9 @@ renderUnwrapError path format (ArchiveHasManyCandidates names) =
 renderUnwrapError path format (ExtractedEntryMissing (EntryName name)) =
   "extracted " <> name <> " from the " <> archiveFormatName format
     <> " archive " <> pathText path <> " but it was not found afterwards"
+renderUnwrapError path format (ArchiveUnreadable (UnreadableReason reason)) =
+  "could not read the " <> archiveFormatName format <> " archive "
+    <> pathText path <> ": " <> reason
 
 -- | The tools that could open a format, as a grammatical alternative: a
 -- lone tool stands alone, two are joined with "or", and any longer list

@@ -10,6 +10,8 @@ crate-type = ["staticlib"]
 crc32fast = "1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 bzip2-rs = "0.1"
+# Store + Deflate only; default features off to keep the C-backed codecs out.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
 [profile.release]
 lto = "fat"

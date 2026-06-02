@@ -16,6 +16,7 @@ module Slap.Archive.Types
   , ToolDiagnostic(..)
   , EntryName(..)
   , SeenEntryCount(..)
+  , UnreadableReason(..)
   , UnwrapError(..)
   ) where
 
@@ -54,7 +55,7 @@ archiveFormatName Archive7z  = "7z"
 -- names the alternatives — so the message can never drift from what slap
 -- actually attempts.
 toolsFor :: ArchiveFormat -> [ToolName]
-toolsFor ArchiveZIP = [ToolName "unzip"]
+toolsFor ArchiveZIP = []  -- read via rusty-slap
 toolsFor ArchiveRAR = [ToolName "unrar", ToolName "7z"]
 toolsFor Archive7z  = [ToolName "7z"]
 
@@ -73,6 +74,11 @@ newtype EntryName = EntryName { unEntryName :: Text }
 
 -- | How many entries an archive held when none survived chaff filtering.
 newtype SeenEntryCount = SeenEntryCount { unSeenEntryCount :: Int }
+  deriving (Show, Eq)
+
+-- | Why a container could not be read (corrupt, encrypted, an unsupported
+-- codec).
+newtype UnreadableReason = UnreadableReason { unUnreadableReason :: Text }
   deriving (Show, Eq)
 
 -- | The closed set of ways unwrapping a recognized archive can fail. The
@@ -96,4 +102,6 @@ data UnwrapError
   | -- | A tool reported a successful extraction but the named file was
     -- not found in the temporary directory afterwards.
     ExtractedEntryMissing EntryName
+  | -- | slap's reader could not read the container.
+    ArchiveUnreadable UnreadableReason
   deriving (Show, Eq)
