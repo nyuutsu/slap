@@ -431,11 +431,9 @@ data SlapError
 
   -- | slap recognized the input as an archive and tried to unwrap the
   -- single patch inside it, but couldn't. The 'FilePath' is the archive
-  -- the user pointed at and the 'ArchiveFormat' is what its magic bytes
-  -- identified; the 'UnwrapError' carries which of the finite unwrap
-  -- failure shapes occurred (no tool on PATH, the tool failed, no usable
-  -- entry, several candidate entries, or a vanished extraction). Raised
-  -- by 'Slap.Archive.unwrapArchive' and rendered at the boundary.
+  -- the user pointed at, the 'ArchiveFormat' is what its magic bytes
+  -- identified, and the 'UnwrapError' is which way it failed. Raised by
+  -- 'Slap.Archive.unwrapArchive' and rendered at the boundary.
   | ArchiveUnwrapFailed FilePath ArchiveFormat UnwrapError
 
   -- Detection
@@ -1370,10 +1368,10 @@ renderUnwrapError path format (ArchiveUnreadable (UnreadableReason reason)) =
 -- (none arise today) gets an Oxford "a, b, or c".
 renderToolAlternatives :: [ToolName] -> Text
 renderToolAlternatives tools = case map unToolName tools of
-  []            -> "a supported tool"
-  [only]        -> only
-  [first, last'] -> first <> " or " <> last'
-  many          -> Text.intercalate ", " (init many) <> ", or " <> last many
+  []                      -> "a supported tool"
+  [onlyTool]              -> onlyTool
+  [firstTool, secondTool] -> firstTool <> " or " <> secondTool
+  manyTools               -> Text.intercalate ", " (init manyTools) <> ", or " <> last manyTools
 
 renderSlapError :: SlapError -> Text
 

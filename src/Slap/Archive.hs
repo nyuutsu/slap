@@ -185,14 +185,15 @@ doExtract ExternalRAR archivePath entryName temporaryDirectory = do
       pure $ case exitCode of
         ExitSuccess -> Right ()
         _           -> Left (ArchiveToolFailed (ToolName "unrar") (toolDiagnostic stderr))
-    Nothing -> do
-      (exitCode, _, stderr) <- readProcessWithExitCode "7z"
-        ["e", "-o" ++ temporaryDirectory, "-y", archivePath, entryName] ""
-      pure $ case exitCode of
-        ExitSuccess -> Right ()
-        _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))
+    Nothing -> extractWith7z archivePath entryName temporaryDirectory
 
-doExtract External7z archivePath entryName temporaryDirectory = do
+doExtract External7z archivePath entryName temporaryDirectory =
+  extractWith7z archivePath entryName temporaryDirectory
+
+-- | Extract one entry with 7z — for 7z archives, and as the RAR fallback
+-- when unrar isn't present. The extraction-side counterpart of 'list7z'.
+extractWith7z :: FilePath -> String -> FilePath -> IO (Either UnwrapError ())
+extractWith7z archivePath entryName temporaryDirectory = do
   (exitCode, _, stderr) <- readProcessWithExitCode "7z"
     ["e", "-o" ++ temporaryDirectory, "-y", archivePath, entryName] ""
   pure $ case exitCode of

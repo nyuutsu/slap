@@ -24,10 +24,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Text (Text)
 
--- | A container format slap can unwrap by shelling out to an external
--- tool. These are genuine archives — an entry table, chaff to filter,
--- and a single file to pick out — as distinct from stream compressors,
--- which slap deliberately does not treat as unwrappable input.
+-- | A container format slap can unwrap. These are genuine archives — an
+-- entry table, chaff to filter, a single file to pick out — not stream
+-- compressors.
 data ArchiveFormat = ArchiveZIP | ArchiveRAR | Archive7z
   deriving (Show, Eq)
 

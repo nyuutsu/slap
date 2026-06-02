@@ -38,32 +38,28 @@ foreign import ccall unsafe "rusty_zip_extract_entry"
 zipEntryNames :: ByteString -> Either UnreadableReason [Text]
 zipEntryNames archiveBytes = unsafeDupablePerformIO $
   withByteString archiveBytes $ \dataPointer dataLength ->
-  alloca $ \resultAddressPointer ->
-  alloca $ \resultLengthPointer ->
-  alloca $ \errorAddressPointer ->
-  alloca $ \errorLengthPointer -> do
-    returnCode <- rustyZipEntryNames
-      dataPointer dataLength
-      resultAddressPointer resultLengthPointer
-      errorAddressPointer  errorLengthPointer
-    if returnCode /= 0
-      then Left . UnreadableReason <$> readText errorAddressPointer errorLengthPointer
-      else Right . splitNames <$> readByteString resultAddressPointer resultLengthPointer
+    fmap splitNames <$> callZipReader (rustyZipEntryNames dataPointer dataLength)
 
 -- | The decompressed bytes of one named entry.
 zipExtractEntry :: ByteString -> Text -> Either UnreadableReason ByteString
 zipExtractEntry archiveBytes entryName = unsafeDupablePerformIO $
   withByteString archiveBytes $ \dataPointer dataLength ->
   withByteString (TextEncoding.encodeUtf8 entryName) $ \namePointer nameLength ->
+    callZipReader (rustyZipExtractEntry dataPointer dataLength namePointer nameLength)
+
+-- | Run a zip FFI call — already given its input pointers, awaiting only
+-- the result and error out-pointers — and turn its return code into the
+-- result buffer or a faithful 'UnreadableReason'.
+callZipReader
+  :: (Ptr (Ptr Word8) -> Ptr CSize -> Ptr (Ptr Word8) -> Ptr CSize -> IO CInt)
+  -> IO (Either UnreadableReason ByteString)
+callZipReader call =
   alloca $ \resultAddressPointer ->
   alloca $ \resultLengthPointer ->
   alloca $ \errorAddressPointer ->
   alloca $ \errorLengthPointer -> do
-    returnCode <- rustyZipExtractEntry
-      dataPointer dataLength
-      namePointer nameLength
-      resultAddressPointer resultLengthPointer
-      errorAddressPointer  errorLengthPointer
+    returnCode <- call resultAddressPointer resultLengthPointer
+                       errorAddressPointer  errorLengthPointer
     if returnCode /= 0
       then Left . UnreadableReason <$> readText errorAddressPointer errorLengthPointer
       else Right <$> readByteString resultAddressPointer resultLengthPointer

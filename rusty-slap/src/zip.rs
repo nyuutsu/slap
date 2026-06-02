@@ -1,4 +1,6 @@
-//! Reading ZIP archives: list entry names, then extract one entry.
+//! Reading ZIP archives with the `zip` crate: list entry names, then
+//! extract one named entry. Store and Deflate only — the crate is pinned
+//! to those, keeping C codecs out.
 
 use std::io::{Cursor, Read};
 
