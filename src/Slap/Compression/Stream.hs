@@ -105,21 +105,14 @@ zlibInflate = callDecompressor rustyZlibInflate
 -- at the algorithm level for the same reason as 'gzipDeflate': in-memory
 -- deflate's only fail-shaped event is allocation failure, which Rust's
 -- allocator handles by aborting before any error reaches us.
---
--- The empty-input guard is deliberate and wire-affecting: NINJA1's
--- compressed-binary payload round-trips an empty payload as empty bytes
--- (paired with 'callDecompressor''s matching empty guard), rather than as
--- the header+checksum a real deflate of empty would emit.
 zlibDeflate :: ByteString -> ByteString
-zlibDeflate input
-  | ByteString.null input = ByteString.empty
-  | otherwise = unsafeDupablePerformIO $
-      withByteString input $ \dataPointer dataLength ->
-        alloca $ \resultAddressPointer ->
-        alloca $ \resultLengthPointer -> do
-          rustyZlibDeflate dataPointer dataLength
-                           resultAddressPointer resultLengthPointer
-          readByteString   resultAddressPointer resultLengthPointer
+zlibDeflate input = unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+  alloca $ \resultAddressPointer ->
+  alloca $ \resultLengthPointer -> do
+    rustyZlibDeflate dataPointer dataLength
+                     resultAddressPointer resultLengthPointer
+    readByteString   resultAddressPointer resultLengthPointer
 
 -- | Gzip (RFC 1952) inflate.
 gzipInflate :: ByteString -> Either DecompressionCause ByteString
