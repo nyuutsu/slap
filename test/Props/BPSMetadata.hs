@@ -38,7 +38,8 @@ bpsMetadataTests = testGroup "BPS metadata"
       , testCase "embedded-nul-is-still-utf8" test_classifyControlIsUTF8
       , testCase "lone-continuation-byte-is-not-utf8" test_classifyLoneContinuation
       , testCase "stray-high-byte-is-not-utf8" test_classifyHighByte
-      , testProperty "classification-is-total" prop_classifyTotal
+      , testProperty "classification-does-not-bottom-on-arbitrary-bytes"
+          prop_classifyDoesNotBottomOnArbitraryBytes
       ]
   , testGroup "renderEscapingNonPrintable"
       [ testCase "printable-ascii-passes-through" test_renderAsciiPasses
@@ -120,14 +121,17 @@ test_classifyHighByte =
   assertEqual "stray 0xFF" MetadataNotUTF8
     (classifyBPSMetadata (BPSMetadata (ByteString.pack [0xFF])))
 
--- | Classification is total over arbitrary bytes: every input lands
--- in exactly one of the three arms and forces without error.
-prop_classifyTotal :: [Int] -> Bool
-prop_classifyTotal ints =
+-- | Classification terminates with a fully-defined result for any byte
+-- sequence: every input lands in one of the three arms with no
+-- exception and no bottom in the carried text. The 'True' arms and the
+-- '>= 0' are vacuous as assertions; their job is to force the result
+-- so a lurking error/undefined surfaces as a failure.
+prop_classifyDoesNotBottomOnArbitraryBytes :: [Int] -> Bool
+prop_classifyDoesNotBottomOnArbitraryBytes ints =
   let bytes = ByteString.pack (map (fromIntegral . (`mod` 256)) ints)
   in case classifyBPSMetadata (BPSMetadata bytes) of
        MetadataAbsent       -> True
-       MetadataUTF8Text txt -> Text.length txt >= 0  -- forces the Text
+       MetadataUTF8Text txt -> Text.length txt >= 0
        MetadataNotUTF8      -> True
 
 ----------------------------------------------------------------------------

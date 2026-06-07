@@ -14,7 +14,6 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createPatch)
 
-import qualified Data.ByteString as ByteString
 import Test.Tasty
 import Test.Tasty.QuickCheck
 
@@ -46,7 +45,7 @@ allCreateFormats =
 
 -- | For any non-empty source, create(src, src) should be an identity patch.
 prop_identity :: CreateFormat -> Property
-prop_identity format = forAll genByteString $ \source -> not (ByteString.null source) ==>
+prop_identity format = forAll genNonEmptyByteString $ \source ->
   case createPatch format Nothing (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left _ -> discard
     Right (CreateResult patch _) -> case parseSome noDialectsRequested EncodingUtf8 patch of

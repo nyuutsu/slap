@@ -1,9 +1,11 @@
 module Props.Helpers
   ( -- * Generators
     genByteString
+  , genNonEmptyByteString
   , genPair
   , genPairNoShrink
   , genShrinkingPair
+  , genUPSEncodeablePair
   , genSameSizePair
   , genEofPair
     -- * Apply helpers
@@ -69,6 +71,14 @@ genByteString = frequency
       ByteString.pack <$> vectorOf byteCount arbitrary)
   ]
 
+-- | 'genByteString' restricted to non-empty values. Identity and
+-- source-hash properties are only meaningful for a non-empty source;
+-- drawing from this states that precondition in the domain rather than
+-- generating empties and discarding them after the fact with '==>'.
+-- 'suchThat' resamples internally, so it costs no QuickCheck discards.
+genNonEmptyByteString :: Gen ByteString
+genNonEmptyByteString = genByteString `suchThat` (not . ByteString.null)
+
 -- | Arbitrary (source, target) pair with no size constraints.
 genPair :: Gen (ByteString, ByteString)
 genPair = (,) <$> genByteString <*> genByteString
@@ -92,6 +102,25 @@ genShrinkingPair = do
   targetLength <- choose (0, ByteString.length source - 1)
   target <- ByteString.pack <$> vectorOf targetLength arbitrary
   pure (source, target)
+
+-- | (source, target) that UPS can encode in both directions. UPS's
+-- bidirectional XOR has nowhere to store a non-zero source tail when
+-- the source extends past the target, so 'createUPS' refuses such
+-- pairs ('UPSSourceTailNonZero'). This generator stays inside the
+-- encodeable domain by zeroing any source overhang — preserving the
+-- shrink, grow, and same-size cases without the ~50% discard rate a
+-- raw 'genPair' incurs (half its pairs shrink, and a random tail is
+-- essentially never all-zero).
+genUPSEncodeablePair :: Gen (ByteString, ByteString)
+genUPSEncodeablePair = do
+  (source, target) <- genPair
+  let targetLength  = ByteString.length target
+      overhangLength = ByteString.length source - targetLength
+      encodeableSource
+        | overhangLength > 0 = ByteString.take targetLength source
+                                 <> ByteString.replicate overhangLength 0
+        | otherwise          = source
+  pure (encodeableSource, target)
 
 -- | (source, target) of equal length. Used by formats whose wire
 -- spec or upstream tooling permits only same-size patching: UPS undo

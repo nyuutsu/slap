@@ -98,7 +98,7 @@ fromAPSRecordEncoding (APSUnknownRecordEncoding byte) = byte
 
 -- | The N64 ROM country byte (ROM header offset 0x3E), copied into the
 -- APS-N64 type-1 header for source verification. The common codes are
--- corpus-verified; the rarer ones are documented but unconfirmed
+-- verified against real patches; the rarer ones are documented but unconfirmed
 -- (see docs/aps-n64/country-codes.md). 'APSN64CountryUnrecognized'
 -- preserves any other byte for round-tripping.
 data APSN64Country

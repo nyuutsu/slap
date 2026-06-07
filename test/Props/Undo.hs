@@ -43,9 +43,11 @@ undoTests = testGroup "Undo"
 -- artefact of slap's old undo path, which reapplied 'applyUPS' and
 -- so always produced a target-sized buffer regardless of direction.
 prop_upsUndo :: Property
-prop_upsUndo = forAll genPair $ \(source, target) ->
+prop_upsUndo = forAll genUPSEncodeablePair $ \(source, target) ->
   case createUPS (InputFileContents source) (OutputFileContents target) of
-    Left _createError -> property True
+    Left createError ->
+      counterexample ("create on encodeable pair: "
+                       ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->

@@ -53,9 +53,9 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Both are reachable from both directions; which arm fires depends
 -- on the patch's shape (growth vs shrink, terminator placement),
 -- not on whether the user invoked apply or undo. See each
--- constructor's docs for the dominant empirical case the current
--- corpus exhibits, but bear in mind those are observations of one
--- corpus, not properties of the format.
+-- constructor's docs for the dominant empirical case the patches we
+-- have exhibit, but bear in mind those are observations of one
+-- collection, not properties of the format.
 data BlockPlacement
   = BlockFitsWithinOutput
     -- ^ The block's declared span — skip, xor, terminator — lies

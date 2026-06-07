@@ -47,8 +47,8 @@ textTests = testGroup "Slap.Text"
                  test_utf8LenientReplacesInvalidBytes
       , testCase "utf8-valid-passes-through"
                  test_utf8LenientPassesValid
-      , testProperty "utf8-never-fails-on-arbitrary-bytes"
-                     prop_utf8LenientNeverFails
+      , testProperty "utf8-decodes-arbitrary-bytes-without-bottom"
+                     prop_utf8LenientDecodesArbitraryBytesWithoutBottom
       ]
   , testGroup "encodeTextBounded"
       [ testProperty "output-is-at-most-cap-bytes" prop_boundedAtMostCap
@@ -194,13 +194,15 @@ test_utf8LenientPassesValid = do
   assertEqual "Japanese decodes" (Text.pack "\x65E5\x672C\x8A9E") decoded
   assertEqual "clean decode emits no loss notices" [] notices
 
--- | UTF-8 lenient decode never throws on arbitrary bytes. Property:
--- whatever bytes we feed, we get back an 'EncodedText'.
-prop_utf8LenientNeverFails :: [Int] -> Property
-prop_utf8LenientNeverFails ints =
+-- | UTF-8 lenient decode terminates with a fully-defined 'Text' for
+-- any byte sequence — no exception, no bottom hiding in the result.
+-- The '>= 0' is vacuous on its own; its purpose is to force the
+-- decoded text, turning a lurking error/undefined into a test failure.
+prop_utf8LenientDecodesArbitraryBytesWithoutBottom :: [Int] -> Property
+prop_utf8LenientDecodesArbitraryBytesWithoutBottom ints =
   let bytes = ByteString.pack (map (fromIntegral . (`mod` 256)) ints)
       (EncodedText _tag text, _notices) = decodeTextLenient EncodingUtf8 bytes
-  in property (Text.length text >= 0)  -- forces evaluation
+  in property (Text.length text >= 0)
 
 ----------------------------------------------------------------------------
 -- Bounded encoding

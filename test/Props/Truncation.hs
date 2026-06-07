@@ -26,7 +26,7 @@ import qualified Slap.Text as SlapText
 import qualified Data.Text as Text
 import qualified Slap.XDelta1.Parse as XDelta1
 
-import Slap.Status (CreateResult(..))
+import Slap.Status (CreateResult(..), renderSlapError)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Convert (DirectCreate(..), CreateFormat(..), noMetadataRequested, noConstraintsRequested, noDialectsRequested)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
@@ -71,21 +71,27 @@ prop_ipsTrunc = forAll genPair $ \(source, target) ->
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ips32Trunc :: Property
-prop_ips32Trunc = forAll genPair $ \(source, target) ->
+prop_ips32Trunc = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateIPS32) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left _ -> discard
+    Left createError ->
+      counterexample ("create on non-shrinking pair: "
+                       ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_ebpTrunc :: Property
-prop_ebpTrunc = forAll genPair $ \(source, target) ->
+prop_ebpTrunc = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateEBP) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
-    Left _ -> discard
+    Left createError ->
+      counterexample ("create on non-shrinking pair: "
+                       ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> truncated IPS.parseIPS patch
 
 prop_upsTrunc :: Property
-prop_upsTrunc = forAll genPair $ \(source, target) ->
+prop_upsTrunc = forAll genUPSEncodeablePair $ \(source, target) ->
   case createUPS (InputFileContents source) (OutputFileContents target) of
-    Left _createError -> property True
+    Left createError ->
+      counterexample ("create on encodeable pair: "
+                       ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> truncated UPS.parseUPS patch
 
 prop_ppf3Trunc :: Property

@@ -13,9 +13,7 @@ import Test.Tasty.QuickCheck
 
 classifyTargetCopyTests :: TestTree
 classifyTargetCopyTests = testGroup "classifyTargetCopy"
-  [ testProperty "classification-is-total"
-      prop_classifyTargetCopy_total
-  , testProperty "non-overlapping-iff-readEnd-le-writePos"
+  [ testProperty "non-overlapping-iff-readEnd-le-writePos"
       prop_classifyTargetCopy_nonOverlapping
   , testProperty "single-byte-run-iff-back-one-and-overlapping"
       prop_classifyTargetCopy_singleByteRun
@@ -49,16 +47,6 @@ referenceClassify readStart writePos copyLength
     readStartInt = unOffset (unReadOffset readStart)
     writePosInt  = unOffset (unWritePosition writePos)
     readEndInt   = readStartInt + unLength copyLength
-
--- | Classification is total: every valid input produces one of the
--- three constructors.
-prop_classifyTargetCopy_total :: Property
-prop_classifyTargetCopy_total =
-  forAll genValidClassifierInput $ \(readStart, writePos, copyLength) ->
-    case classifyTargetCopy readStart writePos copyLength of
-      TargetCopyNonOverlapping -> True
-      TargetCopySingleByteRun  -> True
-      TargetCopyGeneralOverlap -> True
 
 -- | NonOverlapping if and only if readStart + copyLength <= writePos.
 prop_classifyTargetCopy_nonOverlapping :: Property

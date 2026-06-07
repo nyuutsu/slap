@@ -255,9 +255,11 @@ prop_bpsMetadata = forAll genPair $ \(source, target) ->
         Right (Parsed parsed _parseWarnings) -> BPS.unBPSMetadata (BPS.bpsMetadata parsed) === meta
 
 prop_ups :: Property
-prop_ups = forAll genPair $ \(source, target) ->
+prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
   case createUPS (InputFileContents source) (OutputFileContents target) of
-    Left _createError -> property True
+    Left createError ->
+      counterexample ("create on encodeable pair: "
+                       ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) ->
       case UPS.parseUPS patch of
         Left parseError ->
@@ -507,7 +509,7 @@ prop_planCopyOffsetsChain :: Property
 prop_planCopyOffsetsChain = forAll genCopyOffset $ \initialOffset ->
   forAll genCopyLength $ \requestedLength ->
     case GDIFF.planCopy initialOffset requestedLength of
-      []                  -> property True
+      []                  -> unLength requestedLength === 0
       firstChunk : others ->
         encodingOffset firstChunk === unOffset initialOffset
         .&&. conjoin (zipWith chainStep (firstChunk : others) others)
@@ -801,8 +803,7 @@ prop_ninja1 = forAll genPairNoShrink $ \(source, target) ->
          NINJA1.applyNINJA1 parsed (InputFileContents source) === Right (OutputFileContents target)
 
 prop_ninja1Hashes :: Property
-prop_ninja1Hashes = forAll genPairNoShrink $ \(source, _) ->
-  not (ByteString.null source) ==>
+prop_ninja1Hashes = forAll genNonEmptyByteString $ \source ->
   case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents source) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
     Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
     Right (CreateResult patch _) -> case NINJA1.parseNINJA1 patch of
