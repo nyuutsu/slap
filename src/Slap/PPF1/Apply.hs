@@ -7,7 +7,7 @@
 module Slap.PPF1.Apply (applyPPF1) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
@@ -20,7 +20,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
@@ -34,15 +33,14 @@ applyPPF1 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (noAdvisories (OutputFileContents ByteString.empty))
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
                     (unLength (distance sourceEnd outputEnd))
-        maybeErr <- applyRecordStream outputPointer firstAction (ppf1Records patch)
-        pure (0, unFileSize outputFileSize, maybeErr)
-      pure $ case outcome of
+        applyRecordStream outputPointer firstAction (ppf1Records patch)
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelPPF1 applyErr)
         Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
   where

@@ -9,7 +9,7 @@ import Slap.XDelta1.Types
     )
 import Slap.Status (SlapError(..), ApplyError(..), XDelta1GzipStreamInputs(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..),
                      ActionIndex, RequestedLength(..), RemainingLength(..),
                      ExpectedSize(..), WritePosition(..),
@@ -22,7 +22,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, get, modify)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import System.IO.Unsafe (unsafePerformIO)
 
 ----------------------------------------------------------------------------
@@ -74,7 +73,6 @@ applyXDelta1 patch sourceContents =
       | otherwise
           -> proceedWithApply sourceContents
   where
-    outputSize     = unFileSize targetFileSize
     targetFileSize = xdelta1TargetLength patch
     dataSegment    = xdelta1DataSegment patch
 
@@ -101,10 +99,8 @@ applyXDelta1 patch sourceContents =
       | otherwise = Right ()
 
     proceedWithApply (InputFileContents source) = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' outputSize $ \targetPointer -> do
-        maybeErr <- runApply targetPointer
-        pure (0, outputSize, maybeErr)
-      pure $ case outcome of
+      (result, maybeErr) <- fillNewBuffer targetFileSize runApply
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelXDelta1 applyErr)
         Nothing       -> Right (OutputFileContents result)
       where

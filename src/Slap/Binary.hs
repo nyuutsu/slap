@@ -30,6 +30,7 @@ module Slap.Binary
   , copyRegion
   , copyInPlace
   , viewBytesInRange
+  , fillNewBuffer
     -- * Diff
   , diffHunks
     -- * String utilities
@@ -44,6 +45,7 @@ module Slap.Binary
 import Control.Monad (when)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
+import qualified Data.ByteString.Internal as Internal
 import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.ByteString.Builder (Builder, word8)
 import Data.Array (Array, listArray, (!))
@@ -56,7 +58,7 @@ import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray as ByteArray
 import Slap.Checksum (CRC16(..), MD5Hash(..), SHA1Hash(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import Slap.Measure (Offset(..), Length(..), Hunk(..),
+import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
                      advance, byteLength, distance)
 
 ----------------------------------------------------------------------------
@@ -305,6 +307,26 @@ copyInPlace buffer sourceOffset destinationOffset regionLength =
     moveBytes (buffer `plusPtr` unOffset destinationOffset)
               (buffer `plusPtr` unOffset sourceOffset)
               (unLength regionLength)
+
+-- | Allocate an output buffer of exactly @size@ bytes, run a fill
+-- action over it, and return the filled buffer paired with whatever
+-- the action computed (an apply\/undo error, an 'Slap.Status.Outcome',
+-- ...).
+--
+-- This is the one shape slap ever asks of bytestring's internal
+-- 'Internal.createAndTrim'': start at offset 0, keep the full
+-- requested length, never actually trim. That primitive's name half-
+-- hides its calling convention — the @(offset, length, extra)@ triple
+-- the fill action must return — and the format @Apply@ modules were
+-- each spelling that triple identically. Closing over it here keeps
+-- the 'Data.ByteString.Internal' import in one module and lets the
+-- call sites pass a 'FileSize' and their fill action with nothing in
+-- between.
+fillNewBuffer :: FileSize -> (Ptr Word8 -> IO a) -> IO (ByteString, a)
+fillNewBuffer size fill =
+  Internal.createAndTrim' (unFileSize size) $ \bufferPointer -> do
+    extra <- fill bufferPointer
+    pure (0, unFileSize size, extra)
 
 ----------------------------------------------------------------------------
 -- CRC-16/IBM (reflected polynomial 0xA001, init 0x0000)

@@ -11,7 +11,7 @@
 module Slap.PPF3.Apply (applyPPF3, undoPPF3) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..),
                     Outcome(..), noAdvisories)
 import Slap.FormatLabel (FormatLabel(..))
@@ -24,7 +24,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Data.Maybe (fromMaybe)
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
@@ -39,15 +38,14 @@ applyPPF3 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (noAdvisories (OutputFileContents ByteString.empty))
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
                     (0 :: Word8)
                     (unLength (distance sourceEnd outputEnd))
-        maybeErr <- applyRecordStream outputPointer firstAction (ppf3Records patch)
-        pure (0, unFileSize outputFileSize, maybeErr)
-      pure $ case outcome of
+        applyRecordStream outputPointer firstAction (ppf3Records patch)
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
         Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
   where
@@ -110,11 +108,10 @@ undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =
       Right (InputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' inputLength $ \outputPointer -> do
+      (result, maybeErr) <- fillNewBuffer (FileSize inputLength) $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) input (Offset 0) (Length inputLength)
-        maybeErr <- undoRecordStream outputPointer firstAction (ppf3Records patch)
-        pure (0, inputLength, maybeErr)
-      pure $ case outcome of
+        undoRecordStream outputPointer firstAction (ppf3Records patch)
+      pure $ case maybeErr of
         Just applyErr -> Left (UndoFailed LabelPPF3 applyErr)
         Nothing       -> Right (InputFileContents result)
   where

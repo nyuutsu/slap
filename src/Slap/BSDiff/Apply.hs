@@ -6,11 +6,10 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..))
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      SignedOffset(..), Cursor(..), Delta,
                      ActionIndex, RequestedLength(..), RemainingLength(..),
@@ -85,14 +84,11 @@ applyBSDiff patch _
   | unFileSize (bsdiffTargetSize patch) == 0 = Right (OutputFileContents ByteString.empty)
   | unFileSize (bsdiffTargetSize patch) < 0  = Left (NegativeTargetSize LabelBSDiff (bsdiffTargetSize patch))
 applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
-    (result, outcome) <- createAndTrim' outputSize $ \targetPointer -> do
-      maybeErr <- runApply targetPointer
-      pure (0, outputSize, maybeErr)
-    pure $ case outcome of
+    (result, maybeErr) <- fillNewBuffer targetFileSize runApply
+    pure $ case maybeErr of
       Just applyErr -> Left (ApplyFailed LabelBSDiff applyErr)
       Nothing       -> Right (OutputFileContents result)
   where
-    outputSize     = unFileSize targetFileSize
     targetFileSize = bsdiffTargetSize patch
     diffBytes      = bsdiffDiffData patch
     extraBytes     = bsdiffExtraData patch

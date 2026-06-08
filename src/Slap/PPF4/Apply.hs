@@ -1,7 +1,7 @@
 module Slap.PPF4.Apply (applyPPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..))
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
@@ -13,7 +13,6 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.FormatLabel (FormatLabel(LabelPPF4))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (Ptr)
@@ -34,7 +33,7 @@ applyPPF4 patch (InputFileContents source)
   | unFileSize outputFileSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' (unFileSize outputFileSize) $ \outputPointer -> do
+      (result, finalOutcome) <- fillNewBuffer outputFileSize $ \outputPointer -> do
         copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
         when (outputEnd > sourceEnd) $
           fillBytes (plusOffset outputPointer sourceEnd)
@@ -44,14 +43,13 @@ applyPPF4 patch (InputFileContents source)
         -- First failure wins: a Replace-phase error short-circuits the
         -- Append phase, so an Append-phase failure on a buffer corrupted
         -- by a failed Replace can't overwrite the more useful diagnostic.
-        finalOutcome <- case replaceOutcome of
+        case replaceOutcome of
           Left applyErr -> pure (Just applyErr)
           Right appendStartIndex ->
             applyAppends outputPointer
                          appendStartIndex
                          appendStartOffset (ppf4Appends patch)
-        pure (0, unFileSize outputFileSize, finalOutcome)
-      pure $ case outcome of
+      pure $ case finalOutcome of
         Just applyErr -> Left (ApplyFailed LabelPPF4 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where

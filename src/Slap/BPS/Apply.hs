@@ -5,7 +5,7 @@ module Slap.BPS.Apply
   ) where
 
 import Slap.BPS.Types (BPSPatch(..), BPSAction(..))
-import Slap.Binary (copyRegion, copyInPlace)
+import Slap.Binary (copyRegion, copyInPlace, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), CursorKind(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -23,7 +23,6 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
@@ -116,10 +115,8 @@ applyBPS patch (InputFileContents source)
   | unFileSize targetSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' (unFileSize targetSize) $ \outputPointer -> do
-        maybeErr <- runApply outputPointer
-        pure (0, unFileSize targetSize, maybeErr)
-      pure $ case outcome of
+      (result, maybeErr) <- fillNewBuffer targetSize runApply
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelBPS applyErr)
         Nothing       -> Right (OutputFileContents result)
   where

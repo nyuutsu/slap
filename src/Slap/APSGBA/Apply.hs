@@ -5,7 +5,7 @@ module Slap.APSGBA.Apply
   ) where
 
 import Slap.APSGBA.Types
-import Slap.Binary (copyByteStringRange)
+import Slap.Binary (copyByteStringRange, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -15,7 +15,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Monad (when)
@@ -63,10 +62,8 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
   | targetSize < 0 =
       Left (NegativeTargetSize LabelAPSGBA targetFileSize)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' targetSize $ \targetPointer -> do
-        maybeErr <- runApply targetPointer
-        pure (0, targetSize, maybeErr)
-      pure $ case outcome of
+      (result, maybeErr) <- fillNewBuffer targetFileSize runApply
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelAPSGBA applyErr)
         Nothing       -> Right (OutputFileContents result)
   where

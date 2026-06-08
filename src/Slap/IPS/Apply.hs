@@ -6,7 +6,7 @@ import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..),
                        ipsRecordOffset, recordPayloadLength,
                        MarkerDisposition(..), decideMarkerDisposition,
                        effectiveTargetSize)
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..), SlapAdvisory(..),
                    Outcome(..), ClippedRecordCount(..), MarkerOvershootBytes(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -22,7 +22,6 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.State.Strict (StateT, modify, runStateT)
-import Data.ByteString.Internal (createAndTrim')
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
 import Foreign.Marshal.Utils (fillBytes)
@@ -133,9 +132,8 @@ applyIPS (InputFileContents source) patch
       Left (NegativeTargetSize patchLabel effectiveSize)
   | otherwise = unsafePerformIO $ do
       (result, (errorOutcome, clipOutcome)) <-
-        createAndTrim' (unFileSize effectiveSize) $ \outputPointer -> do
-          outcomes <- runStateT (runApply outputPointer) Nothing
-          pure (0, unFileSize effectiveSize, outcomes)
+        fillNewBuffer effectiveSize $ \outputPointer ->
+          runStateT (runApply outputPointer) Nothing
       pure $ case errorOutcome of
         Just applyErr -> Left (ApplyFailed patchLabel applyErr)
         Nothing       -> Right (Outcome

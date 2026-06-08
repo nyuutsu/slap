@@ -3,7 +3,7 @@ module Slap.DPS.Apply
   ) where
 
 import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), dpsOutputExtent)
-import Slap.Binary (copyRegion)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length, FileSize(..),
@@ -15,7 +15,6 @@ import Slap.Measure (Offset(..), Length, FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
@@ -38,10 +37,8 @@ applyDPS patch (InputFileContents source)
   | unFileSize outputSize == 0 =
       Right (OutputFileContents ByteString.empty)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' (unFileSize outputSize) $ \outputPointer -> do
-        maybeErr <- runApply outputPointer
-        pure (0, unFileSize outputSize, maybeErr)
-      pure $ case outcome of
+      (result, maybeErr) <- fillNewBuffer outputSize runApply
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelDPS applyErr)
         Nothing       -> Right (OutputFileContents result)
   where

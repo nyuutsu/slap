@@ -5,7 +5,7 @@ module Slap.NINJA2.Apply
 import Slap.NINJA2.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyByteStringRange)
+import Slap.Binary (copyByteStringRange, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex, RequestedLength(..),
                      byteLength, fitsWithin,
@@ -14,7 +14,6 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
 import qualified Data.ByteString as ByteString
-import Data.ByteString.Internal (createAndTrim')
 import Data.Bits (xor)
 import Data.Word (Word8)
 import Control.Monad (when)
@@ -52,10 +51,8 @@ applyNINJA2 patch (InputFileContents source)
   | outputLength < 0 =
       Left (NegativeTargetSize LabelNINJA2 outputFileSize)
   | otherwise = unsafePerformIO $ do
-      (result, outcome) <- createAndTrim' outputLength $ \outputPointer -> do
-        maybeErr <- runApply outputPointer
-        pure (0, outputLength, maybeErr)
-      pure $ case outcome of
+      (result, maybeErr) <- fillNewBuffer outputFileSize runApply
+      pure $ case maybeErr of
         Just applyErr -> Left (ApplyFailed LabelNINJA2 applyErr)
         Nothing       -> Right (OutputFileContents result)
   where
