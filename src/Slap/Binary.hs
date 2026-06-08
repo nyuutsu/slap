@@ -13,6 +13,7 @@ module Slap.Binary
   , VarintReadFailure(..)
   , getByuuVarint
   , getVcdiffVarint
+  , minimalVcdiffVarintLength
     -- * Builders
   , putWord16BE
   , putWord32LE
@@ -116,16 +117,28 @@ getInt64BE offset input =
 -- against the parser monad directly and surfaces the same
 -- meanings through 'ByteParserError' constructors.
 data VarintReadFailure
-  -- | The reader accumulated nine continuation bytes without
-  -- seeing a terminating byte. Nine 7-bit groups would already
-  -- exceed an 'Int64' regardless of the encoding's continuation
-  -- discipline, so the reader gives up at that point.
+  -- | The decoded value is too large to represent and slap declines
+  -- it outright. Both readers detect this by value — the running
+  -- accumulation would exceed the largest 'Int64' slap can carry —
+  -- rather than by a byte-count proxy: a nine-byte byuu varint can
+  -- already encode a value past 'Int64', so counting bytes would let
+  -- it wrap silently. For VCDIFF this is the @>= 2^64@ band, beyond
+  -- even xd3's @uint64@; for byuu it is the single over-width verdict
+  -- (byuu makes no apology — see 'VarintExceedsSignedButFitsUnsigned').
   = VarintTooManyContinuationBytes
   -- | A continuation byte was followed by no more input; the
   -- varint started inside the buffer but its continuation bytes
   -- ran past the end. Distinct from "read started at or past
   -- EOF", which is an 'ByteParserUnderflow' at the lifting seam.
   | VarintRanPastEndOfInput
+  -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@: representable
+  -- by xd3's unsigned @uint64@ reader, but not by the signed 'Int64'
+  -- slap threads sizes and offsets through. The apologetic verdict —
+  -- the format's effective definition admits these and slap, knowingly,
+  -- does not. Only 'getVcdiffVarint' produces it; the byuu reader caps
+  -- at the same value with the plain 'VarintTooManyContinuationBytes',
+  -- because byuu is canonical and made the coarser call deliberately.
+  | VarintExceedsSignedButFitsUnsigned
   deriving (Eq, Show)
 
 -- | byuu/Near-style varint used by BPS and UPS.
@@ -134,37 +147,62 @@ data VarintReadFailure
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
 -- Returns (value, bytes consumed).
 getByuuVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
-getByuuVarint offset input = decode offset 0 1 (0 :: Int)
+getByuuVarint offset input = decode offset 0 1
   where
-    inputLength = ByteString.length input
-    decode position accumulated multiplier !iterations
-      | iterations >= 9       = Left VarintTooManyContinuationBytes
-      | position >= inputLength = Left VarintRanPastEndOfInput
+    inputLength    = ByteString.length input
+    largestSigned  = fromIntegral (maxBound :: Int64) :: Word64
+    -- A value needing a tenth byte already exceeds the nine-byte
+    -- maximum, which itself sits above 'Int64'; the bound also keeps
+    -- 'multiplier' below the point where the 'Word64' arithmetic
+    -- could wrap, so the value test below stays honest.
+    decode position accumulated multiplier
+      | position - offset >= 9  = Left VarintTooManyContinuationBytes
+      | position >= inputLength  = Left VarintRanPastEndOfInput
       | otherwise =
-          let byte = ByteString.index input position
-              payload = fromIntegral (byte .&. 0x7F) :: Int64
-              total = accumulated + payload * multiplier
-          in if testBit byte 7
-             then Right (VarintResult total (position - offset + 1))
-             else let nextMultiplier = multiplier `shiftL` 7
-                  in decode (position + 1) (total + nextMultiplier) nextMultiplier
-                            (iterations + 1)
+          let byte         = ByteString.index input position
+              payload      = fromIntegral (byte .&. 0x7F) :: Word64
+              valueSoFar   = accumulated + payload * multiplier
+          in if valueSoFar > largestSigned
+             then Left VarintTooManyContinuationBytes
+             else if testBit byte 7
+               then Right (VarintResult (fromIntegral valueSoFar) (position - offset + 1))
+               else let nextMultiplier = multiplier `shiftL` 7
+                    in decode (position + 1) (valueSoFar + nextMultiplier) nextMultiplier
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
 -- Returns (value, bytes consumed).
 getVcdiffVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
-getVcdiffVarint offset input = decode offset 0 (0 :: Int)
+getVcdiffVarint offset input = decode offset 0
   where
-    inputLength = ByteString.length input
-    decode position accumulated !iterations
-      | iterations >= 9       = Left VarintTooManyContinuationBytes
-      | position >= inputLength = Left VarintRanPastEndOfInput
+    inputLength    = ByteString.length input
+    largestSigned  = fromIntegral (maxBound :: Int64)  :: Word64  -- 2^63 - 1
+    -- Folding in another 7-bit group shifts the accumulator left by
+    -- seven; once it carries bits at position 57 or above, that shift
+    -- would push the value past 'Word64' — i.e. past @2^64@, beyond
+    -- even xd3's @uint64@ — so it is a plain over-width rejection.
+    shiftWouldOverflow = (maxBound :: Word64) `shiftR` 7
+    decode position accumulated
+      | accumulated > shiftWouldOverflow = Left VarintTooManyContinuationBytes
+      | position >= inputLength           = Left VarintRanPastEndOfInput
       | otherwise =
-          let byte = ByteString.index input position
-              total = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
+          let byte  = ByteString.index input position
+              value = (accumulated `shiftL` 7) .|. fromIntegral (byte .&. 0x7F)
           in if testBit byte 7
-             then decode (position + 1) total (iterations + 1)
-             else Right (VarintResult total (position - offset + 1))
+             then decode (position + 1) value
+             else if value > largestSigned
+               then Left VarintExceedsSignedButFitsUnsigned
+               else Right (VarintResult (fromIntegral value) (position - offset + 1))
+
+-- | Byte count of the canonical (shortest) VCDIFF varint encoding of a
+-- non-negative value: one base-128 group per seven significant bits,
+-- and at least one group so zero still costs a byte. The seam compares
+-- this against the bytes actually consumed to spot an overlong encoding.
+minimalVcdiffVarintLength :: Int64 -> Int
+minimalVcdiffVarintLength value = groupsNeeded 1 (value `shiftR` 7)
+  where
+    groupsNeeded groupsSoFar remainingBits
+      | remainingBits <= 0 = groupsSoFar
+      | otherwise          = groupsNeeded (groupsSoFar + 1) (remainingBits `shiftR` 7)
 
 ----------------------------------------------------------------------------
 -- Builders
@@ -439,9 +477,14 @@ putInt64BE value =
 -- Variable-length integer result
 ----------------------------------------------------------------------------
 
--- | Result of decoding a variable-length integer: the decoded
--- value followed by the number of bytes consumed from the input.
-data VarintResult = VarintResult !Int64 !Int
+-- | Result of decoding a variable-length integer: the decoded value
+-- and the number of bytes it consumed from the input. The fields are
+-- named for readability; the positional constructor still matches, so
+-- existing @VarintResult value consumed@ patterns are undisturbed.
+data VarintResult = VarintResult
+  { varintDecodedValue  :: !Int64
+  , varintBytesConsumed :: !Int
+  }
   deriving (Show)
 
 ----------------------------------------------------------------------------

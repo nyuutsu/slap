@@ -827,6 +827,15 @@ data SlapAdvisory
   -- for zero-delta".
   | NegativeZeroInBPS
 
+  -- | A VCDIFF varint was encoded in a non-canonical (overlong) form:
+  -- one or more leading zero-groups padded it longer than the value
+  -- needs. Base-128 admits this and xd3 accepts it, so slap does too;
+  -- the note is the house-consistent "weird thing happened" flag,
+  -- sibling to 'NegativeZeroInBPS'. A slap encoder emits only the
+  -- canonical form. The payload is the offending value, so the reader
+  -- can see what was padded.
+  | NonCanonicalVCDIFFVarint Int64
+
   -- | At least one pair of records in an IPS-family patch writes
   -- to overlapping regions of the target. Overlap is permitted and
   -- well-defined (later writes clobber earlier ones), but it's
@@ -1330,6 +1339,10 @@ renderByteParserError (ByteParserVarintOverranBuffer (Position cursor)) =
 renderByteParserError ByteParserVarintExceededWidth =
   "varint overflow (too many continuation bytes)"
 
+renderByteParserError ByteParserVarintExceedsSignedRange =
+  "varint decoded a value in [2^63, 2^64): xd3 admits it as an unsigned"
+  <> " uint64, but slap carries sizes as a signed Int and declines it"
+
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
   "internal: do-pattern match failed in slap's parser: " <> Text.pack message
 
@@ -1773,6 +1786,11 @@ renderSlapAdvisory NegativeZeroInBPS =
   formatLabelName LabelBPS
   <> ": signed-delta varint encoded zero as 0x81 (non-canonical;"
   <> " 0x80 is the canonical form)"
+
+renderSlapAdvisory (NonCanonicalVCDIFFVarint value) =
+  formatLabelName LabelVCDIFF
+  <> ": varint for " <> renderAsText value
+  <> " was encoded overlong (leading zero-groups; canonical form is shorter)"
 
 renderSlapAdvisory (OverlappingRecords label (OverlapCount pairCount)) =
   formatLabelName label
@@ -2267,14 +2285,25 @@ data ByteParserError
   -- fires when the read started at or past EOF.
   | ByteParserVarintOverranBuffer Position
 
-  -- | A varint accumulated too many continuation bytes to fit in
-  -- the target machine word. Raised by all three slap varint
-  -- readers (byuu, VCDIFF, EDSIO) — once nine 7-bit groups have
-  -- accumulated without a terminator, the value exceeds 'Int64'
-  -- regardless of the encoding. The constructor takes no payload
-  -- because the only thing the variant says is "the value can't
-  -- be represented".
+  -- | A varint decoded a value too large to represent at all. Raised
+  -- by all three slap varint readers (byuu, VCDIFF, EDSIO): byuu and
+  -- EDSIO use it as their single over-width verdict, VCDIFF only for
+  -- the @>= 2^64@ band beyond even xd3's @uint64@ (the @[2^63, 2^64)@
+  -- band is the apologetic 'ByteParserVarintExceedsSignedRange'). byuu
+  -- and VCDIFF detect the condition by value; EDSIO still bails on its
+  -- bit-offset. The constructor takes no payload because the only
+  -- thing the variant says is "the value can't be represented".
   | ByteParserVarintExceededWidth
+
+  -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@ — one that
+  -- xd3's unsigned @uint64@ reader accepts but slap's signed 'Int'
+  -- declines. The apologetic arm: distinct from
+  -- 'ByteParserVarintExceededWidth' (which is the @>= 2^64@ band,
+  -- beyond xd3 too) precisely so the renderer can concede the one bit
+  -- slap gives up rather than blame the input. Only the VCDIFF reader
+  -- raises it; the byuu reader caps at the same value as a plain
+  -- over-width and never reaches this arm.
+  | ByteParserVarintExceedsSignedRange
 
   -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
   -- failures inside slap's parser code. Reaching this arm means a
@@ -2330,6 +2359,7 @@ slapAdvisorySeverity advisory = case advisory of
   EmptyPatch{}                         -> SeverityNote
   ZeroCountRLERecord{}                 -> SeverityNote
   NegativeZeroInBPS                    -> SeverityNote
+  NonCanonicalVCDIFFVarint{}           -> SeverityNote
   OverlappingRecords{}                 -> SeverityNote
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote

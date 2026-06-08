@@ -15,13 +15,17 @@ module Props.SpecConformance (specConformanceTests) where
 
 import Props.Helpers (assertFailureT)
 
-import Slap.Binary (putByuuVarint, putWord32LE, getByuuVarint, VarintResult(..))
+import Slap.Binary (putByuuVarint, putWord32LE, getByuuVarint, getVcdiffVarint,
+                    VarintResult(..), VarintReadFailure(..))
+import Slap.ByteParser (runByteParser, vcdiffVarintReportingCanonicality,
+                        VcdiffVarintReading(..))
 import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
-                   ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError)
+                   ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
+                   renderByteParserError)
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -57,33 +61,69 @@ import qualified Data.Text as Text
 specConformanceTests :: TestTree
 specConformanceTests = testGroup "SpecConformance"
   [ testGroup "Varint"
-      [ testGroup "round-trip"
-          [ testProperty "decode-inverts-encode" prop_varintRoundTrip
-          , testProperty "encode-inverts-decode" prop_varintDecodeEncodeRoundTrip
-          , testProperty "canonical-form-is-unique" prop_varintCanonical
+      [ testGroup "byuu"
+          [ testGroup "round-trip"
+              [ testProperty "decode-inverts-encode" prop_varintRoundTrip
+              , testProperty "encode-inverts-decode" prop_varintDecodeEncodeRoundTrip
+              , testProperty "canonical-form-is-unique" prop_varintCanonical
+              ]
+          , testGroup "boundary-values"
+              [ testCase "zero" (varintCase 0 [0x80])
+              , testCase "one" (varintCase 1 [0x81])
+              , testCase "max-single-byte (127)" (varintCase 127 [0xFF])
+              , testCase "min-two-byte (128)" (varintCase 128 [0x00, 0x80])
+              , testCase "255" (varintCase 255 [0x7F, 0x80])
+              , testCase "256" (varintCase 256 [0x00, 0x81])
+              , testCase "1000" (varintCase 1000 [0x68, 0x86])
+              , testCase "16383 (max two-byte)" (varintCase 16383 [0x7F, 0xFE])
+              , testCase "16384 (min three-byte)" (varintCase 16384 [0x00, 0xFF])
+              , testCase "65536" (varintCase 65536 [0x00, 0x7F, 0x82])
+              , testCase "near-int64-maxbound" test_varintNearMaxBound
+              , testCase "largest-valid (int64-maxbound)" test_byuuLargestValid
+              ]
+          , testGroup "decode-rejects"
+              [ testCase "unterminated-single-continuation"
+                  (byuuRejectsCase [0x00])
+              , testCase "unterminated-multi-continuation"
+                  (byuuRejectsCase [0x00, 0x00, 0x00])
+              , testCase "empty-input"
+                  (byuuRejectsCase [])
+              , testCase "ten-continuation-bytes-overflows"
+                  (byuuRejectsCase (replicate 10 0x00))
+              -- The nine-byte wrap the ten-continuation case above does
+              -- NOT cover: eight continuations plus a high terminator
+              -- encode a value above 2^63, which the old reader returned
+              -- as a wrapped negative. Regression test for that defect.
+              , testCase "nine-byte-value-above-int64-rejected"
+                  (byuuRejectsCase [0x7F,0x7F,0x7F,0x7F,0x7F,0x7F,0x7F,0x7F,0xFF])
+              ]
           ]
-      , testGroup "boundary-values"
-          [ testCase "zero" (varintCase 0 [0x80])
-          , testCase "one" (varintCase 1 [0x81])
-          , testCase "max-single-byte (127)" (varintCase 127 [0xFF])
-          , testCase "min-two-byte (128)" (varintCase 128 [0x00, 0x80])
-          , testCase "255" (varintCase 255 [0x7F, 0x80])
-          , testCase "256" (varintCase 256 [0x00, 0x81])
-          , testCase "1000" (varintCase 1000 [0x68, 0x86])
-          , testCase "16383 (max two-byte)" (varintCase 16383 [0x7F, 0xFE])
-          , testCase "16384 (min three-byte)" (varintCase 16384 [0x00, 0xFF])
-          , testCase "65536" (varintCase 65536 [0x00, 0x7F, 0x82])
-          , testCase "near-int64-maxbound" test_varintNearMaxBound
-          ]
-      , testGroup "decode-rejects"
-          [ testCase "unterminated-single-continuation"
-              (varintRejectsCase [0x00])
-          , testCase "unterminated-multi-continuation"
-              (varintRejectsCase [0x00, 0x00, 0x00])
-          , testCase "empty-input"
-              (varintRejectsCase [])
-          , testCase "ten-continuation-bytes-overflows"
-              (varintRejectsCase (replicate 10 0x00))
+      , testGroup "vcdiff"
+          [ testGroup "boundary-values"
+              [ testCase "worked-example (123456789)"
+                  (vcdiffCase 123456789 [0xBA, 0xEF, 0x9A, 0x15])
+              , testCase "int64-maxbound"
+                  (vcdiffCase maxBound
+                     [0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x7F])
+              ]
+          , testGroup "decode-rejects"
+              -- Two distinct verdicts, deliberately not folded together:
+              -- a value in [2^63, 2^64) is the apologetic failure (xd3's
+              -- uint64 admits it, slap's signed Int declines); a value
+              -- >= 2^64 is the plain over-width rejection.
+              [ testCase "unsigned-only-range-is-apologetic"
+                  (vcdiffRejectsWith
+                     [0x81,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x00]
+                     VarintExceedsSignedButFitsUnsigned)
+              , testCase "beyond-uint64-is-plain-over-width"
+                  (vcdiffRejectsWith
+                     [0x82,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x00]
+                     VarintTooManyContinuationBytes)
+              ]
+          , testGroup "canonicality"
+              [ testCase "overlong-small-value-decodes-and-flags-fyi"
+                  test_vcdiffOverlongRaisesFYI
+              ]
           ]
       ]
   , testGroup "BPS"
@@ -240,13 +280,59 @@ varintCase value expectedBytes = do
     Left errorMessage -> assertFailure ("decode failed: " ++ errorMessage)
     Right decoded -> assertEqual ("decode " ++ show value) value decoded
 
--- | Assert that decoding the given bytes produces a Left (parse error).
-varintRejectsCase :: [Word8] -> Assertion
-varintRejectsCase inputBytes =
+-- | Assert that the byuu reader rejects the given bytes (any failure).
+byuuRejectsCase :: [Word8] -> Assertion
+byuuRejectsCase inputBytes =
   case getByuuVarint 0 (ByteString.pack inputBytes) of
     Left _  -> pure ()
     Right (VarintResult value _) ->
       assertFailure ("expected decode to fail, got " ++ show value)
+
+-- | Assert the byuu reader decodes the largest representable value —
+-- 'maxBound' '@Int64' — cleanly, bracketing the over-width boundary
+-- from below (its companion above is
+-- @nine-byte-value-above-int64-rejected@).
+test_byuuLargestValid :: Assertion
+test_byuuLargestValid = do
+  let largestValid = maxBound :: Int64
+      encoded      = encodeVarint largestValid
+  case getByuuVarint 0 encoded of
+    Left failure -> assertFailure ("decode failed: " ++ show failure)
+    Right (VarintResult decoded _) ->
+      assertEqual "largest valid byuu value" largestValid decoded
+
+-- | Assert the VCDIFF reader decodes the given bytes to the expected
+-- value, consuming all of them.
+vcdiffCase :: Int64 -> [Word8] -> Assertion
+vcdiffCase expected inputBytes =
+  case getVcdiffVarint 0 (ByteString.pack inputBytes) of
+    Left failure -> assertFailure ("decode failed: " ++ show failure)
+    Right (VarintResult decoded consumed) -> do
+      assertEqual "decoded value" expected decoded
+      assertEqual "consumed all bytes" (length inputBytes) consumed
+
+-- | Assert the VCDIFF reader rejects the given bytes with exactly the
+-- expected failure — the two over-width bands must stay distinguishable.
+vcdiffRejectsWith :: [Word8] -> VarintReadFailure -> Assertion
+vcdiffRejectsWith inputBytes expectedFailure =
+  case getVcdiffVarint 0 (ByteString.pack inputBytes) of
+    Left failure -> assertEqual "failure mode" expectedFailure failure
+    Right (VarintResult value _) ->
+      assertFailure ("expected decode to fail, got " ++ show value)
+
+-- | An overlong VCDIFF varint (one leading zero-group padding a small
+-- value) decodes to that value AND, at the parser seam, raises the FYI
+-- advisory naming it.
+test_vcdiffOverlongRaisesFYI :: Assertion
+test_vcdiffOverlongRaisesFYI =
+  let overlongOne = ByteString.pack [0x80, 0x01]  -- canonical is [0x01]
+  in case runByteParser vcdiffVarintReportingCanonicality overlongOne of
+    Left parserError ->
+      assertFailureT ("decode failed: " <> renderByteParserError parserError)
+    Right reading -> do
+      assertEqual "decoded value" 1 (vcdiffVarintValue reading)
+      assertEqual "FYI advisory"
+        (Just (NonCanonicalVCDIFFVarint 1)) (vcdiffVarintAdvisory reading)
 
 ----------------------------------------------------------------------------
 -- BPS patch builder

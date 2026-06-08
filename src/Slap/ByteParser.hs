@@ -48,6 +48,8 @@ module Slap.ByteParser
     -- * Variable-length readers
   , byuuVarint
   , vcdiffVarint
+  , VcdiffVarintReading(..)
+  , vcdiffVarintReportingCanonicality
   , edsioVarint
     -- * Lifting raw Binary readers
   , liftRead
@@ -60,6 +62,7 @@ import Slap.Binary
   , getWord16LE, getWord32LE, getInt64LE
   , getWord16BE, getWord24BE, getWord32BE, getInt64BE
   , getByuuVarint, getVcdiffVarint
+  , minimalVcdiffVarintLength
   )
 import Slap.Measure
   ( Position(..), Length(..), remainingFromPosition
@@ -68,6 +71,7 @@ import Slap.Measure
 import Slap.Status
   ( ByteParserError(..)
   , ByteParserOperation(..)
+  , SlapAdvisory(..)
   )
 
 import Control.Monad.Trans.Class (lift)
@@ -272,18 +276,29 @@ liftRead readWidth@(Length width) reader = do
             (RemainingLength (Length (inputLength - startAt)))
             currentPosition)
 
--- | Adapt a variable-length pure varint reader. Three distinct
--- failure modes are surfaced through typed 'ByteParserError'
--- arms: starting the read at or past EOF is 'ByteParserUnderflow'
--- tagged with 'VarintReadOperation' (the request asked for at
--- least one byte, none were available); a varint that starts
--- inside the buffer but whose continuation bytes run past the
--- end is 'ByteParserVarintOverranBuffer'; a varint that
--- accumulates more continuation bytes than fit in 'Int64' is
--- 'ByteParserVarintExceededWidth'.
+-- | Adapt a variable-length pure varint reader, keeping only the
+-- decoded value. Failure modes are surfaced through typed
+-- 'ByteParserError' arms: starting the read at or past EOF is
+-- 'ByteParserUnderflow' tagged with 'VarintReadOperation' (the
+-- request asked for at least one byte, none were available); a varint
+-- that starts inside the buffer but whose continuation bytes run past
+-- the end is 'ByteParserVarintOverranBuffer'; a value too large to
+-- represent at all is 'ByteParserVarintExceededWidth'; and a VCDIFF
+-- value in the unsigned-only @[2^63, 2^64)@ band is the apologetic
+-- 'ByteParserVarintExceedsSignedRange'. The mapping lives in the
+-- shared 'readVarintAdvancing' core.
 liftReadVarint :: (Int -> ByteString -> Either VarintReadFailure VarintResult)
                -> ByteParser Int64
-liftReadVarint reader = do
+liftReadVarint reader = varintDecodedValue <$> readVarintAdvancing reader
+
+-- | Run a pure varint reader, advance the cursor past what it consumed,
+-- and map its failure space into the typed 'ByteParserError' arms. The
+-- shared core behind 'liftReadVarint' and
+-- 'vcdiffVarintReportingCanonicality': the former throws away the
+-- consumed-byte count, the latter inspects it for an overlong encoding.
+readVarintAdvancing :: (Int -> ByteString -> Either VarintReadFailure VarintResult)
+                    -> ByteParser VarintResult
+readVarintAdvancing reader = do
   input            <- askInput
   currentPosition  <- ByteParser get
   let inputLength      = ByteString.length input
@@ -301,8 +316,10 @@ liftReadVarint reader = do
         throwByteParserError ByteParserVarintExceededWidth
       Left VarintRanPastEndOfInput ->
         throwByteParserError (ByteParserVarintOverranBuffer currentPosition)
-      Right (VarintResult result consumed) -> do
-        ByteParser (put (Position (startAt + consumed)))
+      Left VarintExceedsSignedButFitsUnsigned ->
+        throwByteParserError ByteParserVarintExceedsSignedRange
+      Right result -> do
+        ByteParser (put (Position (startAt + varintBytesConsumed result)))
         pure result
 
 word16LE :: ByteParser Word16
@@ -335,6 +352,33 @@ byuuVarint = liftReadVarint getByuuVarint
 
 vcdiffVarint :: ByteParser Int64
 vcdiffVarint = liftReadVarint getVcdiffVarint
+
+-- | The outcome of reading a VCDIFF varint at the parser seam: the
+-- decoded value, plus the overlong-encoding FYI advisory — present
+-- only when the encoding was non-canonical. Unlike
+-- 'Slap.Binary.VarintResult', which carries the raw consumed-byte
+-- count, the seam has already interpreted that count into the advisory.
+data VcdiffVarintReading = VcdiffVarintReading
+  { vcdiffVarintValue    :: !Int64
+  , vcdiffVarintAdvisory :: !(Maybe SlapAdvisory)
+  }
+  deriving (Show)
+
+-- | Read a VCDIFF varint and report whether it was canonically encoded.
+-- Plain 'vcdiffVarint' suffices where the encoding's shape doesn't
+-- matter; this variant also returns the FYI advisory for an overlong
+-- (leading zero-group) encoding. The check is a seam concern, not the
+-- reader's: the pure reader reports how many bytes it consumed, and a
+-- span longer than the decoded value's minimal length was padded.
+vcdiffVarintReportingCanonicality :: ByteParser VcdiffVarintReading
+vcdiffVarintReportingCanonicality = do
+  result <- readVarintAdvancing getVcdiffVarint
+  let value    = varintDecodedValue result
+      advisory
+        | varintBytesConsumed result > minimalVcdiffVarintLength value =
+            Just (NonCanonicalVCDIFFVarint value)
+        | otherwise = Nothing
+  pure (VcdiffVarintReading value advisory)
 
 -- | EDSIO variable-length unsigned int (LEB128-like, used by xdelta1).
 -- 7 bits per byte, LSB first, high bit = continuation. Decoded inline
