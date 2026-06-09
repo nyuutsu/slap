@@ -106,6 +106,8 @@ library slap-internal
     , Slap.UPS.Types
     , Slap.VCDIFF.CodeTable
     , Slap.VCDIFF.Types
+    , Slap.VCDIFF.Parse
+    , Slap.VCDIFF.Apply
     , Slap.XDelta1.Apply
     , Slap.XDelta1.Create
     , Slap.XDelta1.Describe
@@ -223,6 +225,7 @@ test-suite integration
                   , Integration.Undo
                   , Integration.CLI
                   , Integration.FailureMode
+                  , Integration.VCDIFFApply
                   , Integration.XDelta1Names
   default-language: GHC2024
   ghc-options:      -Wall -Werror -Wname-shadowing -threaded -rtsopts "-with-rtsopts=-N"

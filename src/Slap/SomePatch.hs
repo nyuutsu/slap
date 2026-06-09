@@ -56,6 +56,9 @@ import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Describe as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.UPS.Types as UPS
+import qualified Slap.VCDIFF.Parse as VCDIFF
+import qualified Slap.VCDIFF.Apply as VCDIFF
+import qualified Slap.VCDIFF.Types as VCDIFF
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
@@ -94,7 +97,7 @@ import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
-import Slap.Display.Analysis (PatchAnalysis)
+import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSummary(..), SummaryInfo(..))
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Info (PatchInfo(..))
@@ -694,14 +697,57 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- SCAFFOLDING: VCDIFF is mid-reimplementation. Its format modules were
--- deleted wholesale to be rebuilt from the specs under docs/vcdiff/, so
--- a detected VCDIFF patch surfaces a clean refusal until parse and apply
--- return in a later prompt. Remove this stub — and restore the real
--- parse body — when the VCDIFF family lands. 'Slap.Detect' still routes
--- the D6 C3 C4 magic to 'FormatVCDIFF', so this is where that lands.
+-- | Build a 'SomePatch' from a parsed VCDIFF patch. Only the CoreOnly
+-- flavor parses today; a patch using any deferred feature is refused by
+-- 'VCDIFF.parseVCDIFF' with a 'VCDIFFFeatureNotYetSupported' error
+-- before this builder runs. CoreOnly windows carry no per-window
+-- Adler32, so verification is empty; the analytical carrier is a
+-- summary only, pending the VCDIFF Describe pass.
 parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromVCDIFF _patchContents = Left VCDIFFReimplementationInProgress
+parseSomePatchFromVCDIFF patchContents = do
+  Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
+  let windows         = vcdiffWindowsOf patch
+      windowCount     = Vector.length windows
+      totalOutputSize = FileSize
+        (Vector.sum (Vector.map (unFileSize . VCDIFF.windowTargetSize) windows))
+  Right SomePatch
+    { patchFormat       = LabelVCDIFF
+    , patchAnalysis     = PatchAnalysis
+        { analysisSections = []
+        , analysisSummary  = Summary SummaryInfo
+            { summaryTally = Tally windowCount
+            , summaryUnit  = Windows
+            , summaryBytes = Just (TotalOutputBytes totalOutputSize)
+            }
+        }
+    , patchKind         = Differential
+    , patchApply        = ApplyStrategy
+        { runApply = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
+    , patchUndo         = Nothing
+    , patchVerification = noVerification
+    , patchAdvisories   = parseAdvisories
+                        ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
+    , patchInfo         = PatchInfo
+        { infoFormat = FormatHeader LabelVCDIFF Nothing
+        , infoLines  = []
+        , infoTally  = Tally windowCount
+        , infoUnit   = Windows
+        , infoBytes  = Just (TotalOutputBytes totalOutputSize)
+        , infoRange  = Nothing
+        }
+    , patchSourceAdvisories = []
+    , patchMetadata     = Nothing
+    , patchExtractedMeta = noMetadataRequested
+    }
+
+-- | The window list of a parsed VCDIFF patch, regardless of flavor.
+-- Only 'VCDIFF.PatchCoreOnly' is produced today; the other arms keep
+-- the projection total against the flavors still to land.
+vcdiffWindowsOf :: VCDIFF.VCDIFFPatch -> Vector.Vector VCDIFF.Window
+vcdiffWindowsOf vcdiffPatch = case vcdiffPatch of
+  VCDIFF.PatchCoreOnly windows       -> windows
+  VCDIFF.PatchRFC      _ windows     -> windows
+  VCDIFF.PatchXDelta3  _ xdelta3Windows -> fmap VCDIFF.xdelta3WindowBody xdelta3Windows
 
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but

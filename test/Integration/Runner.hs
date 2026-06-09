@@ -39,6 +39,7 @@ import Integration.Skip
   , renderSkipSummary
   )
 import Integration.Undo (undoTests)
+import Integration.VCDIFFApply (vcdiffApplyTests)
 import Integration.XDelta1Names (xdelta1NamesTests)
 
 import System.Environment (setEnv)
@@ -73,6 +74,7 @@ runIntegrationSuite tier = do
     , undoTests tier
     , cliTests tier
     , failureModeTests tier getTargets
+    , vcdiffApplyTests tier
     , xdelta1NamesTests
     ]
 

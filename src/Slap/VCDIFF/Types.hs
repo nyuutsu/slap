@@ -20,6 +20,7 @@ module Slap.VCDIFF.Types
   , VCDIFFInstruction(..)
   , SourceSegment(..)
   , SegmentOrigin(..)
+  , vcdiffMagicBytes
   ) where
 
 import Slap.Measure (Offset, Length, FileSize)
@@ -28,7 +29,15 @@ import Slap.VCDIFF.CodeTable (CodeTable)
 
 import Data.Vector (Vector)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
+
+-- | VCDIFF's identity magic: the three bytes @D6 C3 C4@ (ASCII @V@ @C@
+-- @D@ with the high bit set), at the very start of every patch
+-- (docs/vcdiff/core/spec.md "Identity"). 'Slap.Detect' matches on it
+-- to route a patch to the VCDIFF family.
+vcdiffMagicBytes :: ByteString
+vcdiffMagicBytes = ByteString.pack [0xD6, 0xC3, 0xC4]
 
 -- | A parsed VCDIFF patch, named for which of the three things it
 -- honestly is. The flavor is not a styling choice layered over one
@@ -96,12 +105,15 @@ data Window = Window
 -- so far).
 --
 -- 'Copy' has a single offset, not a source\/target split — unlike
--- BPS's two copy opcodes. VCDIFF addresses one flat space: a copy may
--- read from the source segment, from the produced target, or straddle
--- the boundary, and apply reads it byte by byte through @U@. The
--- address mode and cache that compactly encoded that offset on the wire
--- are encoding detail, discarded at decode; the decoded absolute
--- offset is the fact that remains.
+-- BPS's two copy opcodes. VCDIFF addresses one flat space: a copy
+-- reads either from the source segment or from the produced target
+-- (the latter including the self-referential overlap where the read
+-- trails the write, the run-length case), and apply reads it byte by
+-- byte through @U@. A copy that crosses the segment boundary is
+-- malformed (core invariant 2), so the two cases never mix within one
+-- copy. The address mode and cache that compactly encoded that offset
+-- on the wire are encoding detail, discarded at decode; the decoded
+-- absolute offset is the fact that remains.
 data VCDIFFInstruction
   = Add  !ByteString
   | Run  !Length !Word8

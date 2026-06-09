@@ -55,6 +55,10 @@ module Slap.Status
   , XDelta1ShapeViolation(..)
   , VCDIFFShapeViolation(..)
   , VCDIFFCodeTableMalformation(..)
+  , VCDIFFUnsupportedFeature(..)
+  , VCDIFFMalformation(..)
+  , VCDIFFIndicatorKind(..)
+  , VCDIFFSection(..)
   , BSDiffHeaderMalformation(..)
   , APSN64HeaderMalformation(..)
   , NINJA1Malformation(..)
@@ -564,12 +568,25 @@ data SlapError
   -- which runs outside the byte parser.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
-  -- | SCAFFOLDING: VCDIFF is mid-reimplementation. Its format modules
-  -- were deleted to be rebuilt from the specs under @docs\/vcdiff\/@; a
-  -- detected VCDIFF patch surfaces this refusal until parse and apply
-  -- return in a later prompt. Remove this constructor when the VCDIFF
-  -- family lands. Raised by 'Slap.SomePatch.parseSomePatchFromVCDIFF'.
-  | VCDIFFReimplementationInProgress
+  -- | A VCDIFF patch uses a feature outside the CoreOnly subset slap
+  -- currently decodes. The engine landed flavor by flavor: the core
+  -- (default code table, no checksums, no application data, no
+  -- secondary compression) reads now, and a patch reaching past it is
+  -- refused cleanly — naming the feature — rather than mishandled. The
+  -- 'VCDIFFUnsupportedFeature' says which feature; as the flavors land,
+  -- arms graduate out of it. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  | VCDIFFFeatureNotYetSupported VCDIFFUnsupportedFeature
+
+  -- | A VCDIFF patch's wire bytes parsed but disagree with the core
+  -- semantics slap enforces: a malformed indicator byte, a core
+  -- invariant violated (a COPY reading unwritten output or crossing
+  -- the source-segment boundary, a window that does not fill to its
+  -- declared size), or a section that runs short of what its
+  -- instructions demand. The 'VCDIFFMalformation' names the specific
+  -- failure. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF' after the
+  -- byte-level walk, the way 'UnsupportedVCDIFFShape' validates window
+  -- shape; these are loud refusals, never a substituted zero.
+  | MalformedVCDIFF VCDIFFMalformation
 
   -- | A BSDiff patch's fixed-width header decoded with at least one
   -- of the three size fields as negative. The 'BSDiffHeaderMalformation'
@@ -1520,8 +1537,43 @@ renderSlapError (UnsupportedVCDIFFShape violation) =
     VCDIFFSecondaryCompressionUnsupportedInDataSections ->
       "secondary compression in data sections is not supported"
 
-renderSlapError VCDIFFReimplementationInProgress =
-  formatLabelName LabelVCDIFF <> " support is being reimplemented and is temporarily unavailable"
+renderSlapError (VCDIFFFeatureNotYetSupported feature) =
+  formatLabelName LabelVCDIFF <> ": " <> case feature of
+    VCDIFFSecondaryCompressor ->
+      "secondary compression is not supported yet"
+    VCDIFFCustomCodeTable ->
+      "custom code tables are not supported yet"
+    VCDIFFApplicationHeader ->
+      "application-header data is not supported yet"
+    VCDIFFTargetWindow ->
+      "VCD_TARGET windows are not supported yet"
+    VCDIFFPerWindowChecksum ->
+      "per-window Adler32 checksums are not supported yet"
+    VCDIFFSecondaryCompressedSection ->
+      "secondary-compressed sections are not supported yet"
+
+renderSlapError (MalformedVCDIFF malformation) =
+  formatLabelName LabelVCDIFF <> ": " <> case malformation of
+    VCDIFFUnknownIndicatorBits indicatorKind rawByte ->
+      "unrecognized bits in " <> indicatorKindName indicatorKind
+      <> " (0x" <> padHex 2 rawByte <> ")"
+    VCDIFFBothSourceAndTargetWindowBits ->
+      "window sets both VCD_SOURCE and VCD_TARGET (RFC 3284 §4.2 forbids both)"
+    VCDIFFCopyAddressOutOfRange actionIndex (ActualOffset address) (MaxOffset here) ->
+      "instruction " <> renderAsText (unActionIndex actionIndex)
+      <> ": copy address " <> renderAsText (unOffset address)
+      <> " out of range [0, " <> renderAsText (unOffset here) <> ")"
+    VCDIFFCopyCrossesSourceSegmentEnd actionIndex ->
+      "instruction " <> renderAsText (unActionIndex actionIndex)
+      <> ": copy crosses the source-segment boundary"
+    VCDIFFWindowSizeMismatch (ExpectedSize expected) (ActualSize actual) ->
+      "window produced " <> renderAsText (unFileSize actual)
+      <> " bytes, declared " <> renderAsText (unFileSize expected)
+    VCDIFFSectionExhausted section actionIndex ->
+      "instruction " <> renderAsText (unActionIndex actionIndex)
+      <> ": " <> vcdiffSectionName section <> " section exhausted"
+    VCDIFFInvalidCopyAddressMode modeByte ->
+      "invalid copy address mode " <> renderAsText modeByte
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
@@ -2160,6 +2212,75 @@ data VCDIFFCodeTableMalformation
   -- it must begin with.
   | VCDIFFCodeTableHeaderTooShort
   deriving (Eq, Show)
+
+-- | A VCDIFF feature outside the CoreOnly subset slap currently
+-- decodes, carried by 'VCDIFFFeatureNotYetSupported'. Each names a
+-- wire feature the engine refuses for now rather than mishandles; the
+-- parenthetical says which arc it belongs to. As the RFC and xdelta3
+-- flavors land, arms graduate out of here.
+data VCDIFFUnsupportedFeature
+  = VCDIFFSecondaryCompressor         -- ^ Hdr_Indicator VCD_DECOMPRESS: a secondary compressor is declared.
+  | VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
+  | VCDIFFApplicationHeader           -- ^ Hdr_Indicator VCD_APPHEADER: application data (xdelta3-arc).
+  | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
+  | VCDIFFPerWindowChecksum           -- ^ Win_Indicator VCD_ADLER32: a per-window Adler32 (xdelta3-arc).
+  | VCDIFFSecondaryCompressedSection  -- ^ Delta_Indicator marks a data/inst/addr section secondary-compressed.
+  deriving (Eq, Show)
+
+-- | A core-semantics failure in a VCDIFF patch that parsed at the byte
+-- level, carried by 'MalformedVCDIFF'. These are the loud refusals the
+-- core invariants demand (docs/vcdiff/core/spec.md "Core invariants"):
+-- a malformed indicator byte, a COPY that reads unwritten output or
+-- crosses the source-segment boundary, a window that does not fill to
+-- its declared size, an oversize section reference, or an address mode
+-- the table cannot name.
+data VCDIFFMalformation
+  -- | An indicator byte set bits slap does not recognize. The
+  -- 'VCDIFFIndicatorKind' says which of the three indicators, and the
+  -- 'Word8' is the offending byte.
+  = VCDIFFUnknownIndicatorBits !VCDIFFIndicatorKind !Word8
+  -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which
+  -- RFC 3284 §4.2 forbids.
+  | VCDIFFBothSourceAndTargetWindowBits
+  -- | Core invariant 1: a COPY address must point strictly inside the
+  -- already-produced superstring. The 'ActualOffset' is the decoded
+  -- address; the 'MaxOffset' is @here@ (the current write position in
+  -- the superstring), so the valid range is @[0, here)@.
+  | VCDIFFCopyAddressOutOfRange !ActionIndex !ActualOffset !MaxOffset
+  -- | Core invariant 2: a COPY that begins inside the source segment
+  -- must not run past its end.
+  | VCDIFFCopyCrossesSourceSegmentEnd !ActionIndex
+  -- | Core invariant 3: a window's instructions must produce exactly
+  -- its declared target size. The 'ExpectedSize' is the declared size;
+  -- the 'ActualSize' is what the instructions produced.
+  | VCDIFFWindowSizeMismatch !ExpectedSize !ActualSize
+  -- | An instruction demanded more bytes than its 'VCDIFFSection'
+  -- holds — the data, instruction, or address section ran short.
+  | VCDIFFSectionExhausted !VCDIFFSection !ActionIndex
+  -- | A COPY's code-table entry named an address mode outside the
+  -- range the cache configuration defines. The 'Word8' is the mode.
+  | VCDIFFInvalidCopyAddressMode !Word8
+  deriving (Eq, Show)
+
+-- | Which of a VCDIFF patch's three indicator bytes carried an
+-- unrecognized bit (see 'VCDIFFUnknownIndicatorBits').
+data VCDIFFIndicatorKind = HeaderIndicator | WindowIndicator | DeltaIndicator
+  deriving (Eq, Show)
+
+-- | One of a VCDIFF window's three data sections (see
+-- 'VCDIFFSectionExhausted').
+data VCDIFFSection = VCDIFFDataSection | VCDIFFInstructionSection | VCDIFFAddressSection
+  deriving (Eq, Show)
+
+indicatorKindName :: VCDIFFIndicatorKind -> Text
+indicatorKindName HeaderIndicator = "header indicator"
+indicatorKindName WindowIndicator = "window indicator"
+indicatorKindName DeltaIndicator  = "delta indicator"
+
+vcdiffSectionName :: VCDIFFSection -> Text
+vcdiffSectionName VCDIFFDataSection        = "data"
+vcdiffSectionName VCDIFFInstructionSection = "instruction"
+vcdiffSectionName VCDIFFAddressSection     = "address"
 
 -- | The structural failures slap raises when validating a BSDiff
 -- fixed-width header. The three 'Int64' fields are the
