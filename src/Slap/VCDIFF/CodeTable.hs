@@ -1,5 +1,3 @@
-{-# LANGUAGE StrictData #-}
-
 -- | The VCDIFF code table: the 256-entry structure that maps each byte
 -- of a window's instruction stream to one or two delta instructions.
 --
@@ -20,8 +18,8 @@
 -- Spec: @docs\/vcdiff\/core\/spec.md@, "Instructions" and "The default
 -- code table"; the serialized layout is @docs\/vcdiff\/rfc-vcdiff\/spec.md@.
 module Slap.VCDIFF.CodeTable
-  ( -- * The instruction vocabulary
-    Instruction(..)
+  ( -- * The instruction-template vocabulary
+    InstructionTemplate(..)
   , InstructionSize(..)
   , FixedInstructionSize(..)
   , CopyAddressMode(..)
@@ -46,11 +44,15 @@ import qualified Data.Vector as Vector
 import Data.Word (Word8)
 
 ----------------------------------------------------------------------------
--- The instruction vocabulary
+-- The instruction-template vocabulary
 ----------------------------------------------------------------------------
 
--- | One delta instruction as it lives in a code-table entry: its type,
--- its size, and — for COPY alone — its address mode. The type is the
+-- | One instruction as the code table /templates/ it: a type, a
+-- possibly-deferred size, and — for COPY alone — an address-mode
+-- selector. This is not yet a concrete delta instruction; the size may
+-- still be coded separately and the address mode still has to be
+-- decoded against the address cache. Decode instantiates a template
+-- into a 'Slap.VCDIFF.Types.VCDIFFInstruction'. The type is the
 -- constructor, never a numeric code; the wire codes (NOOP=0, ADD=1,
 -- RUN=2, COPY=3) are facts of serialization, mapped only at the
 -- 'serializeCodeTable' / 'deserializeCodeTable' boundary.
@@ -62,11 +64,11 @@ import Data.Word (Word8)
 -- and only 'Copy' carries an address mode. The spec's "a zero mode
 -- applies to non-COPY instructions" is then not a convention to
 -- remember but a state that cannot be built.
-data Instruction
+data InstructionTemplate
   = Noop
-  | Add  InstructionSize
-  | Run  InstructionSize
-  | Copy InstructionSize CopyAddressMode
+  | Add  !InstructionSize
+  | Run  !InstructionSize
+  | Copy !InstructionSize !CopyAddressMode
   deriving (Eq, Show)
 
 -- | An instruction's size, as the code table holds it. The spec lets a
@@ -77,7 +79,7 @@ data Instruction
 -- says what the zero means at every site that matches on it.
 data InstructionSize
   = SizeCodedSeparately
-  | SizeIs FixedInstructionSize
+  | SizeIs !FixedInstructionSize
   deriving (Eq, Show)
 
 -- | A size fixed inline in the code table: 1–255 on the wire (a zero
@@ -101,12 +103,12 @@ newtype CopyAddressMode = CopyAddressMode { unCopyAddressMode :: Word8 }
 -- The table
 ----------------------------------------------------------------------------
 
--- | One code-table entry: the one or two instructions a single
--- instruction-stream byte expands to. A 'Noop' in 'secondInstruction'
--- marks the entry as encoding a single instruction.
+-- | One code-table entry: the one or two instruction templates a
+-- single instruction-stream byte expands to. A 'Noop' in
+-- 'secondInstruction' marks the entry as encoding a single instruction.
 data CodeTableEntry = CodeTableEntry
-  { firstInstruction  :: Instruction
-  , secondInstruction :: Instruction
+  { firstInstruction  :: !InstructionTemplate
+  , secondInstruction :: !InstructionTemplate
   }
   deriving (Eq, Show)
 
@@ -178,10 +180,10 @@ defaultCodeTable = CodeTable (Vector.fromList (concat
       | mode <- [0 .. 8]
       ]
 
-    single :: Instruction -> CodeTableEntry
-    single instruction = CodeTableEntry instruction Noop
+    single :: InstructionTemplate -> CodeTableEntry
+    single template = CodeTableEntry template Noop
 
-    paired :: Instruction -> Instruction -> CodeTableEntry
+    paired :: InstructionTemplate -> InstructionTemplate -> CodeTableEntry
     paired = CodeTableEntry
 
     sized :: Word8 -> InstructionSize
@@ -239,12 +241,12 @@ deserializeCodeTable image
 
     decodeEntryAt index =
       CodeTableEntry
-        <$> decodeInstruction (ByteString.index firstTypes index)
-                              (ByteString.index firstSizes index)
-                              (ByteString.index firstModes index)
-        <*> decodeInstruction (ByteString.index secondTypes index)
-                              (ByteString.index secondSizes index)
-                              (ByteString.index secondModes index)
+        <$> decodeInstructionTemplate (ByteString.index firstTypes index)
+                                      (ByteString.index firstSizes index)
+                                      (ByteString.index firstModes index)
+        <*> decodeInstructionTemplate (ByteString.index secondTypes index)
+                                      (ByteString.index secondSizes index)
+                                      (ByteString.index secondModes index)
 
 -- The wire codes for the four instruction types. These three literals
 -- are the entire numeric vocabulary of the code table; they live at the
@@ -255,19 +257,19 @@ addWireCode  = 1
 runWireCode  = 2
 copyWireCode = 3
 
-wireType :: Instruction -> Word8
+wireType :: InstructionTemplate -> Word8
 wireType Noop       = noopWireCode
 wireType (Add _)    = addWireCode
 wireType (Run _)    = runWireCode
 wireType (Copy _ _) = copyWireCode
 
-wireSize :: Instruction -> Word8
+wireSize :: InstructionTemplate -> Word8
 wireSize Noop          = 0
 wireSize (Add size)    = sizeWireByte size
 wireSize (Run size)    = sizeWireByte size
 wireSize (Copy size _) = sizeWireByte size
 
-wireMode :: Instruction -> Word8
+wireMode :: InstructionTemplate -> Word8
 wireMode Noop                          = 0
 wireMode (Add _)                       = 0
 wireMode (Run _)                       = 0
@@ -277,12 +279,12 @@ sizeWireByte :: InstructionSize -> Word8
 sizeWireByte SizeCodedSeparately                       = 0
 sizeWireByte (SizeIs (FixedInstructionSize fixedSize)) = fixedSize
 
--- | Reconstruct one instruction from its three wire bytes. The type
--- byte is the only one that can be structurally invalid; a size of
--- zero means 'SizeCodedSeparately', and the mode byte is meaningful
--- only for COPY.
-decodeInstruction :: Word8 -> Word8 -> Word8 -> Either SlapError Instruction
-decodeInstruction typeByte sizeByte modeByte
+-- | Reconstruct one instruction template from its three wire bytes.
+-- The type byte is the only one that can be structurally invalid; a
+-- size of zero means 'SizeCodedSeparately', and the mode byte is
+-- meaningful only for COPY.
+decodeInstructionTemplate :: Word8 -> Word8 -> Word8 -> Either SlapError InstructionTemplate
+decodeInstructionTemplate typeByte sizeByte modeByte
   | typeByte == noopWireCode = Right Noop
   | typeByte == addWireCode  = Right (Add (decodeSize sizeByte))
   | typeByte == runWireCode  = Right (Run (decodeSize sizeByte))

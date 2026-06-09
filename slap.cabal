@@ -105,6 +105,7 @@ library slap-internal
     , Slap.UPS.Parse
     , Slap.UPS.Types
     , Slap.VCDIFF.CodeTable
+    , Slap.VCDIFF.Types
     , Slap.XDelta1.Apply
     , Slap.XDelta1.Create
     , Slap.XDelta1.Describe

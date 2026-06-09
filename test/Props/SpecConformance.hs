@@ -44,7 +44,7 @@ import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
 import Slap.UPS.Types (UPSPatch(..))
-import Slap.VCDIFF.CodeTable (CodeTableEntry(..), Instruction(..),
+import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
                              InstructionSize(..), FixedInstructionSize(..),
                              CopyAddressMode(..), codeTableEntries,
                              defaultCodeTable, serializeCodeTable,
