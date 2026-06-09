@@ -44,6 +44,11 @@ import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
 import Slap.UPS.Parse (parseUPS)
 import Slap.UPS.Types (UPSPatch(..))
+import Slap.VCDIFF.CodeTable (CodeTableEntry(..), Instruction(..),
+                             InstructionSize(..), FixedInstructionSize(..),
+                             CopyAddressMode(..), codeTableEntries,
+                             defaultCodeTable, serializeCodeTable,
+                             deserializeCodeTable)
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -124,6 +129,34 @@ specConformanceTests = testGroup "SpecConformance"
               [ testCase "overlong-small-value-decodes-and-flags-fyi"
                   test_vcdiffOverlongRaisesFYI
               ]
+          ]
+      ]
+  , testGroup "VCDIFF"
+      [ testGroup "code-table"
+          [ testCase "default-table-serializes-to-1536-bytes"
+              codeTableSerializedLength
+          , testCase "deserialize-inverts-serialize"
+              codeTableRoundTrip
+          , testCase "entry-0-is-run-size-coded-separately"
+              (codeTableEntryIs 0
+                 (CodeTableEntry (Run SizeCodedSeparately) Noop))
+          , testCase "entry-1-is-add-size-coded-separately"
+              (codeTableEntryIs 1
+                 (CodeTableEntry (Add SizeCodedSeparately) Noop))
+          , testCase "entry-2-is-add-size-1"
+              (codeTableEntryIs 2
+                 (CodeTableEntry (Add (fixedSize 1)) Noop))
+          , testCase "entry-19-is-copy-mode-0-size-coded-separately"
+              (codeTableEntryIs 19
+                 (CodeTableEntry (Copy SizeCodedSeparately (CopyAddressMode 0)) Noop))
+          , testCase "entry-163-is-add-1-then-copy-4-mode-0"
+              (codeTableEntryIs 163
+                 (CodeTableEntry (Add (fixedSize 1))
+                                 (Copy (fixedSize 4) (CopyAddressMode 0))))
+          , testCase "entry-247-is-copy-4-mode-0-then-add-1"
+              (codeTableEntryIs 247
+                 (CodeTableEntry (Copy (fixedSize 4) (CopyAddressMode 0))
+                                 (Add (fixedSize 1))))
           ]
       ]
   , testGroup "BPS"
@@ -1474,3 +1507,35 @@ apsGbaApplyRecordOffsetPastTarget =
        (\parsed src -> fmap (const ()) (APSGBA.applyAPSGBA parsed src))
        patch source isAbsoluteWritePastTarget
        "record offset past target"
+
+----------------------------------------------------------------------------
+-- VCDIFF code table
+----------------------------------------------------------------------------
+
+-- These tests assert the default code table against the ranges in
+-- docs/vcdiff/core/spec.md. They would pass on "make compiles" alone
+-- if the table were silently wrong, so each entry is checked against
+-- the spec's stated meaning, not against slap's own construction.
+
+fixedSize :: Word8 -> InstructionSize
+fixedSize = SizeIs . FixedInstructionSize
+
+-- | The serialized default table is exactly 1536 bytes (six 256-byte
+-- arrays).
+codeTableSerializedLength :: Assertion
+codeTableSerializedLength =
+  assertEqual "serialized default code table length"
+    1536 (ByteString.length (serializeCodeTable defaultCodeTable))
+
+-- | Reading back a serialized default table reproduces it exactly.
+codeTableRoundTrip :: Assertion
+codeTableRoundTrip =
+  assertEqual "deserialize . serialize is identity on the default table"
+    (Right defaultCodeTable)
+    (deserializeCodeTable (serializeCodeTable defaultCodeTable))
+
+-- | The default table's entry at the given index is the expected pair.
+codeTableEntryIs :: Int -> CodeTableEntry -> Assertion
+codeTableEntryIs index expected =
+  assertEqual ("default code table entry " ++ show index)
+    expected (codeTableEntries defaultCodeTable Vector.! index)

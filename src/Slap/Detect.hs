@@ -23,7 +23,6 @@ import Slap.PPF3.Types (ppf3MagicBytes)
 import Slap.PPF4.Types (ppf4MagicBytes)
 import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(..))
 import Slap.UPS.Types (upsMagicBytes)
-import Slap.VCDIFF.Types (vcdiffMagicBytes)
 
 ----------------------------------------------------------------------------
 -- Magic prefix detection
@@ -75,6 +74,13 @@ magicProbes =
   , FormatProbe (MagicPrefix ppf4MagicBytes)    (PatchDirect       FormatPPF4)
   , FormatProbe (MagicPrefix vcdiffMagicBytes)  (PatchDifferential FormatVCDIFF)
   ]
+
+-- VCDIFF's identity magic: @D6 C3 C4@ (ASCII @V@ @C@ @D@ with the high
+-- bit set), docs/vcdiff/core/spec.md "Identity". Defined locally while
+-- the VCDIFF family is mid-reimplementation; it rejoins a rebuilt
+-- VCDIFF identity module when that family lands.
+vcdiffMagicBytes :: ByteString
+vcdiffMagicBytes = ByteString.pack [0xD6, 0xC3, 0xC4]
 
 probeMatches :: PatchFileContents -> FormatProbe -> Bool
 probeMatches (PatchFileContents fileBytes) probe =

@@ -56,10 +56,6 @@ import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Describe as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.UPS.Types as UPS
-import qualified Slap.VCDIFF.Types as VCDIFF
-import qualified Slap.VCDIFF.Parse as VCDIFF
-import qualified Slap.VCDIFF.Apply as VCDIFF
-import qualified Slap.VCDIFF.Describe as VCDIFF
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
@@ -698,41 +694,14 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
+-- SCAFFOLDING: VCDIFF is mid-reimplementation. Its format modules were
+-- deleted wholesale to be rebuilt from the specs under docs/vcdiff/, so
+-- a detected VCDIFF patch surfaces a clean refusal until parse and apply
+-- return in a later prompt. Remove this stub — and restore the real
+-- parse body — when the VCDIFF family lands. 'Slap.Detect' still routes
+-- the D6 C3 C4 magic to 'FormatVCDIFF', so this is where that lands.
 parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromVCDIFF patchContents = do
-  Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
-  let windows = VCDIFF.vcdiffWindows patch
-      windowOffsets = scanl (+) 0 (map (unFileSize . VCDIFF.vcdiffTargetLength) windows)
-      adlerChecks =
-        [ WindowCheck (Offset windowOffset) (Length (unFileSize (VCDIFF.vcdiffTargetLength window))) checksum
-        | (window, windowOffset) <- zip windows windowOffsets
-        , Just checksum <- [VCDIFF.vcdiffAdler32 window]
-        ]
-  Right SomePatch
-    { patchFormat         = LabelVCDIFF
-    , patchAnalysis       = VCDIFF.analyzeVCDIFF patch
-    , patchKind           = Differential
-    , patchApply          = ApplyStrategy
-        { runApply     = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
-    , patchUndo           = Nothing
-    , patchVerification   = noVerification { verifyWindowAdler32 = adlerChecks }
-    , patchAdvisories       = parseAdvisories
-                            ++ [EmptyPatch LabelVCDIFF EmptyWindows | null windows]
-    , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelVCDIFF (case VCDIFF.vcdiffVersion (VCDIFF.vcdiffHeader patch) of
-                                                   VCDIFF.VCDIFFXDelta3  -> Just " (xdelta3)"
-                                                   VCDIFF.VCDIFFStandard -> Nothing)
-        , infoLines  = VCDIFF.vcdiffMeta patch
-        , infoTally  = Tally (length windows)
-        , infoUnit   = Windows
-        , infoBytes  = Just (TotalOutputBytes (FileSize
-            (sum (map (unFileSize . VCDIFF.vcdiffTargetLength) windows))))
-        , infoRange  = Nothing
-        }
-    , patchSourceAdvisories    = []
-    , patchMetadata       = Nothing
-    , patchExtractedMeta  = noMetadataRequested
-    }
+parseSomePatchFromVCDIFF _patchContents = Left VCDIFFReimplementationInProgress
 
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but

@@ -560,10 +560,16 @@ data SlapError
   -- decoded table bytes were not exactly 1536 bytes long, contained
   -- a byte that did not decode to a valid instruction type, or were
   -- too short to even contain the 2-byte near\/same-cache-size
-  -- header. Surfaced from 'Slap.VCDIFF.Types.decodeCustomTable' and
-  -- 'deserializeCodeTable', both of which run outside the byte
-  -- parser.
+  -- header. Surfaced from 'Slap.VCDIFF.CodeTable.deserializeCodeTable',
+  -- which runs outside the byte parser.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
+
+  -- | SCAFFOLDING: VCDIFF is mid-reimplementation. Its format modules
+  -- were deleted to be rebuilt from the specs under @docs\/vcdiff\/@; a
+  -- detected VCDIFF patch surfaces this refusal until parse and apply
+  -- return in a later prompt. Remove this constructor when the VCDIFF
+  -- family lands. Raised by 'Slap.SomePatch.parseSomePatchFromVCDIFF'.
+  | VCDIFFReimplementationInProgress
 
   -- | A BSDiff patch's fixed-width header decoded with at least one
   -- of the three size fields as negative. The 'BSDiffHeaderMalformation'
@@ -1514,6 +1520,9 @@ renderSlapError (UnsupportedVCDIFFShape violation) =
     VCDIFFSecondaryCompressionUnsupportedInDataSections ->
       "secondary compression in data sections is not supported"
 
+renderSlapError VCDIFFReimplementationInProgress =
+  formatLabelName LabelVCDIFF <> " support is being reimplemented and is temporarily unavailable"
+
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
     VCDIFFCodeTableWrongLength (ActualLength (Length actualLength)) ->
@@ -2134,9 +2143,8 @@ data VCDIFFShapeViolation
 
 -- | The structural failures slap raises when decoding a VCDIFF
 -- custom code table. Validated outside the byte parser by
--- 'Slap.VCDIFF.Types.decodeCustomTable' and 'deserializeCodeTable',
--- both of which receive a bytestring slice and return
--- 'Either SlapError ...' directly.
+-- 'Slap.VCDIFF.CodeTable.deserializeCodeTable', which receives a
+-- bytestring slice and returns 'Either SlapError ...' directly.
 data VCDIFFCodeTableMalformation
   -- | The serialized code-table bytes did not have the spec-
   -- mandated 1536-byte width (six 256-entry slices: types1,
@@ -2144,8 +2152,8 @@ data VCDIFFCodeTableMalformation
   -- carries the observed length.
   = VCDIFFCodeTableWrongLength !ActualLength
   -- | A byte in the types1 or types2 slice did not decode to a
-  -- valid 'VCDIFFInstruction' type tag (Noop=0, Add=1, Run=2,
-  -- Copy=3). The 'Word8' is the offending byte value.
+  -- valid instruction type tag (Noop=0, Add=1, Run=2, Copy=3).
+  -- The 'Word8' is the offending byte value.
   | VCDIFFCodeTableInvalidInstructionType !Word8
   -- | The custom-code-table data section was shorter than the
   -- 2-byte header (near-cache size byte, same-cache size byte)

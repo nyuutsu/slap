@@ -60,6 +60,8 @@ GDIFF    | test/data/dm4y/patch.gdiff     | converted | javaxdelta
 
 The fourth column names the tool or project that produced the patch.
 
+VCDIFF suite coverage is paused while the format is being reimplemented; its rows return when the rewrite lands.
+
 # Footnotes
 
 [^somehow]: dm4y's output state is a development build of my dm4 translation hack. Stadium 2's output state (which probably is not bootable; I haven't checked) is just the base game with some swaps, copies, transforms, etc done in a mostly clustered way.

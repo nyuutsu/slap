@@ -110,7 +110,6 @@ failureModeTests tier getTargets = do
       dm4yUps      = repo </> "test/data/dm4y/patch.ups"
       dm4yRup      = repo </> "test/data/dm4y/patch.rup"
       dm4yXdelta1  = repo </> "test/data/dm4y/patch.xdelta1"
-      dm4yVcdiff   = repo </> "test/data/dm4y/patch.vcdiff"
       fftaBase     = repo </> "test/data/ffta/base.gba"
       fftaAps      = repo </> "test/data/ffta/ffta-x.aps"
       stadium2Base       = repo </> "test/data/stadium2/base.z64"
@@ -140,7 +139,7 @@ failureModeTests tier getTargets = do
         requireFixture dm4yBase $ \_ ->
           pure (map WillRun
                   (wrongSourceTests dm4yBase dm4yBps dm4yUps
-                                    dm4yRup dm4yXdelta1 dm4yVcdiff))
+                                    dm4yRup dm4yXdelta1))
     , requireSlapBinary $ \_ ->
         requireFixture dm4yBase $ \_ ->
           requireFixture fftaBase $ \_ ->
@@ -170,8 +169,8 @@ failureModeTests tier getTargets = do
 -- With --no-verify: succeeds with a warning (test checks exit code,
 -- output pattern, and that "warning" appears in the output).
 wrongSourceTests :: FilePath -> FilePath -> FilePath
-                 -> FilePath -> FilePath -> FilePath -> [TestTree]
-wrongSourceTests base bps ups rup xdelta1 vcdiff =
+                 -> FilePath -> FilePath -> [TestTree]
+wrongSourceTests base bps ups rup xdelta1 =
   -- BPS: CRC32 source verification
   [ testCase "wrong-source/BPS rejects" $
       withTempFile "slap-wrong" $ \wrong ->
@@ -240,22 +239,9 @@ wrongSourceTests base bps ups rup xdelta1 vcdiff =
         expectOkWithWarning ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
-  -- VCDIFF: Adler32 per-window verification
-  , testCase "wrong-source/VCDIFF rejects" $
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        writeGarbage wrong (4 * 1024 * 1024)
-        removeIfExists out
-        expectFail ["apply", vcdiff, wrong, "-o", out]
-          "wrong-source/VCDIFF" "mismatch"
-
-  , testCase "wrong-source/VCDIFF --no-verify proceeds" $
-      withTempFile "slap-wrong" $ \wrong ->
-      withTempFile "slap-out" $ \out -> do
-        writeGarbage wrong (4 * 1024 * 1024)
-        removeIfExists out
-        expectOkWithWarning ["apply", vcdiff, wrong, "-o", out, "--no-verify"]
-          "wrong-source/VCDIFF --no-verify" "applied"
+  -- VCDIFF's wrong-source pair (Adler32 per-window verification)
+  -- returns when the VCDIFF family is rebuilt; the format is currently
+  -- mid-reimplementation and apply is stubbed out.
 
   -- Swapped ROM: apply dm4y BPS patch to dm4y base (which IS the right source)
   -- then try applying it to the PATCHED output — verification should fail
