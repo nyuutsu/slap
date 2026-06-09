@@ -183,6 +183,7 @@ test-suite props
                   , Props.JSON
                   , Props.Narrow
                   , Props.ParseWarnings
+                  , Props.ResolveCopyAddress
                   , Props.RoundTrip
                   , Props.SpecConformance
                   , Props.Text

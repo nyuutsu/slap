@@ -25,7 +25,7 @@ import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
-                   renderByteParserError, VCDIFFMalformation(..))
+                   renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -50,7 +50,7 @@ import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
                              defaultCodeTable, serializeCodeTable,
                              deserializeCodeTable)
 import Slap.VCDIFF.Parse (parseVCDIFF, decodeCopyAddress, freshAddressCache,
-                          nearCacheSize, AddressCache)
+                          nearCacheSize, AddressCache, CopyAddressReading(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 
 import Data.Bits (shiftL, (.|.))
@@ -161,9 +161,19 @@ specConformanceTests = testGroup "SpecConformance"
                  (CodeTableEntry (Copy (fixedSize 4) (CopyAddressMode 0))
                                  (Add (fixedSize 1))))
           ]
+      , testGroup "indicator-bits"
+          [ testCase "reserved-header-bit-declined-as-uninterpretable"
+              test_vcdiffReservedHeaderBitDeclined
+          , testCase "reserved-window-bit-declined-as-uninterpretable"
+              test_vcdiffReservedWindowBitDeclined
+          , testCase "both-source-and-target-still-malformed"
+              test_vcdiffBothSourceBitsStillMalformed
+          ]
       , testGroup "core-engine"
           [ testCase "self-referential-copy-expands-run-length"
               test_vcdiffSelfReferentialCopy
+          , testCase "self-referential-copy-distance-two-expands-forward"
+              test_vcdiffForwardExpansionCopy
           , testCase "copy-address-at-or-past-here-rejected"
               test_vcdiffCopyAddressOutOfRange
           , testCase "copy-crossing-source-segment-end-rejected"
@@ -1579,6 +1589,56 @@ vcdiffPatch :: [Word8] -> PatchFileContents
 vcdiffPatch windowBytes =
   PatchFileContents (ByteString.pack ([0xD6, 0xC3, 0xC4, 0x00, 0x00] ++ windowBytes))
 
+-- | A header indicator with a reserved bit (bit 3) set. slap cannot
+-- interpret a bit the core leaves undefined, so the patch is declined
+-- as unreadable ('VCDIFFReservedIndicatorBits') — not called
+-- malformed, because slap has no grounds to say a future-dialect
+-- patch is broken.
+test_vcdiffReservedHeaderBitDeclined :: Assertion
+test_vcdiffReservedHeaderBitDeclined =
+  case parseVCDIFF patch of
+    Left (VCDIFFReservedIndicatorBits HeaderIndicator 0x08) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFReservedIndicatorBits, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the reserved header bit to be declined"
+  where
+    -- magic | version 00 | header indicator 0x08 (reserved bit 3)
+    patch = PatchFileContents (ByteString.pack [0xD6, 0xC3, 0xC4, 0x00, 0x08])
+
+-- | A window indicator with a reserved bit (bit 3) set, on a window
+-- that is otherwise well-formed (one ADD filling its one-byte
+-- target). Same decline as the header case; the window framing still
+-- parses, the classification declines.
+test_vcdiffReservedWindowBitDeclined :: Assertion
+test_vcdiffReservedWindowBitDeclined =
+  case parseVCDIFF patch of
+    Left (VCDIFFReservedIndicatorBits WindowIndicator 0x08) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFReservedIndicatorBits, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the reserved window bit to be declined"
+  where
+    -- win 0x08 (reserved bit 3) | deltaEncLen 06 | target 01 | deltaInd 00
+    --   | A 01 I 01 C 00 | data "A" | inst [ADD1]
+    patch = vcdiffPatch [0x08, 0x06, 0x01, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
+
+-- | Both VCD_SOURCE and VCD_TARGET set: still 'MalformedVCDIFF'. slap
+-- understands exactly what both bits claim, and RFC 3284 §4.2 forbids
+-- the combination — understood-and-broken stays malformed; only the
+-- uninterpretable reserved bits moved out.
+test_vcdiffBothSourceBitsStillMalformed :: Assertion
+test_vcdiffBothSourceBitsStillMalformed =
+  case parseVCDIFF patch of
+    Left (MalformedVCDIFF VCDIFFBothSourceAndTargetWindowBits) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFBothSourceAndTargetWindowBits, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the both-source window to be refused"
+  where
+    -- win 0x03 (VCD_SOURCE + VCD_TARGET) | segLen 04 segPos 00
+    --   | deltaEncLen 06 | target 04 | deltaInd 00 | A 00 I 01 C 01
+    --   | inst [COPY mode0 size4] | addr [0]
+    patch = vcdiffPatch
+      [0x03, 0x04, 0x00, 0x06, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
+
 -- | A self-contained window that writes one byte then COPYs four bytes
 -- from address 0 — a read that trails the write, so it expands the
 -- single byte into a five-byte run.
@@ -1596,6 +1656,26 @@ test_vcdiffSelfReferentialCopy =
     --   | data "A" | inst [ADD1, COPY mode0 size4] | addr [0]
     patch = vcdiffPatch
       [0x00, 0x09, 0x05, 0x00, 0x01, 0x02, 0x01, 0x41, 0x02, 0x14, 0x00]
+
+-- | A window that writes two bytes then COPYs four from address 0 — a
+-- read two bytes behind the write head, so the expansion must proceed
+-- byte by byte (a one-byte memset here would produce "ABBBBB"). Pins
+-- the forward-expansion shape end-to-end; the distance-one byte-run
+-- shape is pinned by the synthetic above.
+test_vcdiffForwardExpansionCopy :: Assertion
+test_vcdiffForwardExpansionCopy =
+  case parseVCDIFF patch of
+    Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+    Right (Parsed decoded _) ->
+      case applyVCDIFF decoded (InputFileContents ByteString.empty) of
+        Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
+        Right (OutputFileContents output) ->
+          assertEqual "forward expansion" "ABABAB" output
+  where
+    -- win 0x00 | deltaEncLen 0A | target 06 | deltaInd 00 | A 02 I 02 C 01
+    --   | data "AB" | inst [ADD2, COPY mode0 size4] | addr [0]
+    patch = vcdiffPatch
+      [0x00, 0x0A, 0x06, 0x00, 0x02, 0x02, 0x01, 0x41, 0x42, 0x03, 0x14, 0x00]
 
 -- | A first instruction COPYing from address 0 when nothing has been
 -- produced (here = 0): the address is not strictly before the write
@@ -1675,7 +1755,7 @@ test_vcdiffNearCacheRoundRobin = do
                    freshAddressCache [10, 20, 30, 40, 50]
     nearRead cache slot =
       case decodeCopyAddress cache 0 (fromIntegral ((2 :: Int) + slot)) (ByteString.pack [0]) 0 of
-        Right (address, _, _) -> address
+        Right reading -> copyAddressDecoded reading
         Left _ -> error "near-mode decode should not fail"
 
 -- | A SELF-mode decode of 770 writes the same cache at @770 mod 768 = 2@.
@@ -1689,7 +1769,7 @@ test_vcdiffSameCacheModulo =
     seeded = snd (selfSeedBytes freshAddressCache [0x86, 0x02])
     sameRead cache slotByte =
       case decodeCopyAddress cache 0 (fromIntegral (nearCacheSize + 2)) (ByteString.pack [slotByte]) 0 of
-        Right (address, _, _) -> address
+        Right reading -> copyAddressDecoded reading
         Left _ -> error "same-mode decode should not fail"
 
 -- | Seed the caches with a SELF-mode decode of a single-byte varint,
@@ -1701,5 +1781,5 @@ selfSeed cache value = selfSeedBytes cache [value]
 selfSeedBytes :: AddressCache -> [Word8] -> (Int, AddressCache)
 selfSeedBytes cache varintBytes =
   case decodeCopyAddress cache 0 0 (ByteString.pack varintBytes) 0 of
-    Right (address, updatedCache, _) -> (address, updatedCache)
+    Right reading -> (copyAddressDecoded reading, copyAddressCacheAfter reading)
     Left _ -> error "SELF-mode decode should not fail on a well-formed varint"

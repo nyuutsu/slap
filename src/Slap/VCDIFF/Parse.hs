@@ -2,8 +2,9 @@
 -- source-free. Scoped to the CoreOnly subset: the default code table,
 -- no custom table, no application header, no per-window Adler32, no
 -- secondary compression. A patch that reaches past the core is
--- classified and refused cleanly ('VCDIFFFeatureNotYetSupported'),
--- never mishandled.
+-- classified and declined cleanly — a deferred feature as
+-- 'VCDIFFFeatureNotYetSupported', a reserved indicator bit as
+-- 'VCDIFFReservedIndicatorBits' — never mishandled.
 --
 -- Parsing is two passes with one clean seam. 'parseRawPatch' is the
 -- byte-level walk: it reads the header and frames each window into its
@@ -26,6 +27,7 @@ module Slap.VCDIFF.Parse
   , AddressCache(..)
   , freshAddressCache
   , decodeCopyAddress
+  , CopyAddressReading(..)
   , AddressDecodeFailure(..)
   , nearCacheSize
   , sameCacheSize
@@ -51,10 +53,14 @@ import Slap.FileContents (PatchFileContents(..))
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..)
   , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
-  , ActionIndex, actionAtPosition
+  , ActionIndex, firstAction, nextAction
+  , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
   , RequiredLength(..), ActualLength(..), ActualMagic(..)
-  , FoundVersion(..), byteLength )
+  , FoundVersion(..), byteLength, byteFileSize )
 
+import Control.Monad (when, unless)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
 import Data.Bits (testBit, (.&.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -161,7 +167,7 @@ parseRawWindow = do
   -- The per-window checksum, when present, sits between the section
   -- lengths and the data section; read past it so the section slices
   -- frame correctly even though a checksummed window is refused.
-  _adler      <- if hasAdler then Just <$> getBytes (Length 4) else pure Nothing
+  _adler      <- if hasAdler then Just <$> getBytes vcdiffAdler32Length else pure Nothing
   dataSection <- getBytes (Length (fromIntegral dataLength))
   instSection <- getBytes (Length (fromIntegral instLength))
   addrSection <- getBytes (Length (fromIntegral addrLength))
@@ -192,8 +198,16 @@ vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
 vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
 vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
 
+-- | Length of the per-window Adler32 checksum field (xdelta3's
+-- VCD_ADLER32), sitting between the section lengths and the data
+-- section when Win_Indicator bit 2 is set.
+vcdiffAdler32Length :: Length
+vcdiffAdler32Length = Length 4
+
 -- | Mask of the bits each indicator byte leaves undefined in the core.
--- A set bit outside the three the core names is malformed.
+-- A set bit here is reserved for future definition: slap cannot
+-- interpret it, so the patch is declined as unreadable
+-- ('VCDIFFReservedIndicatorBits'), not called malformed.
 reservedIndicatorMask :: Word8
 reservedIndicatorMask = 0xF8
 
@@ -209,7 +223,7 @@ classifyAndDecode rawPatch
   | rawVersion rawPatch /= 0 =
       Left (BadVersion LabelVCDIFF (FoundVersion (rawVersion rawPatch)))
   | headerIndicator .&. reservedIndicatorMask /= 0 =
-      Left (MalformedVCDIFF (VCDIFFUnknownIndicatorBits HeaderIndicator headerIndicator))
+      Left (VCDIFFReservedIndicatorBits HeaderIndicator headerIndicator)
   | testBit headerIndicator vcdDecompressBit =
       Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressor)
   | testBit headerIndicator vcdCodeTableBit =
@@ -226,7 +240,7 @@ classifyAndDecode rawPatch
 classifyWindow :: RawWindow -> Either SlapError Window
 classifyWindow rawWindow
   | windowIndicator .&. reservedIndicatorMask /= 0 =
-      Left (MalformedVCDIFF (VCDIFFUnknownIndicatorBits WindowIndicator windowIndicator))
+      Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator)
   | testBit windowIndicator vcdSourceBit && testBit windowIndicator vcdTargetBit =
       Left (MalformedVCDIFF VCDIFFBothSourceAndTargetWindowBits)
   | rawHasAdler rawWindow =
@@ -234,7 +248,7 @@ classifyWindow rawWindow
   | testBit windowIndicator vcdTargetBit =
       Left (VCDIFFFeatureNotYetSupported VCDIFFTargetWindow)
   | rawDeltaIndicator rawWindow .&. reservedIndicatorMask /= 0 =
-      Left (MalformedVCDIFF (VCDIFFUnknownIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow)))
+      Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow))
   | rawDeltaIndicator rawWindow .&. secondaryCompressionMask /= 0 =
       Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressedSection)
   | otherwise = do
@@ -244,7 +258,7 @@ classifyWindow rawWindow
                            (rawSegmentPosition segment)
                            (rawSegmentLength segment))
             <$> rawSourceSegment rawWindow
-          segmentLength = maybe 0 (unLength . rawSegmentLength) (rawSourceSegment rawWindow)
+          segmentLength = maybe mempty rawSegmentLength (rawSourceSegment rawWindow)
       instructions <- decodeWindowInstructions
                         segmentLength
                         (rawTargetSize rawWindow)
@@ -265,19 +279,105 @@ classifyWindow rawWindow
 -- Instruction-stream decode
 ----------------------------------------------------------------------------
 
--- | Cursors and accumulators threaded through one window's decode. The
--- three sections each carry their own cursor; 'producedBytes' tracks
--- how much of the target this window has emitted, which fixes @here@
--- for the next COPY; 'instructionIndex' numbers the emitted
--- instructions for error reporting.
+-- | Cursors into one window's three sections. Role-wrapped so a
+-- transition meant for one section cannot compile against another —
+-- the same reason 'Slap.BPS.Apply' role-wraps its two relative
+-- cursors — and 'Offset'-backed: each names a byte position in its
+-- section slice, squarely inside 'Offset''s charter of byte positions
+-- in zero-indexed buffers. The walk's byte-level primitives
+-- ('ByteString.index', 'getVcdiffVarint') peel both layers at their
+-- call sites; everywhere else the cursors move only through the
+-- named transitions below.
+newtype InstructionSectionCursor = InstructionSectionCursor Offset
+  deriving (Eq, Ord, Show)
+
+-- | See 'InstructionSectionCursor'.
+newtype DataSectionCursor = DataSectionCursor Offset
+  deriving (Eq, Ord, Show)
+
+-- | See 'InstructionSectionCursor'. The address cursor has no
+-- 'Cursor' instance: it never advances by a stride — the address
+-- kernel returns its absolute post-position, adopted whole by
+-- 'adoptCopyAddressReading'.
+newtype AddressSectionCursor = AddressSectionCursor Offset
+  deriving (Eq, Ord, Show)
+
+instance Cursor InstructionSectionCursor where
+  advance  (InstructionSectionCursor position) stride = InstructionSectionCursor (advance  position stride)
+  displace (InstructionSectionCursor position) delta  = InstructionSectionCursor (displace position delta)
+
+instance Cursor DataSectionCursor where
+  advance  (DataSectionCursor position) stride = DataSectionCursor (advance  position stride)
+  displace (DataSectionCursor position) delta  = DataSectionCursor (displace position delta)
+
+-- | Cursors and accumulators carried through one window's decode by
+-- 'WindowDecode'. The three sections each have their own role-typed
+-- cursor; 'producedBytes' tracks how much of the target this window
+-- has emitted, which fixes @here@ for the next COPY; and
+-- 'instructionIndex' numbers the decoded instructions for error
+-- reporting — deliberately instructions, not instruction-section
+-- bytes: one code byte can carry two instructions, and an inline
+-- size varint widens others, so an error's index counts what the
+-- stream means rather than where it sits.
 data DecodeState = DecodeState
-  { instCursor       :: !Int
-  , dataCursor       :: !Int
-  , addrCursor       :: !Int
+  { instCursor       :: !InstructionSectionCursor
+  , dataCursor       :: !DataSectionCursor
+  , addrCursor       :: !AddressSectionCursor
   , addressCache     :: !AddressCache
-  , producedBytes    :: !Int
-  , instructionIndex :: !Int
+  , producedBytes    :: !Length
+  , instructionIndex :: !ActionIndex
   , emittedReversed  :: ![VCDIFFInstruction]
+  }
+
+-- | The window-decode monad: 'DecodeState' threaded over the same
+-- 'Either' the rest of parse answers in, the way 'Slap.BPS.Apply'
+-- threads its cursors over 'IO'.
+type WindowDecode = StateT DecodeState (Either SlapError)
+
+-- | Refuse the window with a malformation verdict. Every refusal the
+-- instruction walk raises is a 'VCDIFFMalformation'; this is the one
+-- door into the 'Left' lane.
+failDecode :: VCDIFFMalformation -> WindowDecode a
+failDecode = lift . Left . MalformedVCDIFF
+
+-- | Refuse the window: an instruction demanded more bytes than the
+-- named section holds.
+sectionExhausted :: VCDIFFSection -> WindowDecode a
+sectionExhausted section = do
+  failingInstruction <- gets instructionIndex
+  failDecode (VCDIFFSectionExhausted section failingInstruction)
+
+-- | Advance the instruction-section cursor past a consumed code byte
+-- or inline size varint.
+advanceInstCursor :: Length -> DecodeState -> DecodeState
+advanceInstCursor consumed decodeState =
+  decodeState { instCursor = advance (instCursor decodeState) consumed }
+
+-- | Advance the data-section cursor past consumed ADD literal bytes
+-- or a RUN fill byte.
+advanceDataCursor :: Length -> DecodeState -> DecodeState
+advanceDataCursor consumed decodeState =
+  decodeState { dataCursor = advance (dataCursor decodeState) consumed }
+
+-- | Move the state to a 'CopyAddressReading''s post-state: the cache
+-- with the address recorded, the address-section cursor past the
+-- consumed bytes. The address kernel answers in 'Int' (see
+-- 'CopyAddressReading'); its post-state re-enters the typed walk
+-- here.
+adoptCopyAddressReading :: CopyAddressReading -> DecodeState -> DecodeState
+adoptCopyAddressReading reading decodeState = decodeState
+  { addrCursor   = AddressSectionCursor (Offset (copyAddressCursorAfter reading))
+  , addressCache = copyAddressCacheAfter reading
+  }
+
+-- | Account for an emitted instruction: the produced-byte count grows
+-- by the instruction's output size, the instruction counter steps,
+-- and the instruction joins the reversed accumulator.
+emitInstruction :: VCDIFFInstruction -> Length -> DecodeState -> DecodeState
+emitInstruction instruction outputSize decodeState = decodeState
+  { producedBytes    = producedBytes decodeState <> outputSize
+  , instructionIndex = nextAction (instructionIndex decodeState)
+  , emittedReversed  = instruction : emittedReversed decodeState
   }
 
 -- | Decode one window's instruction stream into already-resolved
@@ -288,112 +388,154 @@ data DecodeState = DecodeState
 -- section; RUN takes its fill byte; COPY decodes its absolute
 -- superstring offset through the address cache.
 decodeWindowInstructions
-  :: Int          -- ^ source-segment length, @len(S)@
+  :: Length       -- ^ source-segment length, @len(S)@
   -> FileSize     -- ^ declared target-window size
   -> ByteString   -- ^ data section
   -> ByteString   -- ^ instruction section
   -> ByteString   -- ^ address section
   -> Either SlapError (Vector VCDIFFInstruction)
 decodeWindowInstructions segmentLength targetWindowSize dataSection instSection addrSection =
-  walk initialState
+  evalStateT walkInstructionSection initialState
   where
-    targetSize = unFileSize targetWindowSize
-    instLength = ByteString.length instSection
-    dataLength = ByteString.length dataSection
-
     initialState = DecodeState
-      { instCursor       = 0
-      , dataCursor       = 0
-      , addrCursor       = 0
+      { instCursor       = InstructionSectionCursor (Offset 0)
+      , dataCursor       = DataSectionCursor (Offset 0)
+      , addrCursor       = AddressSectionCursor (Offset 0)
       , addressCache     = freshAddressCache
-      , producedBytes    = 0
-      , instructionIndex = 0
+      , producedBytes    = mempty
+      , instructionIndex = firstAction
       , emittedReversed  = []
       }
 
-    walk state
-      | instCursor state >= instLength =
-          if producedBytes state == targetSize
-            then Right (Vector.fromList (reverse (emittedReversed state)))
-            else Left (MalformedVCDIFF
-                         (VCDIFFWindowSizeMismatch
-                            (ExpectedSize targetWindowSize)
-                            (ActualSize (FileSize (producedBytes state)))))
-      | otherwise =
-          let codeByte = ByteString.index instSection (instCursor state)
-              entry    = Table.codeTableEntries Table.defaultCodeTable Vector.! fromIntegral codeByte
-              advanced = state { instCursor = instCursor state + 1 }
-          in do
-            afterFirst  <- applyTemplate (Table.firstInstruction entry)  advanced
-            afterSecond <- applyTemplate (Table.secondInstruction entry) afterFirst
-            walk afterSecond
+    -- | The sections measured as the whole spaces their cursors
+    -- address. 'FileSize' is the role 'fitsWithin' and
+    -- 'remainingFromOffset' read their last argument in — the total
+    -- extent a region is checked against — and within this walk each
+    -- section is exactly that whole, even though one layer up it is a
+    -- region of the patch file.
+    instructionSectionSize, dataSectionSize :: FileSize
+    instructionSectionSize = byteFileSize instSection
+    dataSectionSize        = byteFileSize dataSection
 
-    applyTemplate :: Table.InstructionTemplate -> DecodeState -> Either SlapError DecodeState
-    applyTemplate Table.Noop state = Right state
-    applyTemplate (Table.Add sizeTemplate) state = do
-      (size, afterSize) <- resolveSize sizeTemplate state
-      if dataCursor afterSize + size > dataLength
-        then sectionExhausted VCDIFFDataSection afterSize
-        else
-          let literal = viewBytesInRange (Offset (dataCursor afterSize)) (Length size) dataSection
-          in Right (emit (Add literal) size afterSize
-                      { dataCursor = dataCursor afterSize + size })
-    applyTemplate (Table.Run sizeTemplate) state = do
-      (size, afterSize) <- resolveSize sizeTemplate state
-      if dataCursor afterSize >= dataLength
-        then sectionExhausted VCDIFFDataSection afterSize
-        else
-          let fillByte = ByteString.index dataSection (dataCursor afterSize)
-          in Right (emit (Run (Length size) fillByte) size afterSize
-                      { dataCursor = dataCursor afterSize + 1 })
-    applyTemplate (Table.Copy sizeTemplate (Table.CopyAddressMode mode)) state = do
-      (size, afterSize) <- resolveSize sizeTemplate state
-      let here = segmentLength + producedBytes afterSize
-      case decodeCopyAddress (addressCache afterSize) here mode addrSection (addrCursor afterSize) of
-        Left AddressSectionExhausted ->
-          sectionExhausted VCDIFFAddressSection afterSize
-        Left (UnknownAddressMode modeByte) ->
-          Left (MalformedVCDIFF (VCDIFFInvalidCopyAddressMode modeByte))
-        Right (address, updatedCache, nextAddrCursor)
-          | address < 0 || address >= here ->
-              Left (MalformedVCDIFF
-                      (VCDIFFCopyAddressOutOfRange
-                         (currentIndex afterSize)
-                         (ActualOffset (Offset address))
-                         (MaxOffset (Offset here))))
-          | address < segmentLength && address + size > segmentLength ->
-              Left (MalformedVCDIFF (VCDIFFCopyCrossesSourceSegmentEnd (currentIndex afterSize)))
-          | otherwise ->
-              Right (emit (Copy (Length size) (Offset address)) size afterSize
-                       { addrCursor   = nextAddrCursor
-                       , addressCache = updatedCache })
+    -- | @len(S)@ in the address kernel's 'Int' domain (see
+    -- 'CopyAddressReading' for why the kernel speaks 'Int'); the
+    -- typed segment length unwraps once, here.
+    segmentEnd :: Int
+    segmentEnd = unLength segmentLength
+
+    -- | The current write position in the superstring @U = S + T@:
+    -- @len(S)@ plus the target bytes produced so far. In the kernel's
+    -- 'Int' domain for the same reason as 'segmentEnd'.
+    superstringWriteHead :: DecodeState -> Int
+    superstringWriteHead decodeState =
+      unLength (segmentLength <> producedBytes decodeState)
+
+    -- | Decode table entries until the instruction section is spent,
+    -- then close the window out.
+    walkInstructionSection :: WindowDecode (Vector VCDIFFInstruction)
+    walkInstructionSection = do
+      sectionSpent <- gets (instructionSectionSpent . instCursor)
+      if sectionSpent
+        then finishWindow
+        else decodeTableEntry >> walkInstructionSection
+
+    -- | Whether the instruction section has no bytes left to decode.
+    instructionSectionSpent :: InstructionSectionCursor -> Bool
+    instructionSectionSpent (InstructionSectionCursor position) =
+      remainingFromOffset position instructionSectionSize == Length 0
+
+    -- | Core invariant 3 — the instructions must produce exactly the
+    -- declared target size — then the reversed accumulator
+    -- materialises as the decoded stream.
+    finishWindow :: WindowDecode (Vector VCDIFFInstruction)
+    finishWindow = do
+      producedSize <- gets (lengthToFileSize . producedBytes)
+      when (producedSize /= targetWindowSize) $
+        failDecode (VCDIFFWindowSizeMismatch
+                      (ExpectedSize targetWindowSize)
+                      (ActualSize producedSize))
+      gets (Vector.fromList . reverse . emittedReversed)
+
+    -- | Read one code byte and apply both of its templates ('Noop'
+    -- fills the unused slot of a single-instruction entry).
+    decodeTableEntry :: WindowDecode ()
+    decodeTableEntry = do
+      codeByte <- nextInstructionByte
+      let entry = Table.codeTableEntries Table.defaultCodeTable
+                    Vector.! fromIntegral codeByte
+      applyTemplate (Table.firstInstruction entry)
+      applyTemplate (Table.secondInstruction entry)
+
+    -- | The next byte of the instruction section. Total:
+    -- 'walkInstructionSection' only descends here when the cursor is
+    -- strictly inside the section.
+    nextInstructionByte :: WindowDecode Word8
+    nextInstructionByte = do
+      InstructionSectionCursor (Offset codeBytePosition) <- gets instCursor
+      modify (advanceInstCursor (Length 1))
+      pure (ByteString.index instSection codeBytePosition)
+
+    applyTemplate :: Table.InstructionTemplate -> WindowDecode ()
+    applyTemplate Table.Noop = pure ()
+    applyTemplate (Table.Add sizeTemplate) = do
+      size <- resolveSize sizeTemplate
+      DataSectionCursor literalStart <- gets dataCursor
+      unless (fitsWithin literalStart size dataSectionSize) $
+        sectionExhausted VCDIFFDataSection
+      modify (advanceDataCursor size)
+      modify (emitInstruction
+                (Add (viewBytesInRange literalStart size dataSection))
+                size)
+    applyTemplate (Table.Run sizeTemplate) = do
+      size <- resolveSize sizeTemplate
+      DataSectionCursor fillStart <- gets dataCursor
+      unless (fitsWithin fillStart (Length 1) dataSectionSize) $
+        sectionExhausted VCDIFFDataSection
+      modify (advanceDataCursor (Length 1))
+      modify (emitInstruction
+                (Run size (ByteString.index dataSection (unOffset fillStart)))
+                size)
+    applyTemplate (Table.Copy sizeTemplate (Table.CopyAddressMode mode)) = do
+      size            <- resolveSize sizeTemplate
+      here            <- gets superstringWriteHead
+      reading         <- readCopyAddress here mode
+      thisInstruction <- gets instructionIndex
+      let address = copyAddressDecoded reading
+          copyEnd = address + unLength size
+      when (address < 0 || address >= here) $
+        failDecode (VCDIFFCopyAddressOutOfRange thisInstruction
+                      (ActualOffset (Offset address))
+                      (MaxOffset (Offset here)))
+      when (address < segmentEnd && copyEnd > segmentEnd) $
+        failDecode (VCDIFFCopyCrossesSourceSegmentEnd thisInstruction)
+      modify (adoptCopyAddressReading reading)
+      modify (emitInstruction (Copy size (Offset address)) size)
 
     -- | Resolve an instruction's size: a fixed table size as-is, or a
     -- deferred (zero) size read inline from the instruction section.
-    resolveSize :: Table.InstructionSize -> DecodeState -> Either SlapError (Int, DecodeState)
-    resolveSize (Table.SizeIs (Table.FixedInstructionSize fixed)) state =
-      Right (fromIntegral fixed, state)
-    resolveSize Table.SizeCodedSeparately state =
-      case getVcdiffVarint (instCursor state) instSection of
-        Left _ -> Left (MalformedVCDIFF (VCDIFFSectionExhausted VCDIFFInstructionSection (currentIndex state)))
-        Right (VarintResult value consumed) ->
-          Right (fromIntegral value, state { instCursor = instCursor state + consumed })
+    resolveSize :: Table.InstructionSize -> WindowDecode Length
+    resolveSize (Table.SizeIs (Table.FixedInstructionSize fixed)) =
+      pure (Length (fromIntegral fixed))
+    resolveSize Table.SizeCodedSeparately = do
+      InstructionSectionCursor (Offset sizePosition) <- gets instCursor
+      case getVcdiffVarint sizePosition instSection of
+        Left _ -> sectionExhausted VCDIFFInstructionSection
+        Right (VarintResult value consumed) -> do
+          modify (advanceInstCursor (Length consumed))
+          pure (Length (fromIntegral value))
 
-    -- | Append an emitted instruction and advance the produced-byte and
-    -- instruction counters.
-    emit :: VCDIFFInstruction -> Int -> DecodeState -> DecodeState
-    emit instruction size state = state
-      { producedBytes    = producedBytes state + size
-      , instructionIndex = instructionIndex state + 1
-      , emittedReversed  = instruction : emittedReversed state
-      }
-
-    sectionExhausted :: VCDIFFSection -> DecodeState -> Either SlapError a
-    sectionExhausted section state =
-      Left (MalformedVCDIFF (VCDIFFSectionExhausted section (currentIndex state)))
-
-    currentIndex :: DecodeState -> ActionIndex
-    currentIndex state = actionAtPosition (instructionIndex state)
+    -- | Decode one COPY address through the cache, mapping the
+    -- kernel's failures onto the malformation vocabulary.
+    readCopyAddress :: Int -> Word8 -> WindowDecode CopyAddressReading
+    readCopyAddress here mode = do
+      AddressSectionCursor (Offset cursor) <- gets addrCursor
+      cache <- gets addressCache
+      case decodeCopyAddress cache here mode addrSection cursor of
+        Left AddressSectionExhausted ->
+          sectionExhausted VCDIFFAddressSection
+        Left (UnknownAddressMode modeByte) ->
+          failDecode (VCDIFFInvalidCopyAddressMode modeByte)
+        Right reading -> pure reading
 
 ----------------------------------------------------------------------------
 -- Address cache
@@ -436,11 +578,25 @@ data AddressDecodeFailure
   | UnknownAddressMode !Word8
   deriving (Eq, Show)
 
+-- | The product of one COPY-address decode: the absolute address into
+-- the superstring, plus the post-state the decode leaves behind — the
+-- cache with the address recorded, and the address-section cursor
+-- advanced past the consumed bytes. Named so callers read the three
+-- by name rather than by tuple position, in the manner of
+-- 'Slap.Binary.VarintResult'.
+data CopyAddressReading = CopyAddressReading
+  { copyAddressDecoded     :: !Int
+    -- ^ The absolute superstring address. Bare 'Int' on purpose: this
+    -- is the cache kernel's arithmetic domain; the address becomes an
+    -- 'Offset' when the validated COPY is emitted.
+  , copyAddressCacheAfter  :: !AddressCache
+  , copyAddressCursorAfter :: !Int
+  }
+  deriving (Eq, Show)
+
 -- | Decode one COPY address from the address section, given the cache,
 -- the current @here@ position in the superstring, and the address
--- mode. Returns the absolute address, the cache updated with it, and
--- the advanced address-section cursor. The mode families
--- (docs/vcdiff/core/spec.md "Address cache"):
+-- mode. The mode families (docs/vcdiff/core/spec.md "Address cache"):
 --
 --   * mode 0 (SELF): the address is a varint, read directly.
 --   * mode 1 (HERE): the address is @here@ minus a varint.
@@ -450,9 +606,14 @@ data AddressDecodeFailure
 -- Both caches are updated after the address is decoded, regardless of
 -- the mode it came through — the round-robin near write and the
 -- @mod 256@ same write that keep decoder and encoder in step.
+--
+-- The upstream half of a two-stage pipeline: the absolute @U@ offset
+-- decoded here is what 'Slap.VCDIFF.Apply.resolveCopyAddress' later
+-- resolves into a physical read against the source file or the output
+-- buffer.
 decodeCopyAddress
   :: AddressCache -> Int -> Word8 -> ByteString -> Int
-  -> Either AddressDecodeFailure (Int, AddressCache, Int)
+  -> Either AddressDecodeFailure CopyAddressReading
 decodeCopyAddress cache here mode addrSection cursor
   | modeNumber == 0 = fromVarint id
   | modeNumber == 1 = fromVarint (\delta -> here - delta)
@@ -468,15 +629,20 @@ decodeCopyAddress cache here mode addrSection cursor
       case getVcdiffVarint cursor addrSection of
         Left _ -> Left AddressSectionExhausted
         Right (VarintResult value consumed) ->
-          let address = computeAddress (fromIntegral value)
-          in Right (address, recordAddress cache address, cursor + consumed)
+          Right (readingOf (computeAddress (fromIntegral value)) (cursor + consumed))
 
     fromSameByte sameBlock
       | cursor >= ByteString.length addrSection = Left AddressSectionExhausted
       | otherwise =
           let slotByte = fromIntegral (ByteString.index addrSection cursor)
-              address  = sameAddresses cache Vector.! (sameBlock * 256 + slotByte)
-          in Right (address, recordAddress cache address, cursor + 1)
+          in Right (readingOf (sameAddresses cache Vector.! (sameBlock * 256 + slotByte))
+                              (cursor + 1))
+
+    readingOf address cursorAfter = CopyAddressReading
+      { copyAddressDecoded     = address
+      , copyAddressCacheAfter  = recordAddress cache address
+      , copyAddressCursorAfter = cursorAfter
+      }
 
 -- | Write a freshly-decoded address into both caches: the next near
 -- slot (advancing round-robin) and the same slot at @address mod

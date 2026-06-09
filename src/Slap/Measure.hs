@@ -604,9 +604,14 @@ byteLength :: ByteString -> Length
 byteLength bytes = Length (ByteString.length bytes)
 
 -- | Measure a 'ByteString' as a 'FileSize'.  Parallels 'byteLength',
--- which measures a 'ByteString' as a 'Length' (a region size, not a
--- whole-file size).  Use this for the size of a buffer that
--- represents a complete source/target/patch file.
+-- which measures a 'ByteString' as a 'Length' (the size of a part,
+-- never of a whole).  Use this for a buffer that is the whole space a
+-- cursor addresses: a complete source/target/patch file, or a slice —
+-- a decompressed window section, say — that is a region one layer up
+-- but the entire space to the walk inside it.  Part-versus-whole is
+-- positional, not intrinsic to the bytes: 'FileSize' names whichever
+-- side of a bounds check ('fitsWithin', 'remainingFromOffset') plays
+-- the total extent.
 byteFileSize :: ByteString -> FileSize
 byteFileSize bytes = FileSize (ByteString.length bytes)
 

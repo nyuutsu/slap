@@ -26,6 +26,8 @@
 --                                  remark.
 --   * 'Props.ClassifyTargetCopy' — pure classifier for BPS TargetCopy
 --                                  execution strategies.
+--   * 'Props.ResolveCopyAddress' — pure resolver of VCDIFF COPY
+--                                  addresses into physical reads.
 --   * 'Props.ParseWarnings'      — IPS parse-time structural warnings:
 --                                  zero-count RLE, overlap, unsorted,
 --                                  IPS32 trailing bytes.
@@ -46,6 +48,7 @@ import qualified Props.IPSMarkerPolicy as IPSMarkerPolicy
 import qualified Props.JSON as JSON
 import qualified Props.Narrow as Narrow
 import qualified Props.ParseWarnings as ParseWarnings
+import qualified Props.ResolveCopyAddress as ResolveCopyAddress
 import qualified Props.RoundTrip as RoundTrip
 import qualified Props.SpecConformance as SpecConformance
 import qualified Props.Text as Text
@@ -67,6 +70,7 @@ main = defaultMain $ testGroup "Properties"
   , Detection.detectionTests
   , BPSMetadata.bpsMetadataTests
   , ClassifyTargetCopy.classifyTargetCopyTests
+  , ResolveCopyAddress.resolveCopyAddressTests
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
   , JSON.jsonTests
