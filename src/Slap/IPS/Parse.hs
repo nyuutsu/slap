@@ -109,7 +109,7 @@ parseIPS (PatchFileContents inputBytes)
             ByteString.drop (unLength ipsMagicLength) inputBytes
       in case runByteParser (parseIPSBody variant) bodyAfterMagic of
            Left parserError ->
-             Left (ParseError LabelIPS parserError)
+             Left (ParseError (labelForIPSVariant variant) parserError)
            Right bodyShape ->
              finalizeBodyShape variant bodyShape
 
@@ -385,6 +385,7 @@ validateRecordList :: IPSVariant -> [IPSRecord] -> Either SlapError ()
 validateRecordList variant = walkAt firstAction
   where
     maxRecordEnd = ipsVariantMaxRecordEnd variant
+    variantLabel = labelForIPSVariant variant
 
     walkAt :: ActionIndex -> [IPSRecord] -> Either SlapError ()
     walkAt _              []                       = Right ()
@@ -399,7 +400,7 @@ validateRecordList variant = walkAt firstAction
             advance (ipsRecordOffset currentRecord)
                     (recordPayloadLength currentRecord)
       in if unOffset recordEndOffset > unOffset maxRecordEnd
-           then Left (RecordExceedsAddressableRange LabelIPS
+           then Left (RecordExceedsAddressableRange variantLabel
                         currentIndex
                         (ActualOffset recordEndOffset)
                         (MaxOffset maxRecordEnd))

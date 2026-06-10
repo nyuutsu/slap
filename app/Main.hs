@@ -300,7 +300,7 @@ data VerificationPolicy
 -- detail of @slap explain@'s structural dump.
 --
 -- @Quiet@ (default) prints only the final \"applied N records → PATH\"
--- summary.  @Verbose@ (set by @-V@\/@--verbose@) also prints each
+-- summary.  @Verbose@ (set by @-v@\/@--verbose@) also prints each
 -- record as it's applied, via 'renderAnalysisFull'.
 data Verbosity
   = Quiet
