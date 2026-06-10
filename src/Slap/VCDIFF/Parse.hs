@@ -463,8 +463,8 @@ decodeWindowInstructions segmentLength targetWindowSize dataSection instSection 
       codeByte <- nextInstructionByte
       let entry = Table.codeTableEntries Table.defaultCodeTable
                     Vector.! fromIntegral codeByte
-      applyTemplate (Table.firstInstruction entry)
-      applyTemplate (Table.secondInstruction entry)
+      applyTemplate (Table.firstTemplate entry)
+      applyTemplate (Table.secondTemplate entry)
 
     -- | The next byte of the instruction section. Total:
     -- 'walkInstructionSection' only descends here when the cursor is

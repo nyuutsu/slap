@@ -25,7 +25,8 @@ module Slap.VCDIFF.CodeTable
   , CopyAddressMode(..)
     -- * The table
   , CodeTableEntry(..)
-  , CodeTable(..)
+  , CodeTable
+  , codeTableEntries
   , defaultCodeTable
     -- * The serialized 1536-byte image
   , serializeCodeTable
@@ -35,7 +36,7 @@ module Slap.VCDIFF.CodeTable
   ) where
 
 import Slap.Measure (Length(..), ActualLength(..), byteLength)
-import Slap.Status (SlapError(..), VCDIFFCodeTableMalformation(..))
+import Slap.Status (SlapError(..), VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -105,15 +106,20 @@ newtype CopyAddressMode = CopyAddressMode { unCopyAddressMode :: Word8 }
 
 -- | One code-table entry: the one or two instruction templates a
 -- single instruction-stream byte expands to. A 'Noop' in
--- 'secondInstruction' marks the entry as encoding a single instruction.
+-- 'secondTemplate' marks the entry as encoding a single instruction.
 data CodeTableEntry = CodeTableEntry
-  { firstInstruction  :: !InstructionTemplate
-  , secondInstruction :: !InstructionTemplate
+  { firstTemplate  :: !InstructionTemplate
+  , secondTemplate :: !InstructionTemplate
   }
   deriving (Eq, Show)
 
 -- | A complete VCDIFF code table: exactly 'codeTableEntryCount'
--- entries, indexed by the instruction-stream byte.
+-- entries, indexed by the instruction-stream byte. The constructor is
+-- intentionally not exported: every 'CodeTable' that exists came from
+-- 'defaultCodeTable' or 'deserializeCodeTable', both provably
+-- 256-wide, so the window decoder's @'Vector.!' codeByte@ lookup is
+-- total by construction — the same proof-by-provenance discipline as
+-- 'Slap.Measure.SplitHunk'.
 newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
   deriving (Eq, Show)
 
@@ -211,19 +217,21 @@ serializedCodeTableLength = Length (6 * codeTableEntryCount)
 -- its inverse.
 serializeCodeTable :: CodeTable -> ByteString
 serializeCodeTable (CodeTable entries) = ByteString.pack
-  (  map (wireType . firstInstruction)  rows
-  ++ map (wireType . secondInstruction) rows
-  ++ map (wireSize . firstInstruction)  rows
-  ++ map (wireSize . secondInstruction) rows
-  ++ map (wireMode . firstInstruction)  rows
-  ++ map (wireMode . secondInstruction) rows )
+  (  map (wireType . firstTemplate)  rows
+  ++ map (wireType . secondTemplate) rows
+  ++ map (wireSize . firstTemplate)  rows
+  ++ map (wireSize . secondTemplate) rows
+  ++ map (wireMode . firstTemplate)  rows
+  ++ map (wireMode . secondTemplate) rows )
   where rows = Vector.toList entries
 
 -- | Read a 1536-byte image back into a code table — the reader a custom
--- code table needs. Rejects an image of the wrong width, or a type
--- byte that names no instruction, through the existing VCDIFF
--- code-table error vocabulary. Mode bytes are carried verbatim
--- ('CopyAddressMode'); their legal range is cache-dependent and
+-- code table needs. Rejects an image of the wrong width, a type byte
+-- that names no instruction, or a nonzero size or mode byte on a
+-- template type that carries no such field, through the existing
+-- VCDIFF code-table error vocabulary. Every check decidable from the
+-- image alone happens here; a COPY's mode byte is carried verbatim
+-- ('CopyAddressMode'), because its legal range is cache-dependent and
 -- belongs to the window decoder, not here.
 deserializeCodeTable :: ByteString -> Either SlapError CodeTable
 deserializeCodeTable image
@@ -248,9 +256,10 @@ deserializeCodeTable image
                                       (ByteString.index secondSizes index)
                                       (ByteString.index secondModes index)
 
--- The wire codes for the four instruction types. These three literals
--- are the entire numeric vocabulary of the code table; they live at the
--- serialization boundary and nowhere else.
+-- The wire codes for the four instruction types. Together with the
+-- zero an absent size or mode serializes as, these four constants are
+-- the entire numeric vocabulary of the code table; all of it lives at
+-- the serialization boundary and nowhere else.
 noopWireCode, addWireCode, runWireCode, copyWireCode :: Word8
 noopWireCode = 0
 addWireCode  = 1
@@ -280,17 +289,34 @@ sizeWireByte SizeCodedSeparately                       = 0
 sizeWireByte (SizeIs (FixedInstructionSize fixedSize)) = fixedSize
 
 -- | Reconstruct one instruction template from its three wire bytes.
--- The type byte is the only one that can be structurally invalid; a
--- size of zero means 'SizeCodedSeparately', and the mode byte is
--- meaningful only for COPY.
+-- A type byte outside the four codes is malformed; a size of zero
+-- means 'SizeCodedSeparately'; and a size or mode byte must be zero
+-- for a type that carries no such field — the don't-care positions
+-- have exactly one well-formed value, so a nonzero one is refused as
+-- evidence of damage rather than read past
+-- (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table
+-- entries").
 decodeInstructionTemplate :: Word8 -> Word8 -> Word8 -> Either SlapError InstructionTemplate
 decodeInstructionTemplate typeByte sizeByte modeByte
-  | typeByte == noopWireCode = Right Noop
-  | typeByte == addWireCode  = Right (Add (decodeSize sizeByte))
-  | typeByte == runWireCode  = Right (Run (decodeSize sizeByte))
+  | typeByte == noopWireCode = do
+      requireUnusedFieldZero CodeTableSizeField sizeByte
+      requireUnusedFieldZero CodeTableModeField modeByte
+      Right Noop
+  | typeByte == addWireCode = do
+      requireUnusedFieldZero CodeTableModeField modeByte
+      Right (Add (decodeSize sizeByte))
+  | typeByte == runWireCode = do
+      requireUnusedFieldZero CodeTableModeField modeByte
+      Right (Run (decodeSize sizeByte))
   | typeByte == copyWireCode = Right (Copy (decodeSize sizeByte) (CopyAddressMode modeByte))
   | otherwise =
       Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableInvalidInstructionType typeByte))
+
+-- | Refuse a nonzero byte in a field its template type does not carry.
+requireUnusedFieldZero :: VCDIFFCodeTableField -> Word8 -> Either SlapError ()
+requireUnusedFieldZero _ 0 = Right ()
+requireUnusedFieldZero field byte =
+  Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableUnusedFieldSet field byte))
 
 decodeSize :: Word8 -> InstructionSize
 decodeSize 0        = SizeCodedSeparately

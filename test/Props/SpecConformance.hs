@@ -25,13 +25,15 @@ import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
 import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
-                   renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..))
+                   renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..),
+                   VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
 import Slap.FFI (crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
 import Slap.IPS.Types (IPSPatch(..), IPSRecord(..), IPSVariant(..), isSMCShapedSize)
 import Slap.Measure (FileSize(..), Offset(..), Length(..), actionAtPosition,
+                     ActualLength(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..))
 import qualified Slap.NINJA2.Apply as NINJA2
 import qualified Slap.NINJA2.Parse as NINJA2
@@ -140,6 +142,14 @@ specConformanceTests = testGroup "SpecConformance"
               codeTableSerializedLength
           , testCase "deserialize-inverts-serialize"
               codeTableRoundTrip
+          , testCase "serialized-image-array-order-matches-spec"
+              codeTableImageLayout
+          , testCase "nonzero-unused-field-rejected"
+              codeTableUnusedFieldRejected
+          , testCase "wrong-length-image-rejected"
+              codeTableWrongLengthRejected
+          , testCase "invalid-instruction-type-rejected"
+              codeTableInvalidTypeRejected
           , testCase "entry-0-is-run-size-coded-separately"
               (codeTableEntryIs 0
                  (CodeTableEntry (Run SizeCodedSeparately) Noop))
@@ -1564,6 +1574,73 @@ codeTableRoundTrip =
   assertEqual "deserialize . serialize is identity on the default table"
     (Right defaultCodeTable)
     (deserializeCodeTable (serializeCodeTable defaultCodeTable))
+
+-- | The serialized image's six arrays sit in the spec's order —
+-- first-instruction types, second types, first sizes, second sizes,
+-- first modes, second modes (docs/vcdiff/rfc-vcdiff/spec.md, the
+-- custom-table decode steps). The round-trip test cannot witness
+-- this: a serializer and deserializer sharing a transposed order
+-- would agree with each other, and with zero custom-table patches in
+-- the wild no real input will ever arbitrate. Known entries therefore
+-- pin known bytes at absolute image positions.
+codeTableImageLayout :: Assertion
+codeTableImageLayout = do
+  assertEqual "types1[0] - entry 0 is RUN"                      2 (imageByte 0)
+  assertEqual "types1[1] - entry 1 is ADD"                      1 (imageByte 1)
+  assertEqual "types2[0] - entry 0's second is NOOP"            0 (imageByte 256)
+  assertEqual "types2[163] - entry 163's second is COPY"        3 (imageByte (256 + 163))
+  assertEqual "sizes1[2] - entry 2 is ADD(1)"                   1 (imageByte (512 + 2))
+  assertEqual "sizes2[163] - entry 163's second is COPY(4)"     4 (imageByte (768 + 163))
+  assertEqual "modes1[251] - entry 251 leads with COPY mode 4"  4 (imageByte (1024 + 251))
+  assertEqual "modes2[239] - entry 239's second is COPY mode 7" 7 (imageByte (1280 + 239))
+  where
+    imageByte position = ByteString.index (serializeCodeTable defaultCodeTable) position
+
+-- | The default table's serialized image, the base the corruption
+-- tests poke bytes into.
+defaultCodeTableImage :: ByteString
+defaultCodeTableImage = serializeCodeTable defaultCodeTable
+
+-- | The image with the byte at @position@ replaced, for corruption
+-- tests.
+pokeImageByte :: Int -> Word8 -> ByteString -> ByteString
+pokeImageByte position byte image =
+  ByteString.take position image
+    <> ByteString.singleton byte
+    <> ByteString.drop (position + 1) image
+
+-- | Deserialization refuses a nonzero byte in a field its template
+-- type does not carry — the questions.md tripwire ruling, extended to
+-- the image's don't-care positions. Entry 0 is RUN+NOOP: its first
+-- mode byte and its second size byte are both unused, so each, poked
+-- nonzero, must refuse with the field named.
+codeTableUnusedFieldRejected :: Assertion
+codeTableUnusedFieldRejected = do
+  assertEqual "nonzero mode byte on a RUN"
+    (Left (MalformedVCDIFFCodeTable
+             (VCDIFFCodeTableUnusedFieldSet CodeTableModeField 0x05)))
+    (deserializeCodeTable (pokeImageByte (1024 + 0) 0x05 defaultCodeTableImage))
+  assertEqual "nonzero size byte on a NOOP"
+    (Left (MalformedVCDIFFCodeTable
+             (VCDIFFCodeTableUnusedFieldSet CodeTableSizeField 0x07)))
+    (deserializeCodeTable (pokeImageByte (768 + 0) 0x07 defaultCodeTableImage))
+
+-- | An input that is not 1536 bytes wide is refused with the length
+-- it actually had.
+codeTableWrongLengthRejected :: Assertion
+codeTableWrongLengthRejected =
+  assertEqual "wrong-width image refused, naming its length"
+    (Left (MalformedVCDIFFCodeTable
+             (VCDIFFCodeTableWrongLength (ActualLength (Length 100)))))
+    (deserializeCodeTable (ByteString.replicate 100 0x00))
+
+-- | A type byte above COPY (3) names no instruction; the refusal
+-- carries the byte. Poked at types1[0].
+codeTableInvalidTypeRejected :: Assertion
+codeTableInvalidTypeRejected =
+  assertEqual "type byte 4 refused"
+    (Left (MalformedVCDIFFCodeTable (VCDIFFCodeTableInvalidInstructionType 0x04)))
+    (deserializeCodeTable (pokeImageByte 0 0x04 defaultCodeTableImage))
 
 -- | The default table's entry at the given index is the expected pair.
 codeTableEntryIs :: Int -> CodeTableEntry -> Assertion

@@ -55,6 +55,7 @@ module Slap.Status
   , XDelta1ShapeViolation(..)
   , VCDIFFShapeViolation(..)
   , VCDIFFCodeTableMalformation(..)
+  , VCDIFFCodeTableField(..)
   , VCDIFFUnsupportedFeature(..)
   , VCDIFFMalformation(..)
   , VCDIFFIndicatorKind(..)
@@ -1603,6 +1604,10 @@ renderSlapError (MalformedVCDIFFCodeTable malformation) =
       "invalid instruction type in code table: " <> renderAsText typeCode
     VCDIFFCodeTableHeaderTooShort ->
       "custom code table data too short"
+    VCDIFFCodeTableUnusedFieldSet field byte ->
+      "code table sets the " <> codeTableFieldName field
+      <> " byte (0x" <> padHex 2 byte
+      <> ") of a template that carries no " <> codeTableFieldName field
 
 renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize diffSize targetSize)) =
   formatLabelName LabelBSDiff
@@ -2231,7 +2236,26 @@ data VCDIFFCodeTableMalformation
   -- 2-byte header (near-cache size byte, same-cache size byte)
   -- it must begin with.
   | VCDIFFCodeTableHeaderTooShort
+  -- | A size or mode byte was nonzero for a template type that
+  -- carries no such field — a size on a NOOP, a mode on a NOOP, ADD,
+  -- or RUN. The grammar gives those bytes exactly one well-formed
+  -- value (zero, matching the default-table image a custom image is
+  -- delta-encoded against), so a nonzero value is not an alternative
+  -- spelling of anything: it is evidence the table bytes are damaged,
+  -- and with no checksum in this arc the table check is the tripwire
+  -- (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table
+  -- entries"). The 'Word8' is the offending byte.
+  | VCDIFFCodeTableUnusedFieldSet !VCDIFFCodeTableField !Word8
   deriving (Eq, Show)
+
+-- | Which per-template byte of the serialized code-table image a
+-- malformation names: the size byte or the mode byte.
+data VCDIFFCodeTableField = CodeTableSizeField | CodeTableModeField
+  deriving (Eq, Show)
+
+codeTableFieldName :: VCDIFFCodeTableField -> Text
+codeTableFieldName CodeTableSizeField = "size"
+codeTableFieldName CodeTableModeField = "mode"
 
 -- | A VCDIFF feature outside the CoreOnly subset slap currently
 -- decodes, carried by 'VCDIFFFeatureNotYetSupported'. Each names a
