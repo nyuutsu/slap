@@ -27,7 +27,7 @@ import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Hunk(..),
-                     splitUndoHunkFromParsed)
+                     Cursor(..), splitUndoHunkFromParsed)
 import qualified Slap.PPF1.Apply as PPF1
 import qualified Slap.PPF1.Describe as PPF1
 import qualified Slap.PPF1.Parse as PPF1
@@ -111,7 +111,7 @@ import qualified Slap.Compression.Stream as Stream
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.List (partition)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 
 ----------------------------------------------------------------------------
@@ -697,12 +697,13 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- | Build a 'SomePatch' from a parsed VCDIFF patch. Only the CoreOnly
--- flavor parses today; a patch using any deferred feature is refused by
--- 'VCDIFF.parseVCDIFF' with a 'VCDIFFFeatureNotYetSupported' error
--- before this builder runs. CoreOnly windows carry no per-window
--- Adler32, so verification is empty; the analytical carrier is a
--- summary only, pending the VCDIFF Describe pass.
+-- | Build a 'SomePatch' from a parsed VCDIFF patch. The CoreOnly and
+-- uncompressed-xdelta3 flavors parse today; a patch using a deferred
+-- feature is refused by 'VCDIFF.parseVCDIFF' before this builder runs.
+-- An xdelta3 patch's per-window Adler32 checksums are lifted into
+-- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs; the
+-- analytical carrier is a summary only, pending the VCDIFF Describe
+-- pass.
 parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromVCDIFF patchContents = do
   Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
@@ -725,6 +726,7 @@ parseSomePatchFromVCDIFF patchContents = do
         { runApply = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
     , patchUndo         = Nothing
     , patchVerification = noVerification
+        { verifyWindowAdler32 = vcdiffWindowChecks patch }
     , patchAdvisories   = parseAdvisories
                         ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
     , patchInfo         = PatchInfo
@@ -741,13 +743,33 @@ parseSomePatchFromVCDIFF patchContents = do
     }
 
 -- | The window list of a parsed VCDIFF patch, regardless of flavor.
--- Only 'VCDIFF.PatchCoreOnly' is produced today; the other arms keep
--- the projection total against the flavors still to land.
+-- 'VCDIFF.PatchCoreOnly' and 'VCDIFF.PatchXDelta3' are produced today;
+-- the RFC arm keeps the projection total against the flavor still to
+-- land.
 vcdiffWindowsOf :: VCDIFF.VCDIFFPatch -> Vector.Vector VCDIFF.Window
 vcdiffWindowsOf vcdiffPatch = case vcdiffPatch of
   VCDIFF.PatchCoreOnly windows       -> windows
   VCDIFF.PatchRFC      _ windows     -> windows
   VCDIFF.PatchXDelta3  _ xdelta3Windows -> fmap VCDIFF.xdelta3WindowBody xdelta3Windows
+
+-- | The per-window Adler32 checks an xdelta3 patch carries, lifted to
+-- the shared verification boundary: each present checksum covers its
+-- window's slice of the final target — the window's base offset, its
+-- output length, and the stored sum. Core-only and RFC windows carry
+-- no checksums, so those flavors contribute none.
+vcdiffWindowChecks :: VCDIFF.VCDIFFPatch -> [WindowCheck]
+vcdiffWindowChecks vcdiffPatch = case vcdiffPatch of
+  VCDIFF.PatchCoreOnly _ -> []
+  VCDIFF.PatchRFC    _ _ -> []
+  VCDIFF.PatchXDelta3 _ xdelta3Windows ->
+      catMaybes (zipWith liftWindowCheck windowBases windowList)
+    where
+      windowList  = Vector.toList xdelta3Windows
+      windowBases = scanl advance (Offset 0) (map xdelta3OutputLength windowList)
+      xdelta3OutputLength = VCDIFF.windowOutputLength . VCDIFF.xdelta3WindowBody
+      liftWindowCheck windowBase xdelta3Window =
+        WindowCheck windowBase (xdelta3OutputLength xdelta3Window)
+          <$> VCDIFF.xdelta3WindowAdler32 xdelta3Window
 
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but

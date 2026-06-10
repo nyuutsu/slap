@@ -1,0 +1,9 @@
+# VCDIFF xdelta3 apply cross-validation
+# Each row: base ROM | patch | label
+#
+# Patches here are unmodified xdelta3 output — application header and
+# per-window Adler32 intact. slap applies the patch and the output is
+# compared, byte for byte, against xdelta3 applying the same patch —
+# never slap against slap. (Until secondary compression lands, rows
+# must be patches xdelta3 emitted uncompressed; compressed rows join
+# this same file when it does.)

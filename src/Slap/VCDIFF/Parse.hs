@@ -1,18 +1,20 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
--- source-free. Scoped to the CoreOnly subset: the default code table,
--- no custom table, no application header, no per-window Adler32, no
--- secondary compression. A patch that reaches past the core is
--- classified and declined cleanly — a deferred feature as
--- 'VCDIFFFeatureNotYetSupported', a reserved indicator bit as
--- 'VCDIFFReservedIndicatorBits' — never mishandled.
+-- source-free. Scoped to the core plus the uncompressed xdelta3 arc:
+-- the default code table, the application header (carried opaque), and
+-- the per-window Adler32 (carried for the verification boundary). A
+-- patch that reaches further — secondary compression, a custom code
+-- table, a VCD_TARGET window — is classified and declined cleanly: a
+-- deferred feature as 'VCDIFFFeatureNotYetSupported', a reserved
+-- indicator bit as 'VCDIFFReservedIndicatorBits' — never mishandled.
 --
 -- Parsing is two passes with one clean seam. 'parseRawPatch' is the
 -- byte-level walk: it reads the header and frames each window into its
--- indicator bytes, source segment, sizes, and three raw section
--- slices, surfacing only truncation ('ParseError'). 'classifyAndDecode'
--- is the semantic pass: it reads the indicator bits to decide flavor,
--- refuses anything past the core, and decodes each core window's
--- instruction stream — enforcing the three core invariants
+-- indicator bytes, source segment, sizes, checksum, and three raw
+-- section slices, surfacing only truncation ('ParseError').
+-- 'classifyAndDecode' is the semantic pass: it reads the indicator
+-- bits to decide flavor, refuses anything unlanded, holds each
+-- window's framing to its own declared length, and decodes each
+-- window's instruction stream — enforcing the three core invariants
 -- (docs/vcdiff/core/spec.md "Core invariants") so a patch this module
 -- returns has them guaranteed.
 --
@@ -35,6 +37,7 @@ module Slap.VCDIFF.Parse
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
+  , XDelta3Header(..), XDelta3Window(..)
   , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
 -- Qualified: 'InstructionTemplate' shares the constructor names Add /
 -- Run / Copy with 'VCDIFFInstruction'. The template (code-table) side
@@ -43,7 +46,8 @@ import Slap.VCDIFF.Types
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
-  ( ByteParser, runByteParser, getByte, getBytes, vcdiffVarint, atEnd )
+  ( ByteParser, runByteParser, getByte, getBytes, vcdiffVarint, word32BE, remaining, atEnd )
+import Slap.Checksum (Adler32(..))
 import Slap.Status
   ( SlapError(..), Parsed(..)
   , VCDIFFUnsupportedFeature(..), VCDIFFMalformation(..)
@@ -55,13 +59,15 @@ import Slap.Measure
   , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
   , ActionIndex, firstAction, nextAction
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
+  , subtractLength
   , RequiredLength(..), ActualLength(..), ActualMagic(..)
   , FoundVersion(..), byteLength, byteFileSize )
 
 import Control.Monad (when, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
-import Data.Bits (testBit, (.&.))
+import Data.Bits (testBit, bit, complement, (.&.))
+import Data.Maybe (isJust)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Vector (Vector)
@@ -93,20 +99,31 @@ parseVCDIFF (PatchFileContents input)
 
 -- | The header plus a framed-but-not-yet-interpreted window list. The
 -- indicator bytes are carried verbatim so 'classifyAndDecode' can read
--- their bits; the sections are raw slices, decoded only for a window
--- that turns out to be core.
+-- their bits; the application header is opaque by definition and is
+-- carried as read; the sections are raw slices, decoded only for a
+-- window that survives classification.
 data RawPatch = RawPatch
   { rawVersion        :: !Word8
   , rawHeaderIndicator :: !Word8
+  , rawAppHeader      :: !(Maybe ByteString)
   , rawWindows        :: ![RawWindow]
   }
 
 data RawWindow = RawWindow
   { rawWindowIndicator :: !Word8
   , rawSourceSegment   :: !(Maybe RawSegment)
+    -- | The delta-encoding length the window declares: the byte span
+    -- of everything after the length field itself, through the end of
+    -- the address section. The boundary a reader navigates windows
+    -- by, so 'classifyWindow' holds it against
+    -- 'rawMeasuredEncodingLength' (docs/vcdiff/core/questions.md,
+    -- "delta-encoding-length").
+  , rawDeclaredEncodingLength :: !Length
+    -- | The span the framer actually consumed over the same fields.
+  , rawMeasuredEncodingLength :: !Length
   , rawTargetSize      :: !FileSize
   , rawDeltaIndicator  :: !Word8
-  , rawHasAdler        :: !Bool
+  , rawWindowAdler     :: !(Maybe Adler32)
   , rawDataSection     :: !ByteString
   , rawInstSection     :: !ByteString
   , rawAddrSection     :: !ByteString
@@ -121,18 +138,44 @@ data RawSegment = RawSegment
   }
 
 -- | The byte-level walk. Reads the version and header indicator, then
--- frames the windows — but only when the header is core (version and
--- header indicator both zero). A non-core header leaves the window
--- list empty; 'classifyAndDecode' refuses on the header before it
--- would look at windows whose framing it could not trust.
+-- frames the windows — but only when the header is one this parser
+-- knows how to walk: version zero, with no header feature beyond the
+-- application header (whose varint-length-plus-bytes shape is read
+-- here). A declared secondary compressor or custom code table changes
+-- what follows in ways slap refuses anyway, so such a header leaves
+-- the window list empty; 'classifyAndDecode' refuses on the header
+-- before it would look at windows whose framing it could not trust.
 parseRawPatch :: ByteParser RawPatch
 parseRawPatch = do
   version          <- getByte
   headerIndicator  <- getByte
-  windows <- if version == 0 && headerIndicator == 0
-               then parseRawWindows
-               else pure []
-  pure (RawPatch version headerIndicator windows)
+  if version == 0 && headerOnlyUsesFramableFeatures headerIndicator
+    then do
+      appHeader <- if testBit headerIndicator vcdAppHeaderBit
+                     then Just <$> parseApplicationHeader
+                     else pure Nothing
+      windows   <- parseRawWindows
+      pure (RawPatch version headerIndicator appHeader windows)
+    else pure (RawPatch version headerIndicator Nothing [])
+
+-- | Whether every set bit of a header indicator names a feature whose
+-- bytes the framer knows how to walk past — today just VCD_APPHEADER,
+-- whose varint-length-plus-bytes shape 'parseApplicationHeader'
+-- reads. Any other set bit means the bytes that follow have a shape
+-- framing cannot trust.
+headerOnlyUsesFramableFeatures :: Word8 -> Bool
+headerOnlyUsesFramableFeatures headerIndicator =
+  headerIndicator .&. complement (bit vcdAppHeaderBit) == 0
+
+-- | The application header's wire shape: a varint length, then that
+-- many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application
+-- header"). On the wire the field follows the compressor id and
+-- code-table data; this parser only reaches it when neither of those
+-- is declared, so here it directly follows the header indicator.
+parseApplicationHeader :: ByteParser ByteString
+parseApplicationHeader = do
+  declaredLength <- vcdiffVarint
+  getBytes (Length (fromIntegral declaredLength))
 
 parseRawWindows :: ByteParser [RawWindow]
 parseRawWindows = collect []
@@ -157,29 +200,36 @@ parseRawWindow = do
                                        (Offset (fromIntegral segmentPosition))
                                        (Length (fromIntegral segmentLength))))
                        else pure Nothing
-  _deltaEncodingLength <- vcdiffVarint
+  declaredEncodingLength   <- Length . fromIntegral <$> vcdiffVarint
+  remainingAtEncodingStart <- remaining
   targetSize           <- vcdiffVarint
   deltaIndicator       <- getByte
   dataLength <- vcdiffVarint
   instLength <- vcdiffVarint
   addrLength <- vcdiffVarint
-  let hasAdler = testBit windowIndicator vcdAdler32Bit
   -- The per-window checksum, when present, sits between the section
-  -- lengths and the data section; read past it so the section slices
-  -- frame correctly even though a checksummed window is refused.
-  _adler      <- if hasAdler then Just <$> getBytes vcdiffAdler32Length else pure Nothing
+  -- lengths and the data section: four bytes, big-endian, presence
+  -- decided by the indicator bit alone (docs/vcdiff/xdelta3/spec.md
+  -- "Per-window Adler32").
+  adlerChecksum <- if testBit windowIndicator vcdAdler32Bit
+                     then Just . Adler32 <$> word32BE
+                     else pure Nothing
   dataSection <- getBytes (Length (fromIntegral dataLength))
   instSection <- getBytes (Length (fromIntegral instLength))
   addrSection <- getBytes (Length (fromIntegral addrLength))
+  remainingAtWindowEnd <- remaining
   pure RawWindow
-    { rawWindowIndicator = windowIndicator
-    , rawSourceSegment   = sourceSegment
-    , rawTargetSize      = FileSize (fromIntegral targetSize)
-    , rawDeltaIndicator  = deltaIndicator
-    , rawHasAdler        = hasAdler
-    , rawDataSection     = dataSection
-    , rawInstSection     = instSection
-    , rawAddrSection     = addrSection
+    { rawWindowIndicator        = windowIndicator
+    , rawSourceSegment          = sourceSegment
+    , rawDeclaredEncodingLength = declaredEncodingLength
+    , rawMeasuredEncodingLength =
+        subtractLength remainingAtEncodingStart remainingAtWindowEnd
+    , rawTargetSize             = FileSize (fromIntegral targetSize)
+    , rawDeltaIndicator         = deltaIndicator
+    , rawWindowAdler            = adlerChecksum
+    , rawDataSection            = dataSection
+    , rawInstSection            = instSection
+    , rawAddrSection            = addrSection
     }
 
 ----------------------------------------------------------------------------
@@ -198,12 +248,6 @@ vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
 vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
 vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
 
--- | Length of the per-window Adler32 checksum field (xdelta3's
--- VCD_ADLER32), sitting between the section lengths and the data
--- section when Win_Indicator bit 2 is set.
-vcdiffAdler32Length :: Length
-vcdiffAdler32Length = Length 4
-
 -- | Mask of the bits each indicator byte leaves undefined in the core.
 -- A set bit here is reserved for future definition: slap cannot
 -- interpret it, so the patch is declined as unreadable
@@ -215,9 +259,8 @@ reservedIndicatorMask = 0xF8
 -- Semantic classification and decode
 ----------------------------------------------------------------------------
 
--- | Interpret a framed patch: refuse a non-core version or header,
--- then decode each window. Only 'PatchCoreOnly' is produced here; the
--- per-flavor constructors arrive with their flavors.
+-- | Interpret a framed patch: refuse an unreadable version or header,
+-- decode each window, then name the flavor.
 classifyAndDecode :: RawPatch -> Either SlapError VCDIFFPatch
 classifyAndDecode rawPatch
   | rawVersion rawPatch /= 0 =
@@ -228,29 +271,58 @@ classifyAndDecode rawPatch
       Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressor)
   | testBit headerIndicator vcdCodeTableBit =
       Left (VCDIFFFeatureNotYetSupported VCDIFFCustomCodeTable)
-  | testBit headerIndicator vcdAppHeaderBit =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFApplicationHeader)
   | otherwise =
-      PatchCoreOnly . Vector.fromList <$> traverse classifyWindow (rawWindows rawPatch)
+      classifyFlavor (rawAppHeader rawPatch) . Vector.fromList
+        <$> traverse classifyWindow (rawWindows rawPatch)
   where
     headerIndicator = rawHeaderIndicator rawPatch
 
--- | Interpret one framed window, refusing any non-core feature before
--- decoding its instruction stream.
-classifyWindow :: RawWindow -> Either SlapError Window
+-- | One decoded window, before the patch-level flavor verdict: the
+-- shared 'Window', plus the checksum it carried if any. A VCDIFF
+-- window and nothing more — which flavor it belongs to is a fact
+-- about the whole patch, rendered by 'classifyFlavor' after every
+-- window is decoded, and only then do these become 'XDelta3Window's
+-- (or shed their absent checksums and stay plain 'Window's).
+data DecodedWindow = DecodedWindow
+  { decodedWindowBody     :: !Window
+  , decodedWindowChecksum :: !(Maybe Adler32)
+  }
+
+-- | Name the decoded patch for what it is. Any xdelta3-arc feature —
+-- an application header, or any window carrying an Adler32 — makes
+-- the patch 'PatchXDelta3'; a patch using none decodes identically
+-- under either flavor and keeps the first-class 'PatchCoreOnly'
+-- verdict (docs/vcdiff/xdelta3/spec.md "Classification").
+classifyFlavor :: Maybe ByteString -> Vector DecodedWindow -> VCDIFFPatch
+classifyFlavor maybeAppHeader decodedWindows
+  | isJust maybeAppHeader
+      || Vector.any (isJust . decodedWindowChecksum) decodedWindows =
+      PatchXDelta3 (XDelta3Header maybeAppHeader) (fmap toXDelta3Window decodedWindows)
+  | otherwise = PatchCoreOnly (fmap decodedWindowBody decodedWindows)
+  where
+    toXDelta3Window decodedWindow =
+      XDelta3Window (decodedWindowBody decodedWindow)
+                    (decodedWindowChecksum decodedWindow)
+
+-- | Interpret one framed window: refuse any unlanded feature, hold
+-- the framing to its own declared length, then decode the instruction
+-- stream.
+classifyWindow :: RawWindow -> Either SlapError DecodedWindow
 classifyWindow rawWindow
   | windowIndicator .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator)
   | testBit windowIndicator vcdSourceBit && testBit windowIndicator vcdTargetBit =
       Left (MalformedVCDIFF VCDIFFBothSourceAndTargetWindowBits)
-  | rawHasAdler rawWindow =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFPerWindowChecksum)
   | testBit windowIndicator vcdTargetBit =
       Left (VCDIFFFeatureNotYetSupported VCDIFFTargetWindow)
   | rawDeltaIndicator rawWindow .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow))
   | rawDeltaIndicator rawWindow .&. secondaryCompressionMask /= 0 =
       Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressedSection)
+  | rawDeclaredEncodingLength rawWindow /= rawMeasuredEncodingLength rawWindow =
+      Left (MalformedVCDIFF (VCDIFFDeltaEncodingLengthMismatch
+              (ExpectedSize (lengthToFileSize (rawDeclaredEncodingLength rawWindow)))
+              (ActualSize   (lengthToFileSize (rawMeasuredEncodingLength rawWindow)))))
   | otherwise = do
       let sourceSegment =
             (\segment -> SourceSegment
@@ -265,10 +337,13 @@ classifyWindow rawWindow
                         (rawDataSection rawWindow)
                         (rawInstSection rawWindow)
                         (rawAddrSection rawWindow)
-      Right Window
-        { windowSourceSegment = sourceSegment
-        , windowTargetSize    = rawTargetSize rawWindow
-        , windowInstructions  = instructions
+      Right DecodedWindow
+        { decodedWindowBody = Window
+            { windowSourceSegment = sourceSegment
+            , windowTargetSize    = rawTargetSize rawWindow
+            , windowInstructions  = instructions
+            }
+        , decodedWindowChecksum = rawWindowAdler rawWindow
         }
   where
     windowIndicator = rawWindowIndicator rawWindow

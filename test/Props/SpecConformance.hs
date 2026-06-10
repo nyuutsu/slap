@@ -22,12 +22,12 @@ import Slap.ByteParser (runByteParser, vcdiffVarintReportingCanonicality,
 import Slap.BPS.Apply (applyBPS)
 import Slap.BPS.Parse (parseBPS)
 import Slap.BPS.Types (BPSPatch(..), BPSMetadata(..))
-import Slap.Checksum (CRC32(..))
+import Slap.Checksum (CRC32(..), Adler32(..))
 import Slap.Status (SlapError(..), SlapAdvisory(..), ApplyError(..), CursorKind(..), Parsed(..), Outcome(..),
                    ClippedRecordCount(..), MarkerOvershootBytes(..), renderSlapError,
                    renderByteParserError, VCDIFFMalformation(..), VCDIFFIndicatorKind(..),
                    VCDIFFCodeTableMalformation(..), VCDIFFCodeTableField(..))
-import Slap.FFI (crc32)
+import Slap.FFI (crc32, adler32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.IPS.Apply (applyIPS)
@@ -40,7 +40,8 @@ import qualified Slap.NINJA2.Parse as NINJA2
 import qualified Slap.APSGBA.Apply as APSGBA
 import qualified Slap.APSGBA.Parse as APSGBA
 import Slap.APSGBA.Types (apsGbaBlockSize)
-import Slap.SomePatch (parseSome, patchVerification, Verification(..), FileSizeCheck(..))
+import Slap.SomePatch (parseSome, patchVerification, Verification(..), FileSizeCheck(..),
+                       WindowCheck(..))
 import Slap.Text (EncodingName(EncodingUtf8))
 import Slap.Convert (noDialectsRequested)
 import Slap.UPS.Apply (applyUPS)
@@ -53,6 +54,7 @@ import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
                              deserializeCodeTable)
 import Slap.VCDIFF.Parse (parseVCDIFF, decodeCopyAddress, freshAddressCache,
                           nearCacheSize, AddressCache, CopyAddressReading(..))
+import Slap.VCDIFF.Types (VCDIFFPatch(..), XDelta3Header(..), XDelta3Window(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 
 import Data.Bits (shiftL, (.|.))
@@ -179,6 +181,14 @@ specConformanceTests = testGroup "SpecConformance"
           , testCase "both-source-and-target-still-malformed"
               test_vcdiffBothSourceBitsStillMalformed
           ]
+      , testGroup "classification"
+          [ testCase "featureless-patch-keeps-the-core-only-verdict"
+              test_vcdiffCoreOnlyVerdict
+          , testCase "application-header-captured-and-classifies-xdelta3"
+              test_vcdiffAppHeaderCaptured
+          , testCase "window-adler32-captured-and-lifted-to-verification"
+              test_vcdiffAdlerCarriedAndLifted
+          ]
       , testGroup "core-engine"
           [ testCase "self-referential-copy-expands-run-length"
               test_vcdiffSelfReferentialCopy
@@ -192,6 +202,8 @@ specConformanceTests = testGroup "SpecConformance"
               test_vcdiffWindowSizeMismatch
           , testCase "source-segment-exceeding-source-rejected-at-apply"
               test_vcdiffSourceSegmentExceedsSource
+          , testCase "lying-delta-encoding-length-rejected"
+              test_vcdiffEncodingLengthMismatch
           ]
       , testGroup "address-cache"
           [ testCase "near-cache-round-robin-overwrites-oldest"
@@ -1657,9 +1669,13 @@ codeTableEntryIs index expected =
 -- Layout per window after the 5-byte header (magic D6 C3 C4, version 00,
 -- header indicator 00): Win_Indicator, [segment length, segment
 -- position], delta-encoding length, target-window size, Delta_Indicator,
--- the three section lengths, then the data, instruction, and address
--- sections. Sizes are kept under 128 so every varint is one byte.
--- Instruction code bytes index the default table: 0x02 = ADD size 1,
+-- the three section lengths, [4-byte big-endian Adler32 when
+-- Win_Indicator bit 2 is set], then the data, instruction, and address
+-- sections. Sizes are kept under 128 so every varint is one byte. The
+-- delta-encoding length must equal the span of everything after it —
+-- the parser holds the declaration to the measured bytes — so each
+-- window's value here is exact, not filler. Instruction code bytes
+-- index the default table: 0x02 = ADD size 1, 0x03 = ADD size 2,
 -- 0x14 = COPY mode 0 size 4.
 
 vcdiffPatch :: [Word8] -> PatchFileContents
@@ -1694,9 +1710,9 @@ test_vcdiffReservedWindowBitDeclined =
       ("expected VCDIFFReservedIndicatorBits, got: " <> renderSlapError otherError)
     Right _ -> assertFailure "expected the reserved window bit to be declined"
   where
-    -- win 0x08 (reserved bit 3) | deltaEncLen 06 | target 01 | deltaInd 00
+    -- win 0x08 (reserved bit 3) | deltaEncLen 07 | target 01 | deltaInd 00
     --   | A 01 I 01 C 00 | data "A" | inst [ADD1]
-    patch = vcdiffPatch [0x08, 0x06, 0x01, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
+    patch = vcdiffPatch [0x08, 0x07, 0x01, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
 
 -- | Both VCD_SOURCE and VCD_TARGET set: still 'MalformedVCDIFF'. slap
 -- understands exactly what both bits claim, and RFC 3284 §4.2 forbids
@@ -1711,10 +1727,10 @@ test_vcdiffBothSourceBitsStillMalformed =
     Right _ -> assertFailure "expected the both-source window to be refused"
   where
     -- win 0x03 (VCD_SOURCE + VCD_TARGET) | segLen 04 segPos 00
-    --   | deltaEncLen 06 | target 04 | deltaInd 00 | A 00 I 01 C 01
+    --   | deltaEncLen 07 | target 04 | deltaInd 00 | A 00 I 01 C 01
     --   | inst [COPY mode0 size4] | addr [0]
     patch = vcdiffPatch
-      [0x03, 0x04, 0x00, 0x06, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
+      [0x03, 0x04, 0x00, 0x07, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
 
 -- | A self-contained window that writes one byte then COPYs four bytes
 -- from address 0 — a read that trails the write, so it expands the
@@ -1763,10 +1779,10 @@ test_vcdiffCopyAddressOutOfRange =
     Left (MalformedVCDIFF VCDIFFCopyAddressOutOfRange{}) -> pure ()
     _ -> assertFailure "expected VCDIFFCopyAddressOutOfRange"
   where
-    -- win 0x00 | deltaEncLen 06 | target 04 | deltaInd 00 | A 00 I 01 C 01
+    -- win 0x00 | deltaEncLen 07 | target 04 | deltaInd 00 | A 00 I 01 C 01
     --   | inst [COPY mode0 size4] | addr [0]
     patch = vcdiffPatch
-      [0x00, 0x06, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
+      [0x00, 0x07, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
 
 -- | A COPY that begins inside a four-byte source segment (address 2)
 -- but runs four bytes, past the segment end. Core invariant 2.
@@ -1776,11 +1792,11 @@ test_vcdiffCopyCrossesSegmentEnd =
     Left (MalformedVCDIFF (VCDIFFCopyCrossesSourceSegmentEnd _)) -> pure ()
     _ -> assertFailure "expected VCDIFFCopyCrossesSourceSegmentEnd"
   where
-    -- win 0x01 (VCD_SOURCE) | segLen 04 segPos 00 | deltaEncLen 06
+    -- win 0x01 (VCD_SOURCE) | segLen 04 segPos 00 | deltaEncLen 07
     --   | target 04 | deltaInd 00 | A 00 I 01 C 01 | inst [COPY mode0 size4]
     --   | addr [2]
     patch = vcdiffPatch
-      [0x01, 0x04, 0x00, 0x06, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x02]
+      [0x01, 0x04, 0x00, 0x07, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x02]
 
 -- | A window declaring a five-byte target but emitting only one ADD of
 -- one byte. Core invariant 3.
@@ -1790,10 +1806,107 @@ test_vcdiffWindowSizeMismatch =
     Left (MalformedVCDIFF VCDIFFWindowSizeMismatch{}) -> pure ()
     _ -> assertFailure "expected VCDIFFWindowSizeMismatch"
   where
-    -- win 0x00 | deltaEncLen 06 | target 05 | deltaInd 00 | A 01 I 01 C 00
+    -- win 0x00 | deltaEncLen 07 | target 05 | deltaInd 00 | A 01 I 01 C 00
     --   | data "A" | inst [ADD1]
     patch = vcdiffPatch
-      [0x00, 0x06, 0x05, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
+      [0x00, 0x07, 0x05, 0x00, 0x01, 0x01, 0x00, 0x41, 0x02]
+
+-- | The self-referential window with its declared delta-encoding
+-- length one byte too large: the window's framing disagrees with its
+-- own declaration, and the window is refused before any decode
+-- (docs/vcdiff/core/questions.md, "delta-encoding-length").
+test_vcdiffEncodingLengthMismatch :: Assertion
+test_vcdiffEncodingLengthMismatch =
+  case parseVCDIFF patch of
+    Left (MalformedVCDIFF VCDIFFDeltaEncodingLengthMismatch{}) -> pure ()
+    Left otherError -> assertFailureT
+      ("expected VCDIFFDeltaEncodingLengthMismatch, got: " <> renderSlapError otherError)
+    Right _ -> assertFailure "expected the lying encoding length to be refused"
+  where
+    -- The valid self-referential window declares 0x09; 0x0A lies.
+    patch = vcdiffPatch
+      [0x00, 0x0A, 0x05, 0x00, 0x01, 0x02, 0x01, 0x41, 0x02, 0x14, 0x00]
+
+-- | A patch using no xdelta3 feature keeps the first-class CoreOnly
+-- verdict: it decodes identically under either flavor and is named as
+-- such, never silently leaned toward one side.
+test_vcdiffCoreOnlyVerdict :: Assertion
+test_vcdiffCoreOnlyVerdict =
+  case parseVCDIFF patch of
+    Right (Parsed (PatchCoreOnly _) _) -> pure ()
+    Right _ -> assertFailure "expected the CoreOnly verdict"
+    Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+  where
+    patch = vcdiffPatch
+      [0x00, 0x09, 0x05, 0x00, 0x01, 0x02, 0x01, 0x41, 0x02, 0x14, 0x00]
+
+-- | An application header (Hdr_Indicator bit 2) classifies the patch
+-- as xdelta3 and is carried byte-exact; the window after it still
+-- frames and applies correctly, proving the header bytes were stepped
+-- over precisely.
+test_vcdiffAppHeaderCaptured :: Assertion
+test_vcdiffAppHeaderCaptured =
+  case parseVCDIFF patch of
+    Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+    Right (Parsed decoded _) -> do
+      case decoded of
+        PatchXDelta3 (XDelta3Header maybeAppHeader) _ ->
+          assertEqual "application header bytes" (Just "slap!") maybeAppHeader
+        _ -> assertFailure "expected the xdelta3 verdict"
+      case applyVCDIFF decoded (InputFileContents ByteString.empty) of
+        Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
+        Right (OutputFileContents output) ->
+          assertEqual "output unaffected by the header"
+            (ByteString.replicate 5 0x41) output
+  where
+    -- magic | version 00 | header indicator 04 (VCD_APPHEADER)
+    --   | appheader length 05, "slap!" | the self-referential window
+    patch = PatchFileContents (ByteString.pack
+      (  [0xD6, 0xC3, 0xC4, 0x00, 0x04]
+      ++ [0x05, 0x73, 0x6C, 0x61, 0x70, 0x21]
+      ++ [0x00, 0x09, 0x05, 0x00, 0x01, 0x02, 0x01, 0x41, 0x02, 0x14, 0x00] ))
+
+-- | A window carrying its Adler32 (Win_Indicator bit 2): the patch
+-- classifies as xdelta3, the big-endian checksum decodes to the
+-- carried value, the framing steps the four bytes precisely (the
+-- window still applies to the right output), and the SomePatch seam
+-- lifts the checksum into 'verifyWindowAdler32' over the window's
+-- slice of the target. 0x03D40146 is the Adler-32 of "AAAAA"; the
+-- first assertion confirms it against slap's own computation, so the
+-- wire pin and the verifier agree about the value.
+test_vcdiffAdlerCarriedAndLifted :: Assertion
+test_vcdiffAdlerCarriedAndLifted = do
+  assertEqual "pinned value is slap's own Adler-32 of the output"
+    (Adler32 0x03D40146) (adler32 (ByteString.replicate 5 0x41))
+  case parseVCDIFF patch of
+    Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
+    Right (Parsed decoded _) -> do
+      case decoded of
+        PatchXDelta3 _ xdelta3Windows ->
+          assertEqual "carried checksum"
+            [Just (Adler32 0x03D40146)]
+            (map xdelta3WindowAdler32 (Vector.toList xdelta3Windows))
+        _ -> assertFailure "expected the xdelta3 verdict"
+      case applyVCDIFF decoded (InputFileContents ByteString.empty) of
+        Left applyError -> assertFailureT ("apply: " <> renderSlapError applyError)
+        Right (OutputFileContents output) ->
+          assertEqual "output unaffected by the checksum field"
+            (ByteString.replicate 5 0x41) output
+  case parseSome noDialectsRequested EncodingUtf8 patch of
+    Left parseError -> assertFailureT ("parseSome: " <> renderSlapError parseError)
+    Right somePatch -> case verifyWindowAdler32 (patchVerification somePatch) of
+      [WindowCheck (Offset 0) (Length 5) liftedChecksum] ->
+        assertEqual "lifted checksum" (Adler32 0x03D40146) liftedChecksum
+      otherChecks -> assertFailure
+        ("expected one window check over bytes [0,5), got: " ++ show otherChecks)
+  where
+    -- win 0x04 (VCD_ADLER32) | deltaEncLen 0D | target 05 | deltaInd 00
+    --   | A 01 I 02 C 01 | adler 03 D4 01 46 | data "A"
+    --   | inst [ADD1, COPY mode0 size4] | addr [0]
+    patch = vcdiffPatch
+      [ 0x04, 0x0D, 0x05, 0x00, 0x01, 0x02, 0x01
+      , 0x03, 0xD4, 0x01, 0x46
+      , 0x41, 0x02, 0x14, 0x00 ]
 
 -- | A patch that parses cleanly but names a ten-byte source segment;
 -- applied against a two-byte source, the segment lies outside the file.
@@ -1807,11 +1920,11 @@ test_vcdiffSourceSegmentExceedsSource =
         Left (ApplyFailed _ ApplySourceReadOutOfBounds{}) -> pure ()
         _ -> assertFailure "expected ApplySourceReadOutOfBounds"
   where
-    -- win 0x01 (VCD_SOURCE) | segLen 0A segPos 00 | deltaEncLen 06
+    -- win 0x01 (VCD_SOURCE) | segLen 0A segPos 00 | deltaEncLen 07
     --   | target 04 | deltaInd 00 | A 00 I 01 C 01 | inst [COPY mode0 size4]
     --   | addr [0]
     patch = vcdiffPatch
-      [0x01, 0x0A, 0x00, 0x06, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
+      [0x01, 0x0A, 0x00, 0x07, 0x04, 0x00, 0x00, 0x01, 0x01, 0x14, 0x00]
 
 ----------------------------------------------------------------------------
 -- VCDIFF address cache — the decode in isolation

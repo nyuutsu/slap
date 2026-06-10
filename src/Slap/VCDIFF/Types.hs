@@ -17,13 +17,14 @@ module Slap.VCDIFF.Types
   , RFCHeader(..)
   , XDelta3Window(..)
   , Window(..)
+  , windowOutputLength
   , VCDIFFInstruction(..)
   , SourceSegment(..)
   , SegmentOrigin(..)
   , vcdiffMagicBytes
   ) where
 
-import Slap.Measure (Offset, Length, FileSize)
+import Slap.Measure (Offset, Length(..), FileSize(..))
 import Slap.Checksum (Adler32)
 import Slap.VCDIFF.CodeTable (CodeTable)
 
@@ -97,6 +98,13 @@ data Window = Window
   , windowInstructions  :: !(Vector VCDIFFInstruction)
   }
   deriving (Eq, Show)
+
+-- | A window's declared target size, as the 'Length' its output
+-- occupies in the buffer it is decoded into. The shared projection
+-- behind both the apply walk (placing each window's output) and the
+-- verification lift (sizing each window's checksum range).
+windowOutputLength :: Window -> Length
+windowOutputLength window = Length (unFileSize (windowTargetSize window))
 
 -- | One decoded delta instruction. 'Add' carries its literal bytes;
 -- 'Run' carries a length and the single byte to repeat; 'Copy' carries

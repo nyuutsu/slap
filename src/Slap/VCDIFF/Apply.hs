@@ -27,7 +27,8 @@ module Slap.VCDIFF.Apply
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
-  , SourceSegment(..), SegmentOrigin(..), xdelta3WindowBody )
+  , SourceSegment(..), SegmentOrigin(..), windowOutputLength
+  , xdelta3WindowBody )
 import Slap.Binary (copyRegion, copyInPlace, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -180,11 +181,6 @@ applyVCDIFF patch (InputFileContents source)
     sourceSize      = byteFileSize source
     totalTargetSize =
       FileSize (Vector.sum (Vector.map (unFileSize . windowTargetSize) windows))
-
-    -- | A window's declared target size, as the 'Length' its output
-    -- occupies in the buffer.
-    windowOutputLength :: Window -> Length
-    windowOutputLength window = Length (unFileSize (windowTargetSize window))
 
     -- | Walk the windows, writing each at its base position in the
     -- output buffer. Each window's source segment is validated against

@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | CoreOnly VCDIFF apply cross-validation. For each row in
--- @test/specs/vcdiff-coreonly.txt@, slap applies the patch in-process
--- and the result is compared, byte for byte, against xdelta3 applying
--- the same patch — the oracle is xdelta3, never slap. Gated on xdelta3
--- and on the fixtures (both local-only), so the group skips cleanly
--- where either is absent.
+-- | VCDIFF apply cross-validation. For each row in
+-- @test/specs/vcdiff-coreonly.txt@ (stripped-to-core patches) and
+-- @test/specs/vcdiff-xdelta3.txt@ (unmodified xdelta3 output:
+-- application header and per-window Adler32 intact), slap applies the
+-- patch in-process and the result is compared, byte for byte, against
+-- xdelta3 applying the same patch — the oracle is xdelta3, never
+-- slap. Gated on xdelta3 and on the fixtures (both local-only), so
+-- rows skip cleanly where either is absent.
 module Integration.VCDIFFApply (vcdiffApplyTests) where
 
 import Integration.External
@@ -32,9 +34,10 @@ import Test.Tasty.HUnit (testCase, assertEqual, assertFailure)
 vcdiffApplyTests :: Tier -> IO GroupPlan
 vcdiffApplyTests _tier = do
   repo <- repoDir
-  rows <- parseSpecFile (repo </> "test" </> "specs" </> "vcdiff-coreonly.txt")
-  rowMaybes <- concat <$> mapM (planRow repo) rows
-  pure (namedGroup "vcdiff-coreonly" rowMaybes)
+  coreOnlyRows <- parseSpecFile (repo </> "test" </> "specs" </> "vcdiff-coreonly.txt")
+  xdelta3Rows  <- parseSpecFile (repo </> "test" </> "specs" </> "vcdiff-xdelta3.txt")
+  rowMaybes <- concat <$> mapM (planRow repo) (coreOnlyRows ++ xdelta3Rows)
+  pure (namedGroup "vcdiff-apply" rowMaybes)
 
 -- | A spec row becomes a runnable test only when both fixtures are
 -- present and xdelta3 resolves; otherwise it contributes a typed skip.

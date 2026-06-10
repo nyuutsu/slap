@@ -1561,12 +1561,8 @@ renderSlapError (VCDIFFFeatureNotYetSupported feature) =
       "secondary compression is not supported yet"
     VCDIFFCustomCodeTable ->
       "custom code tables are not supported yet"
-    VCDIFFApplicationHeader ->
-      "application-header data is not supported yet"
     VCDIFFTargetWindow ->
       "VCD_TARGET windows are not supported yet"
-    VCDIFFPerWindowChecksum ->
-      "per-window Adler32 checksums are not supported yet"
     VCDIFFSecondaryCompressedSection ->
       "secondary-compressed sections are not supported yet"
 
@@ -1595,6 +1591,10 @@ renderSlapError (MalformedVCDIFF malformation) =
       <> ": " <> vcdiffSectionName section <> " section exhausted"
     VCDIFFInvalidCopyAddressMode modeByte ->
       "invalid copy address mode " <> renderAsText modeByte
+    VCDIFFDeltaEncodingLengthMismatch (ExpectedSize declared) (ActualSize measured) ->
+      "window declares a delta-encoding length of "
+      <> renderAsText (unFileSize declared) <> " bytes but its fields span "
+      <> renderAsText (unFileSize measured)
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
@@ -2265,9 +2265,7 @@ codeTableFieldName CodeTableModeField = "mode"
 data VCDIFFUnsupportedFeature
   = VCDIFFSecondaryCompressor         -- ^ Hdr_Indicator VCD_DECOMPRESS: a secondary compressor is declared.
   | VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
-  | VCDIFFApplicationHeader           -- ^ Hdr_Indicator VCD_APPHEADER: application data (xdelta3-arc).
   | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
-  | VCDIFFPerWindowChecksum           -- ^ Win_Indicator VCD_ADLER32: a per-window Adler32 (xdelta3-arc).
   | VCDIFFSecondaryCompressedSection  -- ^ Delta_Indicator marks a data/inst/addr section secondary-compressed.
   deriving (Eq, Show)
 
@@ -2307,6 +2305,14 @@ data VCDIFFMalformation
   -- | A COPY's code-table entry named an address mode outside the
   -- range the cache configuration defines. The 'Word8' is the mode.
   | VCDIFFInvalidCopyAddressMode !Word8
+  -- | A window's declared delta-encoding length disagrees with the
+  -- measured span of its own fields — self-consistency the core
+  -- ruling demands (docs/vcdiff/core/questions.md,
+  -- "delta-encoding-length"): the length is the boundary a reader
+  -- navigates windows by, so once slap steers by it, verifying it is
+  -- obligatory. The 'ExpectedSize' is the wire declaration; the
+  -- 'ActualSize' is the span the framer measured.
+  | VCDIFFDeltaEncodingLengthMismatch !ExpectedSize !ActualSize
   deriving (Eq, Show)
 
 -- | Which of a VCDIFF patch's three indicator bytes carried a

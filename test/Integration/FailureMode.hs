@@ -131,6 +131,9 @@ failureModeTests tier getTargets = do
                       requireFixture dm4yUps $ \_ ->
                         pure (map WillRun (corruptPatchCRCTests dm4yBps dm4yUps))
 
+  vcdiffAdlerMaybes <- requireSlapBinary $ \_ ->
+                         pure (map WillRun vcdiffAdlerVerificationTests)
+
   -- The heavy strand needs the slap binary AND various ROM/patch
   -- fixtures. Each sub-group gates independently so a missing
   -- fixture only suppresses its own tests.
@@ -158,7 +161,7 @@ failureModeTests tier getTargets = do
   pure (namedGroup "failure-mode"
           (smcMaybes ++ xdelta1ShapeMaybes ++ dialectMaybes
             ++ xdelta1NoVerifyMaybes ++ xdelta1InputPreCompressionMaybes
-            ++ corruptCrcMaybes ++ heavyMaybes))
+            ++ corruptCrcMaybes ++ vcdiffAdlerMaybes ++ heavyMaybes))
 
 ----------------------------------------------------------------------------
 -- 1. Wrong source ROM (critical)
@@ -239,9 +242,10 @@ wrongSourceTests base bps ups rup xdelta1 =
         expectOkWithWarning ["apply", xdelta1, wrong, "-o", out, "--no-verify"]
           "wrong-source/xdelta1 --no-verify" "applied"
 
-  -- VCDIFF's wrong-source pair (Adler32 per-window verification)
-  -- returns when the VCDIFF family is rebuilt; the format is currently
-  -- mid-reimplementation and apply is stubbed out.
+  -- VCDIFF's verification pair lives in 'vcdiffAdlerVerificationTests':
+  -- the per-window Adler32 is a target-side check against the patch's
+  -- own declaration, so it needs no wrong-source fixture — a synthetic
+  -- patch with a lying checksum exercises the same machinery.
 
   -- Swapped ROM: apply dm4y BPS patch to dm4y base (which IS the right source)
   -- then try applying it to the PATCHED output — verification should fail
@@ -255,6 +259,44 @@ wrongSourceTests base bps ups rup xdelta1 =
         expectFail ["apply", bps, work, "-o", out]
           "wrong-source/BPS patched-as-source" "mismatch"
   ]
+
+-- | VCDIFF per-window Adler32 verification, end to end through the
+-- binary: a hand-built single-window xdelta3 patch (self-contained
+-- window, output "AAAAA") whose stored checksum is wrong for its
+-- output. The check is fatal by default and downgrades to a warning
+-- under --no-verify (docs/vcdiff/xdelta3/questions.md, "Per-window
+-- Adler32"). No fixtures: the patch is synthetic and the source is
+-- empty.
+vcdiffAdlerVerificationTests :: [TestTree]
+vcdiffAdlerVerificationTests =
+  [ testCase "wrong-adler/VCDIFF rejects" $
+      withWrongAdlerFiles $ \patchPath sourcePath out ->
+        expectFail ["apply", patchPath, sourcePath, "-o", out]
+          "wrong-adler/VCDIFF" "adler32 mismatch"
+  , testCase "wrong-adler/VCDIFF --no-verify proceeds" $
+      withWrongAdlerFiles $ \patchPath sourcePath out ->
+        expectOkWithWarning ["apply", patchPath, sourcePath, "-o", out, "--no-verify"]
+          "wrong-adler/VCDIFF --no-verify" "adler32 mismatch"
+  ]
+  where
+    withWrongAdlerFiles runWithFiles =
+      withTempFile "slap-vcdiff-bad-adler" $ \patchPath ->
+      withTempFile "slap-empty-source" $ \sourcePath ->
+      withTempFile "slap-out" $ \out -> do
+        ByteString.writeFile patchPath wrongAdlerPatch
+        ByteString.writeFile sourcePath ByteString.empty
+        removeIfExists out
+        runWithFiles patchPath sourcePath out
+
+    -- magic | version 00 | hdr 00 | win 0x04 (VCD_ADLER32)
+    --   | deltaEncLen 0D | target 05 | deltaInd 00 | A 01 I 02 C 01
+    --   | adler DE AD BE EF (wrong: "AAAAA" sums to 0x03D40146)
+    --   | data "A" | inst [ADD1, COPY mode0 size4] | addr [0]
+    wrongAdlerPatch = ByteString.pack
+      [ 0xD6, 0xC3, 0xC4, 0x00, 0x00
+      , 0x04, 0x0D, 0x05, 0x00, 0x01, 0x02, 0x01
+      , 0xDE, 0xAD, 0xBE, 0xEF
+      , 0x41, 0x02, 0x14, 0x00 ]
 
 -- | APS-GBA: per-block CRC16 verification (advisory warning, not hard fail)
 wrongSourceApsGbaTests :: FilePath -> FilePath -> [TestTree]
