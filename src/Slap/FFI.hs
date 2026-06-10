@@ -38,16 +38,24 @@ foreign import ccall unsafe "rusty_free"
   rustyFree :: Ptr Word8 -> CSize -> IO ()
 
 -- | CRC-32 via rusty-slap (hardware-accelerated crc32fast).
+--
+-- The @pure $!@ is load-bearing: 'rustyCRC32' is imported pure, so a
+-- lazy @pure $@ would return an unevaluated thunk holding the raw
+-- pointer past the end of 'withByteString''s keep-alive bracket —
+-- and a force after the ByteString's buffer is collected would read
+-- freed memory. Forcing inside the bracket pins the call to the
+-- window where the pointer is guaranteed valid.
 crc32 :: ByteString -> CRC32
 crc32 input = CRC32 $ unsafeDupablePerformIO $
   withByteString input $ \dataPointer dataLength ->
-    pure $ rustyCRC32 dataPointer dataLength
+    pure $! rustyCRC32 dataPointer dataLength
 
--- | Adler-32 via rusty-slap (RFC 1950).
+-- | Adler-32 via rusty-slap (RFC 1950). The @pure $!@ is load-bearing
+-- for the same reason as in 'crc32'.
 adler32 :: ByteString -> Adler32
 adler32 input = Adler32 $ unsafeDupablePerformIO $
   withByteString input $ \dataPointer dataLength ->
-    pure $ rustyAdler32 dataPointer dataLength
+    pure $! rustyAdler32 dataPointer dataLength
 
 -- | Use a 'ByteString''s bytes as an FFI-compatible
 -- ('Ptr' 'Word8', 'CSize') pair for the duration of a synchronous

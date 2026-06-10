@@ -101,8 +101,8 @@ unsafe fn surface_outcome_to_caller(
 /// flavor). See [`crc32::crc32`] for the variant rationale.
 ///
 /// # Safety
-/// `input_address` must point to `input_length` readable bytes (or be
-/// non-null when `input_length == 0`).
+/// `input_address` must point to `input_length` readable bytes (or may
+/// be null when `input_length == 0`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usize) -> u32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
@@ -116,8 +116,8 @@ pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usi
 /// byte_sum`.
 ///
 /// # Safety
-/// `input_address` must point to `input_length` readable bytes (or be
-/// non-null when `input_length == 0`).
+/// `input_address` must point to `input_length` readable bytes (or may
+/// be null when `input_length == 0`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: usize) -> u32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
@@ -141,9 +141,9 @@ pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: u
 ///
 /// # Safety
 /// - `source_address` must point to `source_length` readable bytes (or
-///   be non-null when `source_length == 0`).
+///   may be null when `source_length == 0`).
 /// - `target_address` must point to `target_length` readable bytes (or
-///   be non-null when `target_length == 0`).
+///   may be null when `target_length == 0`).
 /// - `output_address_pointer` and `output_length_pointer` must be
 ///   valid, aligned, writable pointers.
 #[unsafe(no_mangle)]
