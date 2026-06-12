@@ -358,10 +358,10 @@ data ApplyError
 -- constructor.  One constructor per real decompression site slap
 -- knows about; each carries only the axes that actually vary at that
 -- site.  'VCDIFFSectionFailed' is the one site whose algorithm
--- genuinely varies: a section kind's gathered secondary stream is
--- decoded by whichever compressor the patch declared, so the
--- 'CompressionAlgorithm' rides in the value — LZMA today, DJW and
--- FGK through the same constructor when their decoders land.
+-- genuinely varies: a secondary stream is decoded by whichever
+-- compressor the patch declared, so the 'CompressionAlgorithm' rides
+-- in the value — LZMA and DJW today, FGK through the same
+-- constructor when its decoder lands.
 data DecompressionFailure
   = Yay0WrapperFailed                       DecompressionCause
   | NINJA1Failed                            DecompressionCause
@@ -1620,8 +1620,6 @@ renderSlapError (VCDIFFFeatureNotYetSupported feature) =
       "custom code tables are not supported yet"
     VCDIFFTargetWindow ->
       "VCD_TARGET windows are not supported yet"
-    VCDIFFDJWSecondaryCompression ->
-      "this patch uses DJW secondary compression, which slap does not decode yet"
     VCDIFFFGKSecondaryCompression ->
       "this patch uses FGK secondary compression, which slap does not decode yet"
 
@@ -1671,15 +1669,18 @@ renderSlapError (MalformedVCDIFF malformation) =
       "a window marks its " <> vcdiffSectionName section
       <> " section secondary-compressed, but the header declares no compressor"
     VCDIFFSecondaryStreamUnconsumedInput section algorithm (Length leftover) ->
-      "the " <> vcdiffSectionName section <> " sections' "
-      <> compressionAlgorithmName algorithm <> " stream finished with "
+      "the " <> secondaryStreamPossessive section algorithm
+      <> " finished with "
       <> renderAsText leftover <> plural leftover " byte" " bytes"
       <> " of input unused"
     VCDIFFSecondaryStreamOutputSizeMismatch section algorithm
         (ExpectedSize declared) (ActualSize produced) ->
-      "the " <> vcdiffSectionName section <> " sections' "
-      <> compressionAlgorithmName algorithm <> " stream decoded to "
-      <> renderAsText (unFileSize produced) <> " bytes; the sections declare "
+      "the " <> secondaryStreamPossessive section algorithm
+      <> " decoded to "
+      <> renderAsText (unFileSize produced) <> " bytes; "
+      <> (case secondaryStreamGranularity algorithm of
+            GatheredAcrossSections -> "the sections declare "
+            EachSectionItsOwn      -> "the section declares ")
       <> renderAsText (unFileSize declared)
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
@@ -1897,6 +1898,45 @@ bsDiffSectionName BSDiffControl = "control"
 bsDiffSectionName BSDiffDiff    = "diff"
 bsDiffSectionName BSDiffExtra   = "extra"
 
+-- | How a compressor's stream relates to the payloads that carry it:
+-- one continuous stream whose carried pieces are slices of it, or a
+-- self-contained stream per piece. A total projection over
+-- 'CompressionAlgorithm', so a new algorithm must declare its shape
+-- before anything can speak about its streams — there is no wildcard
+-- to inherit one silently. Of the VCDIFF catalog, only LZMA gathers
+-- (the xz header rides in a kind's first compressed section and the
+-- rest are continuation slices); DJW is fresh per section, and FGK is
+-- recorded with today's reading of the same per-section driver, to be
+-- confirmed when its decoder lands. The four fixed-site algorithms
+-- compress self-contained payloads at their sites, so the per-piece
+-- shape is already the true one for them.
+data SecondaryStreamGranularity
+  = GatheredAcrossSections
+  | EachSectionItsOwn
+
+secondaryStreamGranularity :: CompressionAlgorithm -> SecondaryStreamGranularity
+secondaryStreamGranularity Zlib  = EachSectionItsOwn
+secondaryStreamGranularity Gzip  = EachSectionItsOwn
+secondaryStreamGranularity Bzip2 = EachSectionItsOwn
+secondaryStreamGranularity Yay0  = EachSectionItsOwn
+secondaryStreamGranularity DJW   = EachSectionItsOwn
+secondaryStreamGranularity LZMA  = GatheredAcrossSections
+secondaryStreamGranularity FGK   = EachSectionItsOwn
+
+-- | The possessive subject of a secondary-stream message: which
+-- sections own the stream being spoken of. The grammatical number
+-- follows 'secondaryStreamGranularity', because it is a fact about
+-- the stream's shape — a gathered stream belongs to all the kind's
+-- sections, a per-section stream to just one.
+secondaryStreamPossessive :: VCDIFFSection -> CompressionAlgorithm -> Text
+secondaryStreamPossessive section algorithm =
+  vcdiffSectionName section <> ownerSuffix <> " "
+  <> compressionAlgorithmName algorithm <> " stream"
+  where
+    ownerSuffix = case secondaryStreamGranularity algorithm of
+      GatheredAcrossSections -> " sections'"
+      EachSectionItsOwn      -> " section's"
+
 -- | Render a decompression failure as a user-facing line.  The four
 -- fixed-algorithm arms supply their site description as a literal —
 -- NINJA1's description contains the word "zlib" because NINJA1 uses
@@ -1912,8 +1952,7 @@ renderDecompressionFailure failure = case failure of
   BSDiffSectionFailed sec cause -> render
     ("BSDiff " <> bsDiffSectionName sec <> " bzip2 section") cause
   VCDIFFSectionFailed sec algorithm cause -> render
-    ("VCDIFF " <> vcdiffSectionName sec <> " sections' "
-       <> compressionAlgorithmName algorithm <> " stream") cause
+    ("VCDIFF " <> secondaryStreamPossessive sec algorithm) cause
   where
     render siteName (DecompressionCause msg) =
       siteName <> ": decompression failed: " <> msg
@@ -2370,16 +2409,16 @@ codeTableFieldName CodeTableModeField = "mode"
 -- feature the engine refuses for now rather than mishandles; the
 -- parenthetical says which arc it belongs to. As the RFC and xdelta3
 -- flavors land, arms graduate out of here — the blanket
--- secondary-compression arms left when LZMA landed, narrowing the
--- refusal to the two catalog entries slap recognizes but does not
--- decode yet. The per-compressor arms fire only when a window
--- actually compresses a section: a patch that declares DJW but never
--- exercises it decodes in full (docs/vcdiff/xdelta3/spec.md
--- "Catalog" — a declared-but-unused compressor is valid).
+-- secondary-compression arms left when LZMA landed, and the DJW arm
+-- left when its decoder did, leaving FGK the catalog's one
+-- still-refused entry. The FGK arm fires only when a window actually
+-- compresses a section: a patch that declares the compressor but
+-- never exercises it decodes in full
+-- (docs/vcdiff/xdelta3/secondary-compression.md "Catalog" — a
+-- declared-but-unused compressor is valid).
 data VCDIFFUnsupportedFeature
   = VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
   | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
-  | VCDIFFDJWSecondaryCompression     -- ^ A section is compressed under catalog id 1, xdelta3's own static Huffman.
   | VCDIFFFGKSecondaryCompression     -- ^ A section is compressed under catalog id 16, adaptive Huffman.
   deriving (Eq, Show)
 
@@ -2450,18 +2489,21 @@ data VCDIFFMalformation
   -- declarations live in the same patch and contradict each other;
   -- there is no algorithm the section could honestly be decoded by.
   | VCDIFFCompressedSectionWithoutCompressor !VCDIFFSection
-  -- | A section kind's gathered secondary stream finished decoding
-  -- with input left over — the named 'Length' of it. Mirrors xd3's
-  -- "finished with unused input" verdict (@xd3_decode_secondary@),
-  -- kept distinct from the short-output sibling below because
-  -- over-supplied input and under-produced output are different
-  -- faults. The 'CompressionAlgorithm' names the decoder that was
-  -- running.
+  -- | A secondary stream finished decoding with input left over —
+  -- the named 'Length' of it. Mirrors xd3's "finished with unused
+  -- input" verdict (@xd3_decode_secondary@), kept distinct from the
+  -- short-output sibling below because over-supplied input and
+  -- under-produced output are different faults. The
+  -- 'CompressionAlgorithm' names the decoder that was running, and
+  -- fixes the stream's granularity: a kind's windows-spanning
+  -- gathered stream for LZMA, one section's own self-contained
+  -- stream for DJW.
   | VCDIFFSecondaryStreamUnconsumedInput !VCDIFFSection !CompressionAlgorithm !Length
-  -- | A section kind's gathered secondary stream decoded to a byte
-  -- count other than the sum its sections declared. Mirrors xd3's
-  -- "short output" verdict; the 'ExpectedSize' is the declared sum,
-  -- the 'ActualSize' what the decoder produced.
+  -- | A secondary stream decoded to a byte count other than its
+  -- framing declared. Mirrors xd3's "short output" verdict; the
+  -- 'ExpectedSize' is the declared size (the sections' sum for
+  -- LZMA's gathered kind, the one section's own for DJW), the
+  -- 'ActualSize' what the decoder produced.
   | VCDIFFSecondaryStreamOutputSizeMismatch !VCDIFFSection !CompressionAlgorithm !ExpectedSize !ActualSize
   deriving (Eq, Show)
 

@@ -1,46 +1,51 @@
 -- | Secondary compression, the xdelta3 way: the catalog that gives
--- compressor ids their names, and the gather-decode-split machine
--- that turns a section kind's compressed pieces back into plain
--- sections.
+-- compressor ids their names, and the per-kind decode paths that turn
+-- compressed sections back into plain ones.
 --
 -- The RFC defines none of this — §6 waves at "assuming that any such
 -- compressed data has been decompressed" — so the shapes here are
 -- xdelta3 convention, recovered from its source and from real patches
--- (docs/vcdiff/xdelta3/spec.md "Secondary compression",
--- docs/vcdiff/xdelta3/questions.md). The two facts that shape the
--- module:
+-- (docs/vcdiff/xdelta3/secondary-compression.md,
+-- docs/vcdiff/xdelta3/questions.md). One framing fact is shared: a
+-- compressed section's on-wire bytes are a decompressed-size varint
+-- followed by compressor-native stream bytes. What that stream /is/
+-- differs per compressor, and the two decode paths wear the
+-- difference:
 --
---   * A compressed section's on-wire bytes are a decompressed-size
---     varint followed by a slice of compressor-native stream.
+--   * LZMA's stream is continuous within a kind: a compressed data
+--     section in window 7 is not a self-contained unit, it is a slice
+--     of the data kind's one ongoing stream, the xz header appearing
+--     only in the first window that compresses the kind. So the LZMA
+--     path gathers — collect a kind's slices in window order, decode
+--     the kind once, split the output back by declared sizes.
 --
---   * The three section kinds — data, instructions, addresses — are
---     independent of each other, but within a kind the compressed
---     stream is continuous across windows: a compressed data section
---     in window 7 is not a self-contained unit, it is a slice of the
---     data kind's one ongoing stream. The compressor's header appears
---     only in the first window that compresses the kind; later
---     sections are bare continuation slices.
+--   * DJW is fresh per section: xd3's per-section driver
+--     (@xd3_decode_secondary@) holds every section to its own
+--     consume-all and exact-output checks, and @xd3_decode_huff@
+--     starts a fresh bit reader on every call over a stream state of
+--     literally @struct _djw_stream { int unused; }@. Each section
+--     carries its own table headers and bit stream, so the DJW path
+--     decodes each piece independently — no gathering — and its
+--     verdicts land at per-section granularity, xd3's own.
 --
--- Continuity is why the machine gathers: collect a kind's slices in
--- window order, decode the kind once, and split the output back into
--- per-section pieces by their declared sizes. Being in-memory makes
--- this equivalent to xd3's persistent-decoder streaming, without any
--- decoder state crossing the FFI — the Rust side receives bytes and
--- returns bytes plus how much input it consumed, and the verdicts on
--- those facts (xd3's "finished with unused input" and "short output",
--- kept distinct here as they are there) are typed on this side, where
--- the wire framing is known.
+-- In both paths the Rust side receives bytes and returns bytes plus
+-- how much input it consumed; the verdicts on those facts (xd3's
+-- "finished with unused input" and "short output", kept distinct here
+-- as they are there) are typed on this side, where the wire framing
+-- is known.
 module Slap.VCDIFF.SecondaryCompression
   ( -- * The catalog
     XDelta3SecondaryCompressor(..)
   , secondaryCompressorCatalog
-    -- * The gather-decode-split machine
+    -- * The per-kind decode paths
   , SectionCarriage(..)
   , decodeLZMACompressedKind
+  , decodeDJWCompressedKind
   ) where
 
 import Slap.Binary (getVcdiffVarint, VarintResult(..))
-import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress)
+import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
+                                DjwDecoded(..), djwDecompress)
 import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
                      ExpectedSize(..), ActualSize(..))
 import Slap.Status
@@ -67,8 +72,9 @@ data XDelta3SecondaryCompressor
   | SecondaryFGK   -- ^ Adaptive Huffman, "demonstration purposes only".
   deriving (Eq, Show)
 
--- | The id-to-algorithm mapping (docs/vcdiff/xdelta3/spec.md
--- "Catalog"). The ids are not IANA-registered — this table is the
+-- | The id-to-algorithm mapping
+-- (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
+-- The ids are not IANA-registered — this table is the
 -- only registry there is — and xd3 rejects any other id, so a
 -- 'Nothing' here becomes the 'VCDIFFUnknownSecondaryCompressor'
 -- decline at the caller.
@@ -106,18 +112,20 @@ data CompressedPiece = CompressedPiece
   , pieceStreamSlice        :: !ByteString
   }
 
--- | Decode one section kind across a patch's windows: validate each
--- compressed section's framing, gather the stream slices in window
--- order, decode the kind's stream once through the LZMA seam, hold
--- the decoder's facts to the framing's claims, and hand back one
--- plain section per window. Plain carriages pass through untouched;
--- a kind no window compresses comes back exactly as it went in.
+-- | Decode one section kind across a patch's windows, the LZMA way:
+-- validate each compressed section's framing, gather the stream
+-- slices in window order, decode the kind's stream once through the
+-- LZMA seam, hold the decoder's facts to the framing's claims, and
+-- hand back one plain section per window. Plain carriages pass
+-- through untouched; a kind no window compresses comes back exactly
+-- as it went in.
 --
--- LZMA-specific by name and by signature: 'lzmaDecompress' sizes its
--- own output, so this machine needs no expected-size loop bound. The
--- DJW and FGK decoders, when they land, will take the declared total
--- as theirs — that asymmetry is real, and their entry points will
--- wear it rather than hide behind a unified shape.
+-- LZMA-specific by name and by shape: the gathering exists because
+-- LZMA's stream is continuous within a kind, and 'lzmaDecompress'
+-- sizes its own output from the chunk headers, so no expected-size
+-- bound crosses the seam. 'decodeDJWCompressedKind' is the
+-- per-section sibling; the asymmetries between them are the
+-- compressors' own, worn rather than hidden behind a unified shape.
 decodeLZMACompressedKind
   :: VCDIFFSection      -- ^ which kind, naming any refusal
   -> [SectionCarriage]  -- ^ one per window, in window order
@@ -132,9 +140,33 @@ decodeLZMACompressedKind kind carriages = do
     pieces -> do
       let gatheredStream = ByteString.concat (map pieceStreamSlice pieces)
           declaredTotal  = foldMap pieceDeclaredOutputSize pieces
-      decoderFacts <- runLZMADecoder kind gatheredStream
-      holdDecoderToFraming kind gatheredStream declaredTotal decoderFacts
-      pure (handOutDecodedSlices (lzmaDecodedBytes decoderFacts) contributions)
+      decoded <- runLZMADecoder kind gatheredStream
+      holdDecoderToFraming kind LZMA gatheredStream declaredTotal
+        (lzmaDecoderFacts decoded)
+      pure (handOutDecodedSlices (lzmaDecodedBytes decoded) contributions)
+
+-- | Decode one section kind across a patch's windows, the DJW way:
+-- every compressed section is self-contained — its own table headers,
+-- its own bit stream, decoded to exactly its declared size — so there
+-- is nothing to gather. Each piece decodes independently through the
+-- same framing 'readContribution' peels, and the verdicts land at
+-- per-section granularity, sharper than LZMA's per-kind and exactly
+-- xd3's own. Plain carriages pass through untouched.
+decodeDJWCompressedKind
+  :: VCDIFFSection      -- ^ which kind, naming any refusal
+  -> [SectionCarriage]  -- ^ one per window, in window order
+  -> Either SlapError [ByteString]
+decodeDJWCompressedKind kind carriages = do
+  contributions <- traverse (readContribution kind) carriages
+  traverse decodeContribution contributions
+  where
+    decodeContribution (PlainContribution sectionBytes) = Right sectionBytes
+    decodeContribution (CompressedContribution piece) = do
+      decoded <- runDJWDecoder kind piece
+      holdDecoderToFraming kind DJW (pieceStreamSlice piece)
+        (pieceDeclaredOutputSize piece)
+        (djwDecoderFacts decoded)
+      Right (djwDecodedBytes decoded)
 
 -- | Read one carriage's framing. A compressed section must begin
 -- with a readable decompressed-size varint (the zero-length section
@@ -167,25 +199,64 @@ runLZMADecoder kind gatheredStream =
     Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind LZMA cause))
     Right decoderFacts -> Right decoderFacts
 
--- | The two framing verdicts, made here from the decoder's surfaced
+-- | Run one section's stream through the DJW seam, lifting a decoder
+-- fault — an exhausted bit stream, a code outside its table — into
+-- the 'DecompressionFailed' lane with the kind and algorithm named.
+-- The section's declared output size crosses as the decoder's budget.
+runDJWDecoder :: VCDIFFSection -> CompressedPiece -> Either SlapError DjwDecoded
+runDJWDecoder kind piece =
+  case djwDecompress (pieceDeclaredOutputSize piece) (pieceStreamSlice piece) of
+    Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind DJW cause))
+    Right decoderFacts -> Right decoderFacts
+
+-- | The two facts every secondary decoder surfaces: how much input it
+-- consumed, and how much output it produced. One record with named
+-- fields rather than two positional 'Length's, so the roles are fixed
+-- at the only construction sites — the per-decoder projections below —
+-- and cannot transpose on the way to the verdicts.
+data SecondaryDecoderFacts = SecondaryDecoderFacts
+  { factsConsumedInput  :: !Length
+  , factsProducedOutput :: !Length
+  }
+
+-- | The LZMA seam's decoded form, projected onto the shared facts.
+lzmaDecoderFacts :: LzmaDecoded -> SecondaryDecoderFacts
+lzmaDecoderFacts decoded = SecondaryDecoderFacts
+  { factsConsumedInput  = lzmaConsumedInputLength decoded
+  , factsProducedOutput = byteLength (lzmaDecodedBytes decoded)
+  }
+
+-- | The DJW seam's decoded form, projected onto the shared facts.
+djwDecoderFacts :: DjwDecoded -> SecondaryDecoderFacts
+djwDecoderFacts decoded = SecondaryDecoderFacts
+  { factsConsumedInput  = djwConsumedInputLength decoded
+  , factsProducedOutput = byteLength (djwDecodedBytes decoded)
+  }
+
+-- | The two framing verdicts, made here from a decoder's surfaced
 -- facts — never by parsing its message text. The decoder must consume
--- the whole gathered stream, and must produce exactly the sum of the
--- sections' declared sizes; each shortfall is its own malformation,
--- mirroring xd3's two distinct complaints.
+-- the whole stream it was handed, and must produce exactly the
+-- declared size; each shortfall is its own malformation, mirroring
+-- xd3's two distinct complaints. Serves both granularities: LZMA
+-- holds a kind's gathered stream to the sections' declared sum, DJW
+-- holds each section's own stream to its own declaration.
 holdDecoderToFraming
-  :: VCDIFFSection -> ByteString -> Length -> LzmaDecoded -> Either SlapError ()
-holdDecoderToFraming kind gatheredStream declaredTotal decoderFacts = do
+  :: VCDIFFSection -> CompressionAlgorithm
+  -> ByteString             -- ^ the stream the decoder was handed
+  -> Length                 -- ^ the output size its framing declared
+  -> SecondaryDecoderFacts  -- ^ what the decoder reported back
+  -> Either SlapError ()
+holdDecoderToFraming kind algorithm decoderInput declaredOutput decoderFacts = do
   let unconsumedInput =
-        subtractLength (byteLength gatheredStream) (lzmaConsumedInputLength decoderFacts)
-      producedTotal = byteLength (lzmaDecodedBytes decoderFacts)
+        subtractLength (byteLength decoderInput) (factsConsumedInput decoderFacts)
   when (unconsumedInput /= Length 0) $
     Left (MalformedVCDIFF
-           (VCDIFFSecondaryStreamUnconsumedInput kind LZMA unconsumedInput))
-  when (producedTotal /= declaredTotal) $
+           (VCDIFFSecondaryStreamUnconsumedInput kind algorithm unconsumedInput))
+  when (factsProducedOutput decoderFacts /= declaredOutput) $
     Left (MalformedVCDIFF
-           (VCDIFFSecondaryStreamOutputSizeMismatch kind LZMA
-             (ExpectedSize (lengthToFileSize declaredTotal))
-             (ActualSize   (lengthToFileSize producedTotal))))
+           (VCDIFFSecondaryStreamOutputSizeMismatch kind algorithm
+             (ExpectedSize (lengthToFileSize declaredOutput))
+             (ActualSize   (lengthToFileSize (factsProducedOutput decoderFacts)))))
 
 -- | Split the decoded stream back into per-window sections: each
 -- compressed contribution takes its declared size off the front, and

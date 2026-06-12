@@ -1,13 +1,14 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
 -- source-free. Scoped to the core plus the xdelta3 arc as far as
--- LZMA: the default code table, the application header (carried
+-- DJW: the default code table, the application header (carried
 -- opaque), the per-window Adler32 (carried for the verification
--- boundary), and LZMA-compressed sections (decoded here, before
--- instruction decode, through 'Slap.VCDIFF.SecondaryCompression'). A
--- patch that reaches further — DJW or FGK compression, a custom code
--- table, a VCD_TARGET window — is classified and declined cleanly: a
--- deferred feature as 'VCDIFFFeatureNotYetSupported', a reserved
--- indicator bit or an uncataloged compressor id as the decline shapes
+-- boundary), and LZMA- and DJW-compressed sections (decoded here,
+-- before instruction decode, through
+-- 'Slap.VCDIFF.SecondaryCompression'). A patch that reaches further —
+-- FGK compression, a custom code table, a VCD_TARGET window — is
+-- classified and declined cleanly: a deferred feature as
+-- 'VCDIFFFeatureNotYetSupported', a reserved indicator bit or an
+-- uncataloged compressor id as the decline shapes
 -- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor'
 -- — never mishandled.
 --
@@ -55,7 +56,7 @@ import Slap.VCDIFF.Types
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.SecondaryCompression
   ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
-  , SectionCarriage(..), decodeLZMACompressedKind )
+  , SectionCarriage(..), decodeLZMACompressedKind, decodeDJWCompressedKind )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
@@ -514,21 +515,23 @@ newtype ResolvedWindow = ResolvedWindow RawWindow
 --
 --   * No compressor declared: any compression-flagged section is a
 --     wire self-contradiction ('VCDIFFCompressedSectionWithoutCompressor').
---   * DJW or FGK declared and exercised: refused by name — slap
---     recognizes the catalog entry but does not decode it yet.
---   * LZMA declared and exercised: each kind's stream is gathered,
---     decoded, and split back; every window comes out holding plain
---     sections.
+--   * FGK declared and exercised: refused by name — slap recognizes
+--     the catalog entry but does not decode it yet.
+--   * DJW or LZMA declared: each kind runs through its compressor's
+--     decode path — per-section for DJW, gathered for LZMA — and
+--     every window comes out holding plain sections.
 --   * Any compressor declared but exercised by no window: the patch
---     is fully decodable and passes through untouched — a
---     declared-but-unused compressor is valid
---     (docs/vcdiff/xdelta3/spec.md "Catalog").
+--     is fully decodable — a declared-but-unused compressor is valid
+--     (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
+--     FGK's arm checks this
+--     explicitly; the decode paths pass untouched sections through
+--     and arrive at the same place.
 --
--- The DJW and FGK arms are deliberate shape-twins, kept explicit
--- rather than factored through a shared refusal projection: the
--- dispositions above appear one-to-one in the code, and a compressor
--- graduating into decode support — or a new catalog entry — fires
--- '-Wincomplete-patterns' here, at the decision point.
+-- The arms stay explicit rather than factored through a shared
+-- projection: the dispositions above appear one-to-one in the code,
+-- and a compressor graduating into decode support — DJW just did — or
+-- a new catalog entry fires '-Wincomplete-patterns' here, at the
+-- decision point. FGK is the catalog's last refused entry.
 resolveSecondaryCompression
   :: Maybe XDelta3SecondaryCompressor -> [RawWindow]
   -> Either SlapError [ResolvedWindow]
@@ -538,15 +541,12 @@ resolveSecondaryCompression declaredCompressor rawWindows =
       Just orphanedKind ->
         Left (MalformedVCDIFF (VCDIFFCompressedSectionWithoutCompressor orphanedKind))
       Nothing -> Right rawWindows
-    Just SecondaryDJW
-      | anyWindowCompresses ->
-          Left (VCDIFFFeatureNotYetSupported VCDIFFDJWSecondaryCompression)
-      | otherwise -> Right rawWindows
+    Just SecondaryDJW -> decompressSectionsThrough decodeDJWCompressedKind rawWindows
     Just SecondaryFGK
       | anyWindowCompresses ->
           Left (VCDIFFFeatureNotYetSupported VCDIFFFGKSecondaryCompression)
       | otherwise -> Right rawWindows
-    Just SecondaryLZMA -> decompressLZMASections rawWindows
+    Just SecondaryLZMA -> decompressSectionsThrough decodeLZMACompressedKind rawWindows
   where
     anyWindowCompresses = any (not . null . compressedKindsOf) rawWindows
 
@@ -559,22 +559,29 @@ compressedKindsOf rawWindow =
   , testBit (rawDeltaIndicator rawWindow) compressionBit
   ]
 
--- | Run each of the three kinds through the gather-decode-split
--- machine and hand every window back with plain sections. Each kind
--- is its own continuous stream, decoded independently; a kind no
--- window compresses passes through the machine untouched.
-decompressLZMASections :: [RawWindow] -> Either SlapError [RawWindow]
-decompressLZMASections rawWindows = do
-  plainDataSections <- decodeKind VCDIFFDataSection        vcdDataCompBit rawDataSection
-  plainInstSections <- decodeKind VCDIFFInstructionSection vcdInstCompBit rawInstSection
-  plainAddrSections <- decodeKind VCDIFFAddressSection     vcdAddrCompBit rawAddrSection
+-- | Run each of the three kinds through a compressor's kind-decode
+-- path and hand every window back with plain sections. Each kind is
+-- decoded independently of the others; a kind no window compresses
+-- passes through untouched. The argument is the per-compressor
+-- machine — 'decodeLZMACompressedKind' gathers a kind's continuous
+-- stream, 'decodeDJWCompressedKind' decodes each section on its own —
+-- and this walker owns only what the compressors share: pairing each
+-- window's Delta_Indicator bit with its section bytes on the way in,
+-- and reassembling windows on the way out.
+decompressSectionsThrough
+  :: (VCDIFFSection -> [SectionCarriage] -> Either SlapError [ByteString])
+  -> [RawWindow] -> Either SlapError [RawWindow]
+decompressSectionsThrough decodeCompressedKind rawWindows = do
+  plainDataSections <- decodeOneKind VCDIFFDataSection        vcdDataCompBit rawDataSection
+  plainInstSections <- decodeOneKind VCDIFFInstructionSection vcdInstCompBit rawInstSection
+  plainAddrSections <- decodeOneKind VCDIFFAddressSection     vcdAddrCompBit rawAddrSection
   pure (zipWith4 windowWithPlainSections
           rawWindows plainDataSections plainInstSections plainAddrSections)
   where
-    decodeKind :: VCDIFFSection -> Int -> (RawWindow -> ByteString)
-               -> Either SlapError [ByteString]
-    decodeKind kind compressionBit sectionOf =
-      decodeLZMACompressedKind kind
+    decodeOneKind :: VCDIFFSection -> Int -> (RawWindow -> ByteString)
+                  -> Either SlapError [ByteString]
+    decodeOneKind kind compressionBit sectionOf =
+      decodeCompressedKind kind
         [ if testBit (rawDeltaIndicator rawWindow) compressionBit
             then CarriedCompressed (sectionOf rawWindow)
             else CarriedPlain      (sectionOf rawWindow)

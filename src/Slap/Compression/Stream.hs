@@ -7,6 +7,8 @@ module Slap.Compression.Stream
   , bzip2Decompress
   , LzmaDecoded(..)
   , lzmaDecompress
+  , DjwDecoded(..)
+  , djwDecompress
   , yay0Decompress
   ) where
 
@@ -59,6 +61,15 @@ foreign import ccall unsafe "rusty_bzip2_decompress"
 foreign import ccall unsafe "rusty_lzma_decompress"
   rustyLzmaDecompress
     :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
+    -> Ptr CSize                        -- consumed input length
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
+    -> IO CInt
+
+foreign import ccall unsafe "rusty_djw_decompress"
+  rustyDjwDecompress
+    :: Ptr Word8 -> CSize
+    -> CSize                            -- expected output length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
     -> Ptr CSize                        -- consumed input length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
@@ -161,7 +172,7 @@ data LzmaDecoded = LzmaDecoded
   deriving (Show, Eq)
 
 -- | LZMA decompression of one xdelta3-flavored stream (xz header,
--- raw LZMA2 chunks, no closing footer — see @rusty-slap/src/lzma.rs@
+-- raw LZMA2 chunks, no closing footer — see @rusty-slap/src/xdelta3_lzma.rs@
 -- for the stream shape). Written longhand rather than through
 -- 'callDecompressor': the consumed-input length is a third output
 -- channel the helper's shape has no slot for, and the helper's
@@ -191,6 +202,53 @@ lzmaDecompress input = unsafeDupablePerformIO $
           pure $ Right LzmaDecoded
             { lzmaDecodedBytes        = decodedBytes
             , lzmaConsumedInputLength = Length (fromIntegral consumedLength)
+            }
+
+-- | What one DJW decompression reports back across the seam: the
+-- decoded bytes, and how many input bytes the decoder consumed
+-- before its output budget filled. Sibling of 'LzmaDecoded', same
+-- contract: the consumed length is a fact only the decoder can know,
+-- and whether it honors the section's framing is the caller's
+-- judgment.
+data DjwDecoded = DjwDecoded
+  { djwDecodedBytes        :: !ByteString
+  , djwConsumedInputLength :: !Length
+  }
+  deriving (Show, Eq)
+
+-- | DJW decompression of one xdelta3 secondary-compressed section
+-- (xdelta3's own static multi-table Huffman — see
+-- @rusty-slap/src/xdelta3_djw.rs@ for the stream shape). The 'Length' is the
+-- section's declared output size, handed to the decoder as its loop
+-- terminus — DJW's bit stream carries no output size of its own
+-- (LZMA's chunk headers do), so the declaration must travel beside
+-- the bytes; the asymmetry with 'lzmaDecompress' is real and stays
+-- visible. Written longhand for the same reasons as 'lzmaDecompress':
+-- the consumed-length channel, and an honest answer on empty input.
+djwDecompress :: Length -> ByteString -> Either DecompressionCause DjwDecoded
+djwDecompress expectedOutputLength input = unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+    alloca $ \resultAddressPointer ->
+    alloca $ \resultLengthPointer ->
+    alloca $ \consumedLengthPointer ->
+    alloca $ \errorAddressPointer ->
+    alloca $ \errorLengthPointer -> do
+      returnCode <- rustyDjwDecompress
+        dataPointer dataLength
+        (fromIntegral (unLength expectedOutputLength))
+        resultAddressPointer resultLengthPointer
+        consumedLengthPointer
+        errorAddressPointer  errorLengthPointer
+      if returnCode /= 0
+        then do
+          rustMessage <- readText errorAddressPointer errorLengthPointer
+          pure $ Left (DecompressionCause rustMessage)
+        else do
+          decodedBytes   <- readByteString resultAddressPointer resultLengthPointer
+          consumedLength <- peek consumedLengthPointer
+          pure $ Right DjwDecoded
+            { djwDecodedBytes        = decodedBytes
+            , djwConsumedInputLength = Length (fromIntegral consumedLength)
             }
 
 -- | Yay0 (Nintendo LZSS) decompression.
