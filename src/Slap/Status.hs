@@ -924,6 +924,18 @@ data SlapAdvisory
   -- 'Length' is the byte count dropped.
   | IPS32TrailingBytes FormatLabel Length
 
+  -- | Bytes after a VCDIFF patch's last window matching the one
+  -- trailing shape slap recognizes: four @0xFF@ marker bytes, then
+  -- nothing but zero padding to end of input — the tail LODModS-made
+  -- patches carry. VCDIFF has no window count, total-size field, or
+  -- footer, so the format never says what trailing bytes mean, and
+  -- xdelta3 is of two minds about this tail (its applier writes the
+  -- correct output and then errors on it; its printhdr ignores it).
+  -- slap consumes exactly this shape and says what it saw; any other
+  -- trailing bytes keep framing as a window and failing as one. The
+  -- 'Length' is the remnant's full byte count, marker included.
+  | VCDIFFTrailingRemnant !Length
+
   -- | An EBP patch's metadata trailer existed (the post-@"EOF"@
   -- byte stream began with @{@, the shape signature of an EBPatcher
   -- JSON blob) but was not valid JSON, or its root was not an
@@ -1943,6 +1955,12 @@ renderSlapAdvisory (IPS32TrailingBytes label (Length n)) =
   formatLabelName label
   <> ": dropped " <> renderAsText n <> " trailing bytes after EEOF marker"
 
+renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
+  formatLabelName LabelVCDIFF
+  <> ": " <> renderAsText remnantLength
+  <> " trailing bytes after the last window (0xFF 0xFF 0xFF 0xFF, then"
+  <> " zero padding — the LODModS-style tail); not window data, ignored"
+
 renderSlapAdvisory (EBPMetadataMalformed label) =
   formatLabelName label
   <> ": metadata trailer is not valid JSON (or its root is not an object);"
@@ -2637,6 +2655,7 @@ slapAdvisorySeverity advisory = case advisory of
   OverlappingRecords{}                 -> SeverityNote
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote
+  VCDIFFTrailingRemnant{}              -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote

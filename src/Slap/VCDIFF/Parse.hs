@@ -54,10 +54,11 @@ import Slap.VCDIFF.SecondaryCompression
   , SectionCarriage(..), decodeLZMACompressedKind )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
-  ( ByteParser, runByteParser, getByte, getBytes, vcdiffVarint, word32BE, remaining, atEnd )
+  ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
+  , vcdiffVarint, word32BE, remaining, atEnd )
 import Slap.Checksum (Adler32(..))
 import Slap.Status
-  ( SlapError(..), Parsed(..)
+  ( SlapError(..), SlapAdvisory(..), Parsed(..)
   , VCDIFFUnsupportedFeature(..), VCDIFFMalformation(..)
   , VCDIFFIndicatorKind(..), VCDIFFSection(..) )
 import Slap.FormatLabel (FormatLabel(..))
@@ -99,9 +100,20 @@ parseVCDIFF (PatchFileContents input)
   | otherwise =
       case runByteParser parseRawPatch (ByteString.drop magicLength input) of
         Left parserError -> Left (ParseError LabelVCDIFF parserError)
-        Right rawPatch   -> (\patch -> Parsed patch []) <$> classifyAndDecode rawPatch
+        Right rawPatch   ->
+          (\patch -> Parsed patch (trailingRemnantNotes rawPatch))
+            <$> classifyAndDecode rawPatch
   where
     magicLength = ByteString.length vcdiffMagicBytes
+
+-- | The advisory the framer's trailing-remnant recognition surfaces,
+-- when it consumed one (see 'isTrailingRemnant'). The remnant is the
+-- whole of what the patch says about itself here — its bytes are not
+-- patch semantics and go no further than this note.
+trailingRemnantNotes :: RawPatch -> [SlapAdvisory]
+trailingRemnantNotes rawPatch = case rawTrailingRemnant rawPatch of
+  Nothing            -> []
+  Just remnantLength -> [VCDIFFTrailingRemnant remnantLength]
 
 ----------------------------------------------------------------------------
 -- Byte-level framing
@@ -119,6 +131,12 @@ data RawPatch = RawPatch
   , rawCompressorId    :: !(Maybe Word8)
   , rawAppHeader       :: !(Maybe ByteString)
   , rawWindows         :: ![RawWindow]
+  , rawTrailingRemnant :: !(Maybe Length)
+    -- ^ The byte count of the recognized trailing remnant the framer
+    -- consumed after the last window, when one was present (see
+    -- 'isTrailingRemnant'). Carried for the advisory channel only:
+    -- the bytes are not patch semantics, so they reach neither the
+    -- decoded 'VCDIFFPatch' nor anything downstream of it.
   }
 
 data RawWindow = RawWindow
@@ -170,9 +188,9 @@ parseRawPatch = do
       appHeader    <- if testBit headerIndicator vcdAppHeaderBit
                         then Just <$> parseApplicationHeader
                         else pure Nothing
-      windows      <- parseRawWindows
-      pure (RawPatch version headerIndicator compressorId appHeader windows)
-    else pure (RawPatch version headerIndicator Nothing Nothing [])
+      (windows, trailingRemnant) <- parseRawWindows
+      pure (RawPatch version headerIndicator compressorId appHeader windows trailingRemnant)
+    else pure (RawPatch version headerIndicator Nothing Nothing [] Nothing)
 
 -- | Whether every set bit of a header indicator names a feature whose
 -- bytes the framer knows how to walk past — VCD_DECOMPRESS (one
@@ -194,16 +212,70 @@ parseApplicationHeader = do
   declaredLength <- vcdiffVarint
   getBytes (Length (fromIntegral declaredLength))
 
-parseRawWindows :: ByteParser [RawWindow]
+-- | What 'parseRawWindows' finds where the next window would begin:
+-- input spent, the one trailing shape slap recognizes, or another
+-- window to frame. The collect loop's three outcomes as data, in the
+-- house classify-then-dispatch shape, so the loop reads as policy
+-- and the looking lives in 'peekWindowStreamHead'.
+data WindowStreamHead
+  = StreamSpent
+  | RemnantToEnd !Length
+  | WindowAhead
+
+-- | Collect windows until the input ends — or until what sits where
+-- the next window would begin is the one trailing shape slap
+-- recognizes instead ('isTrailingRemnant'). A recognized remnant is
+-- consumed whole and reported by its byte count. The peek classifies
+-- uniformly on every iteration, so a zero-window patch wearing the
+-- tail gets the same recognition as a many-window one.
+parseRawWindows :: ByteParser ([RawWindow], Maybe Length)
 parseRawWindows = collect []
   where
     collect accumulatedReversed = do
-      done <- atEnd
-      if done
-        then pure (reverse accumulatedReversed)
-        else do
+      streamHead <- peekWindowStreamHead
+      case streamHead of
+        StreamSpent -> pure (reverse accumulatedReversed, Nothing)
+        RemnantToEnd remnantLength -> do
+          skip remnantLength
+          pure (reverse accumulatedReversed, Just remnantLength)
+        WindowAhead -> do
           window <- parseRawWindow
           collect (window : accumulatedReversed)
+
+-- | Classify the rest of the input without moving the cursor;
+-- 'parseRawWindows' performs whatever consumption the verdict calls
+-- for.
+peekWindowStreamHead :: ByteParser WindowStreamHead
+peekWindowStreamHead = do
+  done <- atEnd
+  if done
+    then pure StreamSpent
+    else do
+      bytesLeft   <- remaining
+      restOfInput <- lookAhead (getBytes bytesLeft)
+      pure $ if isTrailingRemnant restOfInput
+               then RemnantToEnd bytesLeft
+               else WindowAhead
+
+-- | The one trailing shape slap recognizes after the last window:
+-- the four marker bytes, then nothing but zero padding (none
+-- included) to end of input. Exactly the tail LODModS-made patches
+-- carry, and the tolerance extends exactly as far as that evidence
+-- (docs/vcdiff/questions.md, "How does a decoder know the patch is
+-- over"): any other trailing bytes keep framing as a window and
+-- failing as one, and a second recognized shape earns its place the
+-- way this one did — by existing in the wild, not by widening this
+-- predicate.
+isTrailingRemnant :: ByteString -> Bool
+isTrailingRemnant trailingBytes =
+  ByteString.take markerLength trailingBytes == trailingRemnantMarker
+    && ByteString.all (== 0x00) (ByteString.drop markerLength trailingBytes)
+  where
+    markerLength = ByteString.length trailingRemnantMarker
+
+-- | The four bytes that open the recognized trailing remnant.
+trailingRemnantMarker :: ByteString
+trailingRemnantMarker = ByteString.pack [0xFF, 0xFF, 0xFF, 0xFF]
 
 parseRawWindow :: ByteParser RawWindow
 parseRawWindow = do

@@ -196,25 +196,44 @@ labelForIPSVariant IPS32       = LabelIPS32
 -- parseIPSBody — ByteParser-monad inner record loop
 ----------------------------------------------------------------------------
 
+-- | What the record walk finds at the cursor on each iteration — the
+-- three things 'parseIPSBody' promises can happen, as data, so the
+-- walk's loop reads as policy and the peeking lives in one
+-- classifier.
+data IPSStreamHead
+  = EOFMarkerAhead
+    -- ^ The variant's EOF marker sits at the cursor: the walk is
+    -- over, and the loop consumes the marker and captures the
+    -- trailer.
+  | RecordAhead
+    -- ^ Not the marker, and enough input remains to begin another
+    -- complete record.
+  | TooShortToContinue
+    -- ^ The remaining input cannot hold an EOF marker — or holds no
+    -- marker and cannot hold another record header. The truncated
+    -- shape, with the records decoded so far preserved.
+
 -- | Walk the post-magic record stream record by record, peeking at
 -- every iteration for the variant's EOF marker.
 --
--- Three things can happen on each iteration:
+-- Three things can happen on each iteration — 'IPSStreamHead' names
+-- them:
 --
---   * The bytes at the cursor are the variant's EOF marker. We
---     consume the marker, capture the rest of the input as the
---     post-trailer slice, and return 'IPSBodyClean'. The trailer
---     disambiguation (plain / truncated / EBP / reject) happens
---     outside this loop in 'assembleCleanResult'.
+--   * 'EOFMarkerAhead': the bytes at the cursor are the variant's
+--     EOF marker. We consume the marker, capture the rest of the
+--     input as the post-trailer slice, and return 'IPSBodyClean'.
+--     The trailer disambiguation (plain / truncated / EBP / reject)
+--     happens outside this loop in 'assembleCleanResult'.
 --
---   * The bytes at the cursor are not the EOF marker and we have
---     enough remaining input to read another complete record. We
---     decode the record and recurse.
+--   * 'RecordAhead': the bytes at the cursor are not the EOF marker
+--     and we have enough remaining input to read another complete
+--     record. We decode the record and recurse.
 --
---   * The remaining input is too short to hold either an EOF
---     marker or a complete next record. We return 'IPSBodyTruncated'
---     with the records decoded so far; 'parseIPS' will surface this
---     as an 'IPSParseTruncated' with a 'NoEOFMarker' warning.
+--   * 'TooShortToContinue': the remaining input is too short to hold
+--     either an EOF marker or a complete next record. We return
+--     'IPSBodyTruncated' with the records decoded so far; 'parseIPS'
+--     will surface this as an 'IPSParseTruncated' with a
+--     'NoEOFMarker' warning.
 --
 -- The peek is genuinely non-destructive: 'lookAhead' from
 -- 'Slap.ByteParser' runs the sub-parser and rewinds the cursor regardless
@@ -271,25 +290,40 @@ parseIPSBody variant = bodyLoop [] [] firstAction
     -- it unchanged, since no record was committed.
     bodyLoop :: [IPSRecord] -> [SlapAdvisory] -> ActionIndex -> ByteParser IPSBodyShape
     bodyLoop accumulatedReversed warningsReversed currentIndex = do
+      streamHead <- peekStreamHead
+      case streamHead of
+        TooShortToContinue ->
+          truncatedFrom accumulatedReversed warningsReversed
+        EOFMarkerAhead -> do
+          skip eofMarkerLength
+          trailerLength <- remaining
+          trailingBytes <- getBytes trailerLength
+          pure (IPSBodyClean (reverse accumulatedReversed)
+                             trailingBytes
+                             (reverse warningsReversed))
+        RecordAhead ->
+          decodeOneRecordOrTruncate accumulatedReversed
+                                    warningsReversed
+                                    currentIndex
+
+    -- | Classify the bytes at the cursor without consuming them;
+    -- each 'bodyLoop' arm performs its own consumption.
+    peekStreamHead :: ByteParser IPSStreamHead
+    peekStreamHead = do
       bytesLeft <- remaining
       if unLength bytesLeft < unLength eofMarkerLength
-        then truncatedFrom accumulatedReversed warningsReversed
-        else do
-          peekedBytes <- lookAhead (getBytes eofMarkerLength)
-          if peekedBytes == eofMarkerBytes
-            then do
-              skip eofMarkerLength
-              trailerLength <- remaining
-              trailingBytes <- getBytes trailerLength
-              pure (IPSBodyClean (reverse accumulatedReversed)
-                                 trailingBytes
-                                 (reverse warningsReversed))
-            else
-              if unLength bytesLeft < unLength recordHeaderLength
-                then truncatedFrom accumulatedReversed warningsReversed
-                else decodeOneRecordOrTruncate accumulatedReversed
-                                               warningsReversed
-                                               currentIndex
+        then pure TooShortToContinue
+        else classifyStreamHead bytesLeft <$> lookAhead (getBytes eofMarkerLength)
+
+    -- | The verdict, given the byte budget and the peeked would-be
+    -- marker. Guard order matters: the marker is recognized even
+    -- when the remaining input could not hold a record header (the
+    -- marker is shorter than a record).
+    classifyStreamHead :: Length -> ByteString -> IPSStreamHead
+    classifyStreamHead bytesLeft peekedBytes
+      | peekedBytes == eofMarkerBytes                    = EOFMarkerAhead
+      | unLength bytesLeft < unLength recordHeaderLength = TooShortToContinue
+      | otherwise                                        = RecordAhead
 
     decodeOneRecordOrTruncate :: [IPSRecord]
                               -> [SlapAdvisory]
