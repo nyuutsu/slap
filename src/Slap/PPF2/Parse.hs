@@ -17,15 +17,16 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         ppf2FileIdLengthFieldWidth,
                         ppf2FileIdMarkerLength, ppf2FileIdFooterLength)
 import Slap.Binary (getWord32LE)
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getByte, getBytes, remaining, skip, word32LE)
 import Slap.Measure (Offset, offsetFromParsed, Length(..),
                      EncodingMethodByte(..),
-                     ActionIndex, unActionIndex,
-                     RequiredLength(..), ActualLength(..),
+                     ActionIndex,
+                     RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories)
@@ -121,9 +122,9 @@ parsePPF2Records recordIndex = do
     parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF2Record
     parseLiteralBody index remainingAfterHeader writeOffset payloadLength
       | unLength remainingAfterHeader < payloadLength =
-          fail (truncatedMessage index
-                                 (RequiredLength (Length (5 + payloadLength)))
-                                 (ActualLength (lengthAddingHeader remainingAfterHeader)))
+          throwByteParserError (ByteParserTruncatedRecord index
+            (RequiredLength (Length (5 + payloadLength)))
+            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
       | otherwise = do
           payload <- getBytes (Length payloadLength)
           pure (PPF2Record writeOffset payload)
@@ -131,9 +132,9 @@ parsePPF2Records recordIndex = do
     parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF2Record
     parseRleBody index remainingAfterHeader writeOffset
       | unLength remainingAfterHeader < 2 =
-          fail (truncatedMessage index
-                                 (RequiredLength (Length 7))
-                                 (ActualLength (lengthAddingHeader remainingAfterHeader)))
+          throwByteParserError (ByteParserTruncatedRecord index
+            (RequiredLength (Length 7))
+            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
       | otherwise = do
           dataByte <- getByte
           repeatCount <- fromIntegral <$> getByte
@@ -142,12 +143,6 @@ parsePPF2Records recordIndex = do
     lengthAddingHeader :: Length -> Length
     lengthAddingHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
 
-truncatedMessage :: ActionIndex -> RequiredLength -> ActualLength -> String
-truncatedMessage recordIndex
-                 (RequiredLength (Length needed))
-                 (ActualLength   (Length available)) =
-  "record " ++ show (unActionIndex recordIndex)
-  ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"
 
 ----------------------------------------------------------------------------
 -- FILE_ID.DIZ trailer detection (PPF2-specific 4-byte length field)

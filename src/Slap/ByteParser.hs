@@ -26,6 +26,7 @@
 module Slap.ByteParser
   ( ByteParser
   , runByteParser
+  , throwByteParserError
     -- * Primitives
   , getByte
   , getBytes

@@ -635,6 +635,15 @@ data SlapError
   -- bytes.
   | MalformedAPSN64Header APSN64HeaderMalformation
 
+  -- | A PPF4 Replace record appeared after an Append record. PPF4 is
+  -- two-phase — every in-place Replace precedes every Append — and
+  -- the reference patchers both emit and consume that order, so a
+  -- Replace on the wrong side of the transition is a structural
+  -- claim slap understands and rejects. Judged outside the byte
+  -- parser by 'Slap.PPF4.Parse.partitionPhases', after the record
+  -- walk; the 'ActionIndex' names the offending record.
+  | PPF4ReplaceAfterAppend !ActionIndex
+
   -- | An xdelta1 patch's instruction referenced a source index that
   -- is not 0 (the data source) or 1 (the file source). Canonical
   -- xdelta emits only those two indices and slap rejects anything
@@ -1394,6 +1403,19 @@ renderByteParserError
   <> ": need " <> renderAsText requested <> " bytes at offset " <> renderAsText cursor
   <> " but only " <> renderAsText available <> " available"
 
+renderByteParserError
+  (ByteParserTruncatedRecord
+      recordIndex
+      (RequiredLength (Length needed))
+      (RemainingLength (Length available))) =
+  "record " <> renderAsText (unActionIndex recordIndex)
+  <> " truncated (need " <> renderAsText needed
+  <> " bytes, have " <> renderAsText available <> ")"
+
+renderByteParserError (ByteParserUnknownCommandByte recordIndex commandByte) =
+  "record " <> renderAsText (unActionIndex recordIndex)
+  <> ": unknown command byte 0x" <> padHex 2 commandByte
+
 renderByteParserError (ByteParserTerminatorNotFound terminatorByte (Position cursor)) =
   "getUntilByte: terminator 0x" <> padHex 2 terminatorByte
   <> " not found from offset " <> renderAsText cursor
@@ -1682,6 +1704,12 @@ renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize di
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
     APSN64UnknownPatchType byte -> "unknown patch type: " <> renderAsText byte
+
+renderSlapError (PPF4ReplaceAfterAppend recordIndex) =
+  formatLabelName LabelPPF4 <> ": record "
+  <> renderAsText (unActionIndex recordIndex)
+  <> " is a Replace after an Append; PPF4 is two-phase — once an Append"
+  <> " record appears, every subsequent record must also be Append"
 
 renderSlapError (XDelta1UnknownInstructionTarget wireIndex) =
   formatLabelName LabelXDelta1
@@ -2563,6 +2591,22 @@ data ByteParserError
   -- left in the input. The 'ByteParserOperation' names which
   -- primitive surfaced the underflow.
   = ByteParserUnderflow ByteParserOperation RequestedLength RemainingLength Position
+
+  -- | A record declares more bytes than the stream holds. Raised by
+  -- format walkers through 'Slap.ByteParser.throwByteParserError'
+  -- ahead of the doomed read, so the failure names the record (and
+  -- its full declared size) rather than the byte offset a raw
+  -- underflow would have named. The 'RequiredLength' is the whole
+  -- record's byte count, header included; the 'RemainingLength' is
+  -- what the stream had where the record began.
+  | ByteParserTruncatedRecord !ActionIndex !RequiredLength !RemainingLength
+
+  -- | A command-coded stream's next code byte is outside the
+  -- format's command table. Raised by format walkers through
+  -- 'Slap.ByteParser.throwByteParserError'; the 'ActionIndex' names
+  -- the offending record in wire order and the 'Word8' carries the
+  -- byte as read.
+  | ByteParserUnknownCommandByte !ActionIndex !Word8
 
   -- | 'Slap.ByteParser.getUntilByte' scanned for the given terminator
   -- byte from 'Position' to end-of-input and did not find it.

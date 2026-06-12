@@ -14,15 +14,16 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         ppf3FileIdLengthFieldWidth,
                         ppf3FileIdMarkerLength, ppf3FileIdFooterLength)
 import Slap.Binary (getWord16LE)
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, int64LE)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getByte, getBytes, remaining, skip, int64LE)
 import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RawFlagByte(..),
-                     ActionIndex, unActionIndex,
-                     RequiredLength(..), ActualLength(..),
+                     ActionIndex,
+                     RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories)
@@ -123,9 +124,9 @@ parsePPF3Records hasUndo recordIndex = do
     payloadLength <- fromIntegral <$> getByte
     let totalNeeded = 9 + payloadLength + (if hasUndo then payloadLength else 0)
     if totalNeeded > unLength remainingBytes
-      then fail (truncatedMessage recordIndex
-                                  (RequiredLength (Length totalNeeded))
-                                  (ActualLength remainingBytes))
+      then throwByteParserError (ByteParserTruncatedRecord recordIndex
+             (RequiredLength (Length totalNeeded))
+             (RemainingLength remainingBytes))
       else do
         payload <- getBytes (Length payloadLength)
         undoPayload <- if hasUndo
@@ -134,12 +135,6 @@ parsePPF3Records hasUndo recordIndex = do
         rest <- parsePPF3Records hasUndo (nextAction recordIndex)
         pure (PPF3Record recordOffset payload undoPayload : rest)
 
-truncatedMessage :: ActionIndex -> RequiredLength -> ActualLength -> String
-truncatedMessage recordIndex
-                 (RequiredLength (Length needed))
-                 (ActualLength   (Length available)) =
-  "record " ++ show (unActionIndex recordIndex)
-  ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"
 
 ----------------------------------------------------------------------------
 -- FILE_ID.DIZ trailer detection (PPF3-specific 2-byte length field)

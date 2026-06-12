@@ -8,14 +8,15 @@ module Slap.PPF1.Parse (parsePPF1, parsePPF1Records) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..), PPF1Origin(..),
                         ppf1DescriptionLength)
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining, skip, word32LE, word32BE)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getByte, getBytes, remaining, skip, word32LE, word32BE)
 import Slap.Measure (Offset, offsetFromParsed, Length(..), EncodingMethodByte(..),
-                     ActionIndex, unActionIndex,
-                     RequiredLength(..), ActualLength(..),
+                     ActionIndex,
+                     RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories)
@@ -110,9 +111,9 @@ parsePPF1Records origin = goRecords
     parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF1Record
     parseLiteralBody index remainingAfterHeader writeOffset payloadLength
       | unLength remainingAfterHeader < payloadLength =
-          fail (truncatedMessage index
-                                 (RequiredLength (Length (5 + payloadLength)))
-                                 (ActualLength (lengthAddingHeader remainingAfterHeader)))
+          throwByteParserError (ByteParserTruncatedRecord index
+            (RequiredLength (Length (5 + payloadLength)))
+            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
       | otherwise = do
           payload <- getBytes (Length payloadLength)
           pure (PPF1Record writeOffset payload)
@@ -120,9 +121,9 @@ parsePPF1Records origin = goRecords
     parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF1Record
     parseRleBody index remainingAfterHeader writeOffset
       | unLength remainingAfterHeader < 2 =
-          fail (truncatedMessage index
-                                 (RequiredLength (Length 7))
-                                 (ActualLength (lengthAddingHeader remainingAfterHeader)))
+          throwByteParserError (ByteParserTruncatedRecord index
+            (RequiredLength (Length 7))
+            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
       | otherwise = do
           dataByte <- getByte
           repeatCount <- fromIntegral <$> getByte
@@ -134,11 +135,4 @@ parsePPF1Records origin = goRecords
     lengthAddingHeader :: Length -> Length
     lengthAddingHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
 
--- | Format a truncated-record error message.
-truncatedMessage :: ActionIndex -> RequiredLength -> ActualLength -> String
-truncatedMessage recordIndex
-                 (RequiredLength (Length needed))
-                 (ActualLength   (Length available)) =
-  "record " ++ show (unActionIndex recordIndex)
-  ++ " truncated (need " ++ show needed ++ " bytes, " ++ show available ++ " available)"
 

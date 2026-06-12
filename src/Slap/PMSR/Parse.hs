@@ -10,13 +10,15 @@ module Slap.PMSR.Parse
 -- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
-import Slap.Status (SlapError(..), Parsed(..))
+import Slap.Status (SlapError(..), Parsed(..), ByteParserError(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getBytes, skip, remaining)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getBytes, skip, remaining)
 import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), offsetFromParsed,
-                     RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     RequiredLength(..), ActualLength(..), RemainingLength(..),
+                     ActualMagic(..), ActionIndex, firstAction, nextAction,
                      byteLength)
 
 import qualified Data.ByteString as ByteString
@@ -37,18 +39,25 @@ parsePMSRBody :: ByteParser PMSRPatch
 parsePMSRBody = do
   skip (Length 4)  -- magic
   count <- fromIntegral <$> ByteParser.word32BE
-  records  <- parseLoop count []
+  records  <- parseLoop firstAction count []
   pure (PMSRPatch (Vector.fromList records))
 
-parseLoop :: Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
-parseLoop 0 accumulated = pure (reverse accumulated)
-parseLoop count accumulated = do
+parseLoop :: ActionIndex -> Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
+parseLoop _ 0 accumulated = pure (reverse accumulated)
+parseLoop recordIndex count accumulated = do
   offset <- offsetFromParsed <$> ByteParser.word32BE
   dataLength <- fromIntegral <$> ByteParser.word32BE
   available <- remaining
   if dataLength > unLength available
-    then fail ("record needs " ++ show dataLength ++ " bytes but only "
-               ++ show (unLength available) ++ " available")
+    then throwByteParserError (ByteParserTruncatedRecord recordIndex
+           (RequiredLength (lengthAddingHeader (Length dataLength)))
+           (RemainingLength (lengthAddingHeader available)))
     else do
       payload <- getBytes (Length dataLength)
-      parseLoop (count - 1) (PMSRRecord offset payload : accumulated)
+      parseLoop (nextAction recordIndex) (count - 1) (PMSRRecord offset payload : accumulated)
+  where
+    -- Restate a byte count "as if" the 8-byte record header (4-byte
+    -- offset, 4-byte length) had not been consumed yet, so the error
+    -- names the whole-record budget.
+    lengthAddingHeader :: Length -> Length
+    lengthAddingHeader (Length availableAfterHeader) = Length (8 + availableAfterHeader)

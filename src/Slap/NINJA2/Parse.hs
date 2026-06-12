@@ -10,16 +10,16 @@ module Slap.NINJA2.Parse
 
 import Slap.NINJA2.Types
 import Slap.Checksum (MD5Hash(..))
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, atEnd)
+import Slap.ByteParser (ByteParser, runByteParser, throwByteParserError,
+                        getByte, getBytes, atEnd)
 import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..),
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
+                     ActionIndex, firstAction, nextAction,
                      byteLength)
-import qualified Data.Text as Text
-import Slap.Display.Primitives (padHex)
 import Slap.Text (EncodedText, EncodingName(..), decodeTextLenient, decodeLossAdvisories)
 
 import Data.ByteString (ByteString)
@@ -112,7 +112,7 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
     parseNINJA2Body textMode = do
       headerBytes <- getBytes headerSize
       let (info, headerAdvisories) = parseFixedHeader metadataEncoding textMode headerBytes
-      patch <- parseCommands (emptyPatch info textMode)
+      patch <- parseCommands firstAction (emptyPatch info textMode)
       pure (patch { ninja2Records = reverse (ninja2Records patch) }, headerAdvisories)
 
     emptyPatch info textMode = NINJA2Patch
@@ -121,17 +121,17 @@ parseNINJA2 metadataEncoding (PatchFileContents input)
       , ninja2TextMode = textMode
       }
 
-parseCommands :: NINJA2Patch -> ByteParser NINJA2Patch
-parseCommands patch = do
+parseCommands :: ActionIndex -> NINJA2Patch -> ByteParser NINJA2Patch
+parseCommands commandIndex patch = do
   done <- atEnd
   if done then pure patch
   else do
     code <- getByte
     case code of
-      0x01 -> parseFileCommand patch >>= parseCommands
-      0x02 -> parseXorRecord patch >>= parseCommands
+      0x01 -> parseFileCommand patch >>= parseCommands (nextAction commandIndex)
+      0x02 -> parseXorRecord patch >>= parseCommands (nextAction commandIndex)
       0x00 -> pure patch  -- END marker
-      _    -> fail ("unknown command code: 0x" ++ Text.unpack (padHex 2 code))
+      _    -> throwByteParserError (ByteParserUnknownCommandByte commandIndex code)
 
 -- | Command 0x01: OPEN_NEW_FILE
 parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch
