@@ -936,6 +936,14 @@ data SlapAdvisory
   -- 'Length' is the remnant's full byte count, marker included.
   | VCDIFFTrailingRemnant !Length
 
+  -- | Bytes at the end of an APS-N64 patch too few to begin another
+  -- record (a record header is five bytes: a four-byte offset and a
+  -- length byte). The reference applier ends its walk the same way —
+  -- its next record read returns short and the loop stops — but
+  -- silently; slap stops and says so. The 'Length' is the fragment's
+  -- byte count (one to four).
+  | APSN64TrailingFragment !Length
+
   -- | An EBP patch's metadata trailer existed (the post-@"EOF"@
   -- byte stream began with @{@, the shape signature of an EBPatcher
   -- JSON blob) but was not valid JSON, or its root was not an
@@ -1961,6 +1969,12 @@ renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
   <> " trailing bytes after the last window (0xFF 0xFF 0xFF 0xFF, then"
   <> " zero padding — the LODModS-style tail); not window data, ignored"
 
+renderSlapAdvisory (APSN64TrailingFragment (Length fragmentLength)) =
+  formatLabelName LabelAPSN64
+  <> ": " <> renderAsText fragmentLength
+  <> plural fragmentLength " trailing byte" " trailing bytes"
+  <> " after the last record (too few to begin another); not record data, ignored"
+
 renderSlapAdvisory (EBPMetadataMalformed label) =
   formatLabelName label
   <> ": metadata trailer is not valid JSON (or its root is not an object);"
@@ -2656,6 +2670,7 @@ slapAdvisorySeverity advisory = case advisory of
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote
   VCDIFFTrailingRemnant{}              -> SeverityNote
+  APSN64TrailingFragment{}             -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote
   XDelta1DataRecordNameDiverges{}      -> SeverityNote

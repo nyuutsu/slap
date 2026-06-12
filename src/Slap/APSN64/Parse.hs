@@ -19,7 +19,7 @@ import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, atEnd, remaining, word32LE)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, remaining, word32LE)
 import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
@@ -75,17 +75,17 @@ parseN64 metadataEncoding patchType = do
   case patchType of
     APSSimple -> do
       destinationSize <- FileSize . fromIntegral <$> word32LE
-      records         <- parseN64Records
+      recordWalk      <- parseN64Records
       let patch = APSN64Patch
             APSN64Header
               { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
               , apsN64ImageFormat = Nothing, apsN64CartId = Nothing
               , apsN64Country = Nothing, apsN64Crc = Nothing, apsN64DestinationSize = destinationSize
               }
-            (Vector.fromList records)
+            (Vector.fromList (apsN64WalkRecords recordWalk))
       pure APSN64ParseWalk
         { apsN64ParseWalkPatch    = patch
-        , apsN64ParseWalkWarnings = descriptionAdvisories
+        , apsN64ParseWalkWarnings = descriptionAdvisories ++ apsN64WalkAdvisories recordWalk
         }
     APSN64Specific -> do
       imageFormat <- toAPSImageFormat <$> getByte
@@ -95,39 +95,66 @@ parseN64 metadataEncoding patchType = do
       crcBytes        <- N64ChecksumPair <$> getBytes (Length 8)
       skip (Length 5)  -- padding (bytes 69-73)
       destinationSize <- FileSize . fromIntegral <$> word32LE
-      records         <- parseN64Records
+      recordWalk      <- parseN64Records
       let patch = APSN64Patch
             APSN64Header
               { apsN64PatchType = patchType, apsN64Encoding = encodingMethod, apsN64Description = description
               , apsN64ImageFormat = Just imageFormat, apsN64CartId = Just cartId
               , apsN64Country = Just parsedCountry, apsN64Crc = Just crcBytes, apsN64DestinationSize = destinationSize
               }
-            (Vector.fromList records)
+            (Vector.fromList (apsN64WalkRecords recordWalk))
       pure APSN64ParseWalk
         { apsN64ParseWalkPatch    = patch
-        , apsN64ParseWalkWarnings = descriptionAdvisories
+        , apsN64ParseWalkWarnings = descriptionAdvisories ++ apsN64WalkAdvisories recordWalk
         }
 
-parseN64Records :: ByteParser [APSN64Record]
+-- | What the record walk finds at the cursor: input spent exactly on
+-- a record boundary, a fragment too short to begin another record,
+-- or a record ahead.
+data APSN64StreamHead
+  = StreamSpent
+  | TrailingFragment !Length
+  | RecordAhead
+
+-- | The record walk's product: the records in wire order, plus the
+-- advisories the walk surfaced — today only 'APSN64TrailingFragment'.
+data APSN64RecordWalk = APSN64RecordWalk
+  { apsN64WalkRecords    :: ![APSN64Record]
+  , apsN64WalkAdvisories :: ![SlapAdvisory]
+  }
+
+-- | Walk records to end of input. A trailing fragment — fewer bytes
+-- than a record header where a record would begin — ends the walk
+-- the way the reference applier's short read does, but audibly: the
+-- fragment is consumed and surfaced as a note rather than swallowed.
+parseN64Records :: ByteParser APSN64RecordWalk
 parseN64Records = walkRecords []
   where
-    walkRecords :: [APSN64Record] -> ByteParser [APSN64Record]
+    walkRecords :: [APSN64Record] -> ByteParser APSN64RecordWalk
     walkRecords accumulatedReversed = do
-      done <- atEnd
-      if done then pure (reverse accumulatedReversed)
-      else do
-        remainingLength <- remaining
-        if remainingLength < apsN64RecordHeaderSize
-          then pure (reverse accumulatedReversed)
-          else do
-            recordOffset <- offsetFromParsed <$> word32LE
-            dataLength   <- getByte
-            decodedRecord <- if dataLength == 0
-              then do  -- RLE record
-                fillValue <- getByte
-                fillCount <- getByte
-                pure (APSN64RLE recordOffset fillValue fillCount)
-              else do  -- Normal record
-                recordPayload <- getBytes (Length (fromIntegral dataLength))
-                pure (APSN64Normal recordOffset recordPayload)
-            walkRecords (decodedRecord : accumulatedReversed)
+      streamHead <- classifyStreamHead <$> remaining
+      case streamHead of
+        StreamSpent ->
+          pure (APSN64RecordWalk (reverse accumulatedReversed) [])
+        TrailingFragment fragmentLength -> do
+          skip fragmentLength
+          pure (APSN64RecordWalk (reverse accumulatedReversed)
+                  [APSN64TrailingFragment fragmentLength])
+        RecordAhead -> do
+          recordOffset <- offsetFromParsed <$> word32LE
+          dataLength   <- getByte
+          decodedRecord <- if dataLength == 0
+            then do  -- RLE record
+              fillValue <- getByte
+              fillCount <- getByte
+              pure (APSN64RLE recordOffset fillValue fillCount)
+            else do  -- Normal record
+              recordPayload <- getBytes (Length (fromIntegral dataLength))
+              pure (APSN64Normal recordOffset recordPayload)
+          walkRecords (decodedRecord : accumulatedReversed)
+
+    classifyStreamHead :: Length -> APSN64StreamHead
+    classifyStreamHead remainingLength
+      | remainingLength == Length 0             = StreamSpent
+      | remainingLength < apsN64RecordHeaderSize = TrailingFragment remainingLength
+      | otherwise                                = RecordAhead

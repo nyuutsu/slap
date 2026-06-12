@@ -114,26 +114,59 @@ parseBinaryGet format = do
 decodeBigEndian :: Num a => ByteString -> a
 decodeBigEndian = ByteString.foldl' (\accumulated byte -> accumulated * 256 + fromIntegral byte) 0
 
+-- | What the binary record walk reads at the cursor on each
+-- iteration. Unlike its peers ('Slap.IPS.Parse''s marker peek,
+-- 'Slap.VCDIFF.Parse''s remnant peek), this classification consumes:
+-- the offset-width byte and the offset bytes must be read before the
+-- verdict is knowable, so each constructor carries the evidence the
+-- read left behind, and the loop continues from where the read
+-- stopped.
+data NINJA1BinaryStreamHead
+  = EndsWithoutMarker
+    -- ^ The input is spent, or a zero offset-width byte ended the
+    -- stream early — either way the walk is over with no EOF marker
+    -- seen.
+  | EOFMarkerFound
+    -- ^ The offset field's width and bytes are the EOF marker's: a
+    -- cleanly terminated stream.
+  | RecordAt !Offset
+    -- ^ A record begins here, its offset already decoded; the data
+    -- width, length, and payload remain to be read.
+
 parseBinaryRecords :: ByteParser NINJA1BinaryResult
 parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
+      streamHead <- readBinaryStreamHead
+      case streamHead of
+        EndsWithoutMarker -> pure (NINJA1BinaryResult (reverse accumulated) False)
+        EOFMarkerFound    -> pure (NINJA1BinaryResult (reverse accumulated) True)
+        RecordAt recordOffset -> do
+          dataWidth    <- fromIntegral <$> getByte :: ByteParser Int
+          dataLenBytes <- getBytes (Length dataWidth)
+          let dataLength = decodeBigEndian dataLenBytes :: Int
+          payload <- getBytes (Length dataLength)
+          parseLoop (NINJA1Record recordOffset payload : accumulated)
+
+    -- | Read as far into the next offset field as the verdict
+    -- requires, and classify. The reads are sequenced — the offset
+    -- bytes cannot be read before the width byte says how many —
+    -- which is why this reads rather than peeks.
+    readBinaryStreamHead :: ByteParser NINJA1BinaryStreamHead
+    readBinaryStreamHead = do
       remainingLength <- remaining
-      if unLength remainingLength < 1 then pure (NINJA1BinaryResult (reverse accumulated) False)
-      else do
-        offsetWidth <- fromIntegral <$> getByte :: ByteParser Int
-        if offsetWidth == 0 then pure (NINJA1BinaryResult (reverse accumulated) False)
+      if unLength remainingLength < 1
+        then pure EndsWithoutMarker
         else do
-          offsetBytes <- getBytes (Length offsetWidth)
-          if offsetWidth == ninja1BinaryEOFMarkerWidth && offsetBytes == ninja1BinaryEOFMarkerBytes
-            then pure (NINJA1BinaryResult (reverse accumulated) True)
+          offsetWidth <- fromIntegral <$> getByte :: ByteParser Int
+          if offsetWidth == 0
+            then pure EndsWithoutMarker
             else do
-              let recordOffset = Offset (decodeBigEndian offsetBytes)
-              dataWidth      <- fromIntegral <$> getByte :: ByteParser Int
-              dataLenBytes   <- getBytes (Length dataWidth)
-              let dataLength = decodeBigEndian dataLenBytes :: Int
-              payload        <- getBytes (Length dataLength)
-              parseLoop (NINJA1Record recordOffset payload : accumulated)
+              offsetBytes <- getBytes (Length offsetWidth)
+              pure $ if offsetWidth == ninja1BinaryEOFMarkerWidth
+                          && offsetBytes == ninja1BinaryEOFMarkerBytes
+                       then EOFMarkerFound
+                       else RecordAt (Offset (decodeBigEndian offsetBytes))
 
 ----------------------------------------------------------------------------
 -- Textual format: line-based, # comments, header + hex records
