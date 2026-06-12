@@ -22,7 +22,7 @@ import Slap.Display.Info (renderPatchInfo, renderActionLine)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ExpectedSize(..), ActualSize(..))
+                     ExpectedSize(..), ActualSize(..), byteLength)
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      PatchContents,
                      RequestedPatchMetadata(..),
@@ -1410,7 +1410,7 @@ needSourceMessage somePatch =
 computeBPSDropAdvisories :: SomePatch -> CreateFormat -> [SlapAdvisory]
 computeBPSDropAdvisories parsed targetFormat = case patchMetadata parsed of
   Just metaBytes | targetFormat /= CreateDifferential CreateBPS ->
-    [MetadataDropped (ByteString.length metaBytes)]
+    [MetadataDropped (byteLength metaBytes)]
   _ -> []
 
 ----------------------------------------------------------------------------

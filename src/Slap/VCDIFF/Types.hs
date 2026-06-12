@@ -57,9 +57,12 @@ data VCDIFFPatch
   deriving (Eq, Show)
 
 -- | The xdelta3-only header fields. Today just the optional
--- application header (the VCD_APPHEADER data an xdelta3 patch may carry
--- once, before its windows); secondary compression and the version /
--- indicator-bit handling arrive in later prompts.
+-- application header (the VCD_APPHEADER data an xdelta3 patch may
+-- carry once, before its windows). Secondary compression leaves no
+-- field here on purpose: like the code table and the address cache,
+-- it is decode mechanism — the compressed sections are resolved to
+-- plain bytes during parse, and the declared compressor's one
+-- decoded-form consequence is the flavor verdict itself.
 data XDelta3Header = XDelta3Header
   { xdelta3AppHeader :: !(Maybe ByteString) }
   deriving (Eq, Show)

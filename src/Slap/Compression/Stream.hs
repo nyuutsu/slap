@@ -5,6 +5,8 @@ module Slap.Compression.Stream
   , gzipInflate
   , gzipDeflate
   , bzip2Decompress
+  , LzmaDecoded(..)
+  , lzmaDecompress
   , yay0Decompress
   ) where
 
@@ -14,8 +16,10 @@ import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
+import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
+import Slap.Measure (Length(..))
 import Slap.Status (DecompressionCause(..))
 import Slap.FFI (readByteString, readText, withByteString)
 
@@ -50,6 +54,14 @@ foreign import ccall unsafe "rusty_bzip2_decompress"
     :: Ptr Word8 -> CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
     -> Ptr (Ptr Word8) -> Ptr CSize
+    -> IO CInt
+
+foreign import ccall unsafe "rusty_lzma_decompress"
+  rustyLzmaDecompress
+    :: Ptr Word8 -> CSize
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
+    -> Ptr CSize                        -- consumed input length
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
     -> IO CInt
 
 foreign import ccall unsafe "rusty_yay0_decompress"
@@ -136,6 +148,50 @@ gzipDeflate input = unsafeDupablePerformIO $
 -- | Bzip2 decompress.
 bzip2Decompress :: ByteString -> Either DecompressionCause ByteString
 bzip2Decompress = callDecompressor rustyBzip2Decompress
+
+-- | What one LZMA decompression reports back across the seam: the
+-- decoded bytes, and how many input bytes the decoder consumed
+-- before it finished. The consumed length is a fact only the decoder
+-- can know; whether that fact honors the framing the stream was
+-- carried under is a judgment this seam leaves to its caller.
+data LzmaDecoded = LzmaDecoded
+  { lzmaDecodedBytes        :: !ByteString
+  , lzmaConsumedInputLength :: !Length
+  }
+  deriving (Show, Eq)
+
+-- | LZMA decompression of one xdelta3-flavored stream (xz header,
+-- raw LZMA2 chunks, no closing footer — see @rusty-slap/src/lzma.rs@
+-- for the stream shape). Written longhand rather than through
+-- 'callDecompressor': the consumed-input length is a third output
+-- channel the helper's shape has no slot for, and the helper's
+-- empty-input short-circuit would be wrong here — an empty input is
+-- not an empty output, it is a stream with no xz header, and the
+-- decoder's complaint to that effect is the honest answer.
+lzmaDecompress :: ByteString -> Either DecompressionCause LzmaDecoded
+lzmaDecompress input = unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+    alloca $ \resultAddressPointer ->
+    alloca $ \resultLengthPointer ->
+    alloca $ \consumedLengthPointer ->
+    alloca $ \errorAddressPointer ->
+    alloca $ \errorLengthPointer -> do
+      returnCode <- rustyLzmaDecompress
+        dataPointer dataLength
+        resultAddressPointer resultLengthPointer
+        consumedLengthPointer
+        errorAddressPointer  errorLengthPointer
+      if returnCode /= 0
+        then do
+          rustMessage <- readText errorAddressPointer errorLengthPointer
+          pure $ Left (DecompressionCause rustMessage)
+        else do
+          decodedBytes   <- readByteString resultAddressPointer resultLengthPointer
+          consumedLength <- peek consumedLengthPointer
+          pure $ Right LzmaDecoded
+            { lzmaDecodedBytes        = decodedBytes
+            , lzmaConsumedInputLength = Length (fromIntegral consumedLength)
+            }
 
 -- | Yay0 (Nintendo LZSS) decompression.
 yay0Decompress :: ByteString -> Either DecompressionCause ByteString

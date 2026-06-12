@@ -12,6 +12,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 bzip2-rs = "0.1"
 # Store + Deflate only; default features off to keep the C-backed codecs out.
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+lzma-rs = { version = "0.3", default-features = false }
 
 [profile.release]
 lto = "fat"

@@ -357,16 +357,17 @@ data ApplyError
 -- own narrower vocabulary, lifted into 'SlapError' via a single
 -- constructor.  One constructor per real decompression site slap
 -- knows about; each carries only the axes that actually vary at that
--- site.  Adding xdelta3 / VCDIFF secondary compression adds a
--- constructor here parameterized over 'CompressionAlgorithm'.
+-- site.  'VCDIFFSectionFailed' is the one site whose algorithm
+-- genuinely varies: a section kind's gathered secondary stream is
+-- decoded by whichever compressor the patch declared, so the
+-- 'CompressionAlgorithm' rides in the value — LZMA today, DJW and
+-- FGK through the same constructor when their decoders land.
 data DecompressionFailure
   = Yay0WrapperFailed                       DecompressionCause
   | NINJA1Failed                            DecompressionCause
   | XDelta1Failed                           DecompressionCause
   | BSDiffSectionFailed   BSDiffSection     DecompressionCause
-  -- When VCDIFF secondary compression is supported (today's parser
-  -- rejects it at 'VCDIFF/Parse.hs:113'), add:
-  -- | VCDIFFSectionFailed VCDIFFSection CompressionAlgorithm DecompressionCause
+  | VCDIFFSectionFailed   VCDIFFSection CompressionAlgorithm DecompressionCause
   deriving (Show, Eq)
 
 -- | BSDiff's three bzip2-compressed sections.
@@ -374,10 +375,10 @@ data BSDiffSection = BSDiffControl | BSDiffDiff | BSDiffExtra
   deriving (Show, Eq)
 
 -- | The decompressor's diagnostic message. Carried verbatim from
--- flate2 / bzip2-rs / slap's own Yay0 implementation; slap relays
--- the underlying library's 'Display' rather than re-classifying.
--- Across the FFI seam the bytes are decoded as UTF-8 (see
--- 'Slap.FFI.readText'), so the 'Text' here carries real Unicode
+-- flate2 / bzip2-rs / lzma-rs / slap's own Yay0 implementation; slap
+-- relays the underlying library's 'Display' rather than
+-- re-classifying. Across the FFI seam the bytes are decoded as UTF-8
+-- (see 'Slap.FFI.readText'), so the 'Text' here carries real Unicode
 -- codepoints from the moment it lands.
 newtype DecompressionCause = DecompressionCause { unDecompressionCause :: Text }
   deriving (Show, Eq)
@@ -403,12 +404,11 @@ data XDelta1GzipStreamInputs
   deriving (Show, Eq)
 
 -- | The compression algorithms slap knows about.  Closed and
--- complete: the four currently in use plus the three the VCDIFF
--- spec at @docs/rfc-vcdiff/spec.md:108-110@ already names (DJW,
--- LZMA, FGK).  Today no consumer dispatches on this — both the
--- renderer and the algorithm-of-failure projection are scaffolding
--- for the xdelta3 work, where 'VCDIFFSectionFailed' will carry it
--- as a parameter and 'compressionAlgorithmName' will render it.
+-- complete: the four with fixed decompression sites, plus the three
+-- of xdelta3's secondary-compression catalog (DJW, LZMA, FGK), which
+-- ride in 'VCDIFFSectionFailed' and the secondary-stream framing
+-- malformations so the rendered failure names the algorithm that was
+-- decoding when it fired.
 data CompressionAlgorithm
   = Zlib | Gzip | Bzip2 | Yay0
   | DJW  | LZMA | FGK
@@ -569,13 +569,14 @@ data SlapError
   -- which runs outside the byte parser.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
-  -- | A VCDIFF patch uses a feature outside the CoreOnly subset slap
-  -- currently decodes. The engine landed flavor by flavor: the core
-  -- (default code table, no checksums, no application data, no
-  -- secondary compression) reads now, and a patch reaching past it is
-  -- refused cleanly — naming the feature — rather than mishandled. The
-  -- 'VCDIFFUnsupportedFeature' says which feature; as the flavors land,
-  -- arms graduate out of it. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | A VCDIFF patch uses a feature outside the subset slap currently
+  -- decodes. The engine lands flavor by flavor: the core plus the
+  -- LZMA-compressed xdelta3 arc read now, and a patch reaching past
+  -- them — a custom code table, a VCD_TARGET window, a DJW or FGK
+  -- secondary stream — is refused cleanly, naming the feature, rather
+  -- than mishandled. The 'VCDIFFUnsupportedFeature' says which
+  -- feature; as the flavors land, arms graduate out of it. Raised by
+  -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
   | VCDIFFFeatureNotYetSupported VCDIFFUnsupportedFeature
 
   -- | A VCDIFF indicator byte set one or more bits the format
@@ -594,6 +595,18 @@ data SlapError
   -- indicators; the 'Word8' is the indicator byte as read. Raised by
   -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
   | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8
+
+  -- | A VCDIFF patch declared a secondary-compressor id outside
+  -- xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK — the only
+  -- registry that exists, since RFC 3284 registered none). slap does
+  -- not know what algorithm such an id names, so it cannot say the
+  -- patch is malformed — a future xdelta3 could define id 3 and the
+  -- patch would be well-formed, just unreadable here. The same
+  -- decline disposition as 'VCDIFFReservedIndicatorBits'; the 'Word8'
+  -- is the id byte as read. Raised by
+  -- 'Slap.VCDIFF.SecondaryCompression' through
+  -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  | VCDIFFUnknownSecondaryCompressor !Word8
 
   -- | A VCDIFF patch's wire bytes parsed but disagree with the core
   -- semantics slap enforces: a window naming both copy sources at
@@ -994,7 +1007,11 @@ data SlapAdvisory
   | ValidationBlockDropped
   | DisabledEntriesDropped Int
   | BlockDescriptionsDropped
-  | MetadataDropped Int
+  -- | A BPS metadata blob with no destination channel in the target
+  -- format. The 'Length' is the blob's byte count — a measured span
+  -- of bytes, not a tally, hence not a bare 'Int' like the
+  -- record-counting drop advisories above.
+  | MetadataDropped Length
 
   -- Conversion: defaults assumed
   | DefaultRomType FormatLabel
@@ -1557,20 +1574,26 @@ renderSlapError (UnsupportedVCDIFFShape violation) =
 
 renderSlapError (VCDIFFFeatureNotYetSupported feature) =
   formatLabelName LabelVCDIFF <> ": " <> case feature of
-    VCDIFFSecondaryCompressor ->
-      "secondary compression is not supported yet"
     VCDIFFCustomCodeTable ->
       "custom code tables are not supported yet"
     VCDIFFTargetWindow ->
       "VCD_TARGET windows are not supported yet"
-    VCDIFFSecondaryCompressedSection ->
-      "secondary-compressed sections are not supported yet"
+    VCDIFFDJWSecondaryCompression ->
+      "this patch uses DJW secondary compression, which slap does not decode yet"
+    VCDIFFFGKSecondaryCompression ->
+      "this patch uses FGK secondary compression, which slap does not decode yet"
 
 renderSlapError (VCDIFFReservedIndicatorBits indicatorKind rawByte) =
   formatLabelName LabelVCDIFF <> ": reserved bits set in the "
   <> indicatorKindName indicatorKind <> " (0x" <> padHex 2 rawByte
   <> "); the format leaves those bits undefined, so slap cannot"
   <> " interpret what the patch is asking"
+
+renderSlapError (VCDIFFUnknownSecondaryCompressor idByte) =
+  formatLabelName LabelVCDIFF <> ": secondary compressor id "
+  <> renderAsText idByte
+  <> " is not in xdelta3's catalog (1 = DJW, 2 = LZMA, 16 = FGK);"
+  <> " slap does not know what algorithm it names"
 
 renderSlapError (MalformedVCDIFF malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
@@ -1595,6 +1618,27 @@ renderSlapError (MalformedVCDIFF malformation) =
       "window declares a delta-encoding length of "
       <> renderAsText (unFileSize declared) <> " bytes but its fields span "
       <> renderAsText (unFileSize measured)
+    VCDIFFCompressedSectionWithoutDeclaredSize section ->
+      "a compressed " <> vcdiffSectionName section
+      <> " section has no readable decompressed-size varint"
+    VCDIFFCompressedSectionDeclaresEmptyOutput section ->
+      "a compressed " <> vcdiffSectionName section
+      <> " section declares a decompressed size of 0"
+      <> " (compressing nothing yields framing bytes, never zero)"
+    VCDIFFCompressedSectionWithoutCompressor section ->
+      "a window marks its " <> vcdiffSectionName section
+      <> " section secondary-compressed, but the header declares no compressor"
+    VCDIFFSecondaryStreamUnconsumedInput section algorithm (Length leftover) ->
+      "the " <> vcdiffSectionName section <> " sections' "
+      <> compressionAlgorithmName algorithm <> " stream finished with "
+      <> renderAsText leftover <> plural leftover " byte" " bytes"
+      <> " of input unused"
+    VCDIFFSecondaryStreamOutputSizeMismatch section algorithm
+        (ExpectedSize declared) (ActualSize produced) ->
+      "the " <> vcdiffSectionName section <> " sections' "
+      <> compressionAlgorithmName algorithm <> " stream decoded to "
+      <> renderAsText (unFileSize produced) <> " bytes; the sections declare "
+      <> renderAsText (unFileSize declared)
 
 renderSlapError (MalformedVCDIFFCodeTable malformation) =
   formatLabelName LabelVCDIFF <> ": " <> case malformation of
@@ -1772,23 +1816,25 @@ renderSlapError (VerificationFatal advisory) =
 ----------------------------------------------------------------------------
 
 -- | The compression algorithm in flight at a given failure site.
--- Implicit per constructor for sites with fixed algorithms; for
--- VCDIFF (when added), reads the algorithm parameter.  Today's
--- only consumer is the future 'VCDIFFSectionFailed' arm; the
--- exhaustive match is the seam that fires '-Wincomplete-patterns'
--- when a new 'DecompressionFailure' constructor lands.
+-- Implicit per constructor for the four sites with fixed algorithms;
+-- read off the value for 'VCDIFFSectionFailed', the one site whose
+-- algorithm varies.  The exhaustive match is the seam that fires
+-- '-Wincomplete-patterns' when a new 'DecompressionFailure'
+-- constructor lands.
 decompressionAlgorithm :: DecompressionFailure -> CompressionAlgorithm
-decompressionAlgorithm Yay0WrapperFailed{}        = Yay0
-decompressionAlgorithm NINJA1Failed{}             = Zlib
-decompressionAlgorithm XDelta1Failed{}            = Gzip
-decompressionAlgorithm BSDiffSectionFailed{}      = Bzip2
+decompressionAlgorithm Yay0WrapperFailed{}                 = Yay0
+decompressionAlgorithm NINJA1Failed{}                      = Zlib
+decompressionAlgorithm XDelta1Failed{}                     = Gzip
+decompressionAlgorithm BSDiffSectionFailed{}               = Bzip2
+decompressionAlgorithm (VCDIFFSectionFailed _ algorithm _) = algorithm
 
--- | Display name for a 'CompressionAlgorithm'.  Used by the future
--- 'VCDIFFSectionFailed' renderer arm; the four fixed-algorithm
--- arms render the algorithm name as a literal in their site
--- description.  Exhaustive over 'CompressionAlgorithm' so that
--- adding a new compression algorithm fires '-Wincomplete-patterns'
--- here.
+-- | Display name for a 'CompressionAlgorithm'.  Read by the
+-- 'VCDIFFSectionFailed' renderer arm and the secondary-stream
+-- malformation renders, where the algorithm genuinely varies; the
+-- four fixed-algorithm arms render their algorithm name as a literal
+-- in their site description instead.  Exhaustive over
+-- 'CompressionAlgorithm' so that adding a new compression algorithm
+-- fires '-Wincomplete-patterns' here.
 compressionAlgorithmName :: CompressionAlgorithm -> Text
 compressionAlgorithmName Zlib  = "zlib"
 compressionAlgorithmName Gzip  = "gzip"
@@ -1803,14 +1849,13 @@ bsDiffSectionName BSDiffControl = "control"
 bsDiffSectionName BSDiffDiff    = "diff"
 bsDiffSectionName BSDiffExtra   = "extra"
 
--- | Render a decompression failure as a user-facing line.  Each arm
--- supplies its site description as a literal — NINJA1's description
--- contains the word "zlib" because NINJA1 uses zlib, and that fact
--- is restated at the renderer rather than threaded through the
--- 'compressionAlgorithmName' indirection.  When 'VCDIFFSectionFailed'
--- lands its arm will need 'compressionAlgorithmName' because the
--- algorithm genuinely varies; today's four arms have fixed
--- algorithms and read more directly with literals.
+-- | Render a decompression failure as a user-facing line.  The four
+-- fixed-algorithm arms supply their site description as a literal —
+-- NINJA1's description contains the word "zlib" because NINJA1 uses
+-- zlib, and that fact is restated at the renderer rather than
+-- threaded through the 'compressionAlgorithmName' indirection.  The
+-- VCDIFF arm reads the name off the value, because there the
+-- algorithm genuinely varies.
 renderDecompressionFailure :: DecompressionFailure -> Text
 renderDecompressionFailure failure = case failure of
   Yay0WrapperFailed       cause -> render "Yay0 wrapper"        cause
@@ -1818,6 +1863,9 @@ renderDecompressionFailure failure = case failure of
   XDelta1Failed           cause -> render "XDelta1 gzip body"   cause
   BSDiffSectionFailed sec cause -> render
     ("BSDiff " <> bsDiffSectionName sec <> " bzip2 section") cause
+  VCDIFFSectionFailed sec algorithm cause -> render
+    ("VCDIFF " <> vcdiffSectionName sec <> " sections' "
+       <> compressionAlgorithmName algorithm <> " stream") cause
   where
     render siteName (DecompressionCause msg) =
       siteName <> ": decompression failed: " <> msg
@@ -1965,7 +2013,7 @@ renderSlapAdvisory (DisabledEntriesDropped entryCount) =
 renderSlapAdvisory BlockDescriptionsDropped =
   "dropping block descriptions"
 
-renderSlapAdvisory (MetadataDropped byteCount) =
+renderSlapAdvisory (MetadataDropped (Length byteCount)) =
   "dropping metadata (" <> renderAsText byteCount
   <> plural byteCount " byte" " bytes" <> ")"
 
@@ -2257,32 +2305,44 @@ codeTableFieldName :: VCDIFFCodeTableField -> Text
 codeTableFieldName CodeTableSizeField = "size"
 codeTableFieldName CodeTableModeField = "mode"
 
--- | A VCDIFF feature outside the CoreOnly subset slap currently
--- decodes, carried by 'VCDIFFFeatureNotYetSupported'. Each names a
--- wire feature the engine refuses for now rather than mishandles; the
+-- | A VCDIFF feature outside the subset slap currently decodes,
+-- carried by 'VCDIFFFeatureNotYetSupported'. Each names a wire
+-- feature the engine refuses for now rather than mishandles; the
 -- parenthetical says which arc it belongs to. As the RFC and xdelta3
--- flavors land, arms graduate out of here.
+-- flavors land, arms graduate out of here — the blanket
+-- secondary-compression arms left when LZMA landed, narrowing the
+-- refusal to the two catalog entries slap recognizes but does not
+-- decode yet. The per-compressor arms fire only when a window
+-- actually compresses a section: a patch that declares DJW but never
+-- exercises it decodes in full (docs/vcdiff/xdelta3/spec.md
+-- "Catalog" — a declared-but-unused compressor is valid).
 data VCDIFFUnsupportedFeature
-  = VCDIFFSecondaryCompressor         -- ^ Hdr_Indicator VCD_DECOMPRESS: a secondary compressor is declared.
-  | VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
+  = VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
   | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
-  | VCDIFFSecondaryCompressedSection  -- ^ Delta_Indicator marks a data/inst/addr section secondary-compressed.
+  | VCDIFFDJWSecondaryCompression     -- ^ A section is compressed under catalog id 1, xdelta3's own static Huffman.
+  | VCDIFFFGKSecondaryCompression     -- ^ A section is compressed under catalog id 16, adaptive Huffman.
   deriving (Eq, Show)
 
--- | A core-semantics failure in a VCDIFF patch that parsed at the byte
--- level, carried by 'MalformedVCDIFF'. These are the loud refusals the
--- core invariants demand (docs/vcdiff/core/spec.md "Core invariants"):
--- a window naming both copy sources at once, a COPY that reads
--- unwritten output or crosses the source-segment boundary, a window
--- that does not fill to its declared size, an oversize section
--- reference, or an address mode the table cannot name. Every arm is a
--- claim slap understands and finds invalid; a reserved indicator bit —
--- a claim slap cannot interpret — is the separate decline
--- 'VCDIFFReservedIndicatorBits'. The 'ActionIndex' an arm carries
--- counts decoded instructions, not instruction-section bytes: one
--- code byte can carry two instructions, and an inline size varint
--- widens others, so the index names what the stream means rather
--- than where it sits.
+-- | A semantics failure in a VCDIFF patch that parsed at the byte
+-- level, carried by 'MalformedVCDIFF'. These are the loud refusals
+-- the core invariants demand (docs/vcdiff/core/spec.md "Core
+-- invariants") — a window naming both copy sources at once, a COPY
+-- that reads unwritten output or crosses the source-segment boundary,
+-- a window that does not fill to its declared size, an oversize
+-- section reference, an address mode the table cannot name — plus the
+-- secondary-compression framing contradictions
+-- (docs/vcdiff/xdelta3/questions.md "Secondary compression — the
+-- framing"): a compressed section whose own declarations cannot be
+-- honored, or a kind's gathered stream whose decode disagrees with
+-- what its sections declared. Every arm is a claim slap understands
+-- and finds invalid; a reserved indicator bit or an uncataloged
+-- compressor id — claims slap cannot interpret — are the separate
+-- declines 'VCDIFFReservedIndicatorBits' and
+-- 'VCDIFFUnknownSecondaryCompressor'. The 'ActionIndex' an arm
+-- carries counts decoded instructions, not instruction-section
+-- bytes: one code byte can carry two instructions, and an inline
+-- size varint widens others, so the index names what the stream
+-- means rather than where it sits.
 data VCDIFFMalformation
   -- | A window's indicator set both VCD_SOURCE and VCD_TARGET, which
   -- RFC 3284 §4.2 forbids.
@@ -2313,6 +2373,36 @@ data VCDIFFMalformation
   -- obligatory. The 'ExpectedSize' is the wire declaration; the
   -- 'ActualSize' is the span the framer measured.
   | VCDIFFDeltaEncodingLengthMismatch !ExpectedSize !ActualSize
+  -- | A section flagged secondary-compressed whose bytes cannot
+  -- supply the decompressed-size varint every compressed section
+  -- begins with — the zero-length section is the canonical case
+  -- (nothing to read a varint from). Rejected per
+  -- docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section".
+  | VCDIFFCompressedSectionWithoutDeclaredSize !VCDIFFSection
+  -- | A section flagged secondary-compressed whose decompressed-size
+  -- varint is zero. A category error rather than a no-op: compressing
+  -- nothing yields framing bytes, never zero bytes, so a section
+  -- cannot honestly decompress to empty. xd3 rejects it as "invalid
+  -- output size"; slap does too.
+  | VCDIFFCompressedSectionDeclaresEmptyOutput !VCDIFFSection
+  -- | A window's Delta_Indicator flags a section as compressed, but
+  -- the patch's header declares no secondary compressor. The two
+  -- declarations live in the same patch and contradict each other;
+  -- there is no algorithm the section could honestly be decoded by.
+  | VCDIFFCompressedSectionWithoutCompressor !VCDIFFSection
+  -- | A section kind's gathered secondary stream finished decoding
+  -- with input left over — the named 'Length' of it. Mirrors xd3's
+  -- "finished with unused input" verdict (@xd3_decode_secondary@),
+  -- kept distinct from the short-output sibling below because
+  -- over-supplied input and under-produced output are different
+  -- faults. The 'CompressionAlgorithm' names the decoder that was
+  -- running.
+  | VCDIFFSecondaryStreamUnconsumedInput !VCDIFFSection !CompressionAlgorithm !Length
+  -- | A section kind's gathered secondary stream decoded to a byte
+  -- count other than the sum its sections declared. Mirrors xd3's
+  -- "short output" verdict; the 'ExpectedSize' is the declared sum,
+  -- the 'ActualSize' what the decoder produced.
+  | VCDIFFSecondaryStreamOutputSizeMismatch !VCDIFFSection !CompressionAlgorithm !ExpectedSize !ActualSize
   deriving (Eq, Show)
 
 -- | Which of a VCDIFF patch's three indicator bytes carried a
@@ -2321,7 +2411,9 @@ data VCDIFFIndicatorKind = HeaderIndicator | WindowIndicator | DeltaIndicator
   deriving (Eq, Show)
 
 -- | One of a VCDIFF window's three data sections (see
--- 'VCDIFFSectionExhausted').
+-- 'VCDIFFSectionExhausted') — and, since the sections of one kind
+-- form a continuous secondary stream across windows, also the name
+-- of that kind in the secondary-compression arms above.
 data VCDIFFSection = VCDIFFDataSection | VCDIFFInstructionSection | VCDIFFAddressSection
   deriving (Eq, Show)
 

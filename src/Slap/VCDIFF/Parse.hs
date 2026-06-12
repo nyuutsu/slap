@@ -1,22 +1,27 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
--- source-free. Scoped to the core plus the uncompressed xdelta3 arc:
--- the default code table, the application header (carried opaque), and
--- the per-window Adler32 (carried for the verification boundary). A
--- patch that reaches further — secondary compression, a custom code
+-- source-free. Scoped to the core plus the xdelta3 arc as far as
+-- LZMA: the default code table, the application header (carried
+-- opaque), the per-window Adler32 (carried for the verification
+-- boundary), and LZMA-compressed sections (decoded here, before
+-- instruction decode, through 'Slap.VCDIFF.SecondaryCompression'). A
+-- patch that reaches further — DJW or FGK compression, a custom code
 -- table, a VCD_TARGET window — is classified and declined cleanly: a
 -- deferred feature as 'VCDIFFFeatureNotYetSupported', a reserved
--- indicator bit as 'VCDIFFReservedIndicatorBits' — never mishandled.
+-- indicator bit or an uncataloged compressor id as the decline shapes
+-- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor'
+-- — never mishandled.
 --
 -- Parsing is two passes with one clean seam. 'parseRawPatch' is the
 -- byte-level walk: it reads the header and frames each window into its
 -- indicator bytes, source segment, sizes, checksum, and three raw
 -- section slices, surfacing only truncation ('ParseError').
--- 'classifyAndDecode' is the semantic pass: it reads the indicator
--- bits to decide flavor, refuses anything unlanded, holds each
--- window's framing to its own declared length, and decodes each
--- window's instruction stream — enforcing the three core invariants
+-- 'classifyAndDecode' is the semantic pass, in stages: it vets every
+-- window's framing ('vetWindowFraming'), resolves secondary
+-- compression so each window holds plain sections
+-- ('resolveSecondaryCompression'), decodes each window's instruction
+-- stream ('decodeWindow') — enforcing the three core invariants
 -- (docs/vcdiff/core/spec.md "Core invariants") so a patch this module
--- returns has them guaranteed.
+-- returns has them guaranteed — and names the flavor.
 --
 -- The address cache lives here, as decode mechanism: it is reset per
 -- window, updated after every COPY, and gone once the window's
@@ -44,6 +49,9 @@ import Slap.VCDIFF.Types
 -- is qualified; the decoded-instruction side stays unqualified, so the
 -- two are visibly distinct at every use.
 import qualified Slap.VCDIFF.CodeTable as Table
+import Slap.VCDIFF.SecondaryCompression
+  ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
+  , SectionCarriage(..), decodeLZMACompressedKind )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runByteParser, getByte, getBytes, vcdiffVarint, word32BE, remaining, atEnd )
@@ -66,8 +74,10 @@ import Slap.Measure
 import Control.Monad (when, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
-import Data.Bits (testBit, bit, complement, (.&.))
-import Data.Maybe (isJust)
+import Data.Bits (testBit, bit, complement, (.&.), (.|.))
+import Data.Foldable (traverse_)
+import Data.List (zipWith4)
+import Data.Maybe (isJust, listToMaybe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Vector (Vector)
@@ -99,14 +109,16 @@ parseVCDIFF (PatchFileContents input)
 
 -- | The header plus a framed-but-not-yet-interpreted window list. The
 -- indicator bytes are carried verbatim so 'classifyAndDecode' can read
--- their bits; the application header is opaque by definition and is
--- carried as read; the sections are raw slices, decoded only for a
--- window that survives classification.
+-- their bits; the compressor id is carried as read, looked up against
+-- the catalog only during classification; the application header is
+-- opaque by definition and is carried as read; the sections are raw
+-- slices, decoded only for a window that survives classification.
 data RawPatch = RawPatch
-  { rawVersion        :: !Word8
+  { rawVersion         :: !Word8
   , rawHeaderIndicator :: !Word8
-  , rawAppHeader      :: !(Maybe ByteString)
-  , rawWindows        :: ![RawWindow]
+  , rawCompressorId    :: !(Maybe Word8)
+  , rawAppHeader       :: !(Maybe ByteString)
+  , rawWindows         :: ![RawWindow]
   }
 
 data RawWindow = RawWindow
@@ -140,38 +152,43 @@ data RawSegment = RawSegment
 -- | The byte-level walk. Reads the version and header indicator, then
 -- frames the windows — but only when the header is one this parser
 -- knows how to walk: version zero, with no header feature beyond the
--- application header (whose varint-length-plus-bytes shape is read
--- here). A declared secondary compressor or custom code table changes
--- what follows in ways slap refuses anyway, so such a header leaves
--- the window list empty; 'classifyAndDecode' refuses on the header
--- before it would look at windows whose framing it could not trust.
+-- secondary-compressor id (a single byte) and the application header
+-- (whose varint-length-plus-bytes shape is read here). A custom code
+-- table changes what follows in ways slap refuses anyway, so such a
+-- header leaves the window list empty; 'classifyAndDecode' refuses on
+-- the header before it would look at windows whose framing it could
+-- not trust.
 parseRawPatch :: ByteParser RawPatch
 parseRawPatch = do
   version          <- getByte
   headerIndicator  <- getByte
   if version == 0 && headerOnlyUsesFramableFeatures headerIndicator
     then do
-      appHeader <- if testBit headerIndicator vcdAppHeaderBit
-                     then Just <$> parseApplicationHeader
-                     else pure Nothing
-      windows   <- parseRawWindows
-      pure (RawPatch version headerIndicator appHeader windows)
-    else pure (RawPatch version headerIndicator Nothing [])
+      compressorId <- if testBit headerIndicator vcdDecompressBit
+                        then Just <$> getByte
+                        else pure Nothing
+      appHeader    <- if testBit headerIndicator vcdAppHeaderBit
+                        then Just <$> parseApplicationHeader
+                        else pure Nothing
+      windows      <- parseRawWindows
+      pure (RawPatch version headerIndicator compressorId appHeader windows)
+    else pure (RawPatch version headerIndicator Nothing Nothing [])
 
 -- | Whether every set bit of a header indicator names a feature whose
--- bytes the framer knows how to walk past — today just VCD_APPHEADER,
--- whose varint-length-plus-bytes shape 'parseApplicationHeader'
--- reads. Any other set bit means the bytes that follow have a shape
--- framing cannot trust.
+-- bytes the framer knows how to walk past — VCD_DECOMPRESS (one
+-- compressor-id byte) and VCD_APPHEADER (the varint-length-plus-bytes
+-- shape 'parseApplicationHeader' reads). Any other set bit means the
+-- bytes that follow have a shape framing cannot trust.
 headerOnlyUsesFramableFeatures :: Word8 -> Bool
 headerOnlyUsesFramableFeatures headerIndicator =
-  headerIndicator .&. complement (bit vcdAppHeaderBit) == 0
+  headerIndicator .&. complement (bit vcdDecompressBit .|. bit vcdAppHeaderBit) == 0
 
 -- | The application header's wire shape: a varint length, then that
 -- many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application
--- header"). On the wire the field follows the compressor id and
--- code-table data; this parser only reaches it when neither of those
--- is declared, so here it directly follows the header indicator.
+-- header"). On the wire the field follows the compressor-id byte
+-- (read by 'parseRawPatch' when declared) and the code-table data
+-- (never framed — a code-table header bails out before any field is
+-- walked), so here it follows whichever of those preceded it.
 parseApplicationHeader :: ByteParser ByteString
 parseApplicationHeader = do
   declaredLength <- vcdiffVarint
@@ -248,6 +265,25 @@ vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
 vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
 vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
 
+-- Delta indicator (Delta_Indicator): one bit per section kind,
+-- marking that kind's section of this window as a compressed piece
+-- of the kind's continuous secondary stream.
+vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit :: Int
+vcdDataCompBit = 0   -- VCD_DATACOMP: the data section is compressed
+vcdInstCompBit = 1   -- VCD_INSTCOMP: the instruction section is compressed
+vcdAddrCompBit = 2   -- VCD_ADDRCOMP: the address section is compressed
+
+-- | The three Delta_Indicator compression bits, each paired with the
+-- section kind it governs. The single place the bit-to-kind pairing
+-- lives; both the carriage builder and the compressed-kind scans
+-- below read it.
+sectionCompressionBits :: [(Int, VCDIFFSection)]
+sectionCompressionBits =
+  [ (vcdDataCompBit, VCDIFFDataSection)
+  , (vcdInstCompBit, VCDIFFInstructionSection)
+  , (vcdAddrCompBit, VCDIFFAddressSection)
+  ]
+
 -- | Mask of the bits each indicator byte leaves undefined in the core.
 -- A set bit here is reserved for future definition: slap cannot
 -- interpret it, so the patch is declined as unreadable
@@ -260,22 +296,43 @@ reservedIndicatorMask = 0xF8
 ----------------------------------------------------------------------------
 
 -- | Interpret a framed patch: refuse an unreadable version or header,
--- decode each window, then name the flavor.
+-- vet every window's framing, resolve secondary compression so each
+-- window holds plain sections, decode each window, then name the
+-- flavor.
+--
+-- Vetting runs before resolution on purpose: a window whose delta
+-- indicator carries reserved bits is declined before its compression
+-- bits are believed, because slap cannot claim to interpret three
+-- bits of a byte it does not understand the rest of.
 classifyAndDecode :: RawPatch -> Either SlapError VCDIFFPatch
 classifyAndDecode rawPatch
   | rawVersion rawPatch /= 0 =
       Left (BadVersion LabelVCDIFF (FoundVersion (rawVersion rawPatch)))
   | headerIndicator .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits HeaderIndicator headerIndicator)
-  | testBit headerIndicator vcdDecompressBit =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressor)
   | testBit headerIndicator vcdCodeTableBit =
       Left (VCDIFFFeatureNotYetSupported VCDIFFCustomCodeTable)
-  | otherwise =
-      classifyFlavor (rawAppHeader rawPatch) . Vector.fromList
-        <$> traverse classifyWindow (rawWindows rawPatch)
+  | otherwise = do
+      declaredCompressor <- lookupDeclaredCompressor (rawCompressorId rawPatch)
+      traverse_ vetWindowFraming (rawWindows rawPatch)
+      resolvedWindows <- resolveSecondaryCompression declaredCompressor (rawWindows rawPatch)
+      decodedWindows  <- traverse decodeWindow resolvedWindows
+      pure (classifyFlavor declaredCompressor (rawAppHeader rawPatch)
+              (Vector.fromList decodedWindows))
   where
     headerIndicator = rawHeaderIndicator rawPatch
+
+-- | Resolve a framed compressor id against the catalog. An id the
+-- catalog does not name is the decline shape — slap does not know
+-- what algorithm such a patch is asking for, so it cannot call the
+-- patch malformed (see 'VCDIFFUnknownSecondaryCompressor').
+lookupDeclaredCompressor
+  :: Maybe Word8 -> Either SlapError (Maybe XDelta3SecondaryCompressor)
+lookupDeclaredCompressor Nothing = Right Nothing
+lookupDeclaredCompressor (Just compressorId) =
+  case secondaryCompressorCatalog compressorId of
+    Nothing         -> Left (VCDIFFUnknownSecondaryCompressor compressorId)
+    Just compressor -> Right (Just compressor)
 
 -- | One decoded window, before the patch-level flavor verdict: the
 -- shared 'Window', plus the checksum it carried if any. A VCDIFF
@@ -289,13 +346,19 @@ data DecodedWindow = DecodedWindow
   }
 
 -- | Name the decoded patch for what it is. Any xdelta3-arc feature —
--- an application header, or any window carrying an Adler32 — makes
--- the patch 'PatchXDelta3'; a patch using none decodes identically
--- under either flavor and keeps the first-class 'PatchCoreOnly'
--- verdict (docs/vcdiff/xdelta3/spec.md "Classification").
-classifyFlavor :: Maybe ByteString -> Vector DecodedWindow -> VCDIFFPatch
-classifyFlavor maybeAppHeader decodedWindows
-  | isJust maybeAppHeader
+-- a declared secondary compressor (an xdelta3 signal even when no
+-- window exercises it, because xdelta3's catalog is the only registry
+-- of compressor ids there is), an application header, or any window
+-- carrying an Adler32 — makes the patch 'PatchXDelta3'; a patch using
+-- none decodes identically under either flavor and keeps the
+-- first-class 'PatchCoreOnly' verdict (docs/vcdiff/xdelta3/spec.md
+-- "Classification").
+classifyFlavor
+  :: Maybe XDelta3SecondaryCompressor -> Maybe ByteString
+  -> Vector DecodedWindow -> VCDIFFPatch
+classifyFlavor declaredCompressor maybeAppHeader decodedWindows
+  | isJust declaredCompressor
+      || isJust maybeAppHeader
       || Vector.any (isJust . decodedWindowChecksum) decodedWindows =
       PatchXDelta3 (XDelta3Header maybeAppHeader) (fmap toXDelta3Window decodedWindows)
   | otherwise = PatchCoreOnly (fmap decodedWindowBody decodedWindows)
@@ -304,11 +367,13 @@ classifyFlavor maybeAppHeader decodedWindows
       XDelta3Window (decodedWindowBody decodedWindow)
                     (decodedWindowChecksum decodedWindow)
 
--- | Interpret one framed window: refuse any unlanded feature, hold
--- the framing to its own declared length, then decode the instruction
--- stream.
-classifyWindow :: RawWindow -> Either SlapError DecodedWindow
-classifyWindow rawWindow
+-- | Vet one framed window's framing: refuse any unlanded feature on
+-- its indicator bytes, and hold the window to its own declared
+-- length. Runs over every window before secondary compression is
+-- resolved, so the resolution pass reads compression bits only out
+-- of indicator bytes this vetting has fully accounted for.
+vetWindowFraming :: RawWindow -> Either SlapError ()
+vetWindowFraming rawWindow
   | windowIndicator .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator)
   | testBit windowIndicator vcdSourceBit && testBit windowIndicator vcdTargetBit =
@@ -317,38 +382,138 @@ classifyWindow rawWindow
       Left (VCDIFFFeatureNotYetSupported VCDIFFTargetWindow)
   | rawDeltaIndicator rawWindow .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow))
-  | rawDeltaIndicator rawWindow .&. secondaryCompressionMask /= 0 =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFSecondaryCompressedSection)
   | rawDeclaredEncodingLength rawWindow /= rawMeasuredEncodingLength rawWindow =
       Left (MalformedVCDIFF (VCDIFFDeltaEncodingLengthMismatch
               (ExpectedSize (lengthToFileSize (rawDeclaredEncodingLength rawWindow)))
               (ActualSize   (lengthToFileSize (rawMeasuredEncodingLength rawWindow)))))
-  | otherwise = do
-      let sourceSegment =
-            (\segment -> SourceSegment
-                           FromSourceFile
-                           (rawSegmentPosition segment)
-                           (rawSegmentLength segment))
-            <$> rawSourceSegment rawWindow
-          segmentLength = maybe mempty rawSegmentLength (rawSourceSegment rawWindow)
-      instructions <- decodeWindowInstructions
-                        segmentLength
-                        (rawTargetSize rawWindow)
-                        (rawDataSection rawWindow)
-                        (rawInstSection rawWindow)
-                        (rawAddrSection rawWindow)
-      Right DecodedWindow
-        { decodedWindowBody = Window
-            { windowSourceSegment = sourceSegment
-            , windowTargetSize    = rawTargetSize rawWindow
-            , windowInstructions  = instructions
-            }
-        , decodedWindowChecksum = rawWindowAdler rawWindow
-        }
+  | otherwise = Right ()
   where
     windowIndicator = rawWindowIndicator rawWindow
-    -- VCD_DATACOMP | VCD_INSTCOMP | VCD_ADDRCOMP
-    secondaryCompressionMask = 0x07
+
+-- | Decode one resolved window's instruction stream. The
+-- 'ResolvedWindow' proof is what lets the body read the sections as
+-- plain bytes without checking — the instruction decode never learns
+-- that compression existed.
+decodeWindow :: ResolvedWindow -> Either SlapError DecodedWindow
+decodeWindow (ResolvedWindow rawWindow) = do
+  let sourceSegment =
+        (\segment -> SourceSegment
+                       FromSourceFile
+                       (rawSegmentPosition segment)
+                       (rawSegmentLength segment))
+        <$> rawSourceSegment rawWindow
+      segmentLength = maybe mempty rawSegmentLength (rawSourceSegment rawWindow)
+  instructions <- decodeWindowInstructions
+                    segmentLength
+                    (rawTargetSize rawWindow)
+                    (rawDataSection rawWindow)
+                    (rawInstSection rawWindow)
+                    (rawAddrSection rawWindow)
+  Right DecodedWindow
+    { decodedWindowBody = Window
+        { windowSourceSegment = sourceSegment
+        , windowTargetSize    = rawTargetSize rawWindow
+        , windowInstructions  = instructions
+        }
+    , decodedWindowChecksum = rawWindowAdler rawWindow
+    }
+
+----------------------------------------------------------------------------
+-- Secondary-compression resolution
+----------------------------------------------------------------------------
+
+-- | The proof that 'resolveSecondaryCompression' has run: a window
+-- whose sections are plain bytes, whatever the wire carried. Its
+-- still-set Delta_Indicator compression bits are history, not
+-- instruction — they record what the wire did; the type says it has
+-- been dealt with. 'decodeWindow' accepts only this, so decoding an
+-- unresolved window is a compile error.
+newtype ResolvedWindow = ResolvedWindow RawWindow
+
+-- | Resolve every window's compressed sections into plain ones, or
+-- refuse. The four dispositions, decided by the declared compressor
+-- and whether any window actually compresses a section:
+--
+--   * No compressor declared: any compression-flagged section is a
+--     wire self-contradiction ('VCDIFFCompressedSectionWithoutCompressor').
+--   * DJW or FGK declared and exercised: refused by name — slap
+--     recognizes the catalog entry but does not decode it yet.
+--   * LZMA declared and exercised: each kind's stream is gathered,
+--     decoded, and split back; every window comes out holding plain
+--     sections.
+--   * Any compressor declared but exercised by no window: the patch
+--     is fully decodable and passes through untouched — a
+--     declared-but-unused compressor is valid
+--     (docs/vcdiff/xdelta3/spec.md "Catalog").
+--
+-- The DJW and FGK arms are deliberate shape-twins, kept explicit
+-- rather than factored through a shared refusal projection: the
+-- dispositions above appear one-to-one in the code, and a compressor
+-- graduating into decode support — or a new catalog entry — fires
+-- '-Wincomplete-patterns' here, at the decision point.
+resolveSecondaryCompression
+  :: Maybe XDelta3SecondaryCompressor -> [RawWindow]
+  -> Either SlapError [ResolvedWindow]
+resolveSecondaryCompression declaredCompressor rawWindows =
+  map ResolvedWindow <$> case declaredCompressor of
+    Nothing -> case listToMaybe (concatMap compressedKindsOf rawWindows) of
+      Just orphanedKind ->
+        Left (MalformedVCDIFF (VCDIFFCompressedSectionWithoutCompressor orphanedKind))
+      Nothing -> Right rawWindows
+    Just SecondaryDJW
+      | anyWindowCompresses ->
+          Left (VCDIFFFeatureNotYetSupported VCDIFFDJWSecondaryCompression)
+      | otherwise -> Right rawWindows
+    Just SecondaryFGK
+      | anyWindowCompresses ->
+          Left (VCDIFFFeatureNotYetSupported VCDIFFFGKSecondaryCompression)
+      | otherwise -> Right rawWindows
+    Just SecondaryLZMA -> decompressLZMASections rawWindows
+  where
+    anyWindowCompresses = any (not . null . compressedKindsOf) rawWindows
+
+-- | The section kinds a window's Delta_Indicator flags as
+-- compressed, in kind order.
+compressedKindsOf :: RawWindow -> [VCDIFFSection]
+compressedKindsOf rawWindow =
+  [ kind
+  | (compressionBit, kind) <- sectionCompressionBits
+  , testBit (rawDeltaIndicator rawWindow) compressionBit
+  ]
+
+-- | Run each of the three kinds through the gather-decode-split
+-- machine and hand every window back with plain sections. Each kind
+-- is its own continuous stream, decoded independently; a kind no
+-- window compresses passes through the machine untouched.
+decompressLZMASections :: [RawWindow] -> Either SlapError [RawWindow]
+decompressLZMASections rawWindows = do
+  plainDataSections <- decodeKind VCDIFFDataSection        vcdDataCompBit rawDataSection
+  plainInstSections <- decodeKind VCDIFFInstructionSection vcdInstCompBit rawInstSection
+  plainAddrSections <- decodeKind VCDIFFAddressSection     vcdAddrCompBit rawAddrSection
+  pure (zipWith4 windowWithPlainSections
+          rawWindows plainDataSections plainInstSections plainAddrSections)
+  where
+    decodeKind :: VCDIFFSection -> Int -> (RawWindow -> ByteString)
+               -> Either SlapError [ByteString]
+    decodeKind kind compressionBit sectionOf =
+      decodeLZMACompressedKind kind
+        [ if testBit (rawDeltaIndicator rawWindow) compressionBit
+            then CarriedCompressed (sectionOf rawWindow)
+            else CarriedPlain      (sectionOf rawWindow)
+        | rawWindow <- rawWindows
+        ]
+
+    -- The three plain sections arrive positionally in data, inst,
+    -- addr order — the same order the 'do' block above binds them in,
+    -- so a transposition is visible at the 'zipWith4' call site.
+    windowWithPlainSections :: RawWindow -> ByteString -> ByteString -> ByteString
+                            -> RawWindow
+    windowWithPlainSections rawWindow dataSection instSection addrSection =
+      rawWindow
+        { rawDataSection = dataSection
+        , rawInstSection = instSection
+        , rawAddrSection = addrSection
+        }
 
 ----------------------------------------------------------------------------
 -- Instruction-stream decode

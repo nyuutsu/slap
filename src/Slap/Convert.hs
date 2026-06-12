@@ -96,7 +96,7 @@ import Slap.Measure (FileSize(..), Length(..), Offset(..), Hunk(..),
                       ActualSize(..), ExpectedSize(..),
                       SentinelOffset(..),
                       splitHunks, splitHunksUnbounded, splitUndoHunks,
-                      splitPayload, byteFileSize)
+                      splitPayload, byteFileSize, byteLength)
 import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowHunks, narrowHunksUnbounded,
                     narrowUndoHunksUnbounded)
@@ -872,7 +872,7 @@ fieldNote contents field = case field of
   FieldImageType -> [FieldDropped FieldImageType DroppedEmpty | isJust (contentsImageType contents)]
   FieldFileIdDiz -> [FieldDropped FieldFileIdDiz DroppedEmpty | isJust (contentsFileIdDiz contents)]
   FieldMetadata -> case contentsMetadata contents of
-    Just metadataBlob | not (ByteString.null metadataBlob) -> [MetadataDropped (ByteString.length metadataBlob)]
+    Just metadataBlob | not (ByteString.null metadataBlob) -> [MetadataDropped (byteLength metadataBlob)]
     _ -> []
 
 ----------------------------------------------------------------------------

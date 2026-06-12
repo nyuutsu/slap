@@ -1,9 +1,15 @@
 # VCDIFF xdelta3 apply cross-validation
 # Each row: base ROM | patch | label
 #
-# Patches here are unmodified xdelta3 output — application header and
-# per-window Adler32 intact. slap applies the patch and the output is
+# Patches here are unmodified xdelta3 output — application header,
+# per-window Adler32, and (where the producer chose it) LZMA secondary
+# compression intact. slap applies the patch and the output is
 # compared, byte for byte, against xdelta3 applying the same patch —
-# never slap against slap. (Until secondary compression lands, rows
-# must be patches xdelta3 emitted uncompressed; compressed rows join
-# this same file when it does.)
+# never slap against slap. Gated on xdelta3 and on the fixtures, both
+# of which are local-only, so rows skip cleanly where either is absent.
+#
+# pokesta2-debug-lzma is the first compressed row, keeping this
+# header's old promise: a wild LZMA patch (8 windows, 64 MB output)
+# against the stadium2 fixture base.
+
+test/data/stadium2/base.z64 | roms/curated/xdelta3/[4771]pokesta2-debugmenu-v1/Pokemon Stadium 2 Debug Menu Patch v1 [jrra]/jrra-np3e0-v1.xdelta | pokesta2-debug-lzma

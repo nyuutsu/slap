@@ -698,9 +698,12 @@ parseSomePatchFromUPS patchContents = do
     }
 
 -- | Build a 'SomePatch' from a parsed VCDIFF patch. The CoreOnly and
--- uncompressed-xdelta3 flavors parse today; a patch using a deferred
--- feature is refused by 'VCDIFF.parseVCDIFF' before this builder runs.
--- An xdelta3 patch's per-window Adler32 checksums are lifted into
+-- xdelta3 flavors (LZMA secondary compression included) parse today;
+-- a patch using a deferred feature is refused by 'VCDIFF.parseVCDIFF'
+-- before this builder runs. The flavor verdict surfaces through the
+-- format header's qualifier slot ('vcdiffFlavorQualifier'), so
+-- @slap info@ answers \"which flavor\" on its first line. An xdelta3
+-- patch's per-window Adler32 checksums are lifted into
 -- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs; the
 -- analytical carrier is a summary only, pending the VCDIFF Describe
 -- pass.
@@ -730,7 +733,7 @@ parseSomePatchFromVCDIFF patchContents = do
     , patchAdvisories   = parseAdvisories
                         ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
     , patchInfo         = PatchInfo
-        { infoFormat = FormatHeader LabelVCDIFF Nothing
+        { infoFormat = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
         , infoLines  = []
         , infoTally  = Tally windowCount
         , infoUnit   = Windows
@@ -741,6 +744,17 @@ parseSomePatchFromVCDIFF patchContents = do
     , patchMetadata     = Nothing
     , patchExtractedMeta = noMetadataRequested
     }
+
+-- | The flavor verdict as a format-header qualifier, in the
+-- 'Slap.Display.Common.formatExtra' register (leading separator
+-- included). CoreOnly is the unqualified case — the patch decodes
+-- identically under either flavor, so the bare label is the whole
+-- truth.
+vcdiffFlavorQualifier :: VCDIFF.VCDIFFPatch -> Maybe Text
+vcdiffFlavorQualifier vcdiffPatch = case vcdiffPatch of
+  VCDIFF.PatchCoreOnly _  -> Nothing
+  VCDIFF.PatchRFC      _ _ -> Just " (RFC 3284)"
+  VCDIFF.PatchXDelta3  _ _ -> Just " (xdelta3)"
 
 -- | The window list of a parsed VCDIFF patch, regardless of flavor.
 -- 'VCDIFF.PatchCoreOnly' and 'VCDIFF.PatchXDelta3' are produced today;
