@@ -132,26 +132,29 @@ data BPSCopyKind = CopyFromSource | CopyFromTarget
 -- successfully decoded action in wire order along with any warnings
 -- the walk emitted.
 --
--- The walker is tail-recursive with two reversed accumulators
--- (actions and warnings), reversed once at the 'atEnd' boundary. The
--- per-action decoding is delegated to 'decodeOneAction' so the
--- four-arm command-code dispatch — and the @0x81@ negative-zero
--- detection it carries on the two copy arms — has one home.
+-- The walker is tail-recursive with two reversed accumulators:
+-- actions, and per-action warning groups. Each action's warnings
+-- enter as one group, so an action that emits several keeps them in
+-- emission order through the final reverse-and-concat at the 'atEnd'
+-- boundary. The per-action decoding is delegated to 'decodeOneAction'
+-- so the four-arm command-code dispatch — and the @0x81@
+-- negative-zero detection it carries on the two copy arms — has one
+-- home.
 parseActions :: ByteParser BPSParsedActionStream
 parseActions = walkActions [] []
   where
-    walkActions :: [BPSAction] -> [SlapAdvisory] -> ByteParser BPSParsedActionStream
-    walkActions accumulatedActionsReversed accumulatedWarningsReversed = do
+    walkActions :: [BPSAction] -> [[SlapAdvisory]] -> ByteParser BPSParsedActionStream
+    walkActions accumulatedActionsReversed accumulatedWarningGroupsReversed = do
       done <- atEnd
       if done
         then pure BPSParsedActionStream
                { parsedActionList     = reverse accumulatedActionsReversed
-               , parsedActionWarnings = reverse accumulatedWarningsReversed
+               , parsedActionWarnings = concat (reverse accumulatedWarningGroupsReversed)
                }
         else do
           decodedAction <- decodeOneAction
           walkActions (bpsDecodedActionValue    decodedAction : accumulatedActionsReversed)
-                      (bpsDecodedActionWarnings decodedAction ++ accumulatedWarningsReversed)
+                      (bpsDecodedActionWarnings decodedAction : accumulatedWarningGroupsReversed)
 
 -- | Decode a single BPS action: read the packed command-and-length
 -- varint, dispatch on the two-bit command code, and consume each

@@ -73,7 +73,7 @@ parseUPSBody :: ByteParser UPSBody
 parseUPSBody = do
   rawSourceSize <- byuuVarint
   rawTargetSize <- byuuVarint
-  -- parseBlocks builds a cons-cell list inside the pure Get monad
+  -- parseBlocks builds a cons-cell list inside 'ByteParser'
   -- (where list spine is cheap and natural). We materialise to Vector
   -- once at the UPSBody boundary so the apply loop can index by
   -- position — same pattern as BPS/Parse.hs's action vector.
