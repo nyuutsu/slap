@@ -185,11 +185,7 @@ impl<'section> BitReader<'section> {
 
     /// Read a fixed-width value, most significant bit first.
     fn read_value(&mut self, bit_count: usize) -> Result<usize, DjwFault> {
-        let mut value = 0;
-        for _ in 0..bit_count {
-            value = (value << 1) | self.read_bit()? as usize;
-        }
-        Ok(value)
+        (0..bit_count).try_fold(0, |value, _| Ok((value << 1) | self.read_bit()? as usize))
     }
 
     fn consumed_byte_count(&self) -> usize {
@@ -287,23 +283,26 @@ impl CanonicalPrefixDecoder {
     }
 
     /// Decode one symbol (`djw_decode_symbol`): grow the code a bit at
-    /// a time until a length admits it, then index the symbol order.
-    /// Both exits xd3 reaches by table arithmetic are checked reads
-    /// here — a code below its length's first code, or an offset past
-    /// the coded symbols, is 'CodeOutsideTable', never a stray index.
+    /// a time until a length admits it, then look it up in the symbol
+    /// order. The lengths the table assigns bound the walk — a code
+    /// still unadmitted at the deepest one is outside the table, and
+    /// falling out of the loop is that verdict, not a guard inside it.
     fn decode_symbol(&self, reader: &mut BitReader) -> Result<usize, DjwFault> {
         let mut code = 0usize;
-        let mut length = 0usize;
-        loop {
-            if length == self.longest_code_length {
-                return Err(DjwFault::CodeOutsideTable);
-            }
-            length += 1;
+        for length in 1..=self.longest_code_length {
             code = (code << 1) | reader.read_bit()? as usize;
             if length >= self.shortest_code_length && code <= self.last_code_at_length[length] {
-                break;
+                return self.symbol_assigned_to(length, code);
             }
         }
+        Err(DjwFault::CodeOutsideTable)
+    }
+
+    /// The symbol an admitted code of the given length names. Both
+    /// exits xd3 reaches by table arithmetic are checked reads here —
+    /// a code below its length's first code, or an offset past the
+    /// coded symbols, is 'CodeOutsideTable', never a stray index.
+    fn symbol_assigned_to(&self, length: usize, code: usize) -> Result<usize, DjwFault> {
         let code_order_offset = code
             .checked_sub(self.first_code_at_length[length])
             .ok_or(DjwFault::CodeOutsideTable)?;
@@ -361,13 +360,26 @@ impl MoveToFrontQueue {
     }
 }
 
+/// What a run-coded decode owes its next slots. The three states are
+/// mutually exclusive — xd3 keeps them as two zero-sentinel counters,
+/// but their exclusion is structural, so here it is a sum. A decode
+/// step consumes the state and answers with the next one.
+enum PendingWork {
+    /// Nothing owed: the next slot wants a fresh symbol off the wire.
+    DecodeNextSymbol,
+    /// A run in progress: the queue's front value, this many more times.
+    EmitRepeats { remaining: usize },
+    /// A decoded recency index whose pull-to-front hasn't landed yet —
+    /// real intermediate state, because skipped zeros can be emitted
+    /// between the decode and the pull.
+    PullToFront { recency_index: usize },
+}
+
 /// Decode a move-to-front, 1-2 run-coded value sequence
 /// (`djw_decode_1_2`): symbols 0 and 1 accumulate a binary run of the
 /// queue's front value, higher symbols pull a recency index to the
-/// front and emit it. The priority order per slot — zero-skip, then
-/// pending run, then pending pull, then a fresh symbol — is the
-/// source's exactly, because a pending pull really can be parked
-/// behind skipped zeros.
+/// front and emit it. The priority per slot — zero-skip first, then
+/// whatever 'PendingWork' is owed — is the source's exactly.
 ///
 /// `zero_skip_stride` is the group-table special case: a symbol whose
 /// previous group coded length zero is skipped as zero here too,
@@ -381,9 +393,11 @@ fn decode_run_coded_values(
     element_count: usize,
     zero_skip_stride: usize,
 ) -> Result<Vec<u8>, DjwFault> {
+    // Pre-reserve only up to the largest group-table sequence (eight
+    // groups of 256 lengths): a selector sequence's element count is
+    // wire-derived and a hostile one must not command an allocation.
     let mut values: Vec<u8> = Vec::with_capacity(element_count.min(ALPHABET_SIZE * 8));
-    let mut pending_repeats = 0usize;
-    let mut pending_recency_index = 0usize;
+    let mut pending = PendingWork::DecodeNextSymbol;
     let mut run_code_shift = 0u32;
 
     while values.len() < element_count {
@@ -394,35 +408,52 @@ fn decode_run_coded_values(
             values.push(0);
             continue;
         }
-        if pending_repeats != 0 {
-            values.push(queue.front());
-            pending_repeats -= 1;
-            continue;
-        }
-        if pending_recency_index != 0 {
-            values.push(queue.pull_to_front(pending_recency_index)?);
-            pending_recency_index = 0;
-            continue;
-        }
-        let symbol = decoder.decode_symbol(reader)?;
-        if symbol <= RUN_CODE_1 {
-            // Each run code contributes its digit at the next binary
-            // position; the shift cannot reach overflow because every
-            // contribution is emitted (or overruns) first.
-            pending_repeats = (symbol + 1)
-                .checked_shl(run_code_shift)
-                .ok_or(DjwFault::RepeatRunOvershootsSequence)?;
-            run_code_shift += 1;
-        } else {
-            pending_recency_index = symbol - 1;
-            run_code_shift = 0;
-        }
+        pending = match pending {
+            PendingWork::EmitRepeats { remaining } => {
+                values.push(queue.front());
+                match remaining - 1 {
+                    0         => PendingWork::DecodeNextSymbol,
+                    still_due => PendingWork::EmitRepeats { remaining: still_due },
+                }
+            }
+            PendingWork::PullToFront { recency_index } => {
+                values.push(queue.pull_to_front(recency_index)?);
+                PendingWork::DecodeNextSymbol
+            }
+            PendingWork::DecodeNextSymbol => {
+                let symbol = decoder.decode_symbol(reader)?;
+                if symbol <= RUN_CODE_1 {
+                    // Each run code contributes its digit at the next
+                    // binary position. The wire grammar puts no
+                    // ceiling on consecutive run codes, so a count
+                    // past the machine word is input the format
+                    // admits and this decoder must answer. The answer
+                    // is already decided: a contribution the word
+                    // cannot hold — the shift past its width, or the
+                    // digit's bits shifted out — is necessarily
+                    // larger than any sequence being filled, so it is
+                    // the overrun verdict the moment it appears.
+                    let run_contribution = (symbol + 1)
+                        .checked_shl(run_code_shift)
+                        .filter(|&contribution| contribution != 0)
+                        .ok_or(DjwFault::RepeatRunOvershootsSequence)?;
+                    run_code_shift += 1;
+                    PendingWork::EmitRepeats { remaining: run_contribution }
+                } else {
+                    run_code_shift = 0;
+                    PendingWork::PullToFront { recency_index: symbol - 1 }
+                }
+            }
+        };
     }
 
-    if pending_repeats != 0 {
-        return Err(DjwFault::RepeatRunOvershootsSequence);
+    match pending {
+        // A run still owing values past the sequence's end is the
+        // wire's error. An unlanded pull is dropped without complaint,
+        // as the source drops it.
+        PendingWork::EmitRepeats { .. } => Err(DjwFault::RepeatRunOvershootsSequence),
+        PendingWork::DecodeNextSymbol | PendingWork::PullToFront { .. } => Ok(values),
     }
-    Ok(values)
 }
 
 // ── The section decode ───────────────────────────────────────────────
