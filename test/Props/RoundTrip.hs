@@ -19,7 +19,8 @@ import qualified Slap.IPS.Apply as IPS
 import qualified Slap.IPS.Parse as IPS
 import Slap.IPS.Create (resolveSentinelCollisions, optimalIPSRecords)
 import Slap.IPS.Types (OffsetWidth(..), EBPPatch(..), IPSParseResult(..),
-                       ipsMaxRecordPayload)
+                       ipsMaxRecordPayload, ipsMagicBytes, ipsEOFMarkerBytes)
+import Slap.SomePatch (SomePatch(..), PatchKind(..), parseSome)
 import qualified Slap.UPS.Apply as UPS
 import qualified Slap.UPS.Parse as UPS
 import qualified Slap.PMSR.Parse as PMSR
@@ -122,6 +123,8 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "max-payload at sentinel round-trips" ipsSentinelMaxPayloadRoundTrips
       , testCase     "truncation past the marker's reach is refused" ipsTruncationPastMarkerReachRefused
       , testCase     "truncation at the marker's maximum round-trips" ipsTruncationAtMarkerMaximumRoundTrips
+      , testCase     "zero-count RLE sizes nothing" ipsZeroCountRleSizesNothing
+      , testCase     "zero-count RLE drops out of conversion" ipsZeroCountRleConvertRoundTrips
       , testProperty "dp-not-larger" prop_dpNotLarger
       ]
   , testGroup "IPS32"
@@ -767,6 +770,56 @@ ppf4StraddleRoundTrip =
            assertEqual "straddle round-trip"
              (Right (OutputFileContents target))
              (PPF4.applyPPF4 parsed (InputFileContents source))
+
+-- | The wire bytes of an IPS patch carrying one real write and one
+-- zero-count RLE record at a far offset: a 1-byte copy at offset 0,
+-- then the zero-count record at 0x100000.
+ipsZeroCountRlePatchBytes :: PatchFileContents
+ipsZeroCountRlePatchBytes = PatchFileContents (ByteString.concat
+  [ ipsMagicBytes
+  , ByteString.pack [0x00, 0x00, 0x00,  0x00, 0x01,  0x42]
+  , ByteString.pack [0x10, 0x00, 0x00,  0x00, 0x00,  0x00, 0x00,  0x00]
+  , ipsEOFMarkerBytes
+  ])
+
+-- | A zero-count RLE record is the no-op the parse ruling says it is
+-- (docs/ips/questions.md): it writes nothing, so it also sizes
+-- nothing — the output stays source-sized even when the record's
+-- offset sits past every real write.
+ipsZeroCountRleSizesNothing :: Assertion
+ipsZeroCountRleSizesNothing =
+  let source = ByteString.pack [0x41, 0x41, 0x41, 0x41]
+  in case IPS.parseIPS ipsZeroCountRlePatchBytes of
+       Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
+       Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
+         assertEqual "no-op record must not grow the output"
+           (Right (OutputFileContents (ByteString.pack [0x42, 0x41, 0x41, 0x41])))
+           (fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch))
+       Right _ -> assertFailure "expected a clean StandardIPS parse"
+
+-- | A parsed zero-count RLE record must not survive into a converted
+-- patch's wire bytes: it expands to no write, and emitting it as a
+-- size-0 record would collide with the RLE sentinel and desync every
+-- record after it. The converted patch re-parses cleanly and applies
+-- identically.
+ipsZeroCountRleConvertRoundTrips :: Assertion
+ipsZeroCountRleConvertRoundTrips =
+  let source = ByteString.pack [0x41, 0x41, 0x41, 0x41]
+      expected = OutputFileContents (ByteString.pack [0x42, 0x41, 0x41, 0x41])
+  in case parseSome noDialectsRequested SlapText.EncodingUtf8 ipsZeroCountRlePatchBytes of
+       Left slapError -> assertFailure ("parseSome: " ++ Text.unpack (renderSlapError slapError))
+       Right somePatch -> case patchKind somePatch of
+         Direct (Just contents) ->
+           case convertDirect contents (CreateDirect CreateIPS) noMetadataRequested noConstraintsRequested noDialectsRequested of
+             Left slapError -> assertFailure ("convert: " ++ Text.unpack (renderSlapError slapError))
+             Right (CreateResult convertedPatch _) -> case IPS.parseIPS convertedPatch of
+               Left slapError -> assertFailure ("re-parse: " ++ Text.unpack (renderSlapError slapError))
+               Right (Parsed (IPSParseCleanIPS reparsed) _parseWarnings) ->
+                 assertEqual "converted patch applies identically"
+                   (Right expected)
+                   (fmap outcomeValue (IPS.applyIPS (InputFileContents source) reparsed))
+               Right _ -> assertFailure "expected the converted patch to re-parse as clean StandardIPS"
+         _ -> assertFailure "expected a Direct patch kind with contents"
 
 -- | A shrinking pair whose target is too large for the truncation
 -- marker to name must refuse: the post-EOF marker spells the final

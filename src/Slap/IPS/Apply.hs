@@ -153,12 +153,16 @@ applyIPS (InputFileContents source) patch
 
     -- | Extend the running 'maxRecordEnd' upper bound to cover one
     -- more record's write region. Used as the fold step over the
-    -- record vector.
+    -- record vector. A record that writes nothing claims no end:
+    -- the zero-count RLE is accepted as the no-op it is
+    -- (docs/ips/questions.md), and a no-op cannot grow the output.
     extendMaxWith :: FileSize -> IPSRecord -> FileSize
-    extendMaxWith currentMax record =
-      max currentMax (offsetToFileSize
-                        (advance (ipsRecordOffset record)
-                                 (recordPayloadLength record)))
+    extendMaxWith currentMax record
+      | recordPayloadLength record == Length 0 = currentMax
+      | otherwise =
+          max currentMax (offsetToFileSize
+                            (advance (ipsRecordOffset record)
+                                     (recordPayloadLength record)))
 
     -- | Apply-time warnings derived from the disposition alone.
     -- 'MarkerAbsent' and 'MarkerNoOp' are silent; the other two
@@ -261,12 +265,20 @@ applyIPS (InputFileContents source) patch
         -- error and leaves whatever clip state had been built up
         -- so far in place. The buffer is already fully populated
         -- by 'initialFill' before the walk begins.
+        --
+        -- A record that writes nothing is the parse-accepted no-op
+        -- (docs/ips/questions.md) and takes no part in the walk —
+        -- no write, no bounds geometry, no clip accounting — exactly
+        -- as it took no part in the natural-size fold above. Its
+        -- offset may legally sit past the effective size, which the
+        -- handlers' geometry must never be asked about.
         applyRecordStream :: ActionIndex -> IPSApply (Maybe ApplyError)
         applyRecordStream !recordIndex
-          | recordIndex >= recordStreamEnd = pure Nothing
-          | otherwise =
-              selectedRecordHandler recordIndex
-                (Vector.unsafeIndex records (unActionIndex recordIndex))
+          | recordIndex >= recordStreamEnd          = pure Nothing
+          | recordPayloadLength record == Length 0  = applyRecordStream (nextAction recordIndex)
+          | otherwise                               = selectedRecordHandler recordIndex record
+          where
+            record = Vector.unsafeIndex records (unActionIndex recordIndex)
 
         -- | The per-record handler, chosen once for the whole walk.
         -- The disposition is loop-invariant, so the four-arm dispatch

@@ -111,7 +111,7 @@ import qualified Slap.Compression.Stream as Stream
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.List (partition)
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
 import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 
 ----------------------------------------------------------------------------
@@ -492,20 +492,29 @@ parseSomePatchFromIPS variant patchContents = do
   let label = case variant of
         IPS.StandardIPS -> LabelIPS
         IPS.IPS32       -> LabelIPS32
+      -- The writes a record performs, as a hunk. A zero-count RLE
+      -- record performs none — accepted on parse as the no-op it is
+      -- (docs/ips/questions.md), it expands to no hunk: an empty hunk
+      -- carried forward would re-encode on an IPS-family target as a
+      -- size-0 record, which is the RLE sentinel on the wire, and
+      -- desync every record after it. (An empty copy record cannot
+      -- arrive here: a zero size field parses as that same sentinel.)
       expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
                                          , ipsCopyPayload = recordPayload }) =
-        Hunk recordOffset recordPayload
+        Just (Hunk recordOffset recordPayload)
       expandIPSRecord (IPS.IPSRecordRLE { ipsRleOffset = recordOffset
                                         , ipsRleCount = fillCount
-                                        , ipsRleFill = fillByte }) =
-        Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte)
+                                        , ipsRleFill = fillByte })
+        | unLength fillCount == 0 = Nothing
+        | otherwise =
+            Just (Hunk recordOffset (ByteString.replicate (unLength fillCount) fillByte))
   case parseResult of
     IPS.IPSParseCleanIPS ipsPatch ->
       let records = IPS.ipsRecords ipsPatch
       in Right SomePatch
         { patchFormat         = label
         , patchAnalysis       = IPS.analyzeIPS ipsPatch
-        , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+        , patchKind           = Direct (Just (emptyContents (mapMaybe expandIPSRecord (Vector.toList records)))
             { contentsTruncation = IPS.ipsTruncatedTargetSize ipsPatch
             , contentsEBPMetadata = Nothing
             })
@@ -546,7 +555,7 @@ parseSomePatchFromIPS variant patchContents = do
       in Right SomePatch
         { patchFormat         = LabelEBP
         , patchAnalysis       = IPS.analyzeEBP ebpPatch
-        , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+        , patchKind           = Direct (Just (emptyContents (mapMaybe expandIPSRecord (Vector.toList records)))
             { contentsTruncation = IPS.ipsTruncatedTargetSize basePatch
             , contentsEBPMetadata = Just metadata
             })
@@ -577,7 +586,7 @@ parseSomePatchFromIPS variant patchContents = do
       in Right SomePatch
         { patchFormat         = label
         , patchAnalysis       = IPS.analyzeIPS truncatedPatch
-        , patchKind           = Direct (Just (emptyContents (map expandIPSRecord (Vector.toList records)))
+        , patchKind           = Direct (Just (emptyContents (mapMaybe expandIPSRecord (Vector.toList records)))
             { contentsTruncation = Nothing
             , contentsEBPMetadata = Nothing
             })
