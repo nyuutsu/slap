@@ -814,7 +814,7 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
           -- ^ APSN64's description field is typed 'EncodedText' under
           -- stage 3b; the parse-time decode (and any substitution
           -- advisories) lives inside 'parseAPSN64'.
-          , contentsDestinationSize    = Just (APSN64.apsN64DestinationSize header)
+          , contentsDestinationSize    = Just (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header))
           })
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (APSN64.applyAPSN64 patch source)) }
@@ -833,7 +833,7 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
         , infoLines  = APSN64.apsN64Meta patch
         , infoTally  = Tally (Vector.length records)
         , infoUnit   = Records
-        , infoBytes  = Just (TotalOutputBytes (APSN64.apsN64DestinationSize header))
+        , infoBytes  = Just (TotalOutputBytes (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header)))
         , infoRange  = Nothing
         }
     , patchSourceAdvisories    = []

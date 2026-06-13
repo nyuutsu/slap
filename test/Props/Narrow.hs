@@ -11,19 +11,22 @@ module Props.Narrow (narrowTests) where
 
 import qualified Data.ByteString as ByteString
 
-import Slap.APSN64.Types  (apsN64Limits)
+import Slap.APSN64.Types  (apsN64Limits, narrowAPSN64DestinationSize)
 import Slap.IPS.Types     (ipsLimits, ips32Limits)
 import Slap.PMSR.Types    (pmsrLimits)
 import Slap.PPF1.Types    (ppf1Limits)
 import Slap.PPF2.Types    (ppf2Limits)
 import Slap.PPF3.Types    (ppf3MaxRecordPayload)
+import Slap.XDelta1.Create (narrowXDelta1ControlOffset)
+import Slap.FieldName     (FieldName(..))
 import Slap.FormatLabel   (FormatLabel(..))
-import Slap.Measure       (Offset(..), Length(..), Hunk(..),
+import Slap.Measure       (Offset(..), Length(..), FileSize(..), Hunk(..),
                            ActualOffset(..), MaxOffset(..),
                            splitHunks, splitHunksUnbounded, splitOffset,
                            splitPayload, splitUndoHunks, splitUndoOffset,
                            splitUndoPayload, splitUndoOriginal)
 import Slap.Narrow        (NarrowingFailure(..), narrowHunks)
+import Slap.Status        (SlapError(..))
 
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -36,6 +39,10 @@ narrowTests = testGroup "Slap.Narrow rejection cases"
   , testCase "PPF2 rejects offset 2^32"     ppf2RejectsOverflow
   , testCase "IPS rejects offset 2^24"      ipsRejectsOverflow
   , testCase "IPS32 rejects offset 2^32"    ips32RejectsOverflow
+  , testCase "APSN64 rejects destination size 2^32"
+             apsN64RejectsDestinationSizeOverflow
+  , testCase "xdelta1 rejects control offset 2^32"
+             xdelta1RejectsControlOffsetOverflow
   , testCase "splitHunks slices payloads at the per-format cap"
              splitHunksAtCap
   , testCase "splitUndoHunks slices and zero-pads past source end"
@@ -44,6 +51,27 @@ narrowTests = testGroup "Slap.Narrow rejection cases"
 
 overflowingHunk :: [Hunk]
 overflowingHunk = [Hunk (Offset 0x100000000) (ByteString.singleton 0xFF)]
+
+-- | The two fixed-width header/trailer fields that ride the create
+-- path on their own channel (not through 'narrowHunks'): APS-N64's
+-- destination size and xdelta1's control-segment offset. Each must
+-- refuse a value one past its 4-byte field rather than mask it — the
+-- side-channel siblings of the per-record offset rejections above.
+apsN64RejectsDestinationSizeOverflow :: Assertion
+apsN64RejectsDestinationSizeOverflow =
+  case narrowAPSN64DestinationSize (FileSize 0x100000000) of
+    Left (NarrowingError (FieldValueExceedsBound LabelAPSN64 FieldDestinationSize
+                            0x100000000 0xFFFFFFFF)) -> pure ()
+    other -> assertFailure
+      ("expected APSN64 destination-size FieldValueExceedsBound, got " ++ show other)
+
+xdelta1RejectsControlOffsetOverflow :: Assertion
+xdelta1RejectsControlOffsetOverflow =
+  case narrowXDelta1ControlOffset 0x100000000 of
+    Left (NarrowingError (FieldValueExceedsBound LabelXDelta1 FieldXDelta1ControlOffset
+                            0x100000000 0xFFFFFFFF)) -> pure ()
+    other -> assertFailure
+      ("expected xdelta1 control-offset FieldValueExceedsBound, got " ++ show other)
 
 apsN64RejectsOverflow :: Assertion
 apsN64RejectsOverflow =

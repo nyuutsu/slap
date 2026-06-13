@@ -27,17 +27,23 @@ module Slap.APSN64.Types
   , apsN64RecordHeaderSize
     -- * Encoding limits
   , apsN64Limits
+  , APSN64DestinationSize
+  , unAPSN64DestinationSize
+  , narrowAPSN64DestinationSize
+  , apsN64DestinationSizeFromParsed
+  , apsN64DestinationSizeAsFileSize
   ) where
 
 import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Vector (Vector)
-import Data.Word (Word8)
+import Data.Word (Word8, Word32)
 import Slap.Display.Primitives (padHex)
+import Slap.FieldName (FieldName(FieldDestinationSize))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Measure (FileSize, Length(..), Offset(..))
-import Slap.Narrow (EncodingLimits(..))
-import Slap.Status (APSN64HeaderMalformation(..))
+import Slap.Measure (FileSize(..), Length(..), Offset(..))
+import Slap.Narrow (EncodingLimits(..), narrowToWord32)
+import Slap.Status (APSN64HeaderMalformation(..), SlapError(..))
 import Slap.Text (EncodedText)
 
 -- | The 2-byte cart ID copied from the N64 ROM header at offset 0x3C
@@ -221,7 +227,7 @@ data APSN64Header = APSN64Header
   , apsN64CartId      :: Maybe N64CartId
   , apsN64Country     :: Maybe APSN64Country
   , apsN64Crc         :: Maybe N64ChecksumPair
-  , apsN64DestinationSize    :: FileSize
+  , apsN64DestinationSize    :: APSN64DestinationSize
   } deriving (Show)
 
 data APSN64Record
@@ -264,3 +270,50 @@ apsN64Limits = EncodingLimits
   { maximumOffset = Offset 0xFFFFFFFF
   , formatLabel   = LabelAPSN64
   }
+
+-- | Narrow a target size to the 4-byte little-endian destination-size
+-- header field APS-N64 writes, refusing a value past @0xFFFFFFFF@
+-- rather than letting 'Slap.APSN64.Create.encodeAPSN64' mask it.
+-- The record offsets are already bounded by 'apsN64Limits' through the
+-- narrow layer; the destination size rides the create path on its own
+-- channel (APS-N64 imposes no source/target size-pair rule), so it
+-- needs its own guard — the sibling of 'Slap.DPS.Types.narrowDPSSourceSize'
+-- and 'Slap.APSGBA.Types.narrowAPSGBATargetSize'. As with the record
+-- offsets, unreachable on a real N64 cartridge but enforced so a target
+-- at or past 4 GiB is a typed refusal, never a silently wrapped header.
+-- | APS-N64's 4-byte little-endian destination-size header field,
+-- narrowed from a runtime 'FileSize'. Constructor private; values come
+-- from 'narrowAPSN64DestinationSize' (the create-path width check) or
+-- 'apsN64DestinationSizeFromParsed' (parse-time trust, since the 4-byte
+-- wire field constrains the value before it reaches the constructor).
+-- Sibling of 'Slap.DPS.Types.DPSSourceSize'.
+newtype APSN64DestinationSize =
+  APSN64DestinationSize { unAPSN64DestinationSize :: Word32 }
+  deriving (Show, Eq)
+
+-- | Narrow a target size to the destination-size field, refusing a
+-- value past @0xFFFFFFFF@ rather than letting
+-- 'Slap.APSN64.Create.encodeAPSN64' mask it. The record offsets already
+-- pass through the narrow layer ('apsN64Limits'); the destination size
+-- rides the create path on its own channel, since APS-N64 imposes no
+-- source/target size-pair rule, so it needs its own guard — the sibling
+-- of 'Slap.DPS.Types.narrowDPSSourceSize' and
+-- 'Slap.APSGBA.Types.narrowAPSGBATargetSize'.
+narrowAPSN64DestinationSize :: FileSize -> Either SlapError APSN64DestinationSize
+narrowAPSN64DestinationSize size =
+  case narrowToWord32 LabelAPSN64 FieldDestinationSize (unFileSize size) of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right (APSN64DestinationSize word)
+
+-- | Trust a parsed 4-byte field as a destination size; the wire shape
+-- already constrained it to a 'Word32'.
+apsN64DestinationSizeFromParsed :: Word32 -> APSN64DestinationSize
+apsN64DestinationSizeFromParsed = APSN64DestinationSize
+
+-- | Lift a 'APSN64DestinationSize' back to a 'FileSize' for callers in
+-- the application's general size currency ('Slap.SomePatch''s output
+-- size, 'Slap.APSN64.Describe''s info line). Word32 → Int is widening
+-- on every host slap supports, so the conversion never truncates.
+apsN64DestinationSizeAsFileSize :: APSN64DestinationSize -> FileSize
+apsN64DestinationSizeAsFileSize (APSN64DestinationSize word) =
+  FileSize (fromIntegral word)

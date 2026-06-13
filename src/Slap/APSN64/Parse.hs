@@ -14,13 +14,14 @@ import Slap.APSN64.Types (APSN64Patch(..), APSN64Record(..), APSN64Header(..),
                            toAPSPatchType, toAPSImageFormat,
                            toAPSRecordEncoding, toAPSN64Country,
                            apsN64MagicBytes, apsN64DescriptionWidth,
-                           apsN64RecordHeaderSize)
+                           apsN64RecordHeaderSize,
+                           apsN64DestinationSizeFromParsed)
 import Slap.Status (SlapError(..), SlapAdvisory(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, remaining, word32LE)
-import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
+import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
@@ -74,7 +75,7 @@ parseN64 metadataEncoding patchType = do
         decodeLossAdvisories LabelAPSN64 FieldDescription descriptionNotices
   case patchType of
     APSSimple -> do
-      destinationSize <- FileSize . fromIntegral <$> word32LE
+      destinationSize <- apsN64DestinationSizeFromParsed <$> word32LE
       recordWalk      <- parseN64Records
       let patch = APSN64Patch
             APSN64Header
@@ -94,7 +95,7 @@ parseN64 metadataEncoding patchType = do
       let parsedCountry = toAPSN64Country countryByte
       crcBytes        <- N64ChecksumPair <$> getBytes (Length 8)
       skip (Length 5)  -- padding (bytes 69-73)
-      destinationSize <- FileSize . fromIntegral <$> word32LE
+      destinationSize <- apsN64DestinationSizeFromParsed <$> word32LE
       recordWalk      <- parseN64Records
       let patch = APSN64Patch
             APSN64Header

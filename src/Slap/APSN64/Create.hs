@@ -4,7 +4,7 @@ module Slap.APSN64.Create
   ( encodeAPSN64
   ) where
 
-import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64MagicBytes, apsN64DescriptionWidth)
+import Slap.APSN64.Types (fromAPSPatchType, APSPatchType(..), fromAPSRecordEncoding, APSRecordEncoding(..), apsN64MagicBytes, apsN64DescriptionWidth, APSN64DestinationSize, unAPSN64DestinationSize)
 import Slap.Binary (putWord32LE)
 import Slap.Measure (Offset(..))
 import Slap.Narrow (EncodedHunk, encodedOffset, encodedPayload)
@@ -25,7 +25,7 @@ import Data.Word (Word32)
 -- Patch type: APSSimple matches the simple-record structure we emit.
 -- N64-specific (type 1) would require image format, cart ID, country.
 -- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
-encodeAPSN64 :: [EncodedHunk] -> Word32 -> EncodedText -> CreateResult
+encodeAPSN64 :: [EncodedHunk] -> APSN64DestinationSize -> EncodedText -> CreateResult
 encodeAPSN64 records destinationSize description =
     let (descriptionBytes, descriptionAdvisories) = padDescription description
         patchBytes = LazyByteString.toStrict $ toLazyByteString $
@@ -33,7 +33,7 @@ encodeAPSN64 records destinationSize description =
             <> word8 (fromAPSPatchType APSSimple)
             <> word8 (fromAPSRecordEncoding APSDefaultRecordEncoding)
             <> byteString descriptionBytes
-            <> putWord32LE destinationSize
+            <> putWord32LE (unAPSN64DestinationSize destinationSize)
             <> foldMap encodeAPSN64Record records
     in CreateResult (PatchFileContents patchBytes) descriptionAdvisories
 

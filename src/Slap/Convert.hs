@@ -1084,8 +1084,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
   CreateAPSN64 -> do
     records <- narrow (splitHunks APSN64.apsN64MaxChunkSize (contentsRecords contents))
     case contentsDestinationSize contents of
-      Just targetSize ->
-        Right (APSN64.encodeAPSN64 records (fromIntegral (unFileSize targetSize)) apsDescription)
+      Just targetSize -> do
+        destinationSize <- APSN64.narrowAPSN64DestinationSize targetSize
+        Right (APSN64.encodeAPSN64 records destinationSize apsDescription)
       Nothing -> Left (MissingRequiredField LabelAPSN64 FieldDestinationSize)
   where
     narrow :: [SplitHunk] -> Either SlapError [EncodedHunk]

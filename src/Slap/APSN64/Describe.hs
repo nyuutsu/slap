@@ -27,7 +27,7 @@ apsN64Meta (APSN64Patch header _) = concat
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)
   , countryField (apsN64Country header)
-  , [InfoLine "dest size" (renderAsText (unFileSize (apsN64DestinationSize header)))]
+  , [InfoLine "dest size" (renderAsText (unFileSize (apsN64DestinationSizeAsFileSize (apsN64DestinationSize header))))]
   ]
   where
     -- Read the decoded text directly off the typed field. The

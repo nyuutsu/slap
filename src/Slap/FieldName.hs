@@ -55,6 +55,8 @@ data FieldName
   -- xdelta1 header name fields
   | FieldXDelta1FromName
   | FieldXDelta1ToName
+  -- xdelta1 trailer
+  | FieldXDelta1ControlOffset
   deriving (Show, Eq, Enum, Bounded)
 
 fieldNameLabel :: FieldName -> Text
@@ -92,3 +94,4 @@ fieldNameLabel FieldFileIdDizLength  = "file_id.diz length"
 fieldNameLabel FieldRecordCount      = "record count"
 fieldNameLabel FieldXDelta1FromName  = "from-name"
 fieldNameLabel FieldXDelta1ToName    = "to-name"
+fieldNameLabel FieldXDelta1ControlOffset = "control-segment offset"

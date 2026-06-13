@@ -37,6 +37,7 @@
 -- — matching what canonical xdelta's @--noverify@ produces.
 module Slap.XDelta1.Create
   ( createXDelta1
+  , narrowXDelta1ControlOffset
   ) where
 
 import Slap.Compression.Stream (gzipDeflate)
@@ -70,7 +71,8 @@ import Slap.Binary (md5, putEdsioVarint, word32BEBytes)
 import Slap.Checksum (MD5Hash(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
+import Slap.Narrow (narrowToWord32)
+import Slap.Status (SlapError(..), SlapAdvisory, CreateResult(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..),
                           PatchFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..), byteFileSize)
@@ -126,7 +128,7 @@ createXDelta1 inclusion compression resolvedNames inputContents outputContents =
       targetBytes = unOutputFileContents outputContents
       patch = assemblePatch inclusion compression resolvedNames
                             sourceBytes targetBytes diff
-      (wireBytes, nameAdvisories) = encodeXDelta1 patch
+  (wireBytes, nameAdvisories) <- encodeXDelta1 patch
   Right (CreateResult (PatchFileContents wireBytes) nameAdvisories)
 
 ----------------------------------------------------------------------------
@@ -208,26 +210,28 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
 --                           gzip stream)
 --   7. Control offset:      uint32 BE (file offset where segment 6 begins)
 --   8. Trailing magic:      @%XDZ004%@ (8 bytes)
-encodeXDelta1 :: XDelta1Patch -> (ByteString, [SlapAdvisory])
-encodeXDelta1 patch =
-  ( ByteString.concat
-      [ magicBytes
-      , headerBytes
-      , fromNameBytes
-      , toNameBytes
-      , dataSegment
-      , controlSegment
-      , word32BEBytes controlOffset
-      , magicBytes
-      ]
-  , fromNameAdvisories ++ toNameAdvisories
-    -- The source-record name shares its bytes with the from-name
-    -- ('assemblePatch' pipes one value into both); re-encoding the
-    -- 'EncodedText' for the source-record slot would surface the
-    -- same substitution advisories twice, so 'encodeFileSourceRecord'
-    -- discards its notice list and the from-name's advisories speak
-    -- for the mirrored value.
-  )
+encodeXDelta1 :: XDelta1Patch -> Either SlapError (ByteString, [SlapAdvisory])
+encodeXDelta1 patch = do
+  controlOffsetWord <- narrowXDelta1ControlOffset controlOffsetValue
+  Right
+    ( ByteString.concat
+        [ magicBytes
+        , headerBytes
+        , fromNameBytes
+        , toNameBytes
+        , dataSegment
+        , controlSegment
+        , word32BEBytes controlOffsetWord
+        , magicBytes
+        ]
+    , fromNameAdvisories ++ toNameAdvisories
+      -- The source-record name shares its bytes with the from-name
+      -- ('assemblePatch' pipes one value into both); re-encoding the
+      -- 'EncodedText' for the source-record slot would surface the
+      -- same substitution advisories twice, so 'encodeFileSourceRecord'
+      -- discards its notice list and the from-name's advisories speak
+      -- for the mirrored value.
+    )
   where
     magicBytes     = "%XDZ004%"
     (fromNameBytes, fromNameAdvisories) =
@@ -281,14 +285,32 @@ encodeXDelta1 patch =
     dataSegment    = applyCompression (xdelta1DataSegment patch)
     controlSegment = applyCompression (encodeControl patch)
 
-    -- File offset where the control segment begins.
-    controlOffset :: Word32
-    controlOffset = fromIntegral $
+    -- File offset where the control segment begins. Narrowed to the
+    -- trailer's 4-byte field by 'narrowXDelta1ControlOffset' rather
+    -- than masked, so a patch too large for xdelta1's 32-bit positions
+    -- is refused, not silently truncated.
+    controlOffsetValue :: Int
+    controlOffsetValue =
       ByteString.length magicBytes
       + ByteString.length headerBytes
       + fromNameLength
       + toNameLength
       + ByteString.length dataSegment
+
+-- | Narrow a control-segment file offset to the trailer's 4-byte
+-- big-endian field, refusing a value past @0xFFFFFFFF@. xdelta1's
+-- positions are 32-bit — the format reconstructs its EDSIO @uint@s
+-- into a @guint32@ and the reference documents a 32-bit file-size
+-- limit (the underlying EDSIO library can serialise wider, but the
+-- xdelta1 format does not draw on that) — so a patch whose control
+-- offset would not fit cannot be read back faithfully: the reference
+-- would silently truncate the trailer pointer. slap declines to emit
+-- it instead, the create-side mirror of the parser's guint32 cap.
+narrowXDelta1ControlOffset :: Int -> Either SlapError Word32
+narrowXDelta1ControlOffset value =
+  case narrowToWord32 LabelXDelta1 FieldXDelta1ControlOffset value of
+    Left  failure -> Left (NarrowingError failure)
+    Right word    -> Right word
 
 ----------------------------------------------------------------------------
 -- Control segment encoder
