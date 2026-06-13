@@ -62,6 +62,7 @@ import Slap.IPS.Types (IPSVariant(..), OffsetWidth(..), EBPMetadata(..),
                        SMCShapeRequirement(..), isSMCShapedSize,
                        ipsMaxRecordPayload, variantSpec,
                        ipsLimits, ips32Limits, ebpLimits,
+                       ipsRejectIncompatibleSizeChange,
                        ips32RejectIncompatibleSizeChange,
                        ebpRejectIncompatibleSizeChange)
 import qualified Slap.BPS.Create as BPS
@@ -636,7 +637,7 @@ rejectIncompatibleSizeChange CreateIPS32  = ips32RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateEBP    = ebpRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateNINJA1 = ninja1RejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreatePMSR   = pmsrRejectIncompatibleSizeChange
-rejectIncompatibleSizeChange CreateIPS    = acceptsAnySizeChange
+rejectIncompatibleSizeChange CreateIPS    = ipsRejectIncompatibleSizeChange
 rejectIncompatibleSizeChange CreateAPSN64 = acceptsAnySizeChange
 
 -- | Leaf consumed by 'rejectIncompatibleSizeChange' for formats that

@@ -258,6 +258,16 @@ data UnencodeabilityReason
     -- where the wire format has no truncation marker. The
     -- 'ActualSize' is the source's size; the 'ExpectedSize' is the
     -- would-be target's size.
+  | TruncationTargetUnrepresentable !DeclaredTargetSize !MaxOffset
+    -- ^ The pair shrinks, so the encoding needs a truncation marker,
+    -- and the marker spells the final size in the same width as the
+    -- variant's record offsets — a target size past that width's
+    -- maximum has no representation. 'StandardIPS''s 24-bit post-EOF
+    -- marker is the only marker-bearing format today. Raised by
+    -- 'Slap.IPS.Types.ipsRejectIncompatibleSizeChange'; without the
+    -- refusal, the encoder's offset field would mask the size to its
+    -- low bits and emit a patch that applies to a wrongly-sized
+    -- file, in a format with no checksum to notice.
   deriving (Eq, Show)
 
 ----------------------------------------------------------------------------
@@ -2246,6 +2256,13 @@ renderUnencodeabilityReason _label
   <> " (input 0x" <> renderHexAsText (unFileSize sourceSize)
   <> " bytes, output 0x" <> renderHexAsText (unFileSize targetSize)
   <> " bytes); this format does not represent shrinking"
+renderUnencodeabilityReason _label
+  (TruncationTargetUnrepresentable (DeclaredTargetSize targetSize) (MaxOffset markerMaximum)) =
+  "the output is smaller than the input, so the patch needs a"
+  <> " truncation marker, and the marker cannot name a size of 0x"
+  <> renderHexAsText (unFileSize targetSize)
+  <> " bytes — its field caps at 0x"
+  <> renderHexAsText (unOffset markerMaximum)
 
 -- | Render a trailer marker's raw bytes for inclusion in an error
 -- message. The 'StandardIPS' and 'IPS32' markers are ASCII-printable

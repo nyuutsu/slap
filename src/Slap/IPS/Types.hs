@@ -40,6 +40,7 @@ module Slap.IPS.Types
   , ips32Limits
   , ebpLimits
     -- * Source/target size-pair rules
+  , ipsRejectIncompatibleSizeChange
   , ips32RejectIncompatibleSizeChange
   , ebpRejectIncompatibleSizeChange
   ) where
@@ -62,7 +63,10 @@ import Slap.Measure
   , NaturalTargetSize(..)
   , ActualSize(..)
   , ExpectedSize(..)
+  , MaxOffset(..)
   , byteLength
+  , fileSizeToInt
+  , offsetToInt
   , ipsSentinel
   , ips32Sentinel
   )
@@ -476,6 +480,29 @@ ebpLimits = ipsLimits { formatLabel = LabelEBP }
 ----------------------------------------------------------------------------
 -- Source/target size-pair rules
 ----------------------------------------------------------------------------
+
+-- | 'StandardIPS' declines (source, target) pairs whose target is
+-- both shorter than the source and too large for the truncation
+-- marker to name. Shrinkage itself is the post-EOF marker's whole
+-- purpose — but the marker spells the final size in the variant's
+-- offset width, so a target size past
+-- 'ipsVariantMaxAddressableOffset' has no representation: encoding
+-- it would mask the size to its low 24 bits and emit a patch that
+-- applies to a wrongly-sized file, with no checksum in the format to
+-- notice. Growth and same-size pairs pass — they need no marker.
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through
+-- its 'CreateIPS' arm.
+ipsRejectIncompatibleSizeChange
+  :: FileSize -> FileSize -> Either SlapError ()
+ipsRejectIncompatibleSizeChange sourceSize targetSize
+  | targetSize >= sourceSize = Right ()
+  | fileSizeToInt targetSize <= offsetToInt markerMaximum = Right ()
+  | otherwise = Left (UnencodeablePair LabelIPS
+      (TruncationTargetUnrepresentable
+        (DeclaredTargetSize targetSize)
+        (MaxOffset markerMaximum)))
+  where
+    markerMaximum = ipsVariantMaxAddressableOffset (variantSpec StandardIPS)
 
 -- | IPS32 declines (source, target) pairs whose target is shorter
 -- than the source. IPS32 has no truncation extension in its wire

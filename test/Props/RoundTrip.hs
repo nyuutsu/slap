@@ -120,6 +120,8 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "resolveSentinelCollisions" prop_resolveSentinelCollisions
       , testProperty "source-less convert rejects sentinel" prop_sourcelessSentinelRejected
       , testCase     "max-payload at sentinel round-trips" ipsSentinelMaxPayloadRoundTrips
+      , testCase     "truncation past the marker's reach is refused" ipsTruncationPastMarkerReachRefused
+      , testCase     "truncation at the marker's maximum round-trips" ipsTruncationAtMarkerMaximumRoundTrips
       , testProperty "dp-not-larger" prop_dpNotLarger
       ]
   , testGroup "IPS32"
@@ -765,6 +767,39 @@ ppf4StraddleRoundTrip =
            assertEqual "straddle round-trip"
              (Right (OutputFileContents target))
              (PPF4.applyPPF4 parsed (InputFileContents source))
+
+-- | A shrinking pair whose target is too large for the truncation
+-- marker to name must refuse: the post-EOF marker spells the final
+-- size in the same 24-bit width as record offsets, and masking the
+-- size to fit would emit a patch that applies to a wrongly-sized
+-- file in a format with no checksum to notice.
+ipsTruncationPastMarkerReachRefused :: Assertion
+ipsTruncationPastMarkerReachRefused =
+  let source = ByteString.replicate (0x1000000 + 64) 0x41
+      target = ByteString.replicate (0x1000000 + 32) 0x41
+  in case createPatch (CreateDirect CreateIPS) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left (UnencodeablePair LabelIPS (TruncationTargetUnrepresentable _ _)) -> pure ()
+       Left other -> assertFailure
+         ("expected the marker-range refusal, got: " ++ Text.unpack (renderSlapError other))
+       Right _ -> assertFailure
+         "IPS emitted a truncation marker for a size past its 24-bit reach"
+
+-- | The boundary of the refusal: a shrinking pair whose target sits
+-- exactly at the marker's maximum (0xFFFFFF) still encodes, and the
+-- patch round-trips to the declared size.
+ipsTruncationAtMarkerMaximumRoundTrips :: Assertion
+ipsTruncationAtMarkerMaximumRoundTrips =
+  let source = ByteString.replicate (0x1000000 + 64) 0x41
+      target = ByteString.replicate 0xFFFFFF 0x41
+  in case createPatch (CreateDirect CreateIPS) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left slapError -> assertFailure ("create: " ++ Text.unpack (renderSlapError slapError))
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
+         Left slapError -> assertFailure ("parse: " ++ Text.unpack (renderSlapError slapError))
+         Right (Parsed (IPSParseCleanIPS ipsPatch) _parseWarnings) ->
+           assertEqual "round-trip at the marker's maximum"
+             (Right (OutputFileContents target))
+             (fmap outcomeValue (IPS.applyIPS (InputFileContents source) ipsPatch))
+         Right _ -> assertFailure "expected a clean StandardIPS parse"
 
 -- | A format that can't represent shrinkage must refuse a shrinking
 -- (target shorter than source) create, with the shrink reason and its

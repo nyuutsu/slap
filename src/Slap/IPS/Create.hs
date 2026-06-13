@@ -237,7 +237,11 @@ encodeOffset Offset32 offsetValue =
 -- | Encode a post-EOF truncation marker: a single big-endian
 -- offset value, in the same width as the variant's record offsets.
 -- Only emitted for 'StandardIPS'; see 'encodeIPSPatch' for the
--- IPS32 rationale.
+-- IPS32 rationale. Assumes the size fits the width — the create
+-- path guarantees it via
+-- 'Slap.IPS.Types.ipsRejectIncompatibleSizeChange', and a parsed
+-- marker fits by construction, having been read from this same
+-- field.
 encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
 encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
   encodeOffset offsetWidth truncatedSizeBytes
