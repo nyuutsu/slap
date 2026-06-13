@@ -168,24 +168,58 @@ prop_ips32SentinelDirect =
 -- | A hunk that doesn't start at the sentinel but produces a split fragment
 -- at the sentinel offset must be rejected.  Splitting at 0xFFFF turns a hunk
 -- at 0x444F47 into chunks at 0x444F47 and 0x454F46 (the EOF sentinel).
+-- | A single hunk longer than 0xFFFF whose split lands a record
+-- boundary exactly on the sentinel: the preceding chunk covers
+-- sentinel-1, so the byte the output must hold there is a record's
+-- own payload byte, not a source byte. Source-less convert reads it
+-- from that chunk and resolves the collision correctly — where it
+-- once refused for want of a source byte it never needed. The
+-- converted patch applies to reproduce the hunk's writes.
 prop_ipsSentinelSplitDirect :: Property
 prop_ipsSentinelSplitDirect =
-  let startOffset = 0x454F46 - 0xFFFF  -- 0x444F47: split fragment lands on sentinel
-      payload = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces split
+  let sentinel     = 0x454F46
+      startOffset  = sentinel - 0xFFFF   -- 0x444F47: a 0xFFFF split boundary lands on the sentinel
+      payload      = ByteString.replicate 0x10000 0xFF  -- > 0xFFFF, forces the split
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
-  in property $
-       assertSentinelUnfixable LabelIPS (SentinelOffset (Offset 0x454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS) noMetadataRequested noConstraintsRequested noDialectsRequested)
+      source       = ByteString.replicate (startOffset + 0x10000) 0x00
+      expected     = ByteString.replicate startOffset 0x00 <> payload
+  in case convertDirect patchContent (CreateDirect CreateIPS)
+                        noMetadataRequested noConstraintsRequested noDialectsRequested of
+       Left slapError ->
+         counterexample ("convert should succeed: " ++ Text.unpack (renderSlapError slapError))
+           (property False)
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
+         Left slapError ->
+           counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) (property False)
+         Right (Parsed (IPSParseCleanIPS ipsPatch) _) ->
+           case IPS.applyIPS (InputFileContents source) ipsPatch of
+             Right outcome ->
+               OutputFileContents expected === outcomeValue outcome
+             Left slapError ->
+               counterexample ("apply: " ++ Text.unpack (renderSlapError slapError)) (property False)
+         Right _ ->
+           counterexample "expected a clean StandardIPS parse" (property False)
 
--- | Same as above for IPS32: split fragment at EEOF sentinel 0x45454F46.
+-- | The same resolution at IPS32's sentinel (0x45454F46, ~1.16 GB):
+-- the collision now resolves instead of being refused. The round-trip
+-- itself is proven by the StandardIPS case above — identical logic,
+-- only the sentinel offset differs — since applying at the IPS32
+-- sentinel would mean materialising a gigabyte-scale output buffer.
 prop_ips32SentinelSplitDirect :: Property
 prop_ips32SentinelSplitDirect =
-  let startOffset = 0x45454F46 - 0xFFFF
-      payload = ByteString.replicate 0x10000 0xFF
+  let startOffset  = 0x45454F46 - 0xFFFF
+      payload      = ByteString.replicate 0x10000 0xFF
       patchContent = emptyContents [Hunk (Offset startOffset) payload]
-  in property $
-       assertSentinelUnfixable LabelIPS32 (SentinelOffset (Offset 0x45454F46))
-         (convertDirect patchContent (CreateDirect CreateIPS32) noMetadataRequested noConstraintsRequested noDialectsRequested)
+  in case convertDirect patchContent (CreateDirect CreateIPS32)
+                        noMetadataRequested noConstraintsRequested noDialectsRequested of
+       Left slapError ->
+         counterexample ("convert should succeed: " ++ Text.unpack (renderSlapError slapError))
+           (property False)
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
+         Left slapError ->
+           counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) (property False)
+         Right (Parsed (IPSParseCleanIPS _) _) -> property True
+         Right _ -> counterexample "expected a clean IPS32 parse" (property False)
 
 -- | Assert a 'convertDirect' result is 'Left' 'SentinelCollisionUnfixable'
 -- with the expected label and sentinel offset. 'CreateResult' has no

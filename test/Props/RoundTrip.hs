@@ -121,6 +121,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "resolveSentinelCollisions" prop_resolveSentinelCollisions
       , testProperty "source-less convert rejects sentinel" prop_sourcelessSentinelRejected
       , testCase     "max-payload at sentinel round-trips" ipsSentinelMaxPayloadRoundTrips
+      , testCase     "sentinel collision mid-diff round-trips" ipsSentinelCollisionMidDiffRoundTrips
       , testCase     "truncation past the marker's reach is refused" ipsTruncationPastMarkerReachRefused
       , testCase     "truncation at the marker's maximum round-trips" ipsTruncationAtMarkerMaximumRoundTrips
       , testCase     "zero-count RLE sizes nothing" ipsZeroCountRleSizesNothing
@@ -387,6 +388,48 @@ ipsSentinelMaxPayloadRoundTrips =
            case IPS.applyIPS (InputFileContents source) ipsPatch of
              Right outcome ->
                assertEqual "round-trip"
+                 (OutputFileContents target) (outcomeValue outcome)
+             Left slapError ->
+               assertFailureT ("apply: " <> renderSlapError slapError)
+         Right (Parsed (IPSParseCleanEBP _) _) ->
+           assertFailure "unexpectedly parsed as EBP"
+         Right (Parsed (IPSParseTruncated _ _) _) ->
+           assertFailure "unexpectedly parsed as truncated"
+
+-- | A record boundary can land exactly on the EOF sentinel offset
+-- mid-diff, so the byte at @sentinel - 1@ is the last byte of the
+-- preceding record's payload — a changed target byte, not an
+-- unchanged source byte. The sentinel-collision fix shifts the
+-- colliding record back one and prepends a byte; that prepended byte
+-- is written last (wire order, later wins) over the preceding
+-- record's tail, so it must be the byte the output is meant to hold
+-- there. Here a varying, never-zero region spanning the sentinel
+-- splits at a 0xFFFF chunk boundary that lands on it, putting a
+-- changed byte at @sentinel - 1@; the patch must still round-trip,
+-- and IPS has no checksum to catch it if it doesn't.
+ipsSentinelCollisionMidDiffRoundTrips :: Assertion
+ipsSentinelCollisionMidDiffRoundTrips =
+  let sentinel     = 0x454F46
+      regionStart  = sentinel - 0xFFFF   -- a 0xFFFF chunk boundary lands on the sentinel
+      regionEnd    = sentinel + 0x10
+      totalLength  = regionEnd
+      source       = ByteString.replicate totalLength 0x00
+      regionByteAt i = fromIntegral (0x01 + (i `mod` 0x7F))  -- varying, never zero
+      target = ByteString.replicate regionStart 0x00
+            <> ByteString.pack [regionByteAt i | i <- [regionStart .. regionEnd - 1]]
+  in case createPatch (CreateDirect CreateIPS) Nothing
+                      (InputFileContents source) (OutputFileContents target)
+                      noMetadataRequested Nothing
+                      noConstraintsRequested noDialectsRequested of
+       Left slapError ->
+         assertFailureT ("create: " <> renderSlapError slapError)
+       Right (CreateResult patch _) -> case IPS.parseIPS patch of
+         Left slapError ->
+           assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed (IPSParseCleanIPS ipsPatch) _) ->
+           case IPS.applyIPS (InputFileContents source) ipsPatch of
+             Right outcome ->
+               assertEqual "round-trip across a sentinel-aligned record boundary"
                  (OutputFileContents target) (outcomeValue outcome)
              Left slapError ->
                assertFailureT ("apply: " <> renderSlapError slapError)

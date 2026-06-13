@@ -83,6 +83,8 @@ import Data.ByteString.Builder
   , word8
   )
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.Maybe (listToMaybe)
+import Data.Word (Word8)
 import qualified Data.Aeson as Aeson
 import Data.Aeson ((.=))
 import qualified Data.Aeson.Encoding as AesonEncoding
@@ -249,31 +251,44 @@ encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =
 -- | Resolve every record that sits on the variant's trailer
 -- sentinel. Two outcomes per record:
 --
--- * "Fixable": the record's offset equals the sentinel, offset \> 0,
---   and the source contains the byte at @sentinel - 1@. The record
---   is rewritten to begin one byte earlier with that preceding byte
---   prepended to its payload — the same shift-and-prepend trick the
---   Archiveteam wiki recommends for IPS's @0x454F46@ collision and
---   that Flips' @libips.cpp@ implements inline.
+-- * "Fixable": the record's offset equals the sentinel and the output
+--   byte at @sentinel - 1@ is known. The record is rewritten to begin
+--   one byte earlier with that byte prepended to its payload — the
+--   same shift-and-prepend trick the Archiveteam wiki recommends for
+--   IPS's @0x454F46@ collision and that Flips' @libips.cpp@ implements
+--   inline.
 --
 -- * "Unfixable": the record's offset equals the sentinel but the
---   source has no byte to prepend — either because the source is
---   empty (source-less direct conversion), the source is shorter
---   than @sentinel@, or the sentinel sits at offset @0@ so there is
---   no preceding position. The whole call returns
+--   output byte at @sentinel - 1@ cannot be determined — the sentinel
+--   sits at offset @0@ so there is no preceding position, or the
+--   position is unchanged (no record covers it) and there is no
+--   source byte to read it from (source-less direct conversion, or a
+--   source shorter than @sentinel@). The whole call returns
 --   'Left' 'SentinelCollisionUnfixable' with the format label and
 --   the colliding offset, and the conversion aborts rather than
 --   emitting bytes a parser could not faithfully round-trip.
+--
+-- The prepended byte is the byte the output is meant to hold at
+-- @sentinel - 1@, /not/ the source byte there. The two agree only
+-- when that position is unchanged; when a record boundary falls on
+-- the sentinel mid-diff — a @0xFFFF@ split boundary, or a partition
+-- the optimizer chose — the byte at @sentinel - 1@ is the tail of the
+-- preceding record's payload, a changed target byte. Since IPS
+-- applies in wire order and the shifted record is written last, its
+-- prepended byte lands over that tail; reading the /source/ byte
+-- there would overwrite the correct target byte with the wrong one,
+-- and no IPS checksum would catch it. So the byte is read from
+-- whatever record covers @sentinel - 1@ (the last one, in wire
+-- order), and only from the source when no record does.
 --
 -- Records whose offset is not the sentinel pass through unchanged —
 -- the explicit "not a collision" branch, not a silent catch-all.
 --
 -- Both 'Slap.Convert.createPatch' (with real source bytes) and
 -- 'Slap.Convert.convertDirect' (with an empty 'InputFileContents')
--- call through this function. The shape of the source bytes decides
--- whether a given collision is fixable; the caller decides whether
--- to invoke sentinel resolution at all based on whether the format
--- has a sentinel (IPS, IPS32, EBP do; nothing else does).
+-- call through this function. The caller decides whether to invoke
+-- sentinel resolution at all based on whether the format has a
+-- sentinel (IPS, IPS32, EBP do; nothing else does).
 --
 -- The function operates on already-split records ('SplitHunk') and
 -- unwraps them to raw 'Hunk's on output. The byte-prepend on a fixable
@@ -289,22 +304,48 @@ resolveSentinelCollisions
   -> InputFileContents
   -> [SplitHunk]
   -> Either SlapError [Hunk]
-resolveSentinelCollisions label sentinel (InputFileContents source) =
-  traverse resolveOne
+resolveSentinelCollisions label sentinel (InputFileContents source) records =
+  traverse resolveOne records
   where
-    SentinelOffset sentinelPosition = sentinel
-    sourceLength                    = ByteString.length source
+    SentinelOffset sentinelOffset = sentinel
+    sentinelPosition              = offsetToInt sentinelOffset
+    precedingPosition             = sentinelPosition - 1
+    sourceLength                  = ByteString.length source
+
+    -- The byte the output is meant to hold at @sentinel - 1@: the one
+    -- the shifted record must prepend. Computed once and shared, and
+    -- forced only when a record actually collides. Whatever record
+    -- covers the position writes it (the last, in wire order); failing
+    -- that the position is unchanged and the source supplies it; and
+    -- if neither can, the collision is unfixable.
+    outputByteBeforeSentinel :: Maybe Word8
+    outputByteBeforeSentinel
+      | precedingPosition < 0 = Nothing
+      | otherwise = case lastRecordByteAt precedingPosition of
+          Just covered -> Just covered
+          Nothing
+            | precedingPosition < sourceLength ->
+                Just (ByteString.index source precedingPosition)
+            | otherwise -> Nothing
+
+    -- The byte the last record (in wire order) covering @position@
+    -- writes there, if any record covers it.
+    lastRecordByteAt :: Int -> Maybe Word8
+    lastRecordByteAt position = listToMaybe
+      [ ByteString.index payload (position - recordStart)
+      | record <- reverse records
+      , let recordStart = offsetToInt (splitOffset record)
+            payload     = splitPayload record
+      , recordStart <= position
+      , position < recordStart + ByteString.length payload
+      ]
 
     resolveOne record
-      | recordOffset /= sentinelPosition = Right (Hunk recordOffset recordPayload)
-      | offsetToInt recordOffset > 0
-      , offsetToInt recordOffset - 1 < sourceLength =
-          let precedingByteIndex = offsetToInt recordOffset - 1
-              precedingByte      =
-                ByteString.index source precedingByteIndex
-              extendedPayload    =
-                ByteString.cons precedingByte recordPayload
-          in Right (Hunk (displace recordOffset (Delta (-1))) extendedPayload)
+      | offsetToInt recordOffset /= sentinelPosition =
+          Right (Hunk recordOffset recordPayload)
+      | Just prependByte <- outputByteBeforeSentinel =
+          Right (Hunk (displace recordOffset (Delta (-1)))
+                      (ByteString.cons prependByte recordPayload))
       | otherwise =
           Left (SentinelCollisionUnfixable label sentinel)
       where
