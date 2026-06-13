@@ -746,11 +746,11 @@ data SlapError
 
   -- | The PPF2 wire format mandates a 1024-byte block sampled from
   -- source offset 0x9320, so any source file shorter than 0x9720
-  -- (= 0x9320 + 0x400) bytes can't supply one. The reference DOS
-  -- @MakePPF.exe@ crashes with a Borland Pascal "runtime error 205"
-  -- (FP overflow) on undersized inputs; slap refuses with this
-  -- structured error instead. The 'ActualSize' is the source's size,
-  -- the 'ExpectedSize' is the @0x9720@-byte minimum.
+  -- (= 0x9320 + 0x400) bytes can't supply one — a boundary the format
+  -- never gave a defined behavior. slap names it with this structured
+  -- error rather than reading past the source's end. The 'ActualSize'
+  -- is the source's size, the 'ExpectedSize' is the @0x9720@-byte
+  -- minimum.
   | SourceTooSmallForPPF2Validation FormatLabel ActualSize ExpectedSize
 
   | FieldTooLong FormatLabel FieldName EncodedLength MaxLength
@@ -1452,6 +1452,10 @@ renderByteParserError ByteParserVarintExceededWidth =
 renderByteParserError ByteParserVarintExceedsSignedRange =
   "varint decoded a value in [2^63, 2^64): xd3 admits it as an unsigned"
   <> " uint64, but slap carries sizes as a signed Int and declines it"
+
+renderByteParserError (ByteParserEdsioVarintExceeds32Bits value) =
+  "EDSIO varint decoded " <> renderAsText value
+  <> ", past the 0xFFFFFFFF ceiling of xdelta1's 32-bit fields"
 
 renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
   "internal: do-pattern match failed in slap's parser: " <> Text.pack message
@@ -2713,6 +2717,18 @@ data ByteParserError
   -- raises it; the byuu reader caps at the same value as a plain
   -- over-width and never reaches this arm.
   | ByteParserVarintExceedsSignedRange
+
+  -- | An EDSIO varint decoded a value past @0xFFFFFFFF@. Every integer
+  -- in the xdelta1 wire format is a @guint32@ — offsets, lengths,
+  -- counts alike (upstream @xd_edsio.h@; the reader reconstructs into
+  -- a @guint32@ in @libedsio/default.c@) — so a value wider than 32
+  -- bits is not a representable xdelta1 quantity, and slap declines it
+  -- rather than carry a number the format has no field for.
+  -- (Canonical xdelta truncates such a value into its @guint32@
+  -- silently; slap refuses, the same posture it takes wherever a wire
+  -- field overflows its defined width.) The 'Int64' is the offending
+  -- decoded value. Only the EDSIO reader raises it.
+  | ByteParserEdsioVarintExceeds32Bits !Int64
 
   -- | 'MonadFail'\@'fail' fallback for @do@-notation pattern-match
   -- failures inside slap's parser code. Reaching this arm means a

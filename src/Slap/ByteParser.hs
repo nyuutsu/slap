@@ -385,18 +385,47 @@ vcdiffVarintReportingCanonicality = do
 -- 7 bits per byte, LSB first, high bit = continuation. Decoded inline
 -- because the byuu and VCDIFF varints have a single combined reader
 -- in 'Slap.Binary' but EDSIO's continuation discipline is bespoke.
--- Bit-offsets past 63 saturate the accumulator's representable range
--- and surface as 'ByteParserVarintExceededWidth'.
+--
+-- The xdelta1 wire format stores every integer this reads — offsets,
+-- lengths, counts — as a @guint32@, so a decoded value above
+-- 'edsioMaxValue' (@0xFFFFFFFF@) is not a representable xdelta1
+-- quantity and surfaces as 'ByteParserEdsioVarintExceeds32Bits',
+-- carrying the value the wire asked for. The ceiling is checked on
+-- the terminal byte, where the value is complete, so the verdict
+-- names the whole number rather than the partial accumulation; the
+-- pre-existing 63-bit guard bounds the read to nine bytes regardless,
+-- and a value needing more than that ('Int64' overflow territory)
+-- still surfaces as the wider 'ByteParserVarintExceededWidth'.
 edsioVarint :: ByteParser Int64
-edsioVarint = decode 0 0
+edsioVarint = accumulate 0 0
   where
-    decode accumulated bitOffset
+    -- Fold 7-bit groups in, least-significant first, until a byte
+    -- without the continuation flag closes the value. The 63-bit
+    -- guard bounds the read to nine bytes: a value needing more bits
+    -- than that is past 'Int64' and surfaces as the wider over-width
+    -- verdict.
+    accumulate accumulated bitOffset
       | bitOffset >= 63 =
           throwByteParserError ByteParserVarintExceededWidth
       | otherwise = do
           byte <- getByte
-          let payload     = fromIntegral (byte .&. 0x7F) :: Int64
-              withPayload = accumulated .|. (payload `shiftL` bitOffset)
-          if testBit byte 7
-            then decode withPayload (bitOffset + 7)
-            else pure withPayload
+          let value = accumulated .|. (payloadBits byte `shiftL` bitOffset)
+          if moreBytesFollow byte
+            then accumulate value (bitOffset + 7)
+            else closeValue value
+
+    -- The value the terminal byte completed: accepted when it fits
+    -- xdelta1's @guint32@ fields, refused — naming the value — when it
+    -- does not.
+    closeValue value
+      | value > edsioMaxValue =
+          throwByteParserError (ByteParserEdsioVarintExceeds32Bits value)
+      | otherwise = pure value
+
+    payloadBits    byte = fromIntegral (byte .&. 0x7F) :: Int64
+    moreBytesFollow byte = testBit byte 7
+
+-- | The largest value an xdelta1 EDSIO integer can hold: @0xFFFFFFFF@,
+-- the ceiling of the @guint32@ every field of the format is stored as.
+edsioMaxValue :: Int64
+edsioMaxValue = 0xFFFFFFFF

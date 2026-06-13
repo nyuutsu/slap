@@ -24,7 +24,7 @@ import Props.Helpers (assertFailureT)
 
 import Slap.Binary (putEdsioVarint)
 import Slap.ByteParser (runByteParser, edsioVarint)
-import Slap.Status (ByteParserError, renderByteParserError)
+import Slap.Status (ByteParserError(..), renderByteParserError)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -49,6 +49,22 @@ xdelta1ConformanceTests = testGroup "XDelta1Conformance"
       , testCase "65536"                         (edsioVarintCase 65536      [0x80, 0x80, 0x04])
       , testCase "max-three-byte (2097151)"      (edsioVarintCase 2097151    [0xFF, 0xFF, 0x7F])
       , testCase "min-four-byte (2097152)"       (edsioVarintCase 2097152    [0x80, 0x80, 0x80, 0x01])
+      -- The xdelta1 wire format stores every integer as a guint32, so
+      -- 0xFFFFFFFF is the largest value an EDSIO field can hold — and
+      -- it round-trips.
+      , testCase "max guint32 (0xFFFFFFFF)"
+          (edsioVarintCase 0xFFFFFFFF [0xFF, 0xFF, 0xFF, 0xFF, 0x0F])
+      ]
+      -- A value past the guint32 ceiling is not a representable
+      -- xdelta1 quantity; the decoder refuses it rather than carry a
+      -- number the format has no field for (canonical xdelta would
+      -- silently truncate it into its guint32). The bytes are
+      -- canonical EDSIO output for the over-ceiling value, generated
+      -- by the same encoder the cases above pin byte-for-byte.
+  , testGroup "EDSIO varint past the guint32 ceiling is refused"
+      [ testCase "2^32 (just over)"           (edsioVarintRejected 0x100000000)
+      , testCase "2^40"                        (edsioVarintRejected 0x10000000000)
+      , testCase "near Int64 max"              (edsioVarintRejected 0x7FFFFFFFFFFFFFFF)
       ]
   ]
 
@@ -74,3 +90,18 @@ edsioVarintCase value expectedBytes = do
       assertFailureT ("decode failed: " <> renderByteParserError parserError)
     Right decoded ->
       assertEqual ("decode " ++ show value) (fromIntegral value) decoded
+
+-- | Assert that decoding the canonical EDSIO encoding of an
+-- over-guint32 value is refused with 'ByteParserEdsioVarintExceeds32Bits',
+-- naming the value the wire asked for.
+edsioVarintRejected :: Word64 -> Assertion
+edsioVarintRejected value =
+  case decodeEdsioVarint (encodeEdsioVarint value) of
+    Left (ByteParserEdsioVarintExceeds32Bits reported) ->
+      assertEqual "the refusal names the over-ceiling value"
+        (fromIntegral value) reported
+    Left other ->
+      assertFailureT ("expected the 32-bit-ceiling refusal, got: "
+                       <> renderByteParserError other)
+    Right decoded ->
+      assertFailure ("expected refusal, but decoded " ++ show decoded)
