@@ -157,6 +157,10 @@ roundTripTests = testGroup "RoundTrip"
                  ppf2FileIdDizRoundTrip
       , testCase "growth: target longer than source round-trips with a grow note"
                  ppf2GrowthRoundTrip
+      , testCase "validation: exact-fit source round-trips"
+                 ppf2ExactFitValidationSourceRoundTrips
+      , testCase "validation: source one byte short is refused"
+                 ppf2OneByteShortValidationSourceRejected
       ]
   , testGroup "PPF3"
       [ testProperty "round-trip" prop_ppf3
@@ -710,6 +714,51 @@ ppf2GrowthRoundTrip =
     target = source <> ByteString.pack (replicate 0x10 0x42)
     isGrowNote PPFApplyGrewPastSource{} = True
     isGrowNote _                        = False
+
+-- | The validation block occupies @[0x9320, 0x9320 + 1024)@, so a
+-- source of exactly @0x9320 + 1024 = 0x9720@ bytes ends right at the
+-- block's end and can supply it whole. The extraction gate must
+-- accept this exact-fit source; rejecting it (the prior strict-@>@
+-- bug) contradicts the SourceTooSmallForPPF2Validation error's own
+-- stated minimum, which is exactly @0x9720@.
+ppf2ExactFitValidationSourceRoundTrips :: Assertion
+ppf2ExactFitValidationSourceRoundTrips =
+  let exactFit = 0x9320 + 1024   -- ppf2ValidationOffset + ppf2ValidationSize
+      source   = ByteString.replicate exactFit 0x41
+      target   = ByteString.take 0x100 source
+              <> ByteString.singleton 0x42
+              <> ByteString.drop 0x101 source
+  in case createPatch (CreateDirect CreatePPF2) Nothing
+                      (InputFileContents source) (OutputFileContents target)
+                      noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left slapError ->
+         assertFailureT ("create: " <> renderSlapError slapError)
+       Right (CreateResult patch _) -> case PPF2.parsePPF2 SlapText.EncodingUtf8 patch of
+         Left slapError ->
+           assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) ->
+           assertEqual "exact-fit validation source round-trips"
+             (Right (noAdvisories (OutputFileContents target)))
+             (PPF2.applyPPF2 parsed (InputFileContents source))
+
+-- | One byte short of the exact fit, the source genuinely cannot
+-- supply the full block, and create refuses with the structured error
+-- — the boundary the fix preserves.
+ppf2OneByteShortValidationSourceRejected :: Assertion
+ppf2OneByteShortValidationSourceRejected =
+  let oneShort = 0x9320 + 1024 - 1
+      source   = ByteString.replicate oneShort 0x41
+      target   = ByteString.take 0x100 source
+              <> ByteString.singleton 0x42
+              <> ByteString.drop 0x101 source
+  in case createPatch (CreateDirect CreatePPF2) Nothing
+                      (InputFileContents source) (OutputFileContents target)
+                      noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+       Left (SourceTooSmallForPPF2Validation _ _ _) -> pure ()
+       Left other ->
+         assertFailureT ("expected SourceTooSmallForPPF2Validation, got: " <> renderSlapError other)
+       Right _ ->
+         assertFailure "expected refusal for a source one byte short of the validation block"
 
 -- | A 'FileSize' one byte past the 'Word32' wire-field ceiling
 -- ('0x100000000') is what the convert pipeline would have silently

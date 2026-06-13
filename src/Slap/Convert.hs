@@ -1228,7 +1228,13 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing
-  , contentsValidation  = if needs FieldValidation && ByteString.length source > validationOffset + 1024
+  -- The block occupies [validationOffset, validationOffset + 1024), so
+  -- a source ending exactly at validationOffset + 1024 supplies it
+  -- whole: the bound is '>=', not '>'. (The '>' here once excluded the
+  -- exact-fit source, which then failed in encodeDirect against the
+  -- 'SourceTooSmallForPPF2Validation' error whose own minimum is this
+  -- same sum.)
+  , contentsValidation  = if needs FieldValidation && ByteString.length source >= validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing
   , contentsUndoData    = if needs FieldUndoData
