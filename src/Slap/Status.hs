@@ -319,10 +319,19 @@ data ApplyError
   -- against remaining space before the copy runs.)
   | ApplyTargetUnderfilled WritePosition ExpectedSize
 
-  -- | A record's offset is negative. Only possible for formats that
-  -- store signed offsets (PPF3 uses signed 64-bit). The Offset is
-  -- the negative value as parsed.
+  -- | A record's offset is negative. Possible for any format whose
+  -- offset encoding admits a negative value: PPF3's signed 64-bit
+  -- field, and NINJA2's packed integers, which decode into a signed
+  -- 'Int'. The 'Offset' is the negative value as parsed.
   | ApplyNegativeRecordOffset ActionIndex Offset
+
+  -- | A bsdiff control instruction declares a negative region length.
+  -- bsdiff stores its control values in sign-magnitude, so a set sign
+  -- bit makes a length negative on the wire; a region length is
+  -- non-negative by nature, so such a value is malformed. (The seek
+  -- delta in the same triple is legitimately signed and is not this.)
+  -- The 'RequestedLength' is the negative length as parsed.
+  | ApplyNegativeControlLength ActionIndex RequestedLength
 
   -- | A PPF4 Replace record would write past the source file's end.
   -- PPF4 Replace records cannot grow the file (only Append records
@@ -1361,6 +1370,10 @@ renderApplyError (ApplyTargetUnderfilled (WritePosition cursor) (ExpectedSize ex
 renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
   "record " <> renderAsText (unActionIndex actionIndex)
   <> " has negative offset " <> renderAsText (unOffset offset)
+
+renderApplyError (ApplyNegativeControlLength actionIndex (RequestedLength regionLength)) =
+  "control instruction " <> renderAsText (unActionIndex actionIndex)
+  <> " declares a negative region length " <> renderAsText (unLength regionLength)
 
 renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payloadLength) sourceSize) =
   "record " <> renderAsText (unActionIndex actionIndex)

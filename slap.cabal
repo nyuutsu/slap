@@ -184,6 +184,7 @@ test-suite props
                   , Props.JSON
                   , Props.Measure
                   , Props.Narrow
+                  , Props.NegativeWireValues
                   , Props.ParseWarnings
                   , Props.ResolveCopyAddress
                   , Props.RoundTrip

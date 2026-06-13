@@ -82,6 +82,8 @@ applyNINJA2 patch (InputFileContents source)
     checkRecordFits :: ActionIndex -> Offset -> Length
                     -> Either ApplyError ()
     checkRecordFits actionIndex writePosition recordLength
+      | unOffset writePosition < 0 =
+          Left (ApplyNegativeRecordOffset actionIndex writePosition)
       | not (fitsWithin writePosition recordLength outputFileSize) =
           Left (ApplyAbsoluteWritePastTarget actionIndex
                  writePosition

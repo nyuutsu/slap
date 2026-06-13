@@ -105,6 +105,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     checkAddPreconditions :: ActionIndex -> Length -> Offset -> Offset
                           -> Either ApplyError ()
     checkAddPreconditions actionIndex addLength outputPosition diffReadOffset
+      | unLength addLength < 0 =
+          Left (ApplyNegativeControlLength actionIndex (RequestedLength addLength))
       | not (fitsWithin outputPosition addLength targetFileSize) =
           Left (ApplyWritesPastTarget actionIndex
                  (RequestedLength addLength)
@@ -120,6 +122,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     checkCopyPreconditions :: ActionIndex -> Length -> Offset -> Offset
                            -> Either ApplyError ()
     checkCopyPreconditions actionIndex copyLength outputAfterAdd extraReadOffset
+      | unLength copyLength < 0 =
+          Left (ApplyNegativeControlLength actionIndex (RequestedLength copyLength))
       | not (fitsWithin outputAfterAdd copyLength targetFileSize) =
           Left (ApplyWritesPastTarget actionIndex
                  (RequestedLength copyLength)
