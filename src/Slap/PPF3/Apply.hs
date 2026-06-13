@@ -18,8 +18,8 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex,
                      RequestedLength(..), RemainingLength(..),
-                     fitsWithin, remainingFromOffset, minLength,
-                     advance, byteLength, distance, offsetToFileSize,
+                     fitsWithin, boundedWriteEnd, remainingFromOffset, minLength,
+                     byteLength, distance, offsetToFileSize,
                      firstAction, nextAction, plusOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
@@ -32,49 +32,65 @@ import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
 
 applyPPF3 :: PPF3Patch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
-applyPPF3 patch (InputFileContents source)
-  | unFileSize outputFileSize < 0 =
-      Left (NegativeTargetSize LabelPPF3 outputFileSize)
-  | unFileSize outputFileSize == 0 =
-      Right (noAdvisories (OutputFileContents ByteString.empty))
-  | otherwise = unsafePerformIO $ do
-      (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
-        copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
-        when (outputEnd > sourceEnd) $
-          fillBytes (plusOffset outputPointer sourceEnd)
-                    (0 :: Word8)
-                    (unLength (distance sourceEnd outputEnd))
-        applyRecordStream outputPointer firstAction (ppf3Records patch)
-      pure $ case maybeErr of
-        Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
-        Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
+applyPPF3 patch (InputFileContents source) =
+  case computeOutputExtent firstAction sourceEnd (ppf3Records patch) of
+    Left applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
+    Right outputEnd
+      | unFileSize (offsetToFileSize outputEnd) == 0 ->
+          Right (noAdvisories (OutputFileContents ByteString.empty))
+      | otherwise -> runForward outputEnd
   where
-    sourceEnd      = Offset (ByteString.length source)
-    outputEnd      = computeOutputEnd sourceEnd (ppf3Records patch)
-    outputFileSize = offsetToFileSize outputEnd
-    initialCopyLength = minLength
-                          (distance (Offset 0) sourceEnd)
-                          (distance (Offset 0) outputEnd)
+    sourceEnd = Offset (ByteString.length source)
 
-    growthAdvisories
-      | outputEnd > sourceEnd =
-          [PPFApplyGrewPastSource LabelPPF3
-             (offsetToFileSize sourceEnd)
-             (distance sourceEnd outputEnd)]
-      | otherwise = []
+    -- | The output's exclusive end: the farthest any record writes,
+    -- never shorter than the source. A record whose @offset + payload@
+    -- overflows the addressable range — only PPF3's 64-bit-wide offset
+    -- can reach this — is refused as 'ApplyOutputExceedsAddressableRange'
+    -- naming the record, rather than wrapping into a too-small buffer:
+    -- the laundering a plain 'max'-fold would have hidden, since a
+    -- wrapped-negative end is the value 'max' discards.
+    computeOutputExtent :: ActionIndex -> Offset -> [PPF3Record]
+                        -> Either ApplyError Offset
+    computeOutputExtent _ currentEnd [] = Right currentEnd
+    computeOutputExtent recordIndex currentEnd (record : rest) =
+      case boundedWriteEnd (ppf3RecordOffset record)
+                           (byteLength (ppf3RecordPayload record)) of
+        Nothing ->
+          Left (ApplyOutputExceedsAddressableRange recordIndex
+                 (ppf3RecordOffset record)
+                 (byteLength (ppf3RecordPayload record)))
+        Just recordEnd ->
+          computeOutputExtent (nextAction recordIndex)
+                              (max currentEnd recordEnd) rest
 
-    computeOutputEnd :: Offset -> [PPF3Record] -> Offset
-    computeOutputEnd sourceBufferEnd = foldl' accumulateEnd sourceBufferEnd
+    runForward :: Offset -> Either SlapError (Outcome OutputFileContents)
+    runForward outputEnd = unsafePerformIO $ do
+        (result, maybeErr) <- fillNewBuffer outputFileSize $ \outputPointer -> do
+          copyRegion outputPointer (Offset 0) source (Offset 0) initialCopyLength
+          when (outputEnd > sourceEnd) $
+            fillBytes (plusOffset outputPointer sourceEnd)
+                      (0 :: Word8)
+                      (unLength (distance sourceEnd outputEnd))
+          applyRecordStream outputFileSize outputPointer firstAction (ppf3Records patch)
+        pure $ case maybeErr of
+          Just applyErr -> Left (ApplyFailed LabelPPF3 applyErr)
+          Nothing       -> Right (Outcome (OutputFileContents result) growthAdvisories)
       where
-        accumulateEnd currentEnd record =
-          let writeEnd = advance (ppf3RecordOffset record)
-                                 (byteLength (ppf3RecordPayload record))
-          in max currentEnd writeEnd
+        outputFileSize    = offsetToFileSize outputEnd
+        initialCopyLength = minLength
+                              (distance (Offset 0) sourceEnd)
+                              (distance (Offset 0) outputEnd)
+        growthAdvisories
+          | outputEnd > sourceEnd =
+              [PPFApplyGrewPastSource LabelPPF3
+                 (offsetToFileSize sourceEnd)
+                 (distance sourceEnd outputEnd)]
+          | otherwise = []
 
-    applyRecordStream :: Ptr Word8
+    applyRecordStream :: FileSize -> Ptr Word8
                       -> ActionIndex -> [PPF3Record] -> IO (Maybe ApplyError)
-    applyRecordStream _ _ [] = pure Nothing
-    applyRecordStream outputPointer recordIndex (record : rest)
+    applyRecordStream _ _ _ [] = pure Nothing
+    applyRecordStream outputFileSize outputPointer recordIndex (record : rest)
       | unOffset writeOffset < 0 =
           pure (Just (ApplyNegativeRecordOffset recordIndex writeOffset))
       | not (fitsWithin writeOffset payloadLength outputFileSize) =
@@ -84,7 +100,7 @@ applyPPF3 patch (InputFileContents source)
                           (remainingFromOffset writeOffset outputFileSize))))
       | otherwise = do
           copyRegion outputPointer writeOffset (ppf3RecordPayload record) (Offset 0) payloadLength
-          applyRecordStream outputPointer (nextAction recordIndex) rest
+          applyRecordStream outputFileSize outputPointer (nextAction recordIndex) rest
       where
         writeOffset   = ppf3RecordOffset record
         payloadLength = byteLength (ppf3RecordPayload record)

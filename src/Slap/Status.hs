@@ -333,6 +333,18 @@ data ApplyError
   -- The 'RequestedLength' is the negative length as parsed.
   | ApplyNegativeControlLength ActionIndex RequestedLength
 
+  -- | A record's write reaches an offset slap cannot address. The
+  -- record's @offset + payload length@ exceeds 'maxBound' :: 'Int', the
+  -- ceiling slap can represent (it carries positions in a signed
+  -- 'Int'). Only a format whose wire offset is as wide as the carrier —
+  -- PPF3's signed 64-bit field — can name such a write; the format
+  -- admits the value, and slap declines to materialise an output it
+  -- cannot address. The apply-side sibling of
+  -- 'FileExceedsAddressableRange'. The 'Offset' and 'Length' are the
+  -- record's, carried separately because it is their sum that does not
+  -- fit; the renderer adds them in 'Integer'.
+  | ApplyOutputExceedsAddressableRange ActionIndex Offset Length
+
   -- | A PPF4 Replace record would write past the source file's end.
   -- PPF4 Replace records cannot grow the file (only Append records
   -- can); the reference applier rejects this with ERROR_BAD_SIZE.
@@ -733,14 +745,17 @@ data SlapError
   | UnencodeablePair FormatLabel UnencodeabilityReason
   | NarrowingError !NarrowingFailure
 
-  -- | A create-path input (source or target) is larger than the
-  -- host platform's addressable range. slap's varint encoders
-  -- shuttle lengths through 'Int', so on a 32-bit platform where
-  -- 'Int' is 31-bit-addressable, a file over ~2 GB would truncate
-  -- via 'fromIntegral' and produce a malformed patch. The
-  -- 'ActualSize' is the offending file's size; the
-  -- 'MaxAddressableSize' is the host's 'maxBound :: Int'. On 64-bit
-  -- platforms the cap is ~9 EB and this error is effectively dead.
+  -- | A create-path input (source or target) names more bytes than
+  -- slap can address. slap threads every size and offset through a
+  -- signed 'Int', so its honest ceiling is 'maxBound' :: 'Int' — about
+  -- 9 EB on a 64-bit host. A wire size field wider than the carrier (a
+  -- full 64-bit length) can name a file past that ceiling; rather than
+  -- wrap or truncate it through 'fromIntegral', slap declines here. The
+  -- direction of the apology is "sorry, not 128-bit" — slap conceding a
+  -- bit it does not carry, not a worry about a narrow host: the bound
+  -- is the carrier's, and on real hardware you would need a ~9 EB file
+  -- to reach it. The 'ActualSize' is the offending file; the
+  -- 'MaxAddressableSize' is the host's 'maxBound :: Int'.
   | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
 
   -- | A record's offset lands on the format's trailer sentinel and
@@ -1374,6 +1389,15 @@ renderApplyError (ApplyNegativeRecordOffset actionIndex offset) =
 renderApplyError (ApplyNegativeControlLength actionIndex (RequestedLength regionLength)) =
   "control instruction " <> renderAsText (unActionIndex actionIndex)
   <> " declares a negative region length " <> renderAsText (unLength regionLength)
+
+renderApplyError (ApplyOutputExceedsAddressableRange actionIndex offset payloadLength) =
+  "record " <> renderAsText (unActionIndex actionIndex)
+  <> " writes at offset " <> renderAsText (unOffset offset)
+  <> " plus " <> renderAsText (unLength payloadLength)
+  <> " bytes, reaching "
+  <> renderAsText (toInteger (unOffset offset) + toInteger (unLength payloadLength))
+  <> " — past the " <> renderAsText (maxBound :: Int)
+  <> "-byte limit slap can address"
 
 renderApplyError (ApplyReplaceGrowsFile actionIndex offset (RequestedLength payloadLength) sourceSize) =
   "record " <> renderAsText (unActionIndex actionIndex)

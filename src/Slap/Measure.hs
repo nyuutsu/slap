@@ -74,6 +74,7 @@ module Slap.Measure
     -- * Arithmetic
   , distance
   , fitsWithin
+  , boundedWriteEnd
   , byteLength
   , byteFileSize
   , hunkEnd
@@ -619,6 +620,28 @@ fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
   && regionLength >= 0
   && regionStart  <= totalSize
   && regionLength <= totalSize - regionStart
+
+-- | The exclusive end of a write of @regionLength@ bytes at
+-- @regionStart@ — @regionStart + regionLength@ — or 'Nothing' when that
+-- sum overflows the signed 'Int' a position is carried in.
+--
+-- This is the apply-side companion to 'fitsWithin': the same ceiling
+-- ('maxBound' :: 'Int'), met not by a bounds check but by /computing/ an
+-- extent that crosses it. A format whose wire offset is as wide as the
+-- carrier — PPF3's signed 64-bit field — can name a write whose end no
+-- 'Int' can hold; the fold that sizes the output buffer must answer "I
+-- cannot address that" rather than wrap into a too-small buffer. A
+-- non-negative @regionLength@ added to a non-negative @regionStart@ can
+-- only land lower than @regionStart@ by wrapping, so @end < regionStart@
+-- detects the overflow exactly. A negative @regionStart@ cannot wrap a
+-- non-negative length upward and so is not reported here — it is the
+-- apply walk's to reject as the malformed position it is.
+boundedWriteEnd :: Offset -> Length -> Maybe Offset
+boundedWriteEnd (Offset regionStart) (Length regionLength)
+  | end < regionStart = Nothing
+  | otherwise         = Just (Offset end)
+  where
+    end = regionStart + regionLength
 
 byteLength :: ByteString -> Length
 byteLength bytes = Length (ByteString.length bytes)
