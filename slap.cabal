@@ -182,6 +182,7 @@ test-suite props
                   , Props.Identity
                   , Props.IPSMarkerPolicy
                   , Props.JSON
+                  , Props.Measure
                   , Props.Narrow
                   , Props.ParseWarnings
                   , Props.ResolveCopyAddress

@@ -46,6 +46,7 @@ import qualified Props.Detection as Detection
 import qualified Props.Identity as Identity
 import qualified Props.IPSMarkerPolicy as IPSMarkerPolicy
 import qualified Props.JSON as JSON
+import qualified Props.Measure as Measure
 import qualified Props.Narrow as Narrow
 import qualified Props.ParseWarnings as ParseWarnings
 import qualified Props.ResolveCopyAddress as ResolveCopyAddress
@@ -74,6 +75,7 @@ main = defaultMain $ testGroup "Properties"
   , ParseWarnings.parseWarningsTests
   , IPSMarkerPolicy.ipsMarkerPolicyTests
   , JSON.jsonTests
+  , Measure.measureTests
   , Narrow.narrowTests
   , XDelta1Conformance.xdelta1ConformanceTests
   ]

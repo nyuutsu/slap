@@ -596,9 +596,29 @@ distance (Offset startOffset) (Offset endOffset)
       error ("distance: end " ++ show endOffset
               ++ " before start " ++ show startOffset)
 
+-- | Does a region of @regionLength@ bytes starting at @regionStart@
+-- lie entirely within a space of @totalSize@ bytes? The bounds check
+-- every apply and parse walk leans on before a read or a write.
+--
+-- Total over the whole 'Int' range, by construction. slap carries
+-- offsets and sizes as a signed 'Int', and several formats decode wire
+-- fields wide enough — a 63-bit PPF3 offset, a byuu or VCDIFF varint, a
+-- bsdiff sign-magnitude length — to seat a near-'maxBound' value here.
+-- A plain @regionStart + regionLength <= totalSize@ would then overflow
+-- the carrier and wrap to a negative sum that falsely reports "fits",
+-- which is the gap an out-of-bounds access slips through. So the test
+-- never adds: each clause is a comparison, and the
+-- @totalSize - regionStart@ subtraction is reached only once
+-- @0 <= regionStart <= totalSize@ holds, so it cannot underflow either.
+-- A negative @regionStart@ or @regionLength@ — a malformed wire value
+-- that was never a real position or length — answers "does not fit"
+-- rather than being summed into a wrong verdict.
 fitsWithin :: Offset -> Length -> FileSize -> Bool
 fitsWithin (Offset regionStart) (Length regionLength) (FileSize totalSize) =
-  regionStart + regionLength <= totalSize
+     regionStart  >= 0
+  && regionLength >= 0
+  && regionStart  <= totalSize
+  && regionLength <= totalSize - regionStart
 
 byteLength :: ByteString -> Length
 byteLength bytes = Length (ByteString.length bytes)
