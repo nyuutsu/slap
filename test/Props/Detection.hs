@@ -8,6 +8,10 @@ module Props.Detection (detectionTests) where
 
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Parse as DPS
+import Slap.Status (SlapError(..), ByteParserError(..))
+import Slap.FormatLabel (FormatLabel(..))
+import Slap.Text (EncodingName(EncodingUtf8))
+import Slap.FileContents (PatchFileContents(..))
 
 import qualified Data.ByteString as ByteString
 import Test.Tasty
@@ -18,6 +22,7 @@ detectionTests = testGroup "DPS Detection"
   [ testCase "valid-dps-zero-records" test_isDPSValidZeroRecords
   , testCase "valid-header-invalid-record-mode" test_isDPSInvalidRecordMode
   , testCase "printable-ascii-not-dps" test_isDPSPrintableAsciiNotDPS
+  , testCase "parse-rejects-trailing-fragment" test_parseDPSRejectsTrailingFragment
   ]
 
 -- | Valid DPS with zero records: 198 bytes, correct version and stability.
@@ -48,3 +53,22 @@ test_isDPSPrintableAsciiNotDPS :: IO ()
 test_isDPSPrintableAsciiNotDPS = do
   let input = ByteString.replicate DPS.dpsMinimumFileSize 0x41
   assertBool "isDPS returns False" (not (DPS.isDPS input))
+
+-- | The parse-side complement of 'test_isDPSInvalidRecordMode': a valid
+-- header followed by a single trailing byte — too few to begin a record.
+-- DPS records run to EOF with nothing after the last, so detection
+-- rejects this (records do not consume the file exactly) and the parser
+-- must agree, refusing with a truncated-record error rather than
+-- silently dropping the tail as a zero-record patch.
+test_parseDPSRejectsTrailingFragment :: IO ()
+test_parseDPSRejectsTrailingFragment = do
+  let metadata = ByteString.replicate DPS.dpsMetadataSize 0
+      input = metadata
+              <> ByteString.singleton 0            -- stability flag: stable
+              <> ByteString.singleton 1            -- format version: 1
+              <> ByteString.pack [0, 0, 0, 0]      -- original size
+              <> ByteString.singleton 0x02         -- one trailing byte
+  case DPS.parseDPS EncodingUtf8 (PatchFileContents input) of
+    Left (ParseError LabelDPS (ByteParserTruncatedRecord{})) -> pure ()
+    Left _  -> assertFailure "expected a DPS truncated-record rejection, got a different parse error"
+    Right _ -> assertFailure "expected parse to reject the trailing fragment, but it succeeded"

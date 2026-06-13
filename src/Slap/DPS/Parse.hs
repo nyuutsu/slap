@@ -15,14 +15,16 @@ import Slap.DPS.Types (DPSPatch(..), DPSRecord(..), DPSFormatVersion(..),
                         dpsVersionOffset, dpsStabilityOffset,
                         dpsCopyFromROMMode, dpsEnclosedDataMode,
                         dpsRecordHeaderSize, dpsCopyRecordSize)
-import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..))
+import Slap.Status (SlapError(..), SlapAdvisory, Parsed(..), ByteParserError(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining)
+import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, remaining,
+                        throwByteParserError)
 import qualified Slap.ByteParser as ByteParser
 import Slap.Measure (Length(..), offsetFromParsed,
-                     RequiredLength(..), ActualLength(..),
+                     RequiredLength(..), RemainingLength(..), ActualLength(..),
+                     ActionIndex, firstAction, nextAction,
                      RawFlagByte(..), byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   decodeTextLenient, decodeLossAdvisories)
@@ -108,7 +110,7 @@ parseDPSBody metadataEncoding = do
     Right stability -> do
       _ <- getByte  -- version byte (validated by parseDPS guard)
       originalSize  <- dpsSourceSizeFromParsed <$> ByteParser.word32LE
-      recordsResult <- parseRecords
+      recordsResult <- parseRecords firstAction
       pure $ case recordsResult of
         Left slapError -> Left slapError
         Right records  -> Right
@@ -124,10 +126,21 @@ parseDPSBody metadataEncoding = do
           , nameAdvisories ++ authorAdvisories ++ versionAdvisories
           )
 
-parseRecords :: ByteParser (Either SlapError [DPSRecord])
-parseRecords = do
+parseRecords :: ActionIndex -> ByteParser (Either SlapError [DPSRecord])
+parseRecords recordIndex = do
   available <- remaining
-  if unLength available < dpsRecordHeaderSize then pure (Right [])
+  if unLength available == 0 then pure (Right [])
+  else if unLength available < dpsRecordHeaderSize then
+    -- Bytes remain but too few to begin a record (mode byte + 4-byte
+    -- output offset). DPS records run to EOF with nothing after the
+    -- last one, so a sub-header tail is a truncated record, not a clean
+    -- end. Detection requires exact consumption (isDPS); the parser
+    -- agrees rather than silently dropping the tail. (dpspatcher.exe's
+    -- while(!feof) loop only tolerates such a tail by luck — for some
+    -- lead bytes it would execute a stale record instead.)
+    throwByteParserError (ByteParserTruncatedRecord recordIndex
+      (RequiredLength (Length dpsRecordHeaderSize))
+      (RemainingLength available))
   else do
     mode <- getByte
     outputOffset <- offsetFromParsed <$> ByteParser.word32LE
@@ -137,13 +150,13 @@ parseRecords = do
         sourceOffset <- offsetFromParsed <$> ByteParser.word32LE
         copyLength   <- Length . fromIntegral <$> ByteParser.word32LE
         let record = DPSCopyFromROM outputOffset sourceOffset copyLength
-        rest <- parseRecords
+        rest <- parseRecords (nextAction recordIndex)
         pure (fmap (record :) rest)
       1 -> do  -- EnclosedData: read length + data from patch
         dataLength  <- fromIntegral <$> ByteParser.word32LE :: ByteParser Int
         payload  <- getBytes (Length dataLength)
         let record = DPSEnclosedData outputOffset payload
-        rest <- parseRecords
+        rest <- parseRecords (nextAction recordIndex)
         pure (fmap (record :) rest)
       unknownByte ->
         pure (Left (UnknownFlag LabelDPS FieldRecordMode (RawFlagByte unknownByte)))
