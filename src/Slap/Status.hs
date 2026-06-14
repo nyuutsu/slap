@@ -2018,6 +2018,9 @@ renderNarrowingFailure (OffsetExceedsBound label (ActualOffset actual) (MaxOffse
   <> renderHexAsText (unOffset actual)
   <> " exceeds maximum offset 0x"
   <> renderHexAsText (unOffset maxOffset)
+renderNarrowingFailure (NegativeOffset label (ActualOffset actual)) =
+  formatLabelName label <> ": record offset " <> renderAsText (unOffset actual)
+  <> " is negative; the wire format addresses only non-negative positions"
 renderNarrowingFailure (FieldValueExceedsBound label field actual maxValue) =
   formatLabelName label
   <> " " <> fieldNameLabel field

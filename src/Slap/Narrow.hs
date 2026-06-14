@@ -89,6 +89,18 @@ data EncodingLimits = EncodingLimits
 -- boundary where they leave 'Slap.Narrow'.
 data NarrowingFailure
   = OffsetExceedsBound !FormatLabel !ActualOffset !MaxOffset
+  | NegativeOffset !FormatLabel !ActualOffset
+    -- ^ A record offset is negative. A write position cannot be
+    -- negative, so this is unrepresentable in any wire-format offset
+    -- field — encoding it would 'fromIntegral'-wrap into a large
+    -- unsigned value and silently misplace the write. The motivating
+    -- source is a parsed PPF3 patch: PPF3's offset is a signed
+    -- @int64@ on the wire (spec, @PPF3.txt@), so a high-bit value
+    -- decodes to a negative 'Offset' — valid for parse to produce
+    -- and for apply to reject ('Slap.Status.ApplyNegativeRecordOffset'),
+    -- but a convert to a bounded target would otherwise wrap it here.
+    -- The sibling 'narrowToWord32' \/ 'narrowToWord16' already refuse
+    -- a negative field value; this is the same rule for the offset.
   | FieldValueExceedsBound !FormatLabel !FieldName !Integer !Integer
     -- ^ A header or trailer field's runtime value exceeded the
     -- wire-format width of the field. The two 'Integer's are the
@@ -123,10 +135,14 @@ narrowToWord16 label field value
     maxValue = maxBound
 
 -- | Narrow a 'SplitHunk' to an 'EncodedHunk' by checking its offset
--- against the format's wire-format range. Overflow surfaces as
--- 'OffsetExceedsBound' tagged with the limits' format label.
+-- against the format's wire-format range: non-negative (a write
+-- position cannot be negative), and within the format's maximum.
+-- A negative offset surfaces as 'NegativeOffset', an over-maximum one
+-- as 'OffsetExceedsBound', each tagged with the limits' format label.
 narrowHunk :: EncodingLimits -> SplitHunk -> Either NarrowingFailure EncodedHunk
 narrowHunk limits hunk
+  | unOffset offset < 0 =
+      Left (NegativeOffset (formatLabel limits) (ActualOffset offset))
   | unOffset offset > unOffset maximum_ =
       Left (OffsetExceedsBound (formatLabel limits)
                                (ActualOffset offset)
@@ -170,10 +186,12 @@ data EncodedUndoHunk = EncodedUndoHunk
   } deriving (Eq, Show)
 
 -- | Narrow a 'SplitUndoHunk' to an 'EncodedUndoHunk' by checking its
--- offset against the format's wire-format range. Overflow surfaces
--- as 'OffsetExceedsBound' tagged with the limits' format label.
+-- offset against the format's wire-format range: non-negative and
+-- within the maximum, the same two-sided check as 'narrowHunk'.
 narrowUndoHunk :: EncodingLimits -> SplitUndoHunk -> Either NarrowingFailure EncodedUndoHunk
 narrowUndoHunk limits hunk
+  | unOffset offset < 0 =
+      Left (NegativeOffset (formatLabel limits) (ActualOffset offset))
   | unOffset offset > unOffset maximum_ =
       Left (OffsetExceedsBound (formatLabel limits)
                                (ActualOffset offset)

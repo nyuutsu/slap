@@ -29,6 +29,7 @@ import Slap.Convert (PatchContents(..), DirectCreate(..), CreateFormat(..),
                       directConversionContract,
                       emptyContents, canConvert, convertDirect, conversionNotes)
 import Slap.IPS.Types (emptyEBPMetadata)
+import Slap.Narrow (NarrowingFailure(..))
 import Slap.Create (createPatch)
 import Slap.PatchField (PatchField(..))
 import Slap.PlatformType (PlatformType(..))
@@ -56,6 +57,7 @@ contractTests = testGroup "Contracts"
   , testProperty "ips-sentinel-split-direct" prop_ipsSentinelSplitDirect
   , testProperty "ips32-sentinel-split-direct" prop_ips32SentinelSplitDirect
   , testProperty "ips-sentinel-with-source" prop_ipsSentinelWithSource
+  , testProperty "ips-negative-offset-convert-refused" prop_ipsNegativeOffsetConvertRefused
   ]
 
 -- | Direct formats that go through buildContents -> encodeDirect.
@@ -220,6 +222,27 @@ prop_ips32SentinelSplitDirect =
            counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) (property False)
          Right (Parsed (IPSParseCleanIPS _) _) -> property True
          Right _ -> counterexample "expected a clean IPS32 parse" (property False)
+
+-- | A record at a negative offset — as a parsed PPF3 patch can carry,
+-- PPF3's wire offset being a signed @int64@ (PPF3.txt), so a high-bit
+-- value decodes to a negative 'Offset' — must be refused on convert to
+-- a bounded target, not 'fromIntegral'-wrapped into a large unsigned
+-- wire offset that silently misplaces the write. Apply already rejects
+-- a negative offset ('ApplyNegativeRecordOffset'); the narrow boundary
+-- now does too, on the convert path that never applies.
+prop_ipsNegativeOffsetConvertRefused :: Property
+prop_ipsNegativeOffsetConvertRefused =
+  let patchContent = emptyContents [Hunk (Offset (-1)) (ByteString.singleton 0x41)]
+  in property $
+       case convertDirect patchContent (CreateDirect CreateIPS)
+                          noMetadataRequested noConstraintsRequested noDialectsRequested of
+         Left (NarrowingError (NegativeOffset LabelIPS _)) -> property True
+         Left other ->
+           counterexample ("expected NarrowingError NegativeOffset, got: "
+                            ++ Text.unpack (renderSlapError other)) (property False)
+         Right _ ->
+           counterexample "expected refusal; a negative offset was silently encoded"
+             (property False)
 
 -- | Assert a 'convertDirect' result is 'Left' 'SentinelCollisionUnfixable'
 -- with the expected label and sentinel offset. 'CreateResult' has no
