@@ -9,7 +9,7 @@
 -- docs/vcdiff/xdelta3/questions.md). One framing fact is shared: a
 -- compressed section's on-wire bytes are a decompressed-size varint
 -- followed by compressor-native stream bytes. What that stream /is/
--- differs per compressor, and the two decode paths wear the
+-- differs per compressor, and the three decode paths wear the
 -- difference:
 --
 --   * LZMA's stream is continuous within a kind: a compressed data
@@ -28,7 +28,17 @@
 --     decodes each piece independently — no gathering — and its
 --     verdicts land at per-section granularity, xd3's own.
 --
--- In both paths the Rust side receives bytes and returns bytes plus
+--   * FGK also gathers, but for a reason all its own: its sections do
+--     not share a bitstream the way LZMA's do — each is byte-flushed —
+--     they share the adaptive /tree/. xd3 inits a kind's secondary
+--     stream once (@xd3_get_secondary@) and carries it across every
+--     section, so a section's first byte decodes against the tree the
+--     earlier sections left. The path gathers the slices and threads
+--     one tree through them, each section bounded by its own declared
+--     size with the reader realigned to a byte boundary between
+--     sections.
+--
+-- In every path the Rust side receives bytes and returns bytes plus
 -- how much input it consumed; the verdicts on those facts (xd3's
 -- "finished with unused input" and "short output", kept distinct here
 -- as they are there) are typed on this side, where the wire framing
@@ -41,11 +51,13 @@ module Slap.VCDIFF.SecondaryCompression
   , SectionCarriage(..)
   , decodeLZMACompressedKind
   , decodeDJWCompressedKind
+  , decodeFGKCompressedKind
   ) where
 
 import Slap.Binary (getVcdiffVarint, VarintResult(..))
 import Slap.Compression.Stream (LzmaDecoded(..), lzmaDecompress,
-                                DjwDecoded(..), djwDecompress)
+                                DjwDecoded(..), djwDecompress,
+                                FgkDecoded(..), fgkDecompress)
 import Slap.Measure (Length(..), byteLength, lengthToFileSize, subtractLength,
                      ExpectedSize(..), ActualSize(..))
 import Slap.Status
@@ -168,6 +180,42 @@ decodeDJWCompressedKind kind carriages = do
         (djwDecoderFacts decoded)
       Right (djwDecodedBytes decoded)
 
+-- | Decode one section kind across a patch's windows, the FGK way:
+-- gather, like LZMA, not per-section like DJW. A kind's compressed
+-- sections share one adaptive tree — xd3 inits a kind's secondary
+-- stream once and carries it across every section — so a section's
+-- first byte decodes against the tree the earlier sections matured, and
+-- the sections cannot be decoded apart. The stream slices gather in
+-- window order, the decoder threads one tree through them all, and the
+-- decoder's facts are held to the gathered framing's claims. Plain
+-- carriages pass through untouched; a kind no window compresses comes
+-- back exactly as it went in.
+--
+-- The gather is LZMA's shape, but the asymmetry differs: LZMA's bytes
+-- are one continuous stream that sizes its own output, while FGK's are
+-- byte-flushed per section and carry no sizes, so each section's
+-- declared output size travels across the seam to bound its decode and
+-- realign the reader between sections.
+decodeFGKCompressedKind
+  :: VCDIFFSection      -- ^ which kind, naming any refusal
+  -> [SectionCarriage]  -- ^ one per window, in window order
+  -> Either SlapError [ByteString]
+decodeFGKCompressedKind kind carriages = do
+  contributions <- traverse (readContribution kind) carriages
+  case [piece | CompressedContribution piece <- contributions] of
+    -- Total: the empty scrutinee just proved every contribution is
+    -- plain, so this comprehension drops nothing and hands back one
+    -- section per window.
+    []     -> pure [bytes | PlainContribution bytes <- contributions]
+    pieces -> do
+      let gatheredStream     = ByteString.concat (map pieceStreamSlice pieces)
+          sectionOutputSizes = map pieceDeclaredOutputSize pieces
+          declaredTotal      = foldMap pieceDeclaredOutputSize pieces
+      decoded <- runFGKDecoder kind sectionOutputSizes gatheredStream
+      holdDecoderToFraming kind FGK gatheredStream declaredTotal
+        (fgkDecoderFacts decoded)
+      pure (handOutDecodedSlices (fgkDecodedBytes decoded) contributions)
+
 -- | Read one carriage's framing. A compressed section must begin
 -- with a readable decompressed-size varint (the zero-length section
 -- has no bytes to read one from), and that size must be positive —
@@ -209,6 +257,18 @@ runDJWDecoder kind piece =
     Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind DJW cause))
     Right decoderFacts -> Right decoderFacts
 
+-- | Run a kind's gathered stream through the FGK seam, lifting a
+-- decoder fault — an exhausted bit stream, an escape past the unseen
+-- list — into the 'DecompressionFailed' lane with the kind and
+-- algorithm named. The per-section declared output sizes cross
+-- alongside the bytes: they bound each section's decode against the
+-- shared tree and realign the reader between sections.
+runFGKDecoder :: VCDIFFSection -> [Length] -> ByteString -> Either SlapError FgkDecoded
+runFGKDecoder kind sectionOutputLengths gatheredStream =
+  case fgkDecompress sectionOutputLengths gatheredStream of
+    Left cause         -> Left (DecompressionFailed (VCDIFFSectionFailed kind FGK cause))
+    Right decoderFacts -> Right decoderFacts
+
 -- | The two facts every secondary decoder surfaces: how much input it
 -- consumed, and how much output it produced. One record with named
 -- fields rather than two positional 'Length's, so the roles are fixed
@@ -231,6 +291,13 @@ djwDecoderFacts :: DjwDecoded -> SecondaryDecoderFacts
 djwDecoderFacts decoded = SecondaryDecoderFacts
   { factsConsumedInput  = djwConsumedInputLength decoded
   , factsProducedOutput = byteLength (djwDecodedBytes decoded)
+  }
+
+-- | The FGK seam's decoded form, projected onto the shared facts.
+fgkDecoderFacts :: FgkDecoded -> SecondaryDecoderFacts
+fgkDecoderFacts decoded = SecondaryDecoderFacts
+  { factsConsumedInput  = fgkConsumedInputLength decoded
+  , factsProducedOutput = byteLength (fgkDecodedBytes decoded)
   }
 
 -- | The two framing verdicts, made here from a decoder's surfaced

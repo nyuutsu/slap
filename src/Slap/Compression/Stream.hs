@@ -9,6 +9,8 @@ module Slap.Compression.Stream
   , lzmaDecompress
   , DjwDecoded(..)
   , djwDecompress
+  , FgkDecoded(..)
+  , fgkDecompress
   , yay0Decompress
   ) where
 
@@ -17,6 +19,7 @@ import qualified Data.ByteString as ByteString
 import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (withArray)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
 import System.IO.Unsafe (unsafeDupablePerformIO)
@@ -70,6 +73,15 @@ foreign import ccall unsafe "rusty_djw_decompress"
   rustyDjwDecompress
     :: Ptr Word8 -> CSize
     -> CSize                            -- expected output length
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
+    -> Ptr CSize                        -- consumed input length
+    -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
+    -> IO CInt
+
+foreign import ccall unsafe "rusty_fgk_decompress"
+  rustyFgkDecompress
+    :: Ptr Word8 -> CSize
+    -> Ptr CSize -> CSize               -- per-section output lengths, count
     -> Ptr (Ptr Word8) -> Ptr CSize     -- decoded bytes
     -> Ptr CSize                        -- consumed input length
     -> Ptr (Ptr Word8) -> Ptr CSize     -- error message buffer
@@ -249,6 +261,58 @@ djwDecompress expectedOutputLength input = unsafeDupablePerformIO $
           pure $ Right DjwDecoded
             { djwDecodedBytes        = decodedBytes
             , djwConsumedInputLength = Length (fromIntegral consumedLength)
+            }
+
+-- | What one FGK kind-decode reports back across the seam: every
+-- section's decoded bytes concatenated, and how many input bytes the
+-- decoder consumed across all of them. Sibling of 'DjwDecoded' and
+-- 'LzmaDecoded' in shape; the consumed length is a fact only the
+-- decoder can know, and whether it honors the kind's gathered framing
+-- is the caller's judgment.
+data FgkDecoded = FgkDecoded
+  { fgkDecodedBytes        :: !ByteString
+  , fgkConsumedInputLength :: !Length
+  }
+  deriving (Show, Eq)
+
+-- | FGK decompression of one kind's gathered sections (xdelta3's
+-- adaptive Huffman — see @rusty-slap/src/xdelta3_fgk.rs@ for the stream
+-- shape). The @['Length']@ is the declared output size of each section,
+-- in window order, and the 'ByteString' is those sections' stream bytes
+-- concatenated in the same order. FGK is gather-shaped like LZMA, not
+-- per-section like DJW: a kind's sections share one adaptive tree, so
+-- they must be decoded together. But unlike LZMA, FGK's bit stream
+-- carries no output size of its own — each section's declared size
+-- bounds its own decode and realigns the reader between sections — so
+-- the sizes travel beside the bytes, the way 'djwDecompress' carries
+-- its one section's size. Written longhand for the same reasons as
+-- 'lzmaDecompress': the consumed-length channel, and an honest answer
+-- on empty input.
+fgkDecompress :: [Length] -> ByteString -> Either DecompressionCause FgkDecoded
+fgkDecompress sectionOutputLengths input = unsafeDupablePerformIO $
+  withByteString input $ \dataPointer dataLength ->
+    withArray (map (fromIntegral . unLength) sectionOutputLengths) $ \sectionLengthsPointer ->
+    alloca $ \resultAddressPointer ->
+    alloca $ \resultLengthPointer ->
+    alloca $ \consumedLengthPointer ->
+    alloca $ \errorAddressPointer ->
+    alloca $ \errorLengthPointer -> do
+      returnCode <- rustyFgkDecompress
+        dataPointer dataLength
+        sectionLengthsPointer (fromIntegral (length sectionOutputLengths))
+        resultAddressPointer resultLengthPointer
+        consumedLengthPointer
+        errorAddressPointer  errorLengthPointer
+      if returnCode /= 0
+        then do
+          rustMessage <- readText errorAddressPointer errorLengthPointer
+          pure $ Left (DecompressionCause rustMessage)
+        else do
+          decodedBytes   <- readByteString resultAddressPointer resultLengthPointer
+          consumedLength <- peek consumedLengthPointer
+          pure $ Right FgkDecoded
+            { fgkDecodedBytes        = decodedBytes
+            , fgkConsumedInputLength = Length (fromIntegral consumedLength)
             }
 
 -- | Yay0 (Nintendo LZSS) decompression.

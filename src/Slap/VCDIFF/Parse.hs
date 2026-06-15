@@ -56,7 +56,8 @@ import Slap.VCDIFF.Types
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.SecondaryCompression
   ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
-  , SectionCarriage(..), decodeLZMACompressedKind, decodeDJWCompressedKind )
+  , SectionCarriage(..), decodeLZMACompressedKind, decodeDJWCompressedKind
+  , decodeFGKCompressedKind )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
@@ -510,28 +511,23 @@ decodeWindow (ResolvedWindow rawWindow) = do
 newtype ResolvedWindow = ResolvedWindow RawWindow
 
 -- | Resolve every window's compressed sections into plain ones, or
--- refuse. The four dispositions, decided by the declared compressor
--- and whether any window actually compresses a section:
+-- refuse. The dispositions, decided by the declared compressor:
 --
 --   * No compressor declared: any compression-flagged section is a
 --     wire self-contradiction ('VCDIFFCompressedSectionWithoutCompressor').
---   * FGK declared and exercised: refused by name — slap recognizes
---     the catalog entry but does not decode it yet.
---   * DJW or LZMA declared: each kind runs through its compressor's
---     decode path — per-section for DJW, gathered for LZMA — and
---     every window comes out holding plain sections.
---   * Any compressor declared but exercised by no window: the patch
---     is fully decodable — a declared-but-unused compressor is valid
---     (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
---     FGK's arm checks this
---     explicitly; the decode paths pass untouched sections through
---     and arrive at the same place.
+--   * A compressor declared: each kind runs through that compressor's
+--     decode path — per-section for DJW and FGK, gathered for LZMA —
+--     and every window comes out holding plain sections. A compressor
+--     declared but exercised by no window passes every section through
+--     untouched and arrives at the same place, which is the valid
+--     declared-but-unused case (docs/vcdiff/xdelta3/secondary-
+--     compression.md "Catalog").
 --
 -- The arms stay explicit rather than factored through a shared
 -- projection: the dispositions above appear one-to-one in the code,
--- and a compressor graduating into decode support — DJW just did — or
--- a new catalog entry fires '-Wincomplete-patterns' here, at the
--- decision point. FGK is the catalog's last refused entry.
+-- and a new catalog entry fires '-Wincomplete-patterns' here, at the
+-- decision point. With FGK's decoder landed, the catalog refuses
+-- nothing: all three compressors are decode paths.
 resolveSecondaryCompression
   :: Maybe XDelta3SecondaryCompressor -> [RawWindow]
   -> Either SlapError [ResolvedWindow]
@@ -541,14 +537,9 @@ resolveSecondaryCompression declaredCompressor rawWindows =
       Just orphanedKind ->
         Left (MalformedVCDIFF (VCDIFFCompressedSectionWithoutCompressor orphanedKind))
       Nothing -> Right rawWindows
-    Just SecondaryDJW -> decompressSectionsThrough decodeDJWCompressedKind rawWindows
-    Just SecondaryFGK
-      | anyWindowCompresses ->
-          Left (VCDIFFFeatureNotYetSupported VCDIFFFGKSecondaryCompression)
-      | otherwise -> Right rawWindows
+    Just SecondaryDJW  -> decompressSectionsThrough decodeDJWCompressedKind rawWindows
+    Just SecondaryFGK  -> decompressSectionsThrough decodeFGKCompressedKind rawWindows
     Just SecondaryLZMA -> decompressSectionsThrough decodeLZMACompressedKind rawWindows
-  where
-    anyWindowCompresses = any (not . null . compressedKindsOf) rawWindows
 
 -- | The section kinds a window's Delta_Indicator flags as
 -- compressed, in kind order.

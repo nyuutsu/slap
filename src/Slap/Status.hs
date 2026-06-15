@@ -1671,8 +1671,6 @@ renderSlapError (VCDIFFFeatureNotYetSupported feature) =
       "custom code tables are not supported yet"
     VCDIFFTargetWindow ->
       "VCD_TARGET windows are not supported yet"
-    VCDIFFFGKSecondaryCompression ->
-      "this patch uses FGK secondary compression, which slap does not decode yet"
 
 renderSlapError (VCDIFFReservedIndicatorBits indicatorKind rawByte) =
   formatLabelName LabelVCDIFF <> ": reserved bits set in the "
@@ -1954,11 +1952,13 @@ bsDiffSectionName BSDiffExtra   = "extra"
 -- self-contained stream per piece. A total projection over
 -- 'CompressionAlgorithm', so a new algorithm must declare its shape
 -- before anything can speak about its streams — there is no wildcard
--- to inherit one silently. Of the VCDIFF catalog, only LZMA gathers
--- (the xz header rides in a kind's first compressed section and the
--- rest are continuation slices); DJW is fresh per section, and FGK is
--- recorded with today's reading of the same per-section driver, to be
--- confirmed when its decoder lands. The four fixed-site algorithms
+-- to inherit one silently. Of the VCDIFF catalog, LZMA and FGK gather
+-- across a kind's sections, for different reasons — LZMA's bytes are
+-- one continuous stream (the xz header rides in a kind's first
+-- compressed section, the rest are continuation slices), FGK's are
+-- byte-flushed per section but share one adaptive tree — while DJW is
+-- fresh per section, its tables read anew each time. The four
+-- fixed-site algorithms
 -- compress self-contained payloads at their sites, so the per-piece
 -- shape is already the true one for them.
 data SecondaryStreamGranularity
@@ -1972,7 +1972,7 @@ secondaryStreamGranularity Bzip2 = EachSectionItsOwn
 secondaryStreamGranularity Yay0  = EachSectionItsOwn
 secondaryStreamGranularity DJW   = EachSectionItsOwn
 secondaryStreamGranularity LZMA  = GatheredAcrossSections
-secondaryStreamGranularity FGK   = EachSectionItsOwn
+secondaryStreamGranularity FGK   = GatheredAcrossSections
 
 -- | The possessive subject of a secondary-stream message: which
 -- sections own the stream being spoken of. The grammatical number
@@ -2470,17 +2470,13 @@ codeTableFieldName CodeTableModeField = "mode"
 -- feature the engine refuses for now rather than mishandles; the
 -- parenthetical says which arc it belongs to. As the RFC and xdelta3
 -- flavors land, arms graduate out of here — the blanket
--- secondary-compression arms left when LZMA landed, and the DJW arm
--- left when its decoder did, leaving FGK the catalog's one
--- still-refused entry. The FGK arm fires only when a window actually
--- compresses a section: a patch that declares the compressor but
--- never exercises it decodes in full
--- (docs/vcdiff/xdelta3/secondary-compression.md "Catalog" — a
--- declared-but-unused compressor is valid).
+-- secondary-compression arms left when LZMA landed, the DJW arm left
+-- when its decoder did, and FGK's left when its decoder did, closing
+-- the catalog. What remains are the two RFC-arc features, both still
+-- ahead.
 data VCDIFFUnsupportedFeature
   = VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
   | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
-  | VCDIFFFGKSecondaryCompression     -- ^ A section is compressed under catalog id 16, adaptive Huffman.
   deriving (Eq, Show)
 
 -- | A semantics failure in a VCDIFF patch that parsed at the byte

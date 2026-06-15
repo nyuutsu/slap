@@ -12,6 +12,7 @@ mod crc32;
 mod xdelta1_diff;
 mod xdelta1_suffix_array;
 mod xdelta3_djw;
+mod xdelta3_fgk;
 mod xdelta3_lzma;
 mod yay0;
 mod zip;
@@ -479,6 +480,65 @@ pub unsafe extern "C" fn rusty_djw_decompress(
 ) -> i32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
     match xdelta3_djw::djw_decompress(input, expected_output_length) {
+        Ok(outcome) => {
+            unsafe {
+                surface_buffer_to_caller(outcome.decoded_bytes, output_address_pointer, output_length_pointer);
+                *consumed_length_pointer = outcome.consumed_input_length;
+                surface_buffer_to_caller(Vec::new(), error_address_pointer, error_length_pointer);
+            }
+            0
+        }
+        Err(cause_message) => {
+            unsafe {
+                surface_buffer_to_caller(Vec::new(), output_address_pointer, output_length_pointer);
+                *consumed_length_pointer = 0;
+                surface_buffer_to_caller(cause_message.into_bytes(), error_address_pointer, error_length_pointer);
+            }
+            -1
+        }
+    }
+}
+
+/// FGK decompression of one kind's gathered secondary-compressed
+/// sections (xdelta3's adaptive Huffman, "for demonstration purposes
+/// only" — see [`xdelta3_fgk`]). Unlike DJW, the sections share one
+/// tree: `input` is the kind's section streams concatenated in order,
+/// and `section_output_lengths_address` points to `section_count`
+/// declared output sizes, one per section, that bound each section's
+/// decode and realign the reader between them. Rust allocates the
+/// output (all sections' decoded bytes concatenated); caller frees with
+/// [`rusty_free`]. Returns 0 on success (output and consumed-input-
+/// length populated; error channel empty), -1 on decoder fault (output
+/// empty, consumed 0, cause message in the error channel). Named for
+/// its possible sibling `rusty_fgk_compress`, the way
+/// [`rusty_djw_decompress`] was.
+///
+/// # Safety
+/// - `input_address` must point to `input_length` readable bytes (or
+///   may be null when `input_length == 0`).
+/// - `section_output_lengths_address` must point to `section_count`
+///   readable `usize` values (or may be null when `section_count == 0`).
+/// - `consumed_length_pointer` and the four buffer out-pointers must
+///   be valid, aligned, and writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_fgk_decompress(
+    input_address:                   *const u8,
+    input_length:                    usize,
+    section_output_lengths_address:  *const usize,
+    section_count:                   usize,
+    output_address_pointer:          *mut *mut u8,
+    output_length_pointer:           *mut usize,
+    consumed_length_pointer:         *mut usize,
+    error_address_pointer:           *mut *mut u8,
+    error_length_pointer:            *mut usize,
+) -> i32 {
+    let input = unsafe { view_caller_buffer(input_address, input_length) };
+    let section_output_lengths = if section_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(section_output_lengths_address, section_count) }
+    };
+    match xdelta3_fgk::fgk_decompress_sections(input, section_output_lengths) {
         Ok(outcome) => {
             unsafe {
                 surface_buffer_to_caller(outcome.decoded_bytes, output_address_pointer, output_length_pointer);
