@@ -204,23 +204,50 @@ impl<'section> BitReader<'section> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct NodeId(usize);
 
-/// One tree node. The two child links and the parent describe the
-/// Huffman tree; `left`/`right` are the node's neighbours in the
-/// weight-ordered sibling sequence (`left` toward lower weight, `right`
-/// toward higher). A leaf carries no children. While a symbol is still
-/// unseen its leaf is off the tree and on the unseen list, which is
-/// threaded through the otherwise-idle `left_child`/`right_child`
-/// fields of those leaves — the same reuse xd3 makes, so the fields
-/// mean "tree child" for a coded leaf and "unseen-list neighbour" for
-/// an unseen one.
+/// A node's place in the Huffman tree. A leaf carries no children, so
+/// for every symbol leaf both child links stay `None` for the node's
+/// whole life.
 #[derive(Clone, Copy, Default)]
-struct Node {
-    weight: u32,
+struct TreeLinks {
     parent: Option<NodeId>,
     left_child: Option<NodeId>,
     right_child: Option<NodeId>,
+}
+
+/// A node's neighbours in the weight-ordered sibling sequence (`left`
+/// toward lower weight, `right` toward higher) — the order
+/// 'AdaptiveTree::block_front' reads.
+#[derive(Clone, Copy, Default)]
+struct SiblingLinks {
     left: Option<NodeId>,
     right: Option<NodeId>,
+}
+
+/// A node's neighbours in the list of not-yet-coded symbols, in symbol
+/// order, headed by 'AdaptiveTree::remaining_zeros' — the structure the
+/// zero-weight escape indexes into. xd3 overloads the tree's child
+/// links to carry this list (nodes were a scarce hand-managed arena);
+/// giving it its own pair keeps the child links meaning tree-child and
+/// nothing else, so a leaf crossing from unseen to coded simply leaves
+/// the list rather than having reused fields reset under it.
+#[derive(Clone, Copy, Default)]
+struct UnseenLinks {
+    prev: Option<NodeId>,
+    next: Option<NodeId>,
+}
+
+/// One node, holding its weight and its place in each of the three
+/// structures it belongs to. Keeping the structures' links in named
+/// groups rather than eight flat fields means a link meant for one
+/// structure cannot be written into another's slot by a slip — the
+/// cross-structure mistake the sibling/tree swap is most exposed to —
+/// because the wrong group has no such field.
+#[derive(Clone, Copy, Default)]
+struct Node {
+    weight: u32,
+    tree: TreeLinks,
+    siblings: SiblingLinks,
+    unseen: UnseenLinks,
 }
 
 /// The decoder's whole state for one section: the node arena and the
@@ -229,9 +256,6 @@ struct Node {
 struct AdaptiveTree {
     nodes: Vec<Node>,
     root: NodeId,
-    /// Where the current symbol's tree walk has reached. Reset to the
-    /// root after every decoded symbol.
-    decode_ptr: NodeId,
     /// The next free internal-node slot, handed out by 'reveal_symbol'.
     free_node: usize,
     /// The head of the unseen-symbol list, or `None` once every symbol
@@ -257,7 +281,6 @@ impl AdaptiveTree {
         let mut tree = AdaptiveTree {
             nodes: vec![Node::default(); TOTAL_NODES],
             root: NodeId(0),
-            decode_ptr: NodeId(0),
             free_node: ALPHABET_SIZE,
             remaining_zeros: Some(NodeId(0)),
             zero_freq_count: ALPHABET_SIZE + 2,
@@ -268,8 +291,8 @@ impl AdaptiveTree {
         tree.factor_remaining();
         for symbol in 0..ALPHABET_SIZE {
             let leaf = &mut tree.nodes[symbol];
-            leaf.right_child = (symbol + 1 < ALPHABET_SIZE).then(|| NodeId(symbol + 1));
-            leaf.left_child = (symbol >= 1).then(|| NodeId(symbol - 1));
+            leaf.unseen.next = (symbol + 1 < ALPHABET_SIZE).then(|| NodeId(symbol + 1));
+            leaf.unseen.prev = (symbol >= 1).then(|| NodeId(symbol - 1));
         }
         tree
     }
@@ -297,46 +320,52 @@ impl AdaptiveTree {
         self.zero_freq_rem = self.zero_freq_count - (1 << self.zero_freq_exp);
     }
 
-    /// Decode one symbol: walk the tree bit by bit, resolving the
-    /// zero-weight escape when the walk lands on the unseen leaf, then
-    /// run the update that keeps decoder and encoder in step. Returns
-    /// the decoded byte; the tree is advanced and `decode_ptr` reset
-    /// for the next call.
+    /// Decode one symbol: walk the tree bit by bit from the root,
+    /// resolving the zero-weight escape when the walk lands on the
+    /// unseen leaf, then run the update that keeps decoder and encoder
+    /// in step. The walk position is local — nothing of it persists past
+    /// the decoded byte this returns.
     fn decode_one_symbol(&mut self, reader: &mut BitReader) -> Result<u8, FgkFault> {
-        // The escape bits accumulate here; at most `exp + 1` of them
-        // (nine over the 256-byte alphabet) before they resolve.
-        let mut escape_bits: Vec<bool> = Vec::new();
+        // The zero-weight escape field, assembled most significant bit
+        // first as each bit arrives (the order `fgk_decode_data`
+        // reconstructs it in): an index into the unseen list, at most
+        // `exp + 1` bits — nine over the 256-byte alphabet — wide. The
+        // lone-remaining-symbol path reads no escape bits and so names
+        // index zero, which is the accumulator's starting value.
+        let mut escape_index = 0usize;
+        let mut escape_bit_count = 0usize;
+        let mut position = self.root;
         loop {
             let bit = reader.read_bit()?;
-            if self.node(self.decode_ptr).weight == 0 {
+            if self.node(position).weight == 0 {
                 // On the unseen leaf: this bit is part of the escape
                 // field naming which unseen symbol is meant.
-                escape_bits.push(bit);
+                escape_index = (escape_index << 1) | bit as usize;
+                escape_bit_count += 1;
                 let bits_required = if self.zero_freq_rem == 0 {
                     self.zero_freq_exp
                 } else {
                     self.zero_freq_exp + 1
                 };
-                if escape_bits.len() >= bits_required {
-                    let symbol = self.nth_unseen(unseen_index_from(&escape_bits))?;
+                if escape_bit_count >= bits_required {
+                    let symbol = self.nth_unseen(escape_index)?;
                     return self.settle_symbol(symbol);
                 }
             } else {
                 // On an interior node: the bit chooses a child.
                 let descend_into = if bit {
-                    self.node(self.decode_ptr).right_child
+                    self.node(position).tree.right_child
                 } else {
-                    self.node(self.decode_ptr).left_child
+                    self.node(position).tree.left_child
                 };
-                self.decode_ptr = descend_into.ok_or(FgkFault::TreeStructureCorrupt)?;
-                if self.node(self.decode_ptr).left_child.is_none() {
+                position = descend_into.ok_or(FgkFault::TreeStructureCorrupt)?;
+                if self.node(position).tree.left_child.is_none() {
                     // A leaf. A weighted one is the decoded symbol; the
                     // unseen leaf is the decoded symbol only when it is
                     // the last unseen one (no escape bits left to read),
                     // and otherwise begins the escape on the next bit.
-                    if self.node(self.decode_ptr).weight != 0 {
-                        let symbol = self.decode_ptr.0;
-                        return self.settle_symbol(symbol);
+                    if self.node(position).weight != 0 {
+                        return self.settle_symbol(position.0);
                     }
                     if self.zero_freq_count == 1 {
                         let symbol = self.nth_unseen(0)?;
@@ -347,11 +376,10 @@ impl AdaptiveTree {
         }
     }
 
-    /// A decoded symbol's common tail: run the lockstep update and reset
-    /// the walk to the root for the next symbol.
+    /// A decoded symbol's common tail: run the lockstep tree update and
+    /// hand back the decoded byte.
     fn settle_symbol(&mut self, symbol: usize) -> Result<u8, FgkFault> {
         self.update_after(symbol)?;
-        self.decode_ptr = self.root;
         Ok(symbol as u8)
     }
 
@@ -359,14 +387,14 @@ impl AdaptiveTree {
     /// (`fgk_nth_zero`). xd3 walks off the end silently and trusts the
     /// caller to notice; this names the overrun instead.
     fn nth_unseen(&self, steps: usize) -> Result<usize, FgkFault> {
-        let mut cursor = self.remaining_zeros.ok_or(FgkFault::TreeStructureCorrupt)?;
-        for _ in 0..steps {
-            cursor = self.node(cursor).right_child.ok_or(FgkFault::ZeroIndexPastUnseenList {
+        let head = self.remaining_zeros.ok_or(FgkFault::TreeStructureCorrupt)?;
+        std::iter::successors(Some(head), |&node| self.node(node).unseen.next)
+            .nth(steps)
+            .map(|node| node.0)
+            .ok_or(FgkFault::ZeroIndexPastUnseenList {
                 requested: steps,
                 unseen: self.zero_freq_count,
-            })?;
-        }
-        Ok(cursor.0)
+            })
     }
 
     /// Update the tree after `symbol` was decoded — the running fold
@@ -383,7 +411,7 @@ impl AdaptiveTree {
         while climbing != self.root {
             self.slide_to_block_front(climbing)?;
             self.raise_weight(climbing)?;
-            climbing = self.node(climbing).parent.ok_or(FgkFault::TreeStructureCorrupt)?;
+            climbing = self.node(climbing).tree.parent.ok_or(FgkFault::TreeStructureCorrupt)?;
         }
         self.raise_weight(self.root)
     }
@@ -401,95 +429,121 @@ impl AdaptiveTree {
     /// through its block free-list; the sibling sequence is weight-
     /// ordered with equal weights contiguous, so walking right while the
     /// weight holds finds the same node and lets the free-list go.
+    ///
+    /// This is the sole consumer of the `left`/`right` links, which
+    /// raises whether the sequence wants to be a doubly-linked list at
+    /// all. It cannot simply be dropped: the relative order of two
+    /// equal-weight non-siblings is xd3's implicit numbering, which is
+    /// path-dependent — not a function of the current tree and weights —
+    /// so reproducing xd3's leader choice needs that order stored
+    /// somewhere. The links are one honest encoding of it; an explicit
+    /// per-node sequence number would be another, no smaller. Retiring
+    /// them is re-encoding, not elimination, so it stays out of scope
+    /// here.
     fn block_front(&self, node: NodeId) -> NodeId {
         let block_weight = self.node(node).weight;
-        let mut leader = node;
-        while let Some(higher) = self.node(leader).right {
-            if self.node(higher).weight != block_weight {
-                break;
-            }
-            leader = higher;
-        }
-        leader
+        std::iter::successors(Some(node), |&member| self.node(member).siblings.right)
+            .take_while(|&member| self.node(member).weight == block_weight)
+            .last()
+            .expect("a node is always the first member of its own block")
     }
 
     /// Slide a node to the front of its weight block (`fgk_move_right`):
-    /// swap it with its block leader in both the sibling sequence and
-    /// the tree, so that the weight raise about to follow keeps the
+    /// exchange it with its block leader in both the sibling sequence
+    /// and the tree, so that the weight raise about to follow keeps the
     /// sequence ordered. A no-op for a zero-weight node, for the leader
     /// itself, or when the leader is the node's own parent — the three
-    /// guards xd3 spends before touching a pointer.
+    /// guards xd3 spends before touching a link.
     fn slide_to_block_front(&mut self, forward: NodeId) -> Result<(), FgkFault> {
         if self.node(forward).weight == 0 {
             return Ok(());
         }
         let back = self.block_front(forward);
-        if forward == back || self.node(forward).parent == Some(back) {
+        if forward == back || self.node(forward).tree.parent == Some(back) {
             return Ok(());
         }
 
-        // The leader has a higher-weight successor in any well-formed
-        // tree — it is not the root (the root is the unique top of the
-        // sequence, and a forward node whose leader were the root would
-        // have tripped the parent guard). Its absence is corruption.
-        let back_successor = self.node(back).right.ok_or(FgkFault::TreeStructureCorrupt)?;
-
-        // Re-link the sibling sequence so `forward` takes `back`'s slot
-        // and `back` takes `forward`'s. The adjacency special-cases
-        // (the two nodes neighbouring each other) are xd3's, kept.
-        self.node_mut(back_successor).left = Some(forward);
-        if let Some(forward_left) = self.node(forward).left {
-            self.node_mut(forward_left).right = Some(back);
+        // The leader is never the root in a well-formed tree: the root
+        // is the unique rightmost node of the sequence, and a forward
+        // node whose leader were the root would be the root's child,
+        // caught by the parent guard above. A leader with no successor
+        // is therefore corruption, surfaced rather than swapped.
+        if self.node(back).siblings.right.is_none() {
+            return Err(FgkFault::TreeStructureCorrupt);
         }
 
-        let forward_right = self.node(forward).right;
-        self.node_mut(forward).right = Some(back_successor);
-        if forward_right == Some(back) {
-            self.node_mut(back).right = Some(forward);
-        } else {
-            if let Some(between) = forward_right {
-                self.node_mut(between).left = Some(back);
-            }
-            self.node_mut(back).right = forward_right;
-        }
-
-        let back_left = self.node(back).left;
-        let forward_left = self.node(forward).left;
-        self.node_mut(back).left = forward_left;
-        if back_left == Some(forward) {
-            self.node_mut(forward).left = Some(back);
-        } else {
-            if let Some(between) = back_left {
-                self.node_mut(between).right = Some(forward);
-            }
-            self.node_mut(forward).left = back_left;
-        }
-
-        // Exchange the two nodes' places in the tree: swap their
-        // parents, then point each parent's child slot at the node that
-        // now sits there. Both child-slot sides are read before either
-        // is written, so a shared parent swaps its two children cleanly.
-        let parent_forward = self.node(forward).parent;
-        let parent_back = self.node(back).parent;
-        let forward_was_right = parent_forward.map(|p| self.node(p).right_child == Some(forward));
-        let back_was_right = parent_back.map(|p| self.node(p).right_child == Some(back));
-        self.node_mut(forward).parent = parent_back;
-        self.node_mut(back).parent = parent_forward;
-        if let Some(parent) = parent_forward {
-            self.set_child(parent, forward_was_right.unwrap(), back);
-        }
-        if let Some(parent) = parent_back {
-            self.set_child(parent, back_was_right.unwrap(), forward);
-        }
+        self.swap_in_sibling_sequence(forward, back);
+        self.swap_in_tree(forward, back);
         Ok(())
+    }
+
+    /// Exchange two nodes' positions in the weight-ordered sibling
+    /// sequence. Correct whether or not the two are neighbours: all four
+    /// outer links are read before any is written, each node takes the
+    /// other's old neighbours (an adjacency self-reference rewritten to
+    /// name where the partner lands), and each genuinely external
+    /// neighbour points back at whoever now fills the vacated slot.
+    fn swap_in_sibling_sequence(&mut self, a: NodeId, b: NodeId) {
+        let a_left = self.node(a).siblings.left;
+        let a_right = self.node(a).siblings.right;
+        let b_left = self.node(b).siblings.left;
+        let b_right = self.node(b).siblings.right;
+
+        self.set_siblings(a, rewriting(b_left, a, b), rewriting(b_right, a, b));
+        self.set_siblings(b, rewriting(a_left, b, a), rewriting(a_right, b, a));
+
+        if let Some(left) = b_left {
+            if left != a {
+                self.node_mut(left).siblings.right = Some(a);
+            }
+        }
+        if let Some(right) = b_right {
+            if right != a {
+                self.node_mut(right).siblings.left = Some(a);
+            }
+        }
+        if let Some(left) = a_left {
+            if left != b {
+                self.node_mut(left).siblings.right = Some(b);
+            }
+        }
+        if let Some(right) = a_right {
+            if right != b {
+                self.node_mut(right).siblings.left = Some(b);
+            }
+        }
+    }
+
+    /// Exchange two nodes' places in the tree: swap their parents, then
+    /// point each parent's child slot at the node that now sits there.
+    /// Both child-slot sides are read before either is written, so a
+    /// shared parent swaps its two children cleanly.
+    fn swap_in_tree(&mut self, a: NodeId, b: NodeId) {
+        let parent_a = self.node(a).tree.parent;
+        let parent_b = self.node(b).tree.parent;
+        let a_was_right = parent_a.map(|p| self.node(p).tree.right_child == Some(a));
+        let b_was_right = parent_b.map(|p| self.node(p).tree.right_child == Some(b));
+        self.node_mut(a).tree.parent = parent_b;
+        self.node_mut(b).tree.parent = parent_a;
+        if let Some(parent) = parent_a {
+            self.set_child(parent, a_was_right.unwrap(), b);
+        }
+        if let Some(parent) = parent_b {
+            self.set_child(parent, b_was_right.unwrap(), a);
+        }
+    }
+
+    /// Set a node's two sibling-sequence links.
+    fn set_siblings(&mut self, node: NodeId, left: Option<NodeId>, right: Option<NodeId>) {
+        self.node_mut(node).siblings = SiblingLinks { left, right };
     }
 
     /// Point a parent's right or left child slot at a node.
     fn set_child(&mut self, parent: NodeId, to_right: bool, child: NodeId) {
         if to_right {
-            self.node_mut(parent).right_child = Some(child);
+            self.node_mut(parent).tree.right_child = Some(child);
         } else {
-            self.node_mut(parent).left_child = Some(child);
+            self.node_mut(parent).tree.left_child = Some(child);
         }
     }
 
@@ -503,7 +557,8 @@ impl AdaptiveTree {
     fn reveal_symbol(&mut self, symbol: usize) -> Result<NodeId, FgkFault> {
         let revealed = NodeId(symbol);
         if self.zero_freq_count == 1 {
-            self.node_mut(revealed).right_child = None;
+            // The lone remaining symbol already sits in the NYT's tree
+            // slot as a childless leaf; the unseen list simply empties.
             self.remaining_zeros = None;
             return Ok(revealed);
         }
@@ -512,15 +567,15 @@ impl AdaptiveTree {
         let new_internal = NodeId(self.free_node);
         self.free_node += 1;
 
-        let head_parent = self.node(old_head).parent;
-        let head_right = self.node(old_head).right;
+        let head_parent = self.node(old_head).tree.parent;
+        let head_right = self.node(old_head).siblings.right;
         {
             let internal = self.node_mut(new_internal);
-            internal.parent = head_parent;
-            internal.right = head_right;
+            internal.tree.parent = head_parent;
+            internal.siblings.right = head_right;
             internal.weight = 0;
-            internal.right_child = Some(revealed);
-            internal.left = Some(revealed);
+            internal.tree.right_child = Some(revealed);
+            internal.siblings.left = Some(revealed);
         }
 
         if self.remaining_zeros == Some(self.root) {
@@ -529,10 +584,10 @@ impl AdaptiveTree {
             self.root = new_internal;
         } else {
             if let Some(successor) = head_right {
-                self.node_mut(successor).left = Some(new_internal);
+                self.node_mut(successor).siblings.left = Some(new_internal);
             }
             let head_parent = head_parent.ok_or(FgkFault::TreeStructureCorrupt)?;
-            let parent_holds_head_right = self.node(head_parent).right_child == Some(old_head);
+            let parent_holds_head_right = self.node(head_parent).tree.right_child == Some(old_head);
             self.set_child(head_parent, parent_holds_head_right, new_internal);
         }
 
@@ -541,63 +596,68 @@ impl AdaptiveTree {
         // node's left child — the unseen leaf in its new tree slot.
         self.eliminate_unseen(revealed);
         let new_head = self.remaining_zeros.ok_or(FgkFault::TreeStructureCorrupt)?;
-        self.node_mut(new_internal).left_child = Some(new_head);
+        self.node_mut(new_internal).tree.left_child = Some(new_head);
         {
+            // 'revealed' is now a coded leaf: its tree-child links were
+            // empty all along, and 'eliminate_unseen' has unthreaded it
+            // from the unseen list, so only its tree placement and
+            // sibling links need setting.
             let symbol_leaf = self.node_mut(revealed);
-            symbol_leaf.right = Some(new_internal);
-            symbol_leaf.left = Some(new_head);
-            symbol_leaf.parent = Some(new_internal);
-            symbol_leaf.left_child = None;
-            symbol_leaf.right_child = None;
+            symbol_leaf.siblings.right = Some(new_internal);
+            symbol_leaf.siblings.left = Some(new_head);
+            symbol_leaf.tree.parent = Some(new_internal);
         }
         {
             let head_leaf = self.node_mut(new_head);
-            head_leaf.parent = Some(new_internal);
-            head_leaf.right = Some(revealed);
+            head_leaf.tree.parent = Some(new_internal);
+            head_leaf.siblings.right = Some(revealed);
         }
         Ok(revealed)
     }
 
     /// Splice a symbol out of the unseen list (`fgk_eliminate_zero`).
-    /// The list is threaded through the leaves' `left_child`/
-    /// `right_child` links; the head's removal advances
-    /// `remaining_zeros`, an interior removal re-links its neighbours.
-    /// Re-factors the unseen count as the symbol leaves.
+    /// The head's removal advances `remaining_zeros`, an interior
+    /// removal re-links its neighbours. Re-factors the unseen count as
+    /// the symbol leaves.
     fn eliminate_unseen(&mut self, node: NodeId) {
         if self.zero_freq_count == 1 {
             return;
         }
         self.factor_remaining();
-        let predecessor = self.node(node).left_child;
-        let successor = self.node(node).right_child;
+        let predecessor = self.node(node).unseen.prev;
+        let successor = self.node(node).unseen.next;
         match (predecessor, successor) {
             // The head: advance to the next unseen symbol, which becomes
             // the new head with no predecessor.
             (None, _) => {
                 self.remaining_zeros = successor;
                 if let Some(new_head) = successor {
-                    self.node_mut(new_head).left_child = None;
+                    self.node_mut(new_head).unseen.prev = None;
                 }
             }
             // The tail: its predecessor becomes the new tail.
             (Some(predecessor), None) => {
-                self.node_mut(predecessor).right_child = None;
+                self.node_mut(predecessor).unseen.next = None;
             }
             // Interior: stitch predecessor and successor together.
             (Some(predecessor), Some(successor)) => {
-                self.node_mut(successor).left_child = Some(predecessor);
-                self.node_mut(predecessor).right_child = Some(successor);
+                self.node_mut(successor).unseen.prev = Some(predecessor);
+                self.node_mut(predecessor).unseen.next = Some(successor);
             }
         }
     }
 }
 
-/// Assemble the unseen-list index from accumulated escape bits, most
-/// significant first — the order `fgk_decode_data` reconstructs them
-/// in. An empty field (the lone-remaining-symbol path, which reads no
-/// escape bits) names index zero.
-fn unseen_index_from(escape_bits: &[bool]) -> usize {
-    escape_bits.iter().fold(0, |index, &bit| (index << 1) | bit as usize)
+/// A sibling link with any reference to `from` rewritten to `to`. In
+/// the sibling swap this turns an adjacency self-reference — a node's
+/// neighbour being its swap partner — into a link to where the partner
+/// lands; a non-matching link passes through unchanged.
+fn rewriting(link: Option<NodeId>, from: NodeId, to: NodeId) -> Option<NodeId> {
+    if link == Some(from) {
+        Some(to)
+    } else {
+        link
+    }
 }
 
 // ── The section decode ───────────────────────────────────────────────
@@ -980,6 +1040,64 @@ mod tests {
             fault,
             FgkFault::ZeroIndexPastUnseenList { requested: 255, unseen: 255 }
         );
+    }
+
+    /// Wire a sibling sequence left-to-right over the given ids in an
+    /// otherwise-fresh tree; only their `left`/`right` links are set.
+    fn sequence_of(ids: &[NodeId]) -> AdaptiveTree {
+        let mut tree = AdaptiveTree::new();
+        for pair in ids.windows(2) {
+            tree.node_mut(pair[0]).siblings.right = Some(pair[1]);
+            tree.node_mut(pair[1]).siblings.left = Some(pair[0]);
+        }
+        tree
+    }
+
+    /// The ids reached from `head` by `right` links, then independently
+    /// by `left` links from the tail — the two must reverse each other
+    /// for the sequence to be consistent.
+    fn sequence_order(tree: &AdaptiveTree, head: NodeId) -> Vec<usize> {
+        let mut forward = vec![head.0];
+        let mut cursor = head;
+        while let Some(next) = tree.node(cursor).siblings.right {
+            forward.push(next.0);
+            cursor = next;
+        }
+        let mut backward = vec![cursor.0];
+        while let Some(prev) = tree.node(cursor).siblings.left {
+            backward.push(prev.0);
+            cursor = prev;
+        }
+        backward.reverse();
+        assert_eq!(forward, backward, "left links must reverse the right links");
+        forward
+    }
+
+    /// The sibling swap is the one place a symmetric rewrite could go
+    /// subtly wrong, and adjacency is where. The integration round-trips
+    /// exercise it through real tree maturation; this pins the helper's
+    /// contract directly — internal ids `300..304` form a four-node
+    /// sequence, kept off the real alphabet.
+    #[test]
+    fn sibling_swap_handles_adjacency_and_distance() {
+        let ids = [NodeId(300), NodeId(301), NodeId(302), NodeId(303)];
+
+        // Adjacent: the two middle neighbours exchange places.
+        let mut tree = sequence_of(&ids);
+        tree.swap_in_sibling_sequence(NodeId(301), NodeId(302));
+        assert_eq!(sequence_order(&tree, NodeId(300)), vec![300, 302, 301, 303]);
+
+        // Non-adjacent: the two ends exchange, so the head and tail swap.
+        let mut tree = sequence_of(&ids);
+        tree.swap_in_sibling_sequence(NodeId(300), NodeId(303));
+        assert_eq!(sequence_order(&tree, NodeId(303)), vec![303, 301, 302, 300]);
+
+        // Adjacent at the head, where one outer link is absent: the new
+        // head must end with no left neighbour.
+        let mut tree = sequence_of(&ids);
+        tree.swap_in_sibling_sequence(NodeId(300), NodeId(301));
+        assert_eq!(sequence_order(&tree, NodeId(301)), vec![301, 300, 302, 303]);
+        assert!(tree.node(NodeId(301)).siblings.left.is_none());
     }
 
     // FgkFault::WeightCounterOverflow and FgkFault::TreeStructureCorrupt
