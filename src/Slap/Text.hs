@@ -99,6 +99,10 @@ module Slap.Text
   , decodeTextLenient
   , LossNotice(..)
 
+    -- * Opaque-field display lens (decode half)
+  , OpaqueFieldReading(..)
+  , readOpaqueField
+
     -- * Bounded encoding (fixed-width fields)
   , encodeTextBounded
 
@@ -106,6 +110,7 @@ module Slap.Text
   , NamedEncoding
   , resolveEncodingName
   , displayNamedEncoding
+  , encodingDisplayName
   , useNamedEncoding
   , UnresolvableEncodingName(..)
 
@@ -177,6 +182,14 @@ instance Show NamedEncoding where
 -- | The user-facing name a 'NamedEncoding' was resolved from.
 displayNamedEncoding :: NamedEncoding -> Text
 displayNamedEncoding = namedEncodingDisplay
+
+-- | A user-facing name for any 'EncodingName' — @"utf8"@ for the
+-- well-defined Unicode case, the resolved-from name for a
+-- 'EncodingNamed'. For messages that need to say which encoding bytes
+-- were read through.
+encodingDisplayName :: EncodingName -> Text
+encodingDisplayName EncodingUtf8          = Text.pack "utf8"
+encodingDisplayName (EncodingNamed named) = displayNamedEncoding named
 
 -- | The resolved @encoding@-library encoder a 'NamedEncoding' carries.
 useNamedEncoding :: NamedEncoding -> Encoding.DynEncoding
@@ -400,6 +413,26 @@ decodeTextLenient (EncodingNamed named) bytes =
   in (EncodedText (EncodingNamed named) text, notices)
   where
     encoder = useNamedEncoding named
+
+-- | Whether a run of opaque bytes reads as text under an encoding —
+-- decoded with no substitution — or does not. The decode half of the
+-- lens slap shows opaque metadata fields (the BPS metadata blob, the
+-- xdelta3 application header) through: a clean decode is text to
+-- display, anything needing recovery is bytes to count.
+-- 'Slap.Display.OpaqueField.renderOpaqueFieldBytes' is the render half.
+data OpaqueFieldReading
+  = OpaqueReadsAsText !Text
+  | OpaqueNotText
+  deriving (Eq, Show)
+
+-- | Read opaque bytes under an encoding. Lossless iff
+-- 'decodeTextLenient' substituted nothing; that all-or-nothing reading
+-- is the same one each opaque field made when its lens was hardcoded to
+-- UTF-8, now answerable under whatever encoding the caller names.
+readOpaqueField :: EncodingName -> ByteString -> OpaqueFieldReading
+readOpaqueField encoding bytes = case decodeTextLenient encoding bytes of
+  (EncodedText _encoding text, []) -> OpaqueReadsAsText text
+  (_decoded, _substitutions)       -> OpaqueNotText
 
 -- | Lenient-decode primitive parameterised over the encoding's strict
 -- decoder. On strict success the whole input decodes cleanly and the

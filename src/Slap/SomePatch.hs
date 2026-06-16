@@ -275,9 +275,9 @@ parseSome dialects metadataEncoding patchContents = case detectFormat patchConte
   Just (PatchDirect       FormatAPSN64)         -> parseSomePatchFromAPSN64 metadataEncoding patchContents
   Just (PatchDirect       FormatNINJA1)         -> parseSomePatchFromNINJA1 patchContents
   Just (PatchDirect       FormatPMSR)           -> parseSomePatchFromPMSR patchContents
-  Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS patchContents
+  Just (PatchDifferential FormatBPS)            -> parseSomePatchFromBPS metadataEncoding patchContents
   Just (PatchDifferential FormatUPS)            -> parseSomePatchFromUPS patchContents
-  Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF patchContents
+  Just (PatchDifferential FormatVCDIFF)         -> parseSomePatchFromVCDIFF metadataEncoding patchContents
   Just (PatchDifferential FormatAPSGBA)         -> parseSomePatchFromAPSGBA patchContents
   Just (PatchDifferential FormatNINJA2)         -> parseSomePatchFromNINJA2 metadataEncoding patchContents
   Just (PatchDifferential FormatBSDiff)         -> parseSomePatchFromBSDiff patchContents
@@ -610,8 +610,8 @@ parseSomePatchFromIPS variant patchContents = do
         , patchExtractedMeta  = noMetadataRequested
         }
 
-parseSomePatchFromBPS :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromBPS patchContents = do
+parseSomePatchFromBPS :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromBPS metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- BPS.parseBPS patchContents
   let actions = BPS.bpsActions patch
       metadataBytes = BPS.unBPSMetadata (BPS.bpsMetadata patch)
@@ -642,7 +642,7 @@ parseSomePatchFromBPS patchContents = do
                             ++ BPS.bpsMetadataNotes patch
     , patchInfo           = PatchInfo
         { infoFormat = FormatHeader LabelBPS Nothing
-        , infoLines  = BPS.bpsMeta patch
+        , infoLines  = BPS.bpsMeta metadataEncoding patch
         , infoTally  = Tally (Vector.length actions)
         , infoUnit   = Actions
         , infoBytes  = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
@@ -717,8 +717,8 @@ parseSomePatchFromUPS patchContents = do
 -- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
 -- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their
 -- voice.
-parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
-parseSomePatchFromVCDIFF patchContents = do
+parseSomePatchFromVCDIFF :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
+parseSomePatchFromVCDIFF metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
   let windows         = VCDIFF.patchWindows patch
       windowCount     = Vector.length windows
@@ -737,7 +737,7 @@ parseSomePatchFromVCDIFF patchContents = do
                         ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
     , patchInfo         = PatchInfo
         { infoFormat = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
-        , infoLines  = VCDIFFDescribe.vcdiffMeta patch
+        , infoLines  = VCDIFFDescribe.vcdiffMeta metadataEncoding patch
         , infoTally  = Tally windowCount
         , infoUnit   = Windows
         , infoBytes  = Just (TotalOutputBytes totalOutputSize)

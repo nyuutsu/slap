@@ -32,9 +32,10 @@ import Slap.Display.Analysis
   , Annotation(..), OffsetKind(..), AnnotDetail(..) )
 import Slap.Display.Common
   ( InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText )
-import Slap.Display.Primitives (renderEscapingNonPrintable, padHex)
+import Slap.Display.OpaqueField (renderOpaqueFieldBytes)
+import Slap.Display.Primitives (padHex)
 import Slap.Checksum (Adler32, showAdler32)
-import Slap.Text (EncodingName(..), EncodedText(..), decodeTextLenient)
+import Slap.Text (EncodingName)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..), byteLength)
 
 import Data.Maybe (isJust)
@@ -60,67 +61,55 @@ import qualified Data.Vector as Vector
 -- before building one), but its arm is written rather than wildcarded,
 -- so the arc's eventual landing arrives here as a decision to make, not
 -- a silent fall-through.
-vcdiffMeta :: VCDIFFPatch -> [InfoLine]
-vcdiffMeta patch = case patch of
+vcdiffMeta :: EncodingName -> VCDIFFPatch -> [InfoLine]
+vcdiffMeta metadataEncoding patch = case patch of
   PatchCoreOnly windows -> sourceRollup (Vector.toList windows)
   PatchRFC _ windows    -> sourceRollup (Vector.toList windows)
   PatchXDelta3 header xdelta3Windows ->
     let windowList = Vector.toList xdelta3Windows
-    in  InfoLine "app header" (renderAppHeaderLine (classifyAppHeader (xdelta3AppHeader header)))
+    in  InfoLine "app header"
+          (renderAppHeaderLine metadataEncoding (classifyAppHeader (xdelta3AppHeader header)))
       : compressorLines (xdelta3SecondaryCompressor header)
      ++ sourceRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
 
--- | What slap can say about an xdelta3 application header, read through
--- a UTF-8 lens. VCD_APPHEADER bytes are opaque — the format fixes them
--- no meaning — so this is the same read-only glance
--- 'Slap.BPS.Types.classifyBPSMetadata' takes at the BPS metadata blob,
--- with one distinction the header's presence bit affords and the BPS
--- blob cannot: 'AppHeaderAbsent' (the bit was never set) is a different
--- fact from 'AppHeaderEmpty' (the bit was set over zero bytes), where
--- BPS, having no such bit, reads an empty blob as simply absent.
+-- | The presence framing of an xdelta3 application header — the only
+-- part of "what this opaque field is" VCDIFF itself decides, before any
+-- viewing lens is chosen. VCD_APPHEADER bytes are opaque (the format
+-- fixes them no meaning), so reading them as text is the shared lens's
+-- job, deferred to display where the @--metadata-encoding@ choice lives;
+-- what stays here is the one distinction the header's presence bit
+-- affords and the BPS blob cannot: 'AppHeaderAbsent' (the bit was never
+-- set) is a different fact from 'AppHeaderEmpty' (the bit was set over
+-- zero bytes), where BPS, having no such bit, reads an empty blob as
+-- simply absent.
 data AppHeaderShape
   = AppHeaderAbsent
     -- ^ No VCD_APPHEADER: the patch declared none.
   | AppHeaderEmpty
     -- ^ Declared, but carrying zero bytes.
-  | AppHeaderText !Length !Text
-    -- ^ Bytes that decode cleanly as UTF-8: their byte count and the
-    -- decoded text (shown with every non-printable codepoint escaped).
-  | AppHeaderBinary !Length
-    -- ^ Bytes that are not UTF-8 at all — the "literally anything" an
-    -- opaque field admits. Only the byte count is shown.
+  | AppHeaderPresent !ByteString
+    -- ^ Declared, carrying these bytes — read through the lens at
+    -- display.
   deriving (Eq, Show)
 
--- | Classify an application header through the UTF-8 lens. Total and
--- pure — the one place the judgment lives, leaving 'renderAppHeaderLine'
--- to only fold it. Bytes the lenient decoder accepted with no
--- substitution are text; bytes that needed even one substitution are
--- not UTF-8, the same all-or-nothing reading 'classifyBPSMetadata'
--- makes.
+-- | Frame an application header by presence alone. Flag-free and pure;
+-- the encoding-dependent reading of its bytes belongs to
+-- 'renderAppHeaderLine' and the shared lens beneath it.
 classifyAppHeader :: Maybe ByteString -> AppHeaderShape
 classifyAppHeader Nothing = AppHeaderAbsent
 classifyAppHeader (Just headerBytes)
   | ByteString.null headerBytes = AppHeaderEmpty
-  | otherwise = case decodeTextLenient EncodingUtf8 headerBytes of
-      (EncodedText _encoding text, []) -> AppHeaderText (byteLength headerBytes) text
-      (_decoded, _substitutionNotices) -> AppHeaderBinary (byteLength headerBytes)
+  | otherwise                   = AppHeaderPresent headerBytes
 
--- | The @app header@ line: fold an 'AppHeaderShape' to its display. The
--- two byte-bearing shapes share the @"N bytes"@ phrasing; the text shape
--- carries it on to the escaped content.
-renderAppHeaderLine :: AppHeaderShape -> Text
-renderAppHeaderLine AppHeaderAbsent = "(none)"
-renderAppHeaderLine AppHeaderEmpty  = "(empty)"
-renderAppHeaderLine (AppHeaderText byteCount text) =
-  byteCountPhrase byteCount <> ": " <> renderEscapingNonPrintable text
-renderAppHeaderLine (AppHeaderBinary byteCount) =
-  byteCountPhrase byteCount <> " (not valid UTF-8)"
-
--- | An application header's size as the @"N bytes"@ phrase its two
--- byte-bearing shapes wear.
-byteCountPhrase :: Length -> Text
-byteCountPhrase byteCount = renderAsText (unLength byteCount) <> " bytes"
+-- | The @app header@ line: the absent and empty framings render
+-- verbatim, and present bytes go through the shared
+-- @--metadata-encoding@ lens — shown as text where they read as text
+-- under the chosen encoding, as a byte count where they don't.
+renderAppHeaderLine :: EncodingName -> AppHeaderShape -> Text
+renderAppHeaderLine _        AppHeaderAbsent          = "(none)"
+renderAppHeaderLine _        AppHeaderEmpty           = "(empty)"
+renderAppHeaderLine encoding (AppHeaderPresent bytes) = renderOpaqueFieldBytes encoding bytes
 
 -- | The @compression@ line, when a secondary compressor was declared.
 -- Named, and named as a /declaration/ — the decoded form has long since

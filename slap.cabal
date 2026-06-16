@@ -62,6 +62,7 @@ library slap-internal
     , Slap.Display.Analysis
     , Slap.Display.Common
     , Slap.Display.Info
+    , Slap.Display.OpaqueField
     , Slap.FileContents
     , Slap.Status
     , Slap.GDIFF.Apply
