@@ -1,12 +1,12 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
--- source-free. Scoped to the core plus the xdelta3 arc as far as
--- DJW: the default code table, the application header (carried
--- opaque), the per-window Adler32 (carried for the verification
--- boundary), and LZMA- and DJW-compressed sections (decoded here,
--- before instruction decode, through
--- 'Slap.VCDIFF.SecondaryCompression'). A patch that reaches further —
--- FGK compression, a custom code table, a VCD_TARGET window — is
--- classified and declined cleanly: a deferred feature as
+-- source-free. Scoped to the core plus the whole of the xdelta3 arc:
+-- the default code table, the application header (carried opaque), the
+-- per-window Adler32 (carried for the verification boundary), and
+-- secondary-compressed sections in all three of xdelta3's flavors —
+-- DJW, LZMA, and FGK — decoded here, before instruction decode,
+-- through 'Slap.VCDIFF.SecondaryCompression'. A patch that reaches
+-- past that — a custom code table, a VCD_TARGET window (the RFC arc) —
+-- is classified and declined cleanly: a deferred feature as
 -- 'VCDIFFFeatureNotYetSupported', a reserved indicator bit or an
 -- uncataloged compressor id as the decline shapes
 -- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor'
@@ -440,7 +440,8 @@ classifyFlavor declaredCompressor maybeAppHeader decodedWindows
   | isJust declaredCompressor
       || isJust maybeAppHeader
       || Vector.any (isJust . decodedWindowChecksum) decodedWindows =
-      PatchXDelta3 (XDelta3Header maybeAppHeader) (fmap toXDelta3Window decodedWindows)
+      PatchXDelta3 (XDelta3Header maybeAppHeader declaredCompressor)
+                   (fmap toXDelta3Window decodedWindows)
   | otherwise = PatchCoreOnly (fmap decodedWindowBody decodedWindows)
   where
     toXDelta3Window decodedWindow =

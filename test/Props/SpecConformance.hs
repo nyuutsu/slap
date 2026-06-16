@@ -1850,7 +1850,7 @@ test_vcdiffAppHeaderCaptured =
     Left parseError -> assertFailureT ("parse: " <> renderSlapError parseError)
     Right (Parsed decoded _) -> do
       case decoded of
-        PatchXDelta3 (XDelta3Header maybeAppHeader) _ ->
+        PatchXDelta3 (XDelta3Header maybeAppHeader _compressor) _ ->
           assertEqual "application header bytes" (Just "slap!") maybeAppHeader
         _ -> assertFailure "expected the xdelta3 verdict"
       case applyVCDIFF decoded (InputFileContents ByteString.empty) of

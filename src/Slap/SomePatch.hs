@@ -59,6 +59,7 @@ import qualified Slap.UPS.Types as UPS
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Types as VCDIFF
+import qualified Slap.VCDIFF.Describe as VCDIFFDescribe
 import qualified Slap.APSN64.Types as APSN64
 import qualified Slap.APSN64.Parse as APSN64
 import qualified Slap.APSN64.Apply as APSN64
@@ -97,7 +98,7 @@ import qualified Slap.NINJA1.Apply as NINJA1
 import qualified Slap.NINJA1.Create as NINJA1
 import qualified Slap.NINJA1.Describe as NINJA1
 import Slap.Platform (ninja1ToPlatform, ninja2ToPlatform)
-import Slap.Display.Analysis (PatchAnalysis(..), AnalysisSummary(..), SummaryInfo(..))
+import Slap.Display.Analysis (PatchAnalysis(..))
 import Slap.Display.Common (FormatHeader(..),
                              Tally(..), CountUnit(..), ByteCount(..))
 import Slap.Display.Info (PatchInfo(..))
@@ -713,26 +714,19 @@ parseSomePatchFromUPS patchContents = do
 -- format header's qualifier slot ('vcdiffFlavorQualifier'), so
 -- @slap info@ answers \"which flavor\" on its first line. An xdelta3
 -- patch's per-window Adler32 checksums are lifted into
--- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs; the
--- analytical carrier is a summary only, pending the VCDIFF Describe
--- pass.
+-- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
+-- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their
+-- voice.
 parseSomePatchFromVCDIFF :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromVCDIFF patchContents = do
   Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents
-  let windows         = vcdiffWindowsOf patch
+  let windows         = VCDIFF.patchWindows patch
       windowCount     = Vector.length windows
       totalOutputSize = FileSize
         (Vector.sum (Vector.map (unFileSize . VCDIFF.windowTargetSize) windows))
   Right SomePatch
     { patchFormat       = LabelVCDIFF
-    , patchAnalysis     = PatchAnalysis
-        { analysisSections = []
-        , analysisSummary  = Summary SummaryInfo
-            { summaryTally = Tally windowCount
-            , summaryUnit  = Windows
-            , summaryBytes = Just (TotalOutputBytes totalOutputSize)
-            }
-        }
+    , patchAnalysis     = VCDIFFDescribe.analyzeVCDIFF patch
     , patchKind         = Differential
     , patchApply        = ApplyStrategy
         { runApply = \source -> pure (fmap noAdvisories (VCDIFF.applyVCDIFF patch source)) }
@@ -743,7 +737,7 @@ parseSomePatchFromVCDIFF patchContents = do
                         ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
     , patchInfo         = PatchInfo
         { infoFormat = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
-        , infoLines  = []
+        , infoLines  = VCDIFFDescribe.vcdiffMeta patch
         , infoTally  = Tally windowCount
         , infoUnit   = Windows
         , infoBytes  = Just (TotalOutputBytes totalOutputSize)
@@ -765,34 +759,22 @@ vcdiffFlavorQualifier vcdiffPatch = case vcdiffPatch of
   VCDIFF.PatchRFC      _ _ -> Just " (RFC 3284)"
   VCDIFF.PatchXDelta3  _ _ -> Just " (xdelta3)"
 
--- | The window list of a parsed VCDIFF patch, regardless of flavor.
--- 'VCDIFF.PatchCoreOnly' and 'VCDIFF.PatchXDelta3' are produced today;
--- the RFC arm keeps the projection total against the flavor still to
--- land.
-vcdiffWindowsOf :: VCDIFF.VCDIFFPatch -> Vector.Vector VCDIFF.Window
-vcdiffWindowsOf vcdiffPatch = case vcdiffPatch of
-  VCDIFF.PatchCoreOnly windows       -> windows
-  VCDIFF.PatchRFC      _ windows     -> windows
-  VCDIFF.PatchXDelta3  _ xdelta3Windows -> fmap VCDIFF.xdelta3WindowBody xdelta3Windows
-
--- | The per-window Adler32 checks an xdelta3 patch carries, lifted to
--- the shared verification boundary: each present checksum covers its
--- window's slice of the final target — the window's base offset, its
--- output length, and the stored sum. Core-only and RFC windows carry
--- no checksums, so those flavors contribute none.
+-- | The per-window Adler32 checks a patch carries, lifted to the shared
+-- verification boundary: each present checksum covers its window's slice
+-- of the final target — the window's base offset, its output length, and
+-- the stored sum. Reads the flavor-flattened window list
+-- ('VCDIFF.patchWindowsWithChecksums'), so it is itself flavor-blind: a
+-- core-only or RFC window pairs with no checksum and 'catMaybes' drops
+-- it, exactly as the absence of an xdelta3 window's checksum does.
 vcdiffWindowChecks :: VCDIFF.VCDIFFPatch -> [WindowCheck]
-vcdiffWindowChecks vcdiffPatch = case vcdiffPatch of
-  VCDIFF.PatchCoreOnly _ -> []
-  VCDIFF.PatchRFC    _ _ -> []
-  VCDIFF.PatchXDelta3 _ xdelta3Windows ->
-      catMaybes (zipWith liftWindowCheck windowBases windowList)
-    where
-      windowList  = Vector.toList xdelta3Windows
-      windowBases = scanl advance (Offset 0) (map xdelta3OutputLength windowList)
-      xdelta3OutputLength = VCDIFF.windowOutputLength . VCDIFF.xdelta3WindowBody
-      liftWindowCheck windowBase xdelta3Window =
-        WindowCheck windowBase (xdelta3OutputLength xdelta3Window)
-          <$> VCDIFF.xdelta3WindowAdler32 xdelta3Window
+vcdiffWindowChecks vcdiffPatch =
+    catMaybes (zipWith windowCheckAt windowBases pairedWindows)
+  where
+    pairedWindows = Vector.toList (VCDIFF.patchWindowsWithChecksums vcdiffPatch)
+    windowBases   = scanl advance (Offset 0)
+                      (map (VCDIFF.windowOutputLength . fst) pairedWindows)
+    windowCheckAt windowBase (window, maybeAdler) =
+      WindowCheck windowBase (VCDIFF.windowOutputLength window) <$> maybeAdler
 
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but

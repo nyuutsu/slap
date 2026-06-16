@@ -18,6 +18,8 @@ module Slap.VCDIFF.Types
   , XDelta3Window(..)
   , Window(..)
   , windowOutputLength
+  , patchWindows
+  , patchWindowsWithChecksums
   , VCDIFFInstruction(..)
   , SourceSegment(..)
   , SegmentOrigin(..)
@@ -27,6 +29,7 @@ module Slap.VCDIFF.Types
 import Slap.Measure (Offset, Length(..), FileSize(..))
 import Slap.Checksum (Adler32)
 import Slap.VCDIFF.CodeTable (CodeTable)
+import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor)
 
 import Data.Vector (Vector)
 import Data.ByteString (ByteString)
@@ -56,15 +59,24 @@ data VCDIFFPatch
   | PatchCoreOnly                !(Vector Window)
   deriving (Eq, Show)
 
--- | The xdelta3-only header fields. Today just the optional
--- application header (the VCD_APPHEADER data an xdelta3 patch may
--- carry once, before its windows). Secondary compression leaves no
--- field here on purpose: like the code table and the address cache,
--- it is decode mechanism — the compressed sections are resolved to
--- plain bytes during parse, and the declared compressor's one
--- decoded-form consequence is the flavor verdict itself.
+-- | The xdelta3-only header fields: the optional application header
+-- (the VCD_APPHEADER data an xdelta3 patch may carry once, before its
+-- windows), and the secondary compressor it declared, if any.
+--
+-- The compressor's /sections/ are decode mechanism — resolved to plain
+-- bytes during parse, gone from the decoded form like the code table
+-- and the address cache. But /which/ compressor was declared is a fact
+-- about the patch worth keeping: it is the only registry a compressor
+-- id belongs to, it is part of how the patch describes itself, and a
+-- 'Nothing' here ('Just' there) is the difference between a plain
+-- xdelta3 patch and a compressed one. So the name survives even when
+-- the bytes it governed do not. A declared compressor that no window
+-- ever draws on is a real, valid state — it is still recorded here, as
+-- a declaration, not a use.
 data XDelta3Header = XDelta3Header
-  { xdelta3AppHeader :: !(Maybe ByteString) }
+  { xdelta3AppHeader           :: !(Maybe ByteString)
+  , xdelta3SecondaryCompressor :: !(Maybe XDelta3SecondaryCompressor)
+  }
   deriving (Eq, Show)
 
 -- | The RFC-only header fields. Today just the optional custom code
@@ -108,6 +120,30 @@ data Window = Window
 -- verification lift (sizing each window's checksum range).
 windowOutputLength :: Window -> Length
 windowOutputLength window = Length (unFileSize (windowTargetSize window))
+
+-- | Every window of a patch paired with the per-window Adler32 it
+-- carries — 'Nothing' for a core-only or RFC window, neither of which
+-- has a slot for one. The one place the flavor is unfolded: a patch's
+-- windows differ across flavors only in whether a checksum rides with
+-- each, so this is the maximal-information flattening, and every other
+-- view of "this patch's windows" ('patchWindows', the verification
+-- lift, the explain walk) is a projection of it. Exhaustive with no
+-- wildcard, so the RFC arc's eventual landing is decided right here.
+patchWindowsWithChecksums :: VCDIFFPatch -> Vector (Window, Maybe Adler32)
+patchWindowsWithChecksums patch = case patch of
+  PatchCoreOnly windows -> fmap withoutChecksum windows
+  PatchRFC _ windows    -> fmap withoutChecksum windows
+  PatchXDelta3 _ xdelta3Windows -> fmap withChecksum xdelta3Windows
+  where
+    withoutChecksum window = (window, Nothing)
+    withChecksum xdelta3Window =
+      (xdelta3WindowBody xdelta3Window, xdelta3WindowAdler32 xdelta3Window)
+
+-- | The windows of a patch, flavor-agnostic, with the per-window
+-- checksums dropped. A projection of 'patchWindowsWithChecksums', so the
+-- flavor unfolds in exactly one place.
+patchWindows :: VCDIFFPatch -> Vector Window
+patchWindows = fmap fst . patchWindowsWithChecksums
 
 -- | One decoded delta instruction. 'Add' carries its literal bytes;
 -- 'Run' carries a length and the single byte to repeat; 'Copy' carries

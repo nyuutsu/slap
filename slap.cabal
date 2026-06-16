@@ -109,6 +109,7 @@ library slap-internal
     , Slap.VCDIFF.Types
     , Slap.VCDIFF.Parse
     , Slap.VCDIFF.Apply
+    , Slap.VCDIFF.Describe
     , Slap.XDelta1.Apply
     , Slap.XDelta1.Create
     , Slap.XDelta1.Describe
