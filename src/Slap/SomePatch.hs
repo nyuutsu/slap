@@ -707,10 +707,11 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- | Build a 'SomePatch' from a parsed VCDIFF patch. The CoreOnly and
--- xdelta3 flavors (LZMA secondary compression included) parse today;
--- a patch using a deferred feature is refused by 'VCDIFF.parseVCDIFF'
--- before this builder runs. The flavor verdict surfaces through the
+-- | Build a 'SomePatch' from a parsed VCDIFF patch. All three flavors
+-- parse today — CoreOnly, xdelta3 (secondary compression included), and
+-- RFC (VCD_TARGET windows) — leaving the custom code table the one
+-- deferred feature 'VCDIFF.parseVCDIFF' still refuses before this
+-- builder runs. The flavor verdict surfaces through the
 -- format header's qualifier slot ('vcdiffFlavorQualifier'), so
 -- @slap info@ answers \"which flavor\" on its first line. An xdelta3
 -- patch's per-window Adler32 checksums are lifted into
@@ -772,9 +773,10 @@ vcdiffWindowChecks vcdiffPatch =
   where
     pairedWindows = Vector.toList (VCDIFF.patchWindowsWithChecksums vcdiffPatch)
     windowBases   = scanl advance (Offset 0)
-                      (map (VCDIFF.windowOutputLength . fst) pairedWindows)
-    windowCheckAt windowBase (window, maybeAdler) =
-      WindowCheck windowBase (VCDIFF.windowOutputLength window) <$> maybeAdler
+                      (map (VCDIFF.windowOutputLength . VCDIFF.windowWithChecksumBody) pairedWindows)
+    windowCheckAt windowBase pairedWindow =
+      WindowCheck windowBase (VCDIFF.windowOutputLength (VCDIFF.windowWithChecksumBody pairedWindow))
+        <$> VCDIFF.windowWithChecksumAdler32 pairedWindow
 
 -- APS N64 and APS GBA are unrelated formats by different authors who
 -- both used "APS" as the name.  detectFormat dispatches on magic, but

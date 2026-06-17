@@ -20,6 +20,7 @@ module Slap.VCDIFF.Types
   , windowOutputLength
   , patchWindows
   , patchWindowsWithChecksums
+  , WindowWithChecksum(..)
   , VCDIFFInstruction(..)
   , SourceSegment(..)
   , SegmentOrigin(..)
@@ -127,23 +128,36 @@ windowOutputLength window = Length (unFileSize (windowTargetSize window))
 -- windows differ across flavors only in whether a checksum rides with
 -- each, so this is the maximal-information flattening, and every other
 -- view of "this patch's windows" ('patchWindows', the verification
--- lift, the explain walk) is a projection of it. Exhaustive with no
--- wildcard, so the RFC arc's eventual landing is decided right here.
-patchWindowsWithChecksums :: VCDIFFPatch -> Vector (Window, Maybe Adler32)
+-- lift, the explain walk) is a projection of it. Exhaustive over the
+-- three flavors, no wildcard.
+patchWindowsWithChecksums :: VCDIFFPatch -> Vector WindowWithChecksum
 patchWindowsWithChecksums patch = case patch of
   PatchCoreOnly windows -> fmap withoutChecksum windows
   PatchRFC _ windows    -> fmap withoutChecksum windows
   PatchXDelta3 _ xdelta3Windows -> fmap withChecksum xdelta3Windows
   where
-    withoutChecksum window = (window, Nothing)
+    withoutChecksum window = WindowWithChecksum window Nothing
     withChecksum xdelta3Window =
-      (xdelta3WindowBody xdelta3Window, xdelta3WindowAdler32 xdelta3Window)
+      WindowWithChecksum (xdelta3WindowBody xdelta3Window) (xdelta3WindowAdler32 xdelta3Window)
+
+-- | A window paired with the per-window Adler32 it carries — 'Nothing'
+-- for a core-only or RFC window, which has no slot for one. The
+-- flavor-flattened unit 'patchWindowsWithChecksums' yields; the
+-- verification lift and the explain walk read its fields by name rather
+-- than by tuple position. Mirrors 'XDelta3Window' in shape, but
+-- flavor-agnostic — the checksum is optional because two of the three
+-- flavors never carry one.
+data WindowWithChecksum = WindowWithChecksum
+  { windowWithChecksumBody    :: !Window
+  , windowWithChecksumAdler32 :: !(Maybe Adler32)
+  }
+  deriving (Eq, Show)
 
 -- | The windows of a patch, flavor-agnostic, with the per-window
 -- checksums dropped. A projection of 'patchWindowsWithChecksums', so the
 -- flavor unfolds in exactly one place.
 patchWindows :: VCDIFFPatch -> Vector Window
-patchWindows = fmap fst . patchWindowsWithChecksums
+patchWindows = fmap windowWithChecksumBody . patchWindowsWithChecksums
 
 -- | One decoded delta instruction. 'Add' carries its literal bytes;
 -- 'Run' carries a length and the single byte to repeat; 'Copy' carries

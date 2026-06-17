@@ -1,16 +1,16 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
--- source-free. Scoped to the core plus the whole of the xdelta3 arc:
--- the default code table, the application header (carried opaque), the
--- per-window Adler32 (carried for the verification boundary), and
--- secondary-compressed sections in all three of xdelta3's flavors —
--- DJW, LZMA, and FGK — decoded here, before instruction decode,
--- through 'Slap.VCDIFF.SecondaryCompression'. A patch that reaches
--- past that — a custom code table, a VCD_TARGET window (the RFC arc) —
--- is classified and declined cleanly: a deferred feature as
--- 'VCDIFFFeatureNotYetSupported', a reserved indicator bit or an
--- uncataloged compressor id as the decline shapes
--- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor'
--- — never mishandled.
+-- source-free. Reads the core (default code table, window framing, the
+-- instruction set), the whole xdelta3 arc — the application header
+-- (carried opaque), the per-window Adler32 (carried for the
+-- verification boundary), and secondary-compressed sections in all
+-- three of xdelta3's compressors, DJW, LZMA, and FGK, decoded here
+-- before instruction decode through 'Slap.VCDIFF.SecondaryCompression'
+-- — and the RFC arc's VCD_TARGET windows. The custom code table is the
+-- one feature it declines, as 'VCDIFFFeatureNotYetSupported'. A
+-- reserved indicator bit and an uncataloged compressor id decline as
+-- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor',
+-- and a patch mixing a VCD_TARGET window with an xdelta3 extension as
+-- 'VCDIFFTargetWindowWithXDelta3Feature' — none mishandled.
 --
 -- Parsing is two passes with one clean seam. 'parseRawPatch' is the
 -- byte-level walk: it reads the header and frames each window into its
@@ -47,7 +47,7 @@ module Slap.VCDIFF.Parse
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
-  , XDelta3Header(..), XDelta3Window(..)
+  , XDelta3Header(..), XDelta3Window(..), RFCHeader(..)
   , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
 -- Qualified: 'InstructionTemplate' shares the constructor names Add /
 -- Run / Copy with 'VCDIFFInstruction'. The template (code-table) side
@@ -65,14 +65,14 @@ import Slap.ByteParser
 import Slap.Checksum (Adler32(..))
 import Slap.Status
   ( SlapError(..), SlapAdvisory(..), Parsed(..)
-  , VCDIFFUnsupportedFeature(..), VCDIFFMalformation(..)
+  , VCDIFFUnsupportedFeature(..), VCDIFFXDelta3Feature(..), VCDIFFMalformation(..)
   , VCDIFFIndicatorKind(..), VCDIFFSection(..) )
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..)
   , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
-  , ActionIndex, firstAction, nextAction
+  , ActionIndex, firstAction, nextAction, actionAtPosition
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
   , subtractLength
   , RequiredLength(..), ActualLength(..), ActualMagic(..)
@@ -109,10 +109,18 @@ parseVCDIFF (PatchFileContents input)
       case runByteParser parseRawPatch (ByteString.drop magicLength input) of
         Left parserError -> Left (ParseError LabelVCDIFF parserError)
         Right rawPatch   ->
-          (\patch -> Parsed patch (trailingRemnantNotes rawPatch))
+          (\patch -> Parsed patch (parseNotes rawPatch))
             <$> classifyAndDecode rawPatch
   where
     magicLength = ByteString.length vcdiffMagicBytes
+
+-- | The note-severity advisories a successfully-parsed patch carries:
+-- the framer's trailing remnant, and any VCD_TARGET window that reaches
+-- nothing. Both are pure readings of the framed patch, attached only on
+-- a parse that succeeds.
+parseNotes :: RawPatch -> [SlapAdvisory]
+parseNotes rawPatch =
+  trailingRemnantNotes rawPatch ++ emptyTargetSegmentNotes rawPatch
 
 -- | The advisory the framer's trailing-remnant recognition surfaces,
 -- when it consumed one (see 'isTrailingRemnant'). The remnant is the
@@ -122,6 +130,21 @@ trailingRemnantNotes :: RawPatch -> [SlapAdvisory]
 trailingRemnantNotes rawPatch = case rawTrailingRemnant rawPatch of
   Nothing            -> []
   Just remnantLength -> [VCDIFFTrailingRemnant remnantLength]
+
+-- | A note for each VCD_TARGET window whose declared source segment is
+-- empty: it draws nothing from the produced target, the only legal
+-- shape a first-window VCD_TARGET can take and a pointless one
+-- anywhere. The window's position in the stream rides in the note.
+emptyTargetSegmentNotes :: RawPatch -> [SlapAdvisory]
+emptyTargetSegmentNotes rawPatch =
+  [ VCDIFFEmptyTargetWindowSegment (actionAtPosition windowPosition)
+  | (windowPosition, rawWindow) <- zip [0 ..] (rawWindows rawPatch)
+  , declaresEmptyTargetSegment rawWindow
+  ]
+  where
+    declaresEmptyTargetSegment rawWindow =
+      testBit (rawWindowIndicator rawWindow) vcdTargetBit
+        && maybe False ((== Length 0) . rawSegmentLength) (rawSourceSegment rawWindow)
 
 ----------------------------------------------------------------------------
 -- Byte-level framing
@@ -397,8 +420,8 @@ classifyAndDecode rawPatch
       traverse_ vetWindowFraming (rawWindows rawPatch)
       resolvedWindows <- resolveSecondaryCompression declaredCompressor (rawWindows rawPatch)
       decodedWindows  <- traverse decodeWindow resolvedWindows
-      pure (classifyFlavor declaredCompressor (rawAppHeader rawPatch)
-              (Vector.fromList decodedWindows))
+      classifyFlavor declaredCompressor (rawAppHeader rawPatch)
+        (Vector.fromList decodedWindows)
   where
     headerIndicator = rawHeaderIndicator rawPatch
 
@@ -425,25 +448,61 @@ data DecodedWindow = DecodedWindow
   , decodedWindowChecksum :: !(Maybe Adler32)
   }
 
--- | Name the decoded patch for what it is. Any xdelta3-arc feature —
--- a declared secondary compressor (an xdelta3 signal even when no
--- window exercises it, because xdelta3's catalog is the only registry
--- of compressor ids there is), an application header, or any window
--- carrying an Adler32 — makes the patch 'PatchXDelta3'; a patch using
--- none decodes identically under either flavor and keeps the
--- first-class 'PatchCoreOnly' verdict (docs/vcdiff/xdelta3/spec.md
--- "Classification").
+-- | Name the decoded patch for what it is, from two independent
+-- readings of its windows: whether it carries an xdelta3 extension, and
+-- whether it carries an RFC-exclusive feature. The four combinations
+-- are exhaustive and each has one honest answer:
+--
+--   * an xdelta3 extension, no RFC-exclusive feature → 'PatchXDelta3'.
+--     A declared secondary compressor (an xdelta3 signal even when no
+--     window exercises it, because xdelta3's catalog is the only
+--     registry of compressor ids there is), an application header, or
+--     any window's Adler32 is enough.
+--   * an RFC-exclusive feature, no xdelta3 extension → 'PatchRFC' with
+--     the default code table ('Nothing'), which is the whole truth for a
+--     VCD_TARGET-only patch. A produced-target window is that signal
+--     today; the custom code table joins it next.
+--   * neither → 'PatchCoreOnly', decoding identically under either
+--     flavor (docs/vcdiff/xdelta3/spec.md "Classification").
+--   * both → refused. The patch is neither dialect — RFC 3284 defines
+--     no xdelta3 extension and xdelta3 refuses VCD_TARGET — so slap,
+--     which reads only those two, declines, naming the xdelta3 extension
+--     it found. The Adler32 reaches this verdict read and used, never
+--     dropped: the type forbids carrying it into a 'PatchRFC' at all.
+--
+-- The mixed case is an explicit 'Left' with no wildcard, so when the
+-- custom code table lands as a second RFC-exclusive signal the compiler
+-- points here.
 classifyFlavor
   :: Maybe XDelta3SecondaryCompressor -> Maybe ByteString
-  -> Vector DecodedWindow -> VCDIFFPatch
-classifyFlavor declaredCompressor maybeAppHeader decodedWindows
-  | isJust declaredCompressor
-      || isJust maybeAppHeader
-      || Vector.any (isJust . decodedWindowChecksum) decodedWindows =
-      PatchXDelta3 (XDelta3Header maybeAppHeader declaredCompressor)
-                   (fmap toXDelta3Window decodedWindows)
-  | otherwise = PatchCoreOnly (fmap decodedWindowBody decodedWindows)
+  -> Vector DecodedWindow -> Either SlapError VCDIFFPatch
+classifyFlavor declaredCompressor maybeAppHeader decodedWindows =
+  case (carriesXDelta3Extension, carriesRFCExclusiveFeature) of
+    (True,  True)  -> Left (VCDIFFTargetWindowWithXDelta3Feature presentXDelta3Feature)
+    (True,  False) -> Right (PatchXDelta3 (XDelta3Header maybeAppHeader declaredCompressor)
+                                          (fmap toXDelta3Window decodedWindows))
+    (False, True)  -> Right (PatchRFC (RFCHeader Nothing) (fmap decodedWindowBody decodedWindows))
+    (False, False) -> Right (PatchCoreOnly (fmap decodedWindowBody decodedWindows))
   where
+    carriesXDelta3Extension =
+      isJust declaredCompressor
+        || isJust maybeAppHeader
+        || Vector.any (isJust . decodedWindowChecksum) decodedWindows
+
+    carriesRFCExclusiveFeature = Vector.any windowDrawsOnProducedTarget decodedWindows
+    windowDrawsOnProducedTarget decodedWindow =
+      case windowSourceSegment (decodedWindowBody decodedWindow) of
+        Just segment -> sourceSegmentOrigin segment == FromProducedTarget
+        Nothing      -> False
+
+    -- Which extension to name in the refusal, in detection priority;
+    -- reached only when 'carriesXDelta3Extension' holds, so the final
+    -- arm means a window checksum is what made it true.
+    presentXDelta3Feature
+      | isJust declaredCompressor = XDelta3FeatureSecondaryCompressor
+      | isJust maybeAppHeader     = XDelta3FeatureApplicationHeader
+      | otherwise                 = XDelta3FeatureWindowChecksum
+
     toXDelta3Window decodedWindow =
       XDelta3Window (decodedWindowBody decodedWindow)
                     (decodedWindowChecksum decodedWindow)
@@ -459,8 +518,6 @@ vetWindowFraming rawWindow
       Left (VCDIFFReservedIndicatorBits WindowIndicator windowIndicator)
   | testBit windowIndicator vcdSourceBit && testBit windowIndicator vcdTargetBit =
       Left (MalformedVCDIFF VCDIFFBothSourceAndTargetWindowBits)
-  | testBit windowIndicator vcdTargetBit =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFTargetWindow)
   | rawDeltaIndicator rawWindow .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits DeltaIndicator (rawDeltaIndicator rawWindow))
   | rawDeclaredEncodingLength rawWindow /= rawMeasuredEncodingLength rawWindow =
@@ -477,9 +534,15 @@ vetWindowFraming rawWindow
 -- that compression existed.
 decodeWindow :: ResolvedWindow -> Either SlapError DecodedWindow
 decodeWindow (ResolvedWindow rawWindow) = do
-  let sourceSegment =
+  let -- The window's two copy-source bits are mutually exclusive
+      -- ('vetWindowFraming' rejects both at once), so the VCD_TARGET bit
+      -- alone decides which side a present segment is cut from.
+      segmentOrigin
+        | testBit (rawWindowIndicator rawWindow) vcdTargetBit = FromProducedTarget
+        | otherwise                                           = FromSourceFile
+      sourceSegment =
         (\segment -> SourceSegment
-                       FromSourceFile
+                       segmentOrigin
                        (rawSegmentPosition segment)
                        (rawSegmentLength segment))
         <$> rawSourceSegment rawWindow

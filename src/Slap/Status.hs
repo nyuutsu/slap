@@ -57,6 +57,7 @@ module Slap.Status
   , VCDIFFCodeTableMalformation(..)
   , VCDIFFCodeTableField(..)
   , VCDIFFUnsupportedFeature(..)
+  , VCDIFFXDelta3Feature(..)
   , VCDIFFMalformation(..)
   , VCDIFFIndicatorKind(..)
   , VCDIFFSection(..)
@@ -600,14 +601,10 @@ data SlapError
   -- which runs outside the byte parser.
   | MalformedVCDIFFCodeTable VCDIFFCodeTableMalformation
 
-  -- | A VCDIFF patch uses a feature outside the subset slap currently
-  -- decodes. The engine lands flavor by flavor: the core plus the
-  -- LZMA-compressed xdelta3 arc read now, and a patch reaching past
-  -- them — a custom code table, a VCD_TARGET window, a DJW or FGK
-  -- secondary stream — is refused cleanly, naming the feature, rather
-  -- than mishandled. The 'VCDIFFUnsupportedFeature' says which
-  -- feature; as the flavors land, arms graduate out of it. Raised by
-  -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | A VCDIFF patch uses a feature outside the subset slap decodes —
+  -- the custom code table. Such a patch is refused cleanly, the
+  -- 'VCDIFFUnsupportedFeature' naming the feature, rather than
+  -- mishandled. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
   | VCDIFFFeatureNotYetSupported VCDIFFUnsupportedFeature
 
   -- | A VCDIFF indicator byte set one or more bits the format
@@ -649,6 +646,21 @@ data SlapError
   -- the byte-level walk, the way 'UnsupportedVCDIFFShape' validates
   -- window shape; these are loud refusals, never a substituted zero.
   | MalformedVCDIFF VCDIFFMalformation
+
+  -- | A VCDIFF patch mixes a VCD_TARGET window — an RFC 3284 feature
+  -- xdelta3 refuses — with an xdelta3 extension RFC 3284 never defined
+  -- (a declared secondary compressor, an application header, or a
+  -- per-window Adler32). Each half is well-formed on its own, so the
+  -- patch is not malformed; it simply belongs to neither dialect slap
+  -- reads — a conformant RFC-3284 patch carries no xdelta3 extension,
+  -- and an xdelta3 patch carries no VCD_TARGET window. The
+  -- 'VCDIFFXDelta3Feature' names which extension it found, so the
+  -- refusal's reason is concrete. The Adler32 case in particular is
+  -- read and used to reach this verdict, never silently dropped:
+  -- 'Slap.VCDIFF.Types.XDelta3Window' makes an RFC-window-with-checksum
+  -- unrepresentable, so the checksum could not survive into a 'PatchRFC'
+  -- even if slap tried. Raised by 'Slap.VCDIFF.Parse.classifyFlavor'.
+  | VCDIFFTargetWindowWithXDelta3Feature VCDIFFXDelta3Feature
 
   -- | A BSDiff patch's fixed-width header decoded with at least one
   -- of the three size fields as negative. The 'BSDiffHeaderMalformation'
@@ -978,6 +990,16 @@ data SlapAdvisory
   -- trailing bytes keep framing as a window and failing as one. The
   -- 'Length' is the remnant's full byte count, marker included.
   | VCDIFFTrailingRemnant !Length
+
+  -- | A VCD_TARGET window declares an empty (zero-length) source
+  -- segment, so it draws nothing from the produced target — a window
+  -- naming a copy source it cannot read a byte from. Legal (a
+  -- zero-length segment fits trivially) and the only shape a
+  -- first-window VCD_TARGET can take, there being no earlier output to
+  -- point at; pointless everywhere else. slap applies the window and
+  -- remarks. The 'ActionIndex' names the window's position in the
+  -- patch's window stream.
+  | VCDIFFEmptyTargetWindowSegment ActionIndex
 
   -- | Bytes at the end of an APS-N64 patch too few to begin another
   -- record (a record header is five bytes: a four-byte offset and a
@@ -1669,8 +1691,17 @@ renderSlapError (VCDIFFFeatureNotYetSupported feature) =
   formatLabelName LabelVCDIFF <> ": " <> case feature of
     VCDIFFCustomCodeTable ->
       "custom code tables are not supported yet"
-    VCDIFFTargetWindow ->
-      "VCD_TARGET windows are not supported yet"
+
+renderSlapError (VCDIFFTargetWindowWithXDelta3Feature feature) =
+  formatLabelName LabelVCDIFF
+  <> ": a VCD_TARGET window (an RFC 3284 feature) together with "
+  <> xdelta3FeaturePhrase feature
+  <> " (an xdelta3 extension) — neither a conformant RFC-3284 patch nor"
+  <> " an xdelta3 patch, and slap applies only conformant patches of either dialect"
+  where
+    xdelta3FeaturePhrase XDelta3FeatureSecondaryCompressor = "a declared secondary compressor"
+    xdelta3FeaturePhrase XDelta3FeatureApplicationHeader   = "an application header"
+    xdelta3FeaturePhrase XDelta3FeatureWindowChecksum      = "a per-window Adler32 checksum"
 
 renderSlapError (VCDIFFReservedIndicatorBits indicatorKind rawByte) =
   formatLabelName LabelVCDIFF <> ": reserved bits set in the "
@@ -2090,6 +2121,12 @@ renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
   <> " trailing bytes after the last window (0xFF 0xFF 0xFF 0xFF, then"
   <> " zero padding — the LODModS-style tail); not window data, ignored"
 
+renderSlapAdvisory (VCDIFFEmptyTargetWindowSegment windowIndex) =
+  formatLabelName LabelVCDIFF
+  <> ": VCD_TARGET window " <> renderAsText (unActionIndex windowIndex)
+  <> " declares an empty source segment; it draws nothing from the"
+  <> " produced target"
+
 renderSlapAdvisory (APSN64TrailingFragment (Length fragmentLength)) =
   formatLabelName LabelAPSN64
   <> ": " <> renderAsText fragmentLength
@@ -2465,18 +2502,25 @@ codeTableFieldName :: VCDIFFCodeTableField -> Text
 codeTableFieldName CodeTableSizeField = "size"
 codeTableFieldName CodeTableModeField = "mode"
 
--- | A VCDIFF feature outside the subset slap currently decodes,
--- carried by 'VCDIFFFeatureNotYetSupported'. Each names a wire
--- feature the engine refuses for now rather than mishandles; the
--- parenthetical says which arc it belongs to. As the RFC and xdelta3
--- flavors land, arms graduate out of here — the blanket
--- secondary-compression arms left when LZMA landed, the DJW arm left
--- when its decoder did, and FGK's left when its decoder did, closing
--- the catalog. What remains are the two RFC-arc features, both still
--- ahead.
+-- | A VCDIFF feature outside the subset slap decodes, carried by
+-- 'VCDIFFFeatureNotYetSupported': a wire feature the engine refuses
+-- rather than mishandles, with the parenthetical naming its arc. The
+-- custom code table is the one such feature, the last RFC-arc feature
+-- slap does not yet read.
 data VCDIFFUnsupportedFeature
   = VCDIFFCustomCodeTable             -- ^ Hdr_Indicator VCD_CODETABLE: a custom code table (RFC-arc).
-  | VCDIFFTargetWindow                -- ^ Win_Indicator VCD_TARGET: the window copies from produced target (RFC-arc).
+  deriving (Eq, Show)
+
+-- | Which xdelta3 extension a VCD_TARGET-bearing patch also carried,
+-- making it neither dialect. Carried by
+-- 'VCDIFFTargetWindowWithXDelta3Feature'; the renderer names the
+-- specific extension so the refusal's reason is concrete. Priority of
+-- detection (compressor, then header, then checksum) is the classifier's
+-- — any one of them is enough to eject the patch from the RFC arc.
+data VCDIFFXDelta3Feature
+  = XDelta3FeatureSecondaryCompressor  -- ^ a declared secondary compressor (VCD_DECOMPRESS).
+  | XDelta3FeatureApplicationHeader    -- ^ an application header (VCD_APPHEADER).
+  | XDelta3FeatureWindowChecksum       -- ^ a per-window Adler32 (VCD_ADLER32).
   deriving (Eq, Show)
 
 -- | A semantics failure in a VCDIFF patch that parsed at the byte
@@ -2825,6 +2869,7 @@ slapAdvisorySeverity advisory = case advisory of
   UnsortedRecords{}                    -> SeverityNote
   IPS32TrailingBytes{}                 -> SeverityNote
   VCDIFFTrailingRemnant{}              -> SeverityNote
+  VCDIFFEmptyTargetWindowSegment{}     -> SeverityNote
   APSN64TrailingFragment{}             -> SeverityNote
   EBPMetadataMalformed{}               -> SeverityNote
   BPSMetadataNonConformant{}           -> SeverityNote

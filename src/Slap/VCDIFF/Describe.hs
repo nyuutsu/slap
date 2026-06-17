@@ -23,7 +23,8 @@ module Slap.VCDIFF.Describe
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), XDelta3Header(..), XDelta3Window(..)
   , VCDIFFInstruction(..), SourceSegment(..), SegmentOrigin(..)
-  , xdelta3WindowBody, xdelta3WindowAdler32, patchWindowsWithChecksums )
+  , xdelta3WindowBody, xdelta3WindowAdler32
+  , patchWindowsWithChecksums, WindowWithChecksum(..) )
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
 import Slap.Display.Analysis
   ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
@@ -51,26 +52,23 @@ import qualified Data.Vector as Vector
 
 -- | The facts @slap info@ surfaces that the format header's flavor
 -- qualifier does not already carry. What there is to say depends on the
--- flavor: a core-only patch holds nothing but its windows, so it speaks
--- only of how those windows divide between source-backed and
--- self-contained; an xdelta3 patch adds the three things only its arc
--- can carry — the application header, the declared secondary
--- compressor, and the per-window checksums.
+-- flavor: a core-only or RFC patch holds nothing but its windows, so it
+-- speaks only of where those windows draw their copies from (the source
+-- file, the produced target, or nowhere); an xdelta3 patch adds the
+-- three things only its arc can carry — the application header, the
+-- declared secondary compressor, and the per-window checksums.
 --
--- 'PatchRFC' is unconstructable today (the parser refuses the RFC arc
--- before building one), but its arm is written rather than wildcarded,
--- so the arc's eventual landing arrives here as a decision to make, not
--- a silent fall-through.
+-- Exhaustive over the three flavors, no wildcard.
 vcdiffMeta :: EncodingName -> VCDIFFPatch -> [InfoLine]
 vcdiffMeta metadataEncoding patch = case patch of
-  PatchCoreOnly windows -> sourceRollup (Vector.toList windows)
-  PatchRFC _ windows    -> sourceRollup (Vector.toList windows)
+  PatchCoreOnly windows -> originRollup (Vector.toList windows)
+  PatchRFC _ windows    -> originRollup (Vector.toList windows)
   PatchXDelta3 header xdelta3Windows ->
     let windowList = Vector.toList xdelta3Windows
     in  InfoLine "app header"
           (renderAppHeaderLine metadataEncoding (classifyAppHeader (xdelta3AppHeader header)))
       : compressorLines (xdelta3SecondaryCompressor header)
-     ++ sourceRollup (map xdelta3WindowBody windowList)
+     ++ originRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
 
 -- | The presence framing of an xdelta3 application header — the only
@@ -126,15 +124,25 @@ compressorName SecondaryDJW  = "DJW"
 compressorName SecondaryLZMA = "LZMA"
 compressorName SecondaryFGK  = "FGK"
 
--- | How many of a patch's windows draw a copy-source segment from the
--- source file, against the total. The rest are self-contained — pure
--- ADD\/RUN and target-internal copies — so the one fraction tells the
--- whole division.
-sourceRollup :: [Window] -> [InfoLine]
-sourceRollup windows =
-  [InfoLine "source" (windowFraction sourceBackedCount (length windows))]
+-- | How a patch's windows divide by where their copies draw from. The
+-- @source@ line — windows whose segment is cut from the source file —
+-- always shows. The @produced target@ line — windows drawing on earlier
+-- output through VCD_TARGET — shows only when at least one window does,
+-- so it is absent on a patch with no VCD_TARGET window. A window in
+-- neither count is self-contained: pure ADD\/RUN and copies of its own
+-- output.
+originRollup :: [Window] -> [InfoLine]
+originRollup windows =
+     [ InfoLine "source" (windowFraction (countOrigin FromSourceFile) total) ]
+  ++ [ InfoLine "produced target" (windowFraction producedTargetCount total)
+     | producedTargetCount > 0 ]
   where
-    sourceBackedCount = length (filter (isJust . windowSourceSegment) windows)
+    total               = length windows
+    producedTargetCount = countOrigin FromProducedTarget
+    countOrigin origin  = length
+      [ () | window  <- windows
+           , Just segment <- [windowSourceSegment window]
+           , sourceSegmentOrigin segment == origin ]
 
 -- | How many of a patch's windows carry a per-window Adler32, against
 -- the total. Zero is the honest reading of an xdelta3 patch whose
@@ -175,17 +183,19 @@ analyzeVCDIFF patch = PatchAnalysis
   where
     windows         = Vector.toList (patchWindowsWithChecksums patch)
     numberedWindows = zip [1 ..] windows
-    totalOutput     = FileSize (sum [ unFileSize (windowTargetSize window)
-                                    | (window, _adler) <- windows ])
+    totalOutput     = FileSize (sum [ unFileSize (windowTargetSize (windowWithChecksumBody pairedWindow))
+                                    | pairedWindow <- windows ])
 
 -- | One window described: its labeled header, then its instructions as
 -- a region list, with the output cursor carried across so the next
 -- window picks up exactly where this one ended.
 describeWindow
-  :: Offset -> (Int, (Window, Maybe Adler32)) -> (Offset, [AnalysisSection])
-describeWindow outputCursor (windowNumber, (window, maybeAdler)) =
+  :: Offset -> (Int, WindowWithChecksum) -> (Offset, [AnalysisSection])
+describeWindow outputCursor (windowNumber, pairedWindow) =
   (cursorAfterWindow, [windowHeader windowNumber window maybeAdler, SectionRegions regions])
   where
+    window     = windowWithChecksumBody pairedWindow
+    maybeAdler = windowWithChecksumAdler32 pairedWindow
     (cursorAfterWindow, regions) =
       mapAccumL (makeVCDIFFRegion (windowSourceSegment window))
                 outputCursor

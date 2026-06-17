@@ -80,11 +80,11 @@ data CopyRead
     -- read from the source file.
   | CopyFromTarget !ReadOffset !Length
     -- ^ The address falls in output bytes settled before the write
-    -- head: one bulk in-buffer copy. Reached today by a window's
-    -- non-overrunning read of its own output; a target-backed source
-    -- segment resolves here too, but such windows are refused at
-    -- parse ('Slap.Status.VCDIFFTargetWindow') until the RFC arc
-    -- lands, so that route is readiness, not reachable code.
+    -- head: one bulk in-buffer copy. Reached by a window's
+    -- non-overrunning read of its own output, and by a VCD_TARGET
+    -- window's source segment — a slice of the target produced by
+    -- earlier windows — which 'resolveCopyAddress' routes here through
+    -- its 'FromProducedTarget' origin.
   | ExpandFromTarget !ReadOffset !Length !TargetExpansion
     -- ^ The address falls in this window's own output and the read
     -- overruns the write head: VCDIFF's run-length back-reference,
