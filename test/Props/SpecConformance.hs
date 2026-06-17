@@ -53,7 +53,8 @@ import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
                              defaultCodeTable, serializeCodeTable,
                              deserializeCodeTable)
 import Slap.VCDIFF.Parse (parseVCDIFF, decodeCopyAddress, freshAddressCache,
-                          nearCacheSize, AddressCache, CopyAddressReading(..))
+                          AddressCacheConfig(..), defaultAddressCacheConfig,
+                          AddressCache, CopyAddressReading(..))
 import Slap.VCDIFF.Types (VCDIFFPatch(..), XDelta3Header(..), XDelta3Window(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 
@@ -1936,15 +1937,15 @@ test_vcdiffSourceSegmentExceedsSource =
 -- stored address, so the round-robin write order is what is checked.
 test_vcdiffNearCacheRoundRobin :: Assertion
 test_vcdiffNearCacheRoundRobin = do
-  assertEqual "near[0] wrapped to the fifth address" 50 (nearRead seeded 0)
-  assertEqual "near[1] kept the second address"      20 (nearRead seeded 1)
-  assertEqual "near[2] kept the third address"       30 (nearRead seeded 2)
-  assertEqual "near[3] kept the fourth address"      40 (nearRead seeded 3)
+  assertEqual "near[0] wrapped to the fifth address" (Offset 50) (nearRead seeded 0)
+  assertEqual "near[1] kept the second address"      (Offset 20) (nearRead seeded 1)
+  assertEqual "near[2] kept the third address"       (Offset 30) (nearRead seeded 2)
+  assertEqual "near[3] kept the fourth address"      (Offset 40) (nearRead seeded 3)
   where
     seeded = foldl (\cache value -> snd (selfSeed cache value))
-                   freshAddressCache [10, 20, 30, 40, 50]
+                   (freshAddressCache defaultAddressCacheConfig) [10, 20, 30, 40, 50]
     nearRead cache slot =
-      case decodeCopyAddress cache 0 (fromIntegral ((2 :: Int) + slot)) (ByteString.pack [0]) 0 of
+      case decodeCopyAddress cache (Offset 0) (fromIntegral ((2 :: Int) + slot)) (ByteString.pack [0]) (Offset 0) of
         Right reading -> copyAddressDecoded reading
         Left _ -> error "near-mode decode should not fail"
 
@@ -1953,23 +1954,23 @@ test_vcdiffNearCacheRoundRobin = do
 -- and the modulo write are checked.
 test_vcdiffSameCacheModulo :: Assertion
 test_vcdiffSameCacheModulo =
-  assertEqual "same[770 mod 768] holds 770" 770 (sameRead seeded 2)
+  assertEqual "same[770 mod 768] holds 770" (Offset 770) (sameRead seeded 2)
   where
     -- 770 as a VCDIFF varint: 0x86 0x02 (group 6, then 2).
-    seeded = snd (selfSeedBytes freshAddressCache [0x86, 0x02])
+    seeded = snd (selfSeedBytes (freshAddressCache defaultAddressCacheConfig) [0x86, 0x02])
     sameRead cache slotByte =
-      case decodeCopyAddress cache 0 (fromIntegral (nearCacheSize + 2)) (ByteString.pack [slotByte]) 0 of
+      case decodeCopyAddress cache (Offset 0) (fromIntegral (nearSlotCount defaultAddressCacheConfig + 2)) (ByteString.pack [slotByte]) (Offset 0) of
         Right reading -> copyAddressDecoded reading
         Left _ -> error "same-mode decode should not fail"
 
 -- | Seed the caches with a SELF-mode decode of a single-byte varint,
 -- returning the decoded address and the updated cache.
-selfSeed :: AddressCache -> Word8 -> (Int, AddressCache)
+selfSeed :: AddressCache -> Word8 -> (Offset, AddressCache)
 selfSeed cache value = selfSeedBytes cache [value]
 
 -- | As 'selfSeed', but the varint may span multiple bytes.
-selfSeedBytes :: AddressCache -> [Word8] -> (Int, AddressCache)
+selfSeedBytes :: AddressCache -> [Word8] -> (Offset, AddressCache)
 selfSeedBytes cache varintBytes =
-  case decodeCopyAddress cache 0 0 (ByteString.pack varintBytes) 0 of
+  case decodeCopyAddress cache (Offset 0) 0 (ByteString.pack varintBytes) (Offset 0) of
     Right reading -> (copyAddressDecoded reading, copyAddressCacheAfter reading)
     Left _ -> error "SELF-mode decode should not fail on a well-formed varint"
