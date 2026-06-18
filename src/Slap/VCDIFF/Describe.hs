@@ -22,10 +22,12 @@ module Slap.VCDIFF.Describe
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), XDelta3Header(..), XDelta3Window(..)
+  , RFCHeader(..)
   , VCDIFFInstruction(..), SourceSegment(..), SegmentOrigin(..)
   , xdelta3WindowBody, xdelta3WindowAdler32
   , patchWindowsWithChecksums, WindowWithChecksum(..) )
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
+import Slap.VCDIFF.CodeTable (CodeTable)
 import Slap.Display.Analysis
   ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
   , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
@@ -52,17 +54,19 @@ import qualified Data.Vector as Vector
 
 -- | The facts @slap info@ surfaces that the format header's flavor
 -- qualifier does not already carry. What there is to say depends on the
--- flavor: a core-only or RFC patch holds nothing but its windows, so it
--- speaks only of where those windows draw their copies from (the source
--- file, the produced target, or nowhere); an xdelta3 patch adds the
--- three things only its arc can carry — the application header, the
--- declared secondary compressor, and the per-window checksums.
+-- flavor: a core-only patch holds nothing but its windows, so it speaks
+-- only of where those windows draw their copies from (the source file,
+-- the produced target, or nowhere); an RFC patch adds the custom code
+-- table when it carries one; an xdelta3 patch adds the three things only
+-- its arc can carry — the application header, the declared secondary
+-- compressor, and the per-window checksums.
 --
 -- Exhaustive over the three flavors, no wildcard.
 vcdiffMeta :: EncodingName -> VCDIFFPatch -> [InfoLine]
 vcdiffMeta metadataEncoding patch = case patch of
-  PatchCoreOnly windows -> originRollup (Vector.toList windows)
-  PatchRFC _ windows    -> originRollup (Vector.toList windows)
+  PatchCoreOnly windows  -> originRollup (Vector.toList windows)
+  PatchRFC header windows ->
+    codeTableLines (rfcCustomCodeTable header) ++ originRollup (Vector.toList windows)
   PatchXDelta3 header xdelta3Windows ->
     let windowList = Vector.toList xdelta3Windows
     in  InfoLine "app header"
@@ -70,6 +74,15 @@ vcdiffMeta metadataEncoding patch = case patch of
       : compressorLines (xdelta3SecondaryCompressor header)
      ++ originRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
+
+-- | The @code table@ line, when a patch supplied its own (RFC 3284 §7).
+-- Named as a presence: the table's entries shaped the decode and are
+-- long since consumed, so what stays to say is that the patch decoded
+-- against a table of its own rather than the default. Omitted entirely
+-- for a patch on the default table.
+codeTableLines :: Maybe CodeTable -> [InfoLine]
+codeTableLines Nothing  = []
+codeTableLines (Just _) = [InfoLine "code table" "custom (RFC 3284 §7)"]
 
 -- | The presence framing of an xdelta3 application header — the only
 -- part of "what this opaque field is" VCDIFF itself decides, before any

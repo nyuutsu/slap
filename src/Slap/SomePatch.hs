@@ -708,10 +708,10 @@ parseSomePatchFromUPS patchContents = do
     }
 
 -- | Build a 'SomePatch' from a parsed VCDIFF patch. All three flavors
--- parse today — CoreOnly, xdelta3 (secondary compression included), and
--- RFC (VCD_TARGET windows) — leaving the custom code table the one
--- deferred feature 'VCDIFF.parseVCDIFF' still refuses before this
--- builder runs. The flavor verdict surfaces through the
+-- parse in full today — CoreOnly, xdelta3 (secondary compression
+-- included), and RFC (VCD_TARGET windows and custom code tables) — with
+-- no feature left for 'VCDIFF.parseVCDIFF' to defer. The flavor verdict
+-- surfaces through the
 -- format header's qualifier slot ('vcdiffFlavorQualifier'), so
 -- @slap info@ answers \"which flavor\" on its first line. An xdelta3
 -- patch's per-window Adler32 checksums are lifted into

@@ -5,12 +5,17 @@
 -- verification boundary), and secondary-compressed sections in all
 -- three of xdelta3's compressors, DJW, LZMA, and FGK, decoded here
 -- before instruction decode through 'Slap.VCDIFF.SecondaryCompression'
--- — and the RFC arc's VCD_TARGET windows. The custom code table is the
--- one feature it declines, as 'VCDIFFFeatureNotYetSupported'. A
--- reserved indicator bit and an uncataloged compressor id decline as
--- 'VCDIFFReservedIndicatorBits' \/ 'VCDIFFUnknownSecondaryCompressor',
--- and a patch mixing a VCD_TARGET window with an xdelta3 extension as
--- 'VCDIFFTargetWindowWithXDelta3Feature' — none mishandled.
+-- — and the whole RFC arc: VCD_TARGET windows, and the custom code
+-- table, built by decoding its inner delta (a self-contained VCDIFF
+-- patch) against the serialized default table and reading the result
+-- back ('buildCustomTable'). A custom table failing to build wraps the
+-- precise inner failure as 'VCDIFFCustomCodeTableDecodeFailed'; an
+-- inner delta declaring its own table is the no-nesting refusal
+-- 'VCDIFFNestedCustomCodeTable'. A reserved indicator bit and an
+-- uncataloged compressor id decline as 'VCDIFFReservedIndicatorBits' \/
+-- 'VCDIFFUnknownSecondaryCompressor', and a patch mixing an
+-- RFC-exclusive feature with an xdelta3 extension as
+-- 'VCDIFFRFCFeatureWithXDelta3Feature' — none mishandled.
 --
 -- Parsing is two passes with one clean seam. 'parseRawPatch' is the
 -- byte-level walk: it reads the header and frames each window into its
@@ -62,10 +67,12 @@ import Slap.ByteParser
 import Slap.Checksum (Adler32(..))
 import Slap.Status
   ( SlapError(..), SlapAdvisory(..), Parsed(..)
-  , VCDIFFUnsupportedFeature(..), VCDIFFXDelta3Feature(..), VCDIFFMalformation(..)
+  , VCDIFFRFCFeature(..), VCDIFFXDelta3Feature(..), VCDIFFMalformation(..)
+  , VCDIFFShapeViolation(..), VCDIFFCodeTableMalformation(..)
   , VCDIFFIndicatorKind(..), VCDIFFSection(..) )
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.FileContents (PatchFileContents(..))
+import Slap.VCDIFF.Apply (applyVCDIFF)
+import Slap.FileContents (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
   ( Offset(..), Length(..), FileSize(..), Delta(..)
   , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
@@ -79,10 +86,10 @@ import Slap.Measure
 import Control.Monad (when, unless)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
-import Data.Bits (testBit, bit, complement, (.&.), (.|.))
+import Data.Bits (testBit, (.&.))
 import Data.Foldable (traverse_)
 import Data.List (zipWith4)
-import Data.Maybe (isJust, listToMaybe)
+import Data.Maybe (isJust, isNothing, listToMaybe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.IntMap.Strict (IntMap)
@@ -95,8 +102,26 @@ import Data.Word (Word8)
 -- Entry point
 ----------------------------------------------------------------------------
 
+-- | Whether a patch being parsed may carry a custom code table. The
+-- top-level parse permits it ('CustomTablesAllowed'); the inner delta a
+-- custom table is built from is parsed with it forbidden
+-- ('CustomTablesForbidden'), because RFC 3284 §7c requires that delta to
+-- use the default table — a nested table would recurse with no base
+-- case. The forbidden case is the one door to 'VCDIFFNestedCustomCodeTable'.
+data CustomTablePolicy
+  = CustomTablesAllowed
+  | CustomTablesForbidden
+  deriving (Eq, Show)
+
 parseVCDIFF :: PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
-parseVCDIFF (PatchFileContents input)
+parseVCDIFF = parseVCDIFFWith CustomTablesAllowed
+
+-- | Parse a VCDIFF patch under a given custom-table policy. The public
+-- 'parseVCDIFF' fixes 'CustomTablesAllowed'; 'buildCustomTable' reuses
+-- this with 'CustomTablesForbidden' to decode a custom table's inner
+-- delta, which is itself a self-contained VCDIFF patch.
+parseVCDIFFWith :: CustomTablePolicy -> PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
+parseVCDIFFWith tablePolicy (PatchFileContents input)
   | ByteString.length input < magicLength =
       Left (InputTooShort LabelVCDIFF
               (RequiredLength (Length magicLength))
@@ -106,9 +131,9 @@ parseVCDIFF (PatchFileContents input)
   | otherwise =
       case runByteParser parseRawPatch (ByteString.drop magicLength input) of
         Left parserError -> Left (ParseError LabelVCDIFF parserError)
-        Right rawPatch   ->
-          (\patch -> Parsed patch (parseNotes rawPatch))
-            <$> classifyAndDecode rawPatch
+        Right rawPatch   -> do
+          (patch, tableNotes) <- classifyAndDecode tablePolicy rawPatch
+          pure (Parsed patch (parseNotes rawPatch ++ tableNotes))
   where
     magicLength = ByteString.length vcdiffMagicBytes
 
@@ -158,6 +183,12 @@ data RawPatch = RawPatch
   { rawVersion         :: !Word8
   , rawHeaderIndicator :: !Word8
   , rawCompressorId    :: !(Maybe Word8)
+  , rawCodeTableData   :: !(Maybe ByteString)
+    -- ^ The custom code table's data section, as read: the two
+    -- cache-size bytes followed by the inner delta, carried verbatim
+    -- when VCD_CODETABLE was set. 'classifyAndDecode' hands it to
+    -- 'buildCustomTable', which peels the cache sizes and decodes the
+    -- inner delta; 'Nothing' means the default table is in force.
   , rawAppHeader       :: !(Maybe ByteString)
   , rawWindows         :: ![RawWindow]
   , rawTrailingRemnant :: !(Maybe Length)
@@ -197,45 +228,62 @@ data RawSegment = RawSegment
   }
 
 -- | The byte-level walk. Reads the version and header indicator, then
--- frames the windows — but only when the header is one this parser
--- knows how to walk: version zero, with no header feature beyond the
--- secondary-compressor id (a single byte) and the application header
--- (whose varint-length-plus-bytes shape is read here). A custom code
--- table changes what follows in ways slap refuses anyway, so such a
--- header leaves the window list empty; 'classifyAndDecode' refuses on
--- the header before it would look at windows whose framing it could
--- not trust.
+-- the optional header fields in wire order — the secondary-compressor
+-- id, the custom-code-table data, the application header — and frames
+-- the windows. It does this only when the header is built from bits
+-- slap recognizes; a header carrying a reserved bit has a byte-shape
+-- the framer cannot trust, so it leaves the window list empty and lets
+-- 'classifyAndDecode' decline on the header before it would read
+-- windows it could not have framed.
 parseRawPatch :: ByteParser RawPatch
 parseRawPatch = do
   version          <- getByte
   headerIndicator  <- getByte
-  if version == 0 && headerOnlyUsesFramableFeatures headerIndicator
+  if version == 0 && headerUsesOnlyRecognizedBits headerIndicator
     then do
-      compressorId <- if testBit headerIndicator vcdDecompressBit
-                        then Just <$> getByte
-                        else pure Nothing
-      appHeader    <- if testBit headerIndicator vcdAppHeaderBit
-                        then Just <$> parseApplicationHeader
-                        else pure Nothing
+      compressorId  <- if testBit headerIndicator vcdDecompressBit
+                         then Just <$> getByte
+                         else pure Nothing
+      codeTableData <- if testBit headerIndicator vcdCodeTableBit
+                         then Just <$> parseCodeTableData
+                         else pure Nothing
+      appHeader     <- if testBit headerIndicator vcdAppHeaderBit
+                         then Just <$> parseApplicationHeader
+                         else pure Nothing
       (windows, trailingRemnant) <- parseRawWindows
-      pure (RawPatch version headerIndicator compressorId appHeader windows trailingRemnant)
-    else pure (RawPatch version headerIndicator Nothing Nothing [] Nothing)
+      pure (RawPatch version headerIndicator compressorId codeTableData
+                     appHeader windows trailingRemnant)
+    else pure (RawPatch version headerIndicator Nothing Nothing Nothing [] Nothing)
 
--- | Whether every set bit of a header indicator names a feature whose
--- bytes the framer knows how to walk past — VCD_DECOMPRESS (one
--- compressor-id byte) and VCD_APPHEADER (the varint-length-plus-bytes
--- shape 'parseApplicationHeader' reads). Any other set bit means the
--- bytes that follow have a shape framing cannot trust.
-headerOnlyUsesFramableFeatures :: Word8 -> Bool
-headerOnlyUsesFramableFeatures headerIndicator =
-  headerIndicator .&. complement (bit vcdDecompressBit .|. bit vcdAppHeaderBit) == 0
+-- | Whether the header indicator is built only from bits slap
+-- recognizes — the three RFC-and-xdelta3 bits VCD_DECOMPRESS,
+-- VCD_CODETABLE, and VCD_APPHEADER (bits 0–2), which are exactly the
+-- complement of 'reservedIndicatorMask'. A set reserved bit (3–7)
+-- names a feature from beyond what slap reads, belonging to neither
+-- dialect; the framer cannot trust the byte-shape that follows such a
+-- header, so it declines to frame and 'classifyAndDecode' surfaces the
+-- honest 'VCDIFFReservedIndicatorBits' reason rather than failing as
+-- framing garbage.
+headerUsesOnlyRecognizedBits :: Word8 -> Bool
+headerUsesOnlyRecognizedBits headerIndicator =
+  headerIndicator .&. reservedIndicatorMask == 0
+
+-- | The custom-code-table data's wire shape: a varint length, then that
+-- many bytes (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
+-- The bytes are carried verbatim — the cache-size header and the inner
+-- delta within them are peeled by 'buildCustomTable', not here. On the
+-- wire this field follows the compressor-id byte (RFC 3284 §4.1's
+-- header order) and precedes the application header.
+parseCodeTableData :: ByteParser ByteString
+parseCodeTableData = do
+  declaredLength <- vcdiffVarint
+  getBytes (Length (fromIntegral declaredLength))
 
 -- | The application header's wire shape: a varint length, then that
 -- many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application
--- header"). On the wire the field follows the compressor-id byte
--- (read by 'parseRawPatch' when declared) and the code-table data
--- (never framed — a code-table header bails out before any field is
--- walked), so here it follows whichever of those preceded it.
+-- header"). On the wire the field follows the compressor-id byte and
+-- the code-table data (both read above when declared), so here it
+-- follows whichever of those preceded it.
 parseApplicationHeader :: ByteParser ByteString
 parseApplicationHeader = do
   declaredLength <- vcdiffVarint
@@ -397,31 +445,183 @@ reservedIndicatorMask = 0xF8
 ----------------------------------------------------------------------------
 
 -- | Interpret a framed patch: refuse an unreadable version or header,
--- vet every window's framing, resolve secondary compression so each
--- window holds plain sections, decode each window, then name the
--- flavor.
+-- settle the code table the windows decode against, vet every window's
+-- framing, resolve secondary compression so each window holds plain
+-- sections, decode each window, then name the flavor. Returns the
+-- decoded patch alongside any advisories the table-build raised (a
+-- custom table's do-nothing entries).
 --
 -- Vetting runs before resolution on purpose: a window whose delta
 -- indicator carries reserved bits is declined before its compression
 -- bits are believed, because slap cannot claim to interpret three
 -- bits of a byte it does not understand the rest of.
-classifyAndDecode :: RawPatch -> Either SlapError VCDIFFPatch
-classifyAndDecode rawPatch
+classifyAndDecode :: CustomTablePolicy -> RawPatch -> Either SlapError (VCDIFFPatch, [SlapAdvisory])
+classifyAndDecode tablePolicy rawPatch
   | rawVersion rawPatch /= 0 =
       Left (BadVersion LabelVCDIFF (FoundVersion (rawVersion rawPatch)))
   | headerIndicator .&. reservedIndicatorMask /= 0 =
       Left (VCDIFFReservedIndicatorBits HeaderIndicator headerIndicator)
-  | testBit headerIndicator vcdCodeTableBit =
-      Left (VCDIFFFeatureNotYetSupported VCDIFFCustomCodeTable)
   | otherwise = do
+      resolvedTable <- resolveActiveTable tablePolicy headerIndicator (rawCodeTableData rawPatch)
       declaredCompressor <- lookupDeclaredCompressor (rawCompressorId rawPatch)
       traverse_ vetWindowFraming (rawWindows rawPatch)
       resolvedWindows <- resolveSecondaryCompression declaredCompressor (rawWindows rawPatch)
-      decodedWindows  <- traverse decodeWindow resolvedWindows
-      classifyFlavor declaredCompressor (rawAppHeader rawPatch)
-        (Vector.fromList decodedWindows)
+      decodedWindows  <- traverse (decodeWindow (resolvedActiveTable resolvedTable)) resolvedWindows
+      patch <- classifyFlavor (resolvedCustomTable resolvedTable) declaredCompressor
+                 (rawAppHeader rawPatch) (Vector.fromList decodedWindows)
+      pure (patch, resolvedTableNotes resolvedTable)
   where
     headerIndicator = rawHeaderIndicator rawPatch
+
+-- | The code table a patch's windows decode against, plus how the
+-- decode names it. 'resolvedActiveTable' is the table-and-cache-config
+-- the instruction walk uses; 'resolvedCustomTable' is 'Just' only for a
+-- patch that supplied its own table (the classifier's RFC-exclusive
+-- signal, and what 'RFCHeader' records); 'resolvedTableNotes' carries
+-- any advisory building the table raised.
+data ResolvedTable = ResolvedTable
+  { resolvedActiveTable :: !ActiveTable
+  , resolvedCustomTable :: !(Maybe Table.CodeTable)
+  , resolvedTableNotes  :: ![SlapAdvisory]
+  }
+
+-- | The code table and address-cache configuration a window's
+-- instruction walk decodes against — the default pair for an ordinary
+-- patch, the built pair for one carrying a custom table. Bundled so the
+-- two travel together and a window can never be decoded against one
+-- patch's table and another's cache sizes.
+data ActiveTable = ActiveTable
+  { activeCodeTable   :: !Table.CodeTable
+  , activeCacheConfig :: !AddressCacheConfig
+  }
+
+-- | The core's pairing: the RFC §5.6 default table with the default
+-- four-near / three-same cache configuration. In force for every patch
+-- that supplies no custom table.
+defaultActiveTable :: ActiveTable
+defaultActiveTable = ActiveTable Table.defaultCodeTable defaultAddressCacheConfig
+
+-- | Settle which table the windows decode against. With VCD_CODETABLE
+-- unset, the default pair. With it set, build the custom table from the
+-- header's data section — unless custom tables are forbidden here (the
+-- inner delta of a table being built), where the bit is the no-nesting
+-- refusal pointing at the table declaration, not the inner body.
+resolveActiveTable
+  :: CustomTablePolicy -> Word8 -> Maybe ByteString -> Either SlapError ResolvedTable
+resolveActiveTable tablePolicy headerIndicator maybeTableData
+  | testBit headerIndicator vcdCodeTableBit =
+      case tablePolicy of
+        CustomTablesForbidden ->
+          Left (UnsupportedVCDIFFShape VCDIFFNestedCustomCodeTable)
+        CustomTablesAllowed -> buildCustomTable maybeTableData
+  | otherwise =
+      Right ResolvedTable
+        { resolvedActiveTable = defaultActiveTable
+        , resolvedCustomTable = Nothing
+        , resolvedTableNotes  = []
+        }
+
+-- | Build a patch's custom code table from its data section (RFC 3284
+-- §7): peel the two cache-size bytes, decode the inner delta — itself a
+-- self-contained VCDIFF patch — against the serialized default table,
+-- read the 1536-byte result back into a table, and check the one thing
+-- the image alone could not (a COPY mode the declared caches do not
+-- reach). Yields the 'ResolvedTable' the windows decode against — the
+-- built table paired with its cache config, the same table as the
+-- classifier's RFC signal, and any do-nothing-entry advisory. Everything
+-- from the inner decode onward — the inner-delta parse and apply, the
+-- read-back, the mode check — is wrapped with the custom-code-table
+-- context so its precision survives; only the cache-size peel, which
+-- fails before any of that, keeps its own bare error.
+buildCustomTable :: Maybe ByteString -> Either SlapError ResolvedTable
+buildCustomTable maybeTableData = do
+  (config, innerDelta) <- peelCodeTableHeader maybeTableData
+  image <- decodeInnerTableImage innerDelta
+  table <- wrapTableDecode (Table.deserializeCodeTable image)
+  wrapTableDecode (checkCustomTableCopyModes config table)
+  Right ResolvedTable
+    { resolvedActiveTable = ActiveTable table config
+    , resolvedCustomTable = Just table
+    , resolvedTableNotes  = noopNoopAdvisories table
+    }
+  where
+    wrapTableDecode = either (Left . VCDIFFCustomCodeTableDecodeFailed) Right
+
+-- | Peel the two cache-size bytes (@s_near@, @s_same@) off the front of
+-- the code-table data, leaving the inner delta. The data must hold at
+-- least those two bytes (RFC 3284 §7); fewer cannot name a cache
+-- configuration at all, so it is 'VCDIFFCodeTableHeaderTooShort'.
+peelCodeTableHeader
+  :: Maybe ByteString -> Either SlapError (AddressCacheConfig, ByteString)
+peelCodeTableHeader (Just tableData)
+  | ByteString.length tableData >= 2 =
+      Right ( AddressCacheConfig
+                (fromIntegral (ByteString.index tableData 0))
+                (fromIntegral (ByteString.index tableData 1))
+            , ByteString.drop 2 tableData )
+peelCodeTableHeader _ =
+  Left (MalformedVCDIFFCodeTable VCDIFFCodeTableHeaderTooShort)
+
+-- | Decode a custom table's inner delta against the serialized default
+-- table, yielding the raw image 'Table.deserializeCodeTable' reads
+-- back. The inner delta is a self-contained VCDIFF patch (RFC 3284 §7),
+-- so this reuses slap's own parse and apply rather than a second
+-- decoder — parsed with custom tables forbidden, so a nested table
+-- surfaces as its own 'VCDIFFNestedCustomCodeTable' (pointing at the
+-- header), while every other inner parse or apply failure is wrapped
+-- with the custom-code-table context.
+decodeInnerTableImage :: ByteString -> Either SlapError ByteString
+decodeInnerTableImage innerDelta =
+  case parseVCDIFFWith CustomTablesForbidden (PatchFileContents innerDelta) of
+    Left nested@(UnsupportedVCDIFFShape VCDIFFNestedCustomCodeTable) -> Left nested
+    Left innerError -> Left (VCDIFFCustomCodeTableDecodeFailed innerError)
+    Right (Parsed innerPatch _innerNotes) ->
+      case applyVCDIFF innerPatch (InputFileContents defaultTableImage) of
+        Left innerError                  -> Left (VCDIFFCustomCodeTableDecodeFailed innerError)
+        Right (OutputFileContents image) -> Right image
+  where
+    defaultTableImage = Table.serializeCodeTable Table.defaultCodeTable
+
+-- | Reject any COPY template in the built table whose address mode the
+-- declared caches do not reach — the cache-dependent check
+-- 'Table.deserializeCodeTable' deliberately defers (it carries the mode
+-- verbatim). The admissible band is exactly the one
+-- 'classifyAddressMode' uses at decode, consulted here so the eager
+-- check and the decode-time check cannot drift
+-- (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
+checkCustomTableCopyModes
+  :: AddressCacheConfig -> Table.CodeTable -> Either SlapError ()
+checkCustomTableCopyModes config table =
+  traverse_ checkTemplate
+    (concatMap bothTemplates (Vector.toList (Table.codeTableEntries table)))
+  where
+    bothTemplates entry = [Table.firstTemplate entry, Table.secondTemplate entry]
+    checkTemplate (Table.Copy _ (Table.CopyAddressMode mode))
+      | isNothing (classifyAddressMode config mode) =
+          Left (MalformedVCDIFFCodeTable
+                  (VCDIFFCodeTableCopyModeOutOfRange mode (highestValidAddressMode config)))
+    checkTemplate _ = Right ()
+
+-- | The highest COPY address mode the caches reach: SELF (0), HERE (1),
+-- the @s_near@ near modes, then the @s_same@ same modes — so
+-- @2 + s_near + s_same - 1@. Shares the band arithmetic with
+-- 'classifyAddressMode'.
+highestValidAddressMode :: AddressCacheConfig -> Int
+highestValidAddressMode config = 1 + nearSlotCount config + sameBlockCount config
+
+-- | A presence advisory if the built table holds any do-nothing
+-- (NOOP-then-NOOP) entry, or none. Legal but remarkable — the default
+-- table has no such entry, so one means the table was deliberately
+-- shaped to carry it (docs/vcdiff/rfc-vcdiff/questions.md, "invalid
+-- decoded-table entries").
+noopNoopAdvisories :: Table.CodeTable -> [SlapAdvisory]
+noopNoopAdvisories table =
+  [ VCDIFFCustomTableNoopNoopEntries doNothingCount | doNothingCount > 0 ]
+  where
+    doNothingCount =
+      length [ () | entry <- Vector.toList (Table.codeTableEntries table)
+                  , Table.firstTemplate  entry == Table.Noop
+                  , Table.secondTemplate entry == Table.Noop ]
 
 -- | Resolve a framed compressor id against the catalog. An id the
 -- catalog does not name is the decline shape — slap does not know
@@ -456,30 +656,31 @@ data DecodedWindow = DecodedWindow
 --     window exercises it, because xdelta3's catalog is the only
 --     registry of compressor ids there is), an application header, or
 --     any window's Adler32 is enough.
---   * an RFC-exclusive feature, no xdelta3 extension → 'PatchRFC' with
---     the default code table ('Nothing'), which is the whole truth for a
---     VCD_TARGET-only patch. A produced-target window is that signal
---     today; the custom code table joins it next.
+--   * an RFC-exclusive feature, no xdelta3 extension → 'PatchRFC',
+--     carrying the custom code table when there was one ('Nothing' for a
+--     VCD_TARGET-only patch). Either a produced-target window or a custom
+--     code table is that signal.
 --   * neither → 'PatchCoreOnly', decoding identically under either
 --     flavor (docs/vcdiff/xdelta3/spec.md "Classification").
 --   * both → refused. The patch is neither dialect — RFC 3284 defines
---     no xdelta3 extension and xdelta3 refuses VCD_TARGET — so slap,
---     which reads only those two, declines, naming the xdelta3 extension
---     it found. The Adler32 reaches this verdict read and used, never
---     dropped: the type forbids carrying it into a 'PatchRFC' at all.
+--     no xdelta3 extension and xdelta3 refuses both RFC-exclusive
+--     features — so slap, which reads only those two dialects, declines,
+--     naming the RFC feature and the xdelta3 extension it found. The
+--     Adler32 reaches this verdict read and used, never dropped: the
+--     type forbids carrying it into a 'PatchRFC' at all.
 --
--- The mixed case is an explicit 'Left' with no wildcard, so when the
--- custom code table lands as a second RFC-exclusive signal the compiler
--- points here.
+-- The mixed case is an explicit 'Left' with no wildcard; both halves of
+-- the two RFC-exclusive features are accounted for, so the compiler
+-- points here if a third signal is ever added.
 classifyFlavor
-  :: Maybe XDelta3SecondaryCompressor -> Maybe ByteString
+  :: Maybe Table.CodeTable -> Maybe XDelta3SecondaryCompressor -> Maybe ByteString
   -> Vector DecodedWindow -> Either SlapError VCDIFFPatch
-classifyFlavor declaredCompressor maybeAppHeader decodedWindows =
+classifyFlavor maybeCustomTable declaredCompressor maybeAppHeader decodedWindows =
   case (carriesXDelta3Extension, carriesRFCExclusiveFeature) of
-    (True,  True)  -> Left (VCDIFFTargetWindowWithXDelta3Feature presentXDelta3Feature)
+    (True,  True)  -> Left (VCDIFFRFCFeatureWithXDelta3Feature presentRFCFeature presentXDelta3Feature)
     (True,  False) -> Right (PatchXDelta3 (XDelta3Header maybeAppHeader declaredCompressor)
                                           (fmap toXDelta3Window decodedWindows))
-    (False, True)  -> Right (PatchRFC (RFCHeader Nothing) (fmap decodedWindowBody decodedWindows))
+    (False, True)  -> Right (PatchRFC (RFCHeader maybeCustomTable) (fmap decodedWindowBody decodedWindows))
     (False, False) -> Right (PatchCoreOnly (fmap decodedWindowBody decodedWindows))
   where
     carriesXDelta3Extension =
@@ -487,11 +688,19 @@ classifyFlavor declaredCompressor maybeAppHeader decodedWindows =
         || isJust maybeAppHeader
         || Vector.any (isJust . decodedWindowChecksum) decodedWindows
 
-    carriesRFCExclusiveFeature = Vector.any windowDrawsOnProducedTarget decodedWindows
+    carriesRFCExclusiveFeature = isJust maybeCustomTable || hasTargetWindow
+    hasTargetWindow = Vector.any windowDrawsOnProducedTarget decodedWindows
     windowDrawsOnProducedTarget decodedWindow =
       case windowSourceSegment (decodedWindowBody decodedWindow) of
         Just segment -> sourceSegmentOrigin segment == FromProducedTarget
         Nothing      -> False
+
+    -- Which RFC feature to name in the refusal; reached only when
+    -- 'carriesRFCExclusiveFeature' holds, so the final arm means the
+    -- custom code table is what made it true.
+    presentRFCFeature
+      | hasTargetWindow = RFCFeatureTargetWindow
+      | otherwise       = RFCFeatureCustomCodeTable
 
     -- Which extension to name in the refusal, in detection priority;
     -- reached only when 'carriesXDelta3Extension' holds, so the final
@@ -526,12 +735,13 @@ vetWindowFraming rawWindow
   where
     windowIndicator = rawWindowIndicator rawWindow
 
--- | Decode one resolved window's instruction stream. The
--- 'ResolvedWindow' proof is what lets the body read the sections as
--- plain bytes without checking — the instruction decode never learns
--- that compression existed.
-decodeWindow :: ResolvedWindow -> Either SlapError DecodedWindow
-decodeWindow (ResolvedWindow rawWindow) = do
+-- | Decode one resolved window's instruction stream against the active
+-- code table — the default pair for an ordinary patch, the built pair
+-- for one carrying a custom table. The 'ResolvedWindow' proof is what
+-- lets the body read the sections as plain bytes without checking — the
+-- instruction decode never learns that compression existed.
+decodeWindow :: ActiveTable -> ResolvedWindow -> Either SlapError DecodedWindow
+decodeWindow activeTable (ResolvedWindow rawWindow) = do
   let -- The window's two copy-source bits are mutually exclusive
       -- ('vetWindowFraming' rejects both at once), so the VCD_TARGET bit
       -- alone decides which side a present segment is cut from.
@@ -546,6 +756,7 @@ decodeWindow (ResolvedWindow rawWindow) = do
         <$> rawSourceSegment rawWindow
       segmentLength = maybe mempty rawSegmentLength (rawSourceSegment rawWindow)
   instructions <- decodeWindowInstructions
+                    activeTable
                     segmentLength
                     (rawTargetSize rawWindow)
                     (rawDataSection rawWindow)
@@ -766,20 +977,21 @@ emitInstruction instruction outputSize decodeState = decodeState
 -- section; RUN takes its fill byte; COPY decodes its absolute
 -- superstring offset through the address cache.
 decodeWindowInstructions
-  :: Length       -- ^ source-segment length, @len(S)@
+  :: ActiveTable  -- ^ the active code table and cache configuration
+  -> Length       -- ^ source-segment length, @len(S)@
   -> FileSize     -- ^ declared target-window size
   -> ByteString   -- ^ data section
   -> ByteString   -- ^ instruction section
   -> ByteString   -- ^ address section
   -> Either SlapError (Vector VCDIFFInstruction)
-decodeWindowInstructions segmentLength targetWindowSize dataSection instSection addrSection =
+decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection instSection addrSection =
   evalStateT walkInstructionSection initialState
   where
     initialState = DecodeState
       { instCursor       = InstructionSectionCursor (Offset 0)
       , dataCursor       = DataSectionCursor (Offset 0)
       , addrCursor       = AddressSectionCursor (Offset 0)
-      , addressCache     = freshAddressCache defaultAddressCacheConfig
+      , addressCache     = freshAddressCache (activeCacheConfig activeTable)
       , producedBytes    = mempty
       , instructionIndex = firstAction
       , emittedReversed  = []
@@ -838,7 +1050,7 @@ decodeWindowInstructions segmentLength targetWindowSize dataSection instSection 
     decodeTableEntry :: WindowDecode ()
     decodeTableEntry = do
       codeByte <- nextInstructionByte
-      let entry = Table.codeTableEntries Table.defaultCodeTable
+      let entry = Table.codeTableEntries (activeCodeTable activeTable)
                     Vector.! fromIntegral codeByte
       applyTemplate (Table.firstTemplate entry)
       applyTemplate (Table.secondTemplate entry)
