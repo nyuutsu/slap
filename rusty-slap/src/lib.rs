@@ -10,6 +10,7 @@ mod bps_suffix_sort;
 mod compress;
 mod crc32;
 mod vcdiff_diff;
+mod vcdiff_suffix_sort;
 mod xdelta1_diff;
 mod xdelta1_suffix_array;
 mod xdelta3_djw;
