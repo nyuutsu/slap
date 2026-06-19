@@ -48,6 +48,8 @@ import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           patchWindows)
+import Slap.VCDIFF.Create (createFromCover, coverToInstructions)
+import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
 import qualified Slap.XDelta1.Types as XDelta1
@@ -148,6 +150,13 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "ignores source (floor copies none)" prop_vcdiffIgnoresSource
       , testCase     "structure: one self-contained ADD window" vcdiffFloorStructure
       , testCase     "exact wire bytes for a two-byte target" vcdiffExactWireBytes
+      , testCase     "cover: copy from the source region round-trips" vcdiffSourceCopyRoundTrips
+      , testCase     "cover: copy from the produced target round-trips" vcdiffTargetCopyRoundTrips
+      , testCase     "cover: repeated-byte literal becomes RUN" vcdiffRunRoundTrips
+      , testCase     "cover: exact wire bytes with a COPY" vcdiffCopyExactWireBytes
+      , testCase     "cover: an overrunning COPY round-trips (run-length expansion)" vcdiffOverlapCopyRoundTrips
+      , testCase     "cover: ADD + RUN + two COPYs interleave and round-trip" vcdiffInterleavedRoundTrips
+      , testCase     "cover: instruction selection at the RUN/ADD boundary" vcdiffInstructionSelection
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -353,6 +362,145 @@ vcdiffExactWireBytes =
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch
+
+-- | Create a patch from a hand-built cover, parse it, apply it to the
+-- source, and assert the result is the target. The shared body of the
+-- cover round-trip cases below.
+assertCoverRoundTrips :: ByteString.ByteString -> ByteString.ByteString -> Cover -> Assertion
+assertCoverRoundTrips source target coverPlan =
+  case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
+    CreateResult patchContents _ -> case VCDIFF.parseVCDIFF patchContents of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parsed _parseWarnings) ->
+        assertEqual "cover round-trip"
+          (Right (OutputFileContents target))
+          (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | The load-bearing new path: a COPY that resolves into the source
+-- segment @S@. The target reuses a verbatim stretch of the source
+-- ("WORLD" out of "HELLOWORLD") and ends with a one-byte literal.
+vcdiffSourceCopyRoundTrips :: Assertion
+vcdiffSourceCopyRoundTrips =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "HELLOWORLD")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "WORLD!")
+      coverPlan = Cover
+        [ CoverCopy (Length 5) (Offset 5)       -- source[5..10) = "WORLD"
+        , CoverLiteral (Offset 5) (Length 1) ]  -- target[5] = "!"
+  in assertCoverRoundTrips source target coverPlan
+
+-- | A COPY addressing the produced-target region of @U@ (offset ≥ the
+-- source length): the target repeats an earlier stretch of itself, so
+-- the copy reads bytes this window already wrote, not the source. The
+-- source ("XY") is still declared as the segment but never read.
+vcdiffTargetCopyRoundTrips :: Assertion
+vcdiffTargetCopyRoundTrips =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "XY")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABAB")
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 2)    -- target[0..2) = "AB"
+        , CoverCopy (Length 2) (Offset 2) ]     -- U offset 2 = produced-target[0..2) = "AB"
+  in assertCoverRoundTrips source target coverPlan
+
+-- | A literal that is one byte repeated becomes a 'Run', not an 'Add' —
+-- asserted on the parsed instruction — and round-trips.
+vcdiffRunRoundTrips :: Assertion
+vcdiffRunRoundTrips =
+  let source = ByteString.empty
+      target = ByteString.replicate 4 0x41    -- "AAAA"
+      coverPlan = Cover [CoverLiteral (Offset 0) (Length 4)]
+  in case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
+       CreateResult patchContents _ -> case VCDIFF.parseVCDIFF patchContents of
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) -> do
+           case toList (patchWindows parsed) of
+             [window] -> case toList (windowInstructions window) of
+               [Run (Length 4) 0x41] -> pure ()
+               other                 -> assertFailure ("expected a single RUN, got " ++ show other)
+             other -> assertFailure ("expected exactly one window, got " ++ show (length other))
+           assertEqual "RUN round-trip"
+             (Right (OutputFileContents target))
+             (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | The exact bytes for a cover whose sole instruction is a COPY of the
+-- whole source, derived by hand from the layout — the VCD_SOURCE
+-- indicator, the two segment varints, the index-19 opcode, and the
+-- SELF-mode address in the address section. Pins the copying-window
+-- shape the way 'vcdiffExactWireBytes' pins the all-ADD floor, catching
+-- a segment-varint-order or address-section misroute a round-trip could
+-- hide.
+vcdiffCopyExactWireBytes :: Assertion
+vcdiffCopyExactWireBytes =
+  let source   = ByteString.pack [0x41, 0x42, 0x43, 0x44]   -- ABCD
+      target   = source
+      coverPlan = Cover [CoverCopy (Length 4) (Offset 0)]
+      expected = ByteString.pack
+        [ 0xD6, 0xC3, 0xC4   -- magic
+        , 0x00               -- version
+        , 0x00               -- Hdr_Indicator
+        , 0x01               -- Win_Indicator: VCD_SOURCE
+        , 0x04               -- source-segment length
+        , 0x00               -- source-segment position
+        , 0x08               -- delta-encoding length
+        , 0x04               -- target window size
+        , 0x00               -- Delta_Indicator
+        , 0x00               -- data-section length
+        , 0x02               -- instruction-section length
+        , 0x01               -- address-section length
+        , 0x13, 0x04         -- inst: COPY mode-0 size-coded, size 4
+        , 0x00 ]             -- addr: SELF address 0
+  in case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
+       CreateResult (PatchFileContents patch) _ ->
+         assertEqual "exact wire bytes (COPY)" expected patch
+
+-- | A COPY whose read overruns the write head — the run-length / overlap
+-- case the decoder expands byte by byte ('ExpandForward'). The target
+-- repeats a two-byte stretch of itself three times; the copy reads four
+-- bytes starting two before the head, so each freshly written byte feeds
+-- the read. This is the most intricate apply branch and the other cover
+-- cases never reach it (their copies stop at the head, not past it).
+vcdiffOverlapCopyRoundTrips :: Assertion
+vcdiffOverlapCopyRoundTrips =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "XY")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABABAB")
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 2)    -- target[0..2) = "AB"
+        , CoverCopy (Length 4) (Offset 2) ]     -- reads produced "AB", overruns, expands to "ABAB"
+  in assertCoverRoundTrips source target coverPlan
+
+-- | One window mixing every instruction kind — a non-repeated literal
+-- (ADD), a repeated literal (RUN), a source-region COPY, and a
+-- produced-target COPY — so the three section streams interleave and the
+-- address stream carries two independent SELF addresses. The strongest
+-- check that 'layoutSections' keeps the streams in step.
+vcdiffInterleavedRoundTrips :: Assertion
+vcdiffInterleavedRoundTrips =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "HELLO")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "XYZZHEXY")
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 2)    -- "XY" -> ADD (not repeated)
+        , CoverLiteral (Offset 2) (Length 2)    -- "ZZ" -> RUN (repeated, length 2)
+        , CoverCopy (Length 2) (Offset 0)       -- U offset 0 = source[0..2) = "HE"
+        , CoverCopy (Length 2) (Offset 5) ]     -- U offset 5 = produced-target[0..2) = "XY"
+  in assertCoverRoundTrips source target coverPlan
+
+-- | Instruction selection pinned directly on 'coverToInstructions',
+-- across the RUN/ADD boundary: a one-byte literal stays an ADD, a
+-- two-byte repeated literal is the smallest RUN, a two-byte non-repeated
+-- literal stays an ADD, and a copy passes straight through to COPY.
+vcdiffInstructionSelection :: Assertion
+vcdiffInstructionSelection =
+  let target = ByteString.pack [0x41, 0x42, 0x42, 0x43, 0x44]   -- "A" "BB" "CD"
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 1)   -- "A"  -> Add (length 1, not "repeated")
+        , CoverLiteral (Offset 1) (Length 2)   -- "BB" -> Run 2 (the smallest RUN)
+        , CoverLiteral (Offset 3) (Length 2)   -- "CD" -> Add (length 2, not repeated)
+        , CoverCopy (Length 4) (Offset 7) ]    -- passes through unchanged
+  in assertEqual "cover instruction selection"
+       [ Add (ByteString.pack [0x41])
+       , Run (Length 2) 0x42
+       , Add (ByteString.pack [0x43, 0x44])
+       , Copy (Length 4) (Offset 7) ]
+       (coverToInstructions target coverPlan)
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->
