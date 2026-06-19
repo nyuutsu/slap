@@ -3,13 +3,14 @@
 -- | VCDIFF patch creation: a cover of the target serialized to wire
 -- bytes.
 --
--- Creation has two halves. A /matcher/ (a later, Rust-backed stage)
--- segments the target into copies and literals — a 'Cover'. This module
--- is the other half: it turns a cover into a VCDIFF patch. It does not
--- find anything; 'createRFCVCDIFF' feeds it the one degenerate cover
--- (the whole target as a single literal), which copies nothing and
--- reproduces the original bedrock floor byte-for-byte, while tests feed
--- it hand-built covers that exercise the full COPY/ADD/RUN path.
+-- Creation has two halves. A /matcher/ ('Slap.VCDIFF.FFI.vcdiffCover',
+-- Rust-backed) segments the target into copies and literals — a
+-- 'Cover'. This module is the other half: it turns a cover into a
+-- VCDIFF patch. 'createRFCVCDIFF' runs the matcher and serializes its
+-- cover; when the matcher finds nothing the cover is all-literal and
+-- the bytes are the bedrock floor's exactly. Tests also feed
+-- 'createFromCover' hand-built covers directly, exercising the full
+-- COPY/ADD/RUN path independently of what the matcher happens to find.
 --
 -- The emitted patch reaches for no flavor-distinguishing feature, so it
 -- parses back as 'Slap.VCDIFF.Types.PatchCoreOnly', not @PatchRFC@. That
@@ -36,6 +37,7 @@ module Slap.VCDIFF.Create
 
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
+import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
 import Slap.Status (SlapError, CreateResult(..))
 import Slap.Measure (Offset(..), Length(..), byteLength)
@@ -47,22 +49,19 @@ import Data.ByteString.Builder (Builder, byteString, word8, toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Word (Word8)
 
--- | Create a VCDIFF patch reconstructing @target@. The degenerate cover
--- — the whole target as one literal — copies nothing from the source,
--- so the patch is self-contained and reconstructs the target whatever
--- it is applied against; the 'Either' is shape-symmetry with the other
--- @create*@ entries, whose richer encoders can fail. No metadata, no
--- advisories.
+-- | Create a VCDIFF patch reconstructing @target@. The cover comes from
+-- the matcher ('Slap.VCDIFF.FFI.vcdiffCover'), so the patch copies
+-- runs the target shares with the source or with itself. When the
+-- matcher finds nothing — an unrelated source, a target shorter than
+-- the minimum match — it returns an all-literal cover and the bytes are
+-- the bedrock floor's exactly, so the degenerate case is still reached,
+-- just no longer hard-coded. The 'Either' is shape-symmetry with the
+-- other @create*@ entries, whose richer encoders can fail. No metadata,
+-- no advisories.
 createRFCVCDIFF :: InputFileContents -> OutputFileContents
                 -> Either SlapError CreateResult
-createRFCVCDIFF inputContents outputContents@(OutputFileContents target) =
-  Right (createFromCover inputContents outputContents (wholeTargetCover target))
-
--- | The degenerate cover: the entire target as a single literal,
--- copying nothing. Run through 'createFromCover' it reproduces the
--- bedrock floor exactly.
-wholeTargetCover :: ByteString -> Cover
-wholeTargetCover target = Cover [CoverLiteral (Offset 0) (byteLength target)]
+createRFCVCDIFF inputContents outputContents =
+  Right (createFromCover inputContents outputContents (vcdiffCover inputContents outputContents))
 
 -- | Serialize a cover of @target@ against @source@ into a VCDIFF patch.
 -- Total: the cover is the contract, and a well-formed cover always

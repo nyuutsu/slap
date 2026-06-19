@@ -50,6 +50,7 @@ import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           patchWindows)
 import Slap.VCDIFF.Create (createFromCover, coverToInstructions)
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
+import Slap.VCDIFF.FFI (vcdiffCover)
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
 import qualified Slap.XDelta1.Types as XDelta1
@@ -146,10 +147,13 @@ roundTripTests = testGroup "RoundTrip"
       [ testProperty "round-trip" prop_ups
       ]
   , testGroup "VCDIFF"
-      [ testProperty "round-trip"                       prop_vcdiff
-      , testProperty "ignores source (floor copies none)" prop_vcdiffIgnoresSource
-      , testCase     "structure: one self-contained ADD window" vcdiffFloorStructure
-      , testCase     "exact wire bytes for a two-byte target" vcdiffExactWireBytes
+      [ testProperty "round-trip (through the matcher)"  prop_vcdiff
+      , testCase     "matcher: a real diff round-trips and shrinks below the floor" vcdiffRealDiffShrinks
+      , testCase     "matcher: several copies and literals survive the FFI crossing" vcdiffMatcherMultipleCopies
+      , testCase     "matcher: agrees with a hand-built greedy cover" vcdiffMatcherAgreesWithHandBuiltCover
+      , testCase     "matcher: a match-free pair falls back to the floor bytes" vcdiffFloorReachableThroughMatcher
+      , testCase     "emitter: one self-contained ADD window (all-literal cover)" vcdiffFloorStructure
+      , testCase     "emitter: exact wire bytes for a two-byte target" vcdiffExactWireBytes
       , testCase     "cover: copy from the source region round-trips" vcdiffSourceCopyRoundTrips
       , testCase     "cover: copy from the produced target round-trips" vcdiffTargetCopyRoundTrips
       , testCase     "cover: repeated-byte literal becomes RUN" vcdiffRunRoundTrips
@@ -299,9 +303,12 @@ prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
             === Right (OutputFileContents target)
 
 -- | The load-bearing test: a created VCDIFF patch, parsed and applied
--- to the source, reconstructs the target exactly.
+-- to the source, reconstructs the target exactly — now through the
+-- matcher. Input size is bounded ('scale'): the 02b matcher is a naive
+-- quadratic scan, and there is no input it must be fast on until the
+-- suffix-array matcher (02c) replaces it and the bound can lift.
 prop_vcdiff :: Property
-prop_vcdiff = forAll genPair $ \(source, target) ->
+prop_vcdiff = forAll (scale (min 16) genPair) $ \(source, target) ->
   case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
     Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
     Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
@@ -309,30 +316,107 @@ prop_vcdiff = forAll genPair $ \(source, target) ->
       Right (Parsed parsed _parseWarnings) ->
         VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
 
--- | The floor copies nothing from the source, so its patch reconstructs
--- the target against /any/ source — including one of a different length.
--- This pins the deliberate source-independence of the bedrock encoder;
--- when source-aware diffing lands, this property is expected to change.
-prop_vcdiffIgnoresSource :: Property
-prop_vcdiffIgnoresSource = forAll genPair $ \(source, target) ->
-  forAll genByteString $ \unrelatedSource ->
-    case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
-      Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
-      Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
-        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
-        Right (Parsed parsed _parseWarnings) ->
-          VCDIFF.applyVCDIFF parsed (InputFileContents unrelatedSource) === Right (OutputFileContents target)
+-- prop_vcdiffIgnoresSource is gone as of 02b. In the floor it was a
+-- tripwire: source-independence held only because the encoder read
+-- nothing of the source, and its own comment said it would fall when
+-- source-aware diffing arrived. The matcher now reads the source, so
+-- the property is false by design — this note is the record that the
+-- floor's deliberate blindness has ended.
 
--- | The floor's shape, asserted on the parsed result: a flavorless
--- 'PatchCoreOnly' (it reaches for no RFC- or xdelta3-specific feature),
--- exactly one window, that window self-contained (no source segment),
--- and its sole instruction a single ADD carrying the whole target.
+-- | A real diff — the target is the source with a small middle edit —
+-- round-trips through 'createRFCVCDIFF' AND emits fewer bytes than the
+-- all-literal floor for the same pair. The size drop is the proof the
+-- source was actually used; a round-trip alone would pass on a floor
+-- cover too.
+vcdiffRealDiffShrinks :: Assertion
+vcdiffRealDiffShrinks =
+  let source = ByteString.pack [0 .. 63]
+      target = ByteString.take 32 source
+            <> ByteString.pack [0xFF, 0xFE]
+            <> ByteString.drop 34 source
+  in case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult matchedPatch@(PatchFileContents matchedBytes) _) -> do
+         case VCDIFF.parseVCDIFF matchedPatch of
+           Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+           Right (Parsed parsed _parseWarnings) ->
+             assertEqual "real diff round-trips"
+               (Right (OutputFileContents target))
+               (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+         let CreateResult (PatchFileContents floorBytes) _ =
+               createFromCover (InputFileContents source) (OutputFileContents target)
+                               (Cover [CoverLiteral (Offset 0) (byteLength target)])
+         assertBool "matcher patch is smaller than the all-literal floor"
+           (ByteString.length matchedBytes < ByteString.length floorBytes)
+
+-- | A pair the matcher must cover with several segments of both kinds —
+-- a source-region COPY, a literal over the changed middle, and a second
+-- source-region COPY. Round-tripping proves the three parallel arrays
+-- marshal and unmarshal in order, not just for a single segment.
+vcdiffMatcherMultipleCopies :: Assertion
+vcdiffMatcherMultipleCopies =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGHIJKL")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABCD??IJKL")
+      segments = coverSegments (vcdiffCover (InputFileContents source) (OutputFileContents target))
+      isCopy    segment = case segment of CoverCopy{}    -> True; CoverLiteral{} -> False
+      isLiteral segment = case segment of CoverLiteral{} -> True; CoverCopy{}    -> False
+  in do
+    assertBool "cover has multiple segments"            (length segments > 1)
+    assertBool "cover has both a copy and a literal"
+      (any isCopy segments && any isLiteral segments)
+    case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+      Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+      Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+        Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+        Right (Parsed parsed _parseWarnings) ->
+          assertEqual "multi-segment cover round-trips"
+            (Right (OutputFileContents target))
+            (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | The matcher's output pinned against a hand-computed greedy cover,
+-- independent of round-trip — so 02c's suffix-array matcher has a
+-- behavioural reference, not only a does-it-apply check. The greedy walk
+-- over target "ABCDEFGHZZ" against source "ABCDEFGH" takes the whole
+-- eight-byte source match, then the trailing "ZZ" (no earlier
+-- occurrence, and under the four-byte floor) as a literal.
+vcdiffMatcherAgreesWithHandBuiltCover :: Assertion
+vcdiffMatcherAgreesWithHandBuiltCover =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGH")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABCDEFGHZZ")
+  in assertEqual "matcher cover matches the hand-built greedy cover"
+       (Cover [ CoverCopy (Length 8) (Offset 0)
+              , CoverLiteral (Offset 8) (Length 2) ])
+       (vcdiffCover (InputFileContents source) (OutputFileContents target))
+
+-- | A match-free pair (no run of at least the minimum match in common)
+-- drives the live path to the all-literal cover, so 'createRFCVCDIFF'
+-- emits the floor's exact bytes — the floor is still reached, just no
+-- longer hard-coded. Shown by equality with 'createFromCover' on the
+-- explicit all-literal cover.
+vcdiffFloorReachableThroughMatcher :: Assertion
+vcdiffFloorReachableThroughMatcher =
+  let source = ByteString.pack [0x01, 0x02, 0x03]
+      target = ByteString.pack [0x10, 0x11, 0x12, 0x13]
+      CreateResult (PatchFileContents floorBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target)
+                        (Cover [CoverLiteral (Offset 0) (byteLength target)])
+  in case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult (PatchFileContents liveBytes) _) ->
+         assertEqual "live path falls back to the floor bytes" floorBytes liveBytes
+
+-- | The emitter's shape on an all-literal cover, asserted on the parsed
+-- result: a flavorless 'PatchCoreOnly' (it reaches for no RFC- or
+-- xdelta3-specific feature), exactly one window, that window
+-- self-contained (no source segment), and its sole instruction a single
+-- ADD carrying the whole target. Driven through 'createFromCover' so it
+-- tests the emitter, not whatever the matcher happens to find.
 vcdiffFloorStructure :: Assertion
 vcdiffFloorStructure =
   let target = ByteString.pack [0x41, 0x42, 0x43, 0x44]
-  in case createRFCVCDIFF (InputFileContents ByteString.empty) (OutputFileContents target) of
-       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
-       Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      allLiteralCover = Cover [CoverLiteral (Offset 0) (byteLength target)]
+  in case createFromCover (InputFileContents ByteString.empty) (OutputFileContents target) allLiteralCover of
+       CreateResult patch _ -> case VCDIFF.parseVCDIFF patch of
          Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
          Right (Parsed parsed _parseWarnings) -> do
            case parsed of
@@ -346,21 +430,23 @@ vcdiffFloorStructure =
                  other         -> assertFailure ("expected a single ADD, got " ++ show other)
              other    -> assertFailure ("expected exactly one window, got " ++ show (length other))
 
--- | The exact bytes for @target = "AB"@, derived by hand from the wire
--- layout rather than from the encoder, so a varint-endianness or
--- section-ordering bug a round-trip could hide (create and apply sharing
--- a symmetric mistake) is caught here. Magic, version 00, Hdr_Indicator
--- 00; window: Win_Indicator 00, delta-encoding-length 09, target size
--- 02, Delta_Indicator 00, A 02, I 02, C 00, data @41 42@, inst @01 02@
--- (ADD-coded index 1, then coded size 2), no addr.
+-- | The exact bytes for @target = "AB"@ through an all-literal cover,
+-- derived by hand from the wire layout rather than from the encoder, so
+-- a varint-endianness or section-ordering bug a round-trip could hide
+-- (create and apply sharing a symmetric mistake) is caught here. Magic,
+-- version 00, Hdr_Indicator 00; window: Win_Indicator 00,
+-- delta-encoding-length 09, target size 02, Delta_Indicator 00, A 02,
+-- I 02, C 00, data @41 42@, inst @01 02@ (ADD-coded index 1, then coded
+-- size 2), no addr. Driven through 'createFromCover' so it pins the
+-- emitter, not the matcher's incidental behaviour on this input.
 vcdiffExactWireBytes :: Assertion
 vcdiffExactWireBytes =
-  let expected = ByteString.pack
+  let target = ByteString.pack [0x41, 0x42]
+      allLiteralCover = Cover [CoverLiteral (Offset 0) (byteLength target)]
+      expected = ByteString.pack
         [0xD6, 0xC3, 0xC4, 0x00, 0x00, 0x00, 0x09, 0x02, 0x00, 0x02, 0x02, 0x00, 0x41, 0x42, 0x01, 0x02]
-  in case createRFCVCDIFF (InputFileContents (ByteString.pack [0x99]))
-                          (OutputFileContents (ByteString.pack [0x41, 0x42])) of
-       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
-       Right (CreateResult (PatchFileContents patch) _) ->
+  in case createFromCover (InputFileContents ByteString.empty) (OutputFileContents target) allLiteralCover of
+       CreateResult (PatchFileContents patch) _ ->
          assertEqual "exact wire bytes" expected patch
 
 -- | Create a patch from a hand-built cover, parse it, apply it to the

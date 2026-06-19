@@ -9,6 +9,7 @@ mod bps_diff;
 mod bps_suffix_sort;
 mod compress;
 mod crc32;
+mod vcdiff_diff;
 mod xdelta1_diff;
 mod xdelta1_suffix_array;
 mod xdelta3_djw;
@@ -257,6 +258,72 @@ fn split_to_parallel_arrays(
         lengths.extend_from_slice(&instruction.length.to_le_bytes());
     }
     (targets, source_offsets, lengths)
+}
+
+// ── VCDIFF cover FFI ──────────────────────────────────────────────────
+
+/// Compute a VCDIFF cover for a (source, target) pair — the naive
+/// greedy segmentation into copies and literals. Rust allocates the
+/// three parallel arrays; the caller frees each with [`rusty_free`].
+///
+/// Returns 0 unconditionally — the cover is total (every input yields
+/// one, the empty target included). The `i32` slot keeps the FFI
+/// return-type discipline uniform with [`rusty_bps_diff`].
+///
+/// The cover crosses as three parallel homogeneous arrays sharing the
+/// segment count N: one `kind` byte per segment (0 = literal, 1 =
+/// copy); one `u64` LE `offset` per segment (a copy's absolute `U`
+/// offset, a literal's target offset); one `u64` LE `length` per
+/// segment. The offset and length buffers are 8N bytes.
+///
+/// # Safety
+/// Buffer pointers follow rusty-slap's existing convention (see
+/// [`view_caller_buffer`] / [`surface_buffer_to_caller`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rusty_vcdiff_cover(
+    source_address:          *const u8,
+    source_length:           usize,
+    target_address:          *const u8,
+    target_length:           usize,
+    kinds_address_pointer:   *mut *mut u8,
+    kinds_length_pointer:    *mut usize,
+    offsets_address_pointer: *mut *mut u8,
+    offsets_length_pointer:  *mut usize,
+    lengths_address_pointer: *mut *mut u8,
+    lengths_length_pointer:  *mut usize,
+) -> i32 {
+    let source = unsafe { view_caller_buffer(source_address, source_length) };
+    let target = unsafe { view_caller_buffer(target_address, target_length) };
+    let cover  = vcdiff_diff::vcdiff_cover(source, target);
+    let (kinds, offsets, lengths) = split_cover_to_parallel_arrays(&cover);
+    unsafe {
+        surface_buffer_to_caller(kinds,   kinds_address_pointer,   kinds_length_pointer);
+        surface_buffer_to_caller(offsets, offsets_address_pointer, offsets_length_pointer);
+        surface_buffer_to_caller(lengths, lengths_address_pointer, lengths_length_pointer);
+    }
+    0
+}
+
+/// Project a cover into three parallel homogeneous byte buffers — one
+/// `kind` byte, one LE `u64` offset, and one LE `u64` length per
+/// segment. The inverse zip happens on the Haskell side in
+/// `Slap.VCDIFF.FFI`. Sibling to [`split_to_parallel_arrays`].
+fn split_cover_to_parallel_arrays(
+    cover: &[vcdiff_diff::CoverSegment],
+) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let segment_count = cover.len();
+    let mut kinds   = Vec::with_capacity(segment_count);
+    let mut offsets = Vec::with_capacity(segment_count * 8);
+    let mut lengths = Vec::with_capacity(segment_count * 8);
+    for segment in cover {
+        kinds.push(match segment.kind {
+            vcdiff_diff::SegmentKind::Literal => 0,
+            vcdiff_diff::SegmentKind::Copy    => 1,
+        });
+        offsets.extend_from_slice(&segment.offset.to_le_bytes());
+        lengths.extend_from_slice(&segment.length.to_le_bytes());
+    }
+    (kinds, offsets, lengths)
 }
 
 // ── Free ──────────────────────────────────────────────────────────────

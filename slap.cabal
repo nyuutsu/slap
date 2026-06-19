@@ -113,6 +113,7 @@ library slap-internal
     , Slap.VCDIFF.Describe
     , Slap.VCDIFF.Cover
     , Slap.VCDIFF.Create
+    , Slap.VCDIFF.FFI
     , Slap.XDelta1.Apply
     , Slap.XDelta1.Create
     , Slap.XDelta1.Describe

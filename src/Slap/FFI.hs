@@ -14,14 +14,16 @@ module Slap.FFI
   , withByteString
   , readByteString
   , readText
+  , readWord64LE
   ) where
 
+import Data.Bits ((.|.), shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Unsafe as UnsafeByteString
 import Data.Text (Text)
 import qualified Data.Text.Encoding as TextEncoding
-import Data.Word (Word8, Word32)
+import Data.Word (Word8, Word32, Word64)
 import Foreign.C.Types (CSize(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
@@ -108,3 +110,20 @@ readText :: Ptr (Ptr Word8) -> Ptr CSize -> IO Text
 readText addressPointer lengthPointer = do
   messageBytes <- readByteString addressPointer lengthPointer
   pure (TextEncoding.decodeUtf8Lenient messageBytes)
+
+-- | Read a little-endian 'Word64' from @offset@ in a buffer — the
+-- decode side of an @x.to_le_bytes()@ element in a rusty-slap parallel
+-- u64 array. The bindings that unmarshal those arrays
+-- ('Slap.XDelta1.FFI', 'Slap.VCDIFF.FFI') share this rather than each
+-- re-spelling the eight shifts.
+readWord64LE :: ByteString -> Int -> Word64
+readWord64LE buffer offset =
+  let byteAt index = fromIntegral (ByteString.index buffer (offset + index)) :: Word64
+  in       byteAt 0
+    .|. (byteAt 1 `shiftL` 8)
+    .|. (byteAt 2 `shiftL` 16)
+    .|. (byteAt 3 `shiftL` 24)
+    .|. (byteAt 4 `shiftL` 32)
+    .|. (byteAt 5 `shiftL` 40)
+    .|. (byteAt 6 `shiftL` 48)
+    .|. (byteAt 7 `shiftL` 56)

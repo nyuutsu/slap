@@ -17,11 +17,10 @@ module Slap.XDelta1.FFI
   , xdelta1Diff
   ) where
 
-import Data.Bits ((.|.), shiftL)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Text (Text)
-import Data.Word (Word8, Word64)
+import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
@@ -31,7 +30,7 @@ import System.IO.Unsafe (unsafeDupablePerformIO)
 import Slap.Display.Common (renderAsText)
 import Slap.Display.Primitives (padHex)
 import Slap.Status (SlapError(..), XDelta1DiffCause(..))
-import Slap.FFI (readByteString, readText, withByteString)
+import Slap.FFI (readByteString, readText, withByteString, readWord64LE)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import Slap.Measure (Offset(..), FileSize(..))
 import Slap.XDelta1.Types
@@ -178,15 +177,3 @@ decodeOffsetModeByte modeByte = case modeByte of
 ffiInvariantFailure :: Text -> SlapError
 ffiInvariantFailure detail =
   XDelta1DiffFailed (XDelta1DiffCause ("FFI invariant violation: " <> detail))
-
-readWord64LE :: ByteString -> Int -> Word64
-readWord64LE buffer offset =
-  let byteAt index = fromIntegral (ByteString.index buffer (offset + index)) :: Word64
-  in       byteAt 0
-    .|. (byteAt 1 `shiftL` 8)
-    .|. (byteAt 2 `shiftL` 16)
-    .|. (byteAt 3 `shiftL` 24)
-    .|. (byteAt 4 `shiftL` 32)
-    .|. (byteAt 5 `shiftL` 40)
-    .|. (byteAt 6 `shiftL` 48)
-    .|. (byteAt 7 `shiftL` 56)
