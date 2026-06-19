@@ -19,6 +19,7 @@ module Slap.Binary
   , putWord32LE
   , word32LEBytes
   , putByuuVarint
+  , putVcdiffVarint
   , putEdsioVarint
     -- * CRC-16
   , crc16
@@ -243,6 +244,25 @@ putByuuVarint = encode
           let lowBits = fromIntegral (value .&. 0x7F) :: Word8
               remaining = (value `shiftR` 7) - 1
           in word8 lowBits <> encode remaining
+
+-- | Encode a non-negative Int64 as a VCDIFF varint (RFC 3284 §2):
+-- big-endian base-128, most-significant 7-bit group first, with the
+-- high bit set on every byte but the last. The inverse of
+-- 'getVcdiffVarint', and emitting only the canonical (no leading
+-- zero-group) form, so zero is the single byte @0x00@. Non-negative by
+-- the same caller's-domain convention as 'putByuuVarint'.
+putVcdiffVarint :: Int64 -> Builder
+putVcdiffVarint value =
+  emitHighGroups (value `shiftR` 7) <> word8 (fromIntegral (value .&. 0x7F))
+  where
+    -- The groups above the final one, emitted most-significant first,
+    -- each carrying the continuation flag. Recurses into the higher
+    -- bits before emitting its own group, so the bytes land big-endian.
+    emitHighGroups remaining
+      | remaining == 0 = mempty
+      | otherwise =
+          emitHighGroups (remaining `shiftR` 7)
+          <> word8 (fromIntegral (remaining .&. 0x7F) .|. 0x80)
 
 -- | Payload bits carried per byte.
 edsioVarintBitsPerByte :: Int

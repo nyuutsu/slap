@@ -74,6 +74,7 @@ import Slap.NINJA2.Types (TextMode(..))
 import qualified Slap.NINJA2.Types as NINJA2
 import qualified Slap.NINJA2.Create as NINJA2
 import qualified Slap.GDIFF.Create as GDIFF
+import qualified Slap.VCDIFF.Create as VCDIFF
 import qualified Slap.XDelta1.Create as XDelta1
 import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..),
@@ -187,11 +188,11 @@ data DirectCreate
   deriving (Show, Eq, Enum, Bounded)
 
 -- | Differential creation target.  Formats slap can parse but not yet
--- create (VCDIFF, BSDiff) belong to DifferentialFormat (the
--- format taxonomy) but not here (slap's current creation capability).
+-- create (BSDiff) belong to DifferentialFormat (the format taxonomy)
+-- but not here (slap's current creation capability).
 data DifferentialCreate
   = CreateBPS | CreateUPS | CreateDPS | CreateNINJA2
-  | CreateAPSGBA | CreateGDIFF | CreateXDelta1
+  | CreateAPSGBA | CreateGDIFF | CreateXDelta1 | CreateRFCVCDIFF
   deriving (Show, Eq)
 
 -- | Target format for patch creation or conversion.
@@ -486,6 +487,7 @@ acceptedMetadataFields (CreateDifferential format) = case format of
   CreateGDIFF   -> Set.empty
   CreateXDelta1 -> Set.fromList [MetadataVerificationInclusion, MetadataPatchCompression,
                                  MetadataXDelta1FromName, MetadataXDelta1ToName]
+  CreateRFCVCDIFF -> Set.empty
 
 -- | The 'MetadataField's the user explicitly set on a
 -- 'RequestedPatchMetadata'. A 'Maybe' field counts as set when 'Just'.
@@ -582,6 +584,7 @@ acceptedConstraints (CreateDifferential format) = case format of
   CreateAPSGBA  -> Set.empty
   CreateGDIFF   -> Set.empty
   CreateXDelta1 -> Set.empty
+  CreateRFCVCDIFF -> Set.empty
 
 -- | Reject any constraint the user opted into that the target format
 -- doesn't honor. Same shape as 'rejectIncompatibleMetadata'.
@@ -1200,6 +1203,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
     NINJA2.createNINJA2 source target ninja2Meta
   CreateAPSGBA  -> APSGBA.createAPSGBA source target
   CreateGDIFF   -> GDIFF.createGDIFF source target
+  CreateRFCVCDIFF -> VCDIFF.createRFCVCDIFF source target
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
@@ -1399,6 +1403,7 @@ differentialFormatInfo CreateNINJA2  = FormatInfo ".rup"     "NINJA2"    LabelNI
 differentialFormatInfo CreateAPSGBA  = FormatInfo ".aps"     "APS (GBA)" LabelAPSGBA
 differentialFormatInfo CreateGDIFF   = FormatInfo ".gdiff"   "GDIFF"     LabelGDIFF
 differentialFormatInfo CreateXDelta1 = FormatInfo ".xdelta1" "XDelta1"   LabelXDelta1
+differentialFormatInfo CreateRFCVCDIFF = FormatInfo ".rfc-vcdiff" "VCDIFF" LabelVCDIFF
 
 directExtension :: DirectCreate -> String
 directExtension = formatInfoExtension . directFormatInfo

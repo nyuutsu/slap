@@ -44,6 +44,10 @@ import qualified Slap.GDIFF.Apply as GDIFF
 import qualified Slap.GDIFF.Create as GDIFF
 import qualified Slap.GDIFF.Parse as GDIFF
 import qualified Slap.GDIFF.Types as GDIFF
+import qualified Slap.VCDIFF.Apply as VCDIFF
+import qualified Slap.VCDIFF.Parse as VCDIFF
+import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
+                          patchWindows)
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
 import qualified Slap.XDelta1.Types as XDelta1
@@ -88,7 +92,7 @@ import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      VerificationInclusion(..),
                      convertDirect, emptyContents)
 import Slap.Create (createBPS, createUPS, createDPS, createNINJA2,
-                    createAPSGBA, createGDIFF, createXDelta1, createPatch)
+                    createAPSGBA, createGDIFF, createXDelta1, createRFCVCDIFF, createPatch)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
@@ -99,6 +103,7 @@ import Data.Bits (shiftL)
 import qualified Data.Bits as Bits
 import Data.ByteString.Builder (word8, byteString, toLazyByteString)
 import Data.List (isInfixOf)
+import Data.Foldable (toList)
 import Slap.Binary (getWord32BE)
 import qualified Data.Word as Word
 import Test.Tasty
@@ -137,6 +142,12 @@ roundTripTests = testGroup "RoundTrip"
       ]
   , testGroup "UPS"
       [ testProperty "round-trip" prop_ups
+      ]
+  , testGroup "VCDIFF"
+      [ testProperty "round-trip"                       prop_vcdiff
+      , testProperty "ignores source (floor copies none)" prop_vcdiffIgnoresSource
+      , testCase     "structure: one self-contained ADD window" vcdiffFloorStructure
+      , testCase     "exact wire bytes for a two-byte target" vcdiffExactWireBytes
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -277,6 +288,71 @@ prop_ups = forAll genUPSEncodeablePair $ \(source, target) ->
         Right (Parsed parsed _parseWarnings) ->
           fmap outcomeValue (UPS.applyUPS parsed (InputFileContents source))
             === Right (OutputFileContents target)
+
+-- | The load-bearing test: a created VCDIFF patch, parsed and applied
+-- to the source, reconstructs the target exactly.
+prop_vcdiff :: Property
+prop_vcdiff = forAll genPair $ \(source, target) ->
+  case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+    Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+    Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+      Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+      Right (Parsed parsed _parseWarnings) ->
+        VCDIFF.applyVCDIFF parsed (InputFileContents source) === Right (OutputFileContents target)
+
+-- | The floor copies nothing from the source, so its patch reconstructs
+-- the target against /any/ source — including one of a different length.
+-- This pins the deliberate source-independence of the bedrock encoder;
+-- when source-aware diffing lands, this property is expected to change.
+prop_vcdiffIgnoresSource :: Property
+prop_vcdiffIgnoresSource = forAll genPair $ \(source, target) ->
+  forAll genByteString $ \unrelatedSource ->
+    case createRFCVCDIFF (InputFileContents source) (OutputFileContents target) of
+      Left createError -> counterexample ("create: " ++ Text.unpack (renderSlapError createError)) $ property False
+      Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+        Left slapError -> counterexample ("parse: " ++ Text.unpack (renderSlapError slapError)) $ property False
+        Right (Parsed parsed _parseWarnings) ->
+          VCDIFF.applyVCDIFF parsed (InputFileContents unrelatedSource) === Right (OutputFileContents target)
+
+-- | The floor's shape, asserted on the parsed result: a flavorless
+-- 'PatchCoreOnly' (it reaches for no RFC- or xdelta3-specific feature),
+-- exactly one window, that window self-contained (no source segment),
+-- and its sole instruction a single ADD carrying the whole target.
+vcdiffFloorStructure :: Assertion
+vcdiffFloorStructure =
+  let target = ByteString.pack [0x41, 0x42, 0x43, 0x44]
+  in case createRFCVCDIFF (InputFileContents ByteString.empty) (OutputFileContents target) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult patch _) -> case VCDIFF.parseVCDIFF patch of
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) -> do
+           case parsed of
+             PatchCoreOnly _ -> pure ()
+             _               -> assertFailure "expected PatchCoreOnly"
+           case toList (patchWindows parsed) of
+             [window] -> do
+               assertEqual "window is self-contained" Nothing (windowSourceSegment window)
+               case toList (windowInstructions window) of
+                 [Add literal] -> assertEqual "ADD carries the whole target" target literal
+                 other         -> assertFailure ("expected a single ADD, got " ++ show other)
+             other    -> assertFailure ("expected exactly one window, got " ++ show (length other))
+
+-- | The exact bytes for @target = "AB"@, derived by hand from the wire
+-- layout rather than from the encoder, so a varint-endianness or
+-- section-ordering bug a round-trip could hide (create and apply sharing
+-- a symmetric mistake) is caught here. Magic, version 00, Hdr_Indicator
+-- 00; window: Win_Indicator 00, delta-encoding-length 09, target size
+-- 02, Delta_Indicator 00, A 02, I 02, C 00, data @41 42@, inst @01 02@
+-- (ADD-coded index 1, then coded size 2), no addr.
+vcdiffExactWireBytes :: Assertion
+vcdiffExactWireBytes =
+  let expected = ByteString.pack
+        [0xD6, 0xC3, 0xC4, 0x00, 0x00, 0x00, 0x09, 0x02, 0x00, 0x02, 0x02, 0x00, 0x41, 0x42, 0x01, 0x02]
+  in case createRFCVCDIFF (InputFileContents (ByteString.pack [0x99]))
+                          (OutputFileContents (ByteString.pack [0x41, 0x42])) of
+       Left createError -> assertFailureT ("create: " <> renderSlapError createError)
+       Right (CreateResult (PatchFileContents patch) _) ->
+         assertEqual "exact wire bytes" expected patch
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->

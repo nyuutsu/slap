@@ -900,6 +900,7 @@ createFormatTokens =
   , ("gdiff",   CreateDifferential CreateGDIFF,  Canonical)
   , ("xdelta1", CreateDifferential CreateXDelta1, Canonical)
   , ("xdelta",  CreateDifferential CreateXDelta1, Alias)
+  , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
   ]
 
 -- | The canonical create-format tokens 'parseCreateFormat'
