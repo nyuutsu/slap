@@ -169,6 +169,11 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "address modes: SAME emits a single address byte" vcdiffSameModeIsOneByte
       , testCase     "address modes: the address section shrinks below SELF-only" vcdiffAddressModesShrinkTheAddressSection
       , testProperty "address modes: encode/decode round-trip at large addresses" prop_vcdiffAddressModeRoundTrips
+      , testCase     "dense: combined ADD+COPY is one opcode for the pair" vcdiffCombinedAddCopyIsOneOpcode
+      , testCase     "dense: combined COPY+ADD is one opcode for the pair" vcdiffCombinedCopyAddIsOneOpcode
+      , testCase     "dense: a small lone ADD drops its size varint" vcdiffFixedSizeAddDropsVarint
+      , testCase     "dense: oversize ADD and COPY fall back to coded singles" vcdiffOversizeFallsBackToCoded
+      , testCase     "dense: the instruction section shrinks below coded-only" vcdiffDenseShrinksInstructionSection
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -443,16 +448,17 @@ vcdiffFloorStructure =
 -- a varint-endianness or section-ordering bug a round-trip could hide
 -- (create and apply sharing a symmetric mistake) is caught here. Magic,
 -- version 00, Hdr_Indicator 00; window: Win_Indicator 00,
--- delta-encoding-length 09, target size 02, Delta_Indicator 00, A 02,
--- I 02, C 00, data @41 42@, inst @01 02@ (ADD-coded index 1, then coded
--- size 2), no addr. Driven through 'createFromCover' so it pins the
--- emitter, not the matcher's incidental behaviour on this input.
+-- delta-encoding-length 08, target size 02, Delta_Indicator 00, A 02,
+-- I 01, C 00, data @41 42@, inst @03@ (ADD fixed-size-2, default index 3
+-- — the size rides in the opcode, so no size varint trails), no addr.
+-- Driven through 'createFromCover' so it pins the emitter, not the
+-- matcher's incidental behaviour on this input.
 vcdiffExactWireBytes :: Assertion
 vcdiffExactWireBytes =
   let target = ByteString.pack [0x41, 0x42]
       allLiteralCover = Cover [CoverLiteral (Offset 0) (byteLength target)]
       expected = ByteString.pack
-        [0xD6, 0xC3, 0xC4, 0x00, 0x00, 0x00, 0x09, 0x02, 0x00, 0x02, 0x02, 0x00, 0x41, 0x42, 0x01, 0x02]
+        [0xD6, 0xC3, 0xC4, 0x00, 0x00, 0x00, 0x08, 0x02, 0x00, 0x02, 0x01, 0x00, 0x41, 0x42, 0x03]
   in case createFromCover (InputFileContents ByteString.empty) (OutputFileContents target) allLiteralCover of
        CreateResult (PatchFileContents patch) _ ->
          assertEqual "exact wire bytes" expected patch
@@ -517,8 +523,8 @@ vcdiffRunRoundTrips =
 
 -- | The exact bytes for a cover whose sole instruction is a COPY of the
 -- whole source, derived by hand from the layout — the VCD_SOURCE
--- indicator, the two segment varints, the index-19 opcode, and the
--- SELF-mode address in the address section. Pins the copying-window
+-- indicator, the two segment varints, the index-20 fixed-size-4 opcode,
+-- and the SELF-mode address in the address section. Pins the copying-window
 -- shape the way 'vcdiffExactWireBytes' pins the all-ADD floor, catching
 -- a segment-varint-order or address-section misroute a round-trip could
 -- hide.
@@ -534,13 +540,13 @@ vcdiffCopyExactWireBytes =
         , 0x01               -- Win_Indicator: VCD_SOURCE
         , 0x04               -- source-segment length
         , 0x00               -- source-segment position
-        , 0x08               -- delta-encoding length
+        , 0x07               -- delta-encoding length
         , 0x04               -- target window size
         , 0x00               -- Delta_Indicator
         , 0x00               -- data-section length
-        , 0x02               -- instruction-section length
+        , 0x01               -- instruction-section length
         , 0x01               -- address-section length
-        , 0x13, 0x04         -- inst: COPY mode-0 size-coded, size 4
+        , 0x14               -- inst: COPY mode-0 fixed-size-4 (default index 20)
         , 0x00 ]             -- addr: SELF address 0
   in case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
        CreateResult (PatchFileContents patch) _ ->
@@ -593,26 +599,161 @@ vcdiffAddressModesShrinkTheAddressSection =
        assertBool "the address section is shorter than a SELF-only encoding"
          (addressSectionLength patch < selfOnlyAddressBytes)
 
--- | The byte length of the address section of a single-window VCDIFF
--- patch, the shape the encoder emits: walk the fixed header and the
--- window framing to the third section-length varint. Test-local, and it
--- assumes that one-window default-table shape.
-addressSectionLength :: ByteString.ByteString -> Int
-addressSectionLength patch = fst (readVarint afterInst)
+-- | The three section byte-slices — data, instructions, addresses — of a
+-- single-window VCDIFF patch, the shape the encoder emits: walk the fixed
+-- header and the window framing to the sections and cut each to its
+-- declared length. Test-local, and it assumes that one-window
+-- default-table shape.
+windowSections :: ByteString.ByteString
+               -> (ByteString.ByteString, ByteString.ByteString, ByteString.ByteString)
+windowSections patch =
+  ( slice sectionsStart dataLen
+  , slice (sectionsStart + dataLen) instLen
+  , slice (sectionsStart + dataLen + instLen) addrLen )
   where
     readVarint offset = case getVcdiffVarint offset patch of
       Right (VarintResult value consumed) -> (fromIntegral value, offset + consumed)
-      Left _ -> error "addressSectionLength: malformed varint in patch framing"
-    skipVarint   = snd . readVarint
+      Left _ -> error "windowSections: malformed varint in patch framing"
+    skipVarint       = snd . readVarint
+    slice offset len = ByteString.take len (ByteString.drop offset patch)
     afterHeader  = 5                              -- magic(3) + version(1) + Hdr_Indicator(1)
     winIndicator = ByteString.index patch afterHeader
     afterWin     = afterHeader + 1
     afterSegment = if winIndicator Bits..&. 0x03 /= 0  -- a copy-source bit: two segment varints follow
                      then skipVarint (skipVarint afterWin)
                      else afterWin
-    afterTarget  = skipVarint (skipVarint afterSegment)  -- delta-encoding length, then target size
-    afterData    = skipVarint (afterTarget + 1)          -- Delta_Indicator(1), then data length
-    afterInst    = skipVarint afterData                  -- instruction-section length
+    afterTarget             = skipVarint (skipVarint afterSegment)  -- delta-encoding length, then target size
+    (dataLen, afterDataLen) = readVarint (afterTarget + 1)          -- Delta_Indicator(1), then data length
+    (instLen, afterInstLen) = readVarint afterDataLen               -- instruction-section length
+    (addrLen, afterAddrLen) = readVarint afterInstLen               -- address-section length
+    sectionsStart           = afterAddrLen
+
+-- | The byte length of a single-window patch's address section, a
+-- projection of 'windowSections'.
+addressSectionLength :: ByteString.ByteString -> Int
+addressSectionLength patch = let (_, _, addr) = windowSections patch in ByteString.length addr
+
+-- | The number of target bytes one instruction produces — its ADD/RUN/
+-- COPY size — as the 'Length' a coded-size opcode would spell in a
+-- trailing size varint. Test-local, for sizing a coded-only baseline.
+instructionOutputLength :: VCDIFFInstruction -> Length
+instructionOutputLength (Add literal)       = byteLength literal
+instructionOutputLength (Run runLength _)   = runLength
+instructionOutputLength (Copy copyLength _) = copyLength
+
+-- | A small ADD immediately followed by a size-4 COPY is one combined
+-- opcode for the two, not two singles: the instruction section is exactly
+-- the one combined byte (index 163 = ADD(1)+COPY(4) mode 0, the COPY's
+-- cheapest mode here being SELF), with no size varints trailing. The
+-- ADD's literal still rides the data section and the COPY's operand the
+-- address section. Round-trips.
+vcdiffCombinedAddCopyIsOneOpcode :: Assertion
+vcdiffCombinedAddCopyIsOneOpcode =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCD")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ZABCD")
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 1)   -- "Z" -> ADD(1)
+        , CoverCopy (Length 4) (Offset 0) ]    -- source[0..4) = "ABCD", SELF mode 0
+      CreateResult (PatchFileContents patch) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+      (dataSec, instSec, addrSec) = windowSections patch
+  in do
+       assertEqual "one combined opcode for the ADD+COPY pair"
+         (ByteString.pack [0xA3]) instSec       -- index 163 = ADD(1)+COPY(4) mode 0
+       assertEqual "data section carries the ADD's literal"
+         (ByteString.pack [0x5A]) dataSec       -- "Z"
+       assertEqual "address section carries the COPY's SELF operand"
+         (ByteString.pack [0x00]) addrSec
+       assertCoverRoundTrips source target coverPlan
+
+-- | The mirror: a size-4 COPY immediately followed by a one-byte ADD is
+-- one combined opcode (index 247 = COPY(4)+ADD(1) mode 0), the COPY's
+-- operand in the address section and the ADD's literal in the data
+-- section, no size varints. Round-trips.
+vcdiffCombinedCopyAddIsOneOpcode :: Assertion
+vcdiffCombinedCopyAddIsOneOpcode =
+  let source = ByteString.pack (map (fromIntegral . fromEnum) "ABCD")
+      target = ByteString.pack (map (fromIntegral . fromEnum) "ABCDZ")
+      coverPlan = Cover
+        [ CoverCopy (Length 4) (Offset 0)      -- source[0..4) = "ABCD", SELF mode 0
+        , CoverLiteral (Offset 4) (Length 1) ] -- "Z" -> ADD(1)
+      CreateResult (PatchFileContents patch) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+      (dataSec, instSec, addrSec) = windowSections patch
+  in do
+       assertEqual "one combined opcode for the COPY+ADD pair"
+         (ByteString.pack [0xF7]) instSec       -- index 247 = COPY(4)+ADD(1) mode 0
+       assertEqual "data section carries the ADD's literal"
+         (ByteString.pack [0x5A]) dataSec       -- "Z"
+       assertEqual "address section carries the COPY's SELF operand"
+         (ByteString.pack [0x00]) addrSec
+       assertCoverRoundTrips source target coverPlan
+
+-- | A lone three-byte non-repeated ADD with no copy beside it takes the
+-- fixed-size single opcode (index 4 = ADD size 3) and emits no trailing
+-- size varint — the instruction section is the one opcode byte. Round-trips.
+vcdiffFixedSizeAddDropsVarint :: Assertion
+vcdiffFixedSizeAddDropsVarint =
+  let target = ByteString.pack (map (fromIntegral . fromEnum) "XYZ")  -- ADD, length 3, not repeated
+      coverPlan = Cover [CoverLiteral (Offset 0) (Length 3)]
+      CreateResult (PatchFileContents patch) _ =
+        createFromCover (InputFileContents ByteString.empty) (OutputFileContents target) coverPlan
+      (dataSec, instSec, _addrSec) = windowSections patch
+  in do
+       assertEqual "fixed-size ADD opcode, no size varint trailing"
+         (ByteString.pack [0x04]) instSec       -- index 4 = ADD size 3
+       assertEqual "data section carries the literal" target dataSec
+       assertCoverRoundTrips ByteString.empty target coverPlan
+
+-- | The fallback guard: an ADD too large to combine or to name a
+-- fixed-size entry (length 20, above the table's 1–17 inline ADD range)
+-- beside a COPY too large for a fixed entry (length 20, above 4–18) emit
+-- as two separate coded-size singles — ADD coded (index 1) then a size
+-- varint, COPY mode-0 coded (index 19) then a size varint — with no
+-- combine forced and no fixed entry misapplied. Round-trips.
+vcdiffOversizeFallsBackToCoded :: Assertion
+vcdiffOversizeFallsBackToCoded =
+  let source  = ByteString.pack [0 .. 39]
+      literal = ByteString.pack [100 .. 119]            -- 20 distinct bytes -> ADD, too big to combine
+      target  = literal <> ByteString.take 20 source    -- then a 20-byte COPY of source[0..20)
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0) (Length 20)
+        , CoverCopy (Length 20) (Offset 0) ]
+      CreateResult (PatchFileContents patch) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+      (_dataSec, instSec, _addrSec) = windowSections patch
+  in do
+       assertEqual "two separate coded-size singles (ADD then COPY mode 0), no combine"
+         (ByteString.pack [0x01, 0x14, 0x13, 0x14]) instSec
+       assertCoverRoundTrips source target coverPlan
+
+-- | The whole layer's point: across three ADD(1)+COPY(4) pairs the dense
+-- instruction section is shorter than a coded-size-only encoding of the
+-- same instructions (one opcode plus a size varint each). The byte count
+-- dropping below that baseline is the proof the dense entries engaged,
+-- where a round-trip alone would pass a coded-only encoder too.
+vcdiffDenseShrinksInstructionSection :: Assertion
+vcdiffDenseShrinksInstructionSection =
+  let source = ByteString.pack [0 .. 49]
+      target = ByteString.pack
+        [ 0xF0, 0, 1, 2, 3, 0xF1, 10, 11, 12, 13, 0xF2, 20, 21, 22, 23 ]
+      coverPlan = Cover
+        [ CoverLiteral (Offset 0)  (Length 1), CoverCopy (Length 4) (Offset 0)
+        , CoverLiteral (Offset 5)  (Length 1), CoverCopy (Length 4) (Offset 10)
+        , CoverLiteral (Offset 10) (Length 1), CoverCopy (Length 4) (Offset 20) ]
+      CreateResult (PatchFileContents patch) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+      (_dataSec, instSec, _addrSec) = windowSections patch
+      -- The instruction section a coded-size-only encoder would emit for
+      -- the same instructions: one opcode plus a size varint each.
+      codedOnlyBytes = sum
+        [ 1 + minimalVcdiffVarintLength (fromIntegral n)
+        | instruction <- coverToInstructions target coverPlan
+        , let Length n = instructionOutputLength instruction ]
+  in do
+       assertBool "the instruction section is shorter than a coded-size-only encoding"
+         (ByteString.length instSec < codedOnlyBytes)
+       assertCoverRoundTrips source target coverPlan
 
 -- | The encode/decode inverse round-trips at the address-cache seam,
 -- across address regimes the matcher-bounded 'prop_vcdiff' (capped at

@@ -70,7 +70,7 @@ data InstructionTemplate
   | Add  !InstructionSize
   | Run  !InstructionSize
   | Copy !InstructionSize !CopyAddressMode
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | An instruction's size, as the code table holds it. The spec lets a
 -- table entry either fix the size inline or defer it: a zero size byte
@@ -81,13 +81,13 @@ data InstructionTemplate
 data InstructionSize
   = SizeCodedSeparately
   | SizeIs !FixedInstructionSize
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | A size fixed inline in the code table: 1–255 on the wire (a zero
 -- byte is 'SizeCodedSeparately', not a fixed size of zero). The size
 -- arrays are one byte per entry, so the inline ceiling is a 'Word8'.
 newtype FixedInstructionSize = FixedInstructionSize { unFixedInstructionSize :: Word8 }
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | A COPY instruction's address mode: the selector the address cache
 -- reads to decode the COPY's address (SELF, HERE, a near slot, or a
@@ -98,7 +98,7 @@ newtype FixedInstructionSize = FixedInstructionSize { unFixedInstructionSize :: 
 -- holds the cache sizes, enforces the bound. Here it is carried
 -- verbatim.
 newtype CopyAddressMode = CopyAddressMode { unCopyAddressMode :: Word8 }
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------------
 -- The table
@@ -111,7 +111,7 @@ data CodeTableEntry = CodeTableEntry
   { firstTemplate  :: !InstructionTemplate
   , secondTemplate :: !InstructionTemplate
   }
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 -- | A complete VCDIFF code table: exactly 'codeTableEntryCount'
 -- entries, indexed by the instruction-stream byte. The constructor is
