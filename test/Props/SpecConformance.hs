@@ -16,6 +16,7 @@ module Props.SpecConformance (specConformanceTests) where
 import Props.Helpers (assertFailureT)
 
 import Slap.Binary (putByuuVarint, putWord32LE, getByuuVarint, getVcdiffVarint,
+                    putVcdiffVarint, minimalVcdiffVarintLength,
                     VarintResult(..), VarintReadFailure(..))
 import Slap.ByteParser (runByteParser, vcdiffVarintReportingCanonicality,
                         VcdiffVarintReading(..))
@@ -136,6 +137,10 @@ specConformanceTests = testGroup "SpecConformance"
           , testGroup "canonicality"
               [ testCase "overlong-small-value-decodes-and-flags-fyi"
                   test_vcdiffOverlongRaisesFYI
+              ]
+          , testGroup "cost-length"
+              [ testProperty "minimal-length-predicts-encoder-output"
+                  prop_vcdiffVarintCostMatchesLength
               ]
           ]
       ]
@@ -321,6 +326,10 @@ specConformanceTests = testGroup "SpecConformance"
 encodeVarint :: Int64 -> ByteString
 encodeVarint = LazyByteString.toStrict . toLazyByteString . putByuuVarint
 
+-- | The VCDIFF (big-endian base-128) varint, encoded to bytes.
+encodeVcdiffVarint :: Int64 -> ByteString
+encodeVcdiffVarint = LazyByteString.toStrict . toLazyByteString . putVcdiffVarint
+
 decodeVarint :: ByteString -> Either String Int64
 decodeVarint input = case getByuuVarint 0 input of
   Left failure -> Left (show failure)
@@ -356,6 +365,24 @@ prop_varintDecodeEncodeRoundTrip =
     in case decodeVarint encoded of
       Left _ -> discard
       Right decoded -> encodeVarint decoded === encoded
+
+-- | The VCDIFF varint cost model agrees with the encoder:
+-- 'minimalVcdiffVarintLength' predicts exactly how many bytes
+-- 'putVcdiffVarint' emits. The address-mode encoder chooses the cheapest
+-- COPY-address mode by that prediction, so a disagreement would silently
+-- misprice every address; this pins the two together rather than
+-- trusting them to stay consistent by eye.
+prop_vcdiffVarintCostMatchesLength :: Property
+prop_vcdiffVarintCostMatchesLength =
+  forAll genMagnitudeSpread $ \value ->
+    ByteString.length (encodeVcdiffVarint value) === minimalVcdiffVarintLength value
+  where
+    -- A magnitude up to 2^bits for a uniformly chosen bits, so every
+    -- varint width from one byte to nine is exercised, not just the wide
+    -- values a flat range would almost always draw.
+    genMagnitudeSpread = do
+      bits <- chooseInt (0, 62)
+      chooseInt64 (0, 2 ^ bits)
 
 -- | Assert that encoding a value produces the expected byte sequence.
 varintCase :: Int64 -> [Word8] -> Assertion

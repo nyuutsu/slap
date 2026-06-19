@@ -51,6 +51,10 @@ import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
 import Slap.VCDIFF.Create (createFromCover, coverToInstructions)
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
+import Slap.VCDIFF.AddressCache
+  ( selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
+  , recordAddress, freshAddressCache, defaultAddressCacheConfig
+  , decodeCopyAddress, CopyAddressReading(..) )
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
 import qualified Slap.XDelta1.Types as XDelta1
@@ -77,6 +81,7 @@ import qualified Slap.PPF4.Parse as PPF4
 import Slap.PPF3.Types (PPF3ImageType(..), narrowPPF3FileId)
 
 import Slap.Binary (md5, sha1, diffHunks)
+import Slap.Binary (minimalVcdiffVarintLength, getVcdiffVarint, VarintResult(..), putVcdiffVarint)
 import Slap.Status (CreateResult(..), Parsed(..), SlapError(..), Outcome(..),
                    noAdvisories, UnencodeabilityReason(..),
                    SlapAdvisory(..), renderSlapError)
@@ -161,6 +166,9 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "cover: an overrunning COPY round-trips (run-length expansion)" vcdiffOverlapCopyRoundTrips
       , testCase     "cover: ADD + RUN + two COPYs interleave and round-trip" vcdiffInterleavedRoundTrips
       , testCase     "cover: instruction selection at the RUN/ADD boundary" vcdiffInstructionSelection
+      , testCase     "address modes: SAME emits a single address byte" vcdiffSameModeIsOneByte
+      , testCase     "address modes: the address section shrinks below SELF-only" vcdiffAddressModesShrinkTheAddressSection
+      , testProperty "address modes: encode/decode round-trip at large addresses" prop_vcdiffAddressModeRoundTrips
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -537,6 +545,104 @@ vcdiffCopyExactWireBytes =
   in case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
        CreateResult (PatchFileContents patch) _ ->
          assertEqual "exact wire bytes (COPY)" expected patch
+
+-- | SAME is a single byte. A COPY whose address already sits in its
+-- same-slot — the same address recorded then copied again is the
+-- simplest case — selects a same-mode opcode and emits its address as
+-- one byte, where SELF would spend two for an address past 0x7F.
+-- Asserted at the selection seam, the encoder's inverse of the decode
+-- the round-trips exercise.
+vcdiffSameModeIsOneByte :: Assertion
+vcdiffSameModeIsOneByte =
+  let address  = Offset 200          -- past 0x7F, so a SELF varint is two bytes
+      here     = Offset 500          -- any write head past the address
+      primed   = recordAddress (freshAddressCache defaultAddressCacheConfig) address
+      selected = selectCopyAddressMode primed here address
+  in do
+       assertEqual "same-mode opcode (block 0)" 6 (selectedAddressMode selected)
+       case selectedAddressOperand selected of
+         AddressSameByte byte -> assertEqual "single same-slot byte" 200 byte
+         other -> assertFailure ("expected a one-byte same operand, got " ++ show other)
+
+-- | The address section shrinks below a SELF-only encoding. Three copies
+-- of one source region, each at the same offset past 0x7F, would cost a
+-- two-byte SELF varint apiece under the 02c encoder (six bytes); the
+-- cache modes spend one byte each (a HERE then two SAMEs, three bytes).
+-- Its byte count — read back out of the emitted patch — dropping below
+-- the SELF-only sum is the proof the cheaper modes engaged, where the
+-- round-trip (also asserted) would pass a SELF-only encoder just as well.
+vcdiffAddressModesShrinkTheAddressSection :: Assertion
+vcdiffAddressModesShrinkTheAddressSection =
+  let source    = ByteString.pack [ fromIntegral (i `mod` 251) | i <- [0 .. 299 :: Int] ]
+      region    = ByteString.take 10 (ByteString.drop 200 source)
+      lit1      = ByteString.pack [0xF0, 0xF1]
+      lit2      = ByteString.pack [0xF2, 0xF3]
+      target    = region <> lit1 <> region <> lit2 <> region
+      coverPlan = Cover
+        [ CoverCopy    (Length 10) (Offset 200)
+        , CoverLiteral (Offset 10) (Length 2)
+        , CoverCopy    (Length 10) (Offset 200)
+        , CoverLiteral (Offset 22) (Length 2)
+        , CoverCopy    (Length 10) (Offset 200) ]
+      copyOffsets          = [ n | CoverCopy _ (Offset n) <- coverSegments coverPlan ]
+      selfOnlyAddressBytes = sum [ minimalVcdiffVarintLength (fromIntegral n) | n <- copyOffsets ]
+      patch = case createFromCover (InputFileContents source) (OutputFileContents target) coverPlan of
+                CreateResult (PatchFileContents bytes) _ -> bytes
+  in do
+       assertCoverRoundTrips source target coverPlan
+       assertBool "the address section is shorter than a SELF-only encoding"
+         (addressSectionLength patch < selfOnlyAddressBytes)
+
+-- | The byte length of the address section of a single-window VCDIFF
+-- patch, the shape the encoder emits: walk the fixed header and the
+-- window framing to the third section-length varint. Test-local, and it
+-- assumes that one-window default-table shape.
+addressSectionLength :: ByteString.ByteString -> Int
+addressSectionLength patch = fst (readVarint afterInst)
+  where
+    readVarint offset = case getVcdiffVarint offset patch of
+      Right (VarintResult value consumed) -> (fromIntegral value, offset + consumed)
+      Left _ -> error "addressSectionLength: malformed varint in patch framing"
+    skipVarint   = snd . readVarint
+    afterHeader  = 5                              -- magic(3) + version(1) + Hdr_Indicator(1)
+    winIndicator = ByteString.index patch afterHeader
+    afterWin     = afterHeader + 1
+    afterSegment = if winIndicator Bits..&. 0x03 /= 0  -- a copy-source bit: two segment varints follow
+                     then skipVarint (skipVarint afterWin)
+                     else afterWin
+    afterTarget  = skipVarint (skipVarint afterSegment)  -- delta-encoding length, then target size
+    afterData    = skipVarint (afterTarget + 1)          -- Delta_Indicator(1), then data length
+    afterInst    = skipVarint afterData                  -- instruction-section length
+
+-- | The encode/decode inverse round-trips at the address-cache seam,
+-- across address regimes the matcher-bounded 'prop_vcdiff' (capped at
+-- 16-byte inputs) never reaches: multi-byte addresses and the
+-- same-cache's 768-slot aliasing. For a cache primed with prior
+-- addresses clustered at and just below the target — so SAME and NEAR
+-- fire, not only SELF — the mode and operand 'selectCopyAddressMode'
+-- chooses decode back through 'decodeCopyAddress' to the same address.
+-- The lockstep guarantee at its narrowest, fastest point: any drift in
+-- the band arithmetic or the cache state sends a NEAR or SAME address
+-- elsewhere and fails here.
+prop_vcdiffAddressModeRoundTrips :: Word.Word16 -> [Word.Word16] -> Word.Word16 -> Property
+prop_vcdiffAddressModeRoundTrips addressRaw recentSteps hereBump =
+  counterexample ("selected mode " ++ show (selectedAddressMode selected)) $
+    case decodeCopyAddress cache here (selectedAddressMode selected) operandBytes (Offset 0) of
+      Right reading -> copyAddressDecoded reading === address
+      Left failure  -> counterexample ("decode failed: " ++ show failure) (property False)
+  where
+    addressInt   = fromIntegral addressRaw :: Int
+    address      = Offset addressInt
+    -- Recorded addresses at and just below the target, so a same-slot
+    -- holds it (SAME) and near slots hold small-forward-delta neighbours
+    -- (NEAR), across whatever multi-byte base address was generated.
+    priorOffsets = [ Offset (max 0 (addressInt - fromIntegral (step `mod` 16))) | step <- recentSteps ]
+    cache        = foldl recordAddress (freshAddressCache defaultAddressCacheConfig) priorOffsets
+    here         = Offset (addressInt + fromIntegral hereBump + 1)
+    selected     = selectCopyAddressMode cache here address
+    operandBytes = case selectedAddressOperand selected of
+      AddressVarint value -> LazyByteString.toStrict (toLazyByteString (putVcdiffVarint value))
+      AddressSameByte byte -> ByteString.singleton byte
 
 -- | A COPY whose read overruns the write head — the run-length / overlap
 -- case the decoder expands byte by byte ('ExpandForward'). The target

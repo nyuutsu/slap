@@ -105,6 +105,7 @@ library slap-internal
     , Slap.UPS.Describe
     , Slap.UPS.Parse
     , Slap.UPS.Types
+    , Slap.VCDIFF.AddressCache
     , Slap.VCDIFF.CodeTable
     , Slap.VCDIFF.SecondaryCompression
     , Slap.VCDIFF.Types

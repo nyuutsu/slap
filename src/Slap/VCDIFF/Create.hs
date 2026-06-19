@@ -21,13 +21,19 @@
 -- these bytes happen to be core-shaped because nothing RFC-specific is
 -- reached for.
 --
--- Instruction selection and the wire layout are uniform and unclever, a
--- floor for a denser encoder to grow on: a literal becomes a 'Run' only
+-- Instruction selection stays uniform: a literal becomes a 'Run' only
 -- when it is a single byte repeated (length ≥ 2), an 'Add' otherwise; a
--- copy passes straight through; every opcode uses the coded-size
--- default-table entry (no inline-size or combined rows) and every COPY
--- address is mode 0 (SELF), the absolute @U@ offset emitted directly
--- with no address cache.
+-- copy passes straight through. Every opcode is still the coded-size
+-- single-instruction default-table entry (no inline-size or combined
+-- rows), and there is still one window. What is no longer uniform is the
+-- COPY address: rather than always SELF (the absolute @U@ offset), the
+-- encoder chooses the cheapest mode the address cache admits per COPY —
+-- SAME (one byte), NEAR (a short delta off a recent address), HERE (a
+-- short distance back from the write head), or SELF — through the shared
+-- 'Slap.VCDIFF.AddressCache.selectCopyAddressMode', running the same
+-- 'Slap.VCDIFF.AddressCache.recordAddress' the decoder runs so the two
+-- caches stay one state. The address section, the fattest part of a
+-- patch, shrinks accordingly.
 module Slap.VCDIFF.Create
   ( createRFCVCDIFF
     -- * Cover-driven emission (exported for testing)
@@ -38,15 +44,23 @@ module Slap.VCDIFF.Create
 import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
+import Slap.VCDIFF.AddressCache
+  ( AddressCache, freshAddressCache, defaultAddressCacheConfig
+  , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..) )
+import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
 import Slap.Status (SlapError, CreateResult(..))
-import Slap.Measure (Offset(..), Length(..), byteLength)
+import Slap.Measure (Offset(..), Length(..), byteLength, Cursor(..), lengthToOffset)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Builder (Builder, byteString, word8, toLazyByteString)
 import qualified Data.ByteString.Lazy as LazyByteString
+import Data.IntMap.Strict (IntMap)
+import qualified Data.IntMap.Strict as IntMap
+import Data.List (mapAccumL)
+import qualified Data.Vector as Vector
 import Data.Word (Word8)
 
 -- | Create a VCDIFF patch reconstructing @target@. The cover comes from
@@ -110,13 +124,13 @@ isSingleRepeatedByte bytes =
 data Sections = Sections
   { sectionData         :: !ByteString   -- ^ ADD literals and RUN fill bytes.
   , sectionInstructions :: !ByteString   -- ^ each opcode and its coded size.
-  , sectionAddresses    :: !ByteString   -- ^ each COPY's SELF-mode address.
+  , sectionAddresses    :: !ByteString   -- ^ each COPY's chosen-mode operand.
   }
 
 -- | The three section byte-streams under construction. One value is both
 -- a single instruction's contribution and — the type being a 'Monoid'
 -- that combines the streams componentwise — a whole window's
--- accumulation, so a window's sections are exactly 'foldMap' of its
+-- accumulation, so a window's sections are exactly the fold of its
 -- instructions' pieces in order. A field is 'mempty' where an
 -- instruction contributes nothing there (a COPY adds no data; an ADD or
 -- RUN adds no address).
@@ -137,37 +151,91 @@ instance Semigroup SectionBuilders where
 instance Monoid SectionBuilders where
   mempty = SectionBuilders mempty mempty mempty
 
--- | An instruction's full wire footprint, decided in one place and
--- exhaustive over the three kinds — no wildcard, so a fourth kind could
--- not slip through silently. Reading one arm shows everything an
--- instruction emits and which stream it lands in.
-wirePieces :: VCDIFFInstruction -> SectionBuilders
-wirePieces = \case
-  Add literal -> SectionBuilders
-    { dataStream        = byteString literal
-    , instructionStream = word8 addOpcodeSizeCoded <> varintOfLength (byteLength literal)
-    , addressStream     = mempty }
-  Run runLength fillByte -> SectionBuilders
-    { dataStream        = word8 fillByte
-    , instructionStream = word8 runOpcodeSizeCoded <> varintOfLength runLength
-    , addressStream     = mempty }
-  Copy copyLength address -> SectionBuilders
-    { dataStream        = mempty
-    , instructionStream = word8 copyOpcodeMode0SizeCoded <> varintOfLength copyLength
-    , addressStream     = varintOfOffset address }
+-- | The encoder's running state as it walks a window's instructions: the
+-- address cache, kept in lockstep with the decoder's, and the write head
+-- @here@ in the superstring @U = S + T@ that the HERE mode measures back
+-- from. Every instruction advances @here@ by its output length; only a
+-- COPY touches the cache.
+data EmitState = EmitState
+  { emitCache :: !AddressCache
+  , emitHere  :: !Offset
+  }
 
--- | Collect a window's instructions into the three realized sections:
--- fold every instruction's pieces together, then render each stream to
--- bytes. Section bytes are the ordered concatenation of the
--- per-instruction contributions, the fold being a monoid homomorphism.
-layoutSections :: [VCDIFFInstruction] -> Sections
-layoutSections instructions = Sections
+-- | Emit one instruction: its three section contributions, and the state
+-- left behind. ADD and RUN advance @here@ and leave the cache untouched;
+-- a COPY chooses its address mode against the cache and @here@ through
+-- the shared 'selectCopyAddressMode', emits the matching opcode and the
+-- mode's operand, and adopts the cache the selection recorded into.
+-- Exhaustive over the three kinds — no wildcard, so a fourth could not
+-- slip through.
+emitInstruction :: IntMap Word8 -> EmitState -> VCDIFFInstruction -> (EmitState, SectionBuilders)
+emitInstruction opcodeForMode emitState = \case
+  Add literal ->
+    ( advanceWriteHead (byteLength literal)
+    , SectionBuilders
+        { dataStream        = byteString literal
+        , instructionStream = word8 addOpcodeSizeCoded <> varintOfLength (byteLength literal)
+        , addressStream     = mempty } )
+  Run runLength fillByte ->
+    ( advanceWriteHead runLength
+    , SectionBuilders
+        { dataStream        = word8 fillByte
+        , instructionStream = word8 runOpcodeSizeCoded <> varintOfLength runLength
+        , addressStream     = mempty } )
+  Copy copyLength address ->
+    let selected = selectCopyAddressMode (emitCache emitState) (emitHere emitState) address
+        opcode   = singleCopyOpcode opcodeForMode (selectedAddressMode selected)
+    in ( EmitState
+           { emitCache = selectedAddressCacheAfter selected
+           , emitHere  = advance (emitHere emitState) copyLength }
+       , SectionBuilders
+           { dataStream        = mempty
+           , instructionStream = word8 opcode <> varintOfLength copyLength
+           , addressStream     = renderOperand (selectedAddressOperand selected) } )
+  where
+    advanceWriteHead outputLength =
+      emitState { emitHere = advance (emitHere emitState) outputLength }
+
+-- | The address-section bytes a chosen mode's operand contributes: a
+-- varint for SELF \/ HERE \/ NEAR, a single byte for SAME.
+renderOperand :: CopyAddressOperand -> Builder
+renderOperand (AddressVarint value) = putVcdiffVarint value
+renderOperand (AddressSameByte byte) = word8 byte
+
+-- | The instruction-stream opcode for a single COPY of coded size in a
+-- given address mode. Total by construction: the selection chooses among
+-- the default configuration's nine modes, and the default table provides
+-- a coded-size single-COPY entry for every one — the same proof-by-
+-- provenance as 'Slap.VCDIFF.CodeTable''s @Vector.!@ lookup.
+singleCopyOpcode :: IntMap Word8 -> Word8 -> Word8
+singleCopyOpcode opcodeForMode mode = opcodeForMode IntMap.! fromIntegral mode
+
+-- | The opcode for a single coded-size COPY in each address mode the
+-- table names, read out of the table itself rather than hard-coded — so
+-- the modes the selection picks and the opcodes emitted come from one
+-- source, the discipline the combined-opcode and custom-table layers
+-- will extend. The default table provides all nine core modes.
+copyOpcodeForMode :: Table.CodeTable -> IntMap Word8
+copyOpcodeForMode table = IntMap.fromList
+  [ (fromIntegral mode, fromIntegral index)
+  | (index, entry) <- zip [0 :: Int ..] (Vector.toList (Table.codeTableEntries table))
+  , Table.CodeTableEntry (Table.Copy Table.SizeCodedSeparately (Table.CopyAddressMode mode)) Table.Noop
+      <- [entry]
+  ]
+
+-- | Walk a window's instructions through the emit state and render the
+-- three accumulated streams to bytes. The fold threads the cache and the
+-- write head so each COPY selects against the state its predecessors
+-- left; section bytes are the ordered concatenation of the per-
+-- instruction contributions.
+layoutSections :: IntMap Word8 -> EmitState -> [VCDIFFInstruction] -> Sections
+layoutSections opcodeForMode initialState instructions = Sections
   { sectionData         = builderBytes (dataStream combined)
   , sectionInstructions = builderBytes (instructionStream combined)
   , sectionAddresses    = builderBytes (addressStream combined)
   }
   where
-    combined = foldMap wirePieces instructions
+    combined = mconcat (snd (mapAccumL (emitInstruction opcodeForMode) initialState instructions))
 
 -- | Whether a window's instructions read from the superstring — i.e.
 -- contain a COPY. A copying window declares its source segment; an
@@ -191,12 +259,22 @@ emitPatch source target cover = builderBytes
   <> windowBuilder )
   where
     instructions = coverToInstructions target cover
-    sections     = layoutSections instructions
+    copying      = hasCopy instructions
+    sections     = layoutSections (copyOpcodeForMode Table.defaultCodeTable)
+                                  initialEmitState instructions
+
+    -- The write head starts at @len(S)@: the source segment a copying
+    -- window declares (the whole source), or zero for a self-contained
+    -- window, which has no COPY to measure against it anyway.
+    initialEmitState = EmitState
+      { emitCache = freshAddressCache defaultAddressCacheConfig
+      , emitHere  = if copying then lengthToOffset (byteLength source) else Offset 0
+      }
 
     -- The Win_Indicator and (when copying) the source-segment varints,
     -- which precede the delta-encoding-length on the wire.
     windowIndicatorAndSegment
-      | hasCopy instructions =
+      | copying =
              word8 sourceSegmentWindow
           <> varintOfLength (byteLength source)   -- source-segment length
           <> putVcdiffVarint 0                    -- source-segment position
@@ -228,10 +306,6 @@ emitPatch source target cover = builderBytes
 varintOfLength :: Length -> Builder
 varintOfLength (Length n) = putVcdiffVarint (fromIntegral n)
 
--- | An 'Offset' as a VCDIFF varint — a COPY's absolute @U@ address.
-varintOfOffset :: Offset -> Builder
-varintOfOffset (Offset n) = putVcdiffVarint (fromIntegral n)
-
 -- | Default code-table index 1: ADD with its size coded separately
 -- (RFC 3284 §5.6).
 addOpcodeSizeCoded :: Word8
@@ -241,12 +315,6 @@ addOpcodeSizeCoded = 0x01
 -- (RFC 3284 §5.6).
 runOpcodeSizeCoded :: Word8
 runOpcodeSizeCoded = 0x00
-
--- | Default code-table index 19: COPY in mode 0 (SELF) with its size
--- coded separately (RFC 3284 §5.6). Mode 0 means the address is a plain
--- varint, no cache slot consulted.
-copyOpcodeMode0SizeCoded :: Word8
-copyOpcodeMode0SizeCoded = 0x13
 
 -- | Version byte: VCDIFF is at version 0 (RFC 3284 §4.1).
 version0 :: Word8

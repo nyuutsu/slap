@@ -60,6 +60,10 @@ import Slap.VCDIFF.SecondaryCompression
   ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
   , SectionCarriage(..), decodeLZMACompressedKind, decodeDJWCompressedKind
   , decodeFGKCompressedKind )
+import Slap.VCDIFF.AddressCache
+  ( AddressCache(..), AddressCacheConfig(..), defaultAddressCacheConfig
+  , freshAddressCache, classifyAddressMode
+  , decodeCopyAddress, CopyAddressReading(..), AddressDecodeFailure(..) )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
@@ -74,11 +78,11 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
 import Slap.FileContents (PatchFileContents(..), InputFileContents(..), OutputFileContents(..))
 import Slap.Measure
-  ( Offset(..), Length(..), FileSize(..), Delta(..)
+  ( Offset(..), Length(..), FileSize(..)
   , ActualOffset(..), MaxOffset(..), ExpectedSize(..), ActualSize(..)
   , ActionIndex, firstAction, nextAction, actionAtPosition
   , Cursor(..), fitsWithin, remainingFromOffset, lengthToFileSize
-  , lengthToOffset, offsetToInt
+  , lengthToOffset
   , subtractLength
   , RequiredLength(..), ActualLength(..), ActualMagic(..)
   , FoundVersion(..), byteLength, byteFileSize )
@@ -92,8 +96,6 @@ import Data.List (zipWith4)
 import Data.Maybe (isJust, isNothing, listToMaybe)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
-import Data.IntMap.Strict (IntMap)
-import qualified Data.IntMap.Strict as IntMap
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import Data.Word (Word8)
@@ -1126,222 +1128,3 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
           failDecode (VCDIFFInvalidCopyAddressMode modeByte)
         Right reading -> pure reading
 
-----------------------------------------------------------------------------
--- Address cache
-----------------------------------------------------------------------------
-
--- | How many slots each cache holds: @s_near@ near slots and @s_same@
--- 256-slot same blocks (docs/vcdiff/core/spec.md "Address cache"). The
--- default code table fixes these ('defaultAddressCacheConfig'); a custom
--- code table declares its own. The cache carries its configuration so the
--- sizes drive the round-robin wrap, the slot bounds, and the same-block
--- arithmetic at runtime, rather than being baked into the types.
-data AddressCacheConfig = AddressCacheConfig
-  { nearSlotCount  :: !Int   -- ^ @s_near@: the number of near slots.
-  , sameBlockCount :: !Int   -- ^ @s_same@: the number of 256-slot same blocks.
-  }
-  deriving (Eq, Show)
-
--- | The default code table's cache configuration: four near slots and
--- three same blocks, the nine address modes (0–8) of the core. The one
--- place @4@ and @3@ are named.
-defaultAddressCacheConfig :: AddressCacheConfig
-defaultAddressCacheConfig = AddressCacheConfig
-  { nearSlotCount  = 4
-  , sameBlockCount = 3
-  }
-
--- | A near-cache slot index, in @[0, s_near)@. Constructed only within
--- bounds — by 'classifyAddressMode' from a mode in the near band, and by
--- 'advanceNearWriteSlot' whose modulus keeps it in range — so a slot the
--- cache lacks is unrepresentable: the four-arm sum's old guarantee, now
--- total over any @s_near@ and living where the index is made.
-newtype NearSlotIndex = NearSlotIndex Int
-  deriving (Eq, Show)
-
--- | A same-cache block index, in @[0, s_same)@. Constructed only within
--- bounds by 'classifyAddressMode' from a mode in the same band, with the
--- same guarantee as 'NearSlotIndex'.
-newtype SameBlockIndex = SameBlockIndex Int
-  deriving (Eq, Show)
-
--- | The two address caches a VCDIFF decoder maintains in lockstep with
--- the encoder (docs/vcdiff/core/spec.md "Address cache"), the
--- configuration that sizes them, and the next near slot to overwrite.
--- Both caches reset to empty at the start of every window and update
--- after every COPY.
---
--- The two caches are one idea twice: each an 'IntMap' keyed by slot,
--- read with a zero default — a slot never written reads as zero, since
--- xd3 zero-initializes both and a read of an untouched slot legitimately
--- decodes address 0, so the empty map /is/ the semantics, not a wall of
--- stored zeroes — and written one slot at a time. The cache is threaded
--- linearly through the decode, each value consumed once to produce the
--- next, so a per-COPY 'IntMap' path-copy is the cheap update an array
--- clone would not be.
-data AddressCache = AddressCache
-  { cacheConfig       :: !AddressCacheConfig
-  , nearAddresses     :: !(IntMap Offset)
-    -- ^ The near cache, keyed by slot index in @[0, s_near)@.
-  , sameAddresses     :: !(IntMap Offset)
-    -- ^ The same cache, keyed by @address mod (256 * s_same)@.
-  , nextNearWriteSlot :: !NearSlotIndex
-    -- ^ The next near slot to overwrite, advanced round-robin.
-  }
-  deriving (Eq, Show)
-
--- | The slots in one same block, fixed by the format: a same-mode COPY's
--- one-byte operand indexes within the block, so a block spans 256 slots
--- regardless of configuration.
-slotsPerSameBlock :: Int
-slotsPerSameBlock = 256
-
--- | The same cache's total slot count for a configuration: 'sameBlockCount'
--- blocks of 'slotsPerSameBlock'.
-sameSlotCount :: AddressCacheConfig -> Int
-sameSlotCount config = sameBlockCount config * slotsPerSameBlock
-
--- | The address held in one near slot; an untouched slot holds zero.
-readNearSlot :: NearSlotIndex -> IntMap Offset -> Offset
-readNearSlot (NearSlotIndex slot) = IntMap.findWithDefault (Offset 0) slot
-
--- | The next near write slot, round-robin. The modulus is the safe one:
--- 'nearSlotCount' is positive and the result lands in @[0, s_near)@.
-advanceNearWriteSlot :: AddressCacheConfig -> NearSlotIndex -> NearSlotIndex
-advanceNearWriteSlot config (NearSlotIndex slot) =
-  NearSlotIndex ((slot + 1) `mod` nearSlotCount config)
-
--- | The address held in one same slot; the block index and the one-byte
--- operand select the slot within the block's 256-slot span, and an
--- untouched slot holds zero.
-readSameSlot :: SameBlockIndex -> Int -> IntMap Offset -> Offset
-readSameSlot (SameBlockIndex block) slotByte =
-  IntMap.findWithDefault (Offset 0) (block * slotsPerSameBlock + slotByte)
-
--- | A zeroed cache for the given configuration, as at the start of each
--- window.
-freshAddressCache :: AddressCacheConfig -> AddressCache
-freshAddressCache config = AddressCache
-  { cacheConfig       = config
-  , nearAddresses     = IntMap.empty
-  , sameAddresses     = IntMap.empty
-  , nextNearWriteSlot = NearSlotIndex 0
-  }
-
--- | Why 'decodeCopyAddress' could not produce an address. Mapped to a
--- 'VCDIFFMalformation' by the caller, which holds the instruction
--- index these are free of.
-data AddressDecodeFailure
-  = AddressSectionExhausted
-  | UnknownAddressMode !Word8
-  deriving (Eq, Show)
-
--- | The product of one COPY-address decode: the absolute address into
--- the superstring, plus the post-state the decode leaves behind — the
--- cache with the address recorded, and the address-section cursor
--- advanced past the consumed bytes. Named so callers read the three
--- by name rather than by tuple position, in the manner of
--- 'Slap.Binary.VarintResult'.
-data CopyAddressReading = CopyAddressReading
-  { copyAddressDecoded     :: !Offset
-    -- ^ The absolute superstring address the COPY names.
-  , copyAddressCacheAfter  :: !AddressCache
-  , copyAddressCursorAfter :: !Offset
-    -- ^ The address-section position just past the bytes this decode
-    -- consumed.
-  }
-  deriving (Eq, Show)
-
--- | What a COPY address mode byte asks for, classified before any
--- bytes are read: one of the two varint modes, a read of a near
--- slot, or a read of a same block. The wire's mode arithmetic
--- (RFC 3284 §5.3's @2 + s_near + s_same@ bands) is collapsed into
--- the classifier; everything after it dispatches on named cases.
-data AddressModeFamily
-  = SelfAddress
-    -- ^ Mode 0 (SELF): the address is a varint, read directly.
-  | HereAddress
-    -- ^ Mode 1 (HERE): the address is @here@ minus a varint.
-  | NearAddress !NearSlotIndex
-    -- ^ Near modes: a varint added to the slot's cached address.
-  | SameAddress !SameBlockIndex
-    -- ^ Same modes: a single byte indexing the block's 256 slots.
-
--- | Name a mode byte's family against a cache configuration: SELF, then
--- HERE, then 'nearSlotCount' near slots, then 'sameBlockCount' same
--- blocks (RFC 3284 §5.3's @2 + s_near + s_same@ bands). 'Nothing' is a
--- mode past the last band — the 'UnknownAddressMode' decline at the
--- caller. The near and same indices are made here, each inside its own
--- band, so neither can name a slot the cache lacks.
-classifyAddressMode :: AddressCacheConfig -> Word8 -> Maybe AddressModeFamily
-classifyAddressMode config mode
-  | modeNumber == 0          = Just SelfAddress
-  | modeNumber == 1          = Just HereAddress
-  | modeNumber < nearBandEnd = Just (NearAddress (NearSlotIndex (modeNumber - 2)))
-  | modeNumber < sameBandEnd = Just (SameAddress (SameBlockIndex (modeNumber - nearBandEnd)))
-  | otherwise                = Nothing
-  where
-    modeNumber  = fromIntegral mode
-    nearBandEnd = 2 + nearSlotCount config
-    sameBandEnd = nearBandEnd + sameBlockCount config
-
--- | Decode one COPY address from the address section, given the cache,
--- the current @here@ position in the superstring, and the address
--- mode. The mode families are classified by 'classifyAddressMode'
--- (docs/vcdiff/core/spec.md "Address cache").
---
--- Both caches are updated after the address is decoded, regardless of
--- the mode it came through — the round-robin near write and the
--- modulo-slotted same write that keep decoder and encoder in step.
---
--- The upstream half of a two-stage pipeline: the absolute @U@ offset
--- decoded here is what 'Slap.VCDIFF.Apply.resolveCopyAddress' later
--- resolves into a physical read against the source file or the output
--- buffer.
-decodeCopyAddress
-  :: AddressCache -> Offset -> Word8 -> ByteString -> Offset
-  -> Either AddressDecodeFailure CopyAddressReading
-decodeCopyAddress cache here mode addrSection cursor =
-  case classifyAddressMode (cacheConfig cache) mode of
-    Nothing -> Left (UnknownAddressMode mode)
-    -- The raw varint means a different thing per mode; each gives it the
-    -- right shape. SELF: it is the address. HERE: a distance back from
-    -- @here@. NEAR: a distance forward from the slot's cached address.
-    Just SelfAddress -> fromVarint Offset
-    Just HereAddress -> fromVarint (\value -> displace here (Delta (negate value)))
-    Just (NearAddress nearSlot) ->
-      fromVarint (\value -> advance (readNearSlot nearSlot (nearAddresses cache)) (Length value))
-    Just (SameAddress sameBlock) -> fromSameByte sameBlock
-  where
-    fromVarint computeAddress =
-      case getVcdiffVarint (offsetToInt cursor) addrSection of
-        Left _ -> Left AddressSectionExhausted
-        Right (VarintResult value consumed) ->
-          Right (readingOf (computeAddress (fromIntegral value))
-                           (advance cursor (Length consumed)))
-
-    fromSameByte sameBlock
-      | fitsWithin cursor (Length 1) (byteFileSize addrSection) =
-          let slotByte = fromIntegral (ByteString.index addrSection (offsetToInt cursor))
-          in Right (readingOf (readSameSlot sameBlock slotByte (sameAddresses cache))
-                              (advance cursor (Length 1)))
-      | otherwise = Left AddressSectionExhausted
-
-    readingOf address cursorAfter = CopyAddressReading
-      { copyAddressDecoded     = address
-      , copyAddressCacheAfter  = recordAddress cache address
-      , copyAddressCursorAfter = cursorAfter
-      }
-
--- | Write a freshly-decoded address into both caches: the near cache at
--- the current write slot (then advancing round-robin) and the same cache
--- at @address mod (256 * s_same)@.
-recordAddress :: AddressCache -> Offset -> AddressCache
-recordAddress cache address = cache
-  { nearAddresses     = IntMap.insert writeSlot address (nearAddresses cache)
-  , nextNearWriteSlot = advanceNearWriteSlot config (nextNearWriteSlot cache)
-  , sameAddresses     = IntMap.insert (offsetToInt address `mod` sameSlotCount config) address (sameAddresses cache)
-  }
-  where
-    config                  = cacheConfig cache
-    NearSlotIndex writeSlot = nextNearWriteSlot cache
