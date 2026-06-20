@@ -47,16 +47,20 @@ import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
-                          RFCHeader(..), patchWindows)
+                          RFCHeader(..), CustomCodeTable(..), patchWindows)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
                            designCandidateTable)
 import Slap.VCDIFF.CodeTable (serializeCodeTable, deserializeCodeTable)
+import qualified Slap.VCDIFF.CodeTable as Table
+import Slap.VCDIFF.Describe (vcdiffMeta)
+import Slap.Display.Common (InfoLine(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
   ( selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
   , recordAddress, freshAddressCache, defaultAddressCacheConfig
+  , nearSlotCount, unNearSlotCount
   , decodeCopyAddress, CopyAddressReading(..) )
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
@@ -181,6 +185,12 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "custom table: the patch-in-a-patch round-trips" vcdiffCustomTableRoundTrips
       , testCase     "custom table: beats the default on a lopsided cover" vcdiffCustomTableBeatsDefault
       , testCase     "custom table: the gate declines a table that won't pay" vcdiffCustomTableGateHolds
+      , testCase     "cache: a grown geometry is declared and round-trips" vcdiffGrownCacheRoundTrips
+      , testCase     "cache: a grown geometry beats the default config" vcdiffGrownCacheBeatsDefault
+      , testCase     "cache: the grown geometry is visible to info/explain" vcdiffGrownCacheGeometryVisible
+      , testCase     "cache: the geometry is not grown past where it pays" vcdiffCacheNotInflatedWhenDefaultHolds
+      , testCase     "single: a repeated odd-size ADD beats the default and round-trips" vcdiffOddSizeSingleBeatsDefault
+      , testCase     "single: the repeated odd-size ADD is minted into the table" vcdiffOddSizeSingleIsMinted
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -943,6 +953,170 @@ vcdiffCustomTableGateHolds =
        assertEqual "the gate falls back to the default bytes exactly" defaultBytes consideredBytes
        assertBool "no custom code table: Hdr_Indicator VCD_CODETABLE clear"
          (not (Bits.testBit (ByteString.index consideredBytes 4) 1))
+
+-- | A (source, target, cover) whose copies interleave five source regions
+-- round-robin, each region advancing a few bytes per round. With the default
+-- four near slots the five-stream round-robin evicts each region before its
+-- next use, so every copy spells its (two-byte) address out in full; a fifth
+-- near slot holds all five regions across a round, turning each repeat into a
+-- one-byte NEAR delta. So the address section shrinks under a grown cache,
+-- and the grow lands on exactly five near slots. The regions sit past offset
+-- 128 so a full address costs two bytes and the saving is real.
+interleavedCacheCase :: Int -> (ByteString.ByteString, ByteString.ByteString, Cover)
+interleavedCacheCase rounds = (source, target, Cover segments)
+  where
+    source        = ByteString.pack [ fromIntegral (i `mod` 256) | i <- [0 .. 1199 :: Int] ]
+    bases         = [200, 400, 600, 800, 1000] :: [Int]
+    step          = 4 :: Int
+    copyLen       = 4 :: Int
+    addressAt base r = base + r * step
+    sliceAt  base r  = ByteString.take copyLen (ByteString.drop (addressAt base r) source)
+    segments = [ CoverCopy (Length copyLen) (Offset (addressAt base r))
+               | r <- [0 .. rounds - 1], base <- bases ]
+    target   = ByteString.concat
+                 [ sliceAt base r | r <- [0 .. rounds - 1], base <- bases ]
+
+-- | The @s_near@ a custom-table patch declares, read from the code-table
+-- data: past the magic, version, and Hdr_Indicator sits the code-table-data
+-- length varint, and the first data byte after it is @s_near@.
+declaredNearSlots :: ByteString.ByteString -> Int
+declaredNearSlots patch = case getVcdiffVarint codeTableDataLengthOffset patch of
+  Right (VarintResult _ consumed) ->
+    fromIntegral (ByteString.index patch (codeTableDataLengthOffset + consumed))
+  Left _ -> error "declaredNearSlots: patch carries no code-table data"
+  where
+    codeTableDataLengthOffset = 5   -- magic (3) + version (1) + Hdr_Indicator (1)
+
+-- | The load-bearing cache test: a pair whose locality outruns four near
+-- slots ships a patch declaring a grown geometry, and parse → apply
+-- reconstructs the target. The round-trip is the proof the declared geometry
+-- is carried and read as one — under a wrong-sized cache the NEAR addresses
+-- would decode elsewhere and the target would not match.
+vcdiffGrownCacheRoundTrips :: Assertion
+vcdiffGrownCacheRoundTrips =
+  let (source, target, coverPlan) = interleavedCacheCase 12
+      CreateResult (PatchFileContents patch) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+  in do
+    assertBool "ships a custom code table" (Bits.testBit (ByteString.index patch 4) 1)
+    assertBool "declares a grown near cache (s_near > 4)" (declaredNearSlots patch > 4)
+    case VCDIFF.parseVCDIFF (PatchFileContents patch) of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parsed _parseWarnings) ->
+        assertEqual "grown-cache patch round-trips"
+          (Right (OutputFileContents target))
+          (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | On the same pair, the grown-cache patch is strictly smaller than the
+-- one the default geometry produces for the identical cover — the address
+-- section shrank by more than the custom table cost to ship.
+vcdiffGrownCacheBeatsDefault :: Assertion
+vcdiffGrownCacheBeatsDefault =
+  let (source, target, coverPlan) = interleavedCacheCase 12
+      CreateResult (PatchFileContents grownBytes) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+      CreateResult (PatchFileContents defaultBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+  in assertBool "the grown-cache patch is smaller than the default-geometry patch"
+       (ByteString.length grownBytes < ByteString.length defaultBytes)
+
+-- | The grown geometry is something a user can see: it survives parse into
+-- the 'CustomCodeTable' (so the declared near-cache size is on the patch, not
+-- just in its bytes), and @info@\/@explain@ surface it as an "address cache"
+-- line. Only a custom table can vary the geometry, so this is the RFC-arc
+-- case; xdelta3 and core-only patches always run the default and show no such
+-- line.
+vcdiffGrownCacheGeometryVisible :: Assertion
+vcdiffGrownCacheGeometryVisible =
+  let (source, target, coverPlan) = interleavedCacheCase 12
+      CreateResult (PatchFileContents patch) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+  in case VCDIFF.parseVCDIFF (PatchFileContents patch) of
+       Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+       Right (Parsed parsed _parseWarnings) -> case parsed of
+         PatchRFC header _ -> case rfcCustomCodeTable header of
+           Nothing -> assertFailure "expected a custom code table carrying the cache geometry"
+           Just customTable -> do
+             assertBool "the parsed custom table exposes a grown near cache"
+               (unNearSlotCount (nearSlotCount (customCodeTableCacheConfig customTable)) > 4)
+             assertBool "info/explain surfaces an address-cache line"
+               (any (\(InfoLine infoLabel _) -> infoLabel == "address cache")
+                    (vcdiffMeta SlapText.EncodingUtf8 parsed))
+         _ -> assertFailure "expected PatchRFC for a grown-cache patch"
+
+-- | The grow stops where a larger cache stops paying: a pair whose copies
+-- already encode in a single byte under the default geometry earns no grow,
+-- so the considering emission ships the default bytes exactly — no custom
+-- table, no inflated cache.
+vcdiffCacheNotInflatedWhenDefaultHolds :: Assertion
+vcdiffCacheNotInflatedWhenDefaultHolds =
+  let source    = ByteString.pack [0 .. 63]
+      coverPlan = Cover [ CoverCopy (Length 4) (Offset 0)
+                        , CoverCopy (Length 4) (Offset 8)
+                        , CoverCopy (Length 4) (Offset 16) ]
+      target    = ByteString.concat
+                    [ ByteString.take 4 (ByteString.drop off source) | off <- [0, 8, 16] ]
+      CreateResult (PatchFileContents consideredBytes) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+      CreateResult (PatchFileContents defaultBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+  in do
+       assertEqual "no custom table when the default cache suffices" defaultBytes consideredBytes
+       assertBool "no custom code table: Hdr_Indicator VCD_CODETABLE clear"
+         (not (Bits.testBit (ByteString.index consideredBytes 4) 1))
+
+-- | A target of many distinct twenty-byte literals — a size the default
+-- table has no fixed-size ADD for, so each spells out a size varint. The
+-- minted single drops that varint, so the custom-table patch is strictly
+-- smaller than the default and still round-trips.
+vcdiffOddSizeSingleBeatsDefault :: Assertion
+vcdiffOddSizeSingleBeatsDefault =
+  let (source, target, coverPlan) = oddSizeSingleCase
+      CreateResult (PatchFileContents customBytes) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+      CreateResult (PatchFileContents defaultBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+  in do
+    assertBool "the odd-size-single patch is smaller than the default"
+      (ByteString.length customBytes < ByteString.length defaultBytes)
+    assertBool "ships a custom code table" (Bits.testBit (ByteString.index customBytes 4) 1)
+    case VCDIFF.parseVCDIFF (PatchFileContents customBytes) of
+      Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+      Right (Parsed parsed _parseWarnings) ->
+        assertEqual "odd-size-single patch round-trips"
+          (Right (OutputFileContents target))
+          (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | The designed table for that pair carries a fixed-size single opcode for
+-- the repeated twenty-byte ADD. The packer prefers a fixed-size entry over
+-- the coded form, so a minted single is a used single — the size saving in
+-- the test above is that preference taking effect.
+vcdiffOddSizeSingleIsMinted :: Assertion
+vcdiffOddSizeSingleIsMinted =
+  let (_source, target, coverPlan) = oddSizeSingleCase
+      resolved = resolveInstructionAddresses defaultAddressCacheConfig (Offset 0)
+                   (coverToInstructions target coverPlan)
+      addTwentySingle = Table.CodeTableEntry
+                          (Table.Add (Table.SizeIs (Table.FixedInstructionSize 20))) Table.Noop
+  in case designCandidateTable resolved of
+       Nothing       -> assertFailure "expected a candidate table minting the repeated odd-size ADD"
+       Just designed ->
+         assertBool "the designed table carries a fixed-size single opcode for ADD(20)"
+           (any ((== addTwentySingle) . snd) (Table.codeTableAssocs designed))
+
+-- | A self-contained target of @count@ distinct twenty-byte literals (each a
+-- non-repeating run, so an ADD not a RUN), with an all-literal cover and no
+-- source. The ADD(20) shape repeats @count@ times — enough to earn a minted
+-- fixed-size single whose varint saving clears the inner-delta cost.
+oddSizeSingleCase :: (ByteString.ByteString, ByteString.ByteString, Cover)
+oddSizeSingleCase = (ByteString.empty, target, Cover segments)
+  where
+    count       = 64 :: Int
+    literalSize = 20 :: Int
+    literalAt i = ByteString.pack [ fromIntegral ((i + j) `mod` 256) | j <- [0 .. literalSize - 1] ]
+    target      = ByteString.concat (map literalAt [0 .. count - 1])
+    segments    = [ CoverLiteral (Offset (literalSize * i)) (Length literalSize)
+                  | i <- [0 .. count - 1] ]
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->

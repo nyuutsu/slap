@@ -40,17 +40,21 @@
 -- Both choices only ever shrink a section, so the rule is mechanical, with
 -- no cost comparison to get wrong. There is still one window.
 --
--- The custom code table is the patch carrying its own opcode assignments,
--- tuned so the ADD+COPY and COPY+ADD pairs this patch repeats — ones the
--- default table spends two opcodes on — get a combined opcode each. The
--- table travels as a VCDIFF delta /inside/ the patch: the default table's
--- 1536-byte image transformed by an inner delta this same module emits on
--- the default-only core, so a table close to the default costs almost
--- nothing to ship. 'createRFCVCDIFF' sizes two candidates — the cover under
--- the default table, and under a designed custom one — and ships the
--- smaller, so a custom table appears only when it beats the default
--- outright. The design ('designCandidateTable') is deliberately simple
--- here; sharpening it is later work.
+-- The custom code table is the patch carrying its own opcode assignments
+-- and cache geometry, tuned to this patch: the ADD+COPY and COPY+ADD pairs
+-- it repeats — ones the default table spends two opcodes on — get a combined
+-- opcode each; the lone ADD and COPY sizes it repeats that fall outside the
+-- default's fixed-size rows get a single-instruction opcode each, dropping
+-- their out-of-line size varints; and the address cache is grown from the
+-- default four-near\/three-same to where a larger cache stops shrinking the
+-- address section. The table travels as a VCDIFF delta /inside/ the patch:
+-- the default table's 1536-byte image transformed by an inner delta this
+-- same module emits on the default-only core, so a table close to the
+-- default costs almost nothing to ship. 'createRFCVCDIFF' grows the cache a
+-- slot at a time, redesigning the table under each geometry, and ships the
+-- smallest candidate — but only when it beats the no-custom-table default
+-- patch outright. The design ('designCandidateTable') stays deliberately
+-- simple; sharpening it further is later work.
 module Slap.VCDIFF.Create
   ( createRFCVCDIFF
     -- * Cover-driven emission (exported for testing)
@@ -83,6 +87,7 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Ord (Down(..))
 import Data.Word (Word8)
 
@@ -440,14 +445,22 @@ data WindowPlan = WindowPlan
   , planSourcing :: !WindowSourcing
   }
 
--- | Plan a cover's single window against a source: select the instruction
--- stream's COPY addresses under the default cache geometry, and decide how
--- the window sources its copies. The write head starts at @len(S)@ for a
--- source-drawing window — the segment it declares — and at zero for a
--- self-contained one, which has no COPY to measure against it anyway.
-planWindow :: ByteString -> ByteString -> Cover -> WindowPlan
-planWindow source target cover = WindowPlan
-  { planResolved = resolveInstructionAddresses defaultAddressCacheConfig initialHere instructions
+-- | Plan a cover's single window against a source under a cache geometry:
+-- select the instruction stream's COPY addresses against the given
+-- 'AddressCacheConfig', and decide how the window sources its copies. The
+-- write head starts at @len(S)@ for a source-drawing window — the segment it
+-- declares — and at zero for a self-contained one, which has no COPY to
+-- measure against it anyway.
+--
+-- The config is the one the window will declare: its addresses are resolved
+-- against the very cache the decoder rebuilds from the table data's cache
+-- sizes, so resolve and declaration cannot drift (see
+-- 'assembleCustomTablePatch'). 'emitDefaultPatch' plans under
+-- 'defaultAddressCacheConfig'; 'grownCacheCandidate' plans under each config
+-- it probes.
+planWindow :: AddressCacheConfig -> ByteString -> ByteString -> Cover -> WindowPlan
+planWindow config source target cover = WindowPlan
+  { planResolved = resolveInstructionAddresses config initialHere instructions
   , planSourcing = sourcing
   }
   where
@@ -528,46 +541,140 @@ assemblePatch headerAfterVersion windowBytes = builderBytes
 emitDefaultPatch :: ByteString -> ByteString -> Cover -> ByteString
 emitDefaultPatch source target cover =
   assemblePatch (word8 noHeaderFeatures)
-                (encodeWindow Table.defaultCodeTable source target (planWindow source target cover))
+                (encodeWindow Table.defaultCodeTable source target
+                   (planWindow defaultAddressCacheConfig source target cover))
 
--- | Emit a cover as a patch, weighing a custom code table against the
--- default and shipping whichever is smaller. The candidate is designed from
--- the cover's own resolved instruction stream ('designCandidateTable');
--- when none differs from the default, or the one that does fails to earn
--- its inner delta back, the default patch ships byte-for-byte. The choice
--- is an explicit branch, never a wildcard, so a third disposition would
--- have to be written down.
+-- | Emit a cover as a patch, weighing custom code tables against the default
+-- and shipping whichever is smallest. The candidate is grown from the
+-- default cache geometry up to where a larger cache stops shrinking the
+-- patch ('grownCacheCandidate'), its table designed afresh under each config
+-- probed; the smallest such candidate is then gated against the
+-- no-custom-table default patch. The default patch ships unless a candidate
+-- beats it outright — when no table differs from the default and no larger
+-- cache pays, the grow's smallest is the default-geometry candidate, which
+-- carries the custom-table overhead for nothing and loses the gate. The gate
+-- is an explicit branch, never a wildcard, so a third disposition would have
+-- to be written down.
 emitConsideringCustomTable :: ByteString -> ByteString -> Cover -> ByteString
-emitConsideringCustomTable source target cover =
-  case designCandidateTable (planResolved plan) of
-    Nothing        -> defaultPatch
-    Just candidate ->
-      let candidatePatch = assembleCustomTablePatch source target plan candidate
-      in if ByteString.length candidatePatch < ByteString.length defaultPatch
-           then candidatePatch
-           else defaultPatch
+emitConsideringCustomTable source target cover
+  | ByteString.length grownCandidate < ByteString.length defaultPatch = grownCandidate
+  | otherwise                                                         = defaultPatch
   where
-    plan         = planWindow source target cover
-    defaultPatch = assemblePatch (word8 noHeaderFeatures)
-                                 (encodeWindow Table.defaultCodeTable source target plan)
+    grownCandidate = grownCacheCandidate source target cover
+    defaultPatch   = assemblePatch (word8 noHeaderFeatures)
+                       (encodeWindow Table.defaultCodeTable source target
+                          (planWindow defaultAddressCacheConfig source target cover))
 
--- | Assemble the custom-table patch for a designed candidate: the header
--- declares VCD_CODETABLE and carries the code-table data — the two
--- cache-size bytes (@s_near@, @s_same@, the default geometry, unchanged by
--- this stage) then the inner delta — behind its length varint, and the
--- window is the cover packed under the candidate. The inner delta is
+-- | The custom-table patch for one cache geometry, or 'Nothing' when no
+-- sound table fits the config's modes into the donor pool. Resolve the
+-- cover's window under @config@, take the donor reassignments its stream
+-- needs and repeats ('donorMints'), and assemble the custom-table patch
+-- declaring @config@. Because the window's addresses are resolved under the
+-- very config the patch declares, every COPY mode the stream selected — and
+-- so every mode a minted entry names — is one the declared cache defines,
+-- and the decoder's mode check passes by construction. The default geometry
+-- is always feasible: it admits no mode past the default nine, all of which
+-- the default table already names.
+candidatePatchForConfig :: ByteString -> ByteString -> Cover -> AddressCacheConfig -> Maybe ByteString
+candidatePatchForConfig source target cover config =
+  fmap assembleUnderDesignedTable (donorMints (planResolved plan))
+  where
+    plan = planWindow config source target cover
+    assembleUnderDesignedTable assignments =
+      assembleCustomTablePatch config source target plan
+        (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
+
+-- | Grow the cache geometry from the default to where a larger cache stops
+-- paying, returning the smallest custom-table candidate found. A larger
+-- cache only ever shrinks the address section — the near cache holds a
+-- strict superset of recent addresses, the same cache collides less — so
+-- each dimension grows cleanly: bump it a slot while the assembled patch
+-- strictly shrinks, stop when a slot buys nothing (or the bumped config is
+-- infeasible). Near is grown first, then same from there; the two interact,
+-- so the order can nudge where it lands, which is fine — more slots never
+-- hurt the address section either way. The patch's own diminishing returns
+-- are the stopping rule: no threshold, no cap beyond the one-byte wire
+-- ceiling on each cache size.
+-- | A cache geometry probed during the grow, paired with the custom-table
+-- patch bytes it produces. The grow threads this so a geometry and the patch
+-- it yields are carried as one and never drift apart.
+data CacheProbe = CacheProbe
+  { probeGeometry   :: !AddressCacheConfig
+  , probePatchBytes :: !ByteString
+  }
+
+-- | The byte size of a probe's patch — the quantity the grow steers by.
+probePatchSize :: CacheProbe -> Int
+probePatchSize = ByteString.length . probePatchBytes
+
+grownCacheCandidate :: ByteString -> ByteString -> Cover -> ByteString
+grownCacheCandidate source target cover =
+    probePatchBytes (growWhilePaying growSameBlock (growWhilePaying growNearSlot defaultProbe))
+  where
+    candidateAt = candidatePatchForConfig source target cover
+
+    -- The default geometry admits no mode past the default nine, so its
+    -- candidate is always feasible; the 'fromMaybe' is a proof-by-provenance
+    -- assertion, not a reachable branch.
+    defaultProbe = CacheProbe defaultAddressCacheConfig
+      (fromMaybe
+        (error "Slap.VCDIFF.Create.grownCacheCandidate: the default cache geometry is infeasible")
+        (candidateAt defaultAddressCacheConfig))
+
+    growWhilePaying :: (AddressCacheConfig -> Maybe AddressCacheConfig) -> CacheProbe -> CacheProbe
+    growWhilePaying growOneStep probe = case growOneStep (probeGeometry probe) of
+      Nothing -> probe
+      Just largerGeometry -> case candidateAt largerGeometry of
+        Just largerBytes
+          | ByteString.length largerBytes < probePatchSize probe ->
+              growWhilePaying growOneStep (CacheProbe largerGeometry largerBytes)
+        _ -> probe
+
+-- | Enlarge the near cache by one slot, or 'Nothing' at the one-byte
+-- @s_near@ wire ceiling. The grow stops well before this on any real input —
+-- a slot that buys nothing ends it first — so the cap is a wire-validity
+-- guard, not the usual stopping rule.
+growNearSlot :: AddressCacheConfig -> Maybe AddressCacheConfig
+growNearSlot geometry
+  | slots < maxCacheDimension = Just geometry { nearSlotCount = NearSlotCount (slots + 1) }
+  | otherwise                 = Nothing
+  where slots = unNearSlotCount (nearSlotCount geometry)
+
+-- | Enlarge the same cache by one block — the mirror of 'growNearSlot',
+-- bounded by the same one-byte @s_same@ ceiling.
+growSameBlock :: AddressCacheConfig -> Maybe AddressCacheConfig
+growSameBlock geometry
+  | blocks < maxCacheDimension = Just geometry { sameBlockCount = SameBlockCount (blocks + 1) }
+  | otherwise                  = Nothing
+  where blocks = unSameBlockCount (sameBlockCount geometry)
+
+-- | The largest value the one-byte @s_near@ \/ @s_same@ cache-size fields
+-- can carry (RFC 3284 §7).
+maxCacheDimension :: Int
+maxCacheDimension = 255
+
+-- | Assemble the custom-table patch for a designed candidate under a cache
+-- geometry: the header declares VCD_CODETABLE and carries the code-table
+-- data — the two cache-size bytes (@s_near@, @s_same@, taken from @config@)
+-- then the inner delta — behind its length varint, and the window is the
+-- cover packed under the candidate. The inner delta is
 -- @default-image → candidate-image@ through the default-only core
--- ('emitDefaultPatch'), so the table the decoder rebuilds from it is
--- exactly the one this window was packed against.
-assembleCustomTablePatch :: ByteString -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
-assembleCustomTablePatch source target plan candidate =
+-- ('emitDefaultPatch'), so the table the decoder rebuilds from it is exactly
+-- the one this window was packed against; and @config@ is the geometry the
+-- window's addresses were resolved under ('planWindow'), so the cache the
+-- decoder rebuilds matches the cache the encoder selected modes against. The
+-- inner delta itself stays on the default geometry — RFC 3284 §7c requires
+-- it — which the default-only 'emitDefaultPatch' provides.
+assembleCustomTablePatch
+  :: AddressCacheConfig -> ByteString -> ByteString -> WindowPlan -> Table.CodeTable -> ByteString
+assembleCustomTablePatch config source target plan candidate =
   assemblePatch (word8 customCodeTableHeader <> framedCodeTableData)
                 (encodeWindow candidate source target plan)
   where
     framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
     codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
-    cacheSizeHeader     = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  defaultAddressCacheConfig)))
-                       <> word8 (fromIntegral (unSameBlockCount (sameBlockCount defaultAddressCacheConfig)))
+    cacheSizeHeader     = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  config)))
+                       <> word8 (fromIntegral (unSameBlockCount (sameBlockCount config)))
     innerDelta          = emitDefaultPatch defaultImage candidateImage
                             (vcdiffCover (InputFileContents defaultImage)
                                          (OutputFileContents candidateImage))
@@ -579,48 +686,94 @@ assembleCustomTablePatch source target plan candidate =
 ----------------------------------------------------------------------------
 
 -- | Design a candidate code table for a window's resolved instruction
--- stream, or 'Nothing' when no table would differ from the default. The
--- design is deliberately simple — this stage is the wire, not the
--- cleverness: tally the ADD+COPY and COPY+ADD adjacencies the default table
--- leaves to two opcodes (those it has no combined entry for), keep the ones
--- this patch repeats, and mint them — most frequent first — into donor
--- opcodes the patch never uses, leaving every other entry default. The
--- cache geometry stays the default 4/3, so every minted COPY mode is one
--- the declared caches reach and the decoder's mode check passes. A lopsided
--- stream earns several mints; an even one earns none — and a barely-lopsided
--- one earns a table the gate then declines.
--- Whatever the design produces, the window is packed against the very table
--- shipped, so the round-trip is correct regardless of how good the design
--- is; the gate, not the design, is what decides a table pays.
+-- stream, or 'Nothing' when no sound table would differ from the default.
+-- A thin reading of 'donorMints': the table is the default with the donor
+-- reassignments applied, present only when there are any and they are sound
+-- (every soundness-required mint placed). The design stays deliberately
+-- simple — this stage is the wire, not the cleverness. Whatever it produces,
+-- the window is packed against the very table shipped, so the round-trip is
+-- correct regardless of how good the design is; the gate, not the design,
+-- decides a table pays.
 designCandidateTable :: [ResolvedInstruction] -> Maybe Table.CodeTable
-designCandidateTable resolved
-  | null mints = Nothing
-  | otherwise  = Just (Table.codeTableWithEntriesReplaced Table.defaultCodeTable mints)
+designCandidateTable resolved = case donorMints resolved of
+  Just assignments
+    | not (null assignments) ->
+        Just (Table.codeTableWithEntriesReplaced Table.defaultCodeTable assignments)
+  _ -> Nothing
+
+-- | The donor-opcode reassignments a resolved stream wants, and whether the
+-- soundness-required ones all fit. Two kinds of shape draw a donor:
+--
+--   * /required/ — a coded-size COPY opcode for each cache mode the stream
+--     uses that the default table cannot name. A grown cache admits modes
+--     past the default nine, and 'selectCopyAddressMode' may pick one;
+--     without an opcode the packer could not emit it. Frequency-independent
+--     (one use still needs it), and placed first so they win donors over the
+--     savings mints. A stream whose required mints outrun the donor pool has
+--     no sound table — 'donorMints' is 'Nothing', and the grow declines it.
+--   * /savings/ — the ADD+COPY and COPY+ADD adjacencies ('combinablePairs')
+--     and the lone fixed-size ADD and COPY shapes ('singleInstructionShapes')
+--     the default cannot name and this stream repeats (@count >= 2@; a shape
+--     seen once cannot repay even the leanest table edit), most frequent
+--     first. Pairs and singles pool into one tally — their entry shapes are
+--     disjoint, a pair carrying two real templates, a single a trailing
+--     'Table.Noop'.
+--
+-- Every minted COPY mode is one the resolved stream selected, so it lies
+-- within the geometry that stream was resolved under, and the decoder's mode
+-- check passes by construction. 'Nothing' is the infeasible verdict — the
+-- required mints outran the donor pool; 'Just []' is feasible with no mints
+-- (the default table suffices), and 'Just' a non-empty list is the custom
+-- table's reassignments.
+donorMints :: [ResolvedInstruction] -> Maybe [(Table.Opcode, Table.CodeTableEntry)]
+donorMints resolved
+  | length requiredCopyModeEntries <= length donorOpcodes = Just (zip donorOpcodes mintEntries)
+  | otherwise                                             = Nothing
   where
     defaultDense = denseOpcodes Table.defaultCodeTable
     pairs        = combinablePairs resolved
+    singles      = singleInstructionShapes resolved
 
-    -- The combined opcodes the default already uses for this patch's pairs
-    -- — excluded from the donor pool so a mint never overwrites an entry
-    -- the patch still needs.
+    requiredCopyModeEntries :: [Table.CodeTableEntry]
+    requiredCopyModeEntries =
+      [ entry
+      | mode <- distinctCopyModes
+      , let entry = Table.CodeTableEntry (Table.Copy Table.SizeCodedSeparately mode) Table.Noop
+      , opcodeFor defaultDense entry == Nothing ]
+
+    distinctCopyModes :: [Table.CopyAddressMode]
+    distinctCopyModes =
+      Map.keys (Map.fromList [ (mode, ()) | ResolvedCopy _ mode _ <- resolved ])
+
+    savingsMints :: [Table.CodeTableEntry]
+    savingsMints =
+      [ entry
+      | (entry, count) <- sortOn (Down . snd) (Map.toList (frequencies mintableShapes))
+      , count >= 2 ]
+      where
+        mintableShapes =
+          [ shape | shape <- pairs ++ singles, opcodeFor defaultDense shape == Nothing ]
+
+    -- Required first (soundness), then savings (size). 'zip' against the
+    -- donor pool drops the tail, so a donor shortage drops savings before it
+    -- ever drops a required mint; the feasibility guard above ('Nothing' when
+    -- the required mints outnumber the donors) is what catches a shortage of
+    -- even those.
+    mintEntries :: [Table.CodeTableEntry]
+    mintEntries = requiredCopyModeEntries ++ savingsMints
+
+    -- The combined opcodes the default already uses for this patch's pairs —
+    -- excluded from the donor pool so a mint never overwrites an entry the
+    -- patch still needs. Single mints cannot collide: a fixed-size single
+    -- the default holds lives in the single-instruction region, never a
+    -- two-template donor slot.
     usedCombinedOpcodes :: [Table.Opcode]
     usedCombinedOpcodes =
       [ opcode | entry <- pairs, Just opcode <- [opcodeFor defaultDense entry] ]
 
-    -- The pairs the default cannot combine and this patch repeats, most
-    -- frequent first — the mint candidates. A pair seen once cannot repay
-    -- even the leanest table edit, so singletons are dropped here; the gate
-    -- weighs whether the repeats that remain are worth their inner delta.
-    mintableByFrequency :: [Table.CodeTableEntry]
-    mintableByFrequency =
-      [ entry
-      | (entry, count) <- sortOn (Down . snd) (Map.toList (frequencies mintablePairs))
-      , count >= 2 ]
-      where mintablePairs = [ entry | entry <- pairs, opcodeFor defaultDense entry == Nothing ]
-
-    -- Donor opcodes: the default's combined slots (its two-template
-    -- entries) the patch does not use, in index order. The supply far
-    -- exceeds the handful of mints in practice.
+    -- Donor opcodes: the default's combined slots (its two-template entries)
+    -- the patch does not use, in index order. The supply far exceeds the
+    -- handful of mints in practice.
     donorOpcodes :: [Table.Opcode]
     donorOpcodes =
       [ opcode
@@ -628,12 +781,6 @@ designCandidateTable resolved
       , Table.secondTemplate entry /= Table.Noop
       , opcode `notElem` usedCombinedOpcodes
       ]
-
-    -- Each mint candidate to a donor opcode; 'zip' drops nothing while
-    -- donors outnumber mints, and a (vanishingly unlikely) donor shortage
-    -- simply mints fewer.
-    mints :: [(Table.Opcode, Table.CodeTableEntry)]
-    mints = zip donorOpcodes mintableByFrequency
 
 -- | The fixed-size ADD+COPY and COPY+ADD pairs a greedy left-to-right walk
 -- would combine, as the code-table entries they would pack into — built by
@@ -650,6 +797,28 @@ combinablePairs (ResolvedCopy copyLength mode _ : ResolvedAdd literal : rest)
   | Just entry <- copyAddEntry copyLength mode (byteLength literal) = entry : combinablePairs rest
 combinablePairs (_ : rest) = combinablePairs rest
 combinablePairs []         = []
+
+-- | The lone fixed-size ADD and COPY shapes a resolved stream contains, as
+-- the single-instruction code-table entries they would pack into — the size
+-- carried in the opcode, no out-of-line size varint. Built so the design can
+-- mint an opcode for a size the default table leaves to the coded form (an
+-- ADD outside 1–17, a COPY outside 4–18). A length the one-byte size field
+-- cannot name ('fixedSizeFor' = 'Nothing') has no fixed-size entry to mint
+-- and is passed over; RUN has no fixed-size form and never contributes. One
+-- entry per occurrence, so 'donorMints' can keep the repeated ones — the
+-- mirror, for singles, of what 'combinablePairs' is for adjacencies.
+singleInstructionShapes :: [ResolvedInstruction] -> [Table.CodeTableEntry]
+singleInstructionShapes resolved =
+  [ entry | instruction <- resolved, Just entry <- [shapeOf instruction] ]
+  where
+    shapeOf = \case
+      ResolvedAdd literal ->
+        fmap (\size -> Table.CodeTableEntry (Table.Add size) Table.Noop)
+             (fixedSizeFor (byteLength literal))
+      ResolvedCopy copyLength mode _ ->
+        fmap (\size -> Table.CodeTableEntry (Table.Copy size mode) Table.Noop)
+             (fixedSizeFor copyLength)
+      ResolvedRun _ _ -> Nothing
 
 -- | Count occurrences of each element.
 frequencies :: Ord a => [a] -> Map a Int

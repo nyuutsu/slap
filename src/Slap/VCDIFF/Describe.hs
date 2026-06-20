@@ -22,12 +22,14 @@ module Slap.VCDIFF.Describe
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), XDelta3Header(..), XDelta3Window(..)
-  , RFCHeader(..)
+  , RFCHeader(..), CustomCodeTable(..)
   , VCDIFFInstruction(..), SourceSegment(..), SegmentOrigin(..)
   , xdelta3WindowBody, xdelta3WindowAdler32
   , patchWindowsWithChecksums, WindowWithChecksum(..) )
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor(..))
-import Slap.VCDIFF.CodeTable (CodeTable)
+import Slap.VCDIFF.AddressCache
+  ( AddressCacheConfig, nearSlotCount, sameBlockCount
+  , unNearSlotCount, unSameBlockCount )
 import Slap.Display.Analysis
   ( PatchAnalysis(..), AnalysisSection(..), AnalysisRegion(..)
   , AnalysisPayload(..), CopySource(..), AnalysisSummary(..)
@@ -75,14 +77,27 @@ vcdiffMeta metadataEncoding patch = case patch of
      ++ originRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
 
--- | The @code table@ line, when a patch supplied its own (RFC 3284 §7).
--- Named as a presence: the table's entries shaped the decode and are
--- long since consumed, so what stays to say is that the patch decoded
--- against a table of its own rather than the default. Omitted entirely
--- for a patch on the default table.
-codeTableLines :: Maybe CodeTable -> [InfoLine]
-codeTableLines Nothing  = []
-codeTableLines (Just _) = [InfoLine "code table" "custom (RFC 3284 §7)"]
+-- | The @code table@ and @address cache@ lines, when a patch supplied its
+-- own table (RFC 3284 §7). The table line names a presence: the entries
+-- shaped the decode and are long since consumed, so what stays to say is
+-- that the patch decoded against a table of its own rather than the default.
+-- The cache line shows the geometry that table declared — the one place a
+-- VCDIFF patch's cache sizes depart from the default four-near\/three-same,
+-- since only a custom table can change them (xdelta3 and core-only patches
+-- always run the default geometry). Both omitted for a patch on the default
+-- table, whose geometry is that implicit default.
+codeTableLines :: Maybe CustomCodeTable -> [InfoLine]
+codeTableLines Nothing            = []
+codeTableLines (Just customTable) =
+  [ InfoLine "code table"    "custom (RFC 3284 §7)"
+  , InfoLine "address cache" (renderCacheGeometry (customCodeTableCacheConfig customTable)) ]
+
+-- | The near-slot and same-block counts a custom table declares (RFC 3284
+-- §5, §7), as the line @info@ \/ @explain@ shows for the address cache.
+renderCacheGeometry :: AddressCacheConfig -> Text
+renderCacheGeometry config =
+     renderAsText (unNearSlotCount  (nearSlotCount  config)) <> " near, "
+  <> renderAsText (unSameBlockCount (sameBlockCount config)) <> " same"
 
 -- | The presence framing of an xdelta3 application header — the only
 -- part of "what this opaque field is" VCDIFF itself decides, before any

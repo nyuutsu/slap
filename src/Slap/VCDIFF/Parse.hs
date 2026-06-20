@@ -50,7 +50,7 @@ module Slap.VCDIFF.Parse
 
 import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
-  , XDelta3Header(..), XDelta3Window(..), RFCHeader(..)
+  , XDelta3Header(..), XDelta3Window(..), RFCHeader(..), CustomCodeTable(..)
   , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
 -- Qualified: 'InstructionTemplate' shares the constructor names Add /
 -- Run / Copy with 'VCDIFFInstruction'. The template (code-table) side
@@ -478,12 +478,13 @@ classifyAndDecode tablePolicy rawPatch
 -- | The code table a patch's windows decode against, plus how the
 -- decode names it. 'resolvedActiveTable' is the table-and-cache-config
 -- the instruction walk uses; 'resolvedCustomTable' is 'Just' only for a
--- patch that supplied its own table (the classifier's RFC-exclusive
--- signal, and what 'RFCHeader' records); 'resolvedTableNotes' carries
+-- patch that supplied its own table, with the cache geometry that table
+-- declared (the classifier's RFC-exclusive signal, and what 'RFCHeader'
+-- records); 'resolvedTableNotes' carries
 -- any advisory building the table raised.
 data ResolvedTable = ResolvedTable
   { resolvedActiveTable :: !ActiveTable
-  , resolvedCustomTable :: !(Maybe Table.CodeTable)
+  , resolvedCustomTable :: !(Maybe CustomCodeTable)
   , resolvedTableNotes  :: ![SlapAdvisory]
   }
 
@@ -543,7 +544,7 @@ buildCustomTable maybeTableData = do
   wrapTableDecode (checkCustomTableCopyModes config table)
   Right ResolvedTable
     { resolvedActiveTable = ActiveTable table config
-    , resolvedCustomTable = Just table
+    , resolvedCustomTable = Just (CustomCodeTable table config)
     , resolvedTableNotes  = noopNoopAdvisories table
     }
   where
@@ -674,7 +675,7 @@ data DecodedWindow = DecodedWindow
 -- the two RFC-exclusive features are accounted for, so the compiler
 -- points here if a third signal is ever added.
 classifyFlavor
-  :: Maybe Table.CodeTable -> Maybe XDelta3SecondaryCompressor -> Maybe ByteString
+  :: Maybe CustomCodeTable -> Maybe XDelta3SecondaryCompressor -> Maybe ByteString
   -> Vector DecodedWindow -> Either SlapError VCDIFFPatch
 classifyFlavor maybeCustomTable declaredCompressor maybeAppHeader decodedWindows =
   case (carriesXDelta3Extension, carriesRFCExclusiveFeature) of

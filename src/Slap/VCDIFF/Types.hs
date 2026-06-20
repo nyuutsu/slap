@@ -15,6 +15,7 @@ module Slap.VCDIFF.Types
   ( VCDIFFPatch(..)
   , XDelta3Header(..)
   , RFCHeader(..)
+  , CustomCodeTable(..)
   , XDelta3Window(..)
   , Window(..)
   , windowOutputLength
@@ -30,6 +31,7 @@ module Slap.VCDIFF.Types
 import Slap.Measure (Offset, Length(..), FileSize(..))
 import Slap.Checksum (Adler32)
 import Slap.VCDIFF.CodeTable (CodeTable)
+import Slap.VCDIFF.AddressCache (AddressCacheConfig)
 import Slap.VCDIFF.SecondaryCompression (XDelta3SecondaryCompressor)
 
 import Data.Vector (Vector)
@@ -84,7 +86,25 @@ data XDelta3Header = XDelta3Header
 -- table (RFC 3284 §7's VCD_CODETABLE) that replaces the default table
 -- for this patch; 'Nothing' means the default table is in force.
 data RFCHeader = RFCHeader
-  { rfcCustomCodeTable :: !(Maybe CodeTable) }
+  { rfcCustomCodeTable :: !(Maybe CustomCodeTable) }
+  deriving (Eq, Show)
+
+-- | A patch's custom code table (RFC 3284 §7), as it governs decoding: the
+-- 256 entries the instruction stream indexes, and the address-cache geometry
+-- the table declares ahead of them — the @s_near@\/@s_same@ pair that sizes
+-- the near and same caches. The two travel together because the wire format
+-- ties them (the table data is the geometry bytes then the entries' inner
+-- delta) and a window resolves its COPY addresses against the very cache the
+-- geometry sizes, so neither is meaningful without the other. A patch on the
+-- default table carries no 'CustomCodeTable' at all — the geometry is then
+-- the implicit default four-near\/three-same — which is why the field is a
+-- 'Maybe' rather than this record holding a default-or-custom flag. The
+-- geometry is the only place a VCDIFF patch's cache sizes can depart from
+-- the default, so it is the fact @info@\/@explain@ surface here.
+data CustomCodeTable = CustomCodeTable
+  { customCodeTableEntries     :: !CodeTable
+  , customCodeTableCacheConfig :: !AddressCacheConfig
+  }
   deriving (Eq, Show)
 
 -- | A window of an xdelta3 patch: the shared 'Window' plus the

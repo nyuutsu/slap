@@ -1,9 +1,11 @@
 -- | VCDIFF cover-matcher binding to rusty-slap.
 --
--- The Rust side (@rusty-slap/src/vcdiff_diff.rs@) owns the naive greedy
--- longest-match scan over the superstring @U = source ++
--- produced-target@. This module is the seam: it assembles the FFI call
--- and zips the three parallel-array buffers back into a typed 'Cover'.
+-- The Rust side owns the longest-match search over the superstring
+-- @U = source ++ produced-target@: a greedy cover walk
+-- (@rusty-slap/src/vcdiff_diff.rs@) driven by a suffix-array matcher
+-- (@rusty-slap/src/vcdiff_suffix_sort.rs@). This module is the seam: it
+-- assembles the FFI call and zips the three parallel-array buffers back
+-- into a typed 'Cover'.
 --
 -- It is total — every input yields a cover, the empty target included —
 -- so it follows 'Slap.BPS.FFI.bpsDiff''s shape (no error channel)
