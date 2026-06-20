@@ -67,7 +67,8 @@ import Slap.VCDIFF.Types (vcdiffMagicBytes, VCDIFFInstruction(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
-  ( AddressCacheConfig(..), freshAddressCache, defaultAddressCacheConfig
+  ( AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
+  , freshAddressCache, defaultAddressCacheConfig
   , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..) )
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
@@ -83,7 +84,6 @@ import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ord (Down(..))
-import qualified Data.Vector as Vector
 import Data.Word (Word8)
 
 -- | Create a VCDIFF patch reconstructing @target@. The cover comes from
@@ -284,13 +284,13 @@ copyAddEntry copyLength mode addLength = do
 -- shared 'addCopyEntry', looked up in the active table. The mode is the one
 -- 'resolveInstructionAddresses' already selected, so a combine never shifts
 -- the COPY off the cheapest address mode.
-combinedAddCopyOpcode :: DenseOpcodes -> Length -> Length -> Table.CopyAddressMode -> Maybe Word8
+combinedAddCopyOpcode :: DenseOpcodes -> Length -> Length -> Table.CopyAddressMode -> Maybe Table.Opcode
 combinedAddCopyOpcode resolver addLength copyLength mode =
   addCopyEntry addLength copyLength mode >>= opcodeFor resolver
 
 -- | The opcode a COPY-then-ADD adjacency packs into under a table — the
 -- mirror of 'combinedAddCopyOpcode'.
-combinedCopyAddOpcode :: DenseOpcodes -> Length -> Table.CopyAddressMode -> Length -> Maybe Word8
+combinedCopyAddOpcode :: DenseOpcodes -> Length -> Table.CopyAddressMode -> Length -> Maybe Table.Opcode
 combinedCopyAddOpcode resolver copyLength mode addLength =
   copyAddEntry copyLength mode addLength >>= opcodeFor resolver
 
@@ -300,10 +300,10 @@ combinedCopyAddOpcode resolver copyLength mode addLength =
 -- the COPY half's operand in the address section. A combined opcode
 -- contributes exactly one of each regardless of the halves' order, so one
 -- shape serves ADD+COPY and COPY+ADD alike.
-combinedSections :: Word8 -> ByteString -> CopyAddressOperand -> SectionBuilders
+combinedSections :: Table.Opcode -> ByteString -> CopyAddressOperand -> SectionBuilders
 combinedSections opcode literal operand = SectionBuilders
   { dataStream        = byteString literal
-  , instructionStream = word8 opcode
+  , instructionStream = word8 (Table.unOpcode opcode)
   , addressStream     = renderOperand operand }
 
 -- | Pack one instruction on its own — a RUN, an ADD or COPY with no
@@ -318,28 +318,28 @@ packSingle :: DenseOpcodes -> ResolvedInstruction -> SectionBuilders
 packSingle resolver = \case
   ResolvedAdd literal ->
     let (opcode, sizeVarint) =
-          singleSize resolver "ADD" (byteLength literal)
+          singleSize resolver (byteLength literal)
             (\size -> Table.CodeTableEntry (Table.Add size) Table.Noop)
     in SectionBuilders
          { dataStream        = byteString literal
-         , instructionStream = word8 opcode <> sizeVarint
+         , instructionStream = word8 (Table.unOpcode opcode) <> sizeVarint
          , addressStream     = mempty }
   ResolvedRun runLength fillByte ->
     SectionBuilders
       { dataStream        = word8 fillByte
-      , instructionStream = word8 codedRunOpcode <> varintOfLength runLength
+      , instructionStream = word8 (Table.unOpcode codedRunOpcode) <> varintOfLength runLength
       , addressStream     = mempty }
   ResolvedCopy copyLength mode operand ->
     let (opcode, sizeVarint) =
-          singleSize resolver ("COPY mode " <> show (Table.unCopyAddressMode mode)) copyLength
+          singleSize resolver copyLength
             (\size -> Table.CodeTableEntry (Table.Copy size mode) Table.Noop)
     in SectionBuilders
          { dataStream        = mempty
-         , instructionStream = word8 opcode <> sizeVarint
+         , instructionStream = word8 (Table.unOpcode opcode) <> sizeVarint
          , addressStream     = renderOperand operand }
   where
     codedRunOpcode = requireOpcode resolver
-      (Table.CodeTableEntry (Table.Run Table.SizeCodedSeparately) Table.Noop) "coded RUN"
+      (Table.CodeTableEntry (Table.Run Table.SizeCodedSeparately) Table.Noop)
 
 -- | The address-section bytes a chosen mode's operand contributes: a
 -- varint for SELF \/ HERE \/ NEAR, a single byte for SAME.
@@ -355,16 +355,15 @@ renderOperand (AddressSameByte byte) = word8 byte
 -- 'Table.Noop' second half) or a combined pair (two real halves). The
 -- lowest index wins a shape that repeats; the default table holds each
 -- shape once.
-newtype DenseOpcodes = DenseOpcodes (Map Table.CodeTableEntry Word8)
+newtype DenseOpcodes = DenseOpcodes (Map Table.CodeTableEntry Table.Opcode)
 
 denseOpcodes :: Table.CodeTable -> DenseOpcodes
 denseOpcodes table = DenseOpcodes
   (Map.fromListWith (\_later earlier -> earlier)
-    [ (entry, fromIntegral index)
-    | (index, entry) <- zip [0 :: Int ..] (Vector.toList (Table.codeTableEntries table)) ])
+    [ (entry, opcode) | (opcode, entry) <- Table.codeTableAssocs table ])
 
 -- | The opcode an entry shape carries in the active table, if any.
-opcodeFor :: DenseOpcodes -> Table.CodeTableEntry -> Maybe Word8
+opcodeFor :: DenseOpcodes -> Table.CodeTableEntry -> Maybe Table.Opcode
 opcodeFor (DenseOpcodes opcodes) entry = Map.lookup entry opcodes
 
 -- | The opcode for an entry the active table must carry — the coded-size
@@ -372,10 +371,10 @@ opcodeFor (DenseOpcodes opcodes) entry = Map.lookup entry opcodes
 -- default table carries them all and a custom table the encoder emits
 -- would too, so a miss means a broken table, surfaced the proof-by-
 -- provenance way the table lookups elsewhere here are.
-requireOpcode :: DenseOpcodes -> Table.CodeTableEntry -> String -> Word8
-requireOpcode resolver entry name = case opcodeFor resolver entry of
+requireOpcode :: DenseOpcodes -> Table.CodeTableEntry -> Table.Opcode
+requireOpcode resolver entry = case opcodeFor resolver entry of
   Just opcode -> opcode
-  Nothing     -> error ("Slap.VCDIFF.Create: active code table lacks the " <> name <> " entry")
+  Nothing     -> error ("Slap.VCDIFF.Create: active code table lacks the entry " <> show entry)
 
 -- | A fixed inline size for a length the one-byte size field can name
 -- (1–255); 'Nothing' for zero, or for a length too large to sit inline,
@@ -391,17 +390,16 @@ fixedSizeFor (Length n)
 -- the given output size: the table's fixed-size entry where it has one
 -- (the size rides in the opcode, nothing trails), else its coded-size
 -- entry (a size varint trails). @entryFor@ builds the lookup key from a
--- size; @name@ labels the coded entry in the provenance error a table
--- missing even that would raise.
+-- size.
 singleSize
-  :: DenseOpcodes -> String -> Length
+  :: DenseOpcodes -> Length
   -> (Table.InstructionSize -> Table.CodeTableEntry)
-  -> (Word8, Builder)
-singleSize resolver name size entryFor =
+  -> (Table.Opcode, Builder)
+singleSize resolver size entryFor =
   case fixedSizeFor size >>= opcodeFor resolver . entryFor of
     Just opcode -> (opcode, mempty)
     Nothing     ->
-      ( requireOpcode resolver (entryFor Table.SizeCodedSeparately) (name <> " (coded)")
+      ( requireOpcode resolver (entryFor Table.SizeCodedSeparately)
       , varintOfLength size )
 
 -- | Render a window's three section streams to bytes under a table.
@@ -568,8 +566,8 @@ assembleCustomTablePatch source target plan candidate =
   where
     framedCodeTableData = varintOfLength (byteLength codeTableData) <> byteString codeTableData
     codeTableData       = builderBytes (cacheSizeHeader <> byteString innerDelta)
-    cacheSizeHeader     = word8 (fromIntegral (nearSlotCount  defaultAddressCacheConfig))
-                       <> word8 (fromIntegral (sameBlockCount defaultAddressCacheConfig))
+    cacheSizeHeader     = word8 (fromIntegral (unNearSlotCount  (nearSlotCount  defaultAddressCacheConfig)))
+                       <> word8 (fromIntegral (unSameBlockCount (sameBlockCount defaultAddressCacheConfig)))
     innerDelta          = emitDefaultPatch defaultImage candidateImage
                             (vcdiffCover (InputFileContents defaultImage)
                                          (OutputFileContents candidateImage))
@@ -605,7 +603,7 @@ designCandidateTable resolved
     -- The combined opcodes the default already uses for this patch's pairs
     -- — excluded from the donor pool so a mint never overwrites an entry
     -- the patch still needs.
-    usedCombinedOpcodes :: [Word8]
+    usedCombinedOpcodes :: [Table.Opcode]
     usedCombinedOpcodes =
       [ opcode | entry <- pairs, Just opcode <- [opcodeFor defaultDense entry] ]
 
@@ -623,18 +621,18 @@ designCandidateTable resolved
     -- Donor opcodes: the default's combined slots (its two-template
     -- entries) the patch does not use, in index order. The supply far
     -- exceeds the handful of mints in practice.
-    donorOpcodes :: [Word8]
+    donorOpcodes :: [Table.Opcode]
     donorOpcodes =
-      [ fromIntegral index
-      | (index, entry) <- zip [0 :: Int ..] (Vector.toList (Table.codeTableEntries Table.defaultCodeTable))
+      [ opcode
+      | (opcode, entry) <- Table.codeTableAssocs Table.defaultCodeTable
       , Table.secondTemplate entry /= Table.Noop
-      , fromIntegral index `notElem` usedCombinedOpcodes
+      , opcode `notElem` usedCombinedOpcodes
       ]
 
     -- Each mint candidate to a donor opcode; 'zip' drops nothing while
     -- donors outnumber mints, and a (vanishingly unlikely) donor shortage
     -- simply mints fewer.
-    mints :: [(Word8, Table.CodeTableEntry)]
+    mints :: [(Table.Opcode, Table.CodeTableEntry)]
     mints = zip donorOpcodes mintableByFrequency
 
 -- | The fixed-size ADD+COPY and COPY+ADD pairs a greedy left-to-right walk

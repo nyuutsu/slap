@@ -25,8 +25,11 @@ module Slap.VCDIFF.CodeTable
   , CopyAddressMode(..)
     -- * The table
   , CodeTableEntry(..)
+  , Opcode(..)
   , CodeTable
   , codeTableEntries
+  , codeTableEntry
+  , codeTableAssocs
   , defaultCodeTable
   , codeTableWithEntriesReplaced
     -- * The serialized 1536-byte image
@@ -117,12 +120,36 @@ data CodeTableEntry = CodeTableEntry
 -- | A complete VCDIFF code table: exactly 'codeTableEntryCount'
 -- entries, indexed by the instruction-stream byte. The constructor is
 -- intentionally not exported: every 'CodeTable' that exists came from
--- 'defaultCodeTable' or 'deserializeCodeTable', both provably
--- 256-wide, so the window decoder's @'Vector.!' codeByte@ lookup is
--- total by construction — the same proof-by-provenance discipline as
+-- 'defaultCodeTable', 'deserializeCodeTable', or
+-- 'codeTableWithEntriesReplaced', all provably 256-wide, so 'codeTableEntry'
+-- is total by construction — the same proof-by-provenance discipline as
 -- 'Slap.Measure.SplitHunk'.
 newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
   deriving (Eq, Show)
+
+-- | An opcode: one byte of a window's instruction stream, which indexes the
+-- code table to the one or two templates it expands to. The wrapper names
+-- the role in every signature it crosses and keeps it distinct from the
+-- other bytes that flow through encode and decode — a fill byte, a same-slot
+-- operand. Its range is the whole 'Word8', exactly the 'codeTableEntryCount'
+-- entries a table holds, which is what makes 'codeTableEntry' total.
+newtype Opcode = Opcode { unOpcode :: Word8 }
+  deriving (Eq, Ord, Show)
+
+-- | The entry an opcode selects. Total by provenance: an 'Opcode' wraps a
+-- 'Word8', so the index lands in @[0, 'codeTableEntryCount')@, and every
+-- 'CodeTable' is that wide. The window decoder's per-instruction lookup,
+-- with the raw 'Vector.!' kept here rather than at the call site.
+codeTableEntry :: CodeTable -> Opcode -> CodeTableEntry
+codeTableEntry (CodeTable entries) (Opcode opcode) = entries Vector.! fromIntegral opcode
+
+-- | Every entry paired with the opcode that selects it, in opcode order —
+-- the inverse direction to 'codeTableEntry'. The encoder reads its opcode
+-- set off this rather than zipping indices onto the raw entry vector by hand.
+codeTableAssocs :: CodeTable -> [(Opcode, CodeTableEntry)]
+codeTableAssocs (CodeTable entries) =
+  [ (Opcode (fromIntegral index), entry)
+  | (index, entry) <- zip [0 :: Int ..] (Vector.toList entries) ]
 
 -- | The fixed default code table (RFC 3284 §5.6,
 -- @docs\/vcdiff\/core\/spec.md@). Not stored in a patch; in force
@@ -197,19 +224,18 @@ defaultCodeTable = CodeTable (Vector.fromList (concat
     sized = SizeIs . FixedInstructionSize
 
 -- | Derive a code table from another by replacing the entries at the
--- listed opcode indices, leaving every other entry untouched. The base
--- supplies the entry count and the result keeps it — 'Vector.//' preserves
--- length, and every index is a 'Word8', so none can fall outside
--- @[0, 'codeTableEntryCount')@ — so a table built this way is as total
--- under the window decoder's @'Vector.!' codeByte@ lookup as
--- 'defaultCodeTable' and 'deserializeCodeTable'. It is the third and last
--- way a 'CodeTable' comes to exist: the VCDIFF encoder uses it to mint a
--- handful of combined entries into donor opcodes the patch never uses,
--- while keeping the rest of the default table intact
+-- listed opcodes, leaving every other entry untouched. The base supplies the
+-- entry count and the result keeps it — 'Vector.//' preserves length, and
+-- every 'Opcode' wraps a 'Word8', so none can fall outside
+-- @[0, 'codeTableEntryCount')@ — so a table built this way is as total under
+-- 'codeTableEntry' as 'defaultCodeTable' and 'deserializeCodeTable'. It is
+-- the third and last way a 'CodeTable' comes to exist: the VCDIFF encoder
+-- uses it to mint a handful of combined entries into donor opcodes the patch
+-- never uses, while keeping the rest of the default table intact
 -- (@docs\/vcdiff\/rfc-vcdiff\/spec.md@, "Custom code tables").
-codeTableWithEntriesReplaced :: CodeTable -> [(Word8, CodeTableEntry)] -> CodeTable
+codeTableWithEntriesReplaced :: CodeTable -> [(Opcode, CodeTableEntry)] -> CodeTable
 codeTableWithEntriesReplaced (CodeTable entries) replacements =
-  CodeTable (entries Vector.// [ (fromIntegral index, entry) | (index, entry) <- replacements ])
+  CodeTable (entries Vector.// [ (fromIntegral (unOpcode opcode), entry) | (opcode, entry) <- replacements ])
 
 ----------------------------------------------------------------------------
 -- The serialized 1536-byte image

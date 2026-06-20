@@ -40,6 +40,8 @@ module Slap.VCDIFF.Parse
     -- * Address cache (exported for testing)
   , AddressCache(..)
   , AddressCacheConfig(..)
+  , NearSlotCount(..)
+  , SameBlockCount(..)
   , defaultAddressCacheConfig
   , freshAddressCache
   , decodeCopyAddress
@@ -61,7 +63,8 @@ import Slap.VCDIFF.SecondaryCompression
   , SectionCarriage(..), decodeLZMACompressedKind, decodeDJWCompressedKind
   , decodeFGKCompressedKind )
 import Slap.VCDIFF.AddressCache
-  ( AddressCache(..), AddressCacheConfig(..), defaultAddressCacheConfig
+  ( AddressCache(..), AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
+  , defaultAddressCacheConfig
   , freshAddressCache, classifyAddressMode
   , decodeCopyAddress, CopyAddressReading(..), AddressDecodeFailure(..) )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
@@ -558,8 +561,8 @@ peelCodeTableHeader
 peelCodeTableHeader (Just tableData)
   | ByteString.length tableData >= 2 =
       Right ( AddressCacheConfig
-                (fromIntegral (ByteString.index tableData 0))
-                (fromIntegral (ByteString.index tableData 1))
+                (NearSlotCount  (fromIntegral (ByteString.index tableData 0)))
+                (SameBlockCount (fromIntegral (ByteString.index tableData 1)))
             , ByteString.drop 2 tableData )
 peelCodeTableHeader _ =
   Left (MalformedVCDIFFCodeTable VCDIFFCodeTableHeaderTooShort)
@@ -609,7 +612,8 @@ checkCustomTableCopyModes config table =
 -- @2 + s_near + s_same - 1@. Shares the band arithmetic with
 -- 'classifyAddressMode'.
 highestValidAddressMode :: AddressCacheConfig -> Int
-highestValidAddressMode config = 1 + nearSlotCount config + sameBlockCount config
+highestValidAddressMode config =
+  1 + unNearSlotCount (nearSlotCount config) + unSameBlockCount (sameBlockCount config)
 
 -- | A presence advisory if the built table holds any do-nothing
 -- (NOOP-then-NOOP) entry, or none. Legal but remarkable — the default
@@ -1052,19 +1056,18 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     decodeTableEntry :: WindowDecode ()
     decodeTableEntry = do
       codeByte <- nextInstructionByte
-      let entry = Table.codeTableEntries (activeCodeTable activeTable)
-                    Vector.! fromIntegral codeByte
+      let entry = Table.codeTableEntry (activeCodeTable activeTable) codeByte
       applyTemplate (Table.firstTemplate entry)
       applyTemplate (Table.secondTemplate entry)
 
     -- | The next byte of the instruction section. Total:
     -- 'walkInstructionSection' only descends here when the cursor is
     -- strictly inside the section.
-    nextInstructionByte :: WindowDecode Word8
+    nextInstructionByte :: WindowDecode Table.Opcode
     nextInstructionByte = do
       InstructionSectionCursor (Offset codeBytePosition) <- gets instCursor
       modify (advanceInstCursor (Length 1))
-      pure (ByteString.index instSection codeBytePosition)
+      pure (Table.Opcode (ByteString.index instSection codeBytePosition))
 
     applyTemplate :: Table.InstructionTemplate -> WindowDecode ()
     applyTemplate Table.Noop = pure ()

@@ -54,7 +54,7 @@ import Slap.VCDIFF.CodeTable (CodeTableEntry(..), InstructionTemplate(..),
                              defaultCodeTable, serializeCodeTable,
                              deserializeCodeTable)
 import Slap.VCDIFF.Parse (parseVCDIFF, decodeCopyAddress, freshAddressCache,
-                          AddressCacheConfig(..), defaultAddressCacheConfig,
+                          AddressCacheConfig(..), NearSlotCount(..), defaultAddressCacheConfig,
                           AddressCache, CopyAddressReading(..))
 import Slap.VCDIFF.Types (VCDIFFPatch(..), XDelta3Header(..), XDelta3Window(..))
 import Slap.VCDIFF.Apply (applyVCDIFF)
@@ -1986,7 +1986,7 @@ test_vcdiffSameCacheModulo =
     -- 770 as a VCDIFF varint: 0x86 0x02 (group 6, then 2).
     seeded = snd (selfSeedBytes (freshAddressCache defaultAddressCacheConfig) [0x86, 0x02])
     sameRead cache slotByte =
-      case decodeCopyAddress cache (Offset 0) (fromIntegral (nearSlotCount defaultAddressCacheConfig + 2)) (ByteString.pack [slotByte]) (Offset 0) of
+      case decodeCopyAddress cache (Offset 0) (fromIntegral (unNearSlotCount (nearSlotCount defaultAddressCacheConfig) + 2)) (ByteString.pack [slotByte]) (Offset 0) of
         Right reading -> copyAddressDecoded reading
         Left _ -> error "same-mode decode should not fail"
 

@@ -28,6 +28,8 @@
 module Slap.VCDIFF.AddressCache
   ( -- * Configuration and caches
     AddressCacheConfig(..)
+  , NearSlotCount(..)
+  , SameBlockCount(..)
   , defaultAddressCacheConfig
   , NearSlotIndex(..)
   , SameBlockIndex(..)
@@ -70,6 +72,20 @@ import Data.Word (Word8)
 -- Configuration and caches
 ----------------------------------------------------------------------------
 
+-- | @s_near@: the number of near slots a cache holds. A role newtype over
+-- 'Int' so it cannot be transposed with 'SameBlockCount' — the two share a
+-- base type and are built side by side from two adjacent wire bytes
+-- ('Slap.VCDIFF.Parse' peels a custom table's @s_near@\/@s_same@ pair), so a
+-- bare-'Int' pair would admit a silent swap that decodes every COPY address
+-- through the wrong cache.
+newtype NearSlotCount = NearSlotCount { unNearSlotCount :: Int }
+  deriving (Eq, Show)
+
+-- | @s_same@: the number of 256-slot same blocks a cache holds. The peer of
+-- 'NearSlotCount'; see its note for why both are newtypes rather than 'Int's.
+newtype SameBlockCount = SameBlockCount { unSameBlockCount :: Int }
+  deriving (Eq, Show)
+
 -- | How many slots each cache holds: @s_near@ near slots and @s_same@
 -- 256-slot same blocks (docs/vcdiff/core/spec.md "Address cache"). The
 -- default code table fixes these ('defaultAddressCacheConfig'); a custom
@@ -77,8 +93,8 @@ import Data.Word (Word8)
 -- sizes drive the round-robin wrap, the slot bounds, and the same-block
 -- arithmetic at runtime, rather than being baked into the types.
 data AddressCacheConfig = AddressCacheConfig
-  { nearSlotCount  :: !Int   -- ^ @s_near@: the number of near slots.
-  , sameBlockCount :: !Int   -- ^ @s_same@: the number of 256-slot same blocks.
+  { nearSlotCount  :: !NearSlotCount   -- ^ @s_near@: the number of near slots.
+  , sameBlockCount :: !SameBlockCount  -- ^ @s_same@: the number of 256-slot same blocks.
   }
   deriving (Eq, Show)
 
@@ -87,8 +103,8 @@ data AddressCacheConfig = AddressCacheConfig
 -- place @4@ and @3@ are named.
 defaultAddressCacheConfig :: AddressCacheConfig
 defaultAddressCacheConfig = AddressCacheConfig
-  { nearSlotCount  = 4
-  , sameBlockCount = 3
+  { nearSlotCount  = NearSlotCount 4
+  , sameBlockCount = SameBlockCount 3
   }
 
 -- | A near-cache slot index, in @[0, s_near)@. Constructed only within
@@ -139,7 +155,7 @@ slotsPerSameBlock = 256
 -- | The same cache's total slot count for a configuration: 'sameBlockCount'
 -- blocks of 'slotsPerSameBlock'.
 sameSlotCount :: AddressCacheConfig -> Int
-sameSlotCount config = sameBlockCount config * slotsPerSameBlock
+sameSlotCount config = unSameBlockCount (sameBlockCount config) * slotsPerSameBlock
 
 -- | The address held in one near slot; an untouched slot holds zero.
 readNearSlot :: NearSlotIndex -> IntMap Offset -> Offset
@@ -149,7 +165,7 @@ readNearSlot (NearSlotIndex slot) = IntMap.findWithDefault (Offset 0) slot
 -- 'nearSlotCount' is positive and the result lands in @[0, s_near)@.
 advanceNearWriteSlot :: AddressCacheConfig -> NearSlotIndex -> NearSlotIndex
 advanceNearWriteSlot config (NearSlotIndex slot) =
-  NearSlotIndex ((slot + 1) `mod` nearSlotCount config)
+  NearSlotIndex ((slot + 1) `mod` unNearSlotCount (nearSlotCount config))
 
 -- | The address held in one same slot; the block index and the one-byte
 -- operand select the slot within the block's 256-slot span, and an
@@ -217,8 +233,8 @@ classifyAddressMode config mode
   | otherwise                = Nothing
   where
     modeNumber  = fromIntegral mode
-    nearBandEnd = 2 + nearSlotCount config
-    sameBandEnd = nearBandEnd + sameBlockCount config
+    nearBandEnd = 2 + unNearSlotCount (nearSlotCount config)
+    sameBandEnd = nearBandEnd + unSameBlockCount (sameBlockCount config)
 
 ----------------------------------------------------------------------------
 -- Decode (mode + operand -> address)
@@ -392,7 +408,7 @@ selectCopyAddressMode cache here address = recordInto chosen
     forwardNearSlots :: [(Int, Int)]   -- (slot index, forward delta)
     forwardNearSlots =
       [ (slotIndex, addressInt - slotAddrInt)
-      | slotIndex <- [0 .. nearSlotCount config - 1]
+      | slotIndex <- [0 .. unNearSlotCount (nearSlotCount config) - 1]
       , let slotAddrInt = offsetToInt (readNearSlot (NearSlotIndex slotIndex) (nearAddresses cache))
       , slotAddrInt <= addressInt
       ]
@@ -406,7 +422,7 @@ selectCopyAddressMode cache here address = recordInto chosen
         (minimalVcdiffVarintLength (fromIntegral value))
 
     nearModeByte slotIndex = fromIntegral (2 + slotIndex)
-    sameModeByte block     = fromIntegral (2 + nearSlotCount config + block)
+    sameModeByte block     = fromIntegral (2 + unNearSlotCount (nearSlotCount config) + block)
 
     recordInto candidate = SelectedCopyAddress
       { selectedAddressMode       = candidateMode candidate
