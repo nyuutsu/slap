@@ -19,8 +19,7 @@ import Slap.Measure (offsetFromParsed, Length(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      ActionIndex, firstAction, nextAction,
                      byteLength)
-import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 
 import Control.Monad (when)
 import qualified Data.ByteString as ByteString
@@ -68,10 +67,8 @@ parsePPF4 metadataEncoding (PatchFileContents input)
     parsePPF4Body = do
       skip ppf4PreambleLength
       descriptionBytes <- getBytes ppf4DescriptionLength
-      let (descriptionText, descriptionNotices) =
-            decodeTextLenient metadataEncoding descriptionBytes
-          descriptionAdvisories =
-            decodeLossAdvisories LabelPPF4 FieldDescription descriptionNotices
+      let (descriptionText, descriptionAdvisories) =
+            decodeFixedWidthTextField metadataEncoding LabelPPF4 FieldDescription descriptionBytes
       skip ppf4PostDescriptionLength
       wireRecords <- parsePPF4Records firstAction []
       pure PPF4ParsedBody

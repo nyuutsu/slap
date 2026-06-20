@@ -291,18 +291,15 @@ parseSome dialects metadataEncoding patchContents = case detectFormat patchConte
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Pass through an 'EncodedText'-shaped header field as a
--- 'RequestedPatchMetadata.requestedDescription' value, or 'Nothing'
--- if the wire field was entirely blank padding (space or null on
--- both ends). The pre-migration shape unpacked to 'String' for the
--- emptiness check; the migration keeps the value typed and runs the
--- check on the decoded codepoints directly.
-extractedDescription :: EncodedText -> Maybe EncodedText
-extractedDescription field
-  | Text.null trimmed = Nothing
-  | otherwise         = Just field
-  where
-    trimmed = Text.dropAround (\c -> c == ' ' || c == '\NUL') (encodedTextContent field)
+-- | A parsed metadata field as a value the producer supplied, or
+-- 'Nothing' when the field was blank. Fields arrive trimmed to their
+-- content at parse, so a blank one means the producer gave no value —
+-- which must read as absent metadata downstream, never as a deliberately
+-- empty value.
+presentField :: EncodedText -> Maybe EncodedText
+presentField field
+  | Text.null (encodedTextContent field) = Nothing
+  | otherwise                            = Just field
 
 -- | Build a 'SomePatch' from a parsed PPF1 patch. PPF1 carries no
 -- validation block, no undo data, no file-size advisory, and no
@@ -333,7 +330,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
-            { requestedDescription = extractedDescription (PPF1.ppf1Description patch) }
+            { requestedDescription = presentField (PPF1.ppf1Description patch) }
       }
   where
     hunkOf record = Hunk (PPF1.ppf1RecordOffset record) (PPF1.ppf1RecordPayload record)
@@ -378,7 +375,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
-            { requestedDescription           = extractedDescription (PPF2.ppf2Description patch)
+            { requestedDescription           = presentField (PPF2.ppf2Description patch)
             , requestedVerificationInclusion = Just IncludeVerification
             }
       }
@@ -436,7 +433,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
-            { requestedDescription           = extractedDescription (PPF3.ppf3Description patch)
+            { requestedDescription           = presentField (PPF3.ppf3Description patch)
             , requestedImageType             = Just (PPF3.ppf3ImageType patch)
             , requestedUndoInclusion         = if PPF3.ppf3HasUndo patch then Just IncludeUndoData else Nothing
             , requestedVerificationInclusion = if isJust (PPF3.ppf3ValidationBlock patch) then Just IncludeVerification else Nothing
@@ -484,7 +481,7 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
       , patchExtractedMeta  = noMetadataRequested
-            { requestedDescription = extractedDescription (PPF4.ppf4Description patch) }
+            { requestedDescription = presentField (PPF4.ppf4Description patch) }
       }
 
 parseSomePatchFromIPS :: IPS.IPSVariant -> PatchFileContents -> Either SlapError SomePatch
@@ -541,17 +538,10 @@ parseSomePatchFromIPS variant patchContents = do
       let basePatch = IPS.ebpBasePatch ebpPatch
           records = IPS.ipsRecords basePatch
           metadata = IPS.ebpMetadata ebpPatch
-          -- The JSON parser already tags extracted values 'EncodingUtf8';
-          -- this collapse just drops empty strings so an EBP patch with
-          -- blank fields reads as "no metadata requested" downstream
-          -- rather than as "empty values explicitly requested".
-          nonEmpty encoded
-            | Text.null (encodedTextContent encoded) = Nothing
-            | otherwise                              = Just encoded
           extractedMeta = noMetadataRequested
-            { requestedTitle       = IPS.ebpMetadataTitle       metadata >>= nonEmpty
-            , requestedAuthor      = IPS.ebpMetadataAuthor      metadata >>= nonEmpty
-            , requestedDescription = IPS.ebpMetadataDescription metadata >>= nonEmpty
+            { requestedTitle       = IPS.ebpMetadataTitle       metadata >>= presentField
+            , requestedAuthor      = IPS.ebpMetadataAuthor      metadata >>= presentField
+            , requestedDescription = IPS.ebpMetadataDescription metadata >>= presentField
             }
       in Right SomePatch
         { patchFormat         = LabelEBP
@@ -822,16 +812,8 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  =
-        let description       = APSN64.apsN64Description header
-            descriptionText   = encodedTextContent description
-            trimmedText       = Text.dropAround (\c -> c == ' ' || c == '\NUL') descriptionText
-        in noMetadataRequested
-             { requestedDescription =
-                 if Text.null trimmedText
-                   then Nothing
-                   else Just description
-             }
+    , patchExtractedMeta  = noMetadataRequested
+        { requestedDescription = presentField (APSN64.apsN64Description header) }
     }
 
 parseSomePatchFromNINJA2 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
@@ -1126,15 +1108,10 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
-    , patchExtractedMeta  =
-        let nonEmpty field =
-              let trimmed = Text.dropAround (\c -> c == ' ' || c == '\NUL')
-                                            (encodedTextContent field)
-              in if Text.null trimmed then Nothing else Just field
-        in noMetadataRequested
-             { requestedTitle     = nonEmpty (DPS.dpsName    patch)
-             , requestedAuthor    = nonEmpty (DPS.dpsAuthor  patch)
-             , requestedVersion   = nonEmpty (DPS.dpsVersion patch)
+    , patchExtractedMeta  = noMetadataRequested
+             { requestedTitle     = presentField (DPS.dpsName    patch)
+             , requestedAuthor    = presentField (DPS.dpsAuthor  patch)
+             , requestedVersion   = presentField (DPS.dpsVersion patch)
              , requestedStability = case DPS.dpsStability patch of
                                       DPS.DPSUnstable -> Just UnstablePatch
                                       DPS.DPSStable   -> Nothing

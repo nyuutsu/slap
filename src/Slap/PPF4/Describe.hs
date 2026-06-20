@@ -31,17 +31,13 @@ import qualified Data.Text as Text
 -- undo, no image type, no File_ID.diz.
 ppf4Meta :: PPF4Patch -> [InfoLine]
 ppf4Meta patch =
-  let description = stripTrailing (encodedTextContent (ppf4Description patch))
+  let description = encodedTextContent (ppf4Description patch)
   in [InfoLine "description" description | not (Text.null description)]
 
 totalPayloadBytes :: PPF4Patch -> Int
 totalPayloadBytes patch =
   sum (map (ByteString.length . replaceData) (ppf4Replaces patch))
   + sum (map (ByteString.length . appendData) (ppf4Appends patch))
-
-stripTrailing :: Text.Text -> Text.Text
-stripTrailing =
-  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 ----------------------------------------------------------------------------
 -- Analyze

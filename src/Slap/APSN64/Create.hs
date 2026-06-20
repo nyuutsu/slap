@@ -38,8 +38,9 @@ encodeAPSN64 records destinationSize description =
     in CreateResult (PatchFileContents patchBytes) descriptionAdvisories
 
 -- | Codepoint-aware bounded encode of the description into APS-N64's
--- 50-byte field, null-padded on the right. The @0x00@ padding byte
--- matches PPF3\/DPS's convention (PPF1\/PPF2 right-pad with @0x20@).
+-- 50-byte field, space-padded on the right with @0x20@ to match the
+-- format spec ("Space padded free text") and the original maker, which
+-- fills the field with spaces (n64caps.c's @memset(Description,' ',50)@).
 -- Substitution and truncation notices both surface as 'SlapAdvisory'
 -- values tagged 'LabelAPSN64' \/ 'FieldDescription'.
 padDescription :: EncodedText -> (ByteString.ByteString, [SlapAdvisory])
@@ -50,7 +51,7 @@ padDescription description =
       padded = truncatedBytes
             <> ByteString.replicate
                  (max 0 (apsN64DescriptionWidth - ByteString.length truncatedBytes))
-                 0x00
+                 0x20
       advisories = encodeLossAdvisories LabelAPSN64 FieldDescription notices
   in (padded, advisories)
 

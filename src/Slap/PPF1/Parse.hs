@@ -18,8 +18,7 @@ import Slap.Measure (Offset, offsetFromParsed, Length(..), EncodingMethodByte(..
                      ActionIndex,
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
-import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -55,10 +54,8 @@ parsePPF1 origin metadataEncoding (PatchFileContents input)
     parsePPF1Body = do
       skip (Length 6)                            -- magic + version + encoding byte
       descriptionBytes <- getBytes ppf1DescriptionLength
-      let (descriptionText, descriptionNotices) =
-            decodeTextLenient metadataEncoding descriptionBytes
-          descriptionAdvisories =
-            decodeLossAdvisories LabelPPF1 FieldDescription descriptionNotices
+      let (descriptionText, descriptionAdvisories) =
+            decodeFixedWidthTextField metadataEncoding LabelPPF1 FieldDescription descriptionBytes
       records <- parsePPF1Records origin firstAction
       pure PPF1ParsedBody
         { ppf1BodyDescription           = descriptionText

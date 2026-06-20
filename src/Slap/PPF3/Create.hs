@@ -41,19 +41,17 @@ import qualified Data.ByteString.Lazy as LazyByteString
 import Data.Maybe (isJust)
 
 -- | Codepoint-aware bounded encode of the description into PPF3's
--- 50-byte field, null-padded on the right. The @0x00@ padding byte
--- is format-faithful: PPF1\/PPF2 right-pad with @0x20@ (per
--- @makeppf.c@'s @memset(' ',50)@), while PPF3's reference encoder
--- uses null padding. The padding is applied here, locally to PPF3,
--- so the shared bounded primitive does not have to know about
--- per-format padding choices.
+-- 50-byte field, space-padded on the right with @0x20@ to match the
+-- reference maker, which fills the field with spaces
+-- (@memset(description,0x20,50)@). Padding is applied here, local to
+-- PPF3, so the shared bounded primitive stays padding-agnostic.
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let width = unLength ppf3DescriptionLength
       (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 width (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (width - ByteString.length truncatedBytes)) 0x00
+                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
   in (padded, advisories)
 

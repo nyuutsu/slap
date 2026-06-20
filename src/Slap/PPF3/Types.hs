@@ -108,10 +108,9 @@ ppf3FileIdFromParsed = PPF3FileId
 data PPF3Patch = PPF3Patch
   { ppf3Description     :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
-    -- chosen metadata encoding. Same encoding model as PPF1/PPF2/PPF4;
-    -- the PPF3 wire field is null-padded on the encode side (vs
-    -- PPF1/PPF2's space-padding), preserved verbatim by
-    -- 'Slap.PPF3.Create.padDescription'.
+    -- chosen metadata encoding (same model as PPF1/PPF2/PPF4). The raw
+    -- field carries the encoder's right padding; trailing space/NUL is
+    -- stripped at display and metadata extraction.
   , ppf3ImageType       :: !PPF3ImageType
   , ppf3HasUndo         :: !Bool                -- ^ True iff each 'PPF3Record' carries an undo payload
   , ppf3ValidationBlock :: !(Maybe PPF3ValidationBlock)  -- ^ Present iff the block-check flag was set in the header

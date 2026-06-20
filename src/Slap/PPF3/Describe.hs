@@ -39,7 +39,7 @@ import Data.Word (Word64)
 
 ppf3Meta :: PPF3Patch -> [InfoLine]
 ppf3Meta patch = concat
-  [ let description = stripTrailing (encodedTextContent (ppf3Description patch))
+  [ let description = encodedTextContent (ppf3Description patch)
     in [InfoLine "description" description | not (Text.null description)]
   , [InfoLine "validation" validationLine]
   , [InfoLine "undo data" (if ppf3HasUndo patch then "yes" else "no")]
@@ -57,10 +57,6 @@ ppf3Meta patch = concat
         <> " block at 0x"
         <> renderHexAsText (fromIntegral (unOffset (ppf3ValidationOffset (ppf3ImageType patch))) :: Word64)
         <> " (" <> renderAsText (ByteString.length blockBytes) <> " bytes)"
-
-stripTrailing :: Text.Text -> Text.Text
-stripTrailing =
-  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF3 :: PPF3Patch -> PatchAnalysis
 analyzePPF3 patch = PatchAnalysis

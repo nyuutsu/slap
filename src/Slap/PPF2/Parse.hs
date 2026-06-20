@@ -29,7 +29,8 @@ import Slap.Measure (Offset, offsetFromParsed, Length(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories)
+                  decodeTextLenient, decodeLossAdvisories,
+                  decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -75,10 +76,8 @@ parsePPF2 metadataEncoding (PatchFileContents input)
     parsePPF2Header = do
       skip (Length 6)
       descriptionBytes <- getBytes ppf2DescriptionLength
-      let (descriptionText, descriptionNotices) =
-            decodeTextLenient metadataEncoding descriptionBytes
-          descriptionAdvisories =
-            decodeLossAdvisories LabelPPF2 FieldDescription descriptionNotices
+      let (descriptionText, descriptionAdvisories) =
+            decodeFixedWidthTextField metadataEncoding LabelPPF2 FieldDescription descriptionBytes
       fileSize <- ppf2SourceSizeFromParsed <$> word32LE
       validationBlock <- PPF2ValidationBlock <$> getBytes ppf2ValidationSize
       pure PPF2ParsedHeader

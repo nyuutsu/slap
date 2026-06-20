@@ -35,8 +35,6 @@ module Slap.Binary
   , fillNewBuffer
     -- * Diff
   , diffHunks
-    -- * String utilities
-  , trimNull
     -- * Additional builders
   , putWord16LE
   , putWord32BE
@@ -506,12 +504,4 @@ data VarintResult = VarintResult
   , varintBytesConsumed :: !Int
   }
   deriving (Show)
-
-----------------------------------------------------------------------------
--- String utilities
-----------------------------------------------------------------------------
-
--- | Strip trailing null bytes from a ByteString.
-trimNull :: ByteString -> ByteString
-trimNull = ByteString.takeWhile (/= 0)
 

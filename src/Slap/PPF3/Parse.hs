@@ -26,7 +26,8 @@ import Slap.Measure (offsetFromParsed, Length(..), EncodingMethodByte(..),
                      RequiredLength(..), ActualLength(..), RemainingLength(..),
                      firstAction, nextAction, byteLength)
 import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories)
+                  decodeTextLenient, decodeLossAdvisories,
+                  decodeFixedWidthTextField)
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -81,10 +82,8 @@ parsePPF3 metadataEncoding (PatchFileContents input)
     parseHeader = do
       skip (Length 6)
       descriptionBytes <- getBytes ppf3DescriptionLength
-      let (descriptionText, descriptionNotices) =
-            decodeTextLenient metadataEncoding descriptionBytes
-          descriptionAdvisories =
-            decodeLossAdvisories LabelPPF3 FieldDescription descriptionNotices
+      let (descriptionText, descriptionAdvisories) =
+            decodeFixedWidthTextField metadataEncoding LabelPPF3 FieldDescription descriptionBytes
       imageTypeByte <- getByte
       hasBlockByte <- getByte
       hasUndoByte <- getByte

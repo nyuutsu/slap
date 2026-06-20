@@ -24,7 +24,7 @@ import Slap.ByteParser (ByteParser, runByteParser, getByte, getBytes, skip, rema
 import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
-import Slap.Text (EncodingName(..), decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodingName(..), decodeFixedWidthTextField)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
@@ -69,10 +69,8 @@ parseN64 metadataEncoding patchType = do
   skip (Length 1)                     -- patch-type byte (pre-validated)
   encodingMethod    <- toAPSRecordEncoding <$> getByte
   descriptionBytes  <- getBytes (Length apsN64DescriptionWidth)
-  let (description, descriptionNotices) =
-        decodeTextLenient metadataEncoding descriptionBytes
-      descriptionAdvisories =
-        decodeLossAdvisories LabelAPSN64 FieldDescription descriptionNotices
+  let (description, descriptionAdvisories) =
+        decodeFixedWidthTextField metadataEncoding LabelAPSN64 FieldDescription descriptionBytes
   case patchType of
     APSSimple -> do
       destinationSize <- apsN64DestinationSizeFromParsed <$> word32LE

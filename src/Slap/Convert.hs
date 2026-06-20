@@ -857,11 +857,11 @@ fieldNote contents field = case field of
     _ -> []
   FieldDescription -> case contentsDescription contents of
     Just description ->
-      let trimmed = trimTrailingNullSpace (encodedTextContent description)
-      in if Text.null trimmed
+      let text = encodedTextContent description
+      in if Text.null text
            then []
            else [FieldDropped FieldDescription
-                  (DroppedDescription (DroppedDescriptionText trimmed))]
+                  (DroppedDescription (DroppedDescriptionText text))]
     Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (length undoRecords)]
@@ -1326,9 +1326,7 @@ resolveDescription sources
   , Just description <- ebpMetadataDescription ebp
   , not (Text.null (encodedTextContent description))
   = description
-  | Just typed <- descriptionSourceTypedText sources =
-      EncodedText (encodedTextEncoding typed)
-                  (trimTrailingNullSpace (encodedTextContent typed))
+  | Just typed <- descriptionSourceTypedText sources = typed
   | otherwise = descriptionSourceFallback sources
 
 -- | Resolve a single EBP field: CLI flag wins, then fall back to the
@@ -1351,10 +1349,6 @@ resolveEBPField cliValue ebpValue
 -- slap-emitted EBP have a single named home.
 slapPatcherIdentity :: EncodedText
 slapPatcherIdentity = EncodedText EncodingUtf8 (Text.pack "slap")
-
--- | Drop trailing spaces and null bytes from a description.
-trimTrailingNullSpace :: Text.Text -> Text.Text
-trimTrailingNullSpace = Text.dropWhileEnd (\char -> char == ' ' || char == '\0')
 
 ----------------------------------------------------------------------------
 -- Format metadata

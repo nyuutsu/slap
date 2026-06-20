@@ -20,7 +20,9 @@ import Slap.Measure (Length(..), Offset(unOffset), offsetFromParsed, FileSize(..
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      ActionIndex, firstAction, nextAction,
                      byteLength)
-import Slap.Text (EncodedText, EncodingName(..), decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField,
+                  encodedTextContent)
+import qualified Data.Text as Text
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
@@ -79,12 +81,11 @@ parseFixedHeader metadataEncoding textMode input =
       let dropCount = unOffset fieldOffset
           takeCount = unLength fieldWidth
           fieldBytes = ByteString.take takeCount (ByteString.drop dropCount input)
-          trimmedBytes = ByteString.takeWhile (/= 0) fieldBytes
-      in if ByteString.null trimmedBytes
+          (content, advisories) =
+            decodeFixedWidthTextField effectiveEncoding LabelNINJA2 fieldName fieldBytes
+      in if Text.null (encodedTextContent content)
            then (Nothing, [])
-           else
-             let (decoded, notices) = decodeTextLenient effectiveEncoding trimmedBytes
-             in (Just decoded, decodeLossAdvisories LabelNINJA2 fieldName notices)
+           else (Just content, advisories)
 
 ----------------------------------------------------------------------------
 -- Command stream (starts at offset 0x800)

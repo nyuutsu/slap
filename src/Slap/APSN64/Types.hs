@@ -222,7 +222,7 @@ data APSN64Header = APSN64Header
   , apsN64Description :: EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
     -- process locale. Same encoding model as PPF1\/PPF2\/PPF3\/PPF4;
-    -- the wire field is null-padded on encode.
+    -- the wire field is space-padded on encode.
   , apsN64ImageFormat :: Maybe APSImageFormat
   , apsN64CartId      :: Maybe N64CartId
   , apsN64Country     :: Maybe APSN64Country
@@ -247,7 +247,7 @@ data APSN64Record
 apsN64MagicBytes :: ByteString
 apsN64MagicBytes = "APS10"
 
--- | Description field width: 50 bytes, null-padded.
+-- | Description field width: 50 bytes, space-padded.
 apsN64DescriptionWidth :: Int
 apsN64DescriptionWidth = 50
 

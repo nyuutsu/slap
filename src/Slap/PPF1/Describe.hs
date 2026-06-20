@@ -34,12 +34,8 @@ import qualified Data.Text as Text
 
 ppf1Meta :: PPF1Patch -> [InfoLine]
 ppf1Meta patch =
-  let description = stripTrailing (encodedTextContent (ppf1Description patch))
+  let description = encodedTextContent (ppf1Description patch)
   in [InfoLine "description" description | not (Text.null description)]
-
-stripTrailing :: Text.Text -> Text.Text
-stripTrailing =
-  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF1 :: PPF1Patch -> PatchAnalysis
 analyzePPF1 patch = PatchAnalysis

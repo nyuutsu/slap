@@ -1154,6 +1154,18 @@ data SlapAdvisory
   -- substitution event.
   | FieldEncodedSubstituted FormatLabel FieldName SubstitutionCount
 
+  -- | A fixed-width text field carried content past a NUL terminator:
+  -- after the trailing space-and-NUL padding was trimmed, bytes that
+  -- decode to real text still followed the field's first @0x00@. slap
+  -- keeps the content up to that terminator and sets the tail aside,
+  -- re-padding the field canonically on any re-encode; the advisory
+  -- marks the field as structurally odd so the reader knows content was
+  -- dropped. The 'Length' is how many characters past the terminator
+  -- were set aside. (A field merely padded with the "wrong" byte —
+  -- zeros where the format spaces — leaves nothing past a NUL and is
+  -- not flagged.)
+  | FieldContentPastEnd FormatLabel FieldName Length
+
   -- Platform conversion
   --
   -- | The source patch named a platform that the target format
@@ -2281,6 +2293,12 @@ renderSlapAdvisory (FieldEncodedSubstituted label name (SubstitutionCount count)
   <> renderAsText count <> plural count " codepoint was" " codepoints were"
   <> " not representable in the target encoding; substituted"
 
+renderSlapAdvisory (FieldContentPastEnd label name (Length dropped)) =
+  formatLabelName label <> " "
+  <> fieldNameLabel name <> ": "
+  <> renderAsText dropped <> plural dropped " character" " characters"
+  <> " past a NUL terminator (dropped on re-encode)"
+
 renderSlapAdvisory (PlatformNotAvailable label platform) =
   "platform " <> platformName platform
   <> " not available in " <> formatLabelName label <> "; using Raw"
@@ -2947,6 +2965,7 @@ slapAdvisorySeverity advisory = case advisory of
   FieldTruncated{}                     -> SeverityNote
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
+  FieldContentPastEnd{}                -> SeverityWarning
   PlatformNotAvailable{}               -> SeverityNote
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
   SubformatConverted{}                 -> SeverityNote

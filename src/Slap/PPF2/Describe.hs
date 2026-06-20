@@ -37,7 +37,7 @@ import Data.Word (Word64)
 
 ppf2Meta :: PPF2Patch -> [InfoLine]
 ppf2Meta patch = concat
-  [ let description = stripTrailing (encodedTextContent (ppf2Description patch))
+  [ let description = encodedTextContent (ppf2Description patch)
     in [InfoLine "description" description | not (Text.null description)]
   , [InfoLine "file size" (renderAsText (unPPF2SourceSize (ppf2SourceFileSize patch)) <> " bytes (validation)")]
   , [InfoLine "validation" validationLine]
@@ -53,10 +53,6 @@ ppf2Meta patch = concat
       "BIN block at 0x"
       <> renderHexAsText (fromIntegral (unOffset ppf2ValidationOffset) :: Word64)
       <> " (" <> renderAsText (ByteString.length validationBlockBytes) <> " bytes)"
-
-stripTrailing :: Text.Text -> Text.Text
-stripTrailing =
-  Text.dropWhileEnd (\character -> character == ' ' || character == '\0')
 
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis

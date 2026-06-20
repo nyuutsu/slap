@@ -106,6 +106,11 @@ module Slap.Text
     -- * Bounded encoding (fixed-width fields)
   , encodeTextBounded
 
+    -- * Fixed-width field reading
+  , FieldContent(..)
+  , readFixedWidthTextField
+  , decodeFixedWidthTextField
+
     -- * Named-encoding resolution
   , NamedEncoding
   , resolveEncodingName
@@ -497,10 +502,10 @@ recoveringDecode strictDecode = walkAt 0
 --
 -- The caller decides what to do about the notices — slap's create
 -- paths typically lift each one to a 'Slap.Status.FieldTruncated'
--- advisory tagged with the format and field name. Padding to the
--- format's exact field width (PPF1/PPF2's 0x20-pad,
--- PPF3/APSN64/DPS's 0x00-pad) stays at the call site; this
--- primitive does the encoding and truncation only.
+-- advisory tagged with the format and field name. Padding the encoded
+-- bytes to the format's exact field width (with whichever byte that
+-- format uses) stays at the call site; this primitive does the
+-- encoding and truncation only.
 encodeTextBounded :: EncodingName -> Int -> Text -> (ByteString, [LossNotice])
 encodeTextBounded encodingName cap text =
   let perCodepoint = zipWith (encodeSingleCodepoint encodingName)
@@ -552,6 +557,76 @@ takeChunksUnderCap cap = walk 0 []
       in if nextUsed > cap
            then (reverse takenReversed, chunk : rest)
            else walk nextUsed (chunk : takenReversed) rest
+
+----------------------------------------------------------------------------
+-- Fixed-width text fields
+----------------------------------------------------------------------------
+
+-- | The meaningful content of a fixed-width text field, read liberally.
+-- A fixed field is text followed by padding, and producers spell that
+-- padding several ways — trailing spaces, trailing NULs, a NUL
+-- terminator then spaces, or the whole field blank.
+-- 'readFixedWidthTextField' drops the trailing run of spaces and NULs
+-- however it is shaped and reports the contentful part. The one
+-- structurally-odd case — real content surviving past a NUL, where the
+-- field was meant to have ended — is kept separate so the caller can
+-- surface it instead of silently swallowing the bytes.
+data FieldContent
+  = AllPadding
+    -- ^ The field held nothing but padding.
+  | Content !EncodedText
+    -- ^ Content with a clean end: trailing padding removed, nothing
+    -- lurking past a terminator.
+  | ContentPastEnd !EncodedText !Length
+    -- ^ Content (the part before the first NUL, its own trailing spaces
+    -- removed), paired with the 'Length' of the tail that ran on past
+    -- that terminator — the anomaly the caller reports, and which a
+    -- re-encode drops.
+  deriving (Eq, Show)
+
+-- | Read a decoded fixed-width field down to its content. The encoding
+-- tag rides through unchanged; only the 'Text' payload is trimmed. See
+-- 'FieldContent' for the three shapes a field can take.
+readFixedWidthTextField :: EncodedText -> FieldContent
+readFixedWidthTextField (EncodedText encoding content) =
+  let withoutTrailingPadding = Text.dropWhileEnd isFieldPadding content
+  in if Text.null withoutTrailingPadding
+       then AllPadding
+       else case Text.findIndex (== '\NUL') withoutTrailingPadding of
+              Nothing ->
+                Content (EncodedText encoding withoutTrailingPadding)
+              Just terminatorIndex ->
+                let beforeTerminator =
+                      Text.dropWhileEnd (== ' ')
+                        (Text.take terminatorIndex withoutTrailingPadding)
+                    tailPastTerminator =
+                      Length (Text.length withoutTrailingPadding - terminatorIndex)
+                in ContentPastEnd
+                     (EncodedText encoding beforeTerminator) tailPastTerminator
+  where
+    isFieldPadding character = character == ' ' || character == '\NUL'
+
+-- | Decode a fixed-width field's raw bytes under the given encoding and
+-- read it down to the content to store, bundling the decode-substitution
+-- advisories with any content-past-end advisory. This is the single call
+-- a format's parse makes per fixed-width text field. A blank field
+-- stores empty content under the field's own encoding; content past a
+-- NUL terminator stores the part before the terminator and raises
+-- 'Slap.Status.FieldContentPastEnd'.
+decodeFixedWidthTextField
+  :: EncodingName -> FormatLabel -> FieldName -> ByteString
+  -> (EncodedText, [SlapAdvisory])
+decodeFixedWidthTextField encoding label field bytes =
+  let (decoded, decodeNotices) = decodeTextLenient encoding bytes
+      decodeAdvisories         = decodeLossAdvisories label field decodeNotices
+  in case readFixedWidthTextField decoded of
+       AllPadding ->
+         (decoded { encodedTextContent = Text.empty }, decodeAdvisories)
+       Content content ->
+         (content, decodeAdvisories)
+       ContentPastEnd content tailPastEnd ->
+         ( content
+         , decodeAdvisories ++ [FieldContentPastEnd label field tailPastEnd] )
 
 ----------------------------------------------------------------------------
 -- Advisory adaptation

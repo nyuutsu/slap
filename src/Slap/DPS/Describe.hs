@@ -37,15 +37,14 @@ dpsMeta patch = concat
   , [InfoLine "breakdown" recordKindBreakdown]
   ]
   where
-    -- The decoded text comes off the typed field directly; empty
-    -- fields suppress their info line. Trailing null bytes (the
-    -- wire's 64-byte field is null-padded) are dropped before render.
+    -- Fields are trimmed to their content at parse time; show each, or
+    -- nothing when it was blank padding.
     fieldPair :: Text -> EncodedText -> [InfoLine]
     fieldPair label value
-      | Text.null trimmed = []
-      | otherwise         = [InfoLine label trimmed]
+      | Text.null content = []
+      | otherwise         = [InfoLine label content]
       where
-        trimmed = Text.dropWhileEnd (== '\NUL') (encodedTextContent value)
+        content = encodedTextContent value
     -- DPS records split into two kinds. The count line already states
     -- the total ("401 records"), so this row breaks that total down
     -- rather than spending a line apiece on two numbers that sum to it.

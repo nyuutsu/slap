@@ -26,8 +26,7 @@ import Slap.Measure (Length(..), offsetFromParsed,
                      RequiredLength(..), RemainingLength(..), ActualLength(..),
                      ActionIndex, firstAction, nextAction,
                      RawFlagByte(..), byteLength)
-import Slap.Text (EncodedText, EncodingName(..),
-                  decodeTextLenient, decodeLossAdvisories)
+import Slap.Text (EncodedText, EncodingName(..), decodeFixedWidthTextField)
 
 import Data.Bits (shiftL, (.|.))
 import Data.ByteString (ByteString)
@@ -96,8 +95,7 @@ parseDPS metadataEncoding (PatchFileContents input)
 parseMetadataField :: EncodingName -> FieldName -> ByteParser (EncodedText, [SlapAdvisory])
 parseMetadataField metadataEncoding fieldName = do
   bytes <- getBytes (Length dpsFieldWidth)
-  let (text, notices) = decodeTextLenient metadataEncoding bytes
-  pure (text, decodeLossAdvisories LabelDPS fieldName notices)
+  pure (decodeFixedWidthTextField metadataEncoding LabelDPS fieldName bytes)
 
 parseDPSBody :: EncodingName -> ByteParser (Either SlapError (DPSPatch, [SlapAdvisory]))
 parseDPSBody metadataEncoding = do
