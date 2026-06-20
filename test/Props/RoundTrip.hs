@@ -47,8 +47,11 @@ import qualified Slap.GDIFF.Types as GDIFF
 import qualified Slap.VCDIFF.Apply as VCDIFF
 import qualified Slap.VCDIFF.Parse as VCDIFF
 import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
-                          patchWindows)
-import Slap.VCDIFF.Create (createFromCover, coverToInstructions)
+                          RFCHeader(..), patchWindows)
+import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
+                           coverToInstructions, resolveInstructionAddresses,
+                           designCandidateTable)
+import Slap.VCDIFF.CodeTable (serializeCodeTable, deserializeCodeTable)
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
@@ -174,6 +177,10 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "dense: a small lone ADD drops its size varint" vcdiffFixedSizeAddDropsVarint
       , testCase     "dense: oversize ADD and COPY fall back to coded singles" vcdiffOversizeFallsBackToCoded
       , testCase     "dense: the instruction section shrinks below coded-only" vcdiffDenseShrinksInstructionSection
+      , testCase     "custom table: a designed table is wire-valid" vcdiffDesignedTableIsWireValid
+      , testCase     "custom table: the patch-in-a-patch round-trips" vcdiffCustomTableRoundTrips
+      , testCase     "custom table: beats the default on a lopsided cover" vcdiffCustomTableBeatsDefault
+      , testCase     "custom table: the gate declines a table that won't pay" vcdiffCustomTableGateHolds
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -834,6 +841,108 @@ vcdiffInstructionSelection =
        , Add (ByteString.pack [0x43, 0x44])
        , Copy (Length 4) (Offset 7) ]
        (coverToInstructions target coverPlan)
+
+-- | A lopsided (source, target, cover) for the custom-table cases: @n@
+-- repetitions of a five-byte literal then a four-byte copy of the source
+-- head, so the resolved stream is @n@ ADD(5)+COPY(4) pairs — a shape the
+-- default table has no combined opcode for, its ADD+COPY rows stopping at
+-- ADD size 4. A large @n@ earns a custom table that pays its inner delta
+-- back; a small @n@ earns one the gate declines.
+lopsidedCustomTableCase :: Int -> (ByteString.ByteString, ByteString.ByteString, Cover)
+lopsidedCustomTableCase repetitions =
+  (source, target, Cover (concatMap segmentsAt [0 .. repetitions - 1]))
+  where
+    source       = ByteString.pack [0 .. 63]
+    copiedHead   = ByteString.take 4 source                       -- source[0..4)
+    literalAt i  = ByteString.pack [0xF0, 0xF1, 0xF2, 0xF3, fromIntegral (i `mod` 256)]
+    unitAt i     = literalAt i <> copiedHead                      -- five-byte ADD, four-byte COPY
+    target       = ByteString.concat (map unitAt [0 .. repetitions - 1])
+    segmentsAt i = [ CoverLiteral (Offset (9 * i)) (Length 5)
+                   , CoverCopy    (Length 4) (Offset 0) ]
+
+-- | The designed table only ever mints entries the format can carry:
+-- 'deserializeCodeTable' rejects malformed images, so a designed table that
+-- survives a serialize/deserialize round-trip unchanged is wire-valid. Not
+-- a tautology — it is the check that the design mints nothing the
+-- 1536-byte image cannot hold.
+vcdiffDesignedTableIsWireValid :: Assertion
+vcdiffDesignedTableIsWireValid =
+  let (source, target, coverPlan) = lopsidedCustomTableCase 16
+      resolved = resolveInstructionAddresses defaultAddressCacheConfig
+                   (Offset (ByteString.length source))
+                   (coverToInstructions target coverPlan)
+  in case designCandidateTable resolved of
+       Nothing       -> assertFailure "expected a candidate table for a lopsided stream"
+       Just designed ->
+         assertEqual "the designed table deserializes from its own image unchanged"
+           (Right designed)
+           (deserializeCodeTable (serializeCodeTable designed))
+
+-- | The load-bearing one: a lopsided pair the candidate table improves,
+-- emitted with the custom-table consideration, parsed and applied back to
+-- the target. It exercises the whole recursion — the inner delta parsed
+-- with custom tables forbidden, applied to the default image, read back
+-- into the table the window decodes against — and confirms the patch
+-- declares VCD_CODETABLE and parses as an RFC-arc patch carrying a table.
+-- A round-trip that reaches the target also proves the inner delta carried
+-- no nested table, surviving the forbidden-policy decode.
+vcdiffCustomTableRoundTrips :: Assertion
+vcdiffCustomTableRoundTrips =
+  let (source, target, coverPlan) = lopsidedCustomTableCase 150
+      CreateResult (PatchFileContents patch) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+  in do
+       assertBool "the custom-table patch sets Hdr_Indicator VCD_CODETABLE"
+         (Bits.testBit (ByteString.index patch 4) 1)
+       case VCDIFF.parseVCDIFF (PatchFileContents patch) of
+         Left slapError -> assertFailureT ("parse: " <> renderSlapError slapError)
+         Right (Parsed parsed _parseWarnings) -> do
+           case parsed of
+             PatchRFC header _ -> case rfcCustomCodeTable header of
+               Just _  -> pure ()
+               Nothing -> assertFailure "expected a custom code table in the parsed RFC header"
+             _ -> assertFailure "expected PatchRFC for a custom-table patch"
+           assertEqual "custom-table patch round-trips"
+             (Right (OutputFileContents target))
+             (VCDIFF.applyVCDIFF parsed (InputFileContents source))
+
+-- | On the same lopsided pair, the custom-table patch is strictly smaller
+-- than the one the default-only core produces for the identical cover. The
+-- saving is the combined opcodes the default lacked, net of the inner
+-- delta the table cost to ship.
+vcdiffCustomTableBeatsDefault :: Assertion
+vcdiffCustomTableBeatsDefault =
+  let (source, target, coverPlan) = lopsidedCustomTableCase 150
+      CreateResult (PatchFileContents customBytes) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+      CreateResult (PatchFileContents defaultBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+  in assertBool "the custom-table patch is strictly smaller than the default-only patch"
+       (ByteString.length customBytes < ByteString.length defaultBytes)
+
+-- | The gate declines a table that would not pay. On a barely-lopsided pair
+-- a candidate table /is/ designed — so it is the gate, not a missing
+-- candidate, doing the declining — but its two saved opcodes cannot cover
+-- the inner delta, so the custom-considering emission falls back to the
+-- default bytes exactly: VCD_CODETABLE clear, byte-identical to the
+-- default-only core.
+vcdiffCustomTableGateHolds :: Assertion
+vcdiffCustomTableGateHolds =
+  let (source, target, coverPlan) = lopsidedCustomTableCase 2
+      resolved = resolveInstructionAddresses defaultAddressCacheConfig
+                   (Offset (ByteString.length source))
+                   (coverToInstructions target coverPlan)
+      CreateResult (PatchFileContents consideredBytes) _ =
+        createConsideringCustomTable (InputFileContents source) (OutputFileContents target) coverPlan
+      CreateResult (PatchFileContents defaultBytes) _ =
+        createFromCover (InputFileContents source) (OutputFileContents target) coverPlan
+  in do
+       case designCandidateTable resolved of
+         Just _  -> pure ()
+         Nothing -> assertFailure "expected a candidate to be designed, so the gate is what declines it"
+       assertEqual "the gate falls back to the default bytes exactly" defaultBytes consideredBytes
+       assertBool "no custom code table: Hdr_Indicator VCD_CODETABLE clear"
+         (not (Bits.testBit (ByteString.index consideredBytes 4) 1))
 
 prop_ips :: Property
 prop_ips = forAll genPair $ \(source, target) ->

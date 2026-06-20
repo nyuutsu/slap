@@ -28,6 +28,7 @@ module Slap.VCDIFF.CodeTable
   , CodeTable
   , codeTableEntries
   , defaultCodeTable
+  , codeTableWithEntriesReplaced
     -- * The serialized 1536-byte image
   , serializeCodeTable
   , deserializeCodeTable
@@ -194,6 +195,21 @@ defaultCodeTable = CodeTable (Vector.fromList (concat
 
     sized :: Word8 -> InstructionSize
     sized = SizeIs . FixedInstructionSize
+
+-- | Derive a code table from another by replacing the entries at the
+-- listed opcode indices, leaving every other entry untouched. The base
+-- supplies the entry count and the result keeps it — 'Vector.//' preserves
+-- length, and every index is a 'Word8', so none can fall outside
+-- @[0, 'codeTableEntryCount')@ — so a table built this way is as total
+-- under the window decoder's @'Vector.!' codeByte@ lookup as
+-- 'defaultCodeTable' and 'deserializeCodeTable'. It is the third and last
+-- way a 'CodeTable' comes to exist: the VCDIFF encoder uses it to mint a
+-- handful of combined entries into donor opcodes the patch never uses,
+-- while keeping the rest of the default table intact
+-- (@docs\/vcdiff\/rfc-vcdiff\/spec.md@, "Custom code tables").
+codeTableWithEntriesReplaced :: CodeTable -> [(Word8, CodeTableEntry)] -> CodeTable
+codeTableWithEntriesReplaced (CodeTable entries) replacements =
+  CodeTable (entries Vector.// [ (fromIntegral index, entry) | (index, entry) <- replacements ])
 
 ----------------------------------------------------------------------------
 -- The serialized 1536-byte image
