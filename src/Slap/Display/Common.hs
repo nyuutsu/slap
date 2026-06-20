@@ -178,7 +178,7 @@ renderOffsetRange range =
 -- @"\/Yay0"@ suffix added when the patch arrived inside a Yay0
 -- envelope. The renderer composes them by simple text concatenation,
 -- so 'formatExtra' includes its own leading separator (e.g.
--- @Just \" (xdelta3)\"@, @Just \"\/Yay0\"@).
+-- @Just " (xdelta3)"@, @Just "\/Yay0"@).
 data FormatHeader = FormatHeader
   { formatLabel :: !FormatLabel
   , formatExtra :: !(Maybe Text)

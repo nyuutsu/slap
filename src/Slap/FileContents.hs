@@ -8,8 +8,8 @@
 -- documents the role of each byte buffer in the type.
 --
 -- The vocabulary matches slap's CLI flags (@--input@ and @--output@).
--- Individual format specs use other terms — \"source\" and \"target\"
--- (BPS, UPS), \"original\" and \"modified\" (DPS, NINJA2), \"source\"
+-- Individual format specs use other terms — "source" and "target"
+-- (BPS, UPS), "original" and "modified" (DPS, NINJA2), "source"
 -- segments (VCDIFF, XDelta1) — and slap preserves those terms inside
 -- the format-specific modules where they describe spec-derived
 -- concepts. The wrappers here name the cross-format role that's the
@@ -27,8 +27,8 @@ module Slap.FileContents
 import Data.ByteString (ByteString)
 
 -- | The contents of a file before a patch is applied — the input
--- ROM. Format specs and patcher folklore call this the \"source\"
--- or the \"original\"; slap names the role 'InputFileContents' to
+-- ROM. Format specs and patcher folklore call this the "source"
+-- or the "original"; slap names the role 'InputFileContents' to
 -- match its CLI's @--input@ flag.
 newtype InputFileContents = InputFileContents
   { unInputFileContents :: ByteString }
@@ -36,7 +36,7 @@ newtype InputFileContents = InputFileContents
 
 -- | The contents of a file after a patch has been applied — the
 -- output ROM. Format specs and patcher folklore call this the
--- \"target\" or the \"modified\" form; slap names the role
+-- "target" or the "modified" form; slap names the role
 -- 'OutputFileContents' to match its CLI's @--output@ flag.
 newtype OutputFileContents = OutputFileContents
   { unOutputFileContents :: ByteString }

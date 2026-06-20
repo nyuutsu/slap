@@ -2,6 +2,7 @@
 
 module Slap.Convert
   ( PatchContents(..)
+  , NINJA1Compression(..)
   , DirectCreate(..)
   , DifferentialCreate(..)
   , CreateFormat(..)
@@ -140,6 +141,11 @@ data DirectConversionContract = DirectConversionContract
   , contractAcceptedFields :: Set.Set PatchField
   }
 
+-- | Whether a NINJA1 source used the compressed (BZ/TZ) subformat,
+-- carried across the convert seam so a NINJA1 target can preserve it.
+data NINJA1Compression = NINJA1Uncompressed | NINJA1Compressed
+  deriving (Eq, Show)
+
 -- | Universal representation of a direct patch's contents.
 data PatchContents = PatchContents
   { contentsRecords     :: [Hunk]
@@ -148,8 +154,8 @@ data PatchContents = PatchContents
     -- encoding tag stays attached end-to-end so a downstream re-encode
     -- can route through whichever encoder the target format wants
     -- without having to re-guess what the source's encoding context
-    -- was. Today only the PPF family of direct formats and APSN64
-    -- populate this field; other direct formats leave it 'Nothing'.
+    -- was. The PPF family of direct formats and APSN64 populate this
+    -- field; other direct formats leave it 'Nothing'.
   , contentsSourceCRC32 :: Maybe CRC32
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
@@ -174,7 +180,7 @@ data PatchContents = PatchContents
     -- length-field width (PPF2: 4 bytes; PPF3: 2 bytes) and apply the
     -- length check after re-encoding at the format's @encodeFileIdDiz@
     -- site.
-  , contentsNINJA1Compressed :: Maybe Bool  -- patch used compressed subformat (BZ/TZ)
+  , contentsNINJA1Compression :: Maybe NINJA1Compression
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
@@ -252,8 +258,8 @@ data RequestedPatchMetadata = RequestedPatchMetadata
   , requestedVerificationInclusion :: Maybe VerificationInclusion
   , requestedPatchCompression     :: Maybe XDelta1PatchCompression
     -- ^ xdelta1 only: 'Just' 'UncompressedPatch' means the user
-    -- asked for @--no-compress@; absent means \"let the format pick
-    -- its default,\" which for xdelta1 is 'CompressedPatch'.
+    -- asked for @--no-compress@; absent means "let the format pick
+    -- its default," which for xdelta1 is 'CompressedPatch'.
   , requestedStability            :: Maybe PatchStability
   , requestedRomType              :: Maybe PlatformType
     -- ^ Shared platform type: NINJA1 and NINJA2 define different
@@ -274,12 +280,12 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ NINJA2 wire encoding the user wants the output patch to
     -- declare. CLI-provided value overrides whatever the source
     -- patch's metadata fields tagged themselves as; absent means
-    -- \"inherit from the source if its tags agree, otherwise UTF-8\"
+    -- "inherit from the source if its tags agree, otherwise UTF-8"
     -- (see the @CreateNINJA2@ arm of 'createPatch').
   , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
-    -- ^ Contents of the user's @--metadata FILE@ flag.  Today only BPS
-    -- consumes this; the name keeps the concept ("a raw blob to embed")
-    -- separate from the format that currently uses it.
+    -- ^ Contents of the user's @--metadata FILE@ flag.  BPS consumes
+    -- this; the name keeps the concept ("a raw blob to embed")
+    -- separate from the format that uses it.
   , requestedXDelta1FromName      :: Maybe XDelta1FromName
     -- ^ xdelta1 only: user-supplied @--from-name TEXT@, already
     -- locale-encoded so the bytes match canonical xdelta's wire
@@ -380,7 +386,7 @@ emptyContents records = PatchContents
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
-  , contentsNINJA1Compressed = Nothing
+  , contentsNINJA1Compression = Nothing
   , contentsMetadata = Nothing
   }
 
@@ -1079,7 +1085,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
-             (fromMaybe False (contentsNINJA1Compressed contents))) platformAdvisories)
+             (contentsNINJA1Compression contents == Just NINJA1Compressed)) platformAdvisories)
   CreatePMSR -> do
     count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
@@ -1209,7 +1215,7 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
     -- The 'Nothing' branch is the typed escape hatch for a porcelain
     -- contract violation (the caller chose 'CreateXDelta1' but didn't
-    -- run a resolver upstream). 'LabelXDelta1' as the \"source\" label
+    -- run a resolver upstream). 'LabelXDelta1' as the "source" label
     -- is the truthful answer: there is no convert-source format in
     -- scope, and the rendered message reads as a generic refusal
     -- rather than a crash.
@@ -1260,7 +1266,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   -- Structural inheritance: preserve format-specific data from the source patch
   , contentsEBPMetadata      = sourceContents >>= contentsEBPMetadata
   , contentsFileIdDiz        = sourceContents >>= contentsFileIdDiz
-  , contentsNINJA1Compressed = sourceContents >>= contentsNINJA1Compressed
+  , contentsNINJA1Compression = sourceContents >>= contentsNINJA1Compression
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsMetadata    = Nothing

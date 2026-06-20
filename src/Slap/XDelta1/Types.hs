@@ -87,7 +87,7 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
   , xdelta1SourceName       :: XDelta1FromName
-    -- ^ The per-source-record \"name\" field for the file-source record
+    -- ^ The per-source-record "name" field for the file-source record
     -- in the EDSIO source list. Distinct concept from the header
     -- 'xdelta1FromName' (which lives at fixed offsets in the header
     -- words), but slap's create path mirrors the two: the same
@@ -186,8 +186,8 @@ basenameAsUtf8Text = EncodedText EncodingUtf8 . Text.pack . takeFileName
 -- upstream so a CLI override has already won over a parsed xdelta1
 -- source patch's field). If either slot is still 'Nothing', refuses
 -- with 'XDelta1ConvertRequiresNames' naming the source format so
--- the user sees \"BPS doesn't carry these fields\" rather than a
--- bare \"names required\". Otherwise cap-checks both encoded byte
+-- the user sees "BPS doesn't carry these fields" rather than a
+-- bare "names required". Otherwise cap-checks both encoded byte
 -- counts and bundles them.
 requireXDelta1FileNames
   :: Maybe EncodedText  -- ^ merged from-name (CLI > inherited > 'Nothing')

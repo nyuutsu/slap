@@ -91,7 +91,7 @@ fromOverflowMode OverflowTruncate = 0x4D  -- 'M'
 
 -- | PATCH_ENC: whether the patch declares its fixed-header text as
 -- UTF-8. Byte 1 means UTF-8 (portable); byte 0 is what the NINJA2 spec
--- nominally calls \"system codepage,\" but that only instructs a reader
+-- nominally calls "system codepage," but that only instructs a reader
 -- to decode with its own codepage and keeps no portable record of the
 -- encoding the bytes are actually in — so slap names it
 -- 'TextModeUndeclared': from a portable standpoint the format simply

@@ -611,7 +611,7 @@ data SlapError
   -- ordinary ways — it does not parse, it parses but an instruction
   -- makes an invalid demand, it applies cleanly to bytes that are not
   -- a valid 1536-byte table image. Rather than flatten those into one
-  -- opaque \"bad code table,\" the precise inner 'SlapError' is carried
+  -- opaque "bad code table," the precise inner 'SlapError' is carried
   -- here verbatim and rendered with a phrase that points at the table,
   -- so the inner precision survives. (The one custom-table failure
   -- that does /not/ wrap this way is a nested table — the inner delta
@@ -1365,7 +1365,7 @@ directionVerb Reverse = "undo"
 
 -- | Which side of the apply (input ROM or output ROM) a verification
 -- check fired against. Carried by the verification 'SlapAdvisory'
--- constructors so the renderer can name \"input\" vs \"output\" without
+-- constructors so the renderer can name "input" vs "output" without
 -- callers passing strings. The constructor names retain slap's older
 -- source\/target vocabulary; the rendered labels track the CLI's
 -- input\/output vocabulary.

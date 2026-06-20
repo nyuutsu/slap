@@ -14,7 +14,7 @@
 -- into the target format — so a per-format typed front door would
 -- have nothing format-level to wrap. Direct-format callers route
 -- through 'createPatch', which is re-exported here for the
--- convenience of \"I want to make a patch\" callers who don't want
+-- convenience of "I want to make a patch" callers who don't want
 -- to think about which submodule to import.
 --
 -- See the Haddock on 'Slap.Convert.RequestedPatchMetadata' in

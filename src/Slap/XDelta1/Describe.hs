@@ -111,7 +111,7 @@ analyzeXDelta1 patch = PatchAnalysis
 -- comparable rows.
 --
 -- 'xdelta1DataRecordName' is a fixed ASCII wire constant
--- (@\"(patch data)\"@); decoding it under UTF-8 is byte-identical
+-- (@"(patch data)"@); decoding it under UTF-8 is byte-identical
 -- to its codepoint reading, so wrapping it as 'EncodedText' tagged
 -- 'EncodingUtf8' is honest and lets the data-record row participate
 -- in the same 'EncodedText' rendering path the file-source row uses.
@@ -146,7 +146,7 @@ makeXDelta1FileSourceText patch = SectionText $
 -- length, offset-mode, and optional MD5. Shared between the data
 -- record and any other source row that decides to route through it;
 -- file-source rows inline the same layout in 'makeXDelta1FileSourceText'
--- because the @\"(file)\"@ kind label and the source-length\/offset-
+-- because the @"(file)"@ kind label and the source-length\/offset-
 -- mode reads come from a different patch field.
 renderSourceLine
   :: Int -> Text -> EncodedText -> FileSize -> XDelta1OffsetMode

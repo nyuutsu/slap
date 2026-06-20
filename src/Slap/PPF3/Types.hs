@@ -154,11 +154,11 @@ ppf3ValidationSize = Length 1024
 ppf3FileIdLengthFieldWidth :: Length
 ppf3FileIdLengthFieldWidth = Length 2
 
--- | Length of the @\"\@BEGIN_FILE_ID.DIZ\"@ marker prefix.
+-- | Length of the @"\@BEGIN_FILE_ID.DIZ"@ marker prefix.
 ppf3FileIdMarkerLength :: Length
 ppf3FileIdMarkerLength = Length 18
 
--- | Length of the @\"\@END_FILE_ID.DIZ\"@ marker following the content.
+-- | Length of the @"\@END_FILE_ID.DIZ"@ marker following the content.
 ppf3FileIdFooterLength :: Length
 ppf3FileIdFooterLength = Length 16
 

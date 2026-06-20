@@ -277,7 +277,7 @@ data DecodeError = DecodeError
 --     straight through with no re-wrapping.
 --
 -- Substitution notices report by position so a caller can
--- describe \"event at position N\"; truncation notices report by
+-- describe "event at position N"; truncation notices report by
 -- byte count because the format-level concept is "the field was
 -- N bytes, we wrote M".
 data LossNotice

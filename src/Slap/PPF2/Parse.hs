@@ -150,16 +150,18 @@ parsePPF2Records recordIndex = do
 -- | Look at the very end of the patch for a FILE_ID.DIZ trailer.
 -- The wire shape is:
 --
--- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <length:LE32>@
+-- "@BEGIN_FILE_ID.DIZ" then content, then "@END_FILE_ID.DIZ", then a
+-- 4-byte LE32 length
 --
 -- with the @<length>@ four bytes naming the @<content>@ length and
 -- letting us walk backwards to find the start. Returns 'Nothing' if
--- the @\"\@END_FILE_ID.DIZ\"@ marker isn't where the length suffix
+-- the "@END_FILE_ID.DIZ" marker isn't where the length suffix
 -- says it should be. When the trailer is present, the content bytes
 -- are decoded leniently under the chosen metadata encoding; any
 -- decode substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
 -- advisories alongside the typed 'PPF2FileId'.
--- | If a trailer is present, returns both the typed FILE_ID.DIZ
+--
+-- If a trailer is present, returns both the typed FILE_ID.DIZ
 -- and the inner-content byte count as declared on the wire
 -- (alongside any decode advisories). The byte count is plumbed
 -- back to 'stripFileId' so the body-trim doesn't have to re-encode

@@ -366,7 +366,7 @@ rangeEndExclusive range = advance (rangeStart range) (rangeLength range)
 
 -- | The last byte 'Offset' inside an 'OffsetRange', i.e.
 -- @rangeEndExclusive - 1@. Suitable for inclusive display
--- (\"0x000100 \\u2013 0x00FFFF\"). Undefined for an empty range; the
+-- ("0x000100 \\u2013 0x00FFFF"). Undefined for an empty range; the
 -- only call sites construct ranges from non-empty record streams.
 rangeLastByte :: OffsetRange -> Offset
 rangeLastByte range = Offset (unOffset (rangeEndExclusive range) - 1)

@@ -15,6 +15,7 @@ import Slap.SomePatch
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
   , FileSizeCheck(..)
+  , applySourcePreHash
   , parseSome
   )
 import Slap.Display.Common (renderInfoLine, pathText)
@@ -246,8 +247,8 @@ data CreateMetadataInputs = CreateMetadataInputs
 -- | What @slap convert@ accepts on the metadata side: the parsed
 -- metadata fields, with 'requestedEmbeddedBlob' filled by the
 -- resolver from the 'EmbeddedBlobIntent' below.  The intent
--- distinguishes \"override with these bytes\", \"drop the source's
--- blob\", and the unspecified case (\"inherit if present\") — the
+-- distinguishes "override with these bytes", "drop the source's
+-- blob", and the unspecified case ("inherit if present") — the
 -- last of which is the convert-default and what every other field
 -- on the inputs record does implicitly.
 data ConvertMetadataInputs = ConvertMetadataInputs
@@ -299,7 +300,7 @@ data VerificationPolicy
 -- operation.  Distinct from 'ExplainVerbosity', which controls the
 -- detail of @slap explain@'s structural dump.
 --
--- @Quiet@ (default) prints only the final \"applied N records → PATH\"
+-- @Quiet@ (default) prints only the final "applied N records → PATH"
 -- summary.  @Verbose@ (set by @-v@\/@--verbose@) also prints each
 -- record as it's applied, via 'renderAnalysisFull'.
 data Verbosity
@@ -1352,7 +1353,7 @@ doConvert parsedCommand = do
 -- 'Nothing' and only the CLI value contributes). The convert
 -- resolver refuses if either slot is still 'Nothing' after the
 -- merge, naming the source patch's format in the refusal so the
--- user sees \"BPS doesn't carry these fields\". 'Just' iff the
+-- user sees "BPS doesn't carry these fields". 'Just' iff the
 -- target format is xdelta1; 'Nothing' for every other target.
 resolveConvertXDelta1Names
   :: ConvertCommand
@@ -1457,7 +1458,7 @@ refuseOverwrite RefuseOverwrite outputPath = do
 
 verifySource :: VerificationPolicy -> Verification -> InputFileContents -> IO ()
 verifySource verificationPolicy verification (InputFileContents sourceBytes) = do
-  let preprocessed = verifySourcePreHash verification sourceBytes
+  let preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
   -- Advisory-class checks first: per-spec non-fatal diagnostics that
   -- the format chose to populate. These fire regardless of policy
   -- because they're structurally non-fatal; --no-verify operates

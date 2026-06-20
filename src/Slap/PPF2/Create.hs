@@ -99,7 +99,7 @@ encodeRecord ehunk =
 -- | Encode a FILE_ID.DIZ trailer in PPF2 format (4-byte LE length).
 -- The PPF2 trailer wire shape is:
 --
--- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <length:LE32>@
+-- @"\@BEGIN_FILE_ID.DIZ" <content> "\@END_FILE_ID.DIZ" <length:LE32>@
 --
 -- Differs from PPF3's trailer only in the length field width
 -- (PPF2: 4 bytes; PPF3: 2 bytes). Returns the trailer bytes plus any

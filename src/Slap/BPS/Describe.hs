@@ -49,7 +49,7 @@ bpsMeta metadataEncoding patch = concat
 
 -- | The @metadata@ info line: a glance at the BPS metadata blob, read
 -- through the @--metadata-encoding@ lens. An absent field reads
--- @\"(none)\"@; present bytes go to the shared 'renderOpaqueFieldBytes',
+-- "(none)"; present bytes go to the shared 'renderOpaqueFieldBytes',
 -- which shows them as text where they decode under the chosen encoding
 -- and as a byte count where they don't. The blob itself is never
 -- altered; this is a read-only view.

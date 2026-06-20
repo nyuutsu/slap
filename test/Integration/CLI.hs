@@ -550,7 +550,19 @@ ninja1VerifyTests tier base ips = quickCases ++ onlyAtFull tier heavyCases
       ]
 
     heavyCases =
-      [ testCase "ninja1-verify/wrong source rejected" $
+      [ -- The 64 MiB stadium2 source exceeds NINJA1's 0x1e00000 sampling
+        -- threshold, so verification runs the stored source hashes over the
+        -- sampled input (first 20 MiB + last 10 MiB + decimal size) rather
+        -- than the whole file. This is the only case that exercises that
+        -- branch; a successful apply means the sampled hashes matched.
+        testCase "ninja1-verify/large source samples (64 MiB)" $
+          withTempFile "slap-out" $ \out -> do
+            removeIfExists out
+            expectOk [ "apply", "test/data/stadium2/fair-heavy/patch.ninja1"
+                     , "test/data/stadium2/base.z64", "-o", out ]
+                     "ninja1/large-sample" "applied"
+
+      , testCase "ninja1-verify/wrong source rejected" $
           withTempFile "slap-target" $ \target ->
           withTempFile "slap-patch" $ \patch ->
           withTempFile "slap-wrong" $ \wrong ->

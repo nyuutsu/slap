@@ -65,7 +65,7 @@ newtype PPF2ValidationBlock = PPF2ValidationBlock
 
 -- | FILE_ID.DIZ content optionally appended after the record
 -- stream. The wire trailer is
--- @\"\@BEGIN_FILE_ID.DIZ\" <content> \"\@END_FILE_ID.DIZ\" <4-byte LE length>@;
+-- @"\@BEGIN_FILE_ID.DIZ" <content> "\@END_FILE_ID.DIZ" <4-byte LE length>@;
 -- this newtype carries only the inner @<content>@ as a typed
 -- 'EncodedText' value whose encoded byte length has been validated
 -- against PPF2's 4-byte LE length field. Constructor private;
@@ -158,11 +158,11 @@ ppf2MaxRecordPayload = Length 255
 ppf2FileIdLengthFieldWidth :: Length
 ppf2FileIdLengthFieldWidth = Length 4
 
--- | Length of the @\"\@BEGIN_FILE_ID.DIZ\"@ marker prefix.
+-- | Length of the @"\@BEGIN_FILE_ID.DIZ"@ marker prefix.
 ppf2FileIdMarkerLength :: Length
 ppf2FileIdMarkerLength = Length 18
 
--- | Length of the @\"\@END_FILE_ID.DIZ\"@ marker following the content.
+-- | Length of the @"\@END_FILE_ID.DIZ"@ marker following the content.
 ppf2FileIdFooterLength :: Length
 ppf2FileIdFooterLength = Length 16
 

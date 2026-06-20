@@ -12,6 +12,8 @@ module Slap.SomePatch
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
   , FileSizeCheck(..)
+  , SourcePreHash(..)
+  , applySourcePreHash
   , noVerification
   , parseSome
   ) where
@@ -21,7 +23,7 @@ import Slap.PatchFormat (PatchFormat(..), DirectFormat(..), DifferentialFormat(.
 import Slap.Detect (detectFormat)
 import Slap.Convert (PatchContents(..), emptyContents, RequestedPatchMetadata(..),
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
-                     RequestedDialects(..),
+                     RequestedDialects(..), NINJA1Compression(..),
                      noMetadataRequested)
 import Slap.Text (EncodedText, EncodingName, encodedTextContent)
 import Data.Text (Text)
@@ -128,6 +130,19 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 newtype ApplyStrategy = ApplyStrategy
   { runApply :: InputFileContents -> IO (Either SlapError (Outcome OutputFileContents)) }
 
+-- | How the source bytes are transformed before the source hashes are
+-- computed — data, not a bare function, so 'Verification' stays
+-- inspectable. 'HashNINJA1Sample' is NINJA1's large-file sampling rule
+-- (see 'Slap.NINJA1.Create.ninja1HashInput'); 'HashWholeSource' is the
+-- default for every other format.
+data SourcePreHash = HashWholeSource | HashNINJA1Sample
+  deriving (Eq, Show)
+
+-- | Apply a 'SourcePreHash' to source bytes before they are hashed.
+applySourcePreHash :: SourcePreHash -> ByteString.ByteString -> ByteString.ByteString
+applySourcePreHash HashWholeSource  = id
+applySourcePreHash HashNINJA1Sample = NINJA1.ninja1HashInput
+
 -- | Verification data extracted from a parsed patch.
 -- All fields are optional; formats populate whichever they carry.
 data Verification = Verification
@@ -148,7 +163,7 @@ data Verification = Verification
   , verifyFileSize :: Maybe FileSizeCheck
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]
-  , verifySourcePreHash :: ByteString.ByteString -> ByteString.ByteString -- transform source before hashing (NINJA1 sampling)
+  , verifySourcePreHash :: SourcePreHash
   }
 
 -- | Per-block CRC16 check (APS-GBA).
@@ -202,7 +217,7 @@ noVerification = Verification
   , verifySourceBlocks = [], verifyTargetBlocks = []
   , verifyPPFBlock = Nothing, verifyFileSize = Nothing
   , verifyWindowAdler32 = [], verifySourceBytes = []
-  , verifySourcePreHash = id
+  , verifySourcePreHash = HashWholeSource
   }
 
 -- | Strategy for undoing a patch.
@@ -703,7 +718,7 @@ parseSomePatchFromUPS patchContents = do
 -- no feature left for 'VCDIFF.parseVCDIFF' to defer. The flavor verdict
 -- surfaces through the
 -- format header's qualifier slot ('vcdiffFlavorQualifier'), so
--- @slap info@ answers \"which flavor\" on its first line. An xdelta3
+-- @slap info@ answers "which flavor" on its first line. An xdelta3
 -- patch's per-window Adler32 checksums are lifted into
 -- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
 -- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their
@@ -889,7 +904,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
         , contentsSourceSHA1  = NINJA1.ninja1SourceSHA1 patch
         , contentsRomType     = Just (ninja1ToPlatform (NINJA1.ninja1RomType patch))
-        , contentsNINJA1Compressed = Just compressed
+        , contentsNINJA1Compression = Just (if compressed then NINJA1Compressed else NINJA1Uncompressed)
         })
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (NINJA1.applyNINJA1 patch source)) }
@@ -898,7 +913,7 @@ parseSomePatchFromNINJA1 patchContents = do
         { verifySourceCRC32  = NINJA1.ninja1SourceCRC patch
         , verifySourceMD5    = NINJA1.ninja1SourceMD5 patch
         , verifySourceSHA1   = NINJA1.ninja1SourceSHA1 patch
-        , verifySourcePreHash = NINJA1.ninja1HashInput
+        , verifySourcePreHash = HashNINJA1Sample
         }
     , patchAdvisories       = warnings
     , patchInfo           = PatchInfo

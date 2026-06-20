@@ -81,7 +81,7 @@ fullContents = PatchContents
   , contentsRomType     = Just PlatformRaw
   , contentsImageType   = Nothing
   , contentsFileIdDiz   = Nothing
-  , contentsNINJA1Compressed = Nothing
+  , contentsNINJA1Compression = Nothing
   , contentsMetadata = Nothing
   }
 
