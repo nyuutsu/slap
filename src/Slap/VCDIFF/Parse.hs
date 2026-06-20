@@ -340,13 +340,11 @@ peekWindowStreamHead = do
 
 -- | The one trailing shape slap recognizes after the last window:
 -- the four marker bytes, then nothing but zero padding (none
--- included) to end of input. Exactly the tail LODModS-made patches
--- carry, and the tolerance extends exactly as far as that evidence
+-- included) to end of input. Some patches carry this harmless
+-- trailer, and slap lets it through rather than blocking them
 -- (docs/vcdiff/questions.md, "How does a decoder know the patch is
--- over"): any other trailing bytes keep framing as a window and
--- failing as one, and a second recognized shape earns its place the
--- way this one did — by existing in the wild, not by widening this
--- predicate.
+-- over"). Any other trailing bytes keep framing as a window and
+-- failing as one.
 isTrailingRemnant :: ByteString -> Bool
 isTrailingRemnant trailingBytes =
   ByteString.take markerLength trailingBytes == trailingRemnantMarker

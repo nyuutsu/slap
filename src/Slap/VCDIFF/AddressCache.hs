@@ -391,8 +391,7 @@ data AddressCandidate = AddressCandidate
 -- record the address so the encoder's cache tracks the decoder's. The
 -- inverse of 'decodeCopyAddress', reusing the same slot arithmetic so
 -- "is this address in its slot" is the very computation 'recordAddress'
--- placed it by — agreement by construction, not by parallel
--- re-derivation.
+-- placed it by — agreement by reuse, not parallel re-derivation.
 --
 -- Cheapest is by emitted address-section bytes, with SELF — the address
 -- verbatim, always available — as the baseline a cache mode must beat

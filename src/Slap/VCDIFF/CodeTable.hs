@@ -122,7 +122,7 @@ data CodeTableEntry = CodeTableEntry
 -- intentionally not exported: every 'CodeTable' that exists came from
 -- 'defaultCodeTable', 'deserializeCodeTable', or
 -- 'codeTableWithEntriesReplaced', all provably 256-wide, so 'codeTableEntry'
--- is total by construction — the same proof-by-provenance discipline as
+-- is total — the same proof-by-provenance discipline as
 -- 'Slap.Measure.SplitHunk'.
 newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
   deriving (Eq, Show)

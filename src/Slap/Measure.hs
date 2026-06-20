@@ -101,7 +101,7 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 
 -- | A byte position in a zero-indexed buffer. Slap's apply paths
 -- operate on output buffers, source/target ByteStrings, and region
--- payloads — all zero-indexed by construction — and parsed wire
+-- payloads — all zero-indexed — and parsed wire
 -- offsets name positions within those buffers. There is no place in
 -- slap where 'Offset' means a position in a non-zero-indexed buffer;
 -- 'SignedOffset' exists separately to carry the may-be-negative
@@ -185,8 +185,8 @@ newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSi
 -- | A target file size declared explicitly by something in the
 -- patch — a header field, a trailer marker, or similar. Distinct
 -- from 'NaturalTargetSize' because some formats compare the two at
--- apply time to decide whether the declaration is honored (only
--- IPS does this today, via its optional post-EOF truncation marker).
+-- apply time to decide whether the declaration is honored (IPS does,
+-- via its optional post-EOF truncation marker).
 -- Bare 'FileSize' arguments at the comparison would let a
 -- transposition silently invert the policy decision.
 newtype DeclaredTargetSize = DeclaredTargetSize
@@ -195,8 +195,8 @@ newtype DeclaredTargetSize = DeclaredTargetSize
 
 -- | A target file size derived from operation inputs alone: the
 -- source size and the maximum write end across the patch's records,
--- actions, or hunks. Equal to @max sourceSize maxRecordEnd@ for IPS
--- (the format that uses this distinction today). Distinct from
+-- actions, or hunks. Equal to @max sourceSize maxRecordEnd@ for IPS.
+-- Distinct from
 -- 'DeclaredTargetSize' for the same reason 'DeclaredTargetSize'
 -- exists.
 newtype NaturalTargetSize = NaturalTargetSize
@@ -588,7 +588,7 @@ plusOffset pointer (Offset position) = pointer `plusPtr` position
 -- @end - start@. Assumes @startOffset '<=' endOffset@ and raises
 -- 'error' otherwise — call sites that span a forward walk
 -- ('findRegionEnd', record-stream order, sorted seed positions) have
--- this ordering by construction. The argument order mirrors the
+-- this ordering. The argument order mirrors the
 -- typical reading "the distance /from/ start /to/ end."
 distance :: Offset -> Offset -> Length
 distance (Offset startOffset) (Offset endOffset)
@@ -601,7 +601,7 @@ distance (Offset startOffset) (Offset endOffset)
 -- lie entirely within a space of @totalSize@ bytes? The bounds check
 -- every apply and parse walk leans on before a read or a write.
 --
--- Total over the whole 'Int' range, by construction. slap carries
+-- Total over the whole 'Int' range. slap carries
 -- offsets and sizes as a signed 'Int', and several formats decode wire
 -- fields wide enough — a 63-bit PPF3 offset, a byuu or VCDIFF varint, a
 -- bsdiff sign-magnitude length — to seat a near-'maxBound' value here.

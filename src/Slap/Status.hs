@@ -374,7 +374,7 @@ data ApplyError
   -- overflow-append step, APSGBA's blocks — where the start position
   -- itself can already sit past the declared target end. Distinct
   -- from 'ApplyWritesPastTarget' (which assumes a forward-walking
-  -- cursor that always sits within the buffer by construction) and
+  -- cursor that always sits within the buffer) and
   -- from 'ApplyReplaceGrowsFile' (PPF4-specific phrasing about
   -- growing the file).
   | ApplyAbsoluteWritePastTarget ActionIndex Offset RequestedLength FileSize
@@ -995,11 +995,11 @@ data SlapAdvisory
 
   -- | Bytes after a VCDIFF patch's last window matching the one
   -- trailing shape slap recognizes: four @0xFF@ marker bytes, then
-  -- nothing but zero padding to end of input — the tail LODModS-made
+  -- nothing but zero padding to end of input — a harmless trailer some
   -- patches carry. VCDIFF has no window count, total-size field, or
-  -- footer, so the format never says what trailing bytes mean, and
-  -- xdelta3 is of two minds about this tail (its applier writes the
-  -- correct output and then errors on it; its printhdr ignores it).
+  -- footer, so the format never says what trailing bytes mean;
+  -- xdelta3's applier writes the correct output and then errors on this
+  -- tail, while its printhdr ignores it.
   -- slap consumes exactly this shape and says what it saw; any other
   -- trailing bytes keep framing as a window and failing as one. The
   -- 'Length' is the remnant's full byte count, marker included.
@@ -2164,7 +2164,7 @@ renderSlapAdvisory (VCDIFFTrailingRemnant (Length remnantLength)) =
   formatLabelName LabelVCDIFF
   <> ": " <> renderAsText remnantLength
   <> " trailing bytes after the last window (0xFF 0xFF 0xFF 0xFF, then"
-  <> " zero padding — the LODModS-style tail); not window data, ignored"
+  <> " zero padding); not window data, ignored"
 
 renderSlapAdvisory (VCDIFFEmptyTargetWindowSegment windowIndex) =
   formatLabelName LabelVCDIFF

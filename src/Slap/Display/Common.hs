@@ -43,9 +43,9 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 
 -- | A label-value display row. Rendered by 'renderInfoLine' with
 -- column-13 alignment ("source size:  1024"). Both fields are 'Text'
--- by convention — the label set across formats is open and proliferates
--- (~30 distinct labels), so a closed sum or newtype wouldn't pay for
--- the constructor surface or wrapping ceremony, and the value has been
+-- by convention — the label set across formats is open and proliferates,
+-- so a closed sum or newtype wouldn't pay for the constructor surface
+-- or wrapping ceremony, and the value has been
 -- rendered to display form by the time it lands here. Labels are
 -- lowercase with no trailing colon — 'renderInfoLine' adds the colon
 -- and the alignment padding.

@@ -118,7 +118,7 @@ import qualified Data.Aeson.Encoding as AesonEncoding
 -- are already within the variant's wire-format range, and that any
 -- record sitting on the variant's trailer sentinel has already been
 -- shifted or rejected by 'resolveSentinelCollisions'. The optimizer
--- guarantees the range precondition by construction, and the
+-- guarantees the range precondition, and the
 -- convert-path pipeline in 'Slap.Convert.encodeDirect' runs
 -- @splitHunks@, 'resolveSentinelCollisions', and 'narrowHunks'
 -- before calling here.
@@ -242,7 +242,7 @@ encodeOffset Offset32 offsetValue =
 -- IPS32 rationale. Assumes the size fits the width — the create
 -- path guarantees it via
 -- 'Slap.IPS.Types.ipsRejectIncompatibleSizeChange', and a parsed
--- marker fits by construction, having been read from this same
+-- marker fits, having been read from this same
 -- field.
 encodeTruncationMarker :: OffsetWidth -> FileSize -> Builder
 encodeTruncationMarker offsetWidth (FileSize truncatedSizeBytes) =

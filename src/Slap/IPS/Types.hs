@@ -592,7 +592,7 @@ effectiveTargetSize (MarkerIgnored  _declared natural)  = unNaturalTargetSize  n
 -- @(size & 0xFFF) == 0x200@ shape filter. SNESTool — MCA\/Elite,
 -- DOS, 1996 — was the format's earliest applier; its IPS apply
 -- loop rejects markers that don't match the bit pattern an
--- SMC-headered SNES ROM exhibits by construction. The IPS spec
+-- SMC-headered SNES ROM exhibits. The IPS spec
 -- itself imposes no such constraint, and every modern applier
 -- (Flips, RomPatcher.js) accepts any wire-valid marker. Only
 -- SNESTool filters.
@@ -619,8 +619,8 @@ data SMCShapeRequirement
 -- @size \`mod\` 4096 == 512@. The motivating case is the canonical
 -- SMC-headered SNES ROM: a commercial header-stripped ROM payload
 -- is a multiple of 4 KiB, and the 512-byte SMC copier header tacks
--- an extra 0x200 onto the size, so a real headered SMC ROM passes
--- by construction. The check is necessary but not sufficient for
+-- an extra 0x200 onto the size, so a real headered SMC ROM passes.
+-- The check is necessary but not sufficient for
 -- SMC-ness — a hypothetical 0x1200-byte file also passes — but
 -- that looseness is in MCA's binary; slap reproduces the binary's
 -- predicate verbatim.

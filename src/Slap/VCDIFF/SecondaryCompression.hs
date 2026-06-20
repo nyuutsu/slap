@@ -4,7 +4,7 @@
 --
 -- The RFC defines none of this — §6 waves at "assuming that any such
 -- compressed data has been decompressed" — so the shapes here are
--- xdelta3 convention, recovered from its source and from real patches
+-- xdelta3 convention, recovered from its source
 -- (docs/vcdiff/xdelta3/secondary-compression.md,
 -- docs/vcdiff/xdelta3/questions.md). One framing fact is shared: a
 -- compressed section's on-wire bytes are a decompressed-size varint
@@ -81,7 +81,7 @@ import Data.Word (Word8)
 data XDelta3SecondaryCompressor
   = SecondaryDJW   -- ^ xdelta3's own static multi-table Huffman.
   | SecondaryLZMA  -- ^ xz\/LZMA2 as liblzma emits it.
-  | SecondaryFGK   -- ^ Adaptive Huffman, "demonstration purposes only".
+  | SecondaryFGK   -- ^ Adaptive Huffman; xd3's own demonstration codec.
   deriving (Eq, Show)
 
 -- | The id-to-algorithm mapping

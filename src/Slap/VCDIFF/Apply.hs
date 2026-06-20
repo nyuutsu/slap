@@ -2,7 +2,7 @@
 --
 -- The patch arrives already validated by 'Slap.VCDIFF.Parse': the three
 -- core invariants hold, so every instruction is in-bounds against the
--- superstring by construction. The only checks left are the ones parse
+-- superstring. The only checks left are the ones parse
 -- could not make without the source — that a window's source segment
 -- actually lies within the source (or, for a target-sourced window,
 -- within the target produced so far).

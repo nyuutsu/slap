@@ -81,7 +81,7 @@ splitData remaining
   | otherwise =
       -- 'chunkLength' is bounded above by 'unLength maxSingleCommandLength'
       -- (the lower of the two arguments to 'min'); the 'fromIntegral'
-      -- below therefore fits 'Word32' by construction.
+      -- below therefore fits 'Word32'.
       let chunkLength    = min (unLength maxSingleCommandLength) (ByteString.length remaining)
           (chunk, leftover) = ByteString.splitAt chunkLength remaining
       in word8 248 <> putWord32BE (fromIntegral chunkLength) <> byteString chunk

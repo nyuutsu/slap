@@ -9,14 +9,11 @@
 --
 -- The four fields slap recognises are the ones EBPatcher established
 -- as the EBP metadata contract: @patcher@, @title@, @author@,
--- @description@. Lookup is case-insensitive: there are two notable
--- producers in the wild and they disagree on key casing. EBPatcher
--- (the Python reference patcher) writes lowercase keys.
--- RomPatcher.js (a JavaScript implementation, including a webapp
--- many end-users hit directly) writes capitalised keys for the
--- three user-facing fields and lowercase @patcher@. A slap reader
--- that wants to handle patches end-users actually have needs to
--- tolerate both, so this module folds the comparison.
+-- @description@. Lookup is case-insensitive: no spec fixes the key
+-- casing, so producers disagree — EBPatcher (the Python reference
+-- patcher) writes lowercase keys, while RomPatcher.js writes
+-- capitalised keys for the three user-facing fields and lowercase
+-- @patcher@. slap folds the comparison so it reads either.
 --
 -- Missing fields are tolerated for the same reason: RomPatcher.js's
 -- writer skips empty fields entirely, so a real-world EBP patch can

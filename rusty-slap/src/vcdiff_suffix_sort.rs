@@ -63,7 +63,7 @@
 //! `usize` throughout. The matcher is total — the cover contract has no
 //! error channel to report an overflow through, unlike
 //! `xdelta1_suffix_array`'s fallible `build` — so it does not narrow to
-//! `u32`; on any 64-bit host a real ROM pair is nowhere near the limit.
+//! `u32`.
 //! Construction is prefix doubling with counting sort (O(n log n)); the
 //! quadratic reference it replaces lives on as the differential oracle
 //! in `vcdiff_diff.rs`.

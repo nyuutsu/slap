@@ -133,9 +133,7 @@ parseRecords recordIndex = do
     -- output offset). DPS records run to EOF with nothing after the
     -- last one, so a sub-header tail is a truncated record, not a clean
     -- end. Detection requires exact consumption (isDPS); the parser
-    -- agrees rather than silently dropping the tail. (dpspatcher.exe's
-    -- while(!feof) loop only tolerates such a tail by luck — for some
-    -- lead bytes it would execute a stale record instead.)
+    -- agrees rather than silently dropping the tail.
     throwByteParserError (ByteParserTruncatedRecord recordIndex
       (RequiredLength (Length dpsRecordHeaderSize))
       (RemainingLength available))

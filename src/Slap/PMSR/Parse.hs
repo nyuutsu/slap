@@ -26,7 +26,6 @@ import qualified Data.Vector as Vector
 
 -- Format: 4 bytes "PMSR" magic, uint32BE record count,
 -- then for each record: uint32BE offset, uint32BE length, then data bytes.
--- Star Rod (Java) uses big-endian — this is the authoritative producer.
 parsePMSR :: PatchFileContents -> Either SlapError (Parsed PMSRPatch)
 parsePMSR (PatchFileContents input)
   | ByteString.length input < 4 = Left (InputTooShort LabelPMSR (RequiredLength (Length 4)) (ActualLength (byteLength input)))

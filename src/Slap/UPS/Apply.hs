@@ -53,9 +53,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Both are reachable from both directions; which arm fires depends
 -- on the patch's shape (growth vs shrink, terminator placement),
 -- not on whether the user invoked apply or undo. See each
--- constructor's docs for the dominant empirical case the patches we
--- have exhibit, but bear in mind those are observations of one
--- collection, not properties of the format.
+-- constructor's docs for the practical case it covers.
 data BlockPlacement
   = BlockFitsWithinOutput
     -- ^ The block's declared span — skip, xor, terminator — lies
@@ -71,10 +69,9 @@ data BlockPlacement
     -- skip, xor, terminator — happens at the write site.
     --
     -- Reachable whenever a block straddles the active output
-    -- boundary. The dominant empirical case is the +1-terminator
-    -- quirk many UPS creation tools (NUPS, Tsukuyomi) emit: a
-    -- final block whose terminator lands at @output_size@ rather
-    -- than @output_size - 1@, so its trailing byte clips. The
+    -- boundary. Some UPS creation tools emit a final block whose
+    -- terminator lands at @output_size@ rather than
+    -- @output_size - 1@, so its trailing byte clips here. The
     -- quirk is direction-independent — it fires whenever the
     -- straddling block's first OOB byte falls on the boundary, in
     -- either 'applyUPS' or 'undoUPS', depending on which size the
@@ -133,7 +130,7 @@ data SourceCopyPlacement
     -- The two carried 'Length's are the in-bounds prefix (source-
     -- read phase length) and the zero-fill tail (virtual-zero phase
     -- length), in that order. Their sum equals the requested copy
-    -- length by construction.
+    -- length.
   | SourceCopyEntirelyPastSource
     -- ^ The copy starts at or past source end: every byte is a
     -- virtual zero. The handler runs only the zero-fill path; the
@@ -168,8 +165,8 @@ classifySourceCopy outputPosition copyLength sourceSize
 -- not threaded through the walker.
 --
 -- Returns 'Left' with a structured error if the declared target
--- size is negative (unreachable by construction but defensively
--- guarded). Blocks whose span exceeds the output size are clipped
+-- size is negative (unreachable — the size is read from a
+-- non-negative varint). Blocks whose span exceeds the output size are clipped
 -- to its bounds — the in-bounds portion is written and the
 -- out-of-bounds portion is silently skipped. This tolerates the
 -- common creation-tool artifact where the final block's terminator

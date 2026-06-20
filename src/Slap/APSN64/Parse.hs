@@ -123,9 +123,8 @@ data APSN64RecordWalk = APSN64RecordWalk
   }
 
 -- | Walk records to end of input. A trailing fragment — fewer bytes
--- than a record header where a record would begin — ends the walk
--- the way the reference applier's short read does, but audibly: the
--- fragment is consumed and surfaced as a note rather than swallowed.
+-- than a record header where a record would begin — ends the walk;
+-- the fragment is consumed and surfaced as a note.
 parseN64Records :: ByteParser APSN64RecordWalk
 parseN64Records = walkRecords []
   where

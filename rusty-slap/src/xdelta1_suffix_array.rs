@@ -7,10 +7,8 @@
 //! Built by SA-IS (Nong, Zhang & Chan 2009) over the source plus
 //! Kasai's LCP construction. Storage is `u32` throughout; build
 //! rejects sources whose byte length exceeds `u32::MAX` with a
-//! typed error rather than truncating silently. Every measured
-//! xdelta1 fixture lives well under 4 GiB, so the narrow width
-//! covers slap's use; a wide-index path would be additive future
-//! work.
+//! typed error rather than truncating silently. A wide-index path
+//! would be additive future work.
 
 use std::cmp::Ordering;
 
@@ -362,7 +360,7 @@ fn classify_each_suffix<Symbol: SaIsSymbol>(input: &[Symbol]) -> Vec<SuffixCompa
 /// Filter for Smaller-typed positions whose predecessor is Larger-
 /// typed. (In the SA-IS literature these are the "LMS" — leftmost-
 /// smaller — suffixes; their relative order determines the entire
-/// SA.) Position 0 has no predecessor and is excluded by construction.
+/// SA.) Position 0 has no predecessor and is excluded.
 fn leftmost_smaller_positions(
     classifications: &[SuffixComparisonWithSuccessor],
 ) -> Vec<usize> {

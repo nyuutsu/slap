@@ -12,7 +12,7 @@
 /// smallest suffix begins.
 ///
 /// Storage width matches what was sufficient for the input: a narrow
-/// `Vec<u32>` for any input up to 4 GB (every realistic ROM size), a
+/// `Vec<u32>` for any input up to 4 GB, a
 /// wide `Vec<u64>` only when the input crosses that threshold.
 /// Consumers see `usize` positions through the accessors; the variant
 /// is an implementation detail that earns the narrow-storage memory
@@ -87,7 +87,7 @@ impl<'a> Iterator for SuffixPositionIter<'a> {
 /// produces an empty [`SuffixArray::Narrow`].
 ///
 /// Dispatches on input size: inputs that fit in a `u32`-indexed scratch
-/// space (≤ 4 GB, effectively every realistic input) are built in
+/// space (≤ 4 GB) are built in
 /// `Vec<u32>` to halve memory bandwidth on the induction passes; larger
 /// inputs build in `Vec<u64>`. The returned variant reflects the
 /// choice; consumers see `usize` positions either way.
@@ -658,8 +658,7 @@ mod tests {
     }
 
     /// The dispatcher routes inputs ≤ `u32::MAX` through `Vec<u32>`-typed
-    /// scratch space, the path that virtually every real input takes.
-    /// Verify it on a multi-KB input — large enough that the recursive
+    /// scratch space. Verify it on a multi-KB input — large enough that the recursive
     /// step actually engages, small enough that the naive reference is
     /// still tractable. Inputs large enough to require the `u64` path
     /// (> 4 GB) aren't checkable this way, but the algorithm is identical

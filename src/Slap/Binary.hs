@@ -123,7 +123,7 @@ data VarintReadFailure
   -- already encode a value past 'Int64', so counting bytes would let
   -- it wrap silently. For VCDIFF this is the @>= 2^64@ band, beyond
   -- even xd3's @uint64@; for byuu it is the single over-width verdict
-  -- (byuu makes no apology — see 'VarintExceedsSignedButFitsUnsigned').
+  -- (see 'VarintExceedsSignedButFitsUnsigned').
   = VarintTooManyContinuationBytes
   -- | A continuation byte was followed by no more input; the
   -- varint started inside the buffer but its continuation bytes
@@ -136,7 +136,7 @@ data VarintReadFailure
   -- the format's effective definition admits these and slap, knowingly,
   -- does not. Only 'getVcdiffVarint' produces it; the byuu reader caps
   -- at the same value with the plain 'VarintTooManyContinuationBytes',
-  -- because byuu is canonical and made the coarser call deliberately.
+  -- byuu's varint drawing no signed/unsigned distinction at this band.
   | VarintExceedsSignedButFitsUnsigned
   deriving (Eq, Show)
 

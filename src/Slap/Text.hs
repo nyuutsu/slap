@@ -295,7 +295,7 @@ data LossNotice
 -- target, naming the first offender and its position.
 --
 -- 'EncodingUtf8' never fails — every Unicode codepoint has a UTF-8
--- representation, and 'Text' values are by construction Unicode.
+-- representation, and 'Text' values are Unicode.
 -- 'EncodingNamed' fails when the resolved encoder reports a codepoint
 -- as not 'Encoding.encodeable' under it (e.g. a Japanese ideograph
 -- under a Latin-1 encoding).
@@ -404,9 +404,8 @@ chooseSubstitute encoder
 -- recovery shape — strict-decode first, prefix-recover on failure,
 -- emit a single 'SubstitutedByteSequence' per substituted byte,
 -- recurse on the rest — is identical across both. The walk is O(n)
--- on the clean path (one strict decode) and O(n²) on the failure
--- path; for slap's text fields (at most ~1 KiB) the cost is
--- imperceptible.
+-- on the clean path (one strict decode); the recovery path is O(n²),
+-- one extra decode per undecodable byte.
 decodeTextLenient :: EncodingName -> ByteString -> (EncodedText, [LossNotice])
 decodeTextLenient EncodingUtf8 bytes =
   let (text, notices) = recoveringDecode TextEncoding.decodeUtf8' bytes

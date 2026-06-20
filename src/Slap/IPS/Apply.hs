@@ -103,11 +103,11 @@ classifyRecordPlacement writePosition writeLength effectiveSize
 -- other three dispositions, per-record writes are guarded by a
 -- strict bounds check that raises 'ApplyWritesPastTarget' on
 -- overrun. The strict guard is structurally unreachable for those
--- dispositions (effective >= maxRecordEnd by construction) but
+-- dispositions (effective >= maxRecordEnd) but
 -- stays as a defensive total guard.
 --
 -- A defensive guard returns 'NegativeTargetSize' if the effective
--- size is somehow negative. Unreachable by construction —
+-- size is somehow negative. Unreachable —
 -- 'NaturalTargetSize' is non-negative and 'DeclaredTargetSize' is
 -- parsed from a non-negative wire value — but kept for parity with
 -- BPS and UPS.
@@ -321,7 +321,7 @@ applyIPS (InputFileContents source) patch
         -- | Record handler for the three non-Honored dispositions.
         -- Strict bounds check; 'ApplyWritesPastTarget' on overrun.
         -- Structurally unreachable for these dispositions
-        -- (effective >= maxRecordEnd by construction), kept as a
+        -- (effective >= maxRecordEnd), kept as a
         -- defensive total guard.
         handleStrict :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
         handleStrict recordIndex record =

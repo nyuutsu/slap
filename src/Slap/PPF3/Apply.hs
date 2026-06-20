@@ -4,7 +4,7 @@
 -- the record stream the same way PPF1/PPF2 do; undo walks the
 -- record stream in input order writing the per-record undo
 -- payload back. Undo is only meaningful when the patch carries
--- undo data — by construction the parser sets 'ppf3RecordUndo'
+-- undo data — the parser sets 'ppf3RecordUndo'
 -- to 'Just' on every record exactly when the patch's undo flag
 -- is set, so 'undoPPF3' returns @Right input@ unchanged on a
 -- non-undo patch.
