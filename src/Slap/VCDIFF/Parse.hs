@@ -40,9 +40,8 @@ module Slap.VCDIFF.Parse
     -- * Address cache (exported for testing)
   , AddressCache(..)
   , AddressCacheConfig(..)
-  , NearSlotCount(..)
-  , SameBlockCount(..)
   , defaultAddressCacheConfig
+  , firstSameMode
   , freshAddressCache
   , decodeCopyAddress
   , CopyAddressReading(..)
@@ -65,7 +64,7 @@ import Slap.VCDIFF.SecondaryCompression
 import Slap.VCDIFF.AddressCache
   ( AddressCache(..), AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
   , defaultAddressCacheConfig
-  , freshAddressCache, classifyAddressMode
+  , freshAddressCache, classifyAddressMode, firstSameMode, modeCeiling
   , decodeCopyAddress, CopyAddressReading(..), AddressDecodeFailure(..) )
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
@@ -607,13 +606,11 @@ checkCustomTableCopyModes config table =
                   (VCDIFFCodeTableCopyModeOutOfRange mode (highestValidAddressMode config)))
     checkTemplate _ = Right ()
 
--- | The highest COPY address mode the caches reach: SELF (0), HERE (1),
--- the @s_near@ near modes, then the @s_same@ same modes — so
--- @2 + s_near + s_same - 1@. Shares the band arithmetic with
--- 'classifyAddressMode'.
+-- | The highest COPY address mode the caches reach: one below the layout's
+-- mode ceiling. Reads that one boundary from 'modeCeiling' rather than
+-- re-deriving the band arithmetic 'classifyAddressMode' steers by.
 highestValidAddressMode :: AddressCacheConfig -> Int
-highestValidAddressMode config =
-  1 + unNearSlotCount (nearSlotCount config) + unSameBlockCount (sameBlockCount config)
+highestValidAddressMode config = modeCeiling config - 1
 
 -- | A presence advisory if the built table holds any do-nothing
 -- (NOOP-then-NOOP) entry, or none. Legal but remarkable — the default

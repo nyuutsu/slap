@@ -39,8 +39,13 @@ module Slap.VCDIFF.AddressCache
   , readNearSlot
   , readSameSlot
   , advanceNearWriteSlot
+  , nearSlotIndices
   , freshAddressCache
   , recordAddress
+    -- * Address-mode layout
+  , firstNearMode
+  , firstSameMode
+  , modeCeiling
     -- * Mode classification
   , AddressModeFamily(..)
   , classifyAddressMode
@@ -167,6 +172,14 @@ advanceNearWriteSlot :: AddressCacheConfig -> NearSlotIndex -> NearSlotIndex
 advanceNearWriteSlot config (NearSlotIndex slot) =
   NearSlotIndex ((slot + 1) `mod` unNearSlotCount (nearSlotCount config))
 
+-- | The near slots a configuration defines, in order: @[0, s_near)@ as
+-- typed indices. The one place the count becomes a sequence — the @s_near@
+-- unwrap is this function's whole purpose — so the encoder's near-slot
+-- search iterates these rather than a bare 'Int' range.
+nearSlotIndices :: AddressCacheConfig -> [NearSlotIndex]
+nearSlotIndices config =
+  [ NearSlotIndex slot | slot <- [0 .. unNearSlotCount (nearSlotCount config) - 1] ]
+
 -- | The address held in one same slot; the block index and the one-byte
 -- operand select the slot within the block's 256-slot span, and an
 -- untouched slot holds zero.
@@ -200,6 +213,34 @@ recordAddress cache address = cache
     NearSlotIndex writeSlot = nextNearWriteSlot cache
 
 ----------------------------------------------------------------------------
+-- The address-mode layout
+----------------------------------------------------------------------------
+
+-- | The first address mode that names a near slot. SELF (mode 0) and HERE
+-- (mode 1) precede the near band, so it always begins at mode 2, whatever
+-- the cache sizes. A near mode names the slot at its distance past this
+-- base, and a near slot's mode byte is this base plus its index — the one
+-- mapping 'classifyAddressMode' reads and 'selectCopyAddressMode' writes.
+firstNearMode :: Int
+firstNearMode = 2
+
+-- | The first address mode that names a same block: the near band fills
+-- @s_near@ modes up from 'firstNearMode', so the same band begins just past
+-- it. Decode ('classifyAddressMode') and encode ('selectCopyAddressMode')
+-- must place this boundary identically — otherwise a same-mode address
+-- decodes through the wrong band — so it has one definition, here, derived
+-- from @s_near@ (RFC 3284 §5.3).
+firstSameMode :: AddressCacheConfig -> Int
+firstSameMode config = firstNearMode + unNearSlotCount (nearSlotCount config)
+
+-- | One past the last address mode the cache defines: the same band fills
+-- @s_same@ modes up from 'firstSameMode'. A mode at or above this names no
+-- band — 'classifyAddressMode' returns 'Nothing', and the custom-table
+-- check rejects a COPY template that reaches it.
+modeCeiling :: AddressCacheConfig -> Int
+modeCeiling config = firstSameMode config + unSameBlockCount (sameBlockCount config)
+
+----------------------------------------------------------------------------
 -- Mode classification
 ----------------------------------------------------------------------------
 
@@ -226,15 +267,13 @@ data AddressModeFamily
 -- band, so neither can name a slot the cache lacks.
 classifyAddressMode :: AddressCacheConfig -> Word8 -> Maybe AddressModeFamily
 classifyAddressMode config mode
-  | modeNumber == 0          = Just SelfAddress
-  | modeNumber == 1          = Just HereAddress
-  | modeNumber < nearBandEnd = Just (NearAddress (NearSlotIndex (modeNumber - 2)))
-  | modeNumber < sameBandEnd = Just (SameAddress (SameBlockIndex (modeNumber - nearBandEnd)))
-  | otherwise                = Nothing
+  | modeNumber == 0                   = Just SelfAddress
+  | modeNumber == 1                   = Just HereAddress
+  | modeNumber < firstSameMode config = Just (NearAddress (NearSlotIndex (modeNumber - firstNearMode)))
+  | modeNumber < modeCeiling config   = Just (SameAddress (SameBlockIndex (modeNumber - firstSameMode config)))
+  | otherwise                         = Nothing
   where
-    modeNumber  = fromIntegral mode
-    nearBandEnd = 2 + unNearSlotCount (nearSlotCount config)
-    sameBandEnd = nearBandEnd + unSameBlockCount (sameBlockCount config)
+    modeNumber = fromIntegral mode
 
 ----------------------------------------------------------------------------
 -- Decode (mode + operand -> address)
@@ -402,14 +441,14 @@ selectCopyAddressMode cache here address = recordInto chosen
     nearCandidate :: [AddressCandidate]
     nearCandidate = case forwardNearSlots of
       []    -> []
-      slots -> let (slotIndex, delta) = minimumBy (comparing snd) slots
-               in [varintCandidate (nearModeByte slotIndex) delta]
+      slots -> let (slot, delta) = minimumBy (comparing snd) slots
+               in [varintCandidate (nearModeByte slot) delta]
 
-    forwardNearSlots :: [(Int, Int)]   -- (slot index, forward delta)
+    forwardNearSlots :: [(NearSlotIndex, Int)]   -- (slot, forward delta)
     forwardNearSlots =
-      [ (slotIndex, addressInt - slotAddrInt)
-      | slotIndex <- [0 .. unNearSlotCount (nearSlotCount config) - 1]
-      , let slotAddrInt = offsetToInt (readNearSlot (NearSlotIndex slotIndex) (nearAddresses cache))
+      [ (slot, addressInt - slotAddrInt)
+      | slot <- nearSlotIndices config
+      , let slotAddrInt = offsetToInt (readNearSlot slot (nearAddresses cache))
       , slotAddrInt <= addressInt
       ]
 
@@ -421,8 +460,8 @@ selectCopyAddressMode cache here address = recordInto chosen
       AddressCandidate mode (AddressVarint (fromIntegral value))
         (minimalVcdiffVarintLength (fromIntegral value))
 
-    nearModeByte slotIndex = fromIntegral (2 + slotIndex)
-    sameModeByte block     = fromIntegral (2 + unNearSlotCount (nearSlotCount config) + block)
+    nearModeByte (NearSlotIndex slot) = fromIntegral (firstNearMode + slot)
+    sameModeByte block     = fromIntegral (firstSameMode config + block)
 
     recordInto candidate = SelectedCopyAddress
       { selectedAddressMode       = candidateMode candidate
