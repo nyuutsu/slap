@@ -46,12 +46,11 @@ module Slap.NINJA2.Types
   , ninja2DescriptionWidth
   ) where
 
--- Canonical reference: docs/specs/ninja2-filespec20.txt (Derrick Sobodash, 2006)
+-- Canonical reference: docs/ninja2/upstream/ninja2-filespec20.txt (Derrick Sobodash, 2006)
 -- Archived from http://ninja.cinnamonpirate.com/files/filespec20.txt
 -- Secondary: RomPatcher.js modules/RomPatcher.format.rup.js
--- NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18);
--- see docs/specs/ninja2-cliusage.txt.  Cross-format conversion goes
--- through 'Slap.PlatformType.PlatformType'.
+-- NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18); see docs/ninja2/upstream/ninja2-cliusage.txt.
+-- Cross-format conversion goes through 'Slap.PlatformType.PlatformType'.
 
 import Slap.Checksum (MD5Hash)
 import Slap.ByteParser (ByteParser, getByte, getBytes)

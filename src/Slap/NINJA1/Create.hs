@@ -8,7 +8,7 @@ module Slap.NINJA1.Create
   , resolveSentinelCollisions
   ) where
 
-import Slap.NINJA1.Types (NINJA1RomType(..), fromNINJA1RomType)
+import Slap.NINJA1.Types (NINJA1RomType(..), NINJA1Compression(..), fromNINJA1RomType)
 import Slap.Binary (putWord32BE)
 import Slap.Checksum (CRC32(..), MD5Hash(..), SHA1Hash(..))
 import Slap.Status (SlapError(..))
@@ -30,17 +30,17 @@ import Data.Bits (shiftR, (.&.))
 import Data.Int (Int64)
 
 -- | Encode pre-diffed records as a NINJA1 Binary patch.
--- When compress is True, zlib-compresses the payload and emits BZ subformat.
 encodeNINJA1 :: [EncodedHunk]
              -> CRC32           -- source CRC32
              -> MD5Hash         -- source MD5 (16 bytes)
              -> SHA1Hash        -- source SHA1 (20 bytes)
              -> NINJA1RomType   -- ROM platform type
-             -> Bool            -- compress (BZ subformat)
+             -> NINJA1Compression
              -> PatchFileContents
-encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
-  | doCompress = PatchFileContents $ "NINJA1BZ" <> zlibDeflate payload
-  | otherwise  = PatchFileContents $ "NINJA1B " <> payload
+encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType compression =
+    case compression of
+      NINJA1Compressed   -> PatchFileContents $ "NINJA1BZ" <> zlibDeflate payload
+      NINJA1Uncompressed -> PatchFileContents $ "NINJA1B " <> payload
   where
     payload = LazyByteString.toStrict $ toLazyByteString $
         word8 (fromNINJA1RomType romType)
@@ -48,7 +48,7 @@ encodeNINJA1 records sourceCRC sourceMD5 sourceSHA1 romType doCompress
         <> byteString (unMD5Hash sourceMD5)
         <> byteString (unSHA1Hash sourceSHA1)
         <> foldMap encodeRecordBuilder records
-        <> word8 3 <> byteString "EOF"     -- EOF sentinel
+        <> word8 3 <> byteString "EOF"
 
 encodeRecordBuilder :: EncodedHunk -> Builder
 encodeRecordBuilder ehunk =
@@ -56,9 +56,6 @@ encodeRecordBuilder ehunk =
         recordPayload = encodedPayload ehunk
         offsetEncoded = encodeBigEndian (fromIntegral (unOffset recordOffset) :: Int64)
         lengthEncoded = encodeBigEndian (fromIntegral (ByteString.length recordPayload) :: Int64)
-    -- The two 'word8 (fromIntegral (ByteString.length ...))' calls are
-    -- safe-by-construction: 'encodeBigEndian' of an 'Int64' produces at
-    -- most 8 bytes, fitting 'Word8'.
     in word8 (fromIntegral (ByteString.length offsetEncoded))
        <> byteString offsetEncoded
        <> word8 (fromIntegral (ByteString.length lengthEncoded))
@@ -73,17 +70,11 @@ encodeBigEndian value = ByteString.pack (extractBytes [] value)
     extractBytes accumulated 0 = accumulated
     extractBytes accumulated remainder = extractBytes (fromIntegral (remainder .&. 0xFF) : accumulated) (remainder `shiftR` 8)
 
-----------------------------------------------------------------------------
--- Large-file hash sampling
---
--- Per the PHP reference (ninja-1.01php), files >0x1e00000 bytes use a
--- sample instead of the full file: first 20 MiB + last 10 MiB + decimal
--- file size string.  CRC32/MD5/SHA1 are computed on this sample.
-----------------------------------------------------------------------------
-
--- | Prepare hash input for NINJA1 source verification.
--- Files >0x1e00000 (30 MiB) use the sampling algorithm from the PHP
--- reference: first 0x1400000 bytes, last 0xa00000 bytes, decimal size.
+-- | Prepare the source-verification hash input. Files larger than
+-- 0x1e00000 bytes (30 MiB) are hashed over a sample, not the whole file:
+-- first 0x1400000 (20 MiB), last 0xa00000 (10 MiB), then the decimal
+-- file-size string. The same sample feeds CRC32, MD5, and SHA1. From the
+-- PHP reference (ninja.php in docs/ninja1/upstream/ninja-1.01php.tar.gz).
 ninja1HashInput :: ByteString -> ByteString
 ninja1HashInput input
   | ByteString.length input > 0x1e00000 =

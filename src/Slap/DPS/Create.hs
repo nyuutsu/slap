@@ -89,11 +89,10 @@ dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
               : buildRecords (intOffset + ByteString.length rawData) rest
 
 -- | Serialise an 'EncodedDPSRecord' to wire bytes. The 'Word32'
--- selectors carry values 'narrowDPSRecord' has already validated
--- against the 4-byte LE wire fields, so the only surviving
--- 'fromIntegral' (the payload length on the 'EnclosedData' arm) is
--- safe-by-construction — the smart constructor checked the same
--- bytestring's length on the way in.
+-- selectors carry values 'narrowDPSRecord' already validated against the
+-- 4-byte LE wire fields, so the surviving 'fromIntegral' (the payload
+-- length on the 'EnclosedData' arm) cannot truncate: the smart
+-- constructor checked that bytestring's length on the way in.
 encodeRecord :: EncodedDPSRecord -> Builder
 encodeRecord (EncodedDPSCopyFromROM outputOffset sourceOffset copyLength) =
     word8 0

@@ -15,7 +15,7 @@ module Slap.XDelta1.Parse
   , XDelta1NoVerifyFlag(..)
   ) where
 
--- Canonical reference: tools/xdelta1/xdelta-1.1.4/ (xdelta 1.x source)
+-- Canonical reference: xdelta 1.x source, preserved at docs/xdelta1/upstream/xdelta-1.1.3.tar.gz
 
 import Slap.XDelta1.Types
     ( XDelta1Patch(..), XDelta1Instruction(..)
@@ -234,47 +234,12 @@ data ParsedInstruction = ParsedInstruction
   } deriving (Show, Eq)
 
 -- | Parse the EDSIO-serialized XdeltaControl from the control segment.
--- The source list is parsed raw and then narrowed to the canonical
--- @[data, file]@ pair by 'requireDataAndFileRecords'; any other count
--- or ordering is rejected with 'UnsupportedXDelta1Shape' before the
--- patch record is constructed. Instructions are parsed against a
--- wider 'ParsedInstruction' intermediate and then translated by
--- 'translateInstruction'; wire indices outside @{0, 1}@ are rejected
--- with 'XDelta1UnknownInstructionTarget'. Only after both checks
--- pass do sequential offsets get resolved and the 'XDelta1Patch'
--- record assembled.
+-- The source list is narrowed to the canonical @[data, file]@ pair by 'requireDataAndFileRecords' and instructions are translated from a wider 'ParsedInstruction' by 'translateInstruction'; both reject off-spec input before the 'XDelta1Patch' record is assembled.
 --
--- The data-record's wire fields are handled per-field rather than
--- carried on the patch (see "Slap.XDelta1.Types" for the rationale):
+-- The data-record's wire fields are validated per-field rather than carried on the patch (see "Slap.XDelta1.Types" for the field-by-field rationale).
+-- One subtlety the parser must honor: canonical's converter (xdelta.c:1433-1471) can emit absolute-mode data records, not only sequential ones.
 --
---   [@name@]        Compared to 'xdelta1DataRecordName'. Mismatches
---                   surface an informational notice
---                   ('XDelta1DataRecordNameDiverges') — the field is
---                   a display label and canonical xdelta-1.x never
---                   gates apply on it.
---   [@MD5@]         Under 'VerifyAgainstStoredMD5s', compared to the
---                   MD5 of the data-segment bytes via the porcelain's
---                   verification pipeline ('verifyDataMD5'); under
---                   'CreatorOptedOutOfVerification', the bytes are
---                   discarded (the curio-warning consults them
---                   separately to spot non-canonical sentinels).
---   [@length@]      Compared to the byte count of the data segment
---                   slap parsed from the patch envelope; structural
---                   inconsistency is fatal
---                   ('XDelta1DataRecordLengthMismatch').
---   [@offset-mode@] Dispatches parser behavior for data-targeting
---                   instructions: under 'SequentialOffsets', their
---                   wire offsets are zero and the absolute offset is
---                   reconstructed by 'fixSequentialOffsets'; under
---                   'AbsoluteOffsets', the wire offset is used
---                   verbatim. Canonical's converter (xdelta.c:1433-
---                   1471) can produce absolute-mode data records, so
---                   the parser must honor both.
---
--- All xdelta1 parse warnings are emitted here: the family
--- 'VerificationOptedOutByCreator' under 'NoVerifyFlagSet', and the
--- 'XDelta1NoVerifyWithDivergentSentinel' curio when the flag is set
--- but the stored MD5 slots do not match 'xdelta1EmptyInputMD5Sentinel'.
+-- All xdelta1 parse warnings are emitted here.
 parseControl :: EncodingName
              -> XDelta1NoVerifyFlag
              -> XDelta1PatchCompression
@@ -422,11 +387,8 @@ parseOneSource = do
     , parsedSourceOffsetMode = offsetMode
     }
 
--- | Parse @count@ source records as a flat list. Shape validation
--- happens afterwards in 'requireDataAndFileRecords'; this function
--- is intentionally permissive over the wire so that off-spec shapes
--- can be reported with structured 'UnsupportedXDelta1Shape' rather
--- than as bare ByteParser-monad failures.
+-- | Parse @count@ source records as a flat list; shape is validated
+-- afterwards in 'requireDataAndFileRecords'.
 parseSourceList :: Int -> ByteParser [ParsedSourceRecord]
 parseSourceList 0 = pure []
 parseSourceList count = do

@@ -232,7 +232,6 @@ labeledHexDump label bytes = "      " <> label <> ":\n" <> hexDump bytes
 resolveXOR :: ByteString -> Int -> ByteString -> ByteString
 resolveXOR source offset deltaBytes =
   let sourceSlice = ByteString.take (ByteString.length deltaBytes) (ByteString.drop offset source)
-      -- zero-pad if source is shorter
       padded = sourceSlice <> ByteString.replicate (ByteString.length deltaBytes - ByteString.length sourceSlice) 0
   in ByteString.pack (ByteString.zipWith xor padded deltaBytes)
 

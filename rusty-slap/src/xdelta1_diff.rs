@@ -85,9 +85,7 @@ pub struct XDelta1DiffOutput {
 /// Failures: sources too large for the `u32`-indexed suffix array
 /// (surfaced by [`SourceSuffixArrayIndex::build`]) and internal-
 /// invariant violations (cumulative emit length != target length at
-/// end). All return `Err(cause)` rather than `panic!` /
-/// `unreachable!()` into the process-abort path established by
-/// `panic = "abort"`.
+/// end).
 pub fn xdelta1_diff(source: &[u8], target: &[u8]) -> Result<XDelta1DiffOutput, String> {
     if target.is_empty() {
         return Ok(XDelta1DiffOutput {

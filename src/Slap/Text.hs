@@ -1,8 +1,5 @@
--- | Typed text values that carry their own encoding. Where the
--- predecessor scheme threaded the encoding decision implicitly
--- through which function happened to get called (an
--- @encodeLocaleField@ vs an @encodeUtf8Field@), this module
--- represents the encoding decision in the value itself.
+-- | Typed text values that carry their own encoding.
+-- The encoding decision lives in the value itself, not in which function the call site happens to reach for.
 --
 -- An 'EncodedText' bundles an 'EncodingName' tag with a 'Text' payload.
 -- The tag remembers what encoding the bytes were when they arrived (or
@@ -494,10 +491,8 @@ recoveringDecode strictDecode = walkAt 0
 -- Substitution semantics from 'encodeTextLenient' apply: codepoints
 -- the target can't represent become substitutes, with each
 -- substitution reported as a 'SubstitutedCodepoint' notice.
--- Truncation, if it happens, surfaces as a 'TruncatedToFitBound'
--- notice carrying the byte count the source would have produced
--- without the cap (matching 'Slap.Status.OriginalLength') and the
--- byte count actually written (matching 'TruncatedLength').
+-- Truncation, if it happens, surfaces as a 'TruncatedToFitBound' notice carrying the byte count the source would have produced without the cap (matching 'Slap.Measure.OriginalLength')
+-- and the byte count actually written (matching 'TruncatedLength').
 --
 -- The caller decides what to do about the notices — slap's create
 -- paths typically lift each one to a 'Slap.Status.FieldTruncated'
@@ -735,15 +730,14 @@ stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 --     codepages, Cyrillic KOI8-R\/U, the Japanese standards
 --     (Shift-JIS, ISO-2022-JP), and the Chinese GB18030 standard
 --     are in this category. Uses the library's own name, so the
---     decode is exact: every byte sequence the source codepage
---     defines decodes to the codepoint the codepage spec assigns.
+--     decode goes through the @encoding@ library's table for that
+--     codepage rather than a near-miss substitute.
 --
 --   * /Compatible superset/ — the @encoding@ library doesn't ship
 --     the exact codepage but does ship a strictly compatible
---     superset. Microsoft's CP936 (Simplified Chinese) maps to
---     GB18030, which is documented to be a strict byte-level
---     superset of GBK (and GB2312); any valid CP936 byte sequence
---     decodes identically under GB18030. Microsoft's CP1250-1257
+--     superset. The library doesn't ship CP936 (Simplified
+--     Chinese), so it maps to GB18030, the standardized successor
+--     that extends GBK and GB2312. Microsoft's CP1250-1257
 --     fall back to the matching ISO-8859 variant where the
 --     codepage entry isn't recognized; the ISO cousins are
 --     ASCII-clean and differ only in upper-half glyphs (e.g.
@@ -764,10 +758,8 @@ stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 --     of these) or a hand-rolled decoder. The table documents the
 --     gap so the cost of closing it is visible.
 --
--- Mappings come from Microsoft's codepage-to-charset tables and
--- IANA's character-set registry. They have not been exercised
--- under each target locale on a real host, so the documented-but-
--- untested caveat applies. Drift in the upper-half byte ranges
+-- Mappings follow Microsoft codepage conventions and IANA charset names.
+-- They have not been exercised under each target locale on a real host, so the documented-but-untested caveat applies. Drift in the upper-half byte ranges
 -- between a Microsoft codepage and its ISO cousin is the failure
 -- mode to watch for; ASCII text and text whose upper-half
 -- characters are well-defined in the cousin will round-trip

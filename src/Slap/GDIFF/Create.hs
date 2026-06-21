@@ -40,7 +40,6 @@ createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFil
       <> word8 0                       -- EOF command
     sharedRegionEnd = lengthToOffset (minLength (byteLength original) (byteLength modified))
     buildCommands position [] =
-      -- trailing unchanged region
       if position < sharedRegionEnd
         then encodeCopy position (distance position sharedRegionEnd)
         else mempty
@@ -58,11 +57,7 @@ createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFil
 -- as signed 32-bit, so a single DATA command can carry at most
 -- @unLength maxSingleCommandLength@ bytes.
 --
--- Each branch's 'fromIntegral' is safe-by-construction: the guard
--- immediately to the left establishes the bound, and the wire-format
--- encoder ('word8' / 'putWord16BE' / 'putWord32BE') matches it.
--- Reading a branch top-to-bottom, guard → fromIntegral → encoder, the
--- safety chain is local to the branch.
+-- Each branch's guard establishes the bound the 'fromIntegral' relies on.
 encodeData :: ByteString -> Builder
 encodeData payload
   | ByteString.null payload                          = mempty
@@ -134,11 +129,7 @@ planCopy initialOffset initialLength = unfoldr peelChunk (initialOffset, initial
 -- precondition by chunking before each call. Reads top-to-bottom as the
 -- W3C GDIFF spec's COPY table — same order as 'CopyEncoding'.
 --
--- Each branch's 'fromIntegral' calls are safe-by-construction: the
--- guard immediately to the left establishes the bound, and the
--- 'CopyEncoding' constructor's argument types match it. Reading a
--- branch top-to-bottom — guard, constructor, fromIntegrals — the
--- safety chain is local to the branch, no where-block to consult.
+-- Each branch's guard establishes the bound the 'fromIntegral' calls rely on.
 selectCopy :: Offset -> Length -> CopyEncoding
 selectCopy offset copyLength
   | offset <= maximumTwoByteOffset  && copyLength <= maximumOneByteLength =

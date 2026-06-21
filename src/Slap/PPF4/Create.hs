@@ -17,11 +17,6 @@
 -- Replaces, hunks at or past @sourceLength@ become Appends — and runs
 -- the split/narrow pipeline so each payload is ≤ 255 bytes and each
 -- Replace offset fits the 4-byte field before reaching this encoder.
---
--- PPF4's 50-byte description field is always written as zero. The
--- reference maker takes no description and zero-fills the field, and
--- the applier reads past it without using it, so slap does the same —
--- PPF4 create carries no description.
 module Slap.PPF4.Create
   ( encodePPF4
   , partitionPPF4Phases
@@ -39,20 +34,11 @@ import Data.ByteString.Builder
 import qualified Data.ByteString.Lazy as LazyByteString
 
 -- | Encode a PPF4 patch from pre-split records. Replace records are
--- 'EncodedHunk's — the typed proof that each offset fits the 4-byte
--- field and each payload fits the single-byte count; the convert-layer
--- pipeline narrows them before calling here. Append records are
--- 'PPF4Append's, which carry only a payload: the wire offset field is
--- always zero for an Append, so an offset-bearing type would be a lie.
--- The two phases being different types also means they can't be passed
--- in the wrong order. Append payloads are bounded to the single-byte
--- count by the same @splitHunks@ pass the caller runs, so the
--- @fromIntegral@ casts below are safe-by-construction.
---
--- There is no description parameter: the reference PPF4 maker writes
--- the 50-byte description field as all zeros and takes no description
--- input, so slap matches it rather than populating a field the format's
--- tooling leaves empty.
+-- 'EncodedHunk's, the typed proof that each offset fits the 4-byte
+-- field and each payload fits the single-byte count. Append records are
+-- 'PPF4Append's, which carry only a payload. The caller's @splitHunks@
+-- pass bounds every payload to the single-byte count, so the
+-- @fromIntegral@ length casts below cannot truncate.
 encodePPF4 :: [EncodedHunk] -> [PPF4Append] -> CreateResult
 encodePPF4 replaces appends =
   let body = foldMap encodeReplaceRecord replaces

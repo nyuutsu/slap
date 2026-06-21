@@ -38,10 +38,7 @@ data PMSRPatch = PMSRPatch
   } deriving (Show)
 
 -- | PMSR's 4-byte BE record-count header field, narrowed from a
--- runtime 'Int' list length. Constructor private; values come from
--- 'narrowPMSRRecordCount'. PMSR's parser doesn't store the count
--- separately — it's derived from 'pmsrRecords' — so no parser-side
--- exit is needed.
+-- runtime 'Int' list length via 'narrowPMSRRecordCount'.
 newtype PMSRRecordCount = PMSRRecordCount { unPMSRRecordCount :: Word32 }
   deriving (Show, Eq)
 
@@ -64,10 +61,9 @@ pmsrLimits = EncodingLimits
   , formatLabel   = LabelPMSR
   }
 
--- | PMSR's wire-format payload cap. The record format's length field
--- is 4 bytes BE, so payloads ≥ 2^32 bytes cannot be expressed without
--- truncation. Enforced at split time so 'Slap.PMSR.Create.encodePMSR'
--- cannot silently emit a truncated length.
+-- | PMSR's per-record length wire field is 4-byte big-endian Word32;
+-- payloads must fit in 2^32 bytes. Enforced at split time so
+-- 'Slap.PMSR.Create.encodePMSR' cannot silently truncate.
 pmsrMaxRecordPayload :: Length
 pmsrMaxRecordPayload = Length 0xFFFFFFFF
 

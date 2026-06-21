@@ -11,6 +11,7 @@ module Slap.UPS.Types
   , upsFooterLength
   , upsOverheadLength
   , upsTerminatorByteLength
+  , upsTerminatorByte
   ) where
 
 import Slap.Checksum (CRC32)
@@ -18,6 +19,7 @@ import Slap.Measure (Length(..), FileSize(..))
 
 import Data.ByteString (ByteString)
 import Data.Vector (Vector)
+import Data.Word (Word8)
 
 -- | A single UPS block: a skip count followed by the XOR delta
 -- bytes for this block. The skip count is the number of bytes to
@@ -71,3 +73,7 @@ upsOverheadLength = upsMagicLength <> upsFooterLength
 -- length of that terminator (always 1).
 upsTerminatorByteLength :: Length
 upsTerminatorByteLength = Length 1
+
+-- | The block-terminator byte itself (always @0x00@); 'upsTerminatorByteLength' is its width.
+upsTerminatorByte :: Word8
+upsTerminatorByte = 0x00

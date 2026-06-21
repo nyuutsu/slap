@@ -44,12 +44,10 @@ data NINJA1SubFormat = NINJA1Binary | NINJA1BinaryCompressed | NINJA1Text | NINJ
 -- and 'Slap.NINJA1.Parse.parseNINJA1' refuses it as
 -- 'UnsupportedNINJA1Subformat'.
 --
--- The text-uncompressed identifier is the one historical
--- divergence between spec and reference implementation: the
--- archived format spec (@docs/specs/ninja1-filespec10.txt@) says
--- the second byte is @0x0D@, but the canonical PHP reference
--- (@docs/specs/ninja-1.01php.tar.gz@) writes @chr(0x0A)@. The
--- spec hex is wrong; slap follows the implementation byte.
+-- The text-uncompressed identifier is the one historical divergence between spec and reference implementation:
+-- the archived format spec (@docs/ninja1/upstream/ninja1-filespec10.txt@) says the second byte is @0x0D@,
+-- but the canonical PHP reference (@docs/ninja1/upstream/ninja-1.01php.tar.gz@) writes @chr(0x0A)@.
+-- The spec hex is wrong; slap follows the implementation byte.
 toNINJA1SubFormat :: ByteString -> Maybe NINJA1SubFormat
 toNINJA1SubFormat bytes
   | bytes == "B "                          = Just NINJA1Binary

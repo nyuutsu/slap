@@ -27,36 +27,21 @@ import System.IO.Unsafe (unsafePerformIO)
 -- applyAPSGBA
 ----------------------------------------------------------------------------
 
--- | Apply a parsed APS-GBA patch. Each record names an absolute
--- 64KB-aligned offset and carries a full 'apsGbaBlockSize'-byte XOR
--- payload; the apply XORs each payload into the seeded output
--- buffer at its declared offset.
+-- | Apply a parsed APS-GBA patch: XOR each record's
+-- 'apsGbaBlockSize'-byte payload into the seeded output buffer at the
+-- record's absolute offset.
 --
--- A record whose start offset is past the patch's natural block
--- reach (the byte count covered by @max(sourceSize, targetSize)@
--- rounded up to whole blocks — equivalent here to
--- @max(sourceSize, targetSize)@ since block ends are skipped
--- per-byte anyway) is malformed and surfaces as
--- 'ApplyAbsoluteWritePastTarget' naming the record's index, offset,
--- block size, and the target size.
+-- A record whose start lies past @max(sourceSize, targetSize)@ is
+-- malformed and surfaces as 'ApplyAbsoluteWritePastTarget'. The bound
+-- is @max@, not @targetSize@ alone, because a shrinking patch
+-- legitimately emits records past the target end: a source block with
+-- no target equivalent still XORs non-zero against the zero-padded
+-- target. Those records write no bytes (the per-byte
+-- 'positionWithinTarget' guard skips them) but belong in the stream.
 --
--- The natural-reach check is strictly looser than "blockOffset must
--- fit inside the declared target size", because 'Slap.APSGBA.Create'
--- legitimately emits records past the target end when the patch is
--- shrinking — source blocks that have no target equivalent still
--- generate a record because the source-vs-(zero-padded-target) XOR
--- is non-zero. Those records contribute no bytes to the output (the
--- per-byte 'positionWithinTarget' guard skips them) but their
--- presence in the record stream is normal. A record whose start
--- exceeds @max(sourceSize, targetSize)@, by contrast, cannot have
--- been emitted by any well-formed creator: nothing in either input
--- would have produced a non-zero block at that index.
---
--- For the block's *tail* extending past the target end: that is the
--- non-64KB-aligned-target case and remains legitimate even when the
--- block start is in-range. The per-byte loop's
--- 'positionWithinTarget' guard skips those bytes; no error is
--- raised.
+-- A block whose start is in range but whose tail runs past the target
+-- end is the non-aligned-last-block case; the same per-byte guard
+-- skips the overhang without error.
 applyAPSGBA :: APSGBAPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
   | targetSize < 0 =
@@ -70,10 +55,8 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
     sourceLength   = ByteString.length source
     targetFileSize = apsGbaTargetSize header
     targetSize     = unFileSize targetFileSize
-    -- | The largest legitimate block-start offset's upper bound,
-    -- derived as @max(sourceSize, targetSize)@. See the
-    -- function-level comment for why this is the right bound and
-    -- not @targetSize@ alone.
+    -- | Exclusive upper bound on a legitimate block start. See
+    -- 'applyAPSGBA' for why this is @max@ and not @targetSize@ alone.
     naturalBlockReach :: FileSize
     naturalBlockReach =
       FileSize (max sourceLength targetSize)
@@ -88,12 +71,10 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                   (0 :: Word8)
                   (targetSize - sourceLength)
 
-    -- | Per-record guard: the record's write *start* must lie
-    -- within the patch's natural block reach (see 'naturalBlockReach').
-    -- The trailing bytes of a block whose start is in-range may
-    -- legitimately extend past the target end (a non-aligned last
-    -- block, or a source-shrinking patch); those bytes are skipped
-    -- by 'executeXorBlock', not flagged here.
+    -- | Flag a record whose write start sits at or past
+    -- 'naturalBlockReach'. An in-range start whose block tail runs
+    -- past the target end is fine — 'executeXorBlock' skips the
+    -- overhang.
     checkRecordStartsWithinReach :: ActionIndex -> Offset
                                  -> Either ApplyError ()
     checkRecordStartsWithinReach actionIndex blockOffset
@@ -104,10 +85,9 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                  targetFileSize)
       | otherwise = Right ()
 
-    -- | Materialise one 64KB block into the output buffer. Each
-    -- byte position is checked against 'targetSize'; positions past
-    -- the target end are skipped (the legitimate non-aligned
-    -- last-block case — see the function-level comment).
+    -- | Materialise one block into the output buffer, skipping any
+    -- byte position at or past 'targetSize'. This is where the
+    -- past-target tail and the shrinking-patch overhang get dropped.
     executeXorBlock :: Ptr Word8 -> Offset -> ByteString.ByteString -> IO ()
     executeXorBlock targetPointer blockOffset xorPayload =
         writeRemainingBytes 0

@@ -102,9 +102,9 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
           lengthBytes        <- readByteString lengthsAddressPointer       lengthsLengthPointer
           dataSegmentBytes   <- readByteString dataSegmentAddressPointer   dataSegmentLengthPointer
           offsetModeByte     <- peek offsetModeBytePointer
-          -- The success path's error_cause is canonically the empty
-          -- buffer (null pointer, zero length). Free defensively in
-          -- case a future Rust-side change starts writing one.
+          -- error_cause is the canonical null buffer on success;
+          -- routing it through readByteString frees any allocation
+          -- behind it, the same as every other out-pointer.
           _                  <- readByteString errorCauseAddressPointer    errorCauseLengthPointer
           pure $ do
             instructions <- parseParallelInstructions targetTagBytes sourceOffsetBytes lengthBytes
@@ -117,11 +117,9 @@ xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
 
 -- | Reconstruct '[XDelta1Instruction]' from the three parallel
 -- buffers the Rust side surfaces (one byte per target tag; eight LE
--- bytes per source offset; eight LE bytes per length). Buffer-shape
--- mismatches and unknown tag bytes register as typed failures
--- ('XDelta1DiffFailed') rather than runtime exceptions — Rust never
--- emits them, surfacing the impossible-case as a structured failure
--- is the slap discipline of "do not shut up".
+-- bytes per source offset; eight LE bytes per length).
+-- Buffer-shape mismatches and unknown tag bytes register as typed failures ('XDelta1DiffFailed') rather than runtime exceptions:
+-- a malformed buffer from the Rust side gets a structured answer, not a crash.
 parseParallelInstructions
   :: ByteString
   -> ByteString

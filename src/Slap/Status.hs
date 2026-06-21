@@ -577,8 +577,9 @@ data SlapError
   -- can produce. The wire encodes the source list as an EDSIO
   -- length-prefixed sequence, so any count parses structurally;
   -- canonical xdelta unconditionally emits exactly two sources in
-  -- @[data, file]@ order ('xdelta-1.1.4/xdelta.c:241-251' adds the
-  -- data source, 'xdmain.c:1539-1542' adds the from-file source),
+  -- @[data, file]@ order (@xdelta.c:246@ adds the data source,
+  -- @xdmain.c:1539-1542@ adds the from-file source, both in
+  -- @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@),
   -- and slap refuses anything else as off-spec.
   | UnsupportedXDelta1Shape XDelta1ShapeViolation
 
@@ -624,8 +625,8 @@ data SlapError
   -- reserves for future definition. slap implements only the bits
   -- defined today, so it does not know what such a patch is asking —
   -- and it must not call the patch malformed, because that is not
-  -- slap's to say: a future-dialect patch could be perfectly
-  -- well-formed, just unreadable here. A sibling decline to
+  -- slap's to say: a future-dialect patch could be well-formed,
+  -- just unreadable here. A sibling decline to
   -- 'VCDIFFUnknownSecondaryCompressor', deliberately not a
   -- 'MalformedVCDIFF' arm — 'MalformedVCDIFF' means slap understands
   -- the claim a patch makes and the claim is invalid. Distinct from
@@ -657,7 +658,7 @@ data SlapError
   -- its instructions demand. The 'VCDIFFMalformation' names the
   -- specific failure. Raised by 'Slap.VCDIFF.Parse.parseVCDIFF' after
   -- the byte-level walk, the way 'UnsupportedVCDIFFShape' validates
-  -- window shape; these are loud refusals, never a substituted zero.
+  -- window shape.
   | MalformedVCDIFF VCDIFFMalformation
 
   -- | A VCDIFF patch mixes an RFC 3284 feature xdelta3 refuses — a
@@ -879,10 +880,8 @@ data SlapError
   -- kinds: 'VerificationCRCMismatch', 'VerificationHashMismatch',
   -- 'VerificationAdler32Mismatch', or 'VerificationFileSizeMismatch'.
   -- The renderer delegates to 'renderSlapAdvisory' for the body and
-  -- appends the @--no-verify@ tail. No type-level guarantee enforces
-  -- that the embedded advisory is one of the four fatal-promotable
-  -- kinds; the four 'check*' helpers in 'Main' are the only callers
-  -- and the audit surface is tractable.
+  -- appends the @--no-verify@ tail.
+  -- The field is a bare 'SlapAdvisory', so this membership is a documented invariant, not a type-level guarantee.
   | VerificationFatal SlapAdvisory
 
   deriving (Show, Eq)
@@ -1587,9 +1586,8 @@ renderUnwrapError path format (ArchiveUnreadable (UnreadableReason reason)) =
   "could not read the " <> archiveFormatName format <> " archive "
     <> pathText path <> ": " <> reason
 
--- | The tools that could open a format, as a grammatical alternative: a
--- lone tool stands alone, two are joined with "or", and any longer list
--- (none arise today) gets an Oxford "a, b, or c".
+-- | The tools that could open a format, as a grammatical alternative:
+-- a lone tool stands alone, two are joined with "or", and any longer list gets an Oxford "a, b, or c".
 renderToolAlternatives :: [ToolName] -> Text
 renderToolAlternatives tools = case map unToolName tools of
   []                      -> "a supported tool"
@@ -2413,10 +2411,8 @@ renderUnencodeabilityReason _label
 renderTrailerMarkerName :: ByteString -> Text
 renderTrailerMarkerName = renderPrintableASCIIOrHex
 
--- | Render the apply-output-field-drop refusal body. The single-drop
--- case (today's only case, 'FieldTruncation') produces one clean sentence;
--- the multi-drop case (trivially available if 'affectsApplyOutput'
--- grows) bullets each field on its own line so nothing gets lost.
+-- | Render the apply-output-field-drop refusal body.
+-- A single drop produces one clean sentence; multiple drops are bulleted, each field on its own line so nothing gets lost.
 renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> Text
 renderApplyOutputDrops target [singleDrop] = renderOneDrop target singleDrop
 renderApplyOutputDrops target manyDrops =

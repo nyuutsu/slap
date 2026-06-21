@@ -47,8 +47,7 @@ applyPPF3 patch (InputFileContents source) =
     -- overflows the addressable range — only PPF3's 64-bit-wide offset
     -- can reach this — is refused as 'ApplyOutputExceedsAddressableRange'
     -- naming the record, rather than wrapping into a too-small buffer:
-    -- the laundering a plain 'max'-fold would have hidden, since a
-    -- wrapped-negative end is the value 'max' discards.
+    -- a plain 'max'-fold would silently discard the wrapped-negative end.
     computeOutputExtent :: ActionIndex -> Offset -> [PPF3Record]
                         -> Either ApplyError Offset
     computeOutputExtent _ currentEnd [] = Right currentEnd
@@ -110,12 +109,9 @@ applyPPF3 patch (InputFileContents source) =
 -- Undo writes each record's saved original bytes back at its offset and
 -- has no operation that shortens the file, so a patch that grew the
 -- file has no coherent inverse — the added length has nowhere to return
--- to. slap leaves this undefended for two reasons. It cannot be
--- detected: a PPF3 patch stores no original size, so at undo time (the
--- patch plus the modified file, and nothing else) there is no signal
--- that the patch grew anything. And it need not be: the reference PPF3
--- creator does not produce valid file-growing patches that carry undo
--- data, so the shape does not arise in practice. slap separately
+-- to. slap leaves this undefended because it cannot be detected:
+-- a PPF3 patch stores no original size, so at undo time (the patch plus the modified file, and nothing else) there is no signal that the patch grew anything.
+-- slap separately
 -- refuses to create growing PPF3 patches (see
 -- 'Slap.PPF3.Types.ppf3RejectIncompatibleSizeChange') and warns when a
 -- parsed PPF3 patch grows the file on apply.

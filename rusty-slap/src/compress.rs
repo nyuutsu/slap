@@ -40,7 +40,7 @@ pub fn zlib_inflate(input: &[u8]) -> Result<Vec<u8>, String> {
 /// any error value reaches the caller.
 pub fn zlib_deflate(input: &[u8]) -> Vec<u8> {
     drain_to_vec(ZlibEncoder::new(input, Compression::default()))
-        .expect("in-memory zlib deflate cannot fail")
+        .expect("in-memory zlib deflate yields no error; allocation failure aborts")
 }
 
 /// Gzip (RFC 1952) inflate.
@@ -59,8 +59,8 @@ pub fn gzip_deflate(input: &[u8]) -> Vec<u8> {
     let mut encoder = GzBuilder::new()
         .mtime(0)
         .write(Vec::new(), Compression::default());
-    encoder.write_all(input).expect("in-memory gzip deflate cannot fail");
-    encoder.finish().expect("in-memory gzip deflate cannot fail")
+    encoder.write_all(input).expect("in-memory gzip deflate yields no error; allocation failure aborts");
+    encoder.finish().expect("in-memory gzip deflate yields no error; allocation failure aborts")
 }
 
 /// Bzip2 decompress.

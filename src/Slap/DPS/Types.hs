@@ -68,13 +68,8 @@ toDPSFormatVersion byte = Left (BadVersion LabelDPS (FoundVersion byte))
 fromDPSFormatVersion :: DPSFormatVersion -> Word8
 fromDPSFormatVersion DPSVersion1 = 1
 
--- | The three header fields a DPS create call supplies: name, author,
--- and version. Each is typed 'EncodedText' so the encoding decision
--- (locale today; declared-on-the-wire when DPS gains an encoding
--- flag) travels with the value. Replaces the stage-3a-era
--- @DPSMetadata@ record of three 'String' fields, whose redundancy
--- with the per-field 'ByteString' selectors on 'DPSPatch' was the
--- specific dual-shape that stage 3b retires.
+-- | The three header fields a DPS create call supplies: name, author, and version.
+-- Each is typed 'EncodedText' so the encoding decision (locale today; declared-on-the-wire when DPS gains an encoding flag) travels with the value.
 data DPSCreateMetadata = DPSCreateMetadata
   { dpsCreateMetadataName    :: !EncodedText
   , dpsCreateMetadataAuthor  :: !EncodedText
@@ -167,7 +162,7 @@ narrowDPSRecord (DPSEnclosedData outputOffset payload) = do
   outputW <- narrowDPSField FieldRecordOutputOffset (unOffset outputOffset)
   -- The wire-format size field for the payload is 4 bytes LE; once
   -- this narrow succeeds, the encoder's 'fromIntegral' on the same
-  -- bytestring's length is safe-by-construction.
+  -- bytestring's length cannot truncate.
   _       <- narrowDPSField FieldRecordLength (ByteString.length payload)
   pure (EncodedDPSEnclosedData outputW payload)
 

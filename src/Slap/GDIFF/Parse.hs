@@ -31,11 +31,6 @@ parseGDIFF (PatchFileContents input)
       case opcode of
         0 -> pure (GDiffPatch (reverse accumulated))
 
-        -- DATA: opcode IS the length (1-246 bytes)
-        _ | opcode <= 246 -> do
-              payload <- getBytes (Length (fromIntegral opcode))
-              parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
-
         -- DATA with ushort length
         247 -> do dataLength <- fromIntegral <$> word16BE
                   payload <- getBytes (Length dataLength)
@@ -81,4 +76,7 @@ parseGDIFF (PatchFileContents input)
                   copyLength <- fromIntegral <$> word32BE
                   parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
 
-        _ -> fail "impossible opcode"  -- 0-255 covered above; GHC can't prove guard exhaustiveness
+        -- DATA: the opcode is itself the length (1-246 bytes); 0 and
+        -- 247-255 are matched above, so this arm is exactly that range.
+        _ -> do payload <- getBytes (Length (fromIntegral opcode))
+                parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)

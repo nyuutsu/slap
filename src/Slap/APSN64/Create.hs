@@ -24,7 +24,7 @@ import Data.Word (Word32)
 -- | Encode pre-diffed records as an APS N64 patch.
 -- Patch type: APSSimple matches the simple-record structure we emit.
 -- N64-specific (type 1) would require image format, cart ID, country.
--- Encoding byte: genuinely unused by all known implementations; 0 is canonical.
+-- Encoding byte: 0 is the canonical/default encoding; we emit APSDefaultRecordEncoding.
 encodeAPSN64 :: [EncodedHunk] -> APSN64DestinationSize -> EncodedText -> CreateResult
 encodeAPSN64 records destinationSize description =
     let (descriptionBytes, descriptionAdvisories) = padDescription description
@@ -57,10 +57,7 @@ padDescription description =
 
 -- | Encode one APS-N64 record. Caller must ensure the payload's length
 -- is at most 'Slap.APSN64.Types.apsN64MaxChunkSize' (255 bytes); the
--- wire format reserves one byte for the length field. 'Slap.Convert'
--- splits at 'splitHunks apsN64MaxChunkSize' before narrow, so all
--- 'EncodedHunk's reaching this function have payload length within
--- bounds.
+-- wire format reserves one byte for the length field.
 encodeAPSN64Record :: EncodedHunk -> Builder
 encodeAPSN64Record ehunk =
     let recordOffset  = encodedOffset ehunk

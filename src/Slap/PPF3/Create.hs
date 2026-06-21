@@ -120,7 +120,7 @@ encodeFileIdDiz fid =
                   byteString "@BEGIN_FILE_ID.DIZ"
                   <> byteString content
                   <> byteString "@END_FILE_ID.DIZ"
-                  -- 'fromIntegral' is safe-by-construction: 'narrowPPF3FileId'
-                  -- validated the encoded byte count fits 'Word16'.
+                  -- 'narrowPPF3FileId' validated the encoded byte count fits
+                  -- 'Word16', so this 'fromIntegral' cannot truncate.
                   <> word16LE (fromIntegral (ByteString.length content))
   in (trailer, advisories)

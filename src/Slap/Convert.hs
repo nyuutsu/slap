@@ -87,7 +87,7 @@ import qualified Slap.PMSR.Create as PMSR
 import qualified Slap.DPS.Types as DPS
 import qualified Slap.DPS.Create as DPS
 import qualified Slap.NINJA1.Types as NINJA1
-import Slap.NINJA1.Types (ninja1RejectIncompatibleSizeChange)
+import Slap.NINJA1.Types (NINJA1Compression(..), ninja1RejectIncompatibleSizeChange)
 import qualified Slap.NINJA1.Create as NINJA1
 import Slap.PlatformType (PlatformType(..))
 import Slap.Platform (platformToNINJA1)
@@ -128,23 +128,14 @@ import qualified Data.Text as Text
 -- Types
 ----------------------------------------------------------------------------
 
--- | The direct-target conversion contract: which 'PatchField's a direct
--- format requires the source patch to carry, and which additional fields
--- it can accept.  'canConvert' consults this to decide whether a given
--- 'PatchContents' can be source-lessly converted to the target format
--- without dropping apply-output-affecting data.
---
--- Differential targets use a different conversion path (apply-and-recreate via
--- @--with INPUT@), so this contract only covers direct formats.
+-- | Which 'PatchField's a direct format requires the source patch to
+-- carry, and which additional fields it can accept.
+-- A source-less convert is admissible only when the source 'PatchContents'
+-- supplies every required field without dropping apply-output-affecting data.
 data DirectConversionContract = DirectConversionContract
   { contractRequiredFields :: Set.Set PatchField
   , contractAcceptedFields :: Set.Set PatchField
   }
-
--- | Whether a NINJA1 source used the compressed (BZ/TZ) subformat,
--- carried across the convert seam so a NINJA1 target can preserve it.
-data NINJA1Compression = NINJA1Uncompressed | NINJA1Compressed
-  deriving (Eq, Show)
 
 -- | Universal representation of a direct patch's contents.
 data PatchContents = PatchContents
@@ -154,8 +145,7 @@ data PatchContents = PatchContents
     -- encoding tag stays attached end-to-end so a downstream re-encode
     -- can route through whichever encoder the target format wants
     -- without having to re-guess what the source's encoding context
-    -- was. The PPF family of direct formats and APSN64 populate this
-    -- field; other direct formats leave it 'Nothing'.
+    -- was.
   , contentsSourceCRC32 :: Maybe CRC32
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
@@ -166,21 +156,17 @@ data PatchContents = PatchContents
   , contentsUndoData    :: Maybe [SplitUndoHunk]
   , contentsTruncation  :: Maybe FileSize
   , contentsEBPMetadata :: Maybe EBPMetadata
-    -- ^ Parsed EBP metadata flowing across the convert seam. Populated
-    -- by 'Slap.SomePatch' when the source patch is EBP (so the source's
-    -- title/author/description/patcher carry into a convert-to-EBP),
-    -- 'Nothing' otherwise. The structured shape comes from
-    -- 'Slap.JSON.parseEBPMetadata' running at parse time; downstream
-    -- consumers read its fields directly rather than re-parsing bytes.
+    -- ^ Parsed EBP metadata flowing across the convert seam.
+    -- Populated by 'Slap.SomePatch' when the source patch is EBP
+    -- (so the source's title/author/description/patcher carry into a convert-to-EBP), 'Nothing' otherwise.
   , contentsRomType     :: Maybe PlatformType
   , contentsImageType   :: Maybe PPF3ImageType
   , contentsFileIdDiz   :: Maybe EncodedText
-    -- ^ Typed FILE_ID.DIZ content (PPF2/PPF3). The encoding tag is
-    -- preserved through the seam; per-format wire trailers differ in
-    -- length-field width (PPF2: 4 bytes; PPF3: 2 bytes) and apply the
-    -- length check after re-encoding at the format's @encodeFileIdDiz@
-    -- site.
+    -- ^ Typed FILE_ID.DIZ content (PPF2/PPF3).
+    -- The encoding tag is preserved through the seam.
   , contentsNINJA1Compression :: Maybe NINJA1Compression
+    -- ^ Whether a NINJA1 source used the compressed (BZ/TZ) subformat,
+    -- carried across the convert seam so a NINJA1 target can preserve it.
   , contentsMetadata :: Maybe ByteString.ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
@@ -214,43 +200,13 @@ data CreateFormat
 -- didn't specify; let the format pick its default"; a 'Just' carries
 -- an explicit request.
 --
--- Direct-format consumption: 'CreateIPS' and 'CreateIPS32' consume
--- nothing from this record — they have no metadata channel.
--- 'CreateEBP' consumes 'requestedTitle', 'requestedAuthor', and
--- 'requestedDescription' (woven into the trailing JSON blob via
--- 'IPS.buildEBPMetadataJSON').  'CreatePPF3' consumes
--- 'requestedDescription' (the 50-byte header field),
--- 'requestedUndoInclusion', 'requestedVerificationInclusion' (gates
--- the validation block), and 'requestedImageType' (selects the
--- validation offset).
--- 'CreateNINJA1' consumes 'requestedRomType' (mapped through
--- 'Slap.Platform.platformToNINJA1'); the compression flag rides in
--- 'PatchContents' rather than this record.  'CreatePMSR' consumes
--- nothing.  'CreateAPSN64' consumes 'requestedDescription' (50-byte header
--- field).
---
--- Differential-format consumption is read directly out of 'createPatch'\'s
--- differential arm: 'CreateBPS' consumes 'requestedEmbeddedBlob';
--- 'CreateXDelta1' consumes 'requestedVerificationInclusion' (gates
--- @FLAG_NO_VERIFY@ and the per-source MD5 fields) and
--- 'requestedPatchCompression' (gates @FLAG_PATCH_COMPRESSED@ and
--- gzip-deflation of the data and control segments); 'CreateUPS',
--- 'CreateAPSGBA', and 'CreateGDIFF' consume nothing; 'CreateDPS'
--- consumes 'requestedTitle'\/'requestedDescription' (name),
--- 'requestedAuthor', 'requestedVersion', and 'requestedStability';
--- 'CreateNINJA2' consumes the full title\/author\/version\/description
--- block plus 'requestedGenre', 'requestedLanguage', 'requestedDate',
--- 'requestedWebsite', 'requestedRomType', and 'requestedTextMode'.
+-- Which target consumes which field is the 'acceptedMetadataFields'
+-- matrix; the per-arm reading is in 'createPatch' / 'encodeDirect'.
 data RequestedPatchMetadata = RequestedPatchMetadata
   { requestedTitle                :: Maybe EncodedText
-    -- ^ Typed across the convert seam end-to-end: the CLI parser
-    -- wraps incoming 'String' as @'EncodedText' 'EncodingUtf8'@,
-    -- and 'parseSomePatchFromDPS' \/ similar extractors hand off the
-    -- already-typed field directly from the parsed patch. The
-    -- create-side encoders (DPS, NINJA2) consume the 'EncodedText'
-    -- directly via 'Slap.Text.encodeTextBounded', so no
-    -- 'String'\/'ByteString' detour is needed between the seam and
-    -- the wire.
+    -- ^ Typed 'EncodedText' across the convert seam end-to-end:
+    -- the CLI parser wraps incoming text as @'EncodedText' 'EncodingUtf8'@,
+    -- and the create-side encoders (DPS, NINJA2) consume it directly via 'Slap.Text.encodeTextBounded'.
   , requestedAuthor               :: Maybe EncodedText
   , requestedDescription          :: Maybe EncodedText
   , requestedVersion              :: Maybe EncodedText
@@ -283,18 +239,12 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- "inherit from the source if its tags agree, otherwise UTF-8"
     -- (see the @CreateNINJA2@ arm of 'createPatch').
   , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
-    -- ^ Contents of the user's @--metadata FILE@ flag.  BPS consumes
-    -- this; the name keeps the concept ("a raw blob to embed")
-    -- separate from the format that uses it.
+    -- ^ Contents of the user's @--metadata FILE@ flag: a raw blob to
+    -- embed verbatim.
   , requestedXDelta1FromName      :: Maybe XDelta1FromName
     -- ^ xdelta1 only: user-supplied @--from-name TEXT@, already
     -- locale-encoded so the bytes match canonical xdelta's wire
-    -- shape. This is the unresolved input: the porcelain runs
-    -- 'Slap.XDelta1.Types.resolveXDelta1FileNames' (create) or
-    -- 'Slap.XDelta1.Types.requireXDelta1FileNames' (convert) on
-    -- these two fields to produce the typed
-    -- 'Slap.XDelta1.Types.ResolvedXDelta1FileNames' passed to
-    -- 'createPatch'.
+    -- shape. This is the unresolved input; the porcelain resolves it.
   , requestedXDelta1ToName        :: Maybe XDelta1ToName
     -- ^ xdelta1 only: counterpart to 'requestedXDelta1FromName' for
     -- the to-name slot.
@@ -541,11 +491,8 @@ rejectIncompatibleMetadata format meta =
 -- future constraints land here.
 --
 -- Unlike 'RequestedPatchMetadata', constraints carry no source-patch
--- inheritance step — they're an entirely CLI-set concept and are
--- not read from a parsed source patch during convert. A source
--- patch's encoder couldn't have known about the user's downstream
--- requirements when it was created, so there's nothing meaningful
--- to inherit.
+-- inheritance step — they're entirely CLI-set and are not read from a
+-- parsed source patch during convert.
 data RequestedConstraints = RequestedConstraints
   { requestedSMCShape :: SMCShapeRequirement
   }
@@ -567,9 +514,7 @@ requestedConstraints constraints = Set.fromList $ concat
 -- exhaustively across both 'CreateDirect' and 'CreateDifferential' so
 -- that adding a constructor anywhere — a new format, or a new
 -- constraint — fires '-Wincomplete-patterns' on every case that
--- needs a decision. This is non-cosmetic: a wildcard would silently
--- reject a half-wired constraint against every format and slap would
--- volunteer no signal.
+-- needs a decision.
 acceptedConstraints :: CreateFormat -> Set.Set Constraint
 acceptedConstraints (CreateDirect format) = case format of
   CreateIPS    -> Set.singleton SMCShapeConstraint
@@ -628,9 +573,8 @@ rejectNonSMCShapedTruncation constraints contents
 --
 -- Differential formats are absent from this dispatcher by design.
 -- Every differential format slap can emit carries source and target
--- sizes natively in its wire shape, so it would be unimaginable for
--- one to refuse on size grounds: any (source, target) pair is
--- representable.
+-- sizes natively in its wire shape, so any (source, target) pair is
+-- representable and none refuses on size grounds.
 --
 -- Called as a precondition of 'createPatch'\'s 'CreateDirect' arm,
 -- once per create, with the actual source\/target byte counts in
@@ -772,10 +716,7 @@ canConvert contents contract =
        then Left (RequirementsMissing missing)
      else Right ()
 
--- | Every direct creation target, used to scan 'directConversionContract'
--- for formats that preserve a given 'PatchField'. Derived from the
--- constructors of 'DirectCreate' via @Enum@\/@Bounded@, so adding a
--- constructor extends this list automatically.
+-- | Every direct creation target, used to scan 'directConversionContract' for formats that preserve a given 'PatchField'.
 allDirectTargets :: [DirectCreate]
 allDirectTargets = [minBound..maxBound]
 
@@ -913,9 +854,8 @@ convertDirect contents (CreateDirect target) meta constraints dialects = do
               [(field, preservingDirectTargets field) | field <- Set.toList fields])
     Right () -> do
       -- Source-less path: 'encodeDirect' still runs 'resolveSentinelCollisions'
-      -- but with an empty 'InputFileContents', so any record sitting on the
-      -- variant's trailer sentinel produces 'SentinelCollisionUnfixable' rather
-      -- than silently passing through.
+      -- with an empty 'InputFileContents', so a record on the variant's
+      -- trailer sentinel produces 'SentinelCollisionUnfixable'.
       let notes = conversionNotes contents target contract meta
       encoded <- encodeDirect contents (InputFileContents ByteString.empty) target meta (encodingLimits target) constraints dialects
       Right CreateResult
@@ -961,10 +901,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- resolveIPSSentinel LabelIPS32 IPS32
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
-    -- IPS32 has no community-recognized truncation marker; encodeIPSPatch
-    -- silently drops the truncation argument for IPS32, but we pass
-    -- 'Nothing' explicitly here to make the decision visible at the call
-    -- site.
+    -- IPS32 has no truncation marker; 'encodeIPSPatch' drops the
+    -- truncation argument for IPS32, so pass 'Nothing' explicitly.
     Right (CreateResult
             (IPS.encodeIPSPatch IPS32 records Nothing)
             [])
@@ -972,15 +910,11 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- resolveIPSSentinel LabelEBP StandardIPS
                      (splitHunks ipsMaxRecordPayload (contentsRecords contents))
     records <- narrow (splitHunks ipsMaxRecordPayload resolvedRaw)
-    -- EBP metadata is structured: build the typed value here and hand
-    -- it to the encoder, which calls 'IPS.buildEBPMetadataJSON'
-    -- internally. The resulting JSON is always slap-canonical
-    -- (four-field shape, @patcher@ first, our identity in the
-    -- patcher slot), since parse-finishes-its-job means the source
-    -- patch's exact wire bytes no longer flow through — only their
-    -- semantic content does, by way of 'resolveEBPField' /
-    -- 'resolveDescription' pulling the resolved values out of
-    -- 'contentsEBPMetadata'.
+    -- Rebuild the canonical EBP metadata from the typed values here
+    -- and hand it to the encoder, which serializes via
+    -- 'IPS.buildEBPMetadataJSON'. The source patch's wire bytes no
+    -- longer flow through; 'resolveEBPField' / 'resolveDescription'
+    -- pull the resolved content out of 'contentsEBPMetadata'.
     let metadata = EBPMetadata
           { ebpMetadataTitle       = Just ebpTitle
           , ebpMetadataAuthor      = Just ebpAuthor
@@ -995,14 +929,11 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     Right (PPF1.encodePPF1 (requestedPPF1Origin dialects) records descriptionTyped)
   CreatePPF2 -> do
     -- The validation block lives on 'contentsValidation' regardless
-    -- of how it got there: 'buildContents' extracts it from source
-    -- bytes for the create path, and 'parseSomePatchFromPPF2' carries
-    -- it across from a parsed PPF2 source patch for the convert path.
-    -- Either way, if it isn't present here the source ROM is too
-    -- short to supply one — buildContents only populates the field
-    -- when source length exceeds the 'ppf2ValidationOffset + ppf2ValidationSize'
-    -- threshold, and the parse path always populates it from a
-    -- well-formed PPF2 patch (PPF2's wire format mandates the block).
+    -- of source: 'buildContents' extracts it from source bytes for the
+    -- create path; the parse path carries it across from a PPF2 source
+    -- patch, where PPF2's wire format mandates the block so it is
+    -- always present. Absent here therefore means the create path's
+    -- source ROM was too short to supply one.
     case contentsValidation contents of
       Nothing -> Left (SourceTooSmallForPPF2Validation LabelPPF2
                          (ActualSize (byteFileSize (unInputFileContents source)))
@@ -1077,15 +1008,14 @@ encodeDirect contents source target meta limits constraints dialects = case targ
     resolvedRaw <- NINJA1.resolveSentinelCollisions LabelNINJA1
                      NINJA1.ninja1SentinelOffset source
                      (splitHunksUnbounded (contentsRecords contents))
-    -- Second pass is a no-op for NINJA1 (no per-record cap); kept for
-    -- type uniformity with the IPS arms above, where it closes a real
-    -- overflow hazard.
+    -- Second pass is a no-op for NINJA1 (no per-record cap);
+    -- on the IPS arms it closes a real overflow hazard.
     records <- narrow (splitHunksUnbounded resolvedRaw)
     let crc      = fromMaybe (CRC32 0) (contentsSourceCRC32 contents)
         md5Hash  = fromMaybe (MD5Hash  (ByteString.replicate 16 0)) (contentsSourceMD5 contents)
         sha1Hash = fromMaybe (SHA1Hash (ByteString.replicate 20 0)) (contentsSourceSHA1 contents)
     Right (CreateResult (NINJA1.encodeNINJA1 records crc md5Hash sha1Hash ninja1Type
-             (contentsNINJA1Compression contents == Just NINJA1Compressed)) platformAdvisories)
+             (fromMaybe NINJA1Uncompressed (contentsNINJA1Compression contents))) platformAdvisories)
   CreatePMSR -> do
     count   <- narrowPMSRRecordCount (length (contentsRecords contents))
     records <- narrow (splitHunks pmsrMaxRecordPayload (contentsRecords contents))
@@ -1119,10 +1049,9 @@ encodeDirect contents source target meta limits constraints dialects = case targ
       , descriptionSourceTypedText = contentsDescription contents
       , descriptionSourceFallback  = EncodedText EncodingUtf8 Text.empty
       }
-    -- APSN64's create-side fallback is a 50-byte space-padded string
-    -- in the pre-migration code; the padding belongs to the format
-    -- encoder (PPF3-style null-padding via 'padDescription'), so the
-    -- fallback here is just empty 'EncodedText' and the encoder pads.
+    -- APSN64's description padding belongs to the format encoder
+    -- ('Slap.APSN64.Create.padDescription', which space-pads to 50 bytes),
+    -- so the fallback here is just empty 'EncodedText'.
     apsDescription = resolveDescription DescriptionSources
       { descriptionSourceCLI       = cliDescription
       , descriptionSourceEBPMetadata   = Nothing
@@ -1152,11 +1081,8 @@ encodeDirect contents source target meta limits constraints dialects = case targ
 -- is xdelta1 (the resolution runs in 'app\/Main.hs' via
 -- 'Slap.XDelta1.Types.resolveXDelta1FileNames' or
 -- 'requireXDelta1FileNames' before this entry point is called).
--- Non-xdelta1 arms ignore it. The xdelta1 arm pattern-matches and
--- refuses with 'XDelta1ConvertRequiresNames' if it's 'Nothing' —
--- which should never happen if the porcelain did its job; the
--- refusal is the graceful structured-error fallback for a programmer
--- contract violation, not an 'error' crash.
+-- Non-xdelta1 arms ignore it.
+-- The xdelta1 arm pattern-matches and turns a 'Nothing' into a typed 'XDelta1ConvertRequiresNames' refusal rather than an 'error' crash.
 createPatch :: CreateFormat
             -> Maybe ResolvedXDelta1FileNames
             -> InputFileContents -> OutputFileContents
@@ -1170,15 +1096,11 @@ createPatch (CreateDirect format) _resolvedNames source target meta sourceConten
   let contents = buildContents format source target meta sourceContents
   encodeDirect contents source format meta (encodingLimits format) constraints dialects
 createPatch (CreateDifferential format) maybeResolvedNames source target meta _sourceContents _constraints _dialects = case format of
-  -- The constraints parameter is unused on the differential arm: today
-  -- no differential format honors any constraint ('acceptedConstraints'
-  -- returns 'Set.empty' for every 'CreateDifferential' constructor),
-  -- and any user-requested constraint against a differential format is
-  -- rejected upstream by 'rejectIncompatibleConstraints' in 'doCreate'
-  -- / 'doConvert' before this arm runs. The parameter stays in the
-  -- signature for shape-symmetry with the direct arm; when a future
-  -- constraint becomes differential-honorable, both the matrix entry
-  -- in 'acceptedConstraints' and this arm's plumbing change at once.
+  -- The constraints parameter is unused on the differential arm:
+  -- 'acceptedConstraints' is empty for every 'CreateDifferential'
+  -- format, and a requested constraint is rejected upstream by
+  -- 'rejectIncompatibleConstraints' before this arm runs. It stays in
+  -- the signature for shape-symmetry with the direct arm.
   CreateBPS    -> BPS.createBPS source target (fromMaybe ByteString.empty (requestedEmbeddedBlob meta))
   CreateUPS    -> UPS.createUPS source target
   CreateDPS    -> DPS.createDPS source target
@@ -1213,12 +1135,9 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
   CreateXDelta1 -> case maybeResolvedNames of
     Just resolvedNames ->
       XDelta1.createXDelta1 verificationChoice compressionChoice resolvedNames source target
-    -- The 'Nothing' branch is the typed escape hatch for a porcelain
-    -- contract violation (the caller chose 'CreateXDelta1' but didn't
-    -- run a resolver upstream). 'LabelXDelta1' as the "source" label
-    -- is the truthful answer: there is no convert-source format in
-    -- scope, and the rendered message reads as a generic refusal
-    -- rather than a crash.
+    -- The 'Nothing' branch gives a typed refusal when no resolver ran upstream.
+    -- 'LabelXDelta1' as the "source" label is the truthful answer: there is no convert-source format in scope,
+    -- so the rendered message reads as a refusal rather than a crash.
     Nothing -> Left (XDelta1ConvertRequiresNames LabelXDelta1)
     where
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
@@ -1239,12 +1158,10 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsDestinationSize    = if needs FieldDestinationSize
                     then Just (byteFileSize target)
                     else Nothing
-  -- The block occupies [validationOffset, validationOffset + 1024), so
-  -- a source ending exactly at validationOffset + 1024 supplies it
-  -- whole: the bound is '>=', not '>'. (The '>' here once excluded the
-  -- exact-fit source, which then failed in encodeDirect against the
-  -- 'SourceTooSmallForPPF2Validation' error whose own minimum is this
-  -- same sum.)
+  -- The block occupies [validationOffset, validationOffset + 1024),
+  -- so a source ending exactly at validationOffset + 1024 supplies it whole: the bound is '>=', not '>'.
+  -- The same sum is the minimum enforced by 'SourceTooSmallForPPF2Validation' in encodeDirect,
+  -- so '>' here would reject an exact-fit source that the encoder accepts.
   , contentsValidation  = if needs FieldValidation && ByteString.length source >= validationOffset + 1024
                     then Just (ByteString.take 1024 (ByteString.drop validationOffset source))
                     else Nothing

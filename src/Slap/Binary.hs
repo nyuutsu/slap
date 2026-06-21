@@ -144,7 +144,6 @@ data VarintReadFailure
 -- LSB-first encoding: each 7-bit group is stored low byte first.
 -- High bit clear = more bytes follow. High bit set = final byte.
 -- Each continuation adds 1 to accumulator before shifting (the "subtract-one" trick).
--- Returns (value, bytes consumed).
 getByuuVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
 getByuuVarint offset input = decode offset 0 1
   where
@@ -169,7 +168,6 @@ getByuuVarint offset input = decode offset 0 1
                     in decode (position + 1) (valueSoFar + nextMultiplier) nextMultiplier
 
 -- | VCDIFF varint (RFC 3284).  MSB-first: high bit set = more bytes follow.
--- Returns (value, bytes consumed).
 getVcdiffVarint :: Int -> ByteString -> Either VarintReadFailure VarintResult
 getVcdiffVarint offset input = decode offset 0
   where
@@ -317,8 +315,7 @@ sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256
 -- Bulk memory operations
 ----------------------------------------------------------------------------
 
--- | Bulk copy @copyLength@ bytes from a ByteString (at @sourceOffset@) to a
--- raw pointer (at @destinationOffset@).  Uses memcpy internally.
+-- | Bulk copy @copyLength@ bytes from a ByteString (at @sourceOffset@) to a raw pointer (at @destinationOffset@).
 copyByteStringRange :: Ptr Word8 -> Int -> ByteString -> Int -> Int -> IO ()
 copyByteStringRange destination destinationOffset source sourceOffset copyLength =
   when (copyLength > 0) $
@@ -410,7 +407,6 @@ crc16Table = listArray (0, 255) [computeEntry entry | entry <- [0..255]]
 -- Diff
 ----------------------------------------------------------------------------
 
--- | Maximum gap (in bytes) between adjacent diff hunks that triggers merging.
 mergeGapThreshold :: Int
 mergeGapThreshold = 5
 

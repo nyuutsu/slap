@@ -467,11 +467,9 @@ validateRecordList variant = walkAt firstAction
 -- never reordered, so wire order downstream is preserved.
 --
 -- The function is shared across every IPS-family parse path,
--- including 'IPS32' whose 32-bit offset space lets record counts
--- grow into the hundred-thousand range. The earlier @O(n^2)@
--- pairwise scan answered the same question correctly but became a
--- minutes-of-wall-clock cost on stadium2-scale 'IPS32' patches,
--- which the sweep eliminates.
+-- including 'IPS32' whose 32-bit offset space lets record counts grow into the hundred-thousand range.
+-- At that scale the @O(n log n)@ sweep is what keeps overlap detection cheap;
+-- a pairwise @O(n^2)@ comparison answers the same question but is quadratic in the record count.
 detectOverlappingRecords :: FormatLabel
                          -> Vector IPSRecord
                          -> [SlapAdvisory]

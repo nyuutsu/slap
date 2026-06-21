@@ -77,9 +77,7 @@ hexByteString = Text.concat . map (padHex 2) . ByteString.unpack
 -- | Render a byte sequence as ASCII text if every byte is in the
 -- printable range (0x20–0x7E inclusive). Falls back to a hex dump
 -- prefixed with @0x@ otherwise. Suitable for protocol bytes that
--- are spec'd ASCII (e.g. magic bytes, trailer markers) where the
--- printable case is the common path and the hex fallback exists
--- as defensive cover for malformed or unexpected input.
+-- are spec'd ASCII (e.g. magic bytes, trailer markers).
 renderPrintableASCIIOrHex :: ByteString -> Text
 renderPrintableASCIIOrHex bytes
   | ByteString.all isPrintableAscii bytes =

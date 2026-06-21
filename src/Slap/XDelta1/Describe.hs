@@ -177,10 +177,8 @@ makeXDelta1Region instruction = AnalysisRegion
   }
 
 -- | The wire-format integer that encodes an 'XDelta1InstructionTarget'.
--- Matches what canonical xdelta emits: 0 for the data source, 1 for
--- the file source. Used to keep the explain output's
--- "instruction at offset N references source 0/1" reading intact
--- after the apply-side dispatch was retyped off raw indices.
+-- Matches what canonical xdelta emits: 0 for the data source, 1 for the file source.
+-- The explain output prints this number so its "instruction at offset N references source 0/1" line reads the same as xdelta's own source indices.
 targetToWireIndex :: XDelta1InstructionTarget -> Int64
 targetToWireIndex FromDataSource = 0
 targetToWireIndex FromFileSource = 1

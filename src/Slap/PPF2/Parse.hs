@@ -99,11 +99,8 @@ checkEncodingByte input
   | otherwise      = Left (UnsupportedEncodingMethod LabelPPF2 (EncodingMethodByte actual))
   where actual = ByteString.index input 5
 
--- | Same record-stream shape as PPF1: @parsePPF1Records@ and
--- @parsePPF2Records@ are deliberately separate so each format owns
--- its own copy. Pulling them into a shared helper would invite a
--- single-edit, two-format mistake whenever a producer-quirk for one
--- version turns up that doesn't apply to the other.
+-- | Same record-stream shape as PPF1, but kept as a separate per-format
+-- copy so the two versions can diverge on their own producer quirks.
 parsePPF2Records :: ActionIndex -> ByteParser [PPF2Record]
 parsePPF2Records recordIndex = do
   remainingBytes <- remaining
@@ -161,11 +158,8 @@ parsePPF2Records recordIndex = do
 -- decode substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
 -- advisories alongside the typed 'PPF2FileId'.
 --
--- If a trailer is present, returns both the typed FILE_ID.DIZ
--- and the inner-content byte count as declared on the wire
--- (alongside any decode advisories). The byte count is plumbed
--- back to 'stripFileId' so the body-trim doesn't have to re-encode
--- the typed text just to recover the on-wire size.
+-- The wire-declared byte count is returned alongside the 'PPF2FileId'
+-- so 'stripFileId' can size the trailer without re-encoding the typed text.
 detectFileId :: EncodingName -> ByteString -> (Maybe (PPF2FileId, Int), [SlapAdvisory])
 detectFileId metadataEncoding input
   | ByteString.length input < markerSize + lengthFieldSize = (Nothing, [])

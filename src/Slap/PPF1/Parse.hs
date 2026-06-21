@@ -126,9 +126,7 @@ parsePPF1Records origin = goRecords
           repeatCount <- fromIntegral <$> getByte
           pure (PPF1Record writeOffset (ByteString.replicate repeatCount dataByte))
 
-    -- Restate the byte count "as if" we hadn't consumed the 5-byte
-    -- record header yet, for error messages that name the whole-
-    -- record budget.
+    -- Add the consumed 5-byte header back so the truncation error's RemainingLength names the whole-record budget, matching RequiredLength.
     lengthAddingHeader :: Length -> Length
     lengthAddingHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
 

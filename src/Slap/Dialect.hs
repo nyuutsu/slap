@@ -22,22 +22,17 @@ import Data.Text (Text)
 
 data Dialect
   = PPF1OriginAxis
-    -- ^ PPF1's offset-field endianness. PPF1's reference applier
-    -- ('docs/ppf/upstream/pdx-ppf1/sources/applyppf.c') reads offsets
-    -- with @fread(&Offset, sizeof(long), ...)@ — native-endian, no
-    -- byte-swap — so a patch produced on a PC writes offsets LE on
-    -- disk and a patch produced on an Amiga writes them BE on disk.
-    -- The two are mutually incompatible cross-platform. Default is
-    -- PC-origin (LE); the @--is-amiga-patch@ flag selects BE.
+    -- ^ PPF1's offset-field endianness.
+    -- PPF1's reference applier ('sources/applyppf.c' in docs/ppf/upstream/pdx-ppf1.zip) reads offsets with @fread(&Offset, sizeof(long), ...)@ — native-endian, no byte-swap —
+    -- so a patch produced on a PC writes offsets LE on disk and a patch produced on an Amiga writes them BE on disk.
+    -- The two are mutually incompatible cross-platform.
+    -- Default is PC-origin (LE); the @--is-amiga-patch@ flag selects BE.
     --
-    -- This axis is read-only: it selects how slap /decodes/ a PPF1
-    -- patch's offsets (apply, undo, info, explain, and convert from a
-    -- PPF1 source). It never affects writing — create and convert to
-    -- PPF1 always emit PC/LE. The general dialect plumbing can still
-    -- carry a write-affecting axis; this particular one just doesn't.
+    -- This axis is read-only: it selects how slap /decodes/ a PPF1 patch's offsets (apply, undo, info, explain, and convert from a PPF1 source).
+    -- It never affects writing — create and convert to PPF1 always emit PC/LE.
+    -- The general dialect plumbing can still carry a write-affecting axis; this particular one just doesn't.
     --
-    -- Per @slap-format-documentation/ppf/spec.md@ §"Offset size and
-    -- endianness".
+    -- Per @docs/ppf/spec.md@ §"Offset size and endianness".
   deriving (Show, Eq, Ord)
 
 -- | Display name for prose contexts in error and help messages.

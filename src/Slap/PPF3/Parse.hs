@@ -1,9 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Parse a PPF3 patch from raw bytes. Spec:
--- @docs/ppf/upstream/ppf-master/ppfdev/PPF3.txt@. Reference applier
--- (canonical for the on-wire byte-walk semantics):
--- @docs/ppf/upstream/ppf-master/ppfdev/applyppf_src/applyppf3_linux.c@.
+-- | Parse a PPF3 patch from raw bytes.
+-- Spec: @ppfdev/PPF3.txt@ in @docs/ppf/upstream/ppf-master.zip@.
+-- Reference applier (canonical for the on-wire byte-walk semantics): @ppfdev/applyppf_src/applyppf3_linux.c@ in @docs/ppf/upstream/ppf-master.zip@.
 module Slap.PPF3.Parse (parsePPF3, parsePPF3Records) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),

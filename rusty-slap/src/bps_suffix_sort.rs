@@ -176,10 +176,9 @@ const BYTE_ALPHABET_SIZE: usize = 256;
 /// against mixing positions with byte counts and bucket indices, which
 /// are all structurally `usize`.
 trait InternalPosition: Copy + Eq + Ord {
-    /// Sentinel marking a not-yet-placed slot in the SA under
-    /// construction. Both impls use the type's `MAX`, which the
-    /// algorithm will never legitimately produce as a real position
-    /// (the dispatcher caps input length one short of it).
+    /// Sentinel marking a not-yet-placed slot in the SA under construction.
+    /// Both impls use the type's `MAX`. The dispatcher caps each path's input length at its `MAX`,
+    /// so the largest real position is one below it and `MAX` stays free as the sentinel.
     const UNPLACED_SLOT: Self;
 
     fn from_index(index: usize) -> Self;

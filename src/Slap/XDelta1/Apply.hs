@@ -34,13 +34,12 @@ import System.IO.Unsafe (unsafePerformIO)
 -- 'XDelta1InstructionTarget': the parser
 -- ('Slap.XDelta1.Parse.translateInstruction') guarantees that every
 -- instruction targets one of the patch's two sources, so no runtime
--- bounds check is needed on the source dispatch and 'sourceBytesFor'
--- is a two-arm pattern-match. Per-instruction OOB on the resolved
--- source — a length/offset combination that would read past that
--- source's end — is a precondition violation enforced at the
--- instruction boundary; the apply loop returns
--- 'ApplySourceReadOutOfBounds' rather than producing partial
--- output.
+-- bounds check is needed.
+-- Per-instruction OOB on the resolved source — a length/offset
+-- combination that would read past that source's end — is a
+-- precondition violation enforced at the instruction boundary; the
+-- apply loop returns 'ApplySourceReadOutOfBounds' rather than
+-- producing partial output.
 --
 -- Before any target-length interpretation, the patch's recorded
 -- input pre-compression posture is checked: if either input was a
@@ -49,13 +48,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- with 'XDelta1InputPreCompressionUnsupported'. Slap doesn't
 -- implement the apply-time gzip transparency that canonical
 -- xdelta-1.x does; proceeding against the user's literal source
--- bytes would silently produce wrong output. The 4-arm gate is
--- total over 'XDelta1FileAtDeltaTime' × 'XDelta1FileAtDeltaTime' —
--- three refusal arms, each naming a distinct
--- 'XDelta1GzipStreamInputs' constructor, and one proceed arm that
--- carries the target-length sub-cases (empty / negative / positive)
--- on its sub-guards so that the gate's precedence over the size
--- shortcuts is unambiguous on the page.
+-- bytes would silently produce wrong output.
 applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyXDelta1 patch sourceContents =
   case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of
@@ -150,7 +143,5 @@ applyXDelta1 patch sourceContents =
 
 -- | Strict 'StateT' over 'IO'. The state slot carries the output
 -- cursor — the apply's only threaded value, advanced by one
--- instruction's length per step. Kept as a bare 'Offset' rather than
--- a one-field record because there is nothing else to bundle with
--- it; xdelta1's apply is small by design.
+-- instruction's length per step.
 type XDelta1Apply = StateT Offset IO

@@ -155,9 +155,7 @@ assemblePatch inclusion compression resolvedNames sourceBytes targetBytes diff =
   , xdelta1Verification     = verificationPosture
   , xdelta1PatchCompression = compression
     -- Slap doesn't detect gzip-magic on inputs at create time, so
-    -- both inputs are recorded as raw bytes. The encoder still
-    -- handles either case because slap convert round-trips parsed
-    -- xdelta1 patches that may have these bits set.
+    -- both inputs are recorded as raw bytes.
   , xdelta1FromAtDeltaTime  = FileWasRawBytes
   , xdelta1ToAtDeltaTime    = FileWasRawBytes
   , xdelta1TargetLength     = byteFileSize targetBytes
@@ -226,11 +224,8 @@ encodeXDelta1 patch = do
         ]
     , fromNameAdvisories ++ toNameAdvisories
       -- The source-record name shares its bytes with the from-name
-      -- ('assemblePatch' pipes one value into both); re-encoding the
-      -- 'EncodedText' for the source-record slot would surface the
-      -- same substitution advisories twice, so 'encodeFileSourceRecord'
-      -- discards its notice list and the from-name's advisories speak
-      -- for the mirrored value.
+      -- ('assemblePatch' pipes one value into both), so the from-name's
+      -- advisories speak for both; 'encodeFileSourceRecord' discards its own.
     )
   where
     magicBytes     = "%XDZ004%"
@@ -325,15 +320,11 @@ narrowXDelta1ControlOffset value =
 -- (always two records, in @[data, file]@ order), and the instruction
 -- list.
 --
--- The two prelude words are non-negotiable: canonical xdelta's
--- generic EDSIO reader (@libedsio\/generic.c:66@) bails immediately
--- with "Unregistered library: 0" when the type tag's low byte
--- isn't a registered library number, and its sub-allocation
--- accountant (@libedsio\/default.c@) caps every reconstructed
--- pointer at the declared allocation bound. Slap's own parser
--- previously skipped both fields without inspection, which is why
--- the all-zeros prelude this encoder used to emit round-tripped
--- under slap but was rejected by canonical.
+-- The two prelude words are non-negotiable:
+-- canonical xdelta's generic EDSIO reader (@libedsio\/generic.c:66@) bails immediately with "Unregistered library: 0"
+-- when the type tag's low byte isn't a registered library number,
+-- and its sub-allocation accountant (@libedsio\/default.c@) caps every reconstructed pointer at the declared allocation bound.
+-- An all-zeros prelude is therefore rejected by canonical even though it carries no instruction data.
 --
 -- The data-record's wire bytes (name, MD5, length, kind, offset-
 -- mode) are inline constants here: name is 'xdelta1DataRecordName';
@@ -436,9 +427,8 @@ encodeFileSourceRecord patch =
 -- offset from the running cumulative length); under 'AbsoluteOffsets'
 -- the offset is written verbatim. The applicable source is decided
 -- by 'xdelta1InstructionTarget': data-targeting instructions are
--- always sequential (slap's differ only emits sequential data
--- emits, matching 'encodeDataRecord' above), file-targeting
--- instructions follow the patch's 'xdelta1SourceOffsetMode'.
+-- always sequential, file-targeting instructions follow the patch's
+-- 'xdelta1SourceOffsetMode'.
 encodeInstruction :: XDelta1Patch -> XDelta1Instruction -> Builder
 encodeInstruction patch instruction =
   putEdsioVarint (instructionTargetWireIndex (xdelta1InstructionTarget instruction))

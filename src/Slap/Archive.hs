@@ -160,7 +160,7 @@ extractEntry format archivePath entryName = do
 
 findExtracted :: FilePath -> String -> IO (Maybe FilePath)
 findExtracted temporaryDirectory entryName = do
-  -- flat extraction puts file directly in temporaryDirectory
+  -- Tools differ: some flatten the entry to its basename, others keep its internal path; probe both.
   let basename = takeFileNamePortable entryName
       flatPath = temporaryDirectory </> basename
       fullPath = temporaryDirectory </> entryName

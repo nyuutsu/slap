@@ -115,7 +115,7 @@ encodeFileIdDiz fid =
                   byteString "@BEGIN_FILE_ID.DIZ"
                   <> byteString content
                   <> byteString "@END_FILE_ID.DIZ"
-                  -- 'fromIntegral' is safe-by-construction: 'narrowPPF2FileId'
-                  -- validated the encoded byte count fits 'Word32'.
+                  -- 'narrowPPF2FileId' validated the encoded byte count fits
+                  -- 'Word32', so this 'fromIntegral' cannot truncate.
                   <> word32LE (fromIntegral (ByteString.length content))
   in (trailer, advisories)

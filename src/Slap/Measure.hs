@@ -366,8 +366,8 @@ rangeEndExclusive range = advance (rangeStart range) (rangeLength range)
 
 -- | The last byte 'Offset' inside an 'OffsetRange', i.e.
 -- @rangeEndExclusive - 1@. Suitable for inclusive display
--- ("0x000100 \\u2013 0x00FFFF"). Undefined for an empty range; the
--- only call sites construct ranges from non-empty record streams.
+-- ("0x000100 – 0x00FFFF"). Undefined for an empty range; every
+-- call site builds the range from a non-empty record stream.
 rangeLastByte :: OffsetRange -> Offset
 rangeLastByte range = Offset (unOffset (rangeEndExclusive range) - 1)
 
@@ -402,8 +402,7 @@ lengthToOffset (Length lengthValue) = Offset lengthValue
 -- buffer is indexed from 'Offset' @0@. Useful at end-of-apply
 -- diagnostics where the cursor's position from the start equals the
 -- number of bytes written. The conversion is meaningful only for
--- buffers indexed from zero with no gaps; every current call site
--- meets that precondition.
+-- buffers indexed from zero with no gaps.
 offsetToFileSize :: Offset -> FileSize
 offsetToFileSize (Offset position) = FileSize position
 
@@ -514,8 +513,7 @@ nextAction (ActionIndex index) = ActionIndex (index + 1)
 -- container. The 'Foldable' constraint forces callers to hand in
 -- the actual stream rather than a pre-computed count, foreclosing
 -- the @ActionIndex (length xs)@ shape that fabricates an index
--- from a count where threading was the right verb. All current
--- call sites pass @Vector.Vector@, where 'length' is O(1).
+-- from a count where threading was the right verb.
 streamEndIndex :: Foldable t => t a -> ActionIndex
 streamEndIndex stream = ActionIndex (length stream)
 
@@ -549,17 +547,12 @@ subtractLength (Length minuend) (Length subtrahend)
 minLength :: Length -> Length -> Length
 minLength (Length left) (Length right) = Length (min left right)
 
--- | The result of examining a 'SignedOffset' for non-negativity.
--- 'NonNegativeCursor' carries an 'Offset' the apply path can use
--- for reads; 'NegativeCursor' carries the original signed value
--- so the negative case can flow into error context (e.g. as the
--- 'SignedOffset' field of 'ApplyCursorUnderflow'). Production
--- code obtains values of this type via 'examineSignedOffset'; the
--- data constructors are exported for pattern-matching at use
--- sites. Direct construction of @NonNegativeCursor (Offset n)@
--- for negative @n@ would compile — the non-negativity is a
--- discipline enforced at the construction site, not by the type
--- system.
+-- | The result of examining a 'SignedOffset' for non-negativity,
+-- produced by 'examineSignedOffset'. 'NonNegativeCursor' carries an
+-- 'Offset' the apply path can use for reads; 'NegativeCursor' carries
+-- the original signed value so the negative case can flow into error
+-- context (e.g. as the
+-- 'SignedOffset' field of 'ApplyCursorUnderflow').
 data SignedOffsetSign
   = NegativeCursor SignedOffset
   | NonNegativeCursor Offset
@@ -698,8 +691,7 @@ splitHunksUnbounded = map (\h -> SplitHunk (hunkOffset h) (hunkPayload h))
 -- bound and pair each split piece with the corresponding bytes from
 -- @source@ (the original-bytes field every PPF3 undo record carries).
 -- Empty payloads produce no output. When a piece extends past the
--- source's end, the missing tail bytes are zero-padded — the same
--- convention the previous @Slap.PPF3.Create.computeUndo@ used.
+-- source's end, the missing tail bytes are zero-padded.
 splitUndoHunks :: Length -> ByteString -> [Hunk] -> [SplitUndoHunk]
 splitUndoHunks maxLength source = concatMap pieces
   where

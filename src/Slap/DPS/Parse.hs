@@ -36,9 +36,6 @@ import qualified Data.ByteString as ByteString
 -- Detection heuristic (no magic bytes)
 ----------------------------------------------------------------------------
 
--- | Heuristic detection: DPS files have version byte = 1 at
--- dpsVersionOffset, stability flag ∈ {0,1} at dpsStabilityOffset,
--- and records that parse cleanly to end of file.
 isDPS :: ByteString -> Bool
 isDPS input
   | ByteString.length input < dpsMinimumFileSize = False
@@ -142,17 +139,17 @@ parseRecords recordIndex = do
     outputOffset <- offsetFromParsed <$> ByteParser.word32LE
     -- UniPatcher wiki swaps mode descriptions; chunk structures are correct.
     case mode of
-      0 -> do  -- CopyFromROM: read offset + length from patch
-        sourceOffset <- offsetFromParsed <$> ByteParser.word32LE
-        copyLength   <- Length . fromIntegral <$> ByteParser.word32LE
-        let record = DPSCopyFromROM outputOffset sourceOffset copyLength
-        rest <- parseRecords (nextAction recordIndex)
-        pure (fmap (record :) rest)
-      1 -> do  -- EnclosedData: read length + data from patch
-        dataLength  <- fromIntegral <$> ByteParser.word32LE :: ByteParser Int
-        payload  <- getBytes (Length dataLength)
-        let record = DPSEnclosedData outputOffset payload
-        rest <- parseRecords (nextAction recordIndex)
-        pure (fmap (record :) rest)
+      m | m == dpsCopyFromROMMode -> do
+            sourceOffset <- offsetFromParsed <$> ByteParser.word32LE
+            copyLength   <- Length . fromIntegral <$> ByteParser.word32LE
+            let record = DPSCopyFromROM outputOffset sourceOffset copyLength
+            rest <- parseRecords (nextAction recordIndex)
+            pure (fmap (record :) rest)
+        | m == dpsEnclosedDataMode -> do
+            dataLength  <- fromIntegral <$> ByteParser.word32LE :: ByteParser Int
+            payload  <- getBytes (Length dataLength)
+            let record = DPSEnclosedData outputOffset payload
+            rest <- parseRecords (nextAction recordIndex)
+            pure (fmap (record :) rest)
       unknownByte ->
         pure (Left (UnknownFlag LabelDPS FieldRecordMode (RawFlagByte unknownByte)))

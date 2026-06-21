@@ -6,8 +6,9 @@ module Slap.PMSR.Parse
   , parseLoop
   ) where
 
--- Canonical reference: Star Rod (Paper Mario 64 modding tool, Java, big-endian)
--- Best available spec: https://github.com/Sappharad/MultiPatch/issues/15 (Star Rod Discord quote)
+-- PMSR is the patch format produced by Star Rod (Paper Mario 64 modding tool, Java, big-endian).
+-- The layout has no formal spec; the most useful public description we found is a Star Rod Discord message,
+-- quoted at https://github.com/Sappharad/MultiPatch/issues/15.
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..), pmsrMagicBytes)
 import Slap.Status (SlapError(..), Parsed(..), ByteParserError(..))

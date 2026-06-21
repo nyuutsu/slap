@@ -69,11 +69,8 @@ adler32 input = Adler32 $ unsafeDupablePerformIO $
 -- 'readByteString'.
 --
 -- The unsafe (no-copy) variant of 'unsafeUseAsCStringLen' is
--- correct for synchronous FFI that consumes the bytes during the
--- call and doesn't retain a pointer after return — slap's current
--- shape. A future FFI that retains a pointer (async, callback, or
--- thread-keeping shape) would need a copying sibling; not present
--- today.
+-- correct here because the FFI call is synchronous: it consumes the
+-- bytes during the call and doesn't retain a pointer after return.
 withByteString :: ByteString -> (Ptr Word8 -> CSize -> IO a) -> IO a
 withByteString input action =
   UnsafeByteString.unsafeUseAsCStringLen input $ \(dataPointer, dataLength) ->
@@ -102,10 +99,7 @@ readByteString addressPointer lengthPointer = do
 -- than throwing, so a corrupt-bytes-from-FFI event cannot raise
 -- during the rendering of an unrelated error. Built on
 -- 'readByteString'; same null-pointer semantics. Used for diagnostic
--- message channels. Rust's 'String' is UTF-8 by language guarantee,
--- so the leniency is defense-in-depth: at this seam the bytes are
--- UTF-8 by Rust's contract, and a buffer-corruption event in the FFI
--- channel can't raise a decode exception during error rendering.
+-- message channels.
 readText :: Ptr (Ptr Word8) -> Ptr CSize -> IO Text
 readText addressPointer lengthPointer = do
   messageBytes <- readByteString addressPointer lengthPointer

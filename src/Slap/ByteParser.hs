@@ -16,13 +16,6 @@
 -- does not provide) can be defined honestly. State is the outer
 -- layer because 'get'\/'put' are the dominant operations across the
 -- primitive set and benefit from not needing 'lift'.
---
--- This module replaces the older @Slap.Get@\/@Get@ pair. Existing
--- primitive names ('getByte', 'getBytes', 'word32LE', 'byuuVarint',
--- and friends) are kept — they're verb-prefixed and describe what
--- they do; renaming would touch many more lines for less aesthetic
--- gain. The type and its runner ('ByteParser', 'runByteParser')
--- carry the load-bearing rename.
 module Slap.ByteParser
   ( ByteParser
   , runByteParser
@@ -95,9 +88,6 @@ import Data.Word (Word8, Word16, Word32)
 -- The newtype exists for the 'MonadFail' instance below — 'Either'
 -- has no 'MonadFail' and we want @do@-notation desugaring to land
 -- in 'ByteParserUnexpectedDoPatternFailure' rather than @error@.
--- No record selector is needed (the helpers below pattern-match on
--- the constructor and the runner uses 'unwrap' directly), so we
--- use the constructor form rather than record syntax.
 newtype ByteParser a
   = ByteParser (StateT Position (ReaderT ByteString (Either ByteParserError)) a)
   deriving newtype (Functor, Applicative, Monad)
@@ -111,10 +101,8 @@ instance MonadFail ByteParser where
   fail message =
     throwByteParserError (ByteParserUnexpectedDoPatternFailure message)
 
--- | Run a parser against an input 'ByteString' starting at offset
--- zero. The final position is discarded — no consumer cares where
--- the parser ended up, only what it produced. 'evalStateT' is the
--- transformer equivalent of @fst <$> runStateT@.
+-- | Run a parser against an input 'ByteString' starting at offset zero.
+-- The final position is discarded — no consumer cares where the parser ended up, only what it produced.
 runByteParser :: ByteParser a -> ByteString -> Either ByteParserError a
 runByteParser (ByteParser parser) input =
   runReaderT (evalStateT parser (Position 0)) input

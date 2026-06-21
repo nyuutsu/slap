@@ -505,13 +505,11 @@ parseSomePatchFromIPS variant patchContents = do
   let label = case variant of
         IPS.StandardIPS -> LabelIPS
         IPS.IPS32       -> LabelIPS32
-      -- The writes a record performs, as a hunk. A zero-count RLE
-      -- record performs none — accepted on parse as the no-op it is
-      -- (docs/ips/questions.md), it expands to no hunk: an empty hunk
-      -- carried forward would re-encode on an IPS-family target as a
-      -- size-0 record, which is the RLE sentinel on the wire, and
-      -- desync every record after it. (An empty copy record cannot
-      -- arrive here: a zero size field parses as that same sentinel.)
+      -- A record's writes become a hunk. A zero-count RLE record
+      -- writes nothing and must expand to no hunk: an empty hunk
+      -- carried to an IPS-family target re-encodes as a size-0
+      -- record, which is the RLE sentinel on the wire, desyncing
+      -- every record after it.
       expandIPSRecord (IPS.IPSRecordCopy { ipsCopyOffset = recordOffset
                                          , ipsCopyPayload = recordPayload }) =
         Just (Hunk recordOffset recordPayload)
@@ -632,14 +630,10 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (BPS.bpsSourceCRC patch)
         , verifyTargetCRC32 = Just (BPS.bpsTargetCRC patch)
-        -- The BPS spec declares source-size in the header and says
-        -- the source checksum "verifies that the input file is
-        -- correct". The spec doesn't mandate rejection on size
-        -- mismatch (only CRC rejection), so we populate the size
-        -- for warn-level diagnostics without changing the fatal-
-        -- error semantics. A wrong-size source still fails via
-        -- the source CRC check; the size warning just makes the
-        -- diagnostic more specific before the CRC hard-errors.
+        -- The spec leaves both checksum and size mismatch unspecified
+        -- (fatal or advisory). Slap's policy makes the source CRC fatal
+        -- and the declared size advisory, so a wrong-size source still
+        -- hard-fails via the source CRC.
         , verifyFileSize = Just (AdvisorySize (BPS.bpsSourceSize patch))
         }
     , patchAdvisories       = parseAdvisories
@@ -669,32 +663,17 @@ parseSomePatchFromUPS patchContents = do
     , patchApply          = ApplyStrategy
         { runApply     = \source -> pure (UPS.applyUPS patch source) }
     , patchUndo           = Just $ UndoStrategy (UPS.undoUPS patch)
-        -- UPS is self-inverse (XOR-based): walking the same block
-        -- stream against the target reconstructs the source. The
-        -- only direction-dependent choice is the output buffer
-        -- size — 'undoUPS' handles that internally by passing
-        -- sourceSize instead of targetSize to the shared walker,
-        -- which is what makes size-changing UPS patches round-trip
-        -- correctly (a reapply-forward path would have produced a
-        -- target-sized buffer regardless of direction, silently
-        -- wrong for growth patches). Each direction's 'Outcome'
-        -- also carries its own 'ApplyOOBBlocksSkipped' advisory
-        -- measured against that direction's output size — apply
-        -- against 'upsTargetSize', undo against 'upsSourceSize' —
-        -- so the user sees a direction-correct OOB summary instead
-        -- of one frozen at parse time against the target.
+        -- UPS is self-inverse (XOR): walking the same block stream
+        -- against the target reconstructs the source. The only
+        -- direction-dependent choice is the output buffer size, and
+        -- 'undoUPS' passes sourceSize instead of targetSize so
+        -- size-changing patches round-trip.
     , patchVerification   = noVerification
         { verifySourceCRC32 = Just (UPS.upsSourceCRC patch)
         , verifyTargetCRC32 = Just (UPS.upsTargetCRC patch)
-        -- See the BPS branch above for the reasoning: UPS spec
-        -- declares source-size in the header but doesn't mandate
-        -- size-based rejection. Populate for warn-level diagnostics
-        -- on the forward-apply path. The undo/reverse-apply path
-        -- bypasses the Verification layer entirely in Main.doUndo,
-        -- so this doesn't interfere with UPS's self-inverse
-        -- property — undoing a patch where the "source" actually
-        -- has target-size still works because undo never consults
-        -- verifyFileSize.
+        -- Advisory like BPS's: the size doesn't gate rejection.
+        -- Undo bypasses the Verification layer (Main.doUndo), so it
+        -- never consults verifyFileSize.
         , verifyFileSize = Just (AdvisorySize (UPS.upsSourceSize patch))
         }
     , patchAdvisories       = parseAdvisories
@@ -783,13 +762,10 @@ vcdiffWindowChecks vcdiffPatch =
       WindowCheck windowBase (VCDIFF.windowOutputLength (VCDIFF.windowWithChecksumBody pairedWindow))
         <$> VCDIFF.windowWithChecksumAdler32 pairedWindow
 
--- APS N64 and APS GBA are unrelated formats by different authors who
--- both used "APS" as the name.  detectFormat dispatches on magic, but
--- "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
--- detectFormat disambiguates via GBA's fixed record structure (12 +
--- N*65544 bytes, 64KB-aligned offsets) and re-routes structurally-GBA
--- inputs to 'FormatAPSGBA' upstream of this function, so by the time
--- 'parseSomePatchFromAPSN64' runs the bytes really are APSN64.
+-- APS N64 and APS GBA are unrelated formats by different authors who both used "APS" as the name.
+-- detectFormat dispatches on magic, but "APS10" (N64) collides with "APS1" + source size when size mod 256 == 48.
+-- detectFormat resolves the collision via GBA's fixed record structure (12 + N*65544 bytes, 64KB-aligned offsets),
+-- routing structurally-GBA inputs to 'FormatAPSGBA'.
 parseSomePatchFromAPSN64 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromAPSN64 metadataEncoding patchContents = do
   Parsed patch@(APSN64.APSN64Patch header records) parseAdvisories <- APSN64.parseAPSN64 metadataEncoding patchContents
@@ -800,9 +776,8 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
     , patchAnalysis       = APSN64.analyzeAPSN64 patch
     , patchKind           = Direct (Just (emptyContents (Vector.toList (Vector.map expandN64 records)))
           { contentsDescription = Just (APSN64.apsN64Description header)
-          -- ^ APSN64's description field is typed 'EncodedText' under
-          -- stage 3b; the parse-time decode (and any substitution
-          -- advisories) lives inside 'parseAPSN64'.
+          -- ^ APSN64's description field is typed 'EncodedText';
+          -- the parse-time decode (and any substitution advisories) lives inside 'parseAPSN64'.
           , contentsDestinationSize    = Just (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header))
           })
     , patchApply          = ApplyStrategy
@@ -993,11 +968,9 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
           , verifyTargetMD5 = Just targetMD5
           }
         XDelta1.CreatorOptedOutOfVerification -> noVerification
-      -- The data-record-name divergence is an informational note —
-      -- the field is a display label, not anything apply consults
-      -- (see 'XDelta1DataRecordNameDiverges'). Split it off the
-      -- warning lane so the porcelain emits it through the @slap:@-
-      -- prefixed notice path instead of the @warning:@ lane.
+      -- The data-record-name is a display label, not anything apply
+      -- consults, so its divergence is routed to the notice lane
+      -- rather than the warning lane.
       (dataNameNotices, otherWarnings) = partition isXDelta1DataNameNotice parseAdvisories
   Right SomePatch
     { patchFormat         = LabelXDelta1
@@ -1135,11 +1108,7 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
 
 -- | Yay0 is a compression container (Nintendo LZSS), not a patch format.
 -- Decompress the envelope and recurse into parseSome on the inner bytes.
--- The format suffix @"\/Yay0"@ is appended to 'patchInfo' so the user
--- can see the envelope at a glance — the analytical carrier
--- 'patchAnalysis' no longer carries a format-name field, since
--- 'renderAnalysisFull' and 'renderAnalysisSummary' read the format-name
--- straight off 'patchInfo' now.
+-- The format suffix @"\/Yay0"@ is appended to 'patchInfo' so the user can see the envelope at a glance.
 parseSomePatchFromYay0 :: RequestedDialects -> EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromYay0 dialects metadataEncoding (PatchFileContents input) = case Stream.yay0Decompress input of
   Left cause              -> Left (DecompressionFailed (Yay0WrapperFailed cause))

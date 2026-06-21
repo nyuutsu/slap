@@ -189,12 +189,11 @@ data IPSPatch = IPSPatch
     -- emitted as.
   -- | Record stream as a boxed 'Vector'. Boxed (not unboxed or
   -- storable) because 'IPSRecord' is a sum type containing a
-  -- 'ByteString'. Stored as a 'Vector' rather than a list for the
-  -- same reason BPS stores its action stream as one: the
-  -- stadium2-scale @.ips32@ fixture is ~27 MB of proportionally
-  -- many records, and a single contiguous array of pointers is
-  -- kinder to the GC during apply than millions of individually
-  -- allocated cons cells would be.
+  -- 'ByteString'. Stored as a 'Vector' rather than a list for the same
+  -- reason BPS stores its action stream as one: IPS32's 32-bit offset
+  -- space admits enough records that a single contiguous array of
+  -- pointers is kinder to the GC during apply than millions of
+  -- individually allocated cons cells.
   , ipsRecords             :: !(Vector IPSRecord)
   , ipsTruncatedTargetSize :: !(Maybe FileSize)
     -- ^ The target file size declared by a post-EOF truncation

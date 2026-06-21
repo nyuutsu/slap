@@ -2,17 +2,11 @@
 
 -- | UPS patch creation. Builds an XOR-block stream over the
 -- byuu-varint header/skip widths.
---
--- Wire-format integer safety: the 'fromIntegral' calls in this
--- module convert 'Int' to 'Int64' as required by 'putByuuVarint'.
--- @Int → Int64@ is widening on 32-bit hosts and a no-op on 64-bit
--- (where GHC's 'Int' is 'Int64'); the conversion never shrinks, so
--- no truncation hazard exists at any of these sites.
 module Slap.UPS.Create
   ( createUPS
   ) where
 
-import Slap.UPS.Types (UPSBlock(..), upsMagicBytes)
+import Slap.UPS.Types (UPSBlock(..), upsMagicBytes, upsTerminatorByte)
 import Slap.Binary (putWord32LE, word32LEBytes, putByuuVarint)
 import Slap.Checksum (CRC32(..))
 import Slap.Status (SlapError(..), UnencodeabilityReason(..), CreateResult(..))
@@ -62,7 +56,7 @@ encodeUPSBlock :: UPSBlock -> Builder
 encodeUPSBlock (UPSBlock skipLength xorData) =
   putByuuVarint (fromIntegral (unLength skipLength))
   <> byteString xorData
-  <> word8 0x00  -- terminator
+  <> word8 upsTerminatorByte
 
 -- | Walk source and target in lockstep, emitting UPS diff blocks.
 -- Returns 'Left' if the pair is unencodeable: 'UPSSourceTailNonZero'
@@ -119,12 +113,9 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
     collectRun start =
       let runEnd = findFirstMatchPosition start
           runLength = distance start runEnd
-          -- unsafeCreate (not create) is safe here because the
-          -- buffer-fill callback writes only to the freshly-allocated
-          -- local buffer with no observable effects beyond that write —
-          -- no IORef, no shared state, deterministic output. The 'unsafe'
-          -- refers to allowing the IO action to be duplicated by GHC,
-          -- which is fine because duplication produces identical output.
+          -- unsafeCreate (not create) is sound here: the fill writes
+          -- only the freshly-allocated local buffer and is deterministic,
+          -- so GHC duplicating the IO action produces identical output.
           runByteCount    = unLength runLength
           startByteOffset = offsetToInt start
           runBytes = unsafeCreate runByteCount $ \outputPointer ->

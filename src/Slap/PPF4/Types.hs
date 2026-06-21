@@ -115,8 +115,7 @@ ppf4Limits = EncodingLimits
 -- exists for; shrinkage is not expressible. See @docs\/ppf\/spec.md@,
 -- "Size-changing patches" under PPF4, for the upstream picture.
 --
--- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its
--- 'CreatePPF4' arm (added when PPF4 gains a create entry).
+-- Consumed by 'Slap.Convert.rejectIncompatibleSizeChange' through its 'CreatePPF4' arm.
 ppf4RejectIncompatibleSizeChange
   :: FileSize -> FileSize -> Either SlapError ()
 ppf4RejectIncompatibleSizeChange sourceSize targetSize

@@ -11,12 +11,7 @@ module Slap.XDelta1.Types
     -- * Header-name newtypes
   , XDelta1FromName(..)
   , XDelta1ToName(..)
-    -- * Resolved file-name pair (smart constructor)
-    --
-    -- The bare data constructor is intentionally not exported; the
-    -- only paths to a 'ResolvedXDelta1FileNames' value are the two
-    -- resolvers below, so every value at every call site has been
-    -- run through the u16 byte-length cap check.
+    -- * Resolved file-name pair (smart constructor; see 'ResolvedXDelta1FileNames')
   , ResolvedXDelta1FileNames
       ( resolvedXDelta1FromName
       , resolvedXDelta1ToName
@@ -67,17 +62,10 @@ data XDelta1OffsetMode = AbsoluteOffsets | SequentialOffsets
 -- fields on the patch record) rather than the parallel-source shape
 -- canonical xdelta's libedsio serializer paints on the wire. The wire
 -- carries two source records (data segment and source file) treated
--- uniformly by libedsio; slap's type model only carries the file
--- source's metadata because the data segment's "name" is the fixed
--- literal 'xdelta1DataRecordName', its MD5 is computed against bytes
--- in 'xdelta1DataSegment', its length equals 'ByteString.length' of
--- that segment, and its offset-mode is always sequential at encode
--- time (slap's differ never emits non-sequential data emits). On
--- parse, the data-record's wire fields are validated against those
--- invariants (length must match the segment bytes; MD5 must match
--- under 'VerifyAgainstStoredMD5s'; offset-mode dispatches sequential-
--- offset reconstruction for data-targeting instructions; name is
--- consulted for an informational notice but never gates apply).
+-- uniformly by libedsio; slap models only the file source's metadata
+-- because the data segment's name, MD5, length, and (always
+-- sequential) offset-mode are all fixed or derivable from
+-- 'xdelta1DataSegment'.
 data XDelta1Patch = XDelta1Patch
   { xdelta1FromName         :: XDelta1FromName
   , xdelta1ToName           :: XDelta1ToName
@@ -87,15 +75,9 @@ data XDelta1Patch = XDelta1Patch
   , xdelta1ToAtDeltaTime    :: XDelta1FileAtDeltaTime
   , xdelta1TargetLength     :: FileSize
   , xdelta1SourceName       :: XDelta1FromName
-    -- ^ The per-source-record "name" field for the file-source record
-    -- in the EDSIO source list. Distinct concept from the header
-    -- 'xdelta1FromName' (which lives at fixed offsets in the header
-    -- words), but slap's create path mirrors the two: the same
-    -- 'resolvedXDelta1FromName' from a 'ResolvedXDelta1FileNames'
-    -- flows into both wire fields so the source-record name reflects
-    -- the real source file, not a placeholder. The type is
-    -- 'XDelta1FromName' rather than 'ByteString' so the same value
-    -- pipes into both fields without an intermediate raw-byte hop.
+    -- ^ The file-source record's "name" in the EDSIO source list.
+    -- A distinct concept from the header 'xdelta1FromName', though
+    -- create mirrors the same resolved value into both wire fields.
   , xdelta1SourceMD5        :: Maybe MD5Hash
   , xdelta1SourceLength     :: FileSize
   , xdelta1SourceOffsetMode :: XDelta1OffsetMode
@@ -113,13 +95,9 @@ data XDelta1Patch = XDelta1Patch
 -- @argv@ convention), but the tag rides along so a future re-encode
 -- under a different encoding picks the right encoder.
 --
--- The u16 byte-length cap that the wire's packed name-lengths
--- header word imposes is enforced at construction of
--- 'ResolvedXDelta1FileNames' — not at the newtype itself, since the
--- parser pulls bytes whose length is already cap-bounded by virtue
--- of the u16 length-prefix on the wire. The newtype is a transport
--- for at-rest type discipline; the cap-check is at-edge validation
--- that lives at the resolver.
+-- The u16 byte-length cap is checked at construction of
+-- 'ResolvedXDelta1FileNames', not here: parsed bytes are already
+-- cap-bounded by the wire's u16 length-prefix.
 newtype XDelta1FromName = XDelta1FromName
   { unXDelta1FromName :: EncodedText
   } deriving (Eq, Show)
@@ -243,24 +221,12 @@ xdelta1NameByteCap = 0xFFFF
 -- | The slap-internal representation of an xdelta 1.1.x patch's
 -- verification posture — whether MD5 fields carry real verification
 -- data or are the canonical sentinel ('xdelta1EmptyInputMD5Sentinel')
--- emitted by the canonical tool's @--noverify@. The round-trip
--- vehicle for the @--omit-verification@ axis in xdelta1: the parser
--- produces a value of this type from the wire; the encoder in
--- "Slap.XDelta1.Create" consumes one (mapped from
--- 'Slap.Convert.VerificationInclusion' at the porcelain boundary)
--- and writes the corresponding wire bytes (flag bit set with
--- sentinels in MD5 slots, or flag bit clear with computed MD5s).
--- Constructors are unchanged across directions. The source-file
--- MD5 ('xdelta1SourceMD5') shares the patch-level posture: it
--- carries @Just MD5Hash@ under 'VerifyAgainstStoredMD5s' and
--- @Nothing@ under 'CreatorOptedOutOfVerification' (parser-enforced;
--- not type-level). Family siblings:
--- 'Slap.Convert.VerificationInclusion' on create (the user-facing
--- choice the porcelain maps to a posture), 'VerificationPolicy'
--- on apply (the runtime policy that gates mismatch behavior when
--- verification /does/ run),
--- 'Slap.Status.VerificationOptedOutByCreator' (the warning emitted
--- when verification is declared absent at the format level).
+-- emitted by the canonical tool's @--noverify@. On the wire that is
+-- the flag bit set with sentinels in the MD5 slots, or the bit clear
+-- with computed MD5s. The source-file MD5 ('xdelta1SourceMD5') tracks
+-- the same posture — @Just@ under 'VerifyAgainstStoredMD5s', @Nothing@
+-- under 'CreatorOptedOutOfVerification' — but by parser convention,
+-- not at the type level.
 data XDelta1VerificationPosture
   = VerifyAgainstStoredMD5s MD5Hash
   | CreatorOptedOutOfVerification
@@ -315,29 +281,22 @@ data XDelta1Instruction = XDelta1Instruction
 xdelta1TrailerSize :: Int
 xdelta1TrailerSize = 12
 
--- | The MD5 of zero input bytes
--- (@d41d8cd98f00b204e9800998ecf8427e@), used by xdelta 1.1.x's
--- canonical tool as the placeholder in every MD5 slot of a patch
--- created with @--noverify@. The bytes are written by an
--- @edsio_md5_init@ + 0× @_update@ + @_final@ sequence
--- (@xdmain.c:1055,1075,1301@), forced by the algorithm to produce
--- this fixed value. Non-canonical producers may write other bytes;
--- the constant is named here so future diagnostic code can
--- reference the canonical sentinel by name rather than inline hex.
+-- | The MD5 of zero input bytes (@d41d8cd98f00b204e9800998ecf8427e@),
+-- used by xdelta 1.1.x's canonical tool as the placeholder in every MD5 slot of a patch created with @--noverify@.
+-- Under @--noverify@ the context is initialized (@xdmain.c:997@) and
+-- finalized (@xdmain.c:1306@) with every @edsio_md5_update@ skipped by its
+-- @if (!no_verify)@ guard (@xdmain.c:1055,1075,1301@ in
+-- @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@), so it finalizes over zero
+-- bytes and is forced to this fixed value.
+-- Non-canonical producers may write other bytes.
 xdelta1EmptyInputMD5Sentinel :: MD5Hash
 xdelta1EmptyInputMD5Sentinel = MD5Hash
   "\xd4\x1d\x8c\xd9\x8f\x00\xb2\x04\xe9\x80\x09\x98\xec\xf8\x42\x7e"
 
--- | The fixed literal canonical xdelta writes into the data-record's
--- @name@ slot — see @xdelta-1.1.4/xdelta.c:241-251@, where the data
--- source is added with name @"(patch data)"@. The data record is
--- the patch's inline literal-bytes source ('xdelta1DataSegment'),
--- not an externally-named source, so a name field is meaningful
--- only as a label in @xdelta info@-style displays; canonical xdelta
--- itself never consults this field at apply time. Slap encodes the
--- canonical bytes on create and surfaces an informational notice
--- (no warning, no apply refusal) if the parsed patch carries
--- anything else.
+-- | The fixed literal canonical xdelta writes into the data-record's @name@ slot — see @xdelta.c:246@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@, where the data source is added with name @"(patch data)"@.
+-- The data record is the patch's inline literal-bytes source ('xdelta1DataSegment'), not an externally-named source,
+-- so a name field is meaningful only as a label in @xdelta info@-style displays rather than part of apply semantics.
+-- Slap encodes the canonical bytes on create and surfaces an informational notice (no warning, no apply refusal) if the parsed patch carries anything else.
 xdelta1DataRecordName :: ByteString
 xdelta1DataRecordName = "(patch data)"
 
@@ -368,14 +327,14 @@ xdelta1FlagPatchCompressed :: Word32
 xdelta1FlagPatchCompressed = 8
 
 -- | EDSIO type tag for canonical xdelta's @ST_XdeltaControl@ record
--- type. Derived from @tools\/xdelta1\/xdelta-1.1.4\/xd_edsio.h:108@:
+-- type. Derived from @xd_edsio.h:108@ in @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@:
 --
 -- @
 -- ST_XdeltaControl = (1 << (7 + EDSIO_LIBRARY_OFFSET_BITS)) + 3
 -- @
 --
--- with @EDSIO_LIBRARY_OFFSET_BITS = 8@ from
--- @tools\/xdelta1\/xdelta-1.1.4\/libedsio\/edsio.h:41@. The low byte
+-- with @EDSIO_LIBRARY_OFFSET_BITS = 8@ from @libedsio/edsio.h:40@ in
+-- @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@. The low byte
 -- (3) is the library number canonical validates at
 -- @libedsio\/generic.c:66@ — a literal-zero library bails with
 -- "Unregistered library: 0", which is the symptom slap-made patches
@@ -388,25 +347,16 @@ xdelta1ControlTypeTag = (1 `shiftL` 15) + 3  -- = 0x00008003
 -- | Allocation upper bound written into the control prelude's second
 -- 32-bit slot (bytes 4..7 of the EDSIO-serialized control segment,
 -- big-endian). Canonical's parser reads this into
--- @source->alloc_total@ at
--- @tools\/xdelta1\/xdelta-1.1.4\/libedsio\/default.c@ and bounds-
--- checks every sub-record allocation against it: a sub-allocation
+-- @source->alloc_total@ at @libedsio/default.c:149@ in
+-- @docs/xdelta1/upstream/xdelta-1.1.3.tar.gz@ and bounds-checks every
+-- sub-record allocation against it (@default.c:301@): a sub-allocation
 -- request whose running total would exceed the declared bound fires
 -- @EC_EdsioIncorrectAllocation@ and bails. Not a hint — a hard cap.
 --
--- The exact "right" value is the in-memory struct allocation
--- canonical would need to reconstruct the parsed objects —
--- platform-dependent (struct layout, pointer size, 8-byte alignment),
--- not derivable from wire bytes alone. Slap doesn't attempt to
--- compute it precisely; this constant is a generous fixed upper
--- bound, large enough to satisfy canonical's check for any patch
--- slap can produce, small enough to fit in a 32-bit word. The cost
--- of over-declaring is wasted-then-freed memory inside canonical's
--- parser, not wire bloat (the field is always 4 bytes regardless of
--- value).
---
--- 16 MiB is comfortably above any realistic per-patch allocation
--- canonical would actually use and well under the 4 GiB ceiling.
--- Revisit if a future patch shape grows past it.
+-- The precise value isn't derivable from wire bytes, so slap declares
+-- a generous fixed bound. 16 MiB clears any patch slap can produce and
+-- fits a 32-bit word; over-declaring only costs wasted-then-freed
+-- memory in canonical's parser, not wire bytes (the field is always
+-- 4 bytes). Revisit if a future patch shape grows past it.
 xdelta1ControlAllocationBound :: Word32
 xdelta1ControlAllocationBound = 16 * 1024 * 1024

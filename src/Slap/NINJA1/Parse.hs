@@ -14,8 +14,8 @@ module Slap.NINJA1.Parse
   , romTypeFromName
   ) where
 
--- Canonical reference: docs/specs/ninja-1.01php.tar.gz (Derrick Sobodash, 2004, GPLv2)
--- Format spec: docs/specs/ninja1-filespec10.txt
+-- Canonical reference: docs/ninja1/upstream/ninja-1.01php.tar.gz (Derrick Sobodash, 2004, GPLv2)
+-- Format spec: docs/ninja1/upstream/ninja1-filespec10.txt
 -- Both archived from http://ninja.cinnamonpirate.com/
 
 import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),

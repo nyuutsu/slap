@@ -6,8 +6,8 @@
 -- a configurable image-type byte that switches the validation
 -- block's source offset between BIN-style and GameCube ISO-style
 -- images. Records use 8-byte LE offsets (vs PPF1/PPF2's 4-byte)
--- and never use the count=0 RLE sentinel. Specified in
--- @docs/ppf/upstream/ppf-master/ppfdev/PPF3.txt@.
+-- and never use the count=0 RLE sentinel.
+-- Specified in @ppfdev/PPF3.txt@ in @docs/ppf/upstream/ppf-master.zip@.
 module Slap.PPF3.Types
   ( PPF3Patch(..)
   , PPF3Record(..)

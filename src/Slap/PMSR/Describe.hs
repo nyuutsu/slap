@@ -26,7 +26,7 @@ import qualified Data.Vector as Vector
 -- Info
 ----------------------------------------------------------------------------
 
--- | PMSR carries no header metadata; this returns an empty list.
+-- | PMSR carries no header metadata.
 pmsrMeta :: PMSRPatch -> [InfoLine]
 pmsrMeta _ = []
 

@@ -15,9 +15,7 @@
 -- concepts. The wrappers here name the cross-format role that's the
 -- same regardless of which format is involved.
 --
--- All three are newtypes around 'ByteString' with zero runtime cost.
--- Use the @un*@ accessors at boundaries (file I/O, FFI, hash
--- functions) where the underlying 'ByteString' is needed.
+-- Use the @un*@ accessors at boundaries (file I/O, FFI, hash functions) where the underlying 'ByteString' is needed.
 module Slap.FileContents
   ( InputFileContents(..)
   , OutputFileContents(..)

@@ -136,10 +136,8 @@ zlibInflate = callDecompressor rustyZlibInflate
 -- | Zlib (RFC 1950) deflate at the library's default compression level.
 -- The NINJA1 spec is mute on level — any zlib-deflate output round-trips
 -- through any decoder regardless — so the rusty side pins the default
--- rather than exposing a knob no caller currently turns. Pure, and total
--- at the algorithm level for the same reason as 'gzipDeflate': in-memory
--- deflate's only fail-shaped event is allocation failure, which Rust's
--- allocator handles by aborting before any error reaches us.
+-- rather than exposing a knob no caller currently turns.
+-- Pure: in-memory deflate has no error to surface (allocation failure aborts).
 zlibDeflate :: ByteString -> ByteString
 zlibDeflate input = unsafeDupablePerformIO $
   withByteString input $ \dataPointer dataLength ->
@@ -154,11 +152,8 @@ gzipInflate :: ByteString -> Either DecompressionCause ByteString
 gzipInflate = callDecompressor rustyGzipInflate
 
 -- | Gzip (RFC 1952) deflate via rusty-slap (flate2's gzip encoder, default
--- compression level, @mtime = 0@ pinned for deterministic output). Pure:
--- gzip-deflate of arbitrary input is total at the algorithm level; the only
--- fail-shaped event is allocation failure, which Rust's default allocator
--- handles by aborting before any error value reaches us. Round-trip partner
--- of 'gzipInflate'.
+-- compression level, @mtime = 0@ pinned for deterministic output).
+-- Round-trip partner of 'gzipInflate'.
 gzipDeflate :: ByteString -> ByteString
 gzipDeflate input = unsafeDupablePerformIO $
   withByteString input $ \dataPointer dataLength ->

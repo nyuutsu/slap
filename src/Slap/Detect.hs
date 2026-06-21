@@ -98,7 +98,7 @@ detectFormat patchFile =
   where
     PatchFileContents fileBytes = patchFile
 
-    -- | Some probe results are ambiguous between two formats and need a
+    -- Some probe results are ambiguous between two formats and need a
     -- structural test to disambiguate. Today's only such case: APSN64
     -- and APS-GBA share enough magic prefix that an APS-GBA file with
     -- @source_size == 0x30@ reads as @"APS10"@ for its first 5 bytes

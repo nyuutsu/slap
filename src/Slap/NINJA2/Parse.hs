@@ -138,7 +138,7 @@ parseCommands commandIndex patch = do
 parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch
 parseFileCommand patch = do
   _filename <- parsePackedByteString
-  romTypeByte <- getByte  -- ROM type byte
+  romTypeByte <- getByte
   sourceSize <- FileSize . fromIntegral <$> parsePackedInteger
   targetSize <- FileSize . fromIntegral <$> parsePackedInteger
   sourceMD5 <- MD5Hash <$> getBytes (Length 16)

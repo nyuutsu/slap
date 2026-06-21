@@ -30,11 +30,8 @@ import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 
 -- | What 'parseN64' produces from the inner ByteParser walk: the decoded
--- patch plus walker-time advisories accumulated during the walk, in
--- wire order. Today only description-decode advisories are emitted
--- here; future parse-time observations (unrecognized image format,
--- unrecognized record encoding, record-level oddities) accumulate
--- through the same channel as APSN64's polish pass lands them.
+-- patch plus walker-time advisories accumulated during the walk, in wire
+-- order. Today only description-decode advisories are emitted here.
 data APSN64ParseWalk = APSN64ParseWalk
   { apsN64ParseWalkPatch    :: !APSN64Patch
   , apsN64ParseWalkWarnings :: ![SlapAdvisory]

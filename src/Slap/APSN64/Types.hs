@@ -186,8 +186,7 @@ fromAPSN64Country APSN64CountryEuropeY          = 0x59
 fromAPSN64Country APSN64CountryEuropeZ          = 0x5A
 fromAPSN64Country (APSN64CountryUnrecognized b) = b
 
--- | Human-facing country label for 'slap info'. Unrecognized bytes
--- render as @unknown (0x__)@, mirroring 'Slap.NINJA1.Types.romTypeName'.
+-- | Human-facing country label for 'slap info'.
 apsN64CountryName :: APSN64Country -> Text
 apsN64CountryName APSN64CountryRegionFree          = "region-free"
 apsN64CountryName APSN64CountryBeta                = "Beta"
@@ -261,44 +260,25 @@ apsN64MaxChunkSize = Length 255
 apsN64RecordHeaderSize :: Length
 apsN64RecordHeaderSize = Length 5
 
--- | APS-N64's per-record offset wire field is 4-byte little-endian Word32;
--- offsets must fit in 2^32 bytes. Practically unreachable on real N64
--- cartridges (64 MB cap) but enforced at narrow time so silent truncation
--- in 'Slap.APSN64.Create.encodeAPSN64Record' is structurally impossible.
+-- | APS-N64's per-record offset wire field is 4-byte little-endian Word32, so offsets must fit in 2^32 bytes.
+-- Enforced at narrow time so silent truncation in 'Slap.APSN64.Create.encodeAPSN64Record' is structurally impossible.
 apsN64Limits :: EncodingLimits
 apsN64Limits = EncodingLimits
   { maximumOffset = Offset 0xFFFFFFFF
   , formatLabel   = LabelAPSN64
   }
 
--- | Narrow a target size to the 4-byte little-endian destination-size
--- header field APS-N64 writes, refusing a value past @0xFFFFFFFF@
--- rather than letting 'Slap.APSN64.Create.encodeAPSN64' mask it.
--- The record offsets are already bounded by 'apsN64Limits' through the
--- narrow layer; the destination size rides the create path on its own
--- channel (APS-N64 imposes no source/target size-pair rule), so it
--- needs its own guard — the sibling of 'Slap.DPS.Types.narrowDPSSourceSize'
--- and 'Slap.APSGBA.Types.narrowAPSGBATargetSize'. As with the record
--- offsets, unreachable on a real N64 cartridge but enforced so a target
--- at or past 4 GiB is a typed refusal, never a silently wrapped header.
 -- | APS-N64's 4-byte little-endian destination-size header field,
 -- narrowed from a runtime 'FileSize'. Constructor private; values come
--- from 'narrowAPSN64DestinationSize' (the create-path width check) or
--- 'apsN64DestinationSizeFromParsed' (parse-time trust, since the 4-byte
--- wire field constrains the value before it reaches the constructor).
--- Sibling of 'Slap.DPS.Types.DPSSourceSize'.
+-- from 'narrowAPSN64DestinationSize' (the create-path width check, which
+-- refuses a value past @0xFFFFFFFF@ rather than masking it) or
+-- 'apsN64DestinationSizeFromParsed' (parse-time trust). APS-N64 imposes
+-- no source/target size-pair rule, so this rides the create path on its
+-- own channel. Sibling of 'Slap.DPS.Types.DPSSourceSize'.
 newtype APSN64DestinationSize =
   APSN64DestinationSize { unAPSN64DestinationSize :: Word32 }
   deriving (Show, Eq)
 
--- | Narrow a target size to the destination-size field, refusing a
--- value past @0xFFFFFFFF@ rather than letting
--- 'Slap.APSN64.Create.encodeAPSN64' mask it. The record offsets already
--- pass through the narrow layer ('apsN64Limits'); the destination size
--- rides the create path on its own channel, since APS-N64 imposes no
--- source/target size-pair rule, so it needs its own guard — the sibling
--- of 'Slap.DPS.Types.narrowDPSSourceSize' and
--- 'Slap.APSGBA.Types.narrowAPSGBATargetSize'.
 narrowAPSN64DestinationSize :: FileSize -> Either SlapError APSN64DestinationSize
 narrowAPSN64DestinationSize size =
   case narrowToWord32 LabelAPSN64 FieldDestinationSize (unFileSize size) of
@@ -312,8 +292,8 @@ apsN64DestinationSizeFromParsed = APSN64DestinationSize
 
 -- | Lift a 'APSN64DestinationSize' back to a 'FileSize' for callers in
 -- the application's general size currency ('Slap.SomePatch''s output
--- size, 'Slap.APSN64.Describe''s info line). Word32 → Int is widening
--- on every host slap supports, so the conversion never truncates.
+-- size, 'Slap.APSN64.Describe''s info line). 'Int' is 64-bit in slap,
+-- so the 'Word32' → 'Int' conversion never truncates.
 apsN64DestinationSizeAsFileSize :: APSN64DestinationSize -> FileSize
 apsN64DestinationSizeAsFileSize (APSN64DestinationSize word) =
   FileSize (fromIntegral word)

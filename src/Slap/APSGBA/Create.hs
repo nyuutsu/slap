@@ -2,7 +2,6 @@
 
 module Slap.APSGBA.Create
   ( createAPSGBA
-  , encodeGBABlock
   ) where
 
 import Slap.APSGBA.Types (apsGbaMagicBytes, apsGbaBlockSize,
@@ -48,12 +47,9 @@ createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFi
 
 encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
 encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockIndex =
-    -- Safe-by-construction: 'createAPSGBA' has narrowed both
-    -- 'sourceSize' and 'targetSize' to 'Word32', and any reachable
-    -- 'blockIndex' lies in @[0 .. blockCount)@ where
-    -- @blockCount * apsGbaBlockSize@ does not exceed the larger of
-    -- those two narrowed sizes. The @blockIndex * apsGbaBlockSize@
-    -- product therefore fits 'Word32' without truncation.
+    -- offset fits Word32: createAPSGBA narrowed both file sizes to
+    -- Word32, and offset = blockIndex * apsGbaBlockSize stays below the
+    -- larger size.
     putWord32LE (fromIntegral offset :: Word32)
     <> putWord16LE (unCRC16 (crc16 sourceBlock))
     <> putWord16LE (unCRC16 (crc16 targetBlock))

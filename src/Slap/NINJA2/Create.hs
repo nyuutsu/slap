@@ -3,13 +3,6 @@
 
 -- | NINJA2 patch creation. XOR-based records, packed-integer (VLV)
 -- header sizes and per-record lengths.
---
--- Wire-format integer safety: the 'fromIntegral' calls in this
--- module convert 'Int' to 'Int64' as required by
--- 'encodeVariableLengthValue'. @Int → Int64@ is widening on 32-bit
--- hosts and a no-op on 64-bit (where GHC's 'Int' is 'Int64'); the
--- conversion never shrinks, so no truncation hazard exists at any
--- of these sites.
 module Slap.NINJA2.Create
   ( createNINJA2
   , encodeXorRecord
@@ -108,19 +101,17 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
                                                -- FILE_N_LEN/FILE_NAME bytes to
                                                -- follow — distinct from a length-1
                                                -- VLV holding the value 0)
-      <> word8 (fromNINJA2RomType romType)     -- ROM type byte
-      <> encodeVariableLengthValue (fromIntegral (ByteString.length original))   -- source size
-      <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))   -- target size
-      <> byteString (unMD5Hash (md5 original))  -- source MD5
-      <> byteString (unMD5Hash (md5 modified))  -- target MD5
+      <> word8 (fromNINJA2RomType romType)
+      <> encodeVariableLengthValue (fromIntegral (ByteString.length original))
+      <> encodeVariableLengthValue (fromIntegral (ByteString.length modified))
+      <> byteString (unMD5Hash (md5 original))
+      <> byteString (unMD5Hash (md5 modified))
       <> overflowPart
       <> foldMap encodeXorRecord xorHunks
       <> word8 0x00                            -- END command
-    -- XOR hunks over the shared region
     minimumLength = min (ByteString.length original) (ByteString.length modified)
     sourceTrimmed = ByteString.take minimumLength original
     targetTrimmed = ByteString.take minimumLength modified
-    -- diffHunks finds changed regions; we then XOR old and new at those positions
     xorHunks = map computeXorHunk
                    (diffHunks (InputFileContents sourceTrimmed)
                               (OutputFileContents targetTrimmed))

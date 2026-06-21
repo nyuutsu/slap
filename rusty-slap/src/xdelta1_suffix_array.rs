@@ -1,8 +1,6 @@
 //! Suffix-array index over xdelta1's source bytes. The differ in
 //! `xdelta1_diff.rs` queries this index at each target position to
 //! find the longest source span that prefixes the remaining target.
-//! Every byte position in source is a candidate match start, and
-//! every match length the wire admits is reachable.
 //!
 //! Built by SA-IS (Nong, Zhang & Chan 2009) over the source plus
 //! Kasai's LCP construction. Storage is `u32` throughout; build

@@ -64,10 +64,9 @@ applyNINJA2 patch (InputFileContents source)
     records        = ninja2Records patch
     overflowActionIndex = streamEndIndex records
 
-    -- | Initial buffer state: copy the source bytes (clipped at the
-    -- output length, in case the patch is shrinking) and zero-fill
-    -- any tail past the source. After this call the buffer is fully
-    -- populated; subsequent record writes overlay it.
+    -- | Seed the buffer with the source bytes (clipped at the output
+    -- length, in case the patch is shrinking) and zero-fill any tail
+    -- past the source.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer outputPointer = do
       copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)

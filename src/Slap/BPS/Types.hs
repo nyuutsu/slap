@@ -99,14 +99,10 @@ decodeSignedVarint encoded =
   let magnitude = shiftR encoded 1
   in if testBit encoded 0 then negate magnitude else magnitude
 
--- | Recognize the non-canonical @0x81@ encoding of zero in a BPS
--- signed-delta varint. The sign-magnitude scheme used by
--- 'decodeSignedVarint' admits two encodings for delta zero: @0x80@
--- (sign 0, magnitude 0) is canonical, and @0x81@ (sign 1, magnitude
--- 0) is "negative zero" — semantically identical to @0x80@ but
--- distinct on the wire. Predicate fires when bit 0 is set and bits
--- 1+ are zero, which is exactly the @0x81@ shape after byuu-varint
--- decoding (the @0x81@ byte decodes to unsigned varint 1).
+-- | Recognize the non-canonical @0x81@ encoding of zero in a BPS signed-delta varint.
+-- The sign-magnitude scheme used by 'decodeSignedVarint' admits two encodings for delta zero:
+-- @0x80@ (sign 0, magnitude 0) is canonical, and @0x81@ (sign 1, magnitude 0) is "negative zero" — semantically identical to @0x80@ but distinct on the wire.
+-- The matched bit pattern is exactly the @0x81@ shape after byuu-varint decoding (the @0x81@ byte decodes to unsigned varint 1).
 --
 -- The 'Int64' input is grandfathered from 'decodeSignedVarint': both
 -- functions consume the post-'byuuVarint' integer rather than the
