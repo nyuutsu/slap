@@ -125,30 +125,16 @@ data ExplainVerbosity
   deriving (Show, Eq)
 
 -- | What to do with an applied patch's output bytes.
+-- The four variants are mutually exclusive CLI lanes;
+-- the parser rejects a command line that mixes distinguishing flags from more than one (see 'applyOutputParser').
 --
--- The four variants correspond to four mutually exclusive CLI lanes; the
--- parser rejects any command line that mixes distinguishing flags from
--- more than one lane (see 'applyOutputParser').
---
--- 'ApplyInPlace' overwrites the source file (the most invasive option;
--- carries a 'BackupBehavior' to opt into a @.bak@ copy before writing).
--- Mutually exclusive with @-o@\/positional @OUTPUT@ and with @--dry-run@.
--- 'ApplyToExplicitFile' writes to an operator-chosen path.  The path
--- can be given as @-o FILE@ or as a bare third positional @OUTPUT@;
--- the two spellings are equivalent, and giving both at once is a parse
--- error because there's no sensible way to honor two different paths.
--- Carries an 'OverwritePolicy' to opt into clobbering an existing
--- destination via @--force@; the flag is a sub-flag of this lane (and
--- 'ApplyToDerivedFile') because it is meaningless against an in-place
--- write or a dry run.
--- 'ApplyToDerivedFile' writes to a path derived from the source file name
--- (the default when no lane-distinguishing flag is given).  Also carries
--- an 'OverwritePolicy' for the same reason as 'ApplyToExplicitFile'.
--- 'ApplyDryRun' writes nothing; it only reports what would happen.  The
--- report names the derived-default destination since dry runs do not
--- accept lane-modifying flags (no @--in-place@, no @-o@, no @--force@).
--- Users who want to preview a specific destination should run without
--- @--dry-run@ against a scratch file.
+-- 'ApplyInPlace' overwrites the source file, carrying a 'BackupBehavior' for an optional @.bak@ copy.
+-- 'ApplyToExplicitFile' writes to an operator-chosen path.
+-- The path is @-o FILE@ or, equivalently, a bare third positional @OUTPUT@; both at once is a parse error.
+-- 'ApplyToDerivedFile' writes to a path derived from the source name — the default lane.
+-- The 'OverwritePolicy' those two carry guards @--force@;
+-- it is a sub-flag of the two file-writing lanes because clobbering is meaningless in place or on a dry run.
+-- 'ApplyDryRun' writes nothing and reports against the derived-default destination, since it accepts no lane-modifying flags.
 data ApplyOutput
   = ApplyInPlace BackupBehavior
   | ApplyToExplicitFile FilePath OverwritePolicy
@@ -163,32 +149,10 @@ data BackupBehavior
   deriving (Show, Eq)
 
 -- | What to do with an undo's reverted source bytes.
---
--- The four variants correspond to four mutually exclusive CLI lanes; the
--- parser rejects any command line that mixes distinguishing flags from
--- more than one lane (see 'undoOutputParser').
---
--- 'UndoInPlace' overwrites the modified file with the reverted bytes
--- (the most invasive option; carries a 'BackupBehavior' to opt into a
--- @.bak@ copy before writing).  Mutually exclusive with @-o@\/positional
--- @OUTPUT@ and with @--dry-run@.
--- 'UndoToExplicitFile' writes to an operator-chosen path.  The path
--- can be given as @-o FILE@ or as a bare third positional @OUTPUT@;
--- the two spellings are equivalent, and giving both at once is a parse
--- error because there's no sensible way to honor two different paths.
--- Carries an 'OverwritePolicy' to opt into clobbering an existing
--- destination via @--force@; the flag is a sub-flag of this lane (and
--- 'UndoToDerivedFile') because it is meaningless against an in-place
--- write or a dry run.
--- 'UndoToDerivedFile' writes to a path derived from the modified file
--- name (the default when no lane-distinguishing flag is given).  Also
--- carries an 'OverwritePolicy' for the same reason as
--- 'UndoToExplicitFile'.
--- 'UndoDryRun' writes nothing; it only reports what would happen.  The
--- report names the derived-default destination since dry runs do not
--- accept lane-modifying flags (no @--in-place@, no @-o@, no @--force@).
--- Users who want to preview a specific destination should run without
--- @--dry-run@ against a scratch file.
+-- Mirrors 'ApplyOutput' lane-for-lane (see there for the @-o@\/positional and @--force@ rules);
+-- the only difference is that undo operates on the modified file where apply operates on the source file —
+-- so 'UndoInPlace' overwrites it and 'UndoToDerivedFile' derives its path from it.
+-- The parser rejects mixing distinguishing flags from more than one lane (see 'undoOutputParser').
 data UndoOutput
   = UndoInPlace BackupBehavior
   | UndoToExplicitFile FilePath OverwritePolicy
@@ -233,12 +197,9 @@ data EmbeddedBlobIntent
   | DropEmbeddedBlob
   deriving (Show, Eq)
 
--- | What @slap create@ accepts on the metadata side: the parsed
--- metadata fields, with 'requestedEmbeddedBlob' filled by the
--- resolver from the optional @--metadata FILE@ path below.  Only
--- BPS consumes the blob today; on other targets the path triggers
--- the same metadata-rejection check as any other format-incompatible
--- field.
+-- | What @slap create@ accepts on the metadata side: the parsed metadata fields.
+-- 'requestedEmbeddedBlob' is filled by the resolver from the optional @--metadata FILE@ path below.
+-- A target that doesn't consume the blob triggers the same metadata-rejection check as any other format-incompatible field.
 data CreateMetadataInputs = CreateMetadataInputs
   { createParsedMetadata   :: RequestedPatchMetadata
   , createEmbeddedBlobPath :: Maybe FilePath
@@ -281,11 +242,8 @@ data OverwritePolicy
 -- integrity data — set by @--omit-verification@. Related types:
 --
 -- * 'Slap.Convert.VerificationInclusion' — the inclusion axis:
---   what 'slap create' (and convert) embeds in the patch under
---   @--omit-verification@. PPF3 and xdelta1 are the consuming
---   formats today (the 1024-byte validation block and the
---   source/target MD5s respectively); future formats with their
---   own integrity-check mechanisms plug into the same flag.
+--   what 'slap create' (and convert) embeds in the patch under @--omit-verification@.
+--   Formats with their own integrity-check mechanisms plug into the same flag.
 -- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
 --   side member: what a parsed xdelta1 patch declares about its
 --   own verification data.
@@ -353,9 +311,6 @@ data CreateCommand = CreateCommand
   , createConstraints :: RequestedConstraints
   }
 
--- | The 'convertWithSource' field reuses the type name 'ConvertWithSource'
--- defined above; that's namespace coincidence, not collision — Haskell's
--- term/type namespaces are separate.
 data ConvertCommand = ConvertCommand
   { convertPatch       :: FilePath
   , convertTo          :: CreateFormat
@@ -432,12 +387,9 @@ commandParser = subparser
  <> command "explain" (info (Explain <$> explainParser   <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
   )
 
--- | A positional argument whose value is a filesystem path. Carries
--- @action "file"@ so generated shell-completion scripts (see
--- @slap --bash-completion-script@ / @--zsh-completion-script@ /
--- @--fish-completion-script@) complete paths at this argument
--- position. Reach for this anywhere the parsed string will be passed
--- to an 'IO' file primitive.
+-- | A positional argument whose value is a filesystem path.
+-- Carries @action "file"@ so generated shell-completion scripts complete paths at this argument position
+-- (see @slap --bash-completion-script@ / @--zsh-completion-script@ / @--fish-completion-script@).
 pathArgument :: Mod ArgumentFields FilePath -> Parser FilePath
 pathArgument modifiers = argument str (modifiers <> action "file")
 
@@ -520,19 +472,12 @@ verbosityParser :: Parser Verbosity
 verbosityParser = flag Quiet Verbose
   (long "verbose" <> short 'v' <> help "Print each record as it's applied")
 
--- | Parser for the four mutually exclusive output lanes.  'asum' tries
--- each lane in turn; combinations that span multiple lanes are rejected
--- at parse time, with no silent precedence resolution.  The two writing
--- lanes ('ApplyToExplicitFile' and 'ApplyToDerivedFile') share a single
--- 'writingLane' parser so that @--force@ has exactly one home in the
--- parser tree — otherwise a bare @--force@ would partially match the
--- explicit-file lane (consuming the flag but missing the path) and
--- optparse-applicative would prefer that partial match's error over the
--- derived-file lane's success.  Within 'writingLane', whether the user
--- supplied an explicit path decides which constructor 'chooseWritingLane'
--- returns, and @--force@ is consumed at that one site.  @--in-place@
--- and @--dry-run@ commit to their own lanes, so combining them with
--- @--force@ leaves @--force@ unconsumed and produces a parse error.
+-- | Parser for the four mutually exclusive output lanes.
+-- 'asum' tries each in turn; a combination spanning lanes is rejected at parse time rather than resolved by precedence.
+-- The two writing lanes share one 'writingLane' parser so @--force@ has a single home in the parser tree.
+-- Split across lanes, a bare @--force@ would partially match the explicit-file lane (flag consumed, path missing),
+-- and optparse-applicative would then prefer that partial match's error over the derived-file lane's success.
+-- @--in-place@ and @--dry-run@ commit to their own lanes, so a @--force@ paired with either is left unconsumed and errors.
 applyOutputParser :: Parser ApplyOutput
 applyOutputParser = asum
   [ dryRunLane
@@ -599,10 +544,8 @@ undoParser = do
       , undoDialects           = dialects
       }
 
--- | Parser for the four mutually exclusive undo output lanes.  Mirror
--- of 'applyOutputParser'; same 'asum' \/ 'writingLane' shape so the
--- discipline that prevents bare @--force@ from partially matching the
--- explicit-file lane carries over.
+-- | Parser for the four mutually exclusive undo output lanes.
+-- Mirror of 'applyOutputParser'; the same 'asum' \/ 'writingLane' shape, so its @--force@ discipline carries over.
 undoOutputParser :: Parser UndoOutput
 undoOutputParser = asum
   [ dryRunLane
@@ -706,10 +649,8 @@ constraintsParser = do
     { requestedSMCShape = smcShape
     }
 
--- | Parser for the 'RequestedDialects' bag, shared between every
--- subcommand that reads or writes a patch (i.e., all six). Each
--- dialect axis contributes one flag; 'dialectFlagName' is the single
--- source of truth for the spelling.
+-- | Parser for the 'RequestedDialects' bag, shared between every subcommand that reads or writes a patch.
+-- Each dialect axis contributes one flag; 'dialectFlagName' is the single source of truth for the spelling.
 dialectsParser :: Parser RequestedDialects
 dialectsParser = do
   ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
@@ -724,12 +665,9 @@ dialectsParser = do
     { requestedPPF1Origin = ppf1Origin
     }
 
--- | Parser for @--with INPUT@ plus its sub-flag @--no-verify@.  The
--- @--with@ option is the distinguishing flag: if absent, the whole parser
--- fails and the enclosing 'optional' falls back to 'Nothing', which leaves
--- any stray @--no-verify@ for the top-level parser to reject.  That's how
--- the coupling is enforced at parse time — @--no-verify@ is only accepted
--- alongside @--with@.
+-- | Parser for @--with INPUT@ plus its sub-flag @--no-verify@.
+-- The @--with@ option is required: if it is absent, the whole parser fails and the enclosing 'optional' falls back to 'Nothing'.
+-- That leaves any stray @--no-verify@ for the top-level parser to reject — so @--no-verify@ is accepted only alongside @--with@.
 convertWithSourceParser :: Parser ConvertWithSource
 convertWithSourceParser = ConvertWithSource
   <$> pathOption (long "with" <> metavar "INPUT"
@@ -754,13 +692,10 @@ convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
     <> help ("Target format: " ++ intercalate ", " advertisedCreateFormats))
 
--- | Parse the 14 metadata flags shared between @slap create@ and
--- @slap convert@.  Produces a 'RequestedPatchMetadata' with
--- 'requestedEmbeddedBlob' set to 'Nothing'; the resolvers
--- 'resolveCreateMetadata' and 'resolveConvertMetadata' fill that
--- field from each command's command-specific blob source (the
--- @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for
--- convert).
+-- | Parse the metadata flags shared between @slap create@ and @slap convert@.
+-- Produces a 'RequestedPatchMetadata' with 'requestedEmbeddedBlob' set to 'Nothing';
+-- the resolvers 'resolveCreateMetadata' and 'resolveConvertMetadata' fill that field from each command's blob source:
+-- the @--metadata FILE@ path for create, the 'EmbeddedBlobIntent' for convert.
 requestedMetadataParser :: Parser RequestedPatchMetadata
 requestedMetadataParser = do
     title             <- optional (option str (long "title" <> metavar "TEXT"
@@ -846,13 +781,12 @@ convertMetadataInputsParser = ConvertMetadataInputs
   <$> requestedMetadataParser
   <*> embeddedBlobIntentParser
 
--- | Parse the BPS embedded-blob intent for @slap convert@.  The three
--- alternatives are mutually exclusive: @--metadata FILE@ commits to
--- 'EmbedFromFile' and consumes the path; @--drop-metadata@ commits
--- to 'DropEmbeddedBlob' and consumes nothing else; absent both, the
--- 'pure' fallback selects 'CarryIfPresent'.  Passing both flags
--- leaves one unconsumed and the top-level parser rejects the
--- command — the same lane discipline used elsewhere in this file.
+-- | Parse the BPS embedded-blob intent for @slap convert@.
+-- The three alternatives are mutually exclusive:
+-- @--metadata FILE@ commits to 'EmbedFromFile' and consumes the path;
+-- @--drop-metadata@ commits to 'DropEmbeddedBlob' and consumes nothing else;
+-- absent both, the 'pure' fallback selects 'CarryIfPresent'.
+-- Passing both flags leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
   [ EmbedFromFile <$> pathOption (long "metadata" <> metavar "FILE"
@@ -863,13 +797,9 @@ embeddedBlobIntentParser = asum
   , pure CarryIfPresent
   ]
 
--- | Whether a CLI token is part of the canonical advertised set or
--- a quietly-accepted alias.  The parser case bodies in
--- 'parseCreateFormat' and 'parseRomType' historically inlined the
--- canonical list in their error messages and had no compiler-checked
--- relationship to the case arms.  Tagging each token in a single
--- table lets the advertised list be derived, eliminating any drift
--- between "what the parser accepts" and "what we tell users to type."
+-- | Whether a CLI token is part of the canonical advertised set or a quietly-accepted alias.
+-- Tagging each token in a single table lets the advertised list be derived from the same source the parser uses,
+-- so "what the parser accepts" and "what we tell users to type" cannot drift apart.
 data TokenVisibility = Canonical | Alias
 
 -- | The full set of CLI tokens 'parseCreateFormat' accepts, paired
@@ -926,11 +856,8 @@ parseTextMode input = case map toLower input of
   "undeclared" -> Right TextModeUndeclared
   _            -> Left ("unknown NINJA2 text mode: " ++ input ++ "\n  expected: utf8, undeclared")
 
--- | The full set of CLI tokens 'parseRomType' accepts, paired with
--- the 'PlatformType' each token resolves to and a 'TokenVisibility'
--- tag.  Source of truth — both 'parseRomType' and 'advertisedRomTypes'
--- derive from this table.  No aliases today; every token is
--- 'Canonical'.
+-- | The full set of CLI tokens 'parseRomType' accepts, paired with the 'PlatformType' each resolves to and a 'TokenVisibility' tag.
+-- Source of truth: both 'parseRomType' and 'advertisedRomTypes' derive from this table.
 romTypeTokens :: [(String, PlatformType, TokenVisibility)]
 romTypeTokens =
   [ ("raw",  PlatformRaw,             Canonical)
@@ -954,10 +881,8 @@ romTypeTokens =
   , ("gp32", PlatformGP32,            Canonical)
   ]
 
--- | The canonical ROM-type tokens 'parseRomType' advertises in its
--- error message and the @--rom-type@ help string.  Derived from
--- 'romTypeTokens' by filtering out aliases.  (Today every entry is
--- canonical; the filter is structural, not narrowing.)
+-- | The canonical ROM-type tokens 'parseRomType' advertises in its error message and the @--rom-type@ help string.
+-- Derived from 'romTypeTokens' by filtering out aliases.
 advertisedRomTypes :: [String]
 advertisedRomTypes =
   [token | (token, _platformType, Canonical) <- romTypeTokens]
@@ -994,12 +919,8 @@ patchInfoParser = do
 -- Archive-aware file reading
 ----------------------------------------------------------------------------
 
--- | Read a user-supplied input file into a 'ByteString.ByteString',
--- converting the two interesting IO failure modes — the path does not
--- exist, and the path exists but cannot be opened — into typed
--- 'SlapError' values rendered through slap's normal error channel.
--- Without this wrapper, a missing or unreadable input would escape as
--- an uncaught 'IOException' and bury the failure under a GHC backtrace.
+-- | Read a user-supplied input file, turning its two interesting IO failure modes into typed 'SlapError' values on slap's normal error channel:
+-- the path is absent ('MissingInputFile'), or present but unopenable ('UnreadableInputFile').
 readInputFile :: FilePath -> IO ByteString.ByteString
 readInputFile path = do
   result <- try (ByteString.readFile path)
@@ -1024,8 +945,6 @@ readUnwrap path = do
           pure unwrappedBytes
 
 -- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
--- 'InfoCommand' currently uses 'readUnwrap' unconditionally; if it ever grows
--- a @--raw@ flag of its own, route it through here instead.
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
@@ -1125,11 +1044,7 @@ doApply parsedCommand = do
       case verifySourceCRC32 verification of
         Just expected -> do
           sourceBytes <- readMaybeUnwrap (applyFileReading parsedCommand) (applySource parsedCommand)
-          let actual = crc32 sourceBytes
-          TextIO.putStrLn $ "input CRC: " <> formatCRC actual
-            <> if actual == expected
-                 then Text.pack [' ', checkMark]
-                 else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
+          TextIO.putStrLn (renderCrcCheck "input CRC" expected (crc32 sourceBytes))
         Nothing -> pure ()
       exitSuccess
     ApplyInPlace backupBehavior -> do
@@ -1185,11 +1100,7 @@ doUndo parsedCommand = do
           case verifyTargetCRC32 verification of
             Just expected -> do
               modifiedBytes <- readMaybeUnwrap (undoFileReading parsedCommand) (undoSource parsedCommand)
-              let actual = crc32 modifiedBytes
-              TextIO.putStrLn $ "output CRC: " <> formatCRC actual
-                <> if actual == expected
-                     then Text.pack [' ', checkMark]
-                     else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
+              TextIO.putStrLn (renderCrcCheck "output CRC" expected (crc32 modifiedBytes))
             Nothing -> pure ()
           exitSuccess
         UndoInPlace backupBehavior -> do
@@ -1249,9 +1160,6 @@ resolveCreateXDelta1Names parsedCommand createMeta = case createFormat parsedCom
       (fmap unXDelta1ToName   (requestedXDelta1ToName   createMeta))
       (createOriginal parsedCommand)
       (createModified parsedCommand)
-    -- 'unXDelta1FromName'\/'unXDelta1ToName' now project to
-    -- 'EncodedText' (stage 3b); the resolver's signature changed in
-    -- lockstep, so no other rewrap is needed at this site.
   _ -> Right Nothing
 
 ----------------------------------------------------------------------------
@@ -1271,7 +1179,6 @@ data ConvertDispatch
   | ConvertRequiresSource SomePatch
     -- ^ User didn't supply source, and the parsed patch doesn't carry
     -- 'PatchContents' (diff formats without self-contained records).
-    -- Terminates via 'needSourceMessage'.
 
 -- | Decide which convert path runs from the parsed patch and the CLI
 -- command.  The user's @--with INPUT@ flag commits to
@@ -1346,15 +1253,11 @@ doConvert parsedCommand = do
     ConvertRequiresSource somePatch ->
       bail (needSourceMessage somePatch)
 
--- | Resolve the xdelta1 file-name pair for @slap convert@. The
--- merge step in 'doConvert' has already combined the CLI value (if
--- any) with the source patch's extracted-meta inheritance (if the
--- source patch is xdelta1; otherwise the inherited side is
--- 'Nothing' and only the CLI value contributes). The convert
--- resolver refuses if either slot is still 'Nothing' after the
--- merge, naming the source patch's format in the refusal so the
--- user sees "BPS doesn't carry these fields". 'Just' iff the
--- target format is xdelta1; 'Nothing' for every other target.
+-- | Resolve the xdelta1 file-name pair for @slap convert@.
+-- Unlike 'resolveCreateXDelta1Names', this refuses rather than falling back to basenames.
+-- 'requireXDelta1FileNames' rejects a slot still 'Nothing' after 'doConvert' has merged the CLI value with any inherited from the source patch;
+-- the refusal names the source format, so the user sees "BPS doesn't carry these fields".
+-- 'Just' iff the target format is xdelta1; 'Nothing' for every other target.
 resolveConvertXDelta1Names
   :: ConvertCommand
   -> SomePatch
@@ -1382,11 +1285,8 @@ data SourceRequiredReason = SourceRequiredReason
   , sourceRequiredConsequence :: Text
   }
 
--- | Error message when --with is required but not provided.
--- The cause/consequence pair is carried by 'SourceRequiredReason' so
--- the two strings for one 'PatchKind' arm sit visually adjacent at
--- the construction site, and a future third 'PatchKind' constructor
--- fires '-Wincomplete-patterns' once instead of in two parallel cases.
+-- | Error message when @--with@ is required but not provided.
+-- The cause/consequence pair travels in 'SourceRequiredReason' so a future third 'PatchKind' constructor fires '-Wincomplete-patterns' once, not in two parallel cases.
 needSourceMessage :: SomePatch -> Text
 needSourceMessage somePatch =
   "converting from " <> name <> " requires the original ROM (--with INPUT)\n"
@@ -1394,14 +1294,15 @@ needSourceMessage somePatch =
   <> sourceRequiredConsequence reason
   where
     name   = formatLabelName (patchFormat somePatch)
+    convertConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
     reason = case patchKind somePatch of
       Differential -> SourceRequiredReason
         { sourceRequiredCause       = "tells us what to change in the input ROM, not what the result should be"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
+        , sourceRequiredConsequence = convertConsequence
         }
       Direct _ -> SourceRequiredReason
         { sourceRequiredCause       = "can't be converted directly into another patch format"
-        , sourceRequiredConsequence = "To convert it, we'd apply the patch to the input first and convert the result " <> Text.pack [emDash] <> " which is why we need the input."
+        , sourceRequiredConsequence = convertConsequence
         }
 
 -- | Warn when the source patch carries embedded BPS metadata bytes and
@@ -1435,9 +1336,7 @@ deriveOutput patchPath sourcePath =
 -- > deriveUndoOutput "Pokemon Red [translation].gbc"
 -- >   == "Pokemon Red [translation] [reverted].gbc"
 --
--- The helper makes no attempt to detect or strip pre-existing
--- bracketed markers; the input filename is treated as opaque and
--- the marker is appended unconditionally.
+-- Pre-existing bracketed markers are not detected or stripped; the marker is appended unconditionally.
 deriveUndoOutput :: FilePath -> FilePath
 deriveUndoOutput modifiedPath =
   dropExtension modifiedPath ++ " [reverted]" ++ takeExtension modifiedPath
@@ -1565,6 +1464,14 @@ noteSourceBytes label checkOffset expectedData sourceBytes =
 formatCRC :: CRC32 -> Text
 formatCRC crcValue = "0x" <> showCRC32 crcValue
 
+-- | Render a dry-run CRC line: the actual checksum, then a check-mark if it matches the expected one, or a ballot-X naming the expected.
+renderCrcCheck :: Text -> CRC32 -> CRC32 -> Text
+renderCrcCheck label expected actual =
+  label <> ": " <> formatCRC actual
+    <> if actual == expected
+         then Text.pack [' ', checkMark]
+         else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
+
 -- | Render the full per-record analysis to stderr, but only when
 -- verbosity is 'Verbose'. Used by 'doApply' and 'doUndo' to share
 -- the pre-action verbose dump; the caller passes the parsed patch
@@ -1574,14 +1481,10 @@ emitVerboseAnalysis Verbose parsed =
   TextIO.hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
 emitVerboseAnalysis Quiet _ = pure ()
 
--- | Read a patch file, parse it, return the parsed 'SomePatch'. Terminates
--- with a rendered error if the file can't be read or the bytes don't parse.
--- Caller is responsible for calling 'emitAdvisories' on the result if parse-
--- time advisories should be surfaced. Some callers ('doInfo', 'doExplain')
--- defer warning emission until after their primary stdout output renders,
--- so the user sees the asked-for content unobstructed; others ('doApply',
--- 'doUndo', 'doConvert') emit warnings immediately. The helper stays
--- parse-only to leave that ordering to each caller.
+-- | Read a patch file, parse it, return the parsed 'SomePatch'.
+-- Terminates with a rendered error if the file can't be read or the bytes don't parse.
+-- Emits no advisories itself: the caller invokes 'emitAdvisories'.
+-- That is because 'doInfo' and 'doExplain' defer warnings until after their stdout renders, while 'doApply', 'doUndo', and 'doConvert' emit immediately — so staying parse-only leaves that ordering to each caller.
 readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
 readAndParsePatch dialects metadataEncoding path = do
   patchBytes <- readUnwrap path
@@ -1591,21 +1494,14 @@ readAndParsePatch dialects metadataEncoding path = do
 -- Stdout and stderr encoding setup
 ----------------------------------------------------------------------------
 
--- | Bind 'stdout' and 'stderr' to UTF-8 with transliteration on
--- failure, so that printing a codepoint the encoder can't represent
--- substitutes a placeholder rather than crashing the program with
--- @hPutChar: invalid argument (Invalid or incomplete multibyte or
--- wide character)@. UTF-8 can encode every Unicode scalar value, so
--- the only thing it could ever fail on is a lone surrogate. With
--- 'main' pinning the filesystem encoding to UTF-8, GHC's argv and
--- filepath decoders now reject malformed bytes outright rather than
--- surrogate-escaping them — the one route that used to hand a lone
--- surrogate inward — and slap's own lenient decode substitutes
--- U+FFFD, a scalar, never an escape. So no surrogate is expected to
--- reach the output path; the transliteration stays as cheap defensive
--- cover, keeping a stray one from aborting the process at the first
--- attempt to print. Called once at slap startup,
--- before any I\/O.
+-- | Bind 'stdout' and 'stderr' to UTF-8 with transliteration on failure.
+-- A codepoint the encoder can't represent then substitutes a placeholder rather than crashing with an @hPutChar@ invalid-argument error.
+-- UTF-8 encodes every scalar value, so the only thing it can fail on is a lone surrogate.
+-- None is expected to reach output, for two reasons:
+-- 'main' pins the filesystem encoding to UTF-8, so GHC's argv and filepath decoders reject malformed bytes instead of surrogate-escaping them;
+-- and slap's lenient decode substitutes U+FFFD, a scalar.
+-- Transliteration is cheap defensive cover for a stray one.
+-- Called once at startup, before any I\/O.
 --
 -- We deliberately do not consult the locale here — slap does not
 -- consult it anywhere. Interpreting patch text fields whose encoding
