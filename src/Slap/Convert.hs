@@ -194,7 +194,7 @@ data CreateFormat
   deriving (Show, Eq)
 
 -- | User intent about what metadata should end up in an emitted patch.
--- Built from CLI flags in 'app/Main.hs' (and from parsed source patches
+-- Built from CLI flags in 'app/CLI.hs' (and from parsed source patches
 -- during conversion), then consumed by 'createPatch' /
 -- 'encodeDirect'.  Every 'Maybe' field's 'Nothing' means "the user
 -- didn't specify; let the format pick its default"; a 'Just' carries

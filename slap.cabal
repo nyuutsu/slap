@@ -164,6 +164,7 @@ library slap-internal
 
 executable slap
   main-is:          Main.hs
+  other-modules:    CLI
   hs-source-dirs:   app
   default-language: GHC2024
   ghc-options:      -Wall -Werror -Wpartial-fields -Wname-shadowing -O2 -g3

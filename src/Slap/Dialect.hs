@@ -41,6 +41,6 @@ dialectName PPF1OriginAxis = "PPF1 offset endianness"
 
 -- | The CLI flag spelling for a 'Dialect' axis, without the leading
 -- @--@. Single source of truth shared by 'Slap.Status' renderers and
--- the parser declaration in @app\/Main.hs@.
+-- the parser declaration in @app\/CLI.hs@.
 dialectFlagName :: Dialect -> Text
 dialectFlagName PPF1OriginAxis = "is-amiga-patch"
