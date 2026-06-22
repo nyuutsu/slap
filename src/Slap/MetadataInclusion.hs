@@ -21,23 +21,19 @@ data UndoInclusion
 -- | Whether the output patch should carry source-integrity-checking
 -- data, when the format supports embedding such data.
 --
--- This is the create-side member of slap's @--no-verify@ family.
+-- The embed-side member of slap's verification family, set by @--omit-verification@ on 'slap create' (and convert).
 -- Family siblings:
 --
--- * @VerificationPolicy@ (in @app\/Main.hs@) — the apply-side
---   member: what 'slap apply' does at runtime when verification
---   data is present and mismatches the input.
--- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
---   side member: what a parsed xdelta1 patch declares about its
---   own verification data.
+-- * @VerificationPolicy@ (in @app\/Main.hs@) — the apply-side member, set by @--no-verify@:
+--   what 'slap apply' does at runtime when verification data is present and mismatches the input.
+-- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-side member:
+--   what a parsed xdelta1 patch declares about its own verification data,
+--   surfaced to the user as the 'Slap.Status.VerificationOptedOutByCreator' warning when the creator opted out.
 --
--- Format-specific wire mechanisms vary — PPF3 samples a 1024-byte
--- block from a format-specific offset in the source ROM; xdelta1
--- hashes the entire source and target with MD5. Both answer the
--- same user-facing question: "does the source the user is applying
--- against match the one the patch was created from?" The user
--- expresses their choice once via @--no-verify@; slap routes the
--- answer to whichever wire mechanism the chosen format supports.
+-- Format-specific wire mechanisms vary — PPF3 samples a 1024-byte block from a format-specific offset in the source ROM;
+-- xdelta1 hashes the entire source and target with MD5.
+-- Both answer the same user-facing question: "does the source the user is applying against match the one the patch was created from?"
+-- @--omit-verification@ chooses whether to embed that data; slap routes it to whichever wire mechanism the chosen format supports.
 data VerificationInclusion
   = IncludeVerification
   | OmitVerification

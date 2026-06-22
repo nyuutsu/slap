@@ -52,9 +52,8 @@ import Slap.Text (EncodedText(..), EncodingName(..), resolveEncodingName,
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
--- The CLI parsers below wrap incoming 'String' as 'EncodedText'
--- tagged 'EncodingUtf8' at the boundary: text slap writes is always
--- UTF-8, with no write-side encoding choice.
+-- The CLI parsers below wrap incoming 'String' as 'EncodedText' tagged 'EncodingUtf8' at the boundary:
+-- text slap writes is always UTF-8, with no write-side encoding choice.
 import Slap.PPF3.Types (PPF3ImageType(..))
 import Slap.PlatformType (PlatformType(..))
 import Slap.Archive (detectArchive, unwrapArchive)
@@ -89,25 +88,19 @@ import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
 -- Types
 ----------------------------------------------------------------------------
 
--- | How slap should interpret input files whose first bytes look like an
--- archive signature.
+-- | How slap should interpret input files whose first bytes look like an archive signature.
 --
--- Slap can open single-entry zip and 7z archives transparently, so a user
--- with @rom.zip@ containing one @rom.gbc@ can pass either the archive or
--- the unwrapped ROM.  The @--raw@ flag exists to disable that: some files
--- share a magic-byte prefix with an archive format without actually being
--- one, and unwrapping them would fail or silently return the wrong bytes.
+-- Slap can open single-entry zip and 7z archives transparently,
+-- so a user with @rom.zip@ containing one @rom.gbc@ can pass either the archive or the unwrapped ROM.
+-- The @--raw@ flag exists to disable that:
+-- some files share a magic-byte prefix with an archive format without actually being one,
+-- and unwrapping them would fail or silently return the wrong bytes.
 data ArchiveHandling
   = AutoUnwrapSingleEntryArchives
   | ReadBytesVerbatim
   deriving (Show, Eq)
 
--- | Per-operation options for how slap reads its input files.  One field
--- today; more can land here as new file-reading concerns appear (e.g. a
--- future @--allow-missing@ for tolerating absent optional inputs).
---
--- The @--raw@ switch that populates 'fileReadingArchiveHandling' is
--- defined in 'fileReadingOptionsParser' below.
+-- | Per-operation options for how slap reads its input files.
 data FileReadingOptions = FileReadingOptions
   { fileReadingArchiveHandling :: ArchiveHandling
   }
@@ -115,10 +108,9 @@ data FileReadingOptions = FileReadingOptions
 
 -- | How much detail 'slap explain' should emit.
 --
--- @Summary@ is the default: top-level structure, field-by-field metadata,
--- aggregate record counts.  @FullRecords@ adds every parsed record to the
--- output, which is what you want when investigating a specific byte range
--- or comparing patches record-for-record.  Selected via @--records@.
+-- @Summary@ is the default: top-level structure, field-by-field metadata, aggregate record counts.
+-- @FullRecords@ adds every parsed record to the output.
+-- Selected via @--records@.
 data ExplainVerbosity
   = Summary
   | FullRecords
@@ -161,118 +153,77 @@ data UndoOutput
   deriving (Show, Eq)
 
 -- | Where convert writes the produced patch bytes.
---
--- 'ConvertToExplicitFile' uses an operator-chosen path via @-o@.
--- 'ConvertToDerivedFile' uses the source patch path with the target
--- format's extension substituted in.
+-- 'ConvertToDerivedFile' uses the source patch path with the target format's extension substituted in.
 data ConvertOutput
   = ConvertToExplicitFile FilePath
   | ConvertToDerivedFile
   deriving (Show, Eq)
 
--- | Optional side-channel for @slap convert@ when the target format needs
--- the original ROM or the user opts into apply-and-recreate.  Couples the
--- source path with its verification policy because @--no-verify@ is only
--- meaningful when there's a source to verify against; the convert parser
--- rejects @--no-verify@ alone.
+-- | Optional side-channel for @slap convert@ when the target format needs the original ROM,
+-- or the user opts into apply-and-recreate.
+-- Couples the source path with its verification policy because @--no-verify@ is only meaningful when there's a source to verify against;
+-- the convert parser rejects @--no-verify@ alone.
 data ConvertWithSource = ConvertWithSource
   { convertWithSourcePath   :: FilePath
   , convertWithVerification :: VerificationPolicy
   }
   deriving (Show, Eq)
 
--- | What the user wants done with the BPS embedded-metadata blob during
--- a convert.  'CarryIfPresent' is the default and matches the behavior
--- of every other metadata field: inherit from the source patch unless
--- the user overrides.  'EmbedFromFile' overrides with user-supplied
--- bytes.  'DropEmbeddedBlob' discards the source's blob without
--- substituting anything — the only way to produce a metadata-less BPS
--- from a source BPS that carried metadata.  The three intents are
--- mutually exclusive at the CLI: 'embeddedBlobIntentParser' commits to
--- exactly one based on which (if any) of @--metadata FILE@ and
--- @--drop-metadata@ the user typed.
+-- | What the user wants done with the BPS embedded-metadata blob during a convert.
+-- 'CarryIfPresent' (the default) inherits from the source patch unless the user overrides, like every other metadata field.
+-- 'EmbedFromFile' overrides with user-supplied bytes.
+-- 'DropEmbeddedBlob' discards the source's blob without substituting anything —
+-- the only way to produce a metadata-less BPS from a source BPS that carried metadata.
 data EmbeddedBlobIntent
   = CarryIfPresent
   | EmbedFromFile FilePath
   | DropEmbeddedBlob
   deriving (Show, Eq)
 
--- | What @slap create@ accepts on the metadata side: the parsed metadata fields.
--- 'requestedEmbeddedBlob' is filled by the resolver from the optional @--metadata FILE@ path below.
+-- | What @slap create@ accepts on the metadata side: the parsed metadata fields,
+-- with 'requestedEmbeddedBlob' filled by the resolver from the optional @--metadata FILE@ path below.
 -- A target that doesn't consume the blob triggers the same metadata-rejection check as any other format-incompatible field.
 data CreateMetadataInputs = CreateMetadataInputs
   { createParsedMetadata   :: RequestedPatchMetadata
   , createEmbeddedBlobPath :: Maybe FilePath
   }
 
--- | What @slap convert@ accepts on the metadata side: the parsed
--- metadata fields, with 'requestedEmbeddedBlob' filled by the
--- resolver from the 'EmbeddedBlobIntent' below.  The intent
--- distinguishes "override with these bytes", "drop the source's
--- blob", and the unspecified case ("inherit if present") — the
--- last of which is the convert-default and what every other field
--- on the inputs record does implicitly.
+-- | What @slap convert@ accepts on the metadata side: the parsed metadata fields,
+-- with 'requestedEmbeddedBlob' filled by the resolver from the 'EmbeddedBlobIntent' below.
 data ConvertMetadataInputs = ConvertMetadataInputs
   { convertParsedMetadata     :: RequestedPatchMetadata
   , convertEmbeddedBlobIntent :: EmbeddedBlobIntent
   }
 
 -- | Whether to refuse writing over an existing output file.
---
--- @RefuseOverwrite@ (default) checks 'doesFileExist' before writing and
--- aborts if the target is present; the user gets a clear error and can
--- decide whether to delete the existing file.  @ForceOverwrite@ (set by
--- @--force@) skips the check; the output path is overwritten
--- unconditionally.  Does not apply to the @--in-place@ lane, which
--- writes to the source by definition.
+-- Does not apply to the @--in-place@ lane, which writes to the source by definition.
 data OverwritePolicy
   = RefuseOverwrite
   | ForceOverwrite
   deriving (Show, Eq)
 
 -- | The user's runtime posture toward verification mismatches.
--- @EnforceVerification@ (default) fails with a readable error on
--- hash mismatch; @SkipVerification@ (set by @--no-verify@)
--- downgrades the mismatch to a warning and applies anyway.
+-- @EnforceVerification@ (default) fails with a readable error on a hash mismatch;
+-- @SkipVerification@ (set by @--no-verify@) downgrades the mismatch to a warning and applies anyway.
 -- Formats without source checksums are unaffected either way.
 --
--- This is the enforcement axis, set by @--no-verify@ on apply,
--- undo, and convert (the @--with INPUT@ check). It is distinct
--- from the inclusion axis — whether a created patch embeds
--- integrity data — set by @--omit-verification@. Related types:
---
--- * 'Slap.Convert.VerificationInclusion' — the inclusion axis:
---   what 'slap create' (and convert) embeds in the patch under @--omit-verification@.
---   Formats with their own integrity-check mechanisms plug into the same flag.
--- * 'Slap.XDelta1.Types.XDelta1VerificationPosture' — the parse-
---   side member: what a parsed xdelta1 patch declares about its
---   own verification data.
--- * 'Slap.Status.VerificationOptedOutByCreator' — the warning
---   emitted when the parse-side posture indicates an opt-out.
+-- The enforcement axis of slap's @--no-verify@ family, set on apply, undo, and convert (the @--with INPUT@ check).
+-- The embed-side counterpart and the full family map live on 'VerificationInclusion'.
 data VerificationPolicy
   = EnforceVerification
   | SkipVerification
   deriving (Show, Eq)
 
--- | How much progress output apply and undo emit to stderr during
--- operation.  Distinct from 'ExplainVerbosity', which controls the
--- detail of @slap explain@'s structural dump.
---
--- @Quiet@ (default) prints only the final "applied N records → PATH"
--- summary.  @Verbose@ (set by @-v@\/@--verbose@) also prints each
--- record as it's applied, via 'renderAnalysisFull'.
+-- | How much progress output apply and undo emit to stderr during operation.
+-- Distinct from 'ExplainVerbosity', which controls the detail of @slap explain@'s structural dump.
 data Verbosity
   = Quiet
   | Verbose
   deriving (Show, Eq)
 
--- | The top-level CLI command.  Each constructor wraps a dedicated record
--- type whose fields are total within that subcommand's scope; field
--- selectors are therefore total too, and the @-Wpartial-fields@ warning
--- (enabled in @slap.cabal@) fires on no field of any record below.  The
--- per-record verb prefix (@apply*@, @undo*@, ...) isn't dodging cross-
--- constructor field collisions — there are none — but it makes per-record
--- field accesses self-describing at use sites.
+-- | The top-level CLI command.
+-- The per-record verb prefix (@apply*@, @undo*@, ...) isn't dodging cross-constructor field collisions — there are none —
+-- but it makes per-record field accesses self-describing at use sites.
 data Command
   = Apply   ApplyCommand
   | Undo    UndoCommand
@@ -345,11 +296,10 @@ data ExplainCommand = ExplainCommand
 
 main :: IO ()
 main = do
-  -- Slap is a UTF-8 program on both sides: setFileSystemEncoding utf8
-  -- pins argument decoding to UTF-8 and setStdoutAndStderrToLenientUtf8
-  -- pins output, so LANG/LC_CTYPE cannot change how slap reads its
-  -- arguments or what it prints. The filesystem pin must run first,
-  -- before customExecParser decodes argv.
+  -- Slap is a UTF-8 program on both sides:
+  -- setFileSystemEncoding utf8 pins argument decoding to UTF-8 and setStdoutAndStderrToLenientUtf8 pins output,
+  -- so LANG/LC_CTYPE cannot change how slap reads its arguments or what it prints.
+  -- The filesystem pin must run first, before customExecParser decodes argv.
   setFileSystemEncoding utf8
   setStdoutAndStderrToLenientUtf8
   parsedCommand <- customExecParser (prefs showHelpOnEmpty) options
@@ -361,8 +311,7 @@ main = do
     Info    subcommand -> doInfo    subcommand
     Explain subcommand -> doExplain subcommand
 
--- | The top-level @--encodings@ flag: print the text encodings slap can
--- decode (for @--metadata-encoding@) and exit, like @--help@.
+-- | The top-level @--encodings@ flag: print the text encodings slap can decode and exit, like @--help@.
 encodingsInfo :: Parser (a -> a)
 encodingsInfo = infoOption renderAdvertisedEncodings
   ( long "encodings"
@@ -387,24 +336,17 @@ commandParser = subparser
  <> command "explain" (info (Explain <$> explainParser   <**> helper) (progDesc "Patch structure summary (use --records for full dump)"))
   )
 
--- | A positional argument whose value is a filesystem path.
--- Carries @action "file"@ so generated shell-completion scripts complete paths at this argument position
--- (see @slap --bash-completion-script@ / @--zsh-completion-script@ / @--fish-completion-script@).
+-- | Carries @action "file"@ so generated shell-completion scripts complete paths at this argument position.
 pathArgument :: Mod ArgumentFields FilePath -> Parser FilePath
 pathArgument modifiers = argument str (modifiers <> action "file")
 
--- | An option whose value is a filesystem path. Carries
--- @action "file"@ for the same reason as 'pathArgument'.
+-- | Carries @action "file"@ for the same reason as 'pathArgument'.
 pathOption :: Mod OptionFields FilePath -> Parser FilePath
 pathOption modifiers = option str (modifiers <> action "file")
 
--- | The @--metadata-encoding ENC@ option, shared by the commands that
--- surface metadata text ('slap info', 'slap explain', 'slap convert').
--- It sets how slap interprets text fields whose encoding the patch
--- format leaves undeclared (PPF descriptions, XDelta1 names, DPS
--- metadata, NINJA2 mode-0 fields). The name resolves at parse time via
--- 'resolveEncodingName', so an unresolvable name fails the CLI parse
--- rather than surprising the user mid-run; the default is UTF-8.
+-- | The @--metadata-encoding ENC@ option.
+-- The name resolves at parse time via 'resolveEncodingName',
+-- so an unresolvable name fails the CLI parse rather than surprising the user mid-run.
 metadataEncodingParser :: Parser EncodingName
 metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
   ( long "metadata-encoding"
@@ -416,10 +358,8 @@ metadataEncodingParser = option (eitherReader resolveMetadataEncoding)
        ++ " NINJA2 mode-0 fields) as ENC (e.g. shift-jis, cp1252; see"
        ++ " --encodings). Default: utf8.") )
 
--- | Resolve a @--metadata-encoding@ value to an 'EncodingName', or
--- name the value that didn't resolve. Wraps 'resolveEncodingName' for
--- 'eitherReader'; write is always UTF-8, so this only ever feeds the
--- read side.
+-- | Resolve a @--metadata-encoding@ value to an 'EncodingName', or name the value that didn't resolve.
+-- Write is always UTF-8, so this only ever feeds the read side.
 resolveMetadataEncoding :: String -> Either String EncodingName
 resolveMetadataEncoding raw = case resolveEncodingName (Text.pack raw) of
   Right named -> Right (EncodingNamed named)
@@ -634,10 +574,8 @@ convertParser = do
       , convertMetadataEncoding = metadataEncoding
       }
 
--- | Parser for the 'RequestedConstraints' bag, shared between
--- @slap create@ and @slap convert@. Each constraint contributes one
--- flag; 'constraintFlagName' is the single source of truth for the
--- spelling.
+-- | Parser for the 'RequestedConstraints' bag, shared between @slap create@ and @slap convert@.
+-- 'constraintFlagName' is the single source of truth for the flag spelling.
 constraintsParser :: Parser RequestedConstraints
 constraintsParser = do
   smcShape <- flag AllowAnyTruncationShape RequireSMCShapedTruncation
@@ -650,7 +588,7 @@ constraintsParser = do
     }
 
 -- | Parser for the 'RequestedDialects' bag, shared between every subcommand that reads or writes a patch.
--- Each dialect axis contributes one flag; 'dialectFlagName' is the single source of truth for the spelling.
+-- 'dialectFlagName' is the single source of truth for the flag spelling.
 dialectsParser :: Parser RequestedDialects
 dialectsParser = do
   ppf1Origin <- flag PPF1OriginPC PPF1OriginAmiga
@@ -676,17 +614,16 @@ convertWithSourceParser = ConvertWithSource
         (long "no-verify"
           <> help "Skip input hash verification (requires --with INPUT; mismatches become warnings)")
 
--- | The output-format flag accepted by @slap create@.  Defaults to BPS
--- so the bare @slap create base mod out@ command works without needing
--- the user to spell out a format.
+-- | The output-format flag for @slap create@.
+-- Defaults to BPS, so the bare @slap create base mod out@ works without spelling out a format.
 createFormatParser :: Parser CreateFormat
 createFormatParser = option (eitherReader parseCreateFormat)
   (long "format" <> metavar "FMT" <> value (CreateDifferential CreateBPS)
     <> help ("Output format: " ++ intercalate ", " advertisedCreateFormats
               ++ " (default: bps)"))
 
--- | The target-format flag accepted by @slap convert@.  No default:
--- conversion has to know what it is converting to.
+-- | The target-format flag for @slap convert@.
+-- No default: conversion has to know what it is converting to.
 convertToParser :: Parser CreateFormat
 convertToParser = option (eitherReader parseCreateFormat)
   (long "to" <> short 't' <> metavar "FMT"
@@ -761,32 +698,22 @@ requestedMetadataParser = do
     wrapUtf8 :: String -> EncodedText
     wrapUtf8 = EncodedText EncodingUtf8 . Text.pack
 
--- | Create-side metadata: the parsed metadata fields plus an optional
--- @--metadata FILE@ path whose bytes the resolver embeds as the patch's
--- metadata blob (BPS only; the rejection check refuses the flag
--- against any other target).
+-- | Create-side metadata: the parsed metadata fields plus an optional @--metadata FILE@ path
+-- whose bytes the resolver embeds as the patch's metadata blob (BPS only; the rejection check refuses the flag against any other target).
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser
   <*> optional (pathOption (long "metadata" <> metavar "FILE"
         <> help "Embed bytes from FILE as the output patch's metadata (BPS only)"))
 
--- | Convert-side metadata: the parsed metadata fields plus an
--- 'EmbeddedBlobIntent' that the resolver consults to fill the blob.
--- The intent parser admits one of @--metadata FILE@, @--drop-metadata@,
--- or neither — combining the two is rejected at parse time because
--- @--drop-metadata@'s alternative consumes only itself.
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
 convertMetadataInputsParser = ConvertMetadataInputs
   <$> requestedMetadataParser
   <*> embeddedBlobIntentParser
 
 -- | Parse the BPS embedded-blob intent for @slap convert@.
--- The three alternatives are mutually exclusive:
--- @--metadata FILE@ commits to 'EmbedFromFile' and consumes the path;
--- @--drop-metadata@ commits to 'DropEmbeddedBlob' and consumes nothing else;
--- absent both, the 'pure' fallback selects 'CarryIfPresent'.
--- Passing both flags leaves one unconsumed and the top-level parser rejects the command.
+-- @--metadata FILE@ selects 'EmbedFromFile', @--drop-metadata@ selects 'DropEmbeddedBlob', neither selects 'CarryIfPresent'.
+-- The three are mutually exclusive: passing both flags leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
   [ EmbedFromFile <$> pathOption (long "metadata" <> metavar "FILE"
@@ -797,17 +724,12 @@ embeddedBlobIntentParser = asum
   , pure CarryIfPresent
   ]
 
--- | Whether a CLI token is part of the canonical advertised set or a quietly-accepted alias.
--- Tagging each token in a single table lets the advertised list be derived from the same source the parser uses,
+-- | Tagging each token in a single table lets the advertised list be derived from the same source the parser uses,
 -- so "what the parser accepts" and "what we tell users to type" cannot drift apart.
 data TokenVisibility = Canonical | Alias
 
--- | The full set of CLI tokens 'parseCreateFormat' accepts, paired
--- with the 'CreateFormat' each token resolves to and a tag for
--- whether the token is advertised in error messages and help strings
--- ('Canonical') or quietly accepted as a convenience alias ('Alias').
--- Source of truth — both 'parseCreateFormat' and
--- 'advertisedCreateFormats' derive from this table.
+-- | Source of truth for slap's create-format tokens:
+-- both 'parseCreateFormat' and 'advertisedCreateFormats' derive from this table.
 createFormatTokens :: [(String, CreateFormat, TokenVisibility)]
 createFormatTokens =
   [ ("bps",     CreateDifferential CreateBPS,    Canonical)
@@ -834,10 +756,6 @@ createFormatTokens =
   , ("rfc-vcdiff", CreateDifferential CreateRFCVCDIFF, Canonical)
   ]
 
--- | The canonical create-format tokens 'parseCreateFormat'
--- advertises in its error message and the @--format@ / @--to@ help
--- strings.  Derived from 'createFormatTokens' by filtering out
--- aliases.
 advertisedCreateFormats :: [String]
 advertisedCreateFormats =
   [token | (token, _format, Canonical) <- createFormatTokens]
@@ -856,8 +774,8 @@ parseTextMode input = case map toLower input of
   "undeclared" -> Right TextModeUndeclared
   _            -> Left ("unknown NINJA2 text mode: " ++ input ++ "\n  expected: utf8, undeclared")
 
--- | The full set of CLI tokens 'parseRomType' accepts, paired with the 'PlatformType' each resolves to and a 'TokenVisibility' tag.
--- Source of truth: both 'parseRomType' and 'advertisedRomTypes' derive from this table.
+-- | Source of truth for slap's ROM-type tokens:
+-- both 'parseRomType' and 'advertisedRomTypes' derive from this table.
 romTypeTokens :: [(String, PlatformType, TokenVisibility)]
 romTypeTokens =
   [ ("raw",  PlatformRaw,             Canonical)
@@ -881,8 +799,6 @@ romTypeTokens =
   , ("gp32", PlatformGP32,            Canonical)
   ]
 
--- | The canonical ROM-type tokens 'parseRomType' advertises in its error message and the @--rom-type@ help string.
--- Derived from 'romTypeTokens' by filtering out aliases.
 advertisedRomTypes :: [String]
 advertisedRomTypes =
   [token | (token, _platformType, Canonical) <- romTypeTokens]
@@ -944,26 +860,20 @@ readUnwrap path = do
           TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> Text.pack entryName)
           pure unwrappedBytes
 
--- | Read a file, honoring the 'FileReadingOptions' view of archive handling.
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> readInputFile
 
--- | Resolve @slap create@'s metadata inputs.  @--metadata FILE@'s
--- contents (when supplied) become the embedded blob; otherwise the
--- blob field stays 'Nothing'.
+-- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ is read into the embedded blob.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
   embeddedBlob <- traverse readInputFile (createEmbeddedBlobPath inputs)
   pure (createParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
 
--- | Resolve @slap convert@'s metadata inputs.  Only 'EmbedFromFile'
--- triggers IO and produces a 'Just'; 'CarryIfPresent' and
--- 'DropEmbeddedBlob' both leave the field 'Nothing'.  Distinguishing
--- the latter two happens in 'doConvert' after the source-patch
--- merge: the merge would re-introduce the source's blob for both,
--- but a 'DropEmbeddedBlob' intent overrides it back to 'Nothing'.
+-- | Resolve @slap convert@'s metadata inputs.
+-- Only 'EmbedFromFile' triggers IO and produces a 'Just'; 'CarryIfPresent' and 'DropEmbeddedBlob' both leave the field 'Nothing' here.
+-- The two 'Nothing' cases diverge only later, in 'doConvert' after the source-patch merge.
 resolveConvertMetadata :: ConvertMetadataInputs -> IO RequestedPatchMetadata
 resolveConvertMetadata inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
@@ -1145,10 +1055,9 @@ doCreate parsedCommand = do
   ByteString.writeFile (createOutput parsedCommand) (unPatchFileContents (resultBytes result))
   TextIO.putStrLn ("wrote " <> pathText (createOutput parsedCommand))
 
--- | Resolve the xdelta1 file-name pair for @slap create@, falling
--- back to @basename@ of the source\/target file paths when CLI flags
--- are absent. 'Just' iff the target format is xdelta1; 'Nothing' for
--- every other target.
+-- | Resolve the xdelta1 file-name pair for @slap create@,
+-- falling back to the basename of the source\/target file paths when the CLI flags are absent.
+-- 'Just' iff the target format is xdelta1; 'Nothing' for every other target.
 resolveCreateXDelta1Names
   :: CreateCommand
   -> RequestedPatchMetadata
@@ -1166,27 +1075,18 @@ resolveCreateXDelta1Names parsedCommand createMeta = case createFormat parsedCom
 -- Convert
 ----------------------------------------------------------------------------
 
--- | The three real convert cases, each with the inputs the branch needs.
--- Built once from the parsed patch and the CLI command by
--- 'chooseConvertDispatch'; pattern-matched once in 'doConvert'.
+-- | The convert cases, built once by 'chooseConvertDispatch' and pattern-matched once in 'doConvert'.
 data ConvertDispatch
   = ApplyAndRecreate ConvertWithSource
-    -- ^ User supplied @--with INPUT@; load the source, apply the patch,
-    -- re-encode the target bytes as the target format.
+    -- ^ User supplied @--with INPUT@.
   | SourceLessConvert PatchContents
-    -- ^ User didn't supply source, but the parsed patch carries enough
-    -- structure ('PatchContents') to re-encode without source bytes.
+    -- ^ No source supplied; the parsed patch carries 'PatchContents'.
   | ConvertRequiresSource SomePatch
-    -- ^ User didn't supply source, and the parsed patch doesn't carry
-    -- 'PatchContents' (diff formats without self-contained records).
+    -- ^ No source supplied, and the parsed patch carries no 'PatchContents'.
 
--- | Decide which convert path runs from the parsed patch and the CLI
--- command.  The user's @--with INPUT@ flag commits to
--- apply-and-recreate outright; without it the parsed 'PatchKind'
--- decides — only @'Direct' ('Just' _)@ carries enough structure
--- ('PatchContents') to re-encode source-lessly. @'Direct' 'Nothing'@
--- (PPF4 with Append commands) and 'Differential' both need the
--- source; 'needSourceMessage' renders the user-visible reason.
+-- | Decide which convert path runs from the parsed patch and the CLI command.
+-- The @--with INPUT@ flag commits to apply-and-recreate outright; without it the parsed 'PatchKind' decides.
+-- 'needSourceMessage' renders the user-visible reason for the source-required cases.
 chooseConvertDispatch :: ConvertCommand -> SomePatch -> ConvertDispatch
 chooseConvertDispatch parsedCommand parsed =
   case convertWithSource parsedCommand of
@@ -1197,9 +1097,6 @@ chooseConvertDispatch parsedCommand parsed =
       Differential           -> ConvertRequiresSource parsed
 
 -- | Project the optional 'PatchContents' bag out of a 'SomePatch'.
--- 'Differential' patches never carry one; 'Direct' patches carry
--- 'Just' when their data fits the universal-bag representation
--- ('Nothing' for PPF4 with Append commands).
 patchContentsOf :: SomePatch -> Maybe PatchContents
 patchContentsOf parsed = case patchKind parsed of
   Direct optionalContents -> optionalContents
@@ -1221,11 +1118,8 @@ doConvert parsedCommand = do
         ConvertToDerivedFile           -> replaceExtension (convertPatch parsedCommand)
                                                            (formatExtension (convertTo parsedCommand))
       blobIntent = convertEmbeddedBlobIntent (convertMetadata parsedCommand)
-      -- The merge inherits the source patch's embedded blob whenever
-      -- the CLI didn't supply one — desirable for 'CarryIfPresent',
-      -- but for 'DropEmbeddedBlob' it would re-introduce the very
-      -- bytes the user asked to discard.  Override the field back to
-      -- 'Nothing' for that one intent.
+      -- The merge inherits the source patch's embedded blob when the CLI supplied none;
+      -- for 'DropEmbeddedBlob' that would re-introduce the very bytes the user asked to discard.
       mergedMeta = case blobIntent of
         DropEmbeddedBlob ->
           (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
@@ -1254,9 +1148,8 @@ doConvert parsedCommand = do
       bail (needSourceMessage somePatch)
 
 -- | Resolve the xdelta1 file-name pair for @slap convert@.
--- Unlike 'resolveCreateXDelta1Names', this refuses rather than falling back to basenames.
--- 'requireXDelta1FileNames' rejects a slot still 'Nothing' after 'doConvert' has merged the CLI value with any inherited from the source patch;
--- the refusal names the source format, so the user sees "BPS doesn't carry these fields".
+-- Unlike 'resolveCreateXDelta1Names', this refuses rather than falling back to basenames;
+-- 'requireXDelta1FileNames' owns the refusal.
 -- 'Just' iff the target format is xdelta1; 'Nothing' for every other target.
 resolveConvertXDelta1Names
   :: ConvertCommand
@@ -1271,22 +1164,19 @@ resolveConvertXDelta1Names parsedCommand parsed mergedMeta = case convertTo pars
       (patchFormat parsed)
   _ -> Right Nothing
 
--- | Apply a parsed patch to source bytes, returning target bytes (for convert).
 applyForConvert :: SomePatch -> InputFileContents -> IO OutputFileContents
 applyForConvert somePatch source = do
   outcome <- orBail =<< runApply (patchApply somePatch) source
   emitAdvisories (outcomeAdvisories outcome)
   pure (outcomeValue outcome)
 
--- | Local helper for 'needSourceMessage' — the cause/consequence pair
--- of why source-less convert fails for a given 'PatchKind'.
+-- | Local helper for 'needSourceMessage'.
 data SourceRequiredReason = SourceRequiredReason
   { sourceRequiredCause       :: Text
   , sourceRequiredConsequence :: Text
   }
 
 -- | Error message when @--with@ is required but not provided.
--- The cause/consequence pair travels in 'SourceRequiredReason' so a future third 'PatchKind' constructor fires '-Wincomplete-patterns' once, not in two parallel cases.
 needSourceMessage :: SomePatch -> Text
 needSourceMessage somePatch =
   "converting from " <> name <> " requires the original ROM (--with INPUT)\n"
@@ -1305,11 +1195,9 @@ needSourceMessage somePatch =
         , sourceRequiredConsequence = convertConsequence
         }
 
--- | Warn when the source patch carries embedded BPS metadata bytes and
--- the target format has no metadata channel to put them in — i.e.,
--- when conversion silently drops the bytes.  Returns @[]@ for
--- BPS→BPS (the merge carries the bytes through) and for any source
--- patch that didn't have metadata to begin with.
+-- | Warn when the source patch carries embedded BPS metadata bytes
+-- and the target format has no metadata channel to put them in — conversion silently drops the bytes.
+-- Returns @[]@ for BPS→BPS (the merge carries the bytes through), and for any source patch that had no metadata to begin with.
 computeBPSDropAdvisories :: SomePatch -> CreateFormat -> [SlapAdvisory]
 computeBPSDropAdvisories parsed targetFormat = case patchMetadata parsed of
   Just metaBytes | targetFormat /= CreateDifferential CreateBPS ->
@@ -1320,30 +1208,25 @@ computeBPSDropAdvisories parsed targetFormat = case patchMetadata parsed of
 -- Helpers
 ----------------------------------------------------------------------------
 
--- | Derive output path from patch and source names.
--- "game.gbc" + "translation.ips" → "game [translation].gbc"
+-- | "game.gbc" + "translation.ips" → "game [translation].gbc"
 deriveOutput :: FilePath -> FilePath -> FilePath
 deriveOutput patchPath sourcePath =
   dropExtension sourcePath ++ " [" ++ takeBaseName patchPath ++ "]" ++ takeExtension sourcePath
 
--- | Derive an output path for @slap undo@ when no @-i@, @-o@, or
--- positional @OUTPUT@ is supplied.  Inserts @[reverted]@ at the end
--- of the modified-file name, before the extension if there is one.
--- Examples:
+-- | Append a @[reverted]@ marker before the extension, if there is one.
 --
 -- > deriveUndoOutput "patched.gba"  == "patched [reverted].gba"
 -- > deriveUndoOutput "patched"      == "patched [reverted]"
 -- > deriveUndoOutput "Pokemon Red [translation].gbc"
 -- >   == "Pokemon Red [translation] [reverted].gbc"
 --
--- Pre-existing bracketed markers are not detected or stripped; the marker is appended unconditionally.
+-- Pre-existing bracketed markers are not detected or stripped;
+-- the marker is appended unconditionally.
 deriveUndoOutput :: FilePath -> FilePath
 deriveUndoOutput modifiedPath =
   dropExtension modifiedPath ++ " [reverted]" ++ takeExtension modifiedPath
 
--- | Abort if the destination already exists and the user did not pass
--- @--force@.  Used by the two apply lanes that write to a path other
--- than the source ('ApplyToExplicitFile' and 'ApplyToDerivedFile').
+-- | Abort if the destination already exists and the user did not pass @--force@.
 refuseOverwrite :: OverwritePolicy -> FilePath -> IO ()
 refuseOverwrite ForceOverwrite  _          = pure ()
 refuseOverwrite RefuseOverwrite outputPath = do
@@ -1358,29 +1241,24 @@ refuseOverwrite RefuseOverwrite outputPath = do
 verifySource :: VerificationPolicy -> Verification -> InputFileContents -> IO ()
 verifySource verificationPolicy verification (InputFileContents sourceBytes) = do
   let preprocessed = applySourcePreHash (verifySourcePreHash verification) sourceBytes
-  -- Advisory-class checks first: per-spec non-fatal diagnostics that
-  -- the format chose to populate. These fire regardless of policy
-  -- because they're structurally non-fatal; --no-verify operates
-  -- only on fatal-class checks below.
+  -- Advisory-class checks first: per-spec non-fatal diagnostics that the format chose to populate.
+  -- These fire regardless of policy because they're structurally non-fatal;
+  -- --no-verify operates only on the fatal-class checks below.
   forM_ (verifySourceBlocks verification) $ \(BlockCheck blockOffset expectedCRC) ->
     noteBlockCRC SourceSide blockOffset expectedCRC (crc16 (viewBytesInRange blockOffset (Length 0x10000) sourceBytes))
   forM_ (verifyPPFBlock verification) $ \(ValidationBlock blockOffset expectedData) ->
     notePPFBlock blockOffset expectedData sourceBytes
   forM_ (verifySourceBytes verification) $ \(ByteCheck checkOffset (AdvisoryExpectedBytes expectedData) checkLabel) ->
     noteSourceBytes (ByteCheckLabel checkLabel) checkOffset expectedData sourceBytes
-  -- File size sits at the advisory/fatal boundary: its severity rides
-  -- on the 'FileSizeCheck' value, so 'AdvisorySize' warns here with the
-  -- other diagnostics while 'RequiredSize' enforces like the fatal
-  -- checks below. Either way the warning prints before any fatal abort.
+  -- File size straddles the advisory/fatal boundary: 'AdvisorySize' warns, 'RequiredSize' enforces ('FileSizeCheck' carries which).
+  -- It runs before the hash checks, so a size warning prints ahead of any fatal mismatch.
   forM_ (verifyFileSize verification) $ \fileSizeCheck ->
     let actualSize = FileSize (fromIntegral (ByteString.length sourceBytes))
     in case fileSizeCheck of
          AdvisorySize expectedSize -> noteFileSize expectedSize actualSize
          RequiredSize expectedSize -> enforceFileSize verificationPolicy SourceSide expectedSize actualSize
-  -- Fatal-class checks: under EnforceVerification a mismatch is
-  -- fatal; under SkipVerification (--no-verify) it downgrades to a
-  -- warning. The format's choice to populate these slots expresses
-  -- the spec's "this mismatch invalidates the patch" judgment.
+  -- Fatal-class checks.
+  -- The format's choice to populate these slots expresses the spec's "this mismatch invalidates the patch" judgment.
   forM_ (verifySourceCRC32 verification) $ \expected ->
     enforceCRC verificationPolicy SourceSide expected (crc32 preprocessed)
   forM_ (verifySourceMD5 verification) $ \expected ->
@@ -1401,16 +1279,12 @@ verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = 
   forM_ (verifyWindowAdler32 verification) $ \(WindowCheck windowOffset windowLength expectedChecksum) ->
     enforceAdler verificationPolicy windowOffset expectedChecksum (adler32 (viewBytesInRange windowOffset windowLength targetBytes))
 
--- | Emit a verification-mismatch warning. The 'note*' family
--- delegates here; 'enforceMismatch' falls through here on its
--- 'SkipVerification' branch.
+-- | Emit a verification-mismatch warning: the single point all mismatch warnings funnel through.
 noteMismatch :: SlapAdvisory -> IO ()
 noteMismatch warning = emitAdvisories [warning]
 
--- | Policy-aware twin of 'noteMismatch'. Under
--- 'EnforceVerification' the mismatch is fatal; under
--- 'SkipVerification' (@--no-verify@) it falls through to
--- 'noteMismatch'.
+-- | The policy gate every @enforce*@ helper routes mismatches through.
+-- 'EnforceVerification' makes the mismatch fatal; 'SkipVerification' (@--no-verify@) falls through to 'noteMismatch'.
 enforceMismatch :: VerificationPolicy -> SlapAdvisory -> IO ()
 enforceMismatch SkipVerification    = noteMismatch
 enforceMismatch EnforceVerification = bailError . VerificationFatal
@@ -1464,7 +1338,6 @@ noteSourceBytes label checkOffset expectedData sourceBytes =
 formatCRC :: CRC32 -> Text
 formatCRC crcValue = "0x" <> showCRC32 crcValue
 
--- | Render a dry-run CRC line: the actual checksum, then a check-mark if it matches the expected one, or a ballot-X naming the expected.
 renderCrcCheck :: Text -> CRC32 -> CRC32 -> Text
 renderCrcCheck label expected actual =
   label <> ": " <> formatCRC actual
@@ -1472,19 +1345,17 @@ renderCrcCheck label expected actual =
          then Text.pack [' ', checkMark]
          else Text.pack [' ', ballotX] <> " (expected " <> formatCRC expected <> ")"
 
--- | Render the full per-record analysis to stderr, but only when
--- verbosity is 'Verbose'. Used by 'doApply' and 'doUndo' to share
--- the pre-action verbose dump; the caller passes the parsed patch
--- and the 'Verbosity' value from its own command record.
+-- | Render the full per-record analysis to stderr, gated on 'Verbose'.
 emitVerboseAnalysis :: Verbosity -> SomePatch -> IO ()
 emitVerboseAnalysis Verbose parsed =
   TextIO.hPutStr stderr (renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
 emitVerboseAnalysis Quiet _ = pure ()
 
 -- | Read a patch file, parse it, return the parsed 'SomePatch'.
--- Terminates with a rendered error if the file can't be read or the bytes don't parse.
--- Emits no advisories itself: the caller invokes 'emitAdvisories'.
--- That is because 'doInfo' and 'doExplain' defer warnings until after their stdout renders, while 'doApply', 'doUndo', and 'doConvert' emit immediately — so staying parse-only leaves that ordering to each caller.
+-- Emits no advisories itself; the caller invokes 'emitAdvisories'.
+-- 'doInfo' and 'doExplain' defer warnings until after their stdout renders,
+-- while 'doApply', 'doUndo', and 'doConvert' emit immediately —
+-- staying parse-only leaves that ordering to each caller.
 readAndParsePatch :: RequestedDialects -> EncodingName -> FilePath -> IO SomePatch
 readAndParsePatch dialects metadataEncoding path = do
   patchBytes <- readUnwrap path
@@ -1503,15 +1374,13 @@ readAndParsePatch dialects metadataEncoding path = do
 -- Transliteration is cheap defensive cover for a stray one.
 -- Called once at startup, before any I\/O.
 --
--- We deliberately do not consult the locale here — slap does not
--- consult it anywhere. Interpreting patch text fields whose encoding
--- the format leaves undeclared is the @--metadata-encoding@ flag's
--- job (an explicit input-side choice, not a statement about the
--- terminal), and every realistic terminal slap runs in is UTF-8.
--- Encoding our own console output to whatever the locale claims would
--- only invite mojibake: @LANG=ja_JP.SJIS slap info patch.bps@ would
--- re-encode slap's own chatter as shift-jis and render it as garbage
--- on a UTF-8 terminal. Stdout and stderr are UTF-8, full stop.
+-- We deliberately do not consult the locale here — slap does not consult it anywhere.
+-- Interpreting patch text fields whose encoding the format leaves undeclared is the @--metadata-encoding@ flag's job
+-- (an explicit input-side choice, not a statement about the terminal),
+-- and every realistic terminal slap runs in is UTF-8.
+-- Encoding our own console output to whatever the locale claims would only invite mojibake:
+-- @LANG=ja_JP.SJIS slap info patch.bps@ would re-encode slap's own chatter as shift-jis and render it as garbage on a UTF-8 terminal.
+-- Stdout and stderr are UTF-8, full stop.
 setStdoutAndStderrToLenientUtf8 :: IO ()
 setStdoutAndStderrToLenientUtf8 = do
   hSetEncoding stdout lenientUtf8
