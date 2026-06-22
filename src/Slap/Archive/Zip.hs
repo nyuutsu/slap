@@ -14,7 +14,7 @@ import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Slap.Archive.Types (UnreadableReason(..))
 import Slap.FFI (readByteString, readText, withByteString)
@@ -36,13 +36,13 @@ foreign import ccall unsafe "rusty_zip_extract_entry"
 
 -- | A ZIP's entry names, read from the central directory.
 zipEntryNames :: ByteString -> Either UnreadableReason [Text]
-zipEntryNames archiveBytes = unsafeDupablePerformIO $
+zipEntryNames archiveBytes = unsafePerformIO $
   withByteString archiveBytes $ \dataPointer dataLength ->
     fmap splitNames <$> callZipReader (rustyZipEntryNames dataPointer dataLength)
 
 -- | The decompressed bytes of one named entry.
 zipExtractEntry :: ByteString -> Text -> Either UnreadableReason ByteString
-zipExtractEntry archiveBytes entryName = unsafeDupablePerformIO $
+zipExtractEntry archiveBytes entryName = unsafePerformIO $
   withByteString archiveBytes $ \dataPointer dataLength ->
   withByteString (TextEncoding.encodeUtf8 entryName) $ \namePointer nameLength ->
     callZipReader (rustyZipExtractEntry dataPointer dataLength namePointer nameLength)

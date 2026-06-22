@@ -28,7 +28,7 @@ import Foreign.C.Types (CSize(..))
 import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek)
 import Slap.Checksum (CRC32(..), Adler32(..))
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 foreign import ccall unsafe "rusty_crc32"
   rustyCRC32 :: Ptr Word8 -> CSize -> Word32
@@ -48,14 +48,14 @@ foreign import ccall unsafe "rusty_free"
 -- freed memory. Forcing inside the bracket pins the call to the
 -- window where the pointer is guaranteed valid.
 crc32 :: ByteString -> CRC32
-crc32 input = CRC32 $ unsafeDupablePerformIO $
+crc32 input = CRC32 $ unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     pure $! rustyCRC32 dataPointer dataLength
 
 -- | Adler-32 via rusty-slap (RFC 1950). The @pure $!@ is load-bearing
 -- for the same reason as in 'crc32'.
 adler32 :: ByteString -> Adler32
-adler32 input = Adler32 $ unsafeDupablePerformIO $
+adler32 input = Adler32 $ unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     pure $! rustyAdler32 dataPointer dataLength
 

@@ -22,7 +22,7 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Array (withArray)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Slap.Measure (Length(..))
 import Slap.Status (DecompressionCause(..))
@@ -108,7 +108,7 @@ callDecompressor
     -> IO CInt )
   -> ByteString -> Either DecompressionCause ByteString
 callDecompressor _          input | ByteString.null input = Right ByteString.empty
-callDecompressor decompress input = unsafeDupablePerformIO $
+callDecompressor decompress input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
@@ -139,7 +139,7 @@ zlibInflate = callDecompressor rustyZlibInflate
 -- rather than exposing a knob no caller currently turns.
 -- Pure: in-memory deflate has no error to surface (allocation failure aborts).
 zlibDeflate :: ByteString -> ByteString
-zlibDeflate input = unsafeDupablePerformIO $
+zlibDeflate input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
   alloca $ \resultAddressPointer ->
   alloca $ \resultLengthPointer -> do
@@ -155,7 +155,7 @@ gzipInflate = callDecompressor rustyGzipInflate
 -- compression level, @mtime = 0@ pinned for deterministic output).
 -- Round-trip partner of 'gzipInflate'.
 gzipDeflate :: ByteString -> ByteString
-gzipDeflate input = unsafeDupablePerformIO $
+gzipDeflate input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
   alloca $ \resultAddressPointer ->
   alloca $ \resultLengthPointer -> do
@@ -187,7 +187,7 @@ data LzmaDecoded = LzmaDecoded
 -- not an empty output, it is a stream with no xz header, and the
 -- decoder's complaint to that effect is the honest answer.
 lzmaDecompress :: ByteString -> Either DecompressionCause LzmaDecoded
-lzmaDecompress input = unsafeDupablePerformIO $
+lzmaDecompress input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
@@ -233,7 +233,7 @@ data DjwDecoded = DjwDecoded
 -- visible. Written longhand for the same reasons as 'lzmaDecompress':
 -- the consumed-length channel, and an honest answer on empty input.
 djwDecompress :: Length -> ByteString -> Either DecompressionCause DjwDecoded
-djwDecompress expectedOutputLength input = unsafeDupablePerformIO $
+djwDecompress expectedOutputLength input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     alloca $ \resultAddressPointer ->
     alloca $ \resultLengthPointer ->
@@ -284,7 +284,7 @@ data FgkDecoded = FgkDecoded
 -- 'lzmaDecompress': the consumed-length channel, and an honest answer
 -- on empty input.
 fgkDecompress :: [Length] -> ByteString -> Either DecompressionCause FgkDecoded
-fgkDecompress sectionOutputLengths input = unsafeDupablePerformIO $
+fgkDecompress sectionOutputLengths input = unsafePerformIO $
   withByteString input $ \dataPointer dataLength ->
     withArray (map (fromIntegral . unLength) sectionOutputLengths) $ \sectionLengthsPointer ->
     alloca $ \resultAddressPointer ->

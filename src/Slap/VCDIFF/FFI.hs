@@ -23,7 +23,7 @@ import Data.Word (Word8)
 import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Slap.FFI (readByteString, withByteString, readWord64LE)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
@@ -39,11 +39,10 @@ foreign import ccall unsafe "rusty_vcdiff_cover"
     -> IO CInt
 
 -- | Segment a target into a 'Cover' against a source, via the Rust
--- matcher. Total, like 'Slap.BPS.FFI.bpsDiff': the return code is 0 by
--- construction and carries no information, so it is discarded.
+-- matcher. It cannot fail, so its return code is ignored.
 vcdiffCover :: InputFileContents -> OutputFileContents -> Cover
 vcdiffCover (InputFileContents source) (OutputFileContents target) =
-  unsafeDupablePerformIO $
+  unsafePerformIO $
     withByteString source $ \sourcePointer sourceLength ->
     withByteString target $ \targetPointer targetLength ->
     alloca $ \kindsAddressPointer   ->

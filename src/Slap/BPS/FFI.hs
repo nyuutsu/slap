@@ -12,7 +12,7 @@ import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import Slap.FFI (readByteString, withByteString)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 foreign import ccall unsafe "rusty_bps_diff"
   rustyBpsDiff :: Ptr Word8 -> CSize -> Ptr Word8 -> CSize
@@ -21,7 +21,7 @@ foreign import ccall unsafe "rusty_bps_diff"
 -- | BPS diff via rusty-slap (suffix-array algorithm, after Alcaro's Flips).
 -- Returns the raw encoded action byte stream.
 bpsDiff :: InputFileContents -> OutputFileContents -> ByteString
-bpsDiff (InputFileContents source) (OutputFileContents target) = unsafeDupablePerformIO $
+bpsDiff (InputFileContents source) (OutputFileContents target) = unsafePerformIO $
   withByteString source $ \sourcePointer sourceLength ->
   withByteString target $ \targetPointer targetLength ->
   alloca $ \resultAddressPointer ->

@@ -25,7 +25,7 @@ import Foreign.C.Types (CSize(..), CInt(..))
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (peek)
-import System.IO.Unsafe (unsafeDupablePerformIO)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Slap.Display.Common (renderAsText)
 import Slap.Display.Primitives (padHex)
@@ -69,7 +69,7 @@ xdelta1Diff
   -> OutputFileContents
   -> Either SlapError XDelta1DiffOutput
 xdelta1Diff (InputFileContents sourceBytes) (OutputFileContents targetBytes) =
-  unsafeDupablePerformIO $
+  unsafePerformIO $
     withByteString sourceBytes $ \sourcePointer sourceLength ->
     withByteString targetBytes $ \targetPointer targetLength ->
     alloca $ \targetsAddressPointer        ->
