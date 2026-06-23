@@ -12,9 +12,9 @@ Four layers, dependencies flowing strictly downward.
 
 2. **Format modules.** Each `Slap/Foo/` directory owns one format, decomposed into `Types`, `Parse`, `Apply`, `Describe`, `Create`. Additional format-specific modules are allowed where the work earns its own home — `Slap.IPS.Optimize` is the current example, hosting the DP partitioner that decides which copy and RLE records IPS create should emit. Some formats currently lack `Create`; that's a gap the project is closing, not a design choice. No format module imports another format module; siblings share only the foundation.
 
-3. **Coordination.** `Detect`, `Convert`, `SomePatch`, `Create`, `Archive`, `Display`, `Compression.Yay0`. Bridges between format-specific code and the CLI.
+3. **Coordination.** `Detect`, `Convert`, `SomePatch`, `Create`, `Display`, `Compression.Yay0`. Bridges between format-specific code and the frontend.
 
-4. **Entry point.** `Main`: CLI via `optparse-applicative`, six subcommands (`apply`, `undo`, `create`, `convert`, `info`, `explain`).
+4. **Native frontend (`app/`).** `Main` dispatches the six subcommands (`apply`, `undo`, `create`, `convert`, `info`, `explain`) and runs the IO handlers; `CLI` is the `optparse-applicative` command surface; `Archive` / `Archive.Zip` unwrap single-entry archives (ZIP in-process, RAR and 7z by shelling out). This layer links the engine, never the reverse.
 
 ## The spine: `SomePatch`
 

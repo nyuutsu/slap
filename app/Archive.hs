@@ -1,11 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Unwrapping single-entry archives: ZIP via "Slap.Archive.Zip", RAR and
--- 7z by shelling out. The vocabulary lives in "Slap.Archive.Types".
-module Slap.Archive
-  ( ArchiveFormat(..)
-  , detectArchive
-  , unwrapArchive
+-- | The native frontend's archive-unwrap layer: open a single-entry
+-- container and hand back the file inside. ZIP is read in-process through
+-- "Archive.Zip"; RAR and 7z shell out to @unrar@ and @7z@. The vocabulary
+-- it acts on — the recognized formats, detection, and the closed set of
+-- unwrap failures — lives engine-side in "Slap.Archive.Types"; this module
+-- depends on that, never the reverse.
+module Archive
+  ( unwrapArchive
   ) where
 
 import Data.Bifunctor (first)
@@ -16,10 +18,10 @@ import Data.List (isSuffixOf, stripPrefix)
 import Data.Maybe (mapMaybe)
 import qualified Data.Text as Text
 import Slap.Archive.Types
-  ( ArchiveFormat(..), detectArchive, toolsFor
+  ( ArchiveFormat(..), toolsFor
   , ToolName(..), ToolDiagnostic(..), EntryName(..), SeenEntryCount(..)
   , UnwrapError(..) )
-import Slap.Archive.Zip (zipEntryNames, zipExtractEntry)
+import Archive.Zip (zipEntryNames, zipExtractEntry)
 import System.Directory (findExecutable, createDirectoryIfMissing,
                          removeDirectoryRecursive, removeFile, doesFileExist,
                          getTemporaryDirectory)

@@ -43,7 +43,7 @@ import Slap.Text (EncodingName(EncodingUtf8))
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import Slap.Archive (detectArchive, unwrapArchive)
+import Slap.Archive.Types (detectArchive)
 import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
                       ExpectedCRC32(..), ActualCRC32(..), showCRC32)
@@ -79,6 +79,7 @@ import CLI
   , BackupBehavior(..)
   , parseCommandLine
   )
+import Archive (unwrapArchive)
 
 import qualified Data.ByteString as ByteString
 import Control.Exception (try)

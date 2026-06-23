@@ -470,7 +470,7 @@ data SlapError
   -- single patch inside it, but couldn't. The 'FilePath' is the archive
   -- the user pointed at, the 'ArchiveFormat' is what its magic bytes
   -- identified, and the 'UnwrapError' is which way it failed. Raised by
-  -- 'Slap.Archive.unwrapArchive' and rendered at the boundary.
+  -- @Archive.unwrapArchive@ and rendered at the boundary.
   | ArchiveUnwrapFailed FilePath ArchiveFormat UnwrapError
 
   -- Detection
