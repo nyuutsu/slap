@@ -23,7 +23,7 @@
 //!     path reads such a copy as a single source read and would run off
 //!     the end. A source-anchored match is capped at `source.len()`.
 //!
-//! ## The augmented string makes both constraints fall out
+//! ## The augmented string folds both constraints in
 //!
 //! We build the suffix array over
 //!
@@ -39,8 +39,7 @@
 //!   * The **separator** caps a source-anchored match exactly at the
 //!     source's end — a source suffix, compared past `source.len()`,
 //!     hits the separator, which equals no target byte, so the common
-//!     prefix stops there. The source-segment cap is the separator, for
-//!     free.
+//!     prefix stops there.
 //!   * "Text position smaller than the query's" is exactly the **write-
 //!     head** constraint once the coordinates are lined up: a candidate
 //!     earlier than the query in the augmented string is a source byte,
@@ -56,7 +55,7 @@
 //! best earlier-starting candidate on each side of the query is the
 //! *nearest* one in suffix-array order whose text position is smaller —
 //! a previous/next-smaller-value walk with the running LCP carried
-//! alongside. That is the whole query.
+//! alongside.
 //!
 //! ## Storage
 //!

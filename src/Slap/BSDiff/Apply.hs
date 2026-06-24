@@ -37,23 +37,16 @@ data BSDiffCursors = BSDiffCursors
     -- | Read cursor into the extra byte stream. Advances by
     -- @copyLength@ per instruction.
   , extraStreamRead :: !Offset
-    -- | Read cursor into the source ROM. Carried as 'SignedOffset'
-    -- because BSDiff's seek delta can take the cursor negative or
-    -- past the end of the source. The matching-window extension
-    -- rule (see 'sourceByteOrZero') treats source positions outside
-    -- @[0, sourceLength)@ as contributing zero to the byte-wise sum,
-    -- which is required for correctness — valid patches use this to
-    -- encode bytes in a match-section whose corresponding source
-    -- position falls outside the source.
+    -- | Read cursor into the source ROM.
+    -- Carried as 'SignedOffset' because BSDiff's seek delta can take the cursor negative or past the end of the source;
+    -- 'sourceByteOrZero' handles reads from those out-of-range positions.
   , originalRead    :: !SignedOffset
     -- | Write cursor into the output target buffer. Advances by
     -- @addLength <> copyLength@ per instruction.
   , outputWrite     :: !Offset
   } deriving (Show)
 
--- | Strict 'StateT' over 'IO' carrying 'BSDiffCursors'. Strict
--- because the cursors update on every instruction and lazy thunk
--- build-up across a long control stream would buy nothing.
+-- | Strict 'StateT' over 'IO' carrying 'BSDiffCursors' (the four per-stream cursors).
 type BSDiffApply = StateT BSDiffCursors IO
 
 -- | Cursor record at the start of an apply: every stream reads from
@@ -71,14 +64,10 @@ initialCursors = BSDiffCursors
 -- applyBSDiff
 ----------------------------------------------------------------------------
 
--- | Apply a parsed BSDiff patch to a source ByteString. Each
--- instruction in the patch's control stream describes one
--- (ADD, COPY) pair plus a signed seek over the source; the apply
--- walks the stream and runs the per-instruction preconditions at
--- the instruction boundary, returning 'Left' with a structured
--- 'ApplyError' if any precondition fails. The source cursor is
--- intentionally unbounded — see 'sourceByteOrZero' for the
--- matching-window extension rule that makes this safe.
+-- | Apply a parsed BSDiff patch to a source ByteString.
+-- Each instruction in the patch's control stream describes one (ADD, COPY) pair plus a signed seek over the source;
+-- the apply walks the stream and runs the per-instruction preconditions at the instruction boundary, returning 'Left' with a structured 'ApplyError' if any precondition fails.
+-- The source cursor is unbounded; 'sourceByteOrZero' handles out-of-range source reads.
 applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBSDiff patch _
   | unFileSize (bsdiffTargetSize patch) == 0 = Right (OutputFileContents ByteString.empty)
@@ -95,13 +84,9 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     diffSize       = byteFileSize diffBytes
     extraSize      = byteFileSize extraBytes
 
-    -- | Per-instruction guards for an ADD region: the write must fit
-    -- in the remaining target buffer, and the diff read must fit in
-    -- the remaining diff stream. The source byte read is intentionally
-    -- unbounded — the matching-window extension rule (see
-    -- 'sourceByteOrZero') defines the algorithm for source positions
-    -- outside @[0, sourceLength)@, so there is no precondition to
-    -- enforce on the source side.
+    -- | Per-instruction guards for an ADD region:
+    -- the control length must be non-negative, the write must fit in the remaining target buffer, and the diff read must fit in the remaining diff stream.
+    -- The source read is unguarded; see 'sourceByteOrZero'.
     checkAddPreconditions :: ActionIndex -> Length -> Offset -> Offset
                           -> Either ApplyError ()
     checkAddPreconditions actionIndex addLength outputPosition diffReadOffset
@@ -116,9 +101,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
                  (advance diffReadOffset addLength) diffSize)
       | otherwise = Right ()
 
-    -- | Per-instruction guards for a COPY region: the write must fit
-    -- in the remaining target buffer, and the extra read must fit in
-    -- the remaining extra stream.
+    -- | Per-instruction guards for a COPY region:
+    -- the copy length must be non-negative, the write must fit in the remaining target buffer, and the extra read must fit in the remaining extra stream.
     checkCopyPreconditions :: ActionIndex -> Length -> Offset -> Offset
                            -> Either ApplyError ()
     checkCopyPreconditions actionIndex copyLength outputAfterAdd extraReadOffset
@@ -135,14 +119,9 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
 
     runApply targetPointer =
       let
-        -- | The cursor transition done after an instruction's ADD
-        -- region completes. The diff cursor advances by @addLength@
-        -- (one diff byte was consumed per output byte). The source
-        -- cursor advances by @addLength@ (one source byte was
-        -- consumed per output byte under the matching-window
-        -- extension rule) and then displaces by the instruction's
-        -- signed seek delta, which re-bases the source cursor for
-        -- the next match. The output cursor advances by @addLength@.
+        -- | Cursor transition after an instruction's ADD region.
+        -- The diff and output cursors advance by @addLength@;
+        -- the source cursor advances by @addLength@ and then displaces by the signed seek delta, re-basing it for the next match.
         advanceForAdd :: Length -> Delta -> BSDiffApply ()
         advanceForAdd addLength seekDelta = modify $ \cursors -> cursors
           { diffStreamRead = advance (diffStreamRead cursors) addLength
@@ -181,11 +160,9 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
                   pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
                   writeRemainingBytes (byteOffset + 1)
 
-        -- | Tail-recursive walk over the instruction list. The four
-        -- cursors live in 'BSDiffApply' state, so each step needs
-        -- only the remaining instructions and the running action
-        -- index. End-of-stream verifies the walker filled the entire
-        -- target buffer.
+        -- | Tail-recursive walk over the instruction list.
+        -- The four cursors live in 'BSDiffApply' state, so each step needs only the remaining instructions and the running action index.
+        -- End-of-stream checks whether the target buffer was filled, raising 'ApplyTargetUnderfilled' otherwise.
         applyLoop :: [BSDiffInstruction] -> ActionIndex -> BSDiffApply (Maybe ApplyError)
         applyLoop [] _actionIndex = do
           finalOutput <- gets outputWrite
@@ -219,21 +196,15 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
                   applyLoop rest (nextAction actionIndex)
       in evalStateT (applyLoop (bsdiffInstructions patch) firstAction) initialCursors
 
--- | Read a byte at @index@ from the source ByteString, returning 0
--- for out-of-bounds indices (negative or past the end).
+-- | Read a byte at @index@ from the source ByteString, returning 0 for out-of-bounds indices (negative or past the end).
 --
--- This implements the bsdiff matching-window extension rule: a
--- single ADD instruction encodes a match-window of @addLength@
--- bytes where the diff stream stores @new[i] − old[oldpos+i]@.
--- The compressor exploits this encoding to extend matches past
--- either end of the source by storing the full target byte
--- verbatim in the diff stream — those bytes get "added to zero"
--- at apply time and reproduce exactly.
+-- This is the bsdiff matching-window extension rule.
+-- An ADD region forms @new[i] = old[oldpos+i] + diff[i]@;
+-- for a position past either end of the source, @old@ contributes 0, so a diff byte holding the target byte verbatim reconstructs that target byte.
+-- This lets one ADD region cover bytes whose source position falls outside @[0, sourceLength)@.
 --
--- This rule applies to the source byte specifically. The diff
--- stream is bounds-checked per-instruction and produces an
--- 'ApplyDiffReadOutOfBounds' error on overflow; only the source
--- side carries the extension-zero semantics.
+-- The extension-zero semantics are the source side only.
+-- The diff stream is bounds-checked per-instruction and overflow raises 'ApplyDiffReadOutOfBounds'.
 sourceByteOrZero :: ByteString -> Int -> Word8
 sourceByteOrZero bytes index
   | index >= 0 && index < ByteString.length bytes =

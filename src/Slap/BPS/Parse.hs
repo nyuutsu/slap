@@ -97,15 +97,11 @@ parseBPSBody = do
 -- Action stream walker
 ----------------------------------------------------------------------------
 
--- | The result of walking the BPS action stream: the decoded actions
--- in wire order, paired with any per-action warnings the walk
--- accumulated. Today the only warning emitted here is
--- 'NegativeZeroInBPS' (the non-canonical @0x81@ encoding of zero in
--- a copy action's signed-delta varint); the channel exists so future
--- per-action observations can be surfaced without reshaping the
--- walker. Strictly private to 'Slap.BPS.Parse' — the public surface
--- of 'BPSBody' carries the same two pieces of information through
--- 'bpsBodyActions' and 'bpsBodyWarnings'.
+-- | The result of walking the BPS action stream:
+-- the decoded actions in wire order, paired with any per-action warnings the walk accumulated.
+-- The only warning emitted here is 'NegativeZeroInBPS' (the non-canonical @0x81@ encoding of zero in a copy action's signed-delta varint).
+-- Strictly private to 'Slap.BPS.Parse' —
+-- the public surface of 'BPSBody' carries the same two pieces of information through 'bpsBodyActions' and 'bpsBodyWarnings'.
 data BPSParsedActionStream = BPSParsedActionStream
   { parsedActionList     :: ![BPSAction]
   , parsedActionWarnings :: ![SlapAdvisory]

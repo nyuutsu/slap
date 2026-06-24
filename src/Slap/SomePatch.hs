@@ -691,17 +691,10 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- | Build a 'SomePatch' from a parsed VCDIFF patch. All three flavors
--- parse in full today — CoreOnly, xdelta3 (secondary compression
--- included), and RFC (VCD_TARGET windows and custom code tables) — with
--- no feature left for 'VCDIFF.parseVCDIFF' to defer. The flavor verdict
--- surfaces through the
--- format header's qualifier slot ('vcdiffFlavorQualifier'), so
--- @slap info@ answers "which flavor" on its first line. An xdelta3
--- patch's per-window Adler32 checksums are lifted into
--- 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
--- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their
--- voice.
+-- | Build a 'SomePatch' from a parsed VCDIFF patch.
+-- The flavor surfaces through the format header's qualifier slot ('vcdiffFlavorQualifier'), so @slap info@ answers "which flavor" on its first line.
+-- An xdelta3 patch's per-window Adler32 checksums are lifted into 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
+-- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their voice.
 parseSomePatchFromVCDIFF :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromVCDIFF metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- VCDIFF.parseVCDIFF patchContents

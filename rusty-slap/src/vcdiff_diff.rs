@@ -10,11 +10,6 @@
 //! parse asks it for the longest run that recurs earlier in the
 //! superstring `U = source ++ target`, takes it when it clears
 //! [`MIN_MATCH`], and otherwise grows the current literal run by a byte.
-//!
-//! The naive quadratic scan that once answered that query lives on in
-//! this module's tests as the differential oracle: exhaustively correct,
-//! unusably slow, and the reference the suffix-array engine is held
-//! against.
 
 use crate::vcdiff_suffix_sort::{Match, SuperstringMatcher};
 
@@ -331,11 +326,10 @@ mod tests {
     #[test]
     fn handles_a_megabyte_pair() {
         // A megabyte target derived from a megabyte source: large enough
-        // that the quadratic oracle would take minutes. The suffix-array
-        // engine finishes in a blink (sub-second in release), and the
-        // reconstruction confirms the cover is still exact at scale. The
-        // generous time bound is a regression tripwire — a return to
-        // quadratic behaviour here would run for far longer than this.
+        // to exercise the suffix-array engine at scale and confirm the
+        // cover is still exact there. The generous time bound is a
+        // regression tripwire — a return to quadratic behaviour would
+        // run far past it.
         let source = pseudo_random_low_alphabet(0x512e, 1 << 20, 64);
         let mut target = source.clone();
         for spot in (0..target.len()).step_by(4096) {

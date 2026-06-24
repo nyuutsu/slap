@@ -240,14 +240,11 @@ data IPSStreamHead
 -- of result, so the subsequent record-decode path consumes the same
 -- bytes the peek inspected.
 --
--- Why peek at all: the IPS "EOF" sentinel is a famous footgun.
--- The bytes @0x45 0x4F 0x46@ are simultaneously the ASCII "EOF"
--- trailer and a perfectly valid 24-bit big-endian offset value
--- (4,542,278). A parser that consumes the next three bytes
--- unconditionally cannot tell whether it just read the next
--- record's offset field or the stream-closing trailer. IPS32 has
--- the same problem at @0x45454F46@ / @"EEOF"@. Peek-then-branch is
--- the only honest disambiguation.
+-- Why peek at all: the IPS "EOF" sentinel is ambiguous with a legal offset.
+-- The bytes @0x45 0x4F 0x46@ are simultaneously the ASCII "EOF" trailer and a perfectly valid 24-bit big-endian offset value (4,542,278).
+-- A parser that consumes the next three bytes unconditionally cannot tell whether it just read the next record's offset field or the stream-closing trailer.
+-- IPS32 has the same problem at @0x45454F46@ / @"EEOF"@.
+-- Peek-then-branch is the only honest disambiguation.
 --
 -- Wire order is preserved exactly: records appear in the returned
 -- list in the order they were laid out on the wire. Parse does not

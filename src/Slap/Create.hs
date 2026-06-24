@@ -7,15 +7,8 @@
 -- encoders in @Slap.<Format>.Create.create<Format>@ do the wire
 -- emission; this module's wrappers add the typed surface.
 --
--- Direct-format creation has no per-format porcelain here. The
--- direct family shares the 'PatchContents' pipeline owned by
--- "Slap.Convert" — 'Slap.Convert.buildContents' assembles the
--- universal record shape, 'Slap.Convert.encodeDirect' walks it
--- into the target format — so a per-format typed front door would
--- have nothing format-level to wrap. Direct-format callers route
--- through 'createPatch', which is re-exported here for the
--- convenience of "I want to make a patch" callers who don't want
--- to think about which submodule to import.
+-- 'createPatch' is re-exported here as the dynamic entry point for callers who don't want to pick a submodule;
+-- direct-format creation has no front door of its own, going through the 'PatchContents' pipeline in "Slap.Convert" instead.
 --
 -- See the Haddock on 'Slap.Convert.RequestedPatchMetadata' in
 -- "Slap.Convert" for which 'Maybe' fields each direct format

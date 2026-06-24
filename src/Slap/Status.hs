@@ -621,21 +621,16 @@ data SlapError
   -- not the inner body.) Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
   | VCDIFFCustomCodeTableDecodeFailed !SlapError
 
-  -- | A VCDIFF indicator byte set one or more bits the format
-  -- reserves for future definition. slap implements only the bits
-  -- defined today, so it does not know what such a patch is asking —
-  -- and it must not call the patch malformed, because that is not
-  -- slap's to say: a future-dialect patch could be well-formed,
-  -- just unreadable here. A sibling decline to
-  -- 'VCDIFFUnknownSecondaryCompressor', deliberately not a
-  -- 'MalformedVCDIFF' arm — 'MalformedVCDIFF' means slap understands
-  -- the claim a patch makes and the claim is invalid. Distinct from
-  -- 'BadVersion' too: a version byte names a whole generation of the
-  -- format, while a reserved bit is an undefined flag within the
-  -- generation slap does implement; the two share only the
-  -- disposition. The 'VCDIFFIndicatorKind' names which of the three
-  -- indicators; the 'Word8' is the indicator byte as read. Raised by
-  -- 'Slap.VCDIFF.Parse.parseVCDIFF'.
+  -- | A VCDIFF indicator byte set one or more bits the format reserves for future definition.
+  -- slap implements only the bits defined today, so it does not know what such a patch is asking.
+  -- A sibling decline to 'VCDIFFUnknownSecondaryCompressor', deliberately not a 'MalformedVCDIFF' arm:
+  -- 'MalformedVCDIFF' means slap understands the claim a patch makes and the claim is invalid, whereas a future-dialect patch could be well-formed, just unreadable here.
+  -- Distinct from 'BadVersion' too:
+  -- a version byte names a whole generation of the format, while a reserved bit is an undefined flag within the generation slap does implement;
+  -- the two share only the disposition.
+  -- The 'VCDIFFIndicatorKind' names which of the three indicators;
+  -- the 'Word8' is the indicator byte as read.
+  -- Raised by 'Slap.VCDIFF.Parse.parseVCDIFF'.
   | VCDIFFReservedIndicatorBits !VCDIFFIndicatorKind !Word8
 
   -- | A VCDIFF patch declared a secondary-compressor id outside
@@ -772,17 +767,13 @@ data SlapError
   | UnencodeablePair FormatLabel UnencodeabilityReason
   | NarrowingError !NarrowingFailure
 
-  -- | A create-path input (source or target) names more bytes than
-  -- slap can address. slap threads every size and offset through a
-  -- signed 'Int', so its honest ceiling is 'maxBound' :: 'Int' — about
-  -- 9 EB on a 64-bit host. A wire size field wider than the carrier (a
-  -- full 64-bit length) can name a file past that ceiling; rather than
-  -- wrap or truncate it through 'fromIntegral', slap declines here. The
-  -- direction of the apology is "sorry, not 128-bit" — slap conceding a
-  -- bit it does not carry, not a worry about a narrow host: the bound
-  -- is the carrier's, and on real hardware you would need a ~9 EB file
-  -- to reach it. The 'ActualSize' is the offending file; the
-  -- 'MaxAddressableSize' is the host's 'maxBound :: Int'.
+  -- | A create-path input (source or target) names more bytes than slap can address.
+  -- slap threads every size and offset through a signed 'Int', so its honest ceiling is 'maxBound' :: 'Int' —
+  -- about 9 EB on a 64-bit host.
+  -- A wire size field wider than the carrier (a full 64-bit length) can name a file past that ceiling;
+  -- rather than wrap or truncate it through 'fromIntegral', slap declines here.
+  -- The 'ActualSize' is the offending file;
+  -- the 'MaxAddressableSize' is the host's 'maxBound :: Int'.
   | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
 
   -- | A record's offset lands on the format's trailer sentinel and
@@ -1080,21 +1071,13 @@ data SlapAdvisory
   -- the patch declared something slap chose not to act on.
   | IPSTruncationMarkerIgnored FormatLabel DeclaredTargetSize NaturalTargetSize
 
-  -- | An xdelta 1.1.x patch had bit 0 (@FLAG_NO_VERIFY@) of the
-  -- header's flags word set, but at least one of its stored MD5
-  -- slots (target MD5 in the control structure, or any source MD5
-  -- in the source-info records) did not equal
-  -- 'Slap.XDelta1.Types.xdelta1EmptyInputMD5Sentinel'. Canonical
-  -- xdelta writes the empty-input MD5 into every slot under
-  -- @--noverify@ (the bytes are forced by the algorithm:
-  -- @edsio_md5_init@ + 0x @_update@ + @_final@ produces exactly that
-  -- value); divergent bytes mean a non-canonical producer or transit
-  -- corruption that left @FLAG_NO_VERIFY@ intact. Slap's behavior is
-  -- unaffected — the flag is honored regardless of slot contents,
-  -- 'VerificationOptedOutByCreator' fires as usual. The curio is
-  -- purely informational, naming the structural oddity so a reader
-  -- wondering about the patch's provenance learns it wasn't produced
-  -- by canonical xdelta.
+  -- | An xdelta 1.1.x patch had bit 0 (@FLAG_NO_VERIFY@) of the header's flags word set.
+  -- But at least one of its stored MD5 slots (target MD5 in the control structure, or any source MD5 in the source-info records) did not equal 'Slap.XDelta1.Types.xdelta1EmptyInputMD5Sentinel'.
+  -- Canonical xdelta writes that empty-input sentinel into every slot under @--noverify@;
+  -- divergent bytes mean a non-canonical producer or transit corruption that left @FLAG_NO_VERIFY@ intact.
+  -- Slap's behavior is unaffected —
+  -- the flag is honored regardless of slot contents, 'VerificationOptedOutByCreator' fires as usual.
+  -- The curio is purely informational, naming the structural oddity so a reader wondering about the patch's provenance learns it wasn't produced by canonical xdelta.
   | XDelta1NoVerifyWithDivergentSentinel
 
   -- | An xdelta 1.1.x patch's data-record carried a @name@ field
@@ -1171,11 +1154,8 @@ data SlapAdvisory
   -- has no wire encoding for; slap falls back to the format's Raw
   -- placeholder and surfaces the change.
   | PlatformNotAvailable FormatLabel PlatformType
-  -- | NINJA2's combined SMS/Game Gear slot is ambiguous on convert
-  -- to a sibling format: slap defaults to SMS. The user can override
-  -- with @--rom-type gg@. Today the only ambiguity slap surfaces;
-  -- future ambiguities get their own nullary constructors so each
-  -- one's rendered prose is its own thing.
+  -- | NINJA2's combined SMS/Game Gear slot is ambiguous on convert to a sibling format: slap defaults to SMS.
+  -- The user can override with @--rom-type gg@.
   | NINJA2SMSGameGearAmbiguity
 
   -- Apply: out-of-bounds block clipping
@@ -2022,19 +2002,9 @@ bsDiffSectionName BSDiffDiff    = "diff"
 bsDiffSectionName BSDiffExtra   = "extra"
 
 -- | How a compressor's stream relates to the payloads that carry it:
--- one continuous stream whose carried pieces are slices of it, or a
--- self-contained stream per piece. A total projection over
--- 'CompressionAlgorithm', so a new algorithm must declare its shape
--- before anything can speak about its streams — there is no wildcard
--- to inherit one silently. Of the VCDIFF catalog, LZMA and FGK gather
--- across a kind's sections, for different reasons — LZMA's bytes are
--- one continuous stream (the xz header rides in a kind's first
--- compressed section, the rest are continuation slices), FGK's are
--- byte-flushed per section but share one adaptive tree — while DJW is
--- fresh per section, its tables read anew each time. The four
--- fixed-site algorithms
--- compress self-contained payloads at their sites, so the per-piece
--- shape is already the true one for them.
+-- one continuous stream whose carried pieces are slices of it ('GatheredAcrossSections'), or a self-contained stream per piece ('EachSectionItsOwn').
+-- A total projection over 'CompressionAlgorithm', so a new algorithm must declare its shape before anything can speak about its streams —
+-- there is no wildcard to inherit one silently.
 data SecondaryStreamGranularity
   = GatheredAcrossSections
   | EachSectionItsOwn

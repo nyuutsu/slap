@@ -47,14 +47,10 @@ data BPSPatch = BPSPatch
   { bpsSourceSize :: !FileSize
   , bpsTargetSize :: !FileSize
   , bpsMetadata   :: !BPSMetadata
-  -- | Action stream as a boxed 'Vector'. Boxed (not unboxed/storable)
-  -- because 'BPSAction' is a sum type containing a 'ByteString'. Stored
-  -- as a 'Vector' rather than a list so the entire action stream lives
-  -- in one contiguous array of pointers — this saves ~90 MB of cons-cell
-  -- overhead on a stadium2-scale patch (~5M actions) and lets the GC
-  -- treat the action stream as a single object instead of millions of
-  -- individually-allocated cells, dramatically reducing minor-GC walk
-  -- cost during 'applyBPS'.
+  -- | Action stream as a boxed 'Vector'.
+  -- Boxed (not unboxed/storable) because 'BPSAction' is a sum type containing a 'ByteString'.
+  -- A 'Vector' rather than a list so the whole stream is one contiguous array of pointers —
+  -- a single GC object instead of a chain of cons cells.
   , bpsActions    :: !(Vector BPSAction)
   , bpsSourceCRC  :: !CRC32
   , bpsTargetCRC  :: !CRC32
@@ -116,17 +112,11 @@ isNegativeZeroSignedVarint encoded =
 -- Metadata-blob classification
 ----------------------------------------------------------------------------
 
--- | What slap can say about a BPS patch's metadata blob, viewed
--- through the spec's recommended-and-verifiable UTF-8 lens. The BPS
--- spec recommends UTF-8 XML in this field but explicitly permits
--- "literally anything", so the blob is opaque on every payload path
--- (carried byte-exact through extract, convert, and create) and is
--- interpreted only here, for the human glance 'slap info' offers and
--- the remark that accompanies it. A pure judgment consumed by several
--- projections, mirroring how 'Slap.IPS.Types.MarkerDisposition' is
--- read by both a sizing function and an advisory builder:
--- 'Slap.BPS.Describe' folds this to an info line and to a
--- 'Slap.Status.SlapAdvisory'.
+-- | What slap can say about a BPS patch's metadata blob, viewed through the spec's recommended-and-verifiable UTF-8 lens.
+-- The BPS spec recommends UTF-8 XML in this field but explicitly permits "literally anything", so the blob is opaque on every payload path —
+-- carried byte-exact through extract, convert, and create —
+-- and interpreted only here, for the human glance 'slap info' offers and the remark that accompanies it.
+-- 'Slap.BPS.Describe' folds this to an info line and to a 'Slap.Status.SlapAdvisory'.
 data BPSMetadataShape
   = MetadataAbsent
     -- ^ Empty field. The overwhelmingly common case.

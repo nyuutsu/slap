@@ -211,12 +211,9 @@ lzmaDecompress input = unsafePerformIO $
             , lzmaConsumedInputLength = Length (fromIntegral consumedLength)
             }
 
--- | What one DJW decompression reports back across the seam: the
--- decoded bytes, and how many input bytes the decoder consumed
--- before its output budget filled. Sibling of 'LzmaDecoded', same
--- contract: the consumed length is a fact only the decoder can know,
--- and whether it honors the section's framing is the caller's
--- judgment.
+-- | What one DJW decompression reports back across the seam:
+-- the decoded bytes, and how many input bytes the decoder consumed before its output budget filled.
+-- Sibling of 'LzmaDecoded', same consumed-length contract.
 data DjwDecoded = DjwDecoded
   { djwDecodedBytes        :: !ByteString
   , djwConsumedInputLength :: !Length
@@ -258,12 +255,9 @@ djwDecompress expectedOutputLength input = unsafePerformIO $
             , djwConsumedInputLength = Length (fromIntegral consumedLength)
             }
 
--- | What one FGK kind-decode reports back across the seam: every
--- section's decoded bytes concatenated, and how many input bytes the
--- decoder consumed across all of them. Sibling of 'DjwDecoded' and
--- 'LzmaDecoded' in shape; the consumed length is a fact only the
--- decoder can know, and whether it honors the kind's gathered framing
--- is the caller's judgment.
+-- | What one FGK kind-decode reports back across the seam:
+-- every section's decoded bytes concatenated, and how many input bytes the decoder consumed across all of them.
+-- Sibling of 'DjwDecoded' and 'LzmaDecoded', same consumed-length contract.
 data FgkDecoded = FgkDecoded
   { fgkDecodedBytes        :: !ByteString
   , fgkConsumedInputLength :: !Length

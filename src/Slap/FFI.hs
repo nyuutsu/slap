@@ -1,13 +1,10 @@
--- | Cross-format math primitives via rusty-slap, plus the shared
--- buffer-handling helpers every rusty-slap binding reaches back
--- into. The math kernels are used by more than one format family
--- ('crc32' lands in BPS and UPS; 'adler32' is VCDIFF's per-window
--- checksum, verified at the shared boundary);
--- one-format-uses-this differs live next to their format
--- ('Slap.BPS.FFI', 'Slap.XDelta1.FFI'), but they all marshal Rust-
--- allocated buffers home through 'readByteString' / 'readText'
--- and hand input bytes across through 'withByteString' — the FFI-
--- marshalling helper trio.
+-- | Cross-format math primitives via rusty-slap, plus the shared buffer-handling helpers every rusty-slap binding reaches back into.
+--
+-- The math kernels live here because more than one format family uses them ('crc32' in BPS and UPS, 'adler32' for VCDIFF's per-window checksum);
+-- a kernel only one format uses lives next to that format ('Slap.BPS.FFI', 'Slap.XDelta1.FFI').
+--
+-- Every binding, here and elsewhere, marshals through the same trio:
+-- 'withByteString' hands input bytes across, 'readByteString' / 'readText' bring Rust-allocated buffers home.
 module Slap.FFI
   ( crc32
   , adler32

@@ -73,16 +73,11 @@ renderMetadataLine metadataEncoding (BPSMetadata bytes)
 -- surfaces on apply and convert as well as info.
 --
 -- Note the deliberate asymmetry from 'renderMetadataLine''s escaping.
--- The display escapes every non-printable codepoint, newlines
--- included, because the question there is "what is safe to render raw
--- in a terminal." The question here is "is the content surprising,"
--- and the answer for whitespace is no — a pretty-printed XML blob is
--- full of newlines and tabs, and that's exactly what the field is
--- meant to hold. So the trigger is "a control that isn't whitespace"
--- ('isControl' and 'not' . 'isSpace', two stdlib category predicates
--- composed — no codepoint privileged by hand): NUL, BEL, ESC, the C1
--- range, and the like, the codepoints that mean the field holds
--- something other than text.
+-- The display escapes every non-printable codepoint, newlines included, because the question there is "what is safe to render raw in a terminal."
+-- The question here is "is the content surprising," and the answer for whitespace is no —
+-- a pretty-printed XML blob is full of newlines and tabs, and that's exactly what the field is meant to hold.
+-- So the trigger is "a control that isn't whitespace":
+-- NUL, BEL, ESC, the C1 range, and the like, the codepoints that mean the field holds something other than text.
 bpsMetadataNotes :: BPSPatch -> [SlapAdvisory]
 bpsMetadataNotes patch = case classifyBPSMetadata metadata of
   MetadataAbsent  -> []

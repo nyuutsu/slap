@@ -1,36 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | JSON parsing for slap. The only JSON in the slap world is the
--- trailing metadata blob carried by EBP patches, so this module's
--- public surface is shaped to that one job: turn the trailer bytes
--- into a structured 'EBPMetadata' value. Anything else the JSON
--- spec permits (nested objects, arrays, numbers, booleans, nulls)
--- is read by aeson under the hood and discarded here — slap has
--- nothing to do with it.
+-- | JSON parsing for slap.
+-- The only JSON in the slap world is the trailing metadata blob carried by EBP patches, so the public surface is shaped to that one job:
+-- turn the trailer bytes into a structured 'EBPMetadata' value.
+-- The four recognised fields (@patcher@, @title@, @author@, @description@) are the contract EBPatcher established;
+-- everything else aeson reads and discards.
 --
--- The four fields slap recognises are the ones EBPatcher established
--- as the EBP metadata contract: @patcher@, @title@, @author@,
--- @description@. Lookup is case-insensitive: no spec fixes the key
--- casing, so producers disagree — EBPatcher (the Python reference
--- patcher) writes lowercase keys, while RomPatcher.js writes
--- capitalised keys for the three user-facing fields and lowercase
--- @patcher@. slap folds the comparison so it reads either.
---
--- Missing fields are tolerated for the same reason: RomPatcher.js's
--- writer skips empty fields entirely, so a real-world EBP patch can
--- arrive with only some of the four keys present. Each field on the
--- returned 'EBPMetadata' is therefore a 'Maybe' 'EncodedText'.
---
--- Extracted values carry an explicit @EncodingUtf8@ tag: JSON is
--- UTF-8 by RFC 8259, aeson enforces that at the parse boundary, and
--- the tag travels with the value so the convert seam knows the
--- encoding without having to remember the JSON-source provenance
--- out-of-band.
---
--- A malformed blob (not valid JSON, or valid JSON whose root is not
--- an object) yields the all-'Nothing' 'EBPMetadata' value paired
--- with an 'EBPMetadataMalformed' advisory. The patch's IPS records
--- are unaffected — apply and convert paths proceed normally — but
--- the user learns at parse time that the metadata couldn't be read.
+-- Producers disagree on key casing and on which fields they emit, so lookup is case-insensitive and each field is a 'Maybe' —
+-- see 'parseEBPMetadata' and 'lookupTopLevelStringField' for the details.
 module Slap.JSON
   ( parseEBPMetadata
   ) where

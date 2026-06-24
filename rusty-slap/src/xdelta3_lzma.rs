@@ -103,9 +103,9 @@ mod tests {
 
     // Both fixtures are unmodified xdelta3 output: the data-kind
     // stream of a one-window `-S lzma` patch, paired with the same
-    // window's data section from the patch's `-S none` twin (the
-    // instruction streams are identical across the two settings, so
-    // the twin's plain section is exactly what the stream decodes to).
+    // window's data section from the patch's `-S none` twin. The plain
+    // section is the expected decode; the round-trip tests below check
+    // they match.
     //
     // The first carries a single LZMA2 *uncompressed* chunk — control
     // byte 0x01, the literal bytes in the clear — which is what

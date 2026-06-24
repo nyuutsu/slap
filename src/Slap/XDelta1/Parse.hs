@@ -396,16 +396,10 @@ parseSourceList count = do
   rest <- parseSourceList (count - 1)
   pure (source : rest)
 
--- | Reduce a parsed source list to the canonical
--- @[data segment, file source]@ pair, or refuse with
--- 'UnsupportedXDelta1Shape'. Canonical xdelta emits exactly that
--- shape ('xdelta.c:241-251' adds the data source, 'xdmain.c:1539-1542'
--- adds the from-file source — both unconditional); any other count
--- or ordering is off-spec and rejected at parse time. The 'String'
--- carried by 'UnsupportedXDelta1Shape' names the offending input
--- ("3 sources", "[file, data]", "[file, file]", "1 source: data",
--- "0 sources", etc.) so the diagnostic reads cleanly without
--- needing a separate render arm per malformation.
+-- | Reduce a parsed source list to the canonical @[data segment, file source]@ pair.
+-- Anything else refuses with 'UnsupportedXDelta1Shape' carrying the 'XDelta1ShapeViolation' that names the malformation.
+-- Canonical xdelta emits exactly that shape ('xdelta.c:241-251' adds the data source, 'xdmain.c:1539-1542' adds the from-file source — both unconditional);
+-- any other count or ordering is off-spec and rejected at parse time.
 requireDataAndFileRecords :: [ParsedSourceRecord] -> Either SlapError ParsedSourcePair
 requireDataAndFileRecords sources = case sources of
   [first, second] -> case (parsedSourceKind first, parsedSourceKind second) of

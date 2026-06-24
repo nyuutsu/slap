@@ -259,10 +259,7 @@ applyBPS patch (InputFileContents source)
         applyActionStream !actionIndex
           | actionIndex >= actionStreamEnd = do
               -- End of action stream: verify we wrote the full target.
-              -- Note: no corresponding over-filled check because
-              -- ApplyWritesPastTarget catches over-writes per-action
-              -- before they can happen, so outputPosition > targetSize
-              -- is unreachable here.
+              -- Over-fill needs no check here: every writing action rejects a past-target write per-action with 'ApplyWritesPastTarget', so outputPosition > targetSize is unreachable.
               writePosition <- gets outputPosition
               let outputOffset = unWritePosition writePosition
               if remainingFromOffset outputOffset targetSize == Length 0

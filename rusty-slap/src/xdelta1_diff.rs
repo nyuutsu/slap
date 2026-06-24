@@ -19,14 +19,11 @@
 use crate::xdelta1_suffix_array::SourceSuffixArrayIndex;
 
 /// Shortest match length the differ will emit as a file-source
-/// instruction. Matches the canonical xdelta1 setting; an empirical
-/// choice in this range trades a few bytes of literal-segment growth
-/// for many fewer fragmented short instructions, which dominate
-/// total wire size under the greedy walk (which has no lookahead
-/// and so commits to every match it sees). Below 8, short
-/// coincidental matches splinter what would otherwise be one long
-/// run of literals or one long file-source match into multiple
-/// records with their own per-instruction varint overhead.
+/// instruction. Matches the canonical xdelta1 setting. Below this,
+/// short coincidental matches splinter what would be one long literal
+/// run or one long file-source match into many records, each with its
+/// own per-instruction varint overhead — and the greedy walk, having
+/// no lookahead, commits to every such match it sees.
 const MIN_MATCH_LENGTH: usize = 8;
 
 // ── Public surface ─────────────────────────────────────────────────────

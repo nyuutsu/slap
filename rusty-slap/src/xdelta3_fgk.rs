@@ -72,11 +72,9 @@ const TOTAL_NODES: usize = 2 * ALPHABET_SIZE - 1;
 /// behavior.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FgkFault {
-    /// The caller asked for zero output bytes. The real path never
-    /// does — a compressed section's framing declares a positive size
-    /// before this is called — but a section that produces nothing has
-    /// no reason to exist, so it is refused before a bit is read, as
-    /// the DJW sibling refuses it.
+    /// The caller asked for zero output bytes. A section that produces
+    /// nothing has no reason to exist, so it is refused before a bit is
+    /// read, as the DJW sibling refuses it.
     OutputBudgetIsZero,
     /// The bit stream ended before the section's declared output was
     /// produced. (xd3: "secondary decoder end of input")
@@ -93,21 +91,18 @@ pub enum FgkFault {
     /// A node's weight overflowed the 32-bit counter xd3 keeps it in
     /// (`fgk_weight`, whose source carries a literal "TODO: Need to
     /// test for overflow"). The root's weight is the count of symbols
-    /// decoded so far, so reaching this needs an output past
-    /// 2^32 bytes — bounded out of any real section by the declared
-    /// size and by 'InputExhausted' arriving first. Surfaced rather
-    /// than wrapped; no crafted case builds it.
+    /// decoded so far, so reaching this needs an output past 2^32
+    /// bytes. Surfaced rather than wrapped.
     WeightCounterOverflow,
     /// A tree link that the shared invariant guarantees was found
     /// absent: a navigation step into a child an internal node must
     /// have, a block leader with no higher-weight successor, an unseen
-    /// list with no head while a symbol is being revealed. None is
-    /// reachable from a well-formed stream — internal nodes always
-    /// carry both children, the root is the unique highest-weight node,
-    /// the unseen list is non-empty whenever a zero-weight symbol is
-    /// decoded — so this is the typed landing for xd3's assertions,
-    /// surfaced should the structural argument ever be wrong. No
-    /// crafted case builds it.
+    /// list with no head while a symbol is being revealed. Internal
+    /// nodes always carry both children, the root is the unique
+    /// highest-weight node, the unseen list is non-empty whenever a
+    /// zero-weight symbol is decoded — so this is the typed landing for
+    /// xd3's assertions, surfaced should the structural argument ever
+    /// be wrong.
     TreeStructureCorrupt,
 }
 
@@ -445,7 +440,7 @@ impl AdaptiveTree {
         std::iter::successors(Some(node), |&member| self.node(member).siblings.right)
             .take_while(|&member| self.node(member).weight == block_weight)
             .last()
-            .expect("a node is always the first member of its own block")
+            .expect("the successors walk is seeded with node, whose weight equals block_weight, so last() is non-empty")
     }
 
     /// Slide a node to the front of its weight block (`fgk_move_right`):
@@ -1101,13 +1096,10 @@ mod tests {
     }
 
     // FgkFault::WeightCounterOverflow and FgkFault::TreeStructureCorrupt
-    // have no crafted cases. The first needs a node's weight past 2^32,
-    // i.e. an output past four billion bytes, which the declared size
-    // and InputExhausted foreclose long before. The second is the typed
-    // landing for the shared invariant's guarantees — both children
-    // present on every interior node, a unique highest-weight root, a
-    // non-empty unseen list under any zero-weight decode — none of which
-    // a bit stream can falsify without the decoder having already
-    // diverged. They exist so the impossible surfaces as a verdict
-    // rather than a panic, the way DJW's SelectorNamesMissingGroup does.
+    // have no test here: the first needs a node's weight past 2^32, the
+    // second is the typed landing for the shared invariant's guarantees
+    // (both children present on every interior node, a unique
+    // highest-weight root, a non-empty unseen list under any zero-weight
+    // decode). They exist so the impossible surfaces as a verdict rather
+    // than a panic, the way DJW's SelectorNamesMissingGroup does.
 }

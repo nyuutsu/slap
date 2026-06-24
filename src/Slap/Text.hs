@@ -44,17 +44,10 @@
 --
 -- == UTF-8 vs everything-else asymmetry
 --
--- The UTF-8 path routes through 'Data.Text.Encoding' — the @text@
--- package's native fast UTF-8 codec. Every other encoding routes
--- through the @encoding@ library (@Data.Encoding@). The asymmetry
--- is a capability-and-speed call: @text@ ships a fast UTF-8 codec
--- but only UTF-8, while @encoding@ ships a structured API that
--- 'encodeTextLenient' and 'encodeTextBounded' need (per-character
--- 'encodeable' predicate, exception-aware @Explicit@ variants,
--- alias-table runtime lookup via 'encodingFromString'). Routing
--- UTF-8 through @encoding@ to unify the paths would be slower
--- without buying anything; routing the non-UTF-8 encodings through
--- @text@ isn't possible.
+-- The UTF-8 path routes through 'Data.Text.Encoding' — the @text@ package's native fast UTF-8 codec.
+-- Every other encoding routes through the @encoding@ library (@Data.Encoding@).
+-- @text@ ships a fast UTF-8 codec but only UTF-8;
+-- @encoding@ ships the structured API that 'encodeTextLenient' and 'encodeTextBounded' need (per-character 'encodeable' predicate, exception-aware @Explicit@ variants, alias-table runtime lookup via 'encodingFromString').
 --
 -- == The name resolver
 --
@@ -744,19 +737,11 @@ stripDashesUnderscores = filter (\c -> c /= '-' && c /= '_')
 --     CP1252's @\\x80@ Euro sign vs ISO-8859-1's @\\x80@ control
 --     character).
 --
---   * /Documented gap/ — the @encoding@ library doesn't ship an
---     encoder and there's no compatible superset in the library.
---     The entry has an empty list, so the lookup fails and
---     'resolveEncodingName' returns 'Left' rather than mojibake from
---     a near-miss decoder. Listed by name so a future-self reading
---     the code sees the encoding was considered. Korean Wansung
---     (CP949), Big5 (CP950
---     and the bare-name variants), the EUC-* family, TIS-620
---     (Thai), VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian),
---     and TSCII (Tamil) all sit here. Closing any of them needs
---     either a backend swap (@text-icu@ against ICU4C covers all
---     of these) or a hand-rolled decoder. The table documents the
---     gap so the cost of closing it is visible.
+--   * /Documented gap/ — the @encoding@ library doesn't ship an encoder and there's no compatible superset in the library.
+--     The entry has an empty list, so the lookup fails and 'resolveEncodingName' returns 'Left' rather than mojibake from a near-miss decoder.
+--     Listed by name so a future-self reading the code sees the encoding was considered and the cost of closing it.
+--     Korean Wansung (CP949), Big5 (CP950 and the bare-name variants), the EUC-* family, TIS-620 (Thai), VISCII and TCVN (Vietnamese), ARMSCII-8 (Armenian), and TSCII (Tamil) all sit here.
+--     Closing any of them needs either a backend swap (@text-icu@ against ICU4C covers all of these) or a hand-rolled decoder.
 --
 -- Mappings follow Microsoft codepage conventions and IANA charset names.
 -- They have not been exercised under each target locale on a real host, so the documented-but-untested caveat applies. Drift in the upper-half byte ranges
@@ -873,16 +858,12 @@ data AdvertisedEncodingFamily = AdvertisedEncodingFamily
   }
   deriving (Eq, Show)
 
--- | Every text encoding slap decodes, one canonical name per encoder,
--- grouped for a legible @--encodings@ listing. This is the full set the
--- bundled @encoding@ library provides as field encodings, not a curated
--- subset: if a name is missing here, slap genuinely cannot decode it.
--- slap additionally /accepts/ alternate spellings of these (case- and
--- separator-insensitive, plus the 'documentedLocaleAliases' locale
--- names), but each encoder appears here exactly once. The library's
--- non-field internals — raw JIS X 0201\/0208\/0212, bare ISO-2022, and
--- punycode — are deliberately omitted; they aren't sensible encodings
--- to tag a metadata text field as.
+-- | Every text encoding slap decodes, one canonical name per encoder, grouped for a legible @--encodings@ listing.
+-- This is the full set the bundled @encoding@ library provides as field encodings:
+-- a name missing here is one slap can't decode.
+-- slap additionally /accepts/ alternate spellings of these (case- and separator-insensitive, plus the 'documentedLocaleAliases' locale names).
+-- The library's non-field internals — raw JIS X 0201\/0208\/0212, bare ISO-2022, and punycode — are deliberately omitted;
+-- they aren't sensible encodings to tag a metadata text field as.
 advertisedEncodings :: [AdvertisedEncodingFamily]
 advertisedEncodings =
   [ AdvertisedEncodingFamily "Unicode"   ["utf-8", "utf-16", "utf-32"]

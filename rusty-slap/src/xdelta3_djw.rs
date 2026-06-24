@@ -88,8 +88,7 @@ const INITIAL_CODE_LENGTH_RECENCY_ORDER: [u8; MAX_CODE_LENGTH + 1] = [
 /// surfaced verdict — including the paths xd3 guards with assertions
 /// (`XD3_ASSERT (gp < groups)`) or trusts to its table arithmetic; a
 /// crafted section reaches a named refusal here, never undefined
-/// behavior. xd3's own in-band rejections are the floor: everything
-/// it rejects, this decoder rejects.
+/// behavior.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DjwFault {
     /// The caller asked for zero output bytes. xd3 rejects this
@@ -629,9 +628,9 @@ mod tests {
     // the in-tree source (tools/xdelta, built standalone) via the
     // -S djw / -S none twin trick lzma.rs documents: the DJW patch's
     // data section with its dec_size varint stripped, paired with the
-    // same window's plain data section from the -S none twin (the
-    // instruction streams are identical across the two settings, so
-    // the twin's section is exactly what the stream decodes to).
+    // same window's plain data section from the -S none twin. The
+    // twin's plain section is the expected decode, checked by the
+    // round-trip tests below.
     //
     // The first is a single-group section (the CLI default: -S djw
     // pins one table). The second was encoded with -S djw9, the
@@ -1069,9 +1068,9 @@ mod tests {
         assert_eq!(fault, DjwFault::RepeatRunOvershootsSequence);
     }
 
-    // DjwFault::SelectorNamesMissingGroup has no crafted case: the
-    // selector queue holds exactly the declared group numbers and the
-    // recency indices cannot reach past them, so no bit stream names
-    // a missing group. The verdict exists as the typed landing for
-    // xd3's assertion, should the structural argument ever be wrong.
+    // DjwFault::SelectorNamesMissingGroup has no test here: the selector
+    // queue holds exactly the declared group numbers and the recency
+    // indices stay within them. The verdict exists as the typed landing
+    // for xd3's assertion (XD3_ASSERT (gp < groups)), should the
+    // structural argument ever be wrong.
 }

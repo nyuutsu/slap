@@ -231,7 +231,7 @@ impl InternalPosition for u64 {
 
 /// Top-level entry for byte input. Specialized so the dominant outer
 /// pass works directly on `&[u8]` without widening to a wider integer
-/// type — the source of the largest perf win over a naïve i32 SA-IS.
+/// type.
 fn suffix_sort_byte_alphabet<P: InternalPosition>(data: &[u8]) -> Vec<P> {
     suffix_sort_over_alphabet::<u8, P>(data, BYTE_ALPHABET_SIZE)
 }

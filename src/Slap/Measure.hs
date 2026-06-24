@@ -106,11 +106,6 @@ import System.IO (Handle, SeekMode(AbsoluteSeek), hSeek)
 -- slap where 'Offset' means a position in a non-zero-indexed buffer;
 -- 'SignedOffset' exists separately to carry the may-be-negative
 -- temporary state across BPS's displace-then-examine pattern.
---
--- The conversions 'offsetToFileSize', 'lengthToOffset', and
--- 'lengthToFileSize' are unconditionally total because of this
--- invariant — any 'Offset' value corresponds to exactly one byte
--- count from the start of its buffer, and vice versa.
 newtype Offset = Offset { unOffset :: Int } deriving (Eq, Ord, Show)
 newtype Length   = Length   { unLength   :: Int } deriving (Eq, Ord, Show)
 newtype FileSize = FileSize { unFileSize :: Int } deriving (Eq, Ord, Show)
@@ -173,12 +168,9 @@ newtype ActualSize = ActualSize { unActualSize :: FileSize }
 newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
   deriving (Eq, Ord, Show)
 
--- | The maximum size slap can address on the host platform, given
--- that offsets and lengths flow through 'Int'. Used in error contexts
--- where a create-path size guard rejects an input larger than the
--- platform's 'Int' range (the byuu-varint encoder in BPS would
--- silently produce a malformed patch via 'fromIntegral' truncation
--- on 32-bit, where 'Int' is 31-bit-addressable).
+-- | The maximum size slap can address on the host platform, given that offsets and lengths flow through 'Int':
+-- the host's 'maxBound' :: 'Int'.
+-- Carried by 'FileExceedsAddressableRange' when a create-path size guard rejects an oversized input.
 newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
   deriving (Eq, Ord, Show)
 

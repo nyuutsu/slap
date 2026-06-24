@@ -42,22 +42,14 @@ import Data.Word (Word8)
 -- Types
 ----------------------------------------------------------------------------
 
--- | The analytical-pass result: per-record breakdown and structured
--- summary. Populated by per-format @analyze\<Format\>@ functions
--- (in each format's @Describe@ module) that walk the record stream
--- and produce 'AnalysisSection' values describing every record's
--- offset, size, label, payload, and annotation.
+-- | The analytical-pass result: per-record breakdown and structured summary.
+-- Populated by per-format @analyze\<Format\>@ functions (in each format's @Describe@ module).
+-- Each walks the record stream and produces 'AnalysisSection' values describing every record's offset, size, label, payload, and annotation.
 --
--- This carrier is consumed by @slap explain@ (both verbosity modes).
--- It is intentionally NOT consumed by @slap info@ or @slap apply@ —
--- those read 'Slap.Display.Info.PatchInfo' from
--- 'Slap.SomePatch.patchInfo' instead, a cheaper carrier that
--- doesn't require record-by-record work.
---
--- 'PatchAnalysis' lives behind a non-strict field on
--- 'Slap.SomePatch.SomePatch' (@patchAnalysis@); the analytical cost
--- is paid only when consumers force the field. Code that runs on
--- every parse must not force this field.
+-- Consumed by @slap explain@ (both verbosity modes), never by @slap info@ or @slap apply@ —
+-- those read the cheaper 'Slap.Display.Info.PatchInfo' instead.
+-- The cost of the analytical walk is deferred by the non-strict 'Slap.SomePatch.patchAnalysis' field;
+-- see that field for the force discipline.
 data PatchAnalysis = PatchAnalysis
   { analysisSections :: [AnalysisSection]
   , analysisSummary  :: AnalysisSummary

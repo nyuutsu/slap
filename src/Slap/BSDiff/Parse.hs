@@ -7,8 +7,6 @@ module Slap.BSDiff.Parse
   , safeDecompressBZip
   ) where
 
--- Canonical reference: bsdiff 4.3 source (Colin Percival)
-
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), (.|.), shiftL, testBit)

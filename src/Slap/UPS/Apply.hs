@@ -83,17 +83,10 @@ data BlockPlacement
     -- observable, so any subsequent blocks (rare past an OOB
     -- block, but legal) remain on stride.
     --
-    -- Reachable whenever a direction writes the smaller of the two
-    -- declared sizes ('upsSourceSize' and 'upsTargetSize') and the
-    -- block stream continues past that smaller size. The canonical
-    -- encoder walks the larger of the two sizes, so the direction
-    -- writing the larger size sees no phantom blocks, while the
-    -- direction writing the smaller size sees a phantom tail.
-    -- Growth patches put the phantom tail on 'undoUPS' (which
-    -- writes the smaller source); shrink patches put it on
-    -- 'applyUPS' (which writes the smaller target). The walker
-    -- itself is direction-blind, so either entry point may reach
-    -- this arm.
+    -- Reachable whenever a direction writes the smaller of the two declared sizes and the block stream continues past that smaller size:
+    -- the canonical encoder walks the larger size, so only the smaller-writing direction sees a phantom tail.
+    -- Growth patches put that tail on 'undoUPS' (writes the smaller source);
+    -- shrink patches put it on 'applyUPS' (writes the smaller target).
   deriving (Show, Eq)
 
 -- | Classify a UPS block's placement against the active output
@@ -164,21 +157,13 @@ classifySourceCopy outputPosition copyLength sourceSize
 -- size — the direction choice lives in these two thin wrappers,
 -- not threaded through the walker.
 --
--- Returns 'Left' with a structured error if the declared target
--- size is negative (unreachable — the size is read from a
--- non-negative varint). Blocks whose span exceeds the output size are clipped
--- to its bounds — the in-bounds portion is written and the
--- out-of-bounds portion is silently skipped. This tolerates the
--- common creation-tool artifact where the final block's terminator
--- byte lands 1 past the declared output size. The returned
--- 'Outcome' carries an 'ApplyOOBBlocksSkipped' advisory measured
--- against the apply-direction output size ('upsTargetSize') so the
--- caller sees a direction-correct summary of any clipping.
+-- Returns 'Left' with a structured error if the declared target size is negative (unreachable — the size is read from a non-negative varint).
+-- Blocks whose span exceeds the output size are clipped to it;
+-- see 'BlockPlacement' for how the prefix is written and the terminator quirk it tolerates.
+-- The returned 'Outcome' carries an 'ApplyOOBBlocksSkipped' advisory measured against the apply-direction output size ('upsTargetSize').
 --
--- Source-shorter-than-target is legal (spec-mandated zero-fill past
--- source end) and is handled inline by the helper functions, not as
--- an error. The caller is still responsible for CRC validation
--- before calling.
+-- Source-shorter-than-target is legal (spec-mandated zero-fill past source end) and is handled inline by the helpers, not as an error.
+-- The caller is still responsible for CRC validation before calling.
 applyUPS :: UPSPatch -> InputFileContents -> Either SlapError (Outcome OutputFileContents)
 applyUPS patch (InputFileContents source) = do
   bytes <- runUPSXorWalk patch source outputSize
@@ -186,18 +171,11 @@ applyUPS patch (InputFileContents source) = do
   where
     outputSize = upsTargetSize patch
 
--- | Reverse-direction sibling to 'applyUPS'. UPS XOR is self-inverse,
--- so reconstructing the source from the target uses the same block
--- stream walked the same way — only the output buffer size differs
--- (@source_size@ instead of @target_size@). Same OOB-clipping rules
--- apply: blocks whose span exceeds the new (source-side) output
--- size get clipped against it, which is the typical situation for
--- growth patches where the block stream covers the larger target
--- but undo writes only the smaller source. The returned 'Outcome'
--- carries an 'ApplyOOBBlocksSkipped' advisory measured against the
--- undo-direction output size ('upsSourceSize'), which for growth
--- patches reports many more blocks and many more bytes than the
--- apply-direction advisory does on the same patch.
+-- | Reverse-direction sibling to 'applyUPS'.
+-- UPS XOR is self-inverse, so reconstructing the source from the target walks the same block stream the same way —
+-- only the output buffer size differs (@source_size@ instead of @target_size@), and clipping follows the same rules.
+-- The returned 'Outcome' carries an 'ApplyOOBBlocksSkipped' advisory measured against the undo-direction output size ('upsSourceSize').
+-- For growth patches that reports many more blocks and bytes than the apply-direction advisory does on the same patch.
 undoUPS :: UPSPatch -> OutputFileContents -> Either SlapError (Outcome InputFileContents)
 undoUPS patch (OutputFileContents modified) = do
   bytes <- runUPSXorWalk patch modified outputSize
@@ -205,14 +183,10 @@ undoUPS patch (OutputFileContents modified) = do
   where
     outputSize = upsSourceSize patch
 
--- | Internal: walks a UPS patch's block stream against @inputBytes@,
--- writing an output buffer of @outputSize@ bytes. The two public
--- entry points ('applyUPS' and 'undoUPS') differ only in which
--- declared size they pass here. Renders 'NegativeTargetSize' for a
--- defensively-checked negative output size — the variant is named
--- after the apply direction's "target" but covers both directions
--- (a negative declared size is unreachable from a well-parsed patch
--- in either case).
+-- | Internal: walks a UPS patch's block stream against @inputBytes@, writing an output buffer of @outputSize@ bytes.
+-- The two public entry points ('applyUPS' and 'undoUPS') differ only in which declared size they pass here.
+-- Renders 'NegativeTargetSize' for a negative output size —
+-- the variant is named after the apply direction's "target" but covers both directions.
 runUPSXorWalk :: UPSPatch -> ByteString -> FileSize -> Either SlapError ByteString
 runUPSXorWalk patch source outputSize
   | unFileSize outputSize < 0 =
@@ -231,16 +205,10 @@ runUPSXorWalk patch source outputSize
 
     runApply outputPointer sourcePointer =
       let
-        -- | Copy bytes from source to output at the given position,
-        -- zero-filling past source end (spec-mandated for source-
-        -- shorter-than-target). Dispatches on 'classifySourceCopy':
-        -- the in-source arm runs a single 'copyBytes'; the
-        -- past-source arm runs a single 'fillBytes' of zeros; the
-        -- straddle arm runs the source-read for the in-bounds
-        -- prefix followed by the zero-fill for the tail, with both
-        -- lengths handed back by the classifier. The caller is
-        -- responsible for ensuring the copy fits within target
-        -- bounds — this helper does not clip to target.
+        -- | Copy bytes from source to output at the given position, zero-filling past source end (spec-mandated for source-shorter-than-target).
+        -- Dispatches on 'classifySourceCopy'.
+        -- The caller is responsible for ensuring the copy fits within target bounds —
+        -- this helper does not clip to target.
         copySourceSlice :: Offset -> Length -> IO ()
         copySourceSlice outputPosition copyLength =
           case classifySourceCopy outputPosition copyLength sourceSize of
@@ -276,9 +244,7 @@ runUPSXorWalk patch source outputSize
         -- ensuring the write fits within target bounds — this helper
         -- does not clip to target.
         --
-        -- The loops use the raw pinned source pointer (in-bounds
-        -- phase) and a hoisted write base, matching BPS's
-        -- 'generalOverlapLoop' style.
+        -- The loops use the raw pinned source pointer (in-bounds phase) and a hoisted write base.
         xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
         xorSourceSlice outputPosition xorDataLength xorData =
           let readBase  = sourcePointer `plusPtr` unOffset outputPosition
@@ -441,16 +407,10 @@ data OOBWalkState = OOBWalkState
   , oobOvershoot  :: !OOBOvershootBytes
   }
 
--- | Walk the block stream and detect blocks whose declared span
--- exceeds the supplied @outputSize@. Returns a single summary
--- advisory if any OOB blocks exist, or an empty list if all blocks
--- fit. The output_size parameter is direction-dependent: apply
--- supplies 'upsTargetSize', undo supplies 'upsSourceSize'. Same
--- block stream, different output sizes, different OOB profiles —
--- a growth patch typically has a handful of OOB blocks (often just
--- one, from the terminator quirk) in the apply direction and many
--- in the undo direction, because the block stream covers the
--- larger target while undo writes the smaller source.
+-- | Walk the block stream and mark blocks whose declared span exceeds the supplied @outputSize@.
+-- Returns a single summary advisory if any OOB blocks exist, or an empty list if all blocks fit.
+-- The output_size parameter is direction-dependent:
+-- apply supplies 'upsTargetSize', undo supplies 'upsSourceSize', so the two directions see different OOB profiles on the same stream.
 --
 -- The direction parameter tags the advisory with which operation
 -- produced it ('Forward' for apply, 'Reverse' for undo), so the

@@ -10,14 +10,9 @@
 -- 'EncodedUndoHunk'. The discipline is type-enforced — removing
 -- either pass from any direct-format pipeline produces a type error.
 --
--- 'EncodedHunk' and 'EncodedUndoHunk' are the post-narrow phases of
--- 'SplitHunk' and 'SplitUndoHunk'. Their constructors are private to
--- this module — every encoded value in slap was produced by one of
--- the @narrow*@ functions here. Encoders consume the encoded types
--- through the exported selectors; they cannot construct one. The
--- only way to obtain an 'EncodedHunk' or 'EncodedUndoHunk' is to
--- start with the corresponding split type, which itself can only be
--- obtained from one of the @split*@ functions in "Slap.Measure".
+-- 'EncodedHunk' and 'EncodedUndoHunk' are the post-narrow phases of 'SplitHunk' and 'SplitUndoHunk';
+-- encoders consume them through the exported selectors.
+-- The private-constructor invariant is stated on each type below.
 --
 -- 'NarrowingFailure' covers two axes: 'OffsetExceedsBound' for
 -- per-record offset overflows (raised by 'narrowHunk' against
@@ -90,17 +85,9 @@ data EncodingLimits = EncodingLimits
 data NarrowingFailure
   = OffsetExceedsBound !FormatLabel !ActualOffset !MaxOffset
   | NegativeOffset !FormatLabel !ActualOffset
-    -- ^ A record offset is negative. A write position cannot be
-    -- negative, so this is unrepresentable in any wire-format offset
-    -- field — encoding it would 'fromIntegral'-wrap into a large
-    -- unsigned value and silently misplace the write. The motivating
-    -- source is a parsed PPF3 patch: PPF3's offset is a signed
-    -- @int64@ on the wire (spec, @PPF3.txt@), so a high-bit value
-    -- decodes to a negative 'Offset' — valid for parse to produce
-    -- and for apply to reject ('Slap.Status.ApplyNegativeRecordOffset'),
-    -- but a convert to a bounded target would otherwise wrap it here.
-    -- The sibling 'narrowToWord32' \/ 'narrowToWord16' already refuse
-    -- a negative field value; this is the same rule for the offset.
+    -- ^ A record offset is negative; encoding it would 'fromIntegral'-wrap into a large unsigned value and silently misplace the write.
+    -- The source is a parsed PPF3 patch, whose offset is a signed @int64@ on the wire (spec, @PPF3.txt@):
+    -- a high-bit value decodes to a negative 'Offset', which apply rejects ('Slap.Status.ApplyNegativeRecordOffset') and convert to a bounded target refuses here.
   | FieldValueExceedsBound !FormatLabel !FieldName !Integer !Integer
     -- ^ A header or trailer field's runtime value exceeded the
     -- wire-format width of the field. The two 'Integer's are the

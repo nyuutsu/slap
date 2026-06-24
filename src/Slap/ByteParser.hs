@@ -387,11 +387,7 @@ vcdiffVarintReportingCanonicality = do
 edsioVarint :: ByteParser Int64
 edsioVarint = accumulate 0 0
   where
-    -- Fold 7-bit groups in, least-significant first, until a byte
-    -- without the continuation flag closes the value. The 63-bit
-    -- guard bounds the read to nine bytes: a value needing more bits
-    -- than that is past 'Int64' and surfaces as the wider over-width
-    -- verdict.
+    -- Fold 7-bit groups in, least-significant first, until a byte without the continuation flag closes the value.
     accumulate accumulated bitOffset
       | bitOffset >= 63 =
           throwByteParserError ByteParserVarintExceededWidth

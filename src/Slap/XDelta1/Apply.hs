@@ -99,11 +99,6 @@ applyXDelta1 patch sourceContents =
       where
         runApply targetPointer =
           let
-            -- | The single cursor transition done after every
-            -- xdelta1 instruction: the output cursor advances by the
-            -- instruction's length. The whole apply walk has exactly
-            -- one piece of state and exactly one transition; this is
-            -- it.
             advanceOutputByInstruction :: Length -> XDelta1Apply ()
             advanceOutputByInstruction stride =
               modify (\outputPosition -> advance outputPosition stride)
