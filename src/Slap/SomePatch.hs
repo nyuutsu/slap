@@ -859,7 +859,6 @@ parseSomePatchFromNINJA1 patchContents = do
       hunkOf ninja1Record = Hunk (NINJA1.ninja1RecordOffset ninja1Record) (NINJA1.ninja1RecordData ninja1Record)
       warnings = concat
         [ parseAdvisories
-        , [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
         , [EmptyPatch LabelNINJA1 EmptyRecords | null records]
         ]
       compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.NINJA1BinaryCompressed, NINJA1.NINJA1TextCompressed]

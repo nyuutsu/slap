@@ -239,6 +239,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "hashes" prop_ninja1Hashes
       , testProperty "eof-collision" prop_ninja1EofCollision
       , testProperty "source-less convert rejects sentinel" prop_ninja1SourcelessSentinelRejected
+      , testProperty "missing EOF footer rejected" prop_ninja1FooterRequired
       , testCase "shrinking target is refused" (assertShrinkRefused CreateNINJA1 LabelNINJA1)
       ]
   , testGroup "DPS"
@@ -1870,6 +1871,18 @@ prop_ninja1SourcelessSentinelRejected = once $
        Right _ ->
          counterexample "expected Left SentinelCollisionUnfixable, got Right" $
            property False
+
+-- | A binary NINJA1 patch's [0x03]"EOF" footer is its only record-stream terminator, so a patch with the footer removed is refused rather than parsed.
+-- Dropping the trailing four footer bytes of an (uncompressed) create output is the whole transform — no hand-edited fixture involved.
+prop_ninja1FooterRequired :: Property
+prop_ninja1FooterRequired = forAll genPairNoShrink $ \(source, target) ->
+  case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> counterexample ("create: " ++ Text.unpack (renderSlapError slapError)) $ property False
+    Right (CreateResult (PatchFileContents bytes) _) ->
+      case NINJA1.parseNINJA1 (PatchFileContents (ByteString.dropEnd 4 bytes)) of
+        Left NINJA1BinaryMissingEOFFooter -> property True
+        Left other -> counterexample ("expected footer refusal, got: " ++ Text.unpack (renderSlapError other)) $ property False
+        Right _   -> counterexample "expected Left NINJA1BinaryMissingEOFFooter, got Right" $ property False
 
 -- DPS: differential, no truncation
 prop_dps :: Property

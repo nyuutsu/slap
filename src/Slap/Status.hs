@@ -562,6 +562,10 @@ data SlapError
   -- space is finite per the format spec.
   | MalformedNINJA1Content NINJA1Malformation
 
+  -- | A binary NINJA1 patch whose record stream ended without the @0x03 "EOF"@ footer that terminates it.
+  -- The footer is the format's only terminator, so a footer-less patch is refused rather than applied (the reference applier cannot stop without it).
+  | NINJA1BinaryMissingEOFFooter
+
   -- | A byte-parser failure surfaced from a per-format parser. The
   -- payload is a structured 'ByteParserError' that enumerates each
   -- shape the parser layer can fail in (underflow, terminator-not-
@@ -1623,6 +1627,9 @@ renderSlapError (UnsupportedXDelta1Subformat version) =
 renderSlapError (UnsupportedNINJA1Subformat subformatBytes) =
   formatLabelName LabelNINJA1 <> ": unsupported subformat: "
   <> renderAsText subformatBytes
+
+renderSlapError NINJA1BinaryMissingEOFFooter =
+  formatLabelName LabelNINJA1 <> ": binary patch ends without the EOF footer"
 
 renderSlapError (TruncatedRecord label recordIndex needed available) =
   formatLabelName label <> ": record " <> renderAsText recordIndex

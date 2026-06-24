@@ -18,7 +18,7 @@ module Slap.NINJA1.Parse
 -- Format spec: docs/ninja1/upstream/ninja1-filespec10.txt
 -- Both archived from http://ninja.cinnamonpirate.com/
 
-import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1BinaryResult(..), NINJA1TextHeader(..),
+import Slap.NINJA1.Types (NINJA1Patch(..), NINJA1Record(..), NINJA1TextHeader(..),
                            NINJA1SubFormat(..), NINJA1RomType(..),
                            toNINJA1RomType, toNINJA1SubFormat,
                            ninja1MagicBytes,
@@ -80,28 +80,28 @@ parseBinary :: NINJA1SubFormat -> PatchFileContents -> Either SlapError NINJA1Pa
 parseBinary format (PatchFileContents payload)
   | ByteString.length payload < 41 = Left (InputTooShort LabelNINJA1 (RequiredLength (Length 41)) (ActualLength (byteLength payload)))
   | otherwise = case runByteParser (parseBinaryGet format) payload of
-      Left parserError -> Left (ParseError LabelNINJA1 parserError)
-      Right patch -> Right patch
+      Left parserError                 -> Left (ParseError LabelNINJA1 parserError)
+      Right (EndedWithoutEOFFooter, _)  -> Left NINJA1BinaryMissingEOFFooter
+      Right (ReachedEOFFooter, patch)   -> Right patch
 
-parseBinaryGet :: NINJA1SubFormat -> ByteParser NINJA1Patch
+parseBinaryGet :: NINJA1SubFormat -> ByteParser (NINJA1BinaryTermination, NINJA1Patch)
 parseBinaryGet format = do
   romType   <- toNINJA1RomType <$> getByte
   crcBytes  <- getBytes (Length 4)
   md5Bytes  <- getBytes (Length 16)
   sha1Bytes <- getBytes (Length 20)
-  result <- parseBinaryRecords
+  (termination, records) <- parseBinaryRecords
   let parsedCRC  = if ByteString.all (== 0) crcBytes then Nothing else Just (CRC32 (decodeBigEndian crcBytes))
       parsedMD5  = if ByteString.all (== 0) md5Bytes then Nothing else Just (MD5Hash md5Bytes)
       parsedSHA1 = if ByteString.all (== 0) sha1Bytes then Nothing else Just (SHA1Hash sha1Bytes)
-  pure NINJA1Patch
+  pure (termination, NINJA1Patch
     { ninja1SubFormat  = format
     , ninja1RomType    = romType
     , ninja1SourceCRC  = parsedCRC
     , ninja1SourceMD5  = parsedMD5
     , ninja1SourceSHA1 = parsedSHA1
-    , ninja1Records    = ninja1BinaryRecords result
-    , ninja1CleanEOF   = ninja1BinaryCleanEOF result
-    }
+    , ninja1Records    = records
+    })
 
 -- | Decode an unsigned big-endian byte sequence as any 'Num'
 -- result type. NINJA1's binary record format encodes offsets and
@@ -133,14 +133,18 @@ data NINJA1BinaryStreamHead
     -- ^ A record begins here, its offset already decoded; the data
     -- width, length, and payload remain to be read.
 
-parseBinaryRecords :: ByteParser NINJA1BinaryResult
+-- How the binary record walk ended.
+-- ReachedEOFFooter is a valid patch; EndedWithoutEOFFooter means the footer (the only terminator) was absent, which parseBinary refuses as NINJA1BinaryMissingEOFFooter.
+data NINJA1BinaryTermination = ReachedEOFFooter | EndedWithoutEOFFooter
+
+parseBinaryRecords :: ByteParser (NINJA1BinaryTermination, [NINJA1Record])
 parseBinaryRecords = parseLoop []
   where
     parseLoop accumulated = do
       streamHead <- readBinaryStreamHead
       case streamHead of
-        EndsWithoutMarker -> pure (NINJA1BinaryResult (reverse accumulated) False)
-        EOFMarkerFound    -> pure (NINJA1BinaryResult (reverse accumulated) True)
+        EndsWithoutMarker -> pure (EndedWithoutEOFFooter, reverse accumulated)
+        EOFMarkerFound    -> pure (ReachedEOFFooter, reverse accumulated)
         RecordAt recordOffset -> do
           dataWidth    <- fromIntegral <$> getByte :: ByteParser Int
           dataLenBytes <- getBytes (Length dataWidth)
@@ -193,7 +197,6 @@ parseText format (PatchFileContents payload) = do
         , ninja1SourceMD5  = ninja1TextSourceMD5 header
         , ninja1SourceSHA1 = ninja1TextSourceSHA1 header
         , ninja1Records    = records
-        , ninja1CleanEOF   = True  -- textual format has no EOF sentinel
         }
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'

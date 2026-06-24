@@ -4,7 +4,6 @@
 module Slap.NINJA1.Types
   ( NINJA1Patch(..)
   , NINJA1Record(..)
-  , NINJA1BinaryResult(..)
   , NINJA1TextHeader(..)
   , NINJA1SubFormat(..)
   , NINJA1RomType(..)
@@ -116,11 +115,6 @@ fromNINJA1RomType RomJaguar         = 16
 fromNINJA1RomType RomGP32           = 17
 fromNINJA1RomType (RomUnknown value) = value
 
-data NINJA1BinaryResult = NINJA1BinaryResult
-  { ninja1BinaryRecords  :: ![NINJA1Record]
-  , ninja1BinaryCleanEOF :: !Bool
-  } deriving (Show)
-
 data NINJA1TextHeader = NINJA1TextHeader
   { ninja1TextRomType    :: !NINJA1RomType
   , ninja1TextSourceCRC  :: !(Maybe CRC32)
@@ -135,7 +129,6 @@ data NINJA1Patch = NINJA1Patch
   , ninja1SourceMD5  :: Maybe MD5Hash
   , ninja1SourceSHA1 :: Maybe SHA1Hash
   , ninja1Records    :: [NINJA1Record]
-  , ninja1CleanEOF   :: Bool              -- parse completed cleanly (binary: EOF sentinel found; text: always True)
   } deriving (Show)
 
 data NINJA1Record = NINJA1Record
