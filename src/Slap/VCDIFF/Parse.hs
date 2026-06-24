@@ -1,33 +1,16 @@
--- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary,
--- source-free. Reads the core (default code table, window framing, the
--- instruction set), the whole xdelta3 arc — the application header
--- (carried opaque), the per-window Adler32 (carried for the
--- verification boundary), and secondary-compressed sections in all
--- three of xdelta3's compressors, DJW, LZMA, and FGK, decoded here
--- before instruction decode through 'Slap.VCDIFF.SecondaryCompression'
--- — and the whole RFC arc: VCD_TARGET windows, and the custom code
--- table, built by decoding its inner delta (a self-contained VCDIFF
--- patch) against the serialized default table and reading the result
--- back ('buildCustomTable'). A custom table failing to build wraps the
--- precise inner failure as 'VCDIFFCustomCodeTableDecodeFailed'; an
--- inner delta declaring its own table is the no-nesting refusal
--- 'VCDIFFNestedCustomCodeTable'. A reserved indicator bit and an
--- uncataloged compressor id decline as 'VCDIFFReservedIndicatorBits' \/
--- 'VCDIFFUnknownSecondaryCompressor', and a patch mixing an
--- RFC-exclusive feature with an xdelta3 extension as
--- 'VCDIFFRFCFeatureWithXDelta3Feature' — none mishandled.
+-- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary, source-free.
+-- Reads the core (default table, framing, instructions), the xdelta3 arc (checksums and secondary compression), and the RFC arc (VCD_TARGET windows and custom code tables).
+-- Each feature's read and each decline reason live where it is handled.
 --
--- Parsing is two passes with one clean seam. 'parseRawPatch' is the
--- byte-level walk: it reads the header and frames each window into its
--- indicator bytes, source segment, sizes, checksum, and three raw
--- section slices, surfacing only truncation ('ParseError').
--- 'classifyAndDecode' is the semantic pass, in stages: it vets every
--- window's framing ('vetWindowFraming'), resolves secondary
--- compression so each window holds plain sections
--- ('resolveSecondaryCompression'), decodes each window's instruction
--- stream ('decodeWindow') — enforcing the three core invariants
--- (docs/vcdiff/core/spec.md "Core invariants") so a patch this module
--- returns has them guaranteed — and names the flavor.
+-- Parsing is two passes with one clean seam.
+-- 'parseRawPatch' is the byte-level walk: it reads the header and frames each window, surfacing only truncation ('ParseError').
+-- 'classifyAndDecode' is the semantic pass, in three stages:
+--
+--   * vet each window's framing ('vetWindowFraming')
+--   * resolve secondary compression so each window holds plain sections ('resolveSecondaryCompression')
+--   * decode each window's instruction stream ('decodeWindow'), enforcing the three core invariants (docs/vcdiff/core/spec.md "Core invariants")
+--
+-- and name the flavor.
 --
 -- The address cache lives here, as decode mechanism: it is reset per
 -- window, updated after every COPY, and gone once the window's
@@ -798,11 +781,9 @@ newtype ResolvedWindow = ResolvedWindow RawWindow
 --     declared-but-unused case (docs/vcdiff/xdelta3/secondary-
 --     compression.md "Catalog").
 --
--- The arms stay explicit rather than factored through a shared
--- projection: the dispositions above appear one-to-one in the code,
--- and a new catalog entry fires '-Wincomplete-patterns' here, at the
--- decision point. With FGK's decoder landed, the catalog refuses
--- nothing: all three compressors are decode paths.
+-- The arms stay explicit rather than factored through a shared projection:
+-- the dispositions above appear one-to-one in the code, and a new catalog entry fires '-Wincomplete-patterns' here, at the decision point.
+-- The catalog refuses nothing here: all three compressors are decode paths.
 resolveSecondaryCompression
   :: Maybe XDelta3SecondaryCompressor -> [RawWindow]
   -> Either SlapError [ResolvedWindow]

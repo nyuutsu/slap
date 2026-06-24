@@ -3,17 +3,13 @@
 --
 -- This is the one concept the two VCDIFF flavors — RFC 3284 and
 -- xdelta3 — share verbatim, and the only slap format with anything
--- like it, so it earns its own module. Core uses the fixed default
--- table ('defaultCodeTable'); a patch may also carry a custom table on
--- the wire, decoded against the 1536-byte serialized image
--- ('serializeCodeTable' / 'deserializeCodeTable'). Building both
--- directions now lets the round-trip be the proof that the table is
--- right; the custom-table envelope that wraps the image is RFC-arc work
--- that lands later and builds on this representation.
+-- like it, so it earns its own module.
+-- Core uses the fixed default table ('defaultCodeTable');
+-- a patch may also carry a custom table on the wire, decoded against the 1536-byte serialized image ('serializeCodeTable' / 'deserializeCodeTable').
+-- Its round-trip exercises the representation in both directions.
 --
--- The module depends on nothing from the rest of the VCDIFF family —
--- it defines its own instruction vocabulary — so it can be laid before
--- that family exists.
+-- The module depends on nothing from the rest of the VCDIFF family:
+-- it defines its own instruction vocabulary.
 --
 -- Spec: @docs\/vcdiff\/core\/spec.md@, "Instructions" and "The default
 -- code table"; the serialized layout is @docs\/vcdiff\/rfc-vcdiff\/spec.md@.

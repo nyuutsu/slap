@@ -21,24 +21,11 @@
 -- names the arc the user asked for; whether the bytes turn out core-shaped
 -- or RFC-shaped is settled by whether a custom table earned its place.
 --
--- Instruction selection stays uniform: a literal becomes a 'Run' only
--- when it is a single byte repeated (length ≥ 2), an 'Add' otherwise; a
--- copy passes straight through. Each COPY's address is resolved once, by
--- 'resolveInstructionAddresses', to the cheapest mode the address cache
--- admits — SAME (one byte), NEAR (a short delta off a recent address),
--- HERE (a short distance back from the write head), or SELF (the absolute
--- @U@ offset) — through the shared
--- 'Slap.VCDIFF.AddressCache.selectCopyAddressMode', running the same
--- 'Slap.VCDIFF.AddressCache.recordAddress' the decoder runs so the two
--- caches stay one state. That selection is table-independent (the cache
--- geometry, not the code table, fixes the mode), so one resolved stream
--- feeds every table the patch is weighed under. Each resolved instruction
--- is then packed as the densest entry the active table offers: a fixed-size
--- single where the size has its own opcode (dropping the out-of-line size
--- varint), or a combined opcode where an adjacent ADD+COPY or COPY+ADD pair
--- shares one — the coded-size single is the fallback, not the default.
--- Both choices only ever shrink a section, so the rule is mechanical, with
--- no cost comparison to get wrong. There is still one window.
+-- The path is cover -> instructions -> resolved instructions -> wire bytes, source-free, under the active code table.
+-- Each cover segment becomes an instruction ('coverToInstructions').
+-- Each COPY's address is resolved once against the cache ('resolveInstructionAddresses').
+-- The resolved stream packs into the densest opcodes the table offers ('packInstructions').
+-- There is still one window.
 --
 -- The custom code table is the patch carrying its own opcode assignments
 -- and cache geometry, tuned to this patch: the ADD+COPY and COPY+ADD pairs
@@ -106,11 +93,9 @@ createRFCVCDIFF inputContents outputContents =
   Right (createConsideringCustomTable inputContents outputContents
            (vcdiffCover inputContents outputContents))
 
--- | Serialize a cover of @target@ against @source@ into a VCDIFF patch on
--- the default code table, with no custom-table consideration — the core.
--- Tests drive it with hand-built covers to pin the emitter, and the
--- custom-table path reuses it for the inner delta. Total: a well-formed
--- cover always serializes, so the 'CreateResult' carries no advisories.
+-- | Serialize a cover of @target@ against @source@ into a VCDIFF patch on the default code table, with no custom-table consideration — the core.
+-- Tests drive it with hand-built covers to pin the emitter, and the custom-table path reuses it for the inner delta.
+-- The 'CreateResult' carries no advisories.
 createFromCover :: InputFileContents -> OutputFileContents -> Cover -> CreateResult
 createFromCover (InputFileContents source) (OutputFileContents target) cover =
   CreateResult (PatchFileContents (emitDefaultPatch source target cover)) []
@@ -243,16 +228,12 @@ instance Semigroup SectionBuilders where
 instance Monoid SectionBuilders where
   mempty = SectionBuilders mempty mempty mempty
 
--- | Pack a window's resolved instructions into the three section streams
--- under a table, choosing the densest opcode each step the table offers. A
--- one-step lookahead packs an adjacent ADD+COPY or COPY+ADD into one
--- combined opcode when the table holds an entry for the pair's sizes and
--- the COPY's already-chosen mode; otherwise each instruction packs on its
--- own. RUN never combines. Greedy left-to-right takes a maximal set of
--- non-overlapping pairs, each pairing saving one opcode, so the instruction
--- section is byte-minimal under the table. No cache here: the modes and
--- operands were fixed by 'resolveInstructionAddresses', so packing is pure
--- opcode lookup over the resolved stream.
+-- | Pack a window's resolved instructions into the three section streams under a table, choosing the densest opcode each step the table offers.
+-- A one-step lookahead packs an adjacent ADD+COPY or COPY+ADD into one combined opcode when the table holds an entry for the pair's sizes and the COPY's already-chosen mode;
+-- otherwise each instruction packs on its own.
+-- RUN never combines.
+-- Greedy left-to-right takes a maximal set of non-overlapping pairs, each pairing saving one opcode.
+-- No cache here: the modes and operands were fixed by 'resolveInstructionAddresses', so packing is pure opcode lookup over the resolved stream.
 packInstructions :: DenseOpcodes -> [ResolvedInstruction] -> SectionBuilders
 packInstructions resolver = packFrom
   where
@@ -311,14 +292,10 @@ combinedSections opcode literal operand = SectionBuilders
   , instructionStream = word8 (Table.unOpcode opcode)
   , addressStream     = renderOperand operand }
 
--- | Pack one instruction on its own — a RUN, an ADD or COPY with no
--- combinable neighbour, or a half of an adjacency the table had no combined
--- entry for. ADD and RUN touch only the data section; a COPY emits its
--- already-chosen operand into the address section. Each takes the densest
--- single opcode: the fixed-size entry where the table names the size (no
--- size varint trails), the coded-size entry otherwise. RUN has only the
--- coded form. Exhaustive over the three kinds — no wildcard, so a fourth
--- could not slip through.
+-- | Pack one instruction on its own — a RUN, an ADD or COPY with no combinable neighbour, or a half of an adjacency the table had no combined entry for.
+-- ADD and RUN touch only the data section; a COPY emits its already-chosen operand into the address section.
+-- Each takes the densest single opcode: the fixed-size entry where the table names the size (no size varint trails), the coded-size entry otherwise.
+-- RUN has only the coded form.
 packSingle :: DenseOpcodes -> ResolvedInstruction -> SectionBuilders
 packSingle resolver = \case
   ResolvedAdd literal ->

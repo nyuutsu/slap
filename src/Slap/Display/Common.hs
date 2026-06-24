@@ -29,6 +29,7 @@ module Slap.Display.Common
   , pathText
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Numeric (showHex)
@@ -186,7 +187,7 @@ data FormatHeader = FormatHeader
 
 renderFormatHeader :: FormatHeader -> Text
 renderFormatHeader (FormatHeader label extra) =
-  formatLabelName label <> maybe "" id extra
+  formatLabelName label <> fromMaybe "" extra
 
 ----------------------------------------------------------------------------
 -- Show-to-Text

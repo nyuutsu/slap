@@ -38,13 +38,16 @@ bsdiffMeta patch =
 
 analyzeBSDiff :: BSDiffPatch -> PatchAnalysis
 analyzeBSDiff patch = PatchAnalysis
-  { analysisSections = if null (bsdiffInstructions patch)
-                  then [SectionText "(control data not decoded)"]
-                  else [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) (bsdiffInstructions patch)))]
-  , analysisSummary  = if null (bsdiffInstructions patch)
-                  then SummaryNone
-                  else Summary (SummaryInfo (Tally (length (bsdiffInstructions patch))) Instructions Nothing)
+  { analysisSections = if hasDecodedControl
+                  then [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) instructions))]
+                  else [SectionText "(control data not decoded)"]
+  , analysisSummary  = if hasDecodedControl
+                  then Summary (SummaryInfo (Tally (length instructions)) Instructions Nothing)
+                  else SummaryNone
   }
+  where
+    instructions      = bsdiffInstructions patch
+    hasDecodedControl = not (null instructions)
 
 makeBSDiffRegion :: Offset -> BSDiffInstruction -> (Offset, AnalysisRegion)
 makeBSDiffRegion outputPosition instruction =

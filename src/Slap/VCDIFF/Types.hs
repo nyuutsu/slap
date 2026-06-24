@@ -46,36 +46,23 @@ import Data.Word (Word8)
 vcdiffMagicBytes :: ByteString
 vcdiffMagicBytes = ByteString.pack [0xD6, 0xC3, 0xC4]
 
--- | A parsed VCDIFF patch, named for which of the three things it
--- honestly is. The flavor is not a styling choice layered over one
--- representation: an xdelta3 patch can carry an application header and
--- per-window checksums an RFC patch cannot, and an RFC patch can carry
--- a custom code table an xdelta3 decoder rejects. 'PatchCoreOnly' is a
--- first-class verdict — a patch that uses no flavor-distinguishing
--- feature, decoding identically under either flavor — not a silent
--- lean toward one side. Modeling all three keeps the question "which
--- flavor is this" answered by the constructor rather than by inspecting
--- fields after the fact.
+-- | A parsed VCDIFF patch, named for which of the three things it is.
+-- An xdelta3 patch can carry an application header and per-window checksums an RFC patch cannot;
+-- an RFC patch can carry a custom code table an xdelta3 decoder rejects.
+-- 'PatchCoreOnly' is first-class — a patch using no flavor-distinguishing feature, decoding identically under either flavor — not a degenerate case.
+-- Modeling all three keeps "which flavor is this" answered by the constructor rather than by inspecting fields after the fact.
 data VCDIFFPatch
   = PatchXDelta3  !XDelta3Header !(Vector XDelta3Window)
   | PatchRFC      !RFCHeader     !(Vector Window)
   | PatchCoreOnly                !(Vector Window)
   deriving (Eq, Show)
 
--- | The xdelta3-only header fields: the optional application header
--- (the VCD_APPHEADER data an xdelta3 patch may carry once, before its
--- windows), and the secondary compressor it declared, if any.
+-- | The xdelta3-only header fields:
+-- the optional application header (the VCD_APPHEADER data an xdelta3 patch may carry once, before its windows), and the secondary compressor it declared, if any.
 --
--- The compressor's /sections/ are decode mechanism — resolved to plain
--- bytes during parse, gone from the decoded form like the code table
--- and the address cache. But /which/ compressor was declared is a fact
--- about the patch worth keeping: it is the only registry a compressor
--- id belongs to, it is part of how the patch describes itself, and a
--- 'Nothing' here ('Just' there) is the difference between a plain
--- xdelta3 patch and a compressed one. So the name survives even when
--- the bytes it governed do not. A declared compressor that no window
--- ever draws on is a real, valid state — it is still recorded here, as
--- a declaration, not a use.
+-- The compressor's /sections/ are decode mechanism — resolved to plain bytes during parse, gone from the decoded form like the code table and the address cache.
+-- But /which/ compressor was declared is worth keeping: a 'Nothing' here is the difference between a plain xdelta3 patch and a compressed one.
+-- The name is a declaration, not a use — a declared compressor no window ever draws on is a real, valid state, still recorded here.
 data XDelta3Header = XDelta3Header
   { xdelta3AppHeader           :: !(Maybe ByteString)
   , xdelta3SecondaryCompressor :: !(Maybe XDelta3SecondaryCompressor)
@@ -160,13 +147,9 @@ patchWindowsWithChecksums patch = case patch of
     withChecksum xdelta3Window =
       WindowWithChecksum (xdelta3WindowBody xdelta3Window) (xdelta3WindowAdler32 xdelta3Window)
 
--- | A window paired with the per-window Adler32 it carries — 'Nothing'
--- for a core-only or RFC window, which has no slot for one. The
--- flavor-flattened unit 'patchWindowsWithChecksums' yields; the
--- verification lift and the explain walk read its fields by name rather
--- than by tuple position. Mirrors 'XDelta3Window' in shape, but
--- flavor-agnostic — the checksum is optional because two of the three
--- flavors never carry one.
+-- | A window paired with the per-window Adler32 it carries — 'Nothing' for a core-only or RFC window, which has no slot for one.
+-- The flavor-flattened unit 'patchWindowsWithChecksums' yields (read by name, not tuple position).
+-- Mirrors 'XDelta3Window' in shape, but flavor-agnostic.
 data WindowWithChecksum = WindowWithChecksum
   { windowWithChecksumBody    :: !Window
   , windowWithChecksumAdler32 :: !(Maybe Adler32)

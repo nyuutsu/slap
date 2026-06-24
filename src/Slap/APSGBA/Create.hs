@@ -14,11 +14,18 @@ import Slap.Measure (Offset(..), Length(..), byteFileSize)
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, byteString, toLazyByteString)
 import Data.Bits (xor)
 import Data.Word (Word32)
+
+-- | Zero-pad a block's bytes up to @size@.
+-- Callers pass a 'viewBytesInRange' slice of length @size@, so the input is already at most @size@ bytes and this only ever pads a short final block.
+zeroPadToBlockSize :: Int -> ByteString -> ByteString
+zeroPadToBlockSize size input =
+  input <> ByteString.replicate (size - ByteString.length input) 0
 
 createAPSGBA :: InputFileContents -> OutputFileContents
              -> Either SlapError CreateResult
@@ -38,12 +45,9 @@ createAPSGBA inputContents@(InputFileContents original) outputContents@(OutputFi
     changedBlocks = filter hasChanges [0 .. blockCount - 1]
     hasChanges blockIndex =
       let offset = blockIndex * blockSize
-          sourceBlock = padBlock (viewBytesInRange (Offset offset) (Length blockSize) original)
-          targetBlock = padBlock (viewBytesInRange (Offset offset) (Length blockSize) modified)
+          sourceBlock = zeroPadToBlockSize blockSize (viewBytesInRange (Offset offset) (Length blockSize) original)
+          targetBlock = zeroPadToBlockSize blockSize (viewBytesInRange (Offset offset) (Length blockSize) modified)
       in sourceBlock /= targetBlock
-    padBlock input
-      | ByteString.length input >= blockSize = ByteString.take blockSize input
-      | otherwise = input <> ByteString.replicate (blockSize - ByteString.length input) 0
 
 encodeGBABlock :: InputFileContents -> OutputFileContents -> Int -> Builder
 encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockIndex =
@@ -56,9 +60,6 @@ encodeGBABlock (InputFileContents original) (OutputFileContents modified) blockI
     <> byteString xorPayload
   where
     offset = blockIndex * apsGbaBlockSize
-    sourceBlock = zeroPadTo apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) original)
-    targetBlock = zeroPadTo apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) modified)
+    sourceBlock = zeroPadToBlockSize apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) original)
+    targetBlock = zeroPadToBlockSize apsGbaBlockSize (viewBytesInRange (Offset offset) (Length apsGbaBlockSize) modified)
     xorPayload = ByteString.packZipWith xor sourceBlock targetBlock
-    zeroPadTo size input
-      | ByteString.length input >= size = ByteString.take size input
-      | otherwise = input <> ByteString.replicate (size - ByteString.length input) 0

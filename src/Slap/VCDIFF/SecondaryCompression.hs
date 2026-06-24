@@ -1,48 +1,19 @@
--- | Secondary compression, the xdelta3 way: the catalog that gives
--- compressor ids their names, and the per-kind decode paths that turn
--- compressed sections back into plain ones.
+-- | Secondary compression, the xdelta3 way:
+-- the catalog that gives compressor ids their names, and the per-kind decode paths that turn compressed sections back into plain ones.
 --
--- The RFC defines none of this — §6 waves at "assuming that any such
--- compressed data has been decompressed" — so the shapes here are
--- xdelta3 convention, recovered from its source
--- (docs/vcdiff/xdelta3/secondary-compression.md,
--- docs/vcdiff/xdelta3/questions.md). One framing fact is shared: a
--- compressed section's on-wire bytes are a decompressed-size varint
--- followed by compressor-native stream bytes. What that stream /is/
--- differs per compressor, and the three decode paths wear the
--- difference:
+-- The RFC defines none of this — §6 waves at "assuming that any such compressed data has been decompressed" —
+-- so the shapes here are xdelta3 convention, recovered from its source (docs/vcdiff/xdelta3/secondary-compression.md, docs/vcdiff/xdelta3/questions.md).
+-- One framing fact is shared: a compressed section's on-wire bytes are a decompressed-size varint followed by compressor-native stream bytes.
+-- What that stream /is/ differs per compressor, and the three decode paths wear the difference:
 --
---   * LZMA's stream is continuous within a kind: a compressed data
---     section in window 7 is not a self-contained unit, it is a slice
---     of the data kind's one ongoing stream, the xz header appearing
---     only in the first window that compresses the kind. So the LZMA
---     path gathers — collect a kind's slices in window order, decode
---     the kind once, split the output back by declared sizes.
+--   * LZMA's stream is continuous within a kind: a window's section is a slice of the kind's one ongoing stream, the xz header in the first window only.
+--     So the LZMA path gathers — collect a kind's slices in window order, decode once, split the output by declared sizes.
+--   * DJW is fresh per section: each carries its own table headers and bit stream, so the DJW path decodes each piece independently — no gathering — its verdicts at per-section granularity.
+--   * FGK also gathers, but its sections share the adaptive /tree/, not a bitstream: each is byte-flushed, yet a section's first byte decodes against the tree the earlier sections left.
+--     So the path gathers the slices and threads one tree through them, each section bounded by its declared size with the reader realigned between sections.
 --
---   * DJW is fresh per section: xd3's per-section driver
---     (@xd3_decode_secondary@) holds every section to its own
---     consume-all and exact-output checks, and @xd3_decode_huff@
---     starts a fresh bit reader on every call over a stream state of
---     literally @struct _djw_stream { int unused; }@. Each section
---     carries its own table headers and bit stream, so the DJW path
---     decodes each piece independently — no gathering — and its
---     verdicts land at per-section granularity, xd3's own.
---
---   * FGK also gathers, but for a reason all its own: its sections do
---     not share a bitstream the way LZMA's do — each is byte-flushed —
---     they share the adaptive /tree/. xd3 inits a kind's secondary
---     stream once (@xd3_get_secondary@) and carries it across every
---     section, so a section's first byte decodes against the tree the
---     earlier sections left. The path gathers the slices and threads
---     one tree through them, each section bounded by its own declared
---     size with the reader realigned to a byte boundary between
---     sections.
---
--- In every path the Rust side receives bytes and returns bytes plus
--- how much input it consumed; the verdicts on those facts (xd3's
--- "finished with unused input" and "short output", kept distinct here
--- as they are there) are typed on this side, where the wire framing
--- is known.
+-- In every path the Rust side receives bytes and returns bytes plus how much input it consumed;
+-- the verdicts on those facts (xd3's "finished with unused input" and "short output", kept distinct here as there) are typed on this side, where the wire framing is known.
 module Slap.VCDIFF.SecondaryCompression
   ( -- * The catalog
     XDelta3SecondaryCompressor(..)
@@ -132,12 +103,9 @@ data CompressedPiece = CompressedPiece
 -- through untouched; a kind no window compresses comes back exactly
 -- as it went in.
 --
--- LZMA-specific by name and by shape: the gathering exists because
--- LZMA's stream is continuous within a kind, and 'lzmaDecompress'
--- sizes its own output from the chunk headers, so no expected-size
--- bound crosses the seam. 'decodeDJWCompressedKind' is the
--- per-section sibling; the asymmetries between them are the
--- compressors' own, worn rather than hidden behind a unified shape.
+-- LZMA-specific by name and by shape:
+-- the gathering exists because LZMA's stream is continuous within a kind, and 'lzmaDecompress' sizes its own output from the chunk headers, so no expected-size bound crosses the seam.
+-- 'decodeDJWCompressedKind' is the per-section sibling.
 decodeLZMACompressedKind
   :: VCDIFFSection      -- ^ which kind, naming any refusal
   -> [SectionCarriage]  -- ^ one per window, in window order
@@ -145,9 +113,7 @@ decodeLZMACompressedKind
 decodeLZMACompressedKind kind carriages = do
   contributions <- traverse (readContribution kind) carriages
   case [piece | CompressedContribution piece <- contributions] of
-    -- Total: the empty scrutinee just proved every contribution is
-    -- plain, so this comprehension drops nothing and hands back one
-    -- section per window.
+    -- The empty case: every contribution is plain, so hand back one section per window.
     []     -> pure [bytes | PlainContribution bytes <- contributions]
     pieces -> do
       let gatheredStream = ByteString.concat (map pieceStreamSlice pieces)
@@ -180,22 +146,14 @@ decodeDJWCompressedKind kind carriages = do
         (djwDecoderFacts decoded)
       Right (djwDecodedBytes decoded)
 
--- | Decode one section kind across a patch's windows, the FGK way:
--- gather, like LZMA, not per-section like DJW. A kind's compressed
--- sections share one adaptive tree — xd3 inits a kind's secondary
--- stream once and carries it across every section — so a section's
--- first byte decodes against the tree the earlier sections matured, and
--- the sections cannot be decoded apart. The stream slices gather in
--- window order, the decoder threads one tree through them all, and the
--- decoder's facts are held to the gathered framing's claims. Plain
--- carriages pass through untouched; a kind no window compresses comes
--- back exactly as it went in.
+-- | Decode one section kind across a patch's windows, the FGK way: gather, like LZMA, not per-section like DJW.
+-- A kind's compressed sections share one adaptive tree, so they cannot be decoded apart:
+-- the stream slices gather in window order, the decoder threads one tree through them all, and the decoder's facts are held to the gathered framing's claims.
+-- Plain carriages pass through untouched; a kind no window compresses comes back exactly as it went in.
 --
--- The gather is LZMA's shape, but the asymmetry differs: LZMA's bytes
--- are one continuous stream that sizes its own output, while FGK's are
--- byte-flushed per section and carry no sizes, so each section's
--- declared output size travels across the seam to bound its decode and
--- realign the reader between sections.
+-- The gather is LZMA's shape, but the asymmetry differs:
+-- LZMA's bytes are one continuous stream that sizes its own output, while FGK's are byte-flushed per section and carry no sizes.
+-- So each section's declared output size travels across the seam to bound its decode and realign the reader between sections.
 decodeFGKCompressedKind
   :: VCDIFFSection      -- ^ which kind, naming any refusal
   -> [SectionCarriage]  -- ^ one per window, in window order
@@ -203,9 +161,7 @@ decodeFGKCompressedKind
 decodeFGKCompressedKind kind carriages = do
   contributions <- traverse (readContribution kind) carriages
   case [piece | CompressedContribution piece <- contributions] of
-    -- Total: the empty scrutinee just proved every contribution is
-    -- plain, so this comprehension drops nothing and hands back one
-    -- section per window.
+    -- The empty case: every contribution is plain (as in the LZMA path).
     []     -> pure [bytes | PlainContribution bytes <- contributions]
     pieces -> do
       let gatheredStream     = ByteString.concat (map pieceStreamSlice pieces)
@@ -216,12 +172,9 @@ decodeFGKCompressedKind kind carriages = do
         (fgkDecoderFacts decoded)
       pure (handOutDecodedSlices (fgkDecodedBytes decoded) contributions)
 
--- | Read one carriage's framing. A compressed section must begin
--- with a readable decompressed-size varint (the zero-length section
--- has no bytes to read one from), and that size must be positive —
--- compressing nothing yields framing bytes, never zero, so a
--- declared size of zero is a category error, not a no-op
--- (docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section").
+-- | Read one carriage's framing.
+-- A compressed section must begin with a readable decompressed-size varint (the zero-length section has no bytes to read one from), and that size must be positive:
+-- a declared size of zero is damage, not an empty section (docs/vcdiff/xdelta3/questions.md, "compressed-but-empty section").
 readContribution :: VCDIFFSection -> SectionCarriage -> Either SlapError KindContribution
 readContribution _ (CarriedPlain sectionBytes) =
   Right (PlainContribution sectionBytes)
@@ -300,13 +253,11 @@ fgkDecoderFacts decoded = SecondaryDecoderFacts
   , factsProducedOutput = byteLength (fgkDecodedBytes decoded)
   }
 
--- | The two framing verdicts, made here from a decoder's surfaced
--- facts — never by parsing its message text. The decoder must consume
--- the whole stream it was handed, and must produce exactly the
--- declared size; each shortfall is its own malformation, mirroring
--- xd3's two distinct complaints. Serves both granularities: LZMA
--- holds a kind's gathered stream to the sections' declared sum, DJW
--- holds each section's own stream to its own declaration.
+-- | The two framing verdicts, made here from a decoder's surfaced facts —
+-- never by parsing its message text.
+-- The decoder must consume the whole stream it was handed, and must produce exactly the declared size;
+-- each shortfall is its own malformation, mirroring xd3's two distinct complaints.
+-- Called at both granularities — a kind's gathered stream and a single section's.
 holdDecoderToFraming
   :: VCDIFFSection -> CompressionAlgorithm
   -> ByteString             -- ^ the stream the decoder was handed

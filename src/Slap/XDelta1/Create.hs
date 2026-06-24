@@ -386,7 +386,7 @@ encodeDataRecord patch =
   <> byteString (unMD5Hash dataMD5Bytes)
   <> putEdsioVarint (fromIntegral (ByteString.length dataBytes))
   <> word8 1  -- kind: data record
-  <> word8 1  -- offset-mode: sequential (slap's differ only emits sequential data)
+  <> word8 (offsetModeByte SequentialOffsets)  -- slap's differ only emits sequential data
   where
     dataBytes = xdelta1DataSegment patch
     dataMD5Bytes = case xdelta1Verification patch of

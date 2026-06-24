@@ -11,11 +11,9 @@
 -- its output @T@ by executing its instructions: ADD appends literal
 -- bytes, RUN repeats one byte, and COPY first resolves where its bytes
 -- physically live — the source file, or the output buffer — through
--- 'resolveCopyAddress', and then moves them. The superstring
--- @U = S + T@ that COPY addresses index is Parse's vocabulary; by the
--- time bytes move there are only the two stores and one wrinkle, a
--- read that overruns the write head. Shape and buffer handling mirror
--- 'Slap.BPS.Apply'.
+-- 'resolveCopyAddress', and then moves them.
+-- The superstring @U = S + T@ that COPY addresses index is Parse's vocabulary, not apply's.
+-- Shape and buffer handling mirror 'Slap.BPS.Apply'.
 module Slap.VCDIFF.Apply
   ( applyVCDIFF
     -- * COPY resolution (exported for testing)
@@ -91,13 +89,10 @@ data CopyRead
     -- where bytes written now feed the rest of the read.
   deriving (Eq, Show)
 
--- | How an overrunning COPY expands. Production code obtains this
--- through 'resolveCopyAddress'; the constructors are exported for
--- pattern matching and tests, and constructing 'ExpandByteRun' for a
--- read more than one byte behind the head would compile — the
--- distance fact is a discipline enforced at the construction site,
--- not by the type, the same trade 'Slap.BPS.Apply.TargetCopyStrategy'
--- makes.
+-- | How an overrunning COPY expands.
+-- 'ExpandByteRun' is correct only for a read one byte behind the head;
+-- that distance is a discipline of 'resolveCopyAddress', not a type guarantee —
+-- the same trade 'Slap.BPS.Apply.TargetCopyStrategy' makes.
 data TargetExpansion
   = ExpandByteRun
     -- ^ The read is the single byte just behind the head: that byte,
@@ -116,12 +111,8 @@ data TargetExpansion
 -- so every COPY resolves against @T@ alone: the absence is a real
 -- case, not a zero-length segment.
 --
--- Pure arithmetic over typed inputs, fenced kernel-style like
--- 'Slap.VCDIFF.Parse.decodeCopyAddress'. Assumes the parse-side core
--- invariants (a COPY neither reads at or past the write head nor
--- crosses the segment boundary) and that 'checkSourceSegment' has
--- accepted the window: resolution is only meaningful on valid inputs,
--- the same contract as 'Slap.BPS.Apply.classifyTargetCopy'.
+-- Assumes the parse-side core invariants (a COPY neither reads at or past the write head nor crosses the segment boundary) and that 'checkSourceSegment' has accepted the window:
+-- resolution is only meaningful on valid inputs, the same contract as 'Slap.BPS.Apply.classifyTargetCopy'.
 resolveCopyAddress
   :: Maybe SourceSegment   -- ^ the window's source segment, as parsed
   -> WindowWriteContext    -- ^ where the window's output stands
@@ -139,8 +130,6 @@ resolveCopyAddress maybeSegment writeContext copyLength copyAddress =
                FromProducedTarget -> CopyFromTarget segmentRead copyLength
       | otherwise -> readOwnOutput segmentLength
   where
-    -- The kernel's arithmetic domain is Int; the typed inputs unwrap
-    -- once, here.
     address    = unOffset copyAddress
     count      = unLength copyLength
     windowBase = unOffset (unWritePosition (windowOutputBase writeContext))
@@ -201,10 +190,8 @@ applyVCDIFF patch (InputFileContents source)
                           (nextAction windowIndex)
                           rest
 
-    -- | The settled region of the output: every byte before the
-    -- window's base, measured as the whole space a target-backed
-    -- segment may address. Total by 'offsetToFileSize''s contract —
-    -- the base is one position past the last settled byte.
+    -- | The settled region of the output:
+    -- every byte before the window's base, measured as the whole space a target-backed segment may address.
     settledBeforeWindow :: WritePosition -> FileSize
     settledBeforeWindow (WritePosition base) = offsetToFileSize base
 
@@ -266,11 +253,8 @@ applyVCDIFF patch (InputFileContents source)
                       address)
                  pure count
 
-        -- | Move the bytes a resolved COPY names. A total dispatch
-        -- with no arithmetic: every offset was placed by
-        -- 'resolveCopyAddress', and each arm touches the buffer once
-        -- (the byte loop of 'ExpandForward' being the operation
-        -- itself, not a fallback).
+        -- | Move the bytes a resolved COPY names:
+        -- a dispatch with no arithmetic, since every offset was already placed by 'resolveCopyAddress'.
         executeCopyRead :: WritePosition -> CopyRead -> IO ()
         executeCopyRead writeHead copyRead = case copyRead of
           CopyFromSource (ReadOffset sourceStart) count ->

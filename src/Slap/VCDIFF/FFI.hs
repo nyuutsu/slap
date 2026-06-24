@@ -8,11 +8,8 @@
 -- into a typed 'Cover'.
 --
 -- It is total — every input yields a cover, the empty target included —
--- so it follows 'Slap.BPS.FFI.bpsDiff''s shape (no error channel)
--- rather than 'Slap.XDelta1.FFI.xdelta1Diff''s. The one thing that
--- cannot happen — a torn cover, a buffer the Rust side could only
--- produce if it were broken — is a loud 'error' rather than a silently
--- defaulted segment.
+-- so it follows 'Slap.BPS.FFI.bpsDiff''s shape (no error channel) rather than 'Slap.XDelta1.FFI.xdelta1Diff''s.
+-- A malformed buffer is a loud 'error', not a silently defaulted segment.
 module Slap.VCDIFF.FFI
   ( vcdiffCover
   ) where
@@ -62,11 +59,8 @@ vcdiffCover (InputFileContents source) (OutputFileContents target) =
       lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer
       pure (decodeCover kindBytes offsetBytes lengthBytes)
 
--- | Zip the three parallel buffers — one kind byte, eight LE offset
--- bytes, and eight LE length bytes per segment — back into a 'Cover',
--- preserving segment order. A buffer-shape mismatch or a kind byte
--- outside {0, 1} is a torn cover: impossible from the Rust matcher, so
--- a loud 'error' rather than a quietly fabricated segment.
+-- | Zip the three parallel buffers — one kind byte, eight LE offset bytes, and eight LE length bytes per segment — back into a 'Cover', preserving segment order.
+-- A buffer-shape mismatch or a kind byte outside {0, 1} is a torn cover: a loud 'error', per the header.
 decodeCover :: ByteString -> ByteString -> ByteString -> Cover
 decodeCover kindBytes offsetBytes lengthBytes
   | ByteString.length offsetBytes /= 8 * segmentCount = tornCover "offsets" offsetBytes

@@ -5,11 +5,8 @@
 -- facts @slap info@ shows in a glance, and 'analyzeVCDIFF' for the
 -- per-window walk @slap explain@ unfolds.
 --
--- The decoders already found the whole story — the flavor, every
--- window's target size and source segment, every instruction, the
--- per-window checksum, the application header. This module is where the
--- patch finally gets to tell it. Nothing here re-derives; it only reads
--- the decoded form and chooses words for it.
+-- The decoders already found everything — the flavor, every window's target size and source segment, every instruction, the per-window checksum, the application header.
+-- Nothing here re-derives; it only reads the decoded form and renders it.
 --
 -- The division of labor mirrors 'Slap.BPS.Describe': the meta side is
 -- cheap single passes (it rides every @slap info@ and @slap apply@), the
@@ -77,15 +74,12 @@ vcdiffMeta metadataEncoding patch = case patch of
      ++ originRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
 
--- | The @code table@ and @address cache@ lines, when a patch supplied its
--- own table (RFC 3284 §7). The table line names a presence: the entries
--- shaped the decode and are long since consumed, so what stays to say is
--- that the patch decoded against a table of its own rather than the default.
--- The cache line shows the geometry that table declared — the one place a
--- VCDIFF patch's cache sizes depart from the default four-near\/three-same,
--- since only a custom table can change them (xdelta3 and core-only patches
--- always run the default geometry). Both omitted for a patch on the default
--- table, whose geometry is that implicit default.
+-- | The @code table@ and @address cache@ lines, when a patch supplied its own table (RFC 3284 §7).
+-- The table line just attests that the patch decoded against a table of its own rather than the default;
+-- the entries themselves were consumed at parse.
+-- The cache line shows the geometry that table declared —
+-- the one place a VCDIFF patch's cache sizes depart from the default four-near\/three-same, since only a custom table can change them (xdelta3 and core-only patches always run the default geometry).
+-- Both omitted for a patch on the default table, whose geometry is that implicit default.
 codeTableLines :: Maybe CustomCodeTable -> [InfoLine]
 codeTableLines Nothing            = []
 codeTableLines (Just customTable) =
@@ -99,16 +93,10 @@ renderCacheGeometry config =
      renderAsText (unNearSlotCount  (nearSlotCount  config)) <> " near, "
   <> renderAsText (unSameBlockCount (sameBlockCount config)) <> " same"
 
--- | The presence framing of an xdelta3 application header — the only
--- part of "what this opaque field is" VCDIFF itself decides, before any
--- viewing lens is chosen. VCD_APPHEADER bytes are opaque (the format
--- fixes them no meaning), so reading them as text is the shared lens's
--- job, deferred to display where the @--metadata-encoding@ choice lives;
--- what stays here is the one distinction the header's presence bit
--- affords and the BPS blob cannot: 'AppHeaderAbsent' (the bit was never
--- set) is a different fact from 'AppHeaderEmpty' (the bit was set over
--- zero bytes), where BPS, having no such bit, reads an empty blob as
--- simply absent.
+-- | An xdelta3 application header by presence alone —
+-- the one distinction VCDIFF's presence bit affords and the BPS blob cannot:
+-- 'AppHeaderAbsent' (the bit was never set) is a different fact from 'AppHeaderEmpty' (the bit set over zero bytes), where BPS, having no such bit, reads an empty blob as simply absent.
+-- The bytes themselves are opaque, so reading them as text is the shared @--metadata-encoding@ lens's job at display.
 data AppHeaderShape
   = AppHeaderAbsent
     -- ^ No VCD_APPHEADER: the patch declared none.
@@ -172,10 +160,8 @@ originRollup windows =
            , Just segment <- [windowSourceSegment window]
            , sourceSegmentOrigin segment == origin ]
 
--- | How many of a patch's windows carry a per-window Adler32, against
--- the total. Zero is the honest reading of an xdelta3 patch whose
--- creator omitted the checksums — the patch's only integrity mechanism,
--- left off.
+-- | How many of a patch's windows carry a per-window Adler32, against the total.
+-- Zero is a valid count: an xdelta3 patch whose creator omitted the checksums.
 adlerRollup :: [XDelta3Window] -> [InfoLine]
 adlerRollup windowList =
   [InfoLine "adler32" (windowFraction checksummedCount (length windowList))]

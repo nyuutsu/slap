@@ -10,16 +10,11 @@
 -- distance back from the write head (HERE). The encoder chooses among
 -- those same modes; the decoder reads whichever was chosen.
 --
--- This module is the cache's home because the encoder and decoder do not
--- merely run the /same kind/ of cache — they run /one/ cache, and it
--- must hold byte-identical state at every step, forever: the moment the
--- two diverge, a NEAR or SAME address decodes to the wrong place and the
--- patch is silently wrong. So 'recordAddress' — the post-COPY update —
--- has exactly one definition, run by 'decodeCopyAddress' on the way in
--- and by 'selectCopyAddressMode' on the way out; divergence is not
--- tested-against but unrepresentable. The two operations sit side by
--- side here, inverses the way 'Slap.VCDIFF.CodeTable' keeps
--- 'Slap.VCDIFF.CodeTable.serializeCodeTable' beside its deserializer.
+-- This module is the cache's home because the encoder and decoder do not merely run the /same kind/ of cache —
+-- they run /one/ cache, which must hold byte-identical state at every step:
+-- the moment the two diverge, a NEAR or SAME address decodes to the wrong place and the patch is silently wrong.
+-- So 'recordAddress' — the post-COPY update — has exactly one definition, run by 'decodeCopyAddress' on the way in and 'selectCopyAddressMode' on the way out.
+-- The two sit side by side here, inverses the way 'Slap.VCDIFF.CodeTable' keeps 'Slap.VCDIFF.CodeTable.serializeCodeTable' beside its deserializer.
 --
 -- The vocabulary is format-defined and pure — no 'Slap.ByteParser', no
 -- 'Slap.Status' — so it sits below 'Slap.VCDIFF.Parse' (which imports it
@@ -132,14 +127,11 @@ newtype SameBlockIndex = SameBlockIndex Int
 -- Both caches reset to empty at the start of every window and update
 -- after every COPY.
 --
--- The two caches are one idea twice: each an 'IntMap' keyed by slot,
--- read with a zero default — a slot never written reads as zero, since
--- xd3 zero-initializes both and a read of an untouched slot legitimately
--- decodes address 0, so the empty map /is/ the semantics, not a wall of
--- stored zeroes — and written one slot at a time. The cache is threaded
--- linearly through the decode, each value consumed once to produce the
--- next, so a per-COPY 'IntMap' path-copy is the cheap update an array
--- clone would not be.
+-- The two caches are one idea twice: each an 'IntMap' keyed by slot, read with a zero default —
+-- an untouched slot decodes address 0, so the empty 'IntMap' /is/ the semantics —
+-- and written one slot at a time.
+-- The cache is threaded linearly through the decode, each value consumed once to produce the next.
+-- A per-COPY 'IntMap' path-copy is the cheap update an array clone would not be.
 data AddressCache = AddressCache
   { cacheConfig       :: !AddressCacheConfig
   , nearAddresses     :: !(IntMap Offset)
