@@ -53,27 +53,34 @@ safeDecompressBZip section compressed = case bzip2Decompress compressed of
 
 parseBSDiff :: PatchFileContents -> Either SlapError (Parsed BSDiffPatch)
 parseBSDiff (PatchFileContents input)
-  | ByteString.length input < 32 = Left (InputTooShort LabelBSDiff (RequiredLength (Length 32)) (ActualLength (byteLength input)))
+  | ByteString.length input < bsdiffHeaderSize = Left (InputTooShort LabelBSDiff (RequiredLength (Length bsdiffHeaderSize)) (ActualLength (byteLength input)))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 =
       Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes rawControlSize rawDiffSize rawTargetSize))
+  | rawExtraSize < 0 =
+      Left (MalformedBSDiffHeader (BSDiffSectionsExceedPatch (negate rawExtraSize)))
   | otherwise = do
       controlData <- safeDecompressBZip BSDiffControl controlCompressed
       diffData    <- safeDecompressBZip BSDiffDiff    diffCompressed
       extraData   <- safeDecompressBZip BSDiffExtra   extraCompressed
       let instructions = parseInstructions controlData
-          rawExtraSize = fromIntegral (ByteString.length input) - 32 - rawControlSize - rawDiffSize
       Right (Parsed (BSDiffPatch (FileSize (fromIntegral rawControlSize)) (FileSize (fromIntegral rawDiffSize)) (FileSize (fromIntegral rawExtraSize)) (FileSize (fromIntegral rawTargetSize)) instructions diffData extraData) [])
   where
-    rawControlSize = getSignMagnitude64 8 input
-    rawDiffSize = getSignMagnitude64 16 input
-    rawTargetSize  = getSignMagnitude64 24 input
-    controlOffset  = 32
-    diffOffset  = 32 + fromIntegral rawControlSize
-    extraOffset = diffOffset + fromIntegral rawDiffSize
-    controlCompressed  = ByteString.take (fromIntegral rawControlSize) (ByteString.drop controlOffset input)
-    diffCompressed  = ByteString.take (fromIntegral rawDiffSize) (ByteString.drop diffOffset input)
-    extraCompressed = ByteString.drop extraOffset input
+    bsdiffHeaderSize, controlSizeFieldOffset, diffSizeFieldOffset, targetSizeFieldOffset :: Int
+    bsdiffHeaderSize       = 32
+    controlSizeFieldOffset = 8
+    diffSizeFieldOffset    = 16
+    targetSizeFieldOffset  = 24
+    rawControlSize = getSignMagnitude64 controlSizeFieldOffset input
+    rawDiffSize    = getSignMagnitude64 diffSizeFieldOffset input
+    rawTargetSize  = getSignMagnitude64 targetSizeFieldOffset input
+    rawExtraSize   = fromIntegral (ByteString.length input) - fromIntegral bsdiffHeaderSize - rawControlSize - rawDiffSize
+    controlOffset  = bsdiffHeaderSize
+    diffOffset     = bsdiffHeaderSize + fromIntegral rawControlSize
+    extraOffset    = diffOffset + fromIntegral rawDiffSize
+    controlCompressed = ByteString.take (fromIntegral rawControlSize) (ByteString.drop controlOffset input)
+    diffCompressed    = ByteString.take (fromIntegral rawDiffSize) (ByteString.drop diffOffset input)
+    extraCompressed   = ByteString.drop extraOffset input
 
 parseInstructions :: ByteString -> [BSDiffInstruction]
 parseInstructions input

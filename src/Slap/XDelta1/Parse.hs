@@ -37,10 +37,11 @@ import Slap.XDelta1.Types
     )
 import Slap.Binary (getWord32BE, md5)
 import Slap.Checksum (MD5Hash(..))
+import Data.Word (Word8)
 import Slap.Status (SlapError(..), DecompressionFailure(..), Parsed(..),
                     SlapAdvisory(..),
                     XDelta1KnownUnsupportedVersion(..),
-                    XDelta1ShapeViolation(..))
+                    XDelta1ShapeViolation(..), XDelta1SourceFlag(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -198,13 +199,21 @@ parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
           Left cause   -> Left (DecompressionFailed (XDelta1Failed cause))
           Right result -> Right result
 
--- | An xdelta1 source record as parsed from the wire, before the
--- patch-level verification posture has been folded into its MD5
--- representation and before the @[data, file]@ shape has been
--- validated. 'parsedSourceKind' captures the wire's source-kind
--- byte so 'requireDataAndFileRecords' can verify the canonical
--- ordering and refuse anything else. Internal to the parser; not
--- exported.
+-- | An xdelta1 source record straight off the wire, with its two boolean flags still raw bytes.
+-- 'validateSourceFlags' decodes them into a 'ParsedSourceRecord', refusing a flag the format leaves undefined.
+-- Internal to the parser; not exported.
+data RawSourceRecord = RawSourceRecord
+  { rawSourceName           :: !ByteString
+  , rawSourceMD5            :: !MD5Hash
+  , rawSourceLength         :: !FileSize
+  , rawSourceKindByte       :: !Word8
+  , rawSourceOffsetModeByte :: !Word8
+  } deriving (Show, Eq)
+
+-- | An xdelta1 source record with its two flag bytes decoded to enums by 'validateSourceFlags', before the @[data, file]@ shape has been validated.
+-- The MD5 is still the raw wire value; the verification posture is folded in per-side later, in 'parseControl'.
+-- 'requireDataAndFileRecords' reads 'parsedSourceKind' to verify the canonical ordering and refuse anything else.
+-- Internal to the parser; not exported.
 data ParsedSourceRecord = ParsedSourceRecord
   { parsedSourceName       :: !ByteString
   , parsedSourceMD5        :: !MD5Hash
@@ -222,6 +231,16 @@ data ParsedSourcePair = ParsedSourcePair
   { parsedDataRecord :: !ParsedSourceRecord
   , parsedFileRecord :: !ParsedSourceRecord
   } deriving (Show, Eq)
+
+-- | The control segment after the wire walk, before source-flag and shape validation.
+-- 'parseControl' decodes the raw sources with 'validateSourceFlags', narrows them with 'requireDataAndFileRecords', and assembles the 'XDelta1Patch'.
+-- Internal to the parser.
+data ParsedControlBody = ParsedControlBody
+  { parsedControlTargetMD5    :: !MD5Hash
+  , parsedControlTargetLength :: !FileSize
+  , parsedControlSources      :: ![RawSourceRecord]
+  , parsedControlInstructions :: ![ParsedInstruction]
+  }
 
 -- | An xdelta1 instruction as parsed from the wire — the source-
 -- index is the raw 'Int64' from the EDSIO varint; 'translateInstruction'
@@ -252,10 +271,15 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
   | ByteString.length controlBytes < 28 =
       Left (TruncatedRecord LabelXDelta1 0 (Length 28) (byteLength controlBytes))
   | otherwise = do
-      (toMD5, targetLength, parsedSources, parsedInstrs) <-
+      parsedBody <-
         case runByteParser parseControlBody controlBytes of
           Left parserError -> Left (ParseError LabelXDelta1 parserError)
           Right result      -> Right result
+      let toMD5        = parsedControlTargetMD5 parsedBody
+          targetLength = parsedControlTargetLength parsedBody
+          rawSources   = parsedControlSources parsedBody
+          parsedInstrs = parsedControlInstructions parsedBody
+      parsedSources <- traverse validateSourceFlags rawSources
       sourcePair <- requireDataAndFileRecords parsedSources
       let parsedDataRec      = parsedDataRecord sourcePair
           parsedFileRec      = parsedFileRecord sourcePair
@@ -331,7 +355,7 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
     controlBytes  = unXDelta1ControlSegment controlSegment
     dataBytes     = unXDelta1DataSegment    dataSegment
 
-    parseControlBody :: ByteParser (MD5Hash, FileSize, [ParsedSourceRecord], [ParsedInstruction])
+    parseControlBody :: ByteParser ParsedControlBody
     parseControlBody = do
       observedTypeTag <- word32BE
       unless (observedTypeTag == xdelta1ControlTypeTag) $
@@ -352,24 +376,22 @@ parseControl metadataEncoding noVerifyFlag compressionPosture controlSegment dat
         -- fixed bound ('xdelta1ControlAllocationBound').
       toMD5 <- MD5Hash <$> getBytes (Length 16)
       targetLength <- edsioVarint
-      skip (Length 1)  -- has_data boolean: encoder-derived from
-                       -- the data segment's emptiness, parser-
-                       -- ignored because the segment carries its
-                       -- own length via the patch envelope
+      -- has_data: a redundant flag, derived from the per-source isdata flags slap reads, so the byte itself is never consulted.
+      skip (Length 1)
       sourceCount <- fromIntegral <$> edsioVarint
       sources <- parseSourceList sourceCount
       instructionCount <- fromIntegral <$> edsioVarint
       instructions <- parseInstructions instructionCount
-      pure ( toMD5
-           , FileSize (fromIntegral targetLength)
-           , sources
-           , instructions
-           )
+      pure ParsedControlBody
+        { parsedControlTargetMD5    = toMD5
+        , parsedControlTargetLength = FileSize (fromIntegral targetLength)
+        , parsedControlSources      = sources
+        , parsedControlInstructions = instructions
+        }
 
--- | Parse a single EDSIO-serialized source record. Returns the raw
--- fields tagged with the wire kind byte; shape validation happens
--- afterwards in 'requireDataAndFileRecords'.
-parseOneSource :: ByteParser ParsedSourceRecord
+-- | Parse a single EDSIO-serialized source record off the wire, flag bytes still raw.
+-- 'validateSourceFlags' decodes the flags afterwards; the @[data, file]@ shape is validated in 'requireDataAndFileRecords'.
+parseOneSource :: ByteParser RawSourceRecord
 parseOneSource = do
   nameLength <- fromIntegral <$> edsioVarint
   sourceName <- getBytes (Length nameLength)
@@ -377,24 +399,44 @@ parseOneSource = do
   sourceLength <- edsioVarint
   sourceKindByte <- getByte
   offsetModeByte <- getByte
-  let kind       = if sourceKindByte /= 0 then ParsedDataKind else ParsedFileKind
-      offsetMode = if offsetModeByte /= 0 then SequentialOffsets else AbsoluteOffsets
-  pure ParsedSourceRecord
-    { parsedSourceName       = sourceName
-    , parsedSourceMD5        = md5Bytes
-    , parsedSourceLength     = FileSize (fromIntegral sourceLength)
-    , parsedSourceKind       = kind
-    , parsedSourceOffsetMode = offsetMode
+  pure RawSourceRecord
+    { rawSourceName           = sourceName
+    , rawSourceMD5            = md5Bytes
+    , rawSourceLength         = FileSize (fromIntegral sourceLength)
+    , rawSourceKindByte       = sourceKindByte
+    , rawSourceOffsetModeByte = offsetModeByte
     }
 
--- | Parse @count@ source records as a flat list; shape is validated
--- afterwards in 'requireDataAndFileRecords'.
-parseSourceList :: Int -> ByteParser [ParsedSourceRecord]
+-- | Parse @count@ source records off the wire as a flat list, flag bytes still raw.
+-- 'validateSourceFlags' decodes each, and the shape is validated in 'requireDataAndFileRecords'.
+parseSourceList :: Int -> ByteParser [RawSourceRecord]
 parseSourceList 0 = pure []
 parseSourceList count = do
   source <- parseOneSource
   rest <- parseSourceList (count - 1)
   pure (source : rest)
+
+-- | Decode a raw source record's two boolean flag bytes into their enums, refusing if either holds a value the format leaves undefined.
+-- isdata and sequential are booleans; the only defined bytes are 0 and 1.
+-- This diverges from canonical xdelta, which reads any nonzero byte as set.
+validateSourceFlags :: RawSourceRecord -> Either SlapError ParsedSourceRecord
+validateSourceFlags raw = do
+  kind       <- decodeSourceKind (rawSourceKindByte raw)
+  offsetMode <- decodeOffsetMode (rawSourceOffsetModeByte raw)
+  pure ParsedSourceRecord
+    { parsedSourceName       = rawSourceName raw
+    , parsedSourceMD5        = rawSourceMD5 raw
+    , parsedSourceLength     = rawSourceLength raw
+    , parsedSourceKind       = kind
+    , parsedSourceOffsetMode = offsetMode
+    }
+  where
+    decodeSourceKind 0         = Right ParsedFileKind
+    decodeSourceKind 1         = Right ParsedDataKind
+    decodeSourceKind byteValue = Left (XDelta1NonBooleanSourceFlag XDelta1SourceKindFlag byteValue)
+    decodeOffsetMode 0         = Right AbsoluteOffsets
+    decodeOffsetMode 1         = Right SequentialOffsets
+    decodeOffsetMode byteValue = Left (XDelta1NonBooleanSourceFlag XDelta1SourceOffsetModeFlag byteValue)
 
 -- | Reduce a parsed source list to the canonical @[data segment, file source]@ pair.
 -- Anything else refuses with 'UnsupportedXDelta1Shape' carrying the 'XDelta1ShapeViolation' that names the malformation.

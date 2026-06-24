@@ -15,6 +15,8 @@ import Slap.Display.Analysis
   , AnalysisSummary(..)
   , SummaryInfo(..)
   , Annotation(..)
+  , OffsetKind(..)
+  , AnnotDetail(..)
   )
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), renderAsText)
 import Slap.Measure (Offset(..), FileSize(..), advance)
@@ -38,20 +40,20 @@ bsdiffMeta patch =
 
 analyzeBSDiff :: BSDiffPatch -> PatchAnalysis
 analyzeBSDiff patch = PatchAnalysis
-  { analysisSections = if hasDecodedControl
+  { analysisSections = if hasInstructions
                   then [SectionRegions (snd (mapAccumL makeBSDiffRegion (Offset 0) instructions))]
-                  else [SectionText "(control data not decoded)"]
-  , analysisSummary  = if hasDecodedControl
+                  else [SectionText "(no control instructions)"]
+  , analysisSummary  = if hasInstructions
                   then Summary (SummaryInfo (Tally (length instructions)) Instructions Nothing)
                   else SummaryNone
   }
   where
-    instructions      = bsdiffInstructions patch
-    hasDecodedControl = not (null instructions)
+    instructions    = bsdiffInstructions patch
+    hasInstructions = not (null instructions)
 
 makeBSDiffRegion :: Offset -> BSDiffInstruction -> (Offset, AnalysisRegion)
 makeBSDiffRegion outputPosition instruction =
-  let addLength = controlAdd instruction
+  let addLength  = controlAdd instruction
       copyLength = controlCopy instruction
   in ( advance outputPosition (addLength <> copyLength)
      , AnalysisRegion
@@ -59,6 +61,10 @@ makeBSDiffRegion outputPosition instruction =
        , regionSize       = addLength <> copyLength
        , regionLabel      = ""
        , regionPayload    = PayloadMeta []
-       , regionAnnotation = AnnotationBSDiff instruction
+       , regionAnnotation = AnnotationAt AtOutput outputPosition
+                              [ DetailAdd addLength
+                              , DetailCopy copyLength
+                              , DetailSeek (controlSeek instruction)
+                              ]
        }
      )

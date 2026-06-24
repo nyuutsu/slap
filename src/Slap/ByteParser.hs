@@ -44,6 +44,7 @@ module Slap.ByteParser
   , vcdiffVarint
   , VcdiffVarintReading(..)
   , vcdiffVarintReportingCanonicality
+  , nonCanonicalVcdiffVarintNote
   , edsioVarint
     -- * Lifting raw Binary readers
   , liftRead
@@ -353,21 +354,30 @@ data VcdiffVarintReading = VcdiffVarintReading
   }
   deriving (Show)
 
+-- | The non-canonical-encoding note for a VCDIFF varint, from its
+-- decoded value and the byte count the reader consumed: present only
+-- when the span ran longer than the value's minimal encoding. The one
+-- home for the overlong rule, shared by the 'ByteParser' seam
+-- ('vcdiffVarintReportingCanonicality') and the VCDIFF instruction
+-- walk's inline size read, which decodes the same varint outside this
+-- monad.
+nonCanonicalVcdiffVarintNote :: Int64 -> Int -> Maybe SlapAdvisory
+nonCanonicalVcdiffVarintNote value consumed
+  | consumed > minimalVcdiffVarintLength value = Just (NonCanonicalVCDIFFVarint value)
+  | otherwise                                  = Nothing
+
 -- | Read a VCDIFF varint and report whether it was canonically encoded.
 -- Plain 'vcdiffVarint' suffices where the encoding's shape doesn't
 -- matter; this variant also returns the FYI advisory for an overlong
 -- (leading zero-group) encoding. The check is a seam concern, not the
--- reader's: the pure reader reports how many bytes it consumed, and a
--- span longer than the decoded value's minimal length was padded.
+-- reader's: the pure reader reports how many bytes it consumed, and
+-- 'nonCanonicalVcdiffVarintNote' turns an over-long span into the note.
 vcdiffVarintReportingCanonicality :: ByteParser VcdiffVarintReading
 vcdiffVarintReportingCanonicality = do
   result <- readVarintAdvancing getVcdiffVarint
-  let value    = varintDecodedValue result
-      advisory
-        | varintBytesConsumed result > minimalVcdiffVarintLength value =
-            Just (NonCanonicalVCDIFFVarint value)
-        | otherwise = Nothing
-  pure (VcdiffVarintReading value advisory)
+  let value = varintDecodedValue result
+  pure (VcdiffVarintReading value
+          (nonCanonicalVcdiffVarintNote value (varintBytesConsumed result)))
 
 -- | EDSIO variable-length unsigned int (LEB128-like, used by xdelta1).
 -- 7 bits per byte, LSB first, high bit = continuation. Decoded inline

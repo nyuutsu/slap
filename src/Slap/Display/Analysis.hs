@@ -15,7 +15,6 @@ module Slap.Display.Analysis
   , renderAnalysisSummary
   ) where
 
-import Slap.BSDiff.Types (BSDiffInstruction(..))
 import Slap.Checksum (CRC16, showCRC16)
 import Slap.Display.Common (InfoLine(..), renderInfoLine,
                              Tally(..), CountUnit, ByteCount,
@@ -93,7 +92,6 @@ data Annotation
                  , annotationOffset     :: !Offset
                  , annotationDetails    :: ![AnnotDetail]
                  }
-  | AnnotationBSDiff !BSDiffInstruction
 
 data OffsetKind = AtOffset | AtOutput
 
@@ -102,6 +100,9 @@ data AnnotDetail
   | DetailUndo                  -- "(undo data)"
   | DetailDelta Delta           -- "(delta +N)"
   | DetailSkip Length           -- "(skip N)"
+  | DetailAdd Length            -- "(add N)"   bsdiff: bytes summed with the source run
+  | DetailCopy Length           -- "(copy N)"  bsdiff: literal bytes from the extra block
+  | DetailSeek Delta            -- "(seek +N)" bsdiff: signed move of the source cursor
   | DetailSource Offset         -- "(source 0xN)"
   | DetailSourceIndex Int64     -- "from source N" (rendered before offset)
   | DetailCRC16 CRC16 CRC16     -- "(src CRC16 0xN, tgt CRC16 0xN)"
@@ -184,10 +185,6 @@ renderSummaryLine summary =
        Just byteCount -> ", " <> renderByteCount byteCount
 
 renderAnnotation :: Annotation -> Text
-renderAnnotation (AnnotationBSDiff BSDiffInstruction { controlAdd, controlCopy, controlSeek }) =
-  "add " <> padRight 10 (renderAsText (unLength controlAdd) <> " B")
-  <> "  copy " <> padRight 10 (renderAsText (unLength controlCopy) <> " B")
-  <> "  seek " <> showSigned (unDelta controlSeek)
 renderAnnotation (AnnotationAt kind offset details) =
   sourcePrefix <> "  " <> kindString kind <> "0x" <> padHex 6 (unOffset offset)
   <> Text.concat (map renderDetail remaining)
@@ -206,6 +203,9 @@ renderDetail DetailRLE                      = "  (RLE)"
 renderDetail DetailUndo                     = "  (undo data)"
 renderDetail (DetailDelta delta)            = "  (delta " <> showSigned (unDelta delta) <> ")"
 renderDetail (DetailSkip skipAmount)        = "  (skip " <> renderAsText (unLength skipAmount) <> ")"
+renderDetail (DetailAdd addLength)          = "  (add " <> renderAsText (unLength addLength) <> ")"
+renderDetail (DetailCopy copyLength)        = "  (copy " <> renderAsText (unLength copyLength) <> ")"
+renderDetail (DetailSeek seekDelta)         = "  (seek " <> showSigned (unDelta seekDelta) <> ")"
 renderDetail (DetailSource sourceOffset)    = "  (source 0x" <> padHex 6 (unOffset sourceOffset) <> ")"
 renderDetail (DetailSourceIndex _)          = ""
 renderDetail (DetailCRC16 sourceCrc targetCrc) =
@@ -233,7 +233,6 @@ findSourceOffset (AnnotationAt _ _ details) = searchDetails details
     searchDetails []                           = Nothing
     searchDetails (DetailSource sourceOffset:_) = Just sourceOffset
     searchDetails (_:remaining)                = searchDetails remaining
-findSourceOffset _ = Nothing
 
 renderResolvedXOR :: Maybe ByteString -> Int -> ByteString -> Text
 renderResolvedXOR Nothing _ _ = ""

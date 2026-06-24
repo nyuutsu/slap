@@ -53,6 +53,7 @@ module Slap.Status
   , emptyUnitLabel
   , XDelta1KnownUnsupportedVersion(..)
   , XDelta1ShapeViolation(..)
+  , XDelta1SourceFlag(..)
   , VCDIFFShapeViolation(..)
   , VCDIFFCodeTableMalformation(..)
   , VCDIFFCodeTableField(..)
@@ -583,6 +584,11 @@ data SlapError
   -- and slap refuses anything else as off-spec.
   | UnsupportedXDelta1Shape XDelta1ShapeViolation
 
+  -- | A source record's @isdata@ or @sequential@ flag byte held a value other than 0 or 1.
+  -- Both are booleans, so 0 and 1 are the only defined bytes; slap refuses rather than guess at an undefined value (canonical xdelta reads any nonzero byte as set).
+  -- The 'XDelta1SourceFlag' names which flag; the 'Word8' is the byte as read.
+  | XDelta1NonBooleanSourceFlag XDelta1SourceFlag Word8
+
   -- | A VCDIFF patch's wire shape disagreed with the per-format
   -- structural rules slap enforces. The 'VCDIFFShapeViolation' names
   -- the specific failure: a nested custom code table (forbidden by
@@ -672,12 +678,9 @@ data SlapError
   -- even if slap tried. Raised by 'Slap.VCDIFF.Parse.classifyFlavor'.
   | VCDIFFRFCFeatureWithXDelta3Feature VCDIFFRFCFeature VCDIFFXDelta3Feature
 
-  -- | A BSDiff patch's fixed-width header decoded with at least one
-  -- of the three size fields as negative. The 'BSDiffHeaderMalformation'
-  -- carries all three field values so the renderer can name which
-  -- one(s) were off. The check happens outside the byte parser
-  -- because the header is read with a fixed-offset signed-magnitude
-  -- helper rather than the monadic primitives.
+  -- | A BSDiff patch's fixed-width header failed validation: a size field decoded negative, or the declared control and diff blocks overrun the patch body.
+  -- The 'BSDiffHeaderMalformation' says which, and carries the offending values for the renderer.
+  -- The check happens outside the byte parser because the header is read with a fixed-offset signed-magnitude helper rather than the monadic primitives.
   | MalformedBSDiffHeader BSDiffHeaderMalformation
 
   -- | An APS-N64 patch's header carried a value that did not decode
@@ -1012,9 +1015,7 @@ data SlapAdvisory
   -- has no such entry, so seeing one means the patch shipped a table
   -- deliberately shaped this way. slap builds the table and applies the
   -- patch; it just remarks that the entries exist. The 'Int' is how
-  -- many of the 256 entries are NOOP+NOOP. (Whether a window's
-  -- instructions actually index such an entry is a separate question,
-  -- left to the degenerate-action advisories.)
+  -- many of the 256 entries are NOOP+NOOP.
   | VCDIFFCustomTableNoopNoopEntries !Int
 
   -- | Bytes at the end of an APS-N64 patch too few to begin another
@@ -1694,6 +1695,15 @@ renderSlapError (UnsupportedXDelta1Shape violation) =
     describeViolation XDelta1OneFileSource         = "1 source: file"
     describeViolation (XDelta1TooManySources n)    = renderAsText n <> " sources"
 
+renderSlapError (XDelta1NonBooleanSourceFlag flag byteValue) =
+  formatLabelName LabelXDelta1 <> ": " <> case flag of
+    XDelta1SourceKindFlag ->
+      "isdata is 0x" <> padHex 2 byteValue
+      <> " (0 marks a file source, 1 marks patch data; nothing defines 0x" <> padHex 2 byteValue <> ")"
+    XDelta1SourceOffsetModeFlag ->
+      "sequential is 0x" <> padHex 2 byteValue
+      <> " (0 marks absolute offsets, 1 marks sequential offsets; nothing defines 0x" <> padHex 2 byteValue <> ")"
+
 renderSlapError (UnsupportedVCDIFFShape violation) =
   formatLabelName LabelVCDIFF <> ": " <> case violation of
     VCDIFFNestedCustomCodeTable ->
@@ -1804,6 +1814,11 @@ renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize di
   <> ": invalid header (negative size: control="
   <> renderAsText controlSize <> ", diff=" <> renderAsText diffSize
   <> ", target=" <> renderAsText targetSize <> ")"
+
+renderSlapError (MalformedBSDiffHeader (BSDiffSectionsExceedPatch overrunBytes)) =
+  formatLabelName LabelBSDiff
+  <> ": invalid header (control and diff blocks overrun the patch body by "
+  <> renderAsText overrunBytes <> " bytes; they claim more data than the file holds)"
 
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
@@ -2464,6 +2479,12 @@ data XDelta1ShapeViolation
   | XDelta1TooManySources Int
   deriving (Eq, Show)
 
+-- | Which boolean flag on an xdelta1 source record held a non-boolean byte, for 'XDelta1NonBooleanSourceFlag'.
+data XDelta1SourceFlag
+  = XDelta1SourceKindFlag        -- ^ the @isdata@ byte
+  | XDelta1SourceOffsetModeFlag  -- ^ the @sequential@ byte
+  deriving (Show, Eq)
+
 -- | The off-spec wire shapes a VCDIFF (RFC 3284) parser refuses. The
 -- byte-parser produces raw windows without enforcing these rules;
 -- 'Slap.VCDIFF.Parse.parseVCDIFFWith' validates each one against
@@ -2672,13 +2693,12 @@ vcdiffSectionName VCDIFFDataSection        = "data"
 vcdiffSectionName VCDIFFInstructionSection = "instruction"
 vcdiffSectionName VCDIFFAddressSection     = "address"
 
--- | The structural failures slap raises when validating a BSDiff
--- fixed-width header. The three 'Int64' fields are the
--- @control@, @diff@, and @target@ sizes in declaration order; at
--- least one of them decoded as negative, and all three are
--- preserved verbatim so the renderer can name which.
+-- | The structural failures slap raises when validating a BSDiff fixed-width header.
+-- 'BSDiffNegativeHeaderSizes' carries the @control@, @diff@, and @target@ sizes in declaration order; at least one decoded as negative, and all three are preserved so the renderer can name which.
+-- 'BSDiffSectionsExceedPatch' carries the number of bytes by which the declared control and diff blocks overrun the patch body — equivalently a negative extra block, since the extra block is whatever remains after the two.
 data BSDiffHeaderMalformation
   = BSDiffNegativeHeaderSizes !Int64 !Int64 !Int64
+  | BSDiffSectionsExceedPatch !Int64
   deriving (Eq, Show)
 
 -- | The structural failures slap raises when validating an

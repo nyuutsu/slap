@@ -52,7 +52,9 @@ import Slap.VCDIFF.AddressCache
 import Slap.Binary (getVcdiffVarint, VarintResult(..), viewBytesInRange)
 import Slap.ByteParser
   ( ByteParser, runByteParser, getByte, getBytes, skip, lookAhead
-  , vcdiffVarint, word32BE, remaining, atEnd )
+  , vcdiffVarintReportingCanonicality
+  , VcdiffVarintReading(..), nonCanonicalVcdiffVarintNote
+  , word32BE, remaining, atEnd )
 import Slap.Checksum (Adler32(..))
 import Slap.Status
   ( SlapError(..), SlapAdvisory(..), Parsed(..)
@@ -78,7 +80,7 @@ import Control.Monad.Trans.State.Strict (StateT, evalStateT, gets, modify)
 import Data.Bits (testBit, (.&.))
 import Data.Foldable (traverse_)
 import Data.List (zipWith4)
-import Data.Maybe (isJust, isNothing, listToMaybe)
+import Data.Maybe (isJust, isNothing, listToMaybe, mapMaybe, catMaybes)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Vector (Vector)
@@ -119,18 +121,30 @@ parseVCDIFFWith tablePolicy (PatchFileContents input)
       case runByteParser parseRawPatch (ByteString.drop magicLength input) of
         Left parserError -> Left (ParseError LabelVCDIFF parserError)
         Right rawPatch   -> do
-          (patch, tableNotes) <- classifyAndDecode tablePolicy rawPatch
-          pure (Parsed patch (parseNotes rawPatch ++ tableNotes))
+          (patch, decodeNotes) <- classifyAndDecode tablePolicy rawPatch
+          pure (Parsed patch (parseNotes rawPatch ++ decodeNotes))
   where
     magicLength = ByteString.length vcdiffMagicBytes
 
--- | The note-severity advisories a successfully-parsed patch carries:
--- the framer's trailing remnant, and any VCD_TARGET window that reaches
--- nothing. Both are pure readings of the framed patch, attached only on
--- a parse that succeeds.
+-- | The note-severity advisories the framing stage produces: overlong
+-- (non-canonical) varint encodings in wire order, then the framer's
+-- trailing remnant, then any VCD_TARGET window that reaches nothing.
+-- All are readings of the framed patch, attached only on a parse that
+-- succeeds. The decode stage's notes are gathered separately, in
+-- 'classifyAndDecode'.
 parseNotes :: RawPatch -> [SlapAdvisory]
 parseNotes rawPatch =
-  trailingRemnantNotes rawPatch ++ emptyTargetSegmentNotes rawPatch
+  framingVarintNotes rawPatch
+    ++ trailingRemnantNotes rawPatch
+    ++ emptyTargetSegmentNotes rawPatch
+
+-- | Every overlong-varint note the framing stage gathered: the header's
+-- length-field notes first, then each window's framing-field notes in
+-- wire order ('rawVarintNotes').
+framingVarintNotes :: RawPatch -> [SlapAdvisory]
+framingVarintNotes rawPatch =
+  rawHeaderVarintNotes rawPatch
+    ++ concatMap rawVarintNotes (rawWindows rawPatch)
 
 -- | The advisory the framer's trailing-remnant recognition surfaces,
 -- when it consumed one (see 'isTrailingRemnant'). The remnant is the
@@ -184,6 +198,11 @@ data RawPatch = RawPatch
     -- 'isTrailingRemnant'). Carried for the advisory channel only:
     -- the bytes are not patch semantics, so they reach neither the
     -- decoded 'VCDIFFPatch' nor anything downstream of it.
+  , rawHeaderVarintNotes :: ![SlapAdvisory]
+    -- ^ Overlong-varint notes from the header's own length fields (the
+    -- code-table-data and application-header lengths), in wire order.
+    -- Advisory-only, like 'rawTrailingRemnant'; the per-window framing
+    -- varints carry their notes in 'rawVarintNotes'.
   }
 
 data RawWindow = RawWindow
@@ -204,6 +223,11 @@ data RawWindow = RawWindow
   , rawDataSection     :: !ByteString
   , rawInstSection     :: !ByteString
   , rawAddrSection     :: !ByteString
+  , rawVarintNotes     :: ![SlapAdvisory]
+    -- ^ Overlong-varint notes from this window's framing fields
+    -- (segment length and position, the delta-encoding length, the
+    -- target size, and the three section lengths), in wire order.
+    -- Advisory-only; 'parseNotes' gathers them across windows.
   }
 
 -- | A window's source-segment position and length as read off the wire.
@@ -231,16 +255,21 @@ parseRawPatch = do
       compressorId  <- if testBit headerIndicator vcdDecompressBit
                          then Just <$> getByte
                          else pure Nothing
-      codeTableData <- if testBit headerIndicator vcdCodeTableBit
-                         then Just <$> parseCodeTableData
-                         else pure Nothing
-      appHeader     <- if testBit headerIndicator vcdAppHeaderBit
-                         then Just <$> parseApplicationHeader
-                         else pure Nothing
+      (codeTableData, codeTableNote) <-
+        if testBit headerIndicator vcdCodeTableBit
+          then do (bytes, note) <- parseCodeTableData
+                  pure (Just bytes, note)
+          else pure (Nothing, Nothing)
+      (appHeader, appHeaderNote) <-
+        if testBit headerIndicator vcdAppHeaderBit
+          then do (bytes, note) <- parseApplicationHeader
+                  pure (Just bytes, note)
+          else pure (Nothing, Nothing)
       (windows, trailingRemnant) <- parseRawWindows
       pure (RawPatch version headerIndicator compressorId codeTableData
-                     appHeader windows trailingRemnant)
-    else pure (RawPatch version headerIndicator Nothing Nothing Nothing [] Nothing)
+                     appHeader windows trailingRemnant
+                     (catMaybes [codeTableNote, appHeaderNote]))
+    else pure (RawPatch version headerIndicator Nothing Nothing Nothing [] Nothing [])
 
 -- | Whether the header indicator is built only from bits slap
 -- recognizes — the three RFC-and-xdelta3 bits VCD_DECOMPRESS,
@@ -261,20 +290,22 @@ headerUsesOnlyRecognizedBits headerIndicator =
 -- delta within them are peeled by 'buildCustomTable', not here. On the
 -- wire this field follows the compressor-id byte (RFC 3284 §4.1's
 -- header order) and precedes the application header.
-parseCodeTableData :: ByteParser ByteString
+parseCodeTableData :: ByteParser (ByteString, Maybe SlapAdvisory)
 parseCodeTableData = do
-  declaredLength <- vcdiffVarint
-  getBytes (Length (fromIntegral declaredLength))
+  declaredLength <- vcdiffVarintReportingCanonicality
+  bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
+  pure (bytes, vcdiffVarintAdvisory declaredLength)
 
 -- | The application header's wire shape: a varint length, then that
 -- many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application
 -- header"). On the wire the field follows the compressor-id byte and
 -- the code-table data (both read above when declared), so here it
 -- follows whichever of those preceded it.
-parseApplicationHeader :: ByteParser ByteString
+parseApplicationHeader :: ByteParser (ByteString, Maybe SlapAdvisory)
 parseApplicationHeader = do
-  declaredLength <- vcdiffVarint
-  getBytes (Length (fromIntegral declaredLength))
+  declaredLength <- vcdiffVarintReportingCanonicality
+  bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
+  pure (bytes, vcdiffVarintAdvisory declaredLength)
 
 -- | What 'parseRawWindows' finds where the next window would begin:
 -- input spent, the one trailing shape slap recognizes, or another
@@ -342,22 +373,24 @@ trailingRemnantMarker = ByteString.pack [0xFF, 0xFF, 0xFF, 0xFF]
 parseRawWindow :: ByteParser RawWindow
 parseRawWindow = do
   windowIndicator <- getByte
-  sourceSegment   <- if testBit windowIndicator vcdSourceBit
-                        || testBit windowIndicator vcdTargetBit
-                       then do
-                         segmentLength   <- vcdiffVarint
-                         segmentPosition <- vcdiffVarint
-                         pure (Just (RawSegment
-                                       (Offset (fromIntegral segmentPosition))
-                                       (Length (fromIntegral segmentLength))))
-                       else pure Nothing
-  declaredEncodingLength   <- Length . fromIntegral <$> vcdiffVarint
+  (sourceSegment, segmentNotes) <-
+    if testBit windowIndicator vcdSourceBit
+       || testBit windowIndicator vcdTargetBit
+      then do
+        segmentLength   <- vcdiffVarintReportingCanonicality
+        segmentPosition <- vcdiffVarintReportingCanonicality
+        pure ( Just (RawSegment
+                       (Offset (fromIntegral (vcdiffVarintValue segmentPosition)))
+                       (Length (fromIntegral (vcdiffVarintValue segmentLength))))
+             , mapMaybe vcdiffVarintAdvisory [segmentLength, segmentPosition] )
+      else pure (Nothing, [])
+  encodingLength           <- vcdiffVarintReportingCanonicality
   remainingAtEncodingStart <- remaining
-  targetSize           <- vcdiffVarint
-  deltaIndicator       <- getByte
-  dataLength <- vcdiffVarint
-  instLength <- vcdiffVarint
-  addrLength <- vcdiffVarint
+  targetSize               <- vcdiffVarintReportingCanonicality
+  deltaIndicator           <- getByte
+  dataLength <- vcdiffVarintReportingCanonicality
+  instLength <- vcdiffVarintReportingCanonicality
+  addrLength <- vcdiffVarintReportingCanonicality
   -- The per-window checksum, when present, sits between the section
   -- lengths and the data section: four bytes, big-endian, presence
   -- decided by the indicator bit alone (docs/vcdiff/xdelta3/spec.md
@@ -365,22 +398,26 @@ parseRawWindow = do
   adlerChecksum <- if testBit windowIndicator vcdAdler32Bit
                      then Just . Adler32 <$> word32BE
                      else pure Nothing
-  dataSection <- getBytes (Length (fromIntegral dataLength))
-  instSection <- getBytes (Length (fromIntegral instLength))
-  addrSection <- getBytes (Length (fromIntegral addrLength))
+  dataSection <- getBytes (Length (fromIntegral (vcdiffVarintValue dataLength)))
+  instSection <- getBytes (Length (fromIntegral (vcdiffVarintValue instLength)))
+  addrSection <- getBytes (Length (fromIntegral (vcdiffVarintValue addrLength)))
   remainingAtWindowEnd <- remaining
   pure RawWindow
     { rawWindowIndicator        = windowIndicator
     , rawSourceSegment          = sourceSegment
-    , rawDeclaredEncodingLength = declaredEncodingLength
+    , rawDeclaredEncodingLength = Length (fromIntegral (vcdiffVarintValue encodingLength))
     , rawMeasuredEncodingLength =
         subtractLength remainingAtEncodingStart remainingAtWindowEnd
-    , rawTargetSize             = FileSize (fromIntegral targetSize)
+    , rawTargetSize             = FileSize (fromIntegral (vcdiffVarintValue targetSize))
     , rawDeltaIndicator         = deltaIndicator
     , rawWindowAdler            = adlerChecksum
     , rawDataSection            = dataSection
     , rawInstSection            = instSection
     , rawAddrSection            = addrSection
+    , rawVarintNotes            =
+        segmentNotes
+          ++ mapMaybe vcdiffVarintAdvisory
+               [encodingLength, targetSize, dataLength, instLength, addrLength]
     }
 
 ----------------------------------------------------------------------------
@@ -433,8 +470,9 @@ reservedIndicatorMask = 0xF8
 -- settle the code table the windows decode against, vet every window's
 -- framing, resolve secondary compression so each window holds plain
 -- sections, decode each window, then name the flavor. Returns the
--- decoded patch alongside any advisories the table-build raised (a
--- custom table's do-nothing entries).
+-- decoded patch alongside the decode stage's advisories — a custom
+-- table's do-nothing entries, and any overlong inline size varint a
+-- window's instructions carried.
 --
 -- Vetting runs before resolution on purpose: a window whose delta
 -- indicator carries reserved bits is declined before its compression
@@ -454,7 +492,9 @@ classifyAndDecode tablePolicy rawPatch
       decodedWindows  <- traverse (decodeWindow (resolvedActiveTable resolvedTable)) resolvedWindows
       patch <- classifyFlavor (resolvedCustomTable resolvedTable) declaredCompressor
                  (rawAppHeader rawPatch) (Vector.fromList decodedWindows)
-      pure (patch, resolvedTableNotes resolvedTable)
+      pure ( patch
+           , resolvedTableNotes resolvedTable
+               ++ concatMap decodedWindowNotes decodedWindows )
   where
     headerIndicator = rawHeaderIndicator rawPatch
 
@@ -629,6 +669,7 @@ lookupDeclaredCompressor (Just compressorId) =
 data DecodedWindow = DecodedWindow
   { decodedWindowBody     :: !Window
   , decodedWindowChecksum :: !(Maybe Adler32)
+  , decodedWindowNotes    :: ![SlapAdvisory]
   }
 
 -- | Name the decoded patch for what it is, from two independent
@@ -740,7 +781,7 @@ decodeWindow activeTable (ResolvedWindow rawWindow) = do
                        (rawSegmentLength segment))
         <$> rawSourceSegment rawWindow
       segmentLength = maybe mempty rawSegmentLength (rawSourceSegment rawWindow)
-  instructions <- decodeWindowInstructions
+  (instructions, decodeNotes) <- decodeWindowInstructions
                     activeTable
                     segmentLength
                     (rawTargetSize rawWindow)
@@ -754,6 +795,7 @@ decodeWindow activeTable (ResolvedWindow rawWindow) = do
         , windowInstructions  = instructions
         }
     , decodedWindowChecksum = rawWindowAdler rawWindow
+    , decodedWindowNotes    = decodeNotes
     }
 
 ----------------------------------------------------------------------------
@@ -899,6 +941,7 @@ data DecodeState = DecodeState
   , producedBytes    :: !Length
   , instructionIndex :: !ActionIndex
   , emittedReversed  :: ![VCDIFFInstruction]
+  , notesReversed    :: ![SlapAdvisory]
   }
 
 -- | The window-decode monad: 'DecodeState' threaded over the same
@@ -952,6 +995,14 @@ emitInstruction instruction outputSize decodeState = decodeState
   , emittedReversed  = instruction : emittedReversed decodeState
   }
 
+-- | Record a note raised mid-walk (an overlong inline size varint),
+-- newest-first; 'finishWindow' reverses the accumulator into wire
+-- order. Peer to 'emitInstruction', the way the IPS record walk
+-- carries its own walker-time warnings.
+noteAdvisory :: SlapAdvisory -> DecodeState -> DecodeState
+noteAdvisory advisory decodeState = decodeState
+  { notesReversed = advisory : notesReversed decodeState }
+
 -- | Decode one window's instruction stream into already-resolved
 -- 'VCDIFFInstruction's, enforcing the three core invariants. Each
 -- instruction byte indexes the default code table for up to two
@@ -966,7 +1017,7 @@ decodeWindowInstructions
   -> ByteString   -- ^ data section
   -> ByteString   -- ^ instruction section
   -> ByteString   -- ^ address section
-  -> Either SlapError (Vector VCDIFFInstruction)
+  -> Either SlapError (Vector VCDIFFInstruction, [SlapAdvisory])
 decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection instSection addrSection =
   evalStateT walkInstructionSection initialState
   where
@@ -978,6 +1029,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       , producedBytes    = mempty
       , instructionIndex = firstAction
       , emittedReversed  = []
+      , notesReversed    = []
       }
 
     -- | The sections measured as the whole spaces their cursors
@@ -1004,7 +1056,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
 
     -- | Decode table entries until the instruction section is spent,
     -- then close the window out.
-    walkInstructionSection :: WindowDecode (Vector VCDIFFInstruction)
+    walkInstructionSection :: WindowDecode (Vector VCDIFFInstruction, [SlapAdvisory])
     walkInstructionSection = do
       sectionSpent <- gets (instructionSectionSpent . instCursor)
       if sectionSpent
@@ -1019,14 +1071,16 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
     -- | Core invariant 3 — the instructions must produce exactly the
     -- declared target size — then the reversed accumulator
     -- materialises as the decoded stream.
-    finishWindow :: WindowDecode (Vector VCDIFFInstruction)
+    finishWindow :: WindowDecode (Vector VCDIFFInstruction, [SlapAdvisory])
     finishWindow = do
       producedSize <- gets (lengthToFileSize . producedBytes)
       when (producedSize /= targetWindowSize) $
         failDecode (VCDIFFWindowSizeMismatch
                       (ExpectedSize targetWindowSize)
                       (ActualSize producedSize))
-      gets (Vector.fromList . reverse . emittedReversed)
+      gets (\decodeState ->
+              ( Vector.fromList (reverse (emittedReversed decodeState))
+              , reverse (notesReversed decodeState) ))
 
     -- | Read one code byte and apply both of its templates ('Noop'
     -- fills the unused slot of a single-instruction entry).
@@ -1093,6 +1147,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         Left _ -> sectionExhausted VCDIFFInstructionSection
         Right (VarintResult value consumed) -> do
           modify (advanceInstCursor (Length consumed))
+          traverse_ (modify . noteAdvisory) (nonCanonicalVcdiffVarintNote value consumed)
           pure (Length (fromIntegral value))
 
     -- | Decode one COPY address through the cache, mapping the
