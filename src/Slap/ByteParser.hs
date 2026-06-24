@@ -354,13 +354,8 @@ data VcdiffVarintReading = VcdiffVarintReading
   }
   deriving (Show)
 
--- | The non-canonical-encoding note for a VCDIFF varint, from its
--- decoded value and the byte count the reader consumed: present only
--- when the span ran longer than the value's minimal encoding. The one
--- home for the overlong rule, shared by the 'ByteParser' seam
--- ('vcdiffVarintReportingCanonicality') and the VCDIFF instruction
--- walk's inline size read, which decodes the same varint outside this
--- monad.
+-- | The non-canonical-encoding note for a VCDIFF varint, from its decoded value and the byte count the reader consumed: present only when the span ran longer than the value's minimal encoding.
+-- Shared by the 'ByteParser' seam ('vcdiffVarintReportingCanonicality') and the VCDIFF instruction walk's inline size read, which decodes the same varint outside this monad.
 nonCanonicalVcdiffVarintNote :: Int64 -> Int -> Maybe SlapAdvisory
 nonCanonicalVcdiffVarintNote value consumed
   | consumed > minimalVcdiffVarintLength value = Just (NonCanonicalVCDIFFVarint value)

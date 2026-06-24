@@ -4,8 +4,7 @@
 -- container and hand back the file inside. ZIP is read in-process through
 -- "Archive.Zip"; RAR and 7z shell out to @unrar@ and @7z@. The vocabulary
 -- it acts on — the recognized formats, detection, and the closed set of
--- unwrap failures — lives engine-side in "Slap.Archive.Types"; this module
--- depends on that, never the reverse.
+-- unwrap failures — lives engine-side in "Slap.Archive.Types".
 module Archive
   ( unwrapArchive
   ) where

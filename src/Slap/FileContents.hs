@@ -1,6 +1,6 @@
 -- | File contents newtypes.
 --
--- 'InputFileContents', 'OutputFileContents', and 'PatchFileContents' encode the role each 'ByteString' plays in the patch lifecycle, so a caller cannot confuse a ROM with a patch, or input with output.
+-- 'InputFileContents', 'OutputFileContents', and 'PatchFileContents' encode the role each 'ByteString' plays in the patch lifecycle.
 -- Apply consumes an 'InputFileContents' and produces an 'OutputFileContents'; parse consumes a 'PatchFileContents'.
 -- The names match slap's @--input@ and @--output@ flags; format-specific modules keep their own spec vocabulary where it describes spec-derived concepts.
 --

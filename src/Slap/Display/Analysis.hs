@@ -261,7 +261,7 @@ newtype BucketIndex = BucketIndex { unBucketIndex :: Int }
   deriving stock (Eq, Ord, Show)
   deriving newtype (Ix, Enum)
 
--- | Whether any region touches a sparkline column; it forms a monoid where occupied always wins, so a column counts as occupied once anything lands in it.
+-- | Whether any region touches a sparkline column.
 data ColumnOccupancy = ColumnOccupied | ColumnVacant
   deriving stock (Eq)
 
@@ -302,7 +302,6 @@ runRecords (BucketRun columns) = sum (fmap (tallyRecords . snd) columns)
 runBytes   (BucketRun columns) = sum (fmap (tallyBytes . snd) columns)
 
 -- The element at index length/2 of a non-empty list — the upper of the two middles when the length is even.
--- A lookahead cursor advances twice as fast, so the value cursor lands on the middle without indexing.
 middleElement :: NonEmpty a -> a
 middleElement (firstValue :| laterValues) = seekMiddle firstValue laterValues (firstValue : laterValues)
   where

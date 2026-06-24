@@ -14,6 +14,7 @@ import Data.Int (Int64)
 import Slap.BSDiff.Types (BSDiffPatch(..), BSDiffInstruction(..), bsdiffMagicBytes, bsdiffInstructionSize)
 import Slap.Compression.Stream (bzip2Decompress)
 import Slap.Status (SlapError(..), BSDiffHeaderMalformation(..),
+                    ControlSectionSize(..), DiffSectionSize(..), TargetSectionSize(..),
                     DecompressionFailure(..), BSDiffSection(..), Parsed(..))
 import Slap.FileContents (PatchFileContents(..))
 import Slap.FormatLabel (FormatLabel(..))
@@ -56,7 +57,7 @@ parseBSDiff (PatchFileContents input)
   | ByteString.length input < bsdiffHeaderSize = Left (InputTooShort LabelBSDiff (RequiredLength (Length bsdiffHeaderSize)) (ActualLength (byteLength input)))
   | ByteString.take 8 input /= bsdiffMagicBytes = Left (BadMagic LabelBSDiff (ActualMagic (ByteString.take 8 input)))
   | rawControlSize < 0 || rawDiffSize < 0 || rawTargetSize < 0 =
-      Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes rawControlSize rawDiffSize rawTargetSize))
+      Left (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes (ControlSectionSize rawControlSize) (DiffSectionSize rawDiffSize) (TargetSectionSize rawTargetSize)))
   | rawExtraSize < 0 =
       Left (MalformedBSDiffHeader (BSDiffSectionsExceedPatch (negate rawExtraSize)))
   | otherwise = do

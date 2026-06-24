@@ -38,6 +38,9 @@ module Slap.Status
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
   , UndoRecordCount(..)
+  , ControlSectionSize(..)
+  , DiffSectionSize(..)
+  , TargetSectionSize(..)
   , MarkerOvershootBytes(..)
   , OOBOvershootBytes(..)
   , ApplyDirection(..)
@@ -562,8 +565,8 @@ data SlapError
   -- space is finite per the format spec.
   | MalformedNINJA1Content NINJA1Malformation
 
-  -- | A binary NINJA1 patch whose record stream ended without the @0x03 "EOF"@ footer that terminates it.
-  -- The footer is the format's only terminator, so a footer-less patch is refused rather than applied (the reference applier cannot stop without it).
+  -- | A binary NINJA1 patch whose record stream ended without the @0x03 "EOF"@ footer that the format defines as its terminator.
+  -- With no terminator the patch is structurally incomplete, so slap rejects it as malformed.
   | NINJA1BinaryMissingEOFFooter
 
   -- | A byte-parser failure surfaced from a per-format parser. The
@@ -1822,11 +1825,11 @@ renderSlapError (MalformedVCDIFFCodeTable malformation) =
       "code table names COPY address mode " <> renderAsText mode
       <> ", but the declared caches reach only mode " <> renderAsText highestValidMode
 
-renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes controlSize diffSize targetSize)) =
+renderSlapError (MalformedBSDiffHeader (BSDiffNegativeHeaderSizes control diff target)) =
   formatLabelName LabelBSDiff
   <> ": invalid header (negative size: control="
-  <> renderAsText controlSize <> ", diff=" <> renderAsText diffSize
-  <> ", target=" <> renderAsText targetSize <> ")"
+  <> renderAsText (unControlSectionSize control) <> ", diff=" <> renderAsText (unDiffSectionSize diff)
+  <> ", target=" <> renderAsText (unTargetSectionSize target) <> ")"
 
 renderSlapError (MalformedBSDiffHeader (BSDiffSectionsExceedPatch overrunBytes)) =
   formatLabelName LabelBSDiff
@@ -2414,7 +2417,7 @@ renderTrailerMarkerName = renderPrintableASCIIOrHex
 renderApplyOutputDrops :: FormatLabel -> [(PatchField, [FormatLabel])] -> Text
 renderApplyOutputDrops target [singleDrop] = renderOneDrop target singleDrop
 renderApplyOutputDrops target manyDrops =
-  Text.concat (map (\drop_ -> "\n  - " <> renderOneDrop target drop_) manyDrops)
+  Text.concat (map (\fieldDrop -> "\n  - " <> renderOneDrop target fieldDrop) manyDrops)
 
 renderOneDrop :: FormatLabel -> (PatchField, [FormatLabel]) -> Text
 renderOneDrop target (field, preservers) =
@@ -2563,8 +2566,8 @@ data VCDIFFCodeTableMalformation
   -- damage evidence and, with no checksum in this arc, the table check
   -- is the tripwire (docs/vcdiff/rfc-vcdiff/questions.md, "invalid
   -- decoded-table entries"). The first 'Word8' is the offending mode;
-  -- the 'Int' is the highest mode the declared caches reach.
-  | VCDIFFCodeTableCopyModeOutOfRange !Word8 !Int
+  -- the second 'Word8' is the highest mode the declared caches reach.
+  | VCDIFFCodeTableCopyModeOutOfRange !Word8 !Word8
   deriving (Eq, Show)
 
 -- | Which per-template byte of the serialized code-table image a
@@ -2706,11 +2709,16 @@ vcdiffSectionName VCDIFFDataSection        = "data"
 vcdiffSectionName VCDIFFInstructionSection = "instruction"
 vcdiffSectionName VCDIFFAddressSection     = "address"
 
+-- | The three section sizes a BSDiff fixed-width header declares.
+newtype ControlSectionSize = ControlSectionSize { unControlSectionSize :: Int64 } deriving (Eq, Show)
+newtype DiffSectionSize    = DiffSectionSize    { unDiffSectionSize    :: Int64 } deriving (Eq, Show)
+newtype TargetSectionSize  = TargetSectionSize  { unTargetSectionSize  :: Int64 } deriving (Eq, Show)
+
 -- | The structural failures slap raises when validating a BSDiff fixed-width header.
--- 'BSDiffNegativeHeaderSizes' carries the @control@, @diff@, and @target@ sizes in declaration order; at least one decoded as negative, and all three are preserved so the renderer can name which.
+-- 'BSDiffNegativeHeaderSizes' carries the control, diff, and target section sizes; at least one decoded as negative.
 -- 'BSDiffSectionsExceedPatch' carries the number of bytes by which the declared control and diff blocks overrun the patch body — equivalently a negative extra block, since the extra block is whatever remains after the two.
 data BSDiffHeaderMalformation
-  = BSDiffNegativeHeaderSizes !Int64 !Int64 !Int64
+  = BSDiffNegativeHeaderSizes !ControlSectionSize !DiffSectionSize !TargetSectionSize
   | BSDiffSectionsExceedPatch !Int64
   deriving (Eq, Show)
 

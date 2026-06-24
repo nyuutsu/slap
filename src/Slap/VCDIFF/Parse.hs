@@ -631,8 +631,8 @@ checkCustomTableCopyModes config table =
 -- | The highest COPY address mode the caches reach: one below the layout's
 -- mode ceiling. Reads that one boundary from 'modeCeiling' rather than
 -- re-deriving the band arithmetic 'classifyAddressMode' steers by.
-highestValidAddressMode :: AddressCacheConfig -> Int
-highestValidAddressMode config = modeCeiling config - 1
+highestValidAddressMode :: AddressCacheConfig -> Word8
+highestValidAddressMode config = fromIntegral (modeCeiling config - 1)
 
 -- | A presence advisory if the built table holds any do-nothing
 -- (NOOP-then-NOOP) entry, or none. Legal but remarkable — the default

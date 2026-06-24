@@ -1,8 +1,5 @@
--- | ZIP reading via rusty-slap: list the entry names, then pull one entry
--- out. A thin binding over the FFI marshalling helpers in "Slap.FFI". ZIP
--- unwrapping is native-frontend-only, so this is the frontend's lone
--- foreign-import module: it borrows "Slap.FFI" from the engine but sits
--- apart from the engine's own @Slap.*.FFI@ bindings.
+-- | ZIP reading via rusty-slap: list the entry names, then pull one entry out.
+-- A thin binding over the FFI marshalling helpers in "Slap.FFI".
 module Archive.Zip
   ( zipEntryNames
   , zipExtractEntry
