@@ -348,7 +348,7 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
             { requestedDescription = presentField (PPF1.ppf1Description patch) }
       }
   where
-    hunkOf record = Hunk (PPF1.ppf1RecordOffset record) (PPF1.ppf1RecordPayload record)
+    hunkOf ppf1Record = Hunk (PPF1.ppf1RecordOffset ppf1Record) (PPF1.ppf1RecordPayload ppf1Record)
 
 -- | Build a 'SomePatch' from a parsed PPF2 patch. PPF2 adds the
 -- declared source-file-size field and the 1024-byte validation
@@ -395,7 +395,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
             }
       }
   where
-    hunkOf record = Hunk (PPF2.ppf2RecordOffset record) (PPF2.ppf2RecordPayload record)
+    hunkOf ppf2Record = Hunk (PPF2.ppf2RecordOffset ppf2Record) (PPF2.ppf2RecordPayload ppf2Record)
 
 -- | Build a 'SomePatch' from a parsed PPF3 patch. PPF3 adds the
 -- image-type byte (BIN/GI, choosing the validation offset),
@@ -455,7 +455,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
             }
       }
   where
-    hunkOf record = Hunk (PPF3.ppf3RecordOffset record) (PPF3.ppf3RecordPayload record)
+    hunkOf ppf3Record = Hunk (PPF3.ppf3RecordOffset ppf3Record) (PPF3.ppf3RecordPayload ppf3Record)
 
 -- | Build a 'SomePatch' from a parsed PPF4 patch. PPF4 is a two-phase
 -- format (Replace records, then Append records) with no validation
@@ -470,13 +470,15 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
   let replaces = PPF4.ppf4Replaces patch
       appends  = PPF4.ppf4Appends patch
       totalRecords = length replaces + length appends
+      hunkOf replaceRecord = Hunk (PPF4.replaceOffset replaceRecord) (PPF4.replaceData replaceRecord)
+      directContents
+        | null appends = Just (emptyContents (map hunkOf replaces))
+                           { contentsDescription = Just (PPF4.ppf4Description patch) }
+        | otherwise    = Nothing
   Right SomePatch
       { patchFormat         = LabelPPF4
       , patchAnalysis       = PPF4.analyzePPF4 patch
-      , patchKind           = Direct (if null appends
-                                then Just (emptyContents (map (\replace -> Hunk (PPF4.replaceOffset replace) (PPF4.replaceData replace)) replaces))
-                                       { contentsDescription = Just (PPF4.ppf4Description patch) }
-                                else Nothing)
+      , patchKind           = Direct directContents
       , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (PPF4.applyPPF4 patch source)) }
       , patchUndo           = Nothing
@@ -854,6 +856,7 @@ parseSomePatchFromNINJA1 :: PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromNINJA1 patchContents = do
   Parsed patch parseAdvisories <- NINJA1.parseNINJA1 patchContents
   let records = NINJA1.ninja1Records patch
+      hunkOf ninja1Record = Hunk (NINJA1.ninja1RecordOffset ninja1Record) (NINJA1.ninja1RecordData ninja1Record)
       warnings = concat
         [ parseAdvisories
         , [NoEOFMarker LabelNINJA1 | not (NINJA1.ninja1CleanEOF patch)]
@@ -867,7 +870,7 @@ parseSomePatchFromNINJA1 patchContents = do
   Right SomePatch
     { patchFormat         = LabelNINJA1
     , patchAnalysis       = NINJA1.analyzeNINJA1 patch
-    , patchKind           = Direct (Just (emptyContents (map (\record -> Hunk (NINJA1.ninja1RecordOffset record) (NINJA1.ninja1RecordData record)) records))
+    , patchKind           = Direct (Just (emptyContents (map hunkOf records))
         { contentsSourceCRC32 = NINJA1.ninja1SourceCRC patch
         , contentsSourceMD5   = NINJA1.ninja1SourceMD5 patch
         , contentsSourceSHA1  = NINJA1.ninja1SourceSHA1 patch
@@ -1031,7 +1034,7 @@ parseSomePatchFromPMSR patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
   where
-    recordToHunk record = Hunk (PMSR.pmsrOffset record) (PMSR.pmsrData record)
+    recordToHunk pmsrRecord = Hunk (PMSR.pmsrOffset pmsrRecord) (PMSR.pmsrData pmsrRecord)
 
 
 parseSomePatchFromAPSGBA :: PatchFileContents -> Either SlapError SomePatch

@@ -53,6 +53,7 @@ import Slap.PPF2.Types (PPF2ValidationBlock(..),
 import qualified Slap.PPF3.Create as PPF3
 import Slap.PPF3.Types (PPF3ImageType(..), PPF3ValidationBlock(..),
                         narrowPPF3FileId, ppf3MaxRecordPayload,
+                        ppf3ValidationOffset,
                         ppf3RejectIncompatibleSizeChange)
 import qualified Slap.PPF4.Create as PPF4
 import Slap.PPF4.Types (PPF4Append(..), ppf4Limits, ppf4MaxRecordPayload,
@@ -105,7 +106,7 @@ import Slap.Narrow (EncodedHunk, EncodingLimits(..),
                     narrowUndoHunksUnbounded)
 import Slap.Constraint (Constraint(..))
 import Slap.Dialect (Dialect(..))
-import Slap.Status (SlapError(..), SlapAdvisory(..), DroppedValue(..),
+import Slap.Status (SlapError(..), SlapAdvisory(..), UndoRecordCount(..), DroppedValue(..),
                     DroppedDescriptionText(..), CreateResult(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.MetadataField (MetadataField(..))
@@ -811,7 +812,7 @@ fieldNote contents field = case field of
                   (DroppedDescription (DroppedDescriptionText text))]
     Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
-    Just undoRecords -> [UndoDataDropped (length undoRecords)]
+    Just undoRecords -> [UndoDataDropped (UndoRecordCount (length undoRecords))]
     Nothing -> []
   FieldValidation -> [ValidationBlockDropped | isJust (contentsValidation contents)]
   FieldDestinationSize -> case contentsDestinationSize contents of
@@ -1213,9 +1214,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
       CreateNINJA1 -> NINJA1.ninja1HashInput source
       CreatePMSR   -> source
       CreateAPSN64 -> source
-    validationOffset = case requestedImageType meta of
-                         Just GI -> 0x80A0
-                         _       -> 0x9320
+    validationOffset = unOffset (ppf3ValidationOffset (fromMaybe BIN (requestedImageType meta)))
     undoChoice         = fromMaybe IncludeUndoData     (requestedUndoInclusion         meta)
     verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
     contract           = directConversionContract format undoChoice verificationChoice

@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Slap.Display.Analysis
   ( PatchAnalysis(..)
@@ -26,12 +27,15 @@ import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
                      OffsetRange(..), rangeLastByte, advance, distance)
 import Slap.Status (CursorKind, renderCursorKind)
-import Data.Array (accumArray, elems)
+import Data.Array (Array, Ix, accumArray, assocs, elems)
 import Data.Bits (xor)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (isDigit)
+import Data.Function (on)
 import Data.List (find, intercalate, sort, partition)
+import Data.List.NonEmpty (NonEmpty(..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as Text
@@ -252,6 +256,59 @@ renderCopySource (Just source) region =
 -- Summary renderer
 ----------------------------------------------------------------------------
 
+-- | A sparkline column: the summary divides the patched offset range into bucketCount equal columns, and a BucketIndex names one of them.
+newtype BucketIndex = BucketIndex { unBucketIndex :: Int }
+  deriving stock (Eq, Ord, Show)
+  deriving newtype (Ix, Enum)
+
+-- | Whether any region touches a sparkline column; it forms a monoid where occupied always wins, so a column counts as occupied once anything lands in it.
+data ColumnOccupancy = ColumnOccupied | ColumnVacant
+  deriving stock (Eq)
+
+instance Semigroup ColumnOccupancy where
+  ColumnOccupied <> _              = ColumnOccupied
+  ColumnVacant   <> rightOccupancy = rightOccupancy
+
+instance Monoid ColumnOccupancy where
+  mempty = ColumnVacant
+
+occupancyGlyph :: ColumnOccupancy -> Char
+occupancyGlyph ColumnOccupied = '#'
+occupancyGlyph ColumnVacant   = '.'
+
+-- | One sparkline column's contribution: whether any region touches it (this drives the bar and the run detection), plus the records and bytes attributed to it.
+data BucketTally = BucketTally
+  { tallyOccupancy :: ColumnOccupancy
+  , tallyRecords   :: Int
+  , tallyBytes     :: Int
+  }
+
+instance Semigroup BucketTally where
+  BucketTally leftOccupancy leftRecords leftBytes <> BucketTally rightOccupancy rightRecords rightBytes =
+    BucketTally (leftOccupancy <> rightOccupancy) (leftRecords + rightRecords) (leftBytes + rightBytes)
+
+instance Monoid BucketTally where
+  mempty = BucketTally mempty 0 0
+
+-- | An inclusive run of occupied sparkline columns, carrying the columns it spans.
+newtype BucketRun = BucketRun (NonEmpty (BucketIndex, BucketTally))
+
+runFirstBucket, runLastBucket :: BucketRun -> BucketIndex
+runFirstBucket (BucketRun columns) = fst (NonEmpty.head columns)
+runLastBucket  (BucketRun columns) = fst (NonEmpty.last columns)
+
+runRecords, runBytes :: BucketRun -> Int
+runRecords (BucketRun columns) = sum (fmap (tallyRecords . snd) columns)
+runBytes   (BucketRun columns) = sum (fmap (tallyBytes . snd) columns)
+
+-- The element at index length/2 of a non-empty list — the upper of the two middles when the length is even.
+-- A lookahead cursor advances twice as fast, so the value cursor lands on the middle without indexing.
+middleElement :: NonEmpty a -> a
+middleElement (firstValue :| laterValues) = seekMiddle firstValue laterValues (firstValue : laterValues)
+  where
+    seekMiddle _       (nextValue : slower) (_ : _ : faster) = seekMiddle nextValue slower faster
+    seekMiddle current _                    _                = current
+
 renderAnalysisSummary :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> Text
 renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
   [ map renderInfoLine (renderPatchInfo info)
@@ -345,53 +402,56 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     bucketWidth :: OffsetRange -> Int
     bucketWidth range = max 1 (max 1 (unLength (rangeLength range)) `div` bucketCount)
 
-    toBucket :: OffsetRange -> AnalysisRegion -> [(Int, Int)]
-    toBucket range region =
+    spannedColumns :: OffsetRange -> AnalysisRegion -> [BucketIndex]
+    spannedColumns range region =
       let width = bucketWidth range
-          startBucket = unLength (distance (rangeStart range) (regionOffset region)) `div` width
-          endBucket   = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width
-      in [ (bucket, unLength (regionSize region)) | bucket <- [max 0 startBucket .. min (bucketCount-1) endBucket] ]
+          startColumn = unLength (distance (rangeStart range) (regionOffset region)) `div` width
+          endColumn   = (unOffset (advance (regionOffset region) (regionSize region)) - 1 - unOffset (rangeStart range)) `div` width
+      in [ BucketIndex column | column <- [max 0 startColumn .. min (bucketCount-1) endColumn] ]
 
-    -- Bucket arrays: sums (for sparkline/run detection), counts, bytes.
-    -- All three are empty when offsetRange is Nothing; computed together otherwise.
-    (bucketSums, bucketCounts, bucketBytes) = case offsetRange of
-      Nothing -> ([], [], [])
+    bucketBounds :: (BucketIndex, BucketIndex)
+    bucketBounds = (BucketIndex 0, BucketIndex (bucketCount - 1))
+
+    emptyBuckets :: Array BucketIndex BucketTally
+    emptyBuckets = accumArray (<>) mempty bucketBounds []
+
+    -- One tally per sparkline column: occupancy (which drives the bar and the run detection) folded together with the records and bytes each column carries.
+    -- The empty buckets when offsetRange is Nothing; accumulated from the regions otherwise.
+    bucketTallies :: Array BucketIndex BucketTally
+    bucketTallies = case offsetRange of
+      Nothing -> emptyBuckets
       Just range ->
         let width = bucketWidth range
-            regionBucket region = unLength (distance (rangeStart range) (regionOffset region)) `div` width
-            sums   = elems (accumArray (+) 0 (0, bucketCount - 1) (concatMap (toBucket range) allRegions))
-            counts = elems (accumArray (+) 0 (0, bucketCount - 1)
-                      [ (bucket, 1 :: Int) | region <- allRegions
-                      , let bucket = regionBucket region, bucket >= 0, bucket < bucketCount ])
-            bytes  = elems (accumArray (+) 0 (0, bucketCount - 1)
-                      [ (bucket, unLength (regionSize region)) | region <- allRegions
-                      , let bucket = regionBucket region, bucket >= 0, bucket < bucketCount ])
-        in (sums, counts, bytes)
+            regionStartColumn region = unLength (distance (rangeStart range) (regionOffset region)) `div` width
+            occupancyEntries =
+              [ (column, BucketTally ColumnOccupied 0 0) | region <- allRegions, column <- spannedColumns range region ]
+            startEntries =
+              [ (BucketIndex column, BucketTally ColumnVacant 1 (unLength (regionSize region))) | region <- allRegions
+              , let column = regionStartColumn region, column >= 0, column < bucketCount ]
+        in accumArray (<>) mempty bucketBounds (occupancyEntries <> startEntries)
 
-    -- Contiguous runs of non-empty buckets, as (startIdx, endIdx) pairs
-    findRuns :: [Int] -> [(Int, Int)]
-    findRuns sums = scanRuns 0 Nothing []
+    -- Contiguous runs of occupied columns, each carrying the columns it spans.
+    findRuns :: Array BucketIndex BucketTally -> [BucketRun]
+    findRuns columnTallies =
+      [ BucketRun columns
+      | columns <- NonEmpty.groupBy ((==) `on` occupancyOf) (assocs columnTallies)
+      , occupancyOf (NonEmpty.head columns) == ColumnOccupied
+      ]
       where
-        sumsLength = length sums
-        scanRuns position (Just runStart) accumulated | position >= sumsLength = reverse ((runStart, position-1) : accumulated)
-        scanRuns position Nothing  accumulated | position >= sumsLength = reverse accumulated
-        scanRuns position Nothing  accumulated
-          | sums !! position > 0 = scanRuns (position+1) (Just position) accumulated
-          | otherwise            = scanRuns (position+1) Nothing accumulated
-        scanRuns position (Just runStart) accumulated
-          | sums !! position > 0 = scanRuns (position+1) (Just runStart) accumulated
-          | otherwise            = scanRuns (position+1) Nothing ((runStart, position-1) : accumulated)
+        occupancyOf = tallyOccupancy . snd
 
     regionsBlock = case offsetRange of
       Nothing -> []
       Just range ->
           let width = bucketWidth range
-              runs = findRuns bucketSums
-              formatRun (runStart, runEnd) =
-                let startOffset = unOffset (rangeStart range) + runStart * width
+              runs = findRuns bucketTallies
+              formatRun run =
+                let runStart = unBucketIndex (runFirstBucket run)
+                    runEnd   = unBucketIndex (runLastBucket run)
+                    startOffset = unOffset (rangeStart range) + runStart * width
                     endOffset = unOffset (rangeStart range) + (runEnd + 1) * width - 1
-                    recordsInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketCounts))
-                    bytesInRun = sum (take (runEnd - runStart + 1) (drop runStart bucketBytes))
+                    recordsInRun = runRecords run
+                    bytesInRun   = runBytes run
                     percentage = if totalModified > 0
                           then 100.0 * fromIntegral bytesInRun / fromIntegral totalModified :: Double
                           else 0
@@ -416,10 +476,11 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
       []        -> []
       (uniform:_) | all (== uniform) sizes ->
           ["record sizes: " <> commaNum uniform <> " B"]
-      (smallest:_) ->
-          let largest = last sizes
-              medianSize = sizes !! (length sizes `div` 2)
-              meanSize   = totalModified `div` totalRecords
+      (smallest : moreSizes) ->
+          let sortedSizes = smallest :| moreSizes
+              largest     = NonEmpty.last sortedSizes
+              medianSize  = middleElement sortedSizes
+              meanSize    = totalModified `div` totalRecords
           in ["record sizes: " <> commaNum smallest <> spacePaddedEnDash
               <> commaNum largest <> " B"
               <> " (median " <> commaNum medianSize
@@ -429,7 +490,7 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     sparkline = case offsetRange of
       Nothing -> []
       Just range ->
-          let chars = map (\entry -> if entry > 0 then '#' else '.') bucketSums
+          let chars = map (occupancyGlyph . tallyOccupancy) (elems bucketTallies)
               leftLabel = "0x" <> padHex 6 (unOffset (rangeStart range))
               rightLabel = "0x" <> padHex 6 (unOffset (rangeLastByte range))
               barLine = "[" <> Text.pack chars <> "]"

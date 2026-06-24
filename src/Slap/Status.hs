@@ -37,6 +37,7 @@ module Slap.Status
   , OverlapCount(..)
   , ClippedRecordCount(..)
   , OOBBlockCount(..)
+  , UndoRecordCount(..)
   , MarkerOvershootBytes(..)
   , OOBOvershootBytes(..)
   , ApplyDirection(..)
@@ -1097,7 +1098,7 @@ data SlapAdvisory
 
   -- Conversion: dropped fields
   | FieldDropped PatchField DroppedValue
-  | UndoDataDropped Int
+  | UndoDataDropped UndoRecordCount
   | ValidationBlockDropped
   | DisabledEntriesDropped Int
   | BlockDescriptionsDropped
@@ -1280,6 +1281,11 @@ newtype ClippedRecordCount = ClippedRecordCount { unClippedRecordCount :: Int }
 -- Peer to 'ClippedRecordCount' — both count records-or-blocks that
 -- a format's apply path skipped under a defined policy.
 newtype OOBBlockCount = OOBBlockCount { unOOBBlockCount :: Int }
+  deriving (Eq, Ord, Show)
+
+-- | The number of undo records dropped when converting to a target format with no undo representation.
+-- Emitted only when the source actually carried undo records.
+newtype UndoRecordCount = UndoRecordCount { unUndoRecordCount :: Int }
   deriving (Eq, Ord, Show)
 
 -- | The total byte length lost across all records clipped by an
@@ -2225,7 +2231,7 @@ renderSlapAdvisory (FieldDropped field droppedValue) =
      then "dropping " <> fieldName field
      else "dropping " <> fieldName field <> ": " <> rendered
 
-renderSlapAdvisory (UndoDataDropped recordCount) =
+renderSlapAdvisory (UndoDataDropped (UndoRecordCount recordCount)) =
   "dropping undo data (" <> renderAsText recordCount
   <> plural recordCount " record" " records" <> ")"
 

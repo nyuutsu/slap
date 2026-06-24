@@ -390,12 +390,12 @@ parseIPSBody variant = bodyLoop [] [] firstAction
 -- The ceiling check uses 'ipsVariantMaxRecordEnd' from
 -- 'Slap.IPS.Types' directly, so the @maxAddressableOffset +
 -- maxRecordPayload@ formula has exactly one home in the codebase.
--- The naive bound @offset ≤ maxAddressableOffset@ would falsely
--- reject conformant patches like fe6 whose final record sits at
--- offset @0xFFFFFF@ and writes a payload that ends at @0x1000000@:
--- the offset by itself is at the limit but the record's end
--- position has another @ipsMaxRecordPayload@ bytes of legal range
--- still ahead of it. The sum-of-two-limits ceiling makes that case
+-- Holding the record's end against the bare @maxAddressableOffset@
+-- would falsely reject conformant patches like fe6, whose final
+-- record sits at offset @0xFFFFFF@ and writes a payload ending at
+-- @0x1000000@: the offset is at the limit, but a record may still
+-- write @ipsMaxRecordPayload@ bytes past it, so the real ceiling is
+-- the sum of the two caps. The sum-of-two-limits ceiling makes that case
 -- legal exactly because the offset and payload caps are
 -- independent — any single record can saturate both at once.
 --
