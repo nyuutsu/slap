@@ -16,6 +16,7 @@ import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (PatchFileContents(..))
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
@@ -43,7 +44,7 @@ encodeAPSN64 records destinationSize description =
 -- fills the field with spaces (n64caps.c's @memset(Description,' ',50)@).
 -- Substitution and truncation notices both surface as 'SlapAdvisory'
 -- values tagged 'LabelAPSN64' \/ 'FieldDescription'.
-padDescription :: EncodedText -> (ByteString.ByteString, [SlapAdvisory])
+padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =
         encodeTextBounded EncodingUtf8 apsN64DescriptionWidth

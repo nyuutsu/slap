@@ -81,6 +81,7 @@ import CLI
   )
 import Archive (unwrapArchive)
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Control.Exception (try)
 import Control.Monad (when, forM_)
@@ -120,7 +121,7 @@ main = do
 
 -- | Read a user-supplied input file, turning its two interesting IO failure modes into typed 'SlapError' values on slap's normal error channel:
 -- the path is absent ('MissingInputFile'), or present but unopenable ('UnreadableInputFile').
-readInputFile :: FilePath -> IO ByteString.ByteString
+readInputFile :: FilePath -> IO ByteString
 readInputFile path = do
   result <- try (ByteString.readFile path)
   case result of
@@ -130,7 +131,7 @@ readInputFile path = do
       | otherwise                 -> bailError (UnreadableInputFile path (ioeGetErrorString ioErr))
 
 -- | Read a file, transparently unwrapping single-entry archives.
-readUnwrap :: FilePath -> IO ByteString.ByteString
+readUnwrap :: FilePath -> IO ByteString
 readUnwrap path = do
   fileBytes <- readInputFile path
   case detectArchive (ByteString.take 8 fileBytes) of
@@ -143,7 +144,7 @@ readUnwrap path = do
           TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> Text.pack entryName)
           pure unwrappedBytes
 
-readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString.ByteString
+readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString
 readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReadingOptions of
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> readInputFile
@@ -601,7 +602,7 @@ noteBlockCRC side blockOffset expected actual
   | expected == actual = pure ()
   | otherwise          = noteMismatch (VerificationBlockCRC16Mismatch side blockOffset)
 
-notePPFBlock :: Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+notePPFBlock :: Offset -> ByteString -> ByteString -> IO ()
 notePPFBlock blockOffset expectedData sourceBytes =
   let actual = viewBytesInRange blockOffset (Length (ByteString.length expectedData)) sourceBytes
   in when (actual /= expectedData) $
@@ -612,7 +613,7 @@ noteFileSize expected actual =
   when (expected /= actual) $
     noteMismatch (VerificationFileSizeAdvisory (ExpectedSize expected) (ActualSize actual))
 
-noteSourceBytes :: ByteCheckLabel -> Offset -> ByteString.ByteString -> ByteString.ByteString -> IO ()
+noteSourceBytes :: ByteCheckLabel -> Offset -> ByteString -> ByteString -> IO ()
 noteSourceBytes label checkOffset expectedData sourceBytes =
   let actual = viewBytesInRange checkOffset (Length (ByteString.length expectedData)) sourceBytes
   in when (actual /= expectedData) $

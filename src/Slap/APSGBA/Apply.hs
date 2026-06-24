@@ -14,6 +14,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits (xor)
 import Data.Word (Word8)
@@ -88,7 +89,7 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
     -- | Materialise one block into the output buffer, skipping any
     -- byte position at or past 'targetSize'. This is where the
     -- past-target tail and the shrinking-patch overhang get dropped.
-    executeXorBlock :: Ptr Word8 -> Offset -> ByteString.ByteString -> IO ()
+    executeXorBlock :: Ptr Word8 -> Offset -> ByteString -> IO ()
     executeXorBlock targetPointer blockOffset xorPayload =
         writeRemainingBytes 0
       where

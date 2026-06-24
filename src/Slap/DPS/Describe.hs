@@ -54,7 +54,7 @@ dpsMeta patch = concat
     enclosedCount = length [() | DPSEnclosedData {} <- dpsRecords patch]
 
 ----------------------------------------------------------------------------
--- Explain
+-- Analyze
 ----------------------------------------------------------------------------
 
 analyzeDPS :: DPSPatch -> PatchAnalysis

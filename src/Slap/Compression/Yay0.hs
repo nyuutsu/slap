@@ -9,7 +9,8 @@
 -- would be silly, so the predicate sits next to the format it names.
 module Slap.Compression.Yay0 (isYay0) where
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
-isYay0 :: ByteString.ByteString -> Bool
+isYay0 :: ByteString -> Bool
 isYay0 input = ByteString.take 4 input == "Yay0"

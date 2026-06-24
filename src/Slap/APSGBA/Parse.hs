@@ -22,12 +22,13 @@ import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
                      RequiredLength(..), ActualLength(..), ActualMagic(..),
                      byteLength)
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
 -- | Structural check for APS-GBA: header + N * 65544-byte records,
 -- each record offset 64KB-aligned.  Used to disambiguate "APS10"
 -- (APSN64) from "APS1" + source_size when size mod 256 == 48.
-apsGbaStructure :: ByteString.ByteString -> Bool
+apsGbaStructure :: ByteString -> Bool
 apsGbaStructure input =
   let dataLength = ByteString.length input - apsGbaHeaderSize
       recordCount = dataLength `div` apsGbaRecordSize

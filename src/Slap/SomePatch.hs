@@ -111,6 +111,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import qualified Slap.Compression.Yay0 as Yay0
 import qualified Slap.Compression.Stream as Stream
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.Vector as Vector
 import Data.List (partition)
@@ -139,7 +140,7 @@ data SourcePreHash = HashWholeSource | HashNINJA1Sample
   deriving (Eq, Show)
 
 -- | Apply a 'SourcePreHash' to source bytes before they are hashed.
-applySourcePreHash :: SourcePreHash -> ByteString.ByteString -> ByteString.ByteString
+applySourcePreHash :: SourcePreHash -> ByteString -> ByteString
 applySourcePreHash HashWholeSource  = id
 applySourcePreHash HashNINJA1Sample = NINJA1.ninja1HashInput
 
@@ -173,7 +174,7 @@ data BlockCheck = BlockCheck !Offset !CRC16
 -- | Validation block comparison (PPF2 and PPF3). The bytes are
 -- carried as a raw 'ByteString' at this cross-cutting layer; each
 -- format wraps them in its own role newtype during parse and emit.
-data ValidationBlock = ValidationBlock !Offset !ByteString.ByteString
+data ValidationBlock = ValidationBlock !Offset !ByteString
   deriving (Show)
 
 -- | Per-window Adler32 check (VCDIFF).
@@ -191,7 +192,7 @@ data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !Text
 -- every other 'ByteString' that flows through verification (block CRCs,
 -- validation blocks, hash digests) at the byte boundary.
 newtype AdvisoryExpectedBytes = AdvisoryExpectedBytes
-  { unAdvisoryExpectedBytes :: ByteString.ByteString }
+  { unAdvisoryExpectedBytes :: ByteString }
   deriving (Show, Eq)
 
 -- | A declared file-size expectation paired with how a mismatch is
@@ -268,7 +269,7 @@ data SomePatch = SomePatch
     -- Populated at parse time without per-record analytical work.
     -- The expensive analytical carrier is 'patchAnalysis'.
   , patchSourceAdvisories    :: [SlapAdvisory]
-  , patchMetadata       :: Maybe ByteString.ByteString  -- ^ Arbitrary metadata blob (BPS)
+  , patchMetadata       :: Maybe ByteString  -- ^ Arbitrary metadata blob (BPS)
   , patchExtractedMeta  :: RequestedPatchMetadata  -- ^ Text metadata extracted at parse time for conversion
   }
 

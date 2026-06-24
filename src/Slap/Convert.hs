@@ -119,6 +119,7 @@ import Slap.Text (EncodedText(..), EncodingName(..),
 
 import Control.Applicative ((<|>))
 import Data.Bifunctor (first)
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Maybe (fromMaybe, isJust, isNothing)
@@ -151,7 +152,7 @@ data PatchContents = PatchContents
   , contentsSourceMD5   :: Maybe MD5Hash
   , contentsSourceSHA1  :: Maybe SHA1Hash
   , contentsDestinationSize    :: Maybe FileSize
-  , contentsValidation  :: Maybe ByteString.ByteString
+  , contentsValidation  :: Maybe ByteString
     -- ^ Raw 1024-byte validation-block bytes (PPF2/PPF3). Cross-cutting,
     -- so plain bytes; per-format role newtypes wrap on emit.
   , contentsUndoData    :: Maybe [SplitUndoHunk]
@@ -168,7 +169,7 @@ data PatchContents = PatchContents
   , contentsNINJA1Compression :: Maybe NINJA1Compression
     -- ^ Whether a NINJA1 source used the compressed (BZ/TZ) subformat,
     -- carried across the convert seam so a NINJA1 target can preserve it.
-  , contentsMetadata :: Maybe ByteString.ByteString
+  , contentsMetadata :: Maybe ByteString
     -- ^ Arbitrary metadata blob (BPS). Most formats don't carry this.
   }
 
@@ -239,7 +240,7 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- patch's metadata fields tagged themselves as; absent means
     -- "inherit from the source if its tags agree, otherwise UTF-8"
     -- (see the @CreateNINJA2@ arm of 'createPatch').
-  , requestedEmbeddedBlob         :: Maybe ByteString.ByteString
+  , requestedEmbeddedBlob         :: Maybe ByteString
     -- ^ Contents of the user's @--metadata FILE@ flag: a raw blob to
     -- embed verbatim.
   , requestedXDelta1FromName      :: Maybe XDelta1FromName

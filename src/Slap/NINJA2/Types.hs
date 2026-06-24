@@ -246,8 +246,10 @@ data NINJA2CreateMetadata = NINJA2CreateMetadata
 
 -- | A NINJA2 binary record: an offset followed by the XOR payload
 -- bytes for that offset.
-data NINJA2Record = NINJA2Record !Offset !ByteString
-  deriving (Show)
+data NINJA2Record = NINJA2Record
+  { ninja2RecordOffset  :: !Offset
+  , ninja2RecordPayload :: !ByteString
+  } deriving (Show)
 
 -- | An XOR record for encoding: offset + XOR'd payload.
 data XorRecord = XorRecord

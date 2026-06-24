@@ -13,6 +13,7 @@ import Slap.Measure (Offset(..), Length(..), FileSize(..),
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits (xor)
 import Data.Word (Word8)
@@ -94,7 +95,7 @@ applyNINJA2 patch (InputFileContents source)
     -- @output[writePosition+i] = output[writePosition+i] XOR payload[i]@
     -- for @i@ in @[0, recordLength)@. Bounds are the caller's
     -- responsibility; 'checkRecordFits' ran upstream of this call.
-    executeXorRecord :: Ptr Word8 -> Offset -> ByteString.ByteString -> IO ()
+    executeXorRecord :: Ptr Word8 -> Offset -> ByteString -> IO ()
     executeXorRecord outputPointer writePosition xorPayload =
         writeRemainingBytes 0
       where

@@ -21,6 +21,7 @@ import Slap.FormatLabel (FormatLabel(..))
 
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
+import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Lazy as LazyByteString
 import Data.ByteString.Builder (Builder, word8, byteString, toLazyByteString)
@@ -55,7 +56,7 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
     -- reference encoder; both substitution and truncation notices
     -- surface as 'SlapAdvisory' values tagged with the field name.
     encodeField :: FieldName -> EncodedText
-                -> (ByteString.ByteString, [SlapAdvisory])
+                -> (ByteString, [SlapAdvisory])
     encodeField fieldName fieldText =
       let (truncatedBytes, notices) =
             encodeTextBounded EncodingUtf8 dpsFieldWidth (encodedTextContent fieldText)

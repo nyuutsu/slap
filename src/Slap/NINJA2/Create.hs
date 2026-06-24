@@ -71,7 +71,6 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
                         (fieldAdvisories ++ platformAdvisories))
   where
     textMode              = ninja2CreateTextMode metadata
-    encodeMetadataField = encodeBoundedField
     -- The fixed header's bounded text fields, in wire order. Each
     -- encodes to its padded bytes paired with any truncation or
     -- substitution advisories; 'mconcat' over the
@@ -79,14 +78,14 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
     -- streams in one pass, so the field order is stated once and the
     -- bytes and the advisories cannot fall out of step.
     (fixedHeaderBytes, fieldAdvisories) = mconcat
-      [ encodeMetadataField FieldAuthor      ninja2AuthorWidth      (ninja2CreateMetadataAuthor      metadata)
-      , encodeMetadataField FieldVersion     ninja2VersionWidth     (ninja2CreateMetadataVersion     metadata)
-      , encodeMetadataField FieldTitle       ninja2TitleWidth       (ninja2CreateMetadataTitle       metadata)
-      , encodeMetadataField FieldGenre       ninja2GenreWidth       (ninja2CreateMetadataGenre       metadata)
-      , encodeMetadataField FieldLanguage    ninja2LanguageWidth    (ninja2CreateMetadataLanguage    metadata)
-      , encodeMetadataField FieldDate        ninja2DateWidth        (ninja2CreateMetadataDate        metadata)
-      , encodeMetadataField FieldWebsite     ninja2WebsiteWidth     (ninja2CreateMetadataWebsite     metadata)
-      , encodeMetadataField FieldDescription ninja2DescriptionWidth (ninja2CreateMetadataDescription metadata)
+      [ encodeBoundedField FieldAuthor      ninja2AuthorWidth      (ninja2CreateMetadataAuthor      metadata)
+      , encodeBoundedField FieldVersion     ninja2VersionWidth     (ninja2CreateMetadataVersion     metadata)
+      , encodeBoundedField FieldTitle       ninja2TitleWidth       (ninja2CreateMetadataTitle       metadata)
+      , encodeBoundedField FieldGenre       ninja2GenreWidth       (ninja2CreateMetadataGenre       metadata)
+      , encodeBoundedField FieldLanguage    ninja2LanguageWidth    (ninja2CreateMetadataLanguage    metadata)
+      , encodeBoundedField FieldDate        ninja2DateWidth        (ninja2CreateMetadataDate        metadata)
+      , encodeBoundedField FieldWebsite     ninja2WebsiteWidth     (ninja2CreateMetadataWebsite     metadata)
+      , encodeBoundedField FieldDescription ninja2DescriptionWidth (ninja2CreateMetadataDescription metadata)
       ]
     (romType, platformAdvisories) =
       maybe (NINJA2Raw, []) platformToNINJA2 (ninja2CreateMetadataPlatform metadata)

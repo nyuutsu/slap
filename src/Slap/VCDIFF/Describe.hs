@@ -175,7 +175,7 @@ windowFraction part whole =
   renderAsText part <> " of " <> renderAsText whole <> " windows"
 
 ----------------------------------------------------------------------------
--- Explain — the per-window walk
+-- Analyze — the per-window walk
 ----------------------------------------------------------------------------
 
 -- | The full structural story: one labeled header per window, each
