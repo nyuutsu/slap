@@ -3,7 +3,7 @@
 module Slap.PMSR.Describe
   ( pmsrMeta
   , analyzePMSR
-  , makePMSRRegion
+  , pmsrRecordRegion
   , pmsrRecordsRange
   ) where
 
@@ -36,7 +36,7 @@ pmsrMeta _ = []
 
 analyzePMSR :: PMSRPatch -> PatchAnalysis
 analyzePMSR patch = PatchAnalysis
-  { analysisSections = [SectionRegions (map makePMSRRegion (Vector.toList records))]
+  { analysisSections = [SectionRegions (map pmsrRecordRegion (Vector.toList records))]
   , analysisSummary  = Summary (SummaryInfo (Tally recordCount) Records (Just (TotalPayloadBytes (Length totalBytes))))
   }
   where
@@ -47,8 +47,8 @@ analyzePMSR patch = PatchAnalysis
     addPayloadBytes runningTotal record =
       runningTotal + ByteString.length (pmsrData record)
 
-makePMSRRegion :: PMSRRecord -> AnalysisRegion
-makePMSRRegion record = AnalysisRegion
+pmsrRecordRegion :: PMSRRecord -> AnalysisRegion
+pmsrRecordRegion record = AnalysisRegion
   { regionOffset     = pmsrOffset record
   , regionSize       = byteLength (pmsrData record)
   , regionLabel      = "Write  "

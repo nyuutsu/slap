@@ -40,7 +40,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 -- | Where a UPS block's declared span sits relative to the active
 -- output buffer. UPS blocks have a fixed declared stride
--- (@skipLen + xorDataLength + 1@) and the canonical encoder walks a
+-- (@skipLength + xorDataLength + 1@) and the canonical encoder walks a
 -- block stream that covers @max sourceSize targetSize@ bytes' worth
 -- of output, so the stream can extend past whichever of
 -- @source_size@ / @target_size@ the current direction is writing
@@ -91,12 +91,12 @@ data BlockPlacement
 
 -- | Classify a UPS block's placement against the active output
 -- buffer. Pure function of three typed arguments: the block's start
--- position, its full declared span (@skipLen + xorDataLength + 1@),
+-- position, its full declared span (@skipLength + xorDataLength + 1@),
 -- and the size of the buffer being written. Performs no I/O and
 -- reads no shared state.
 classifyBlockPlacement :: Offset -> Length -> FileSize -> BlockPlacement
-classifyBlockPlacement blockStart totalBlockLen outputSize
-  | fitsWithin blockStart totalBlockLen outputSize = BlockFitsWithinOutput
+classifyBlockPlacement blockStart totalBlockLength outputSize
+  | fitsWithin blockStart totalBlockLength outputSize = BlockFitsWithinOutput
   | offsetToFileSize blockStart >= outputSize      = BlockEntirelyPhantom
   | otherwise =
       BlockPartiallyOvershoots (remainingFromOffset blockStart outputSize)
@@ -144,6 +144,15 @@ classifySourceCopy outputPosition copyLength sourceSize
       let inBoundsPrefix = remainingFromOffset outputPosition sourceSize
           zeroFillTail   = subtractLength copyLength inBoundsPrefix
       in SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail
+
+data BlockWrite = BlockWrite
+  { blockSkipStart     :: !Offset
+  , blockSkipLength    :: !Length
+  , blockXorStart      :: !Offset
+  , blockXorLength     :: !Length
+  , blockXorData       :: !ByteString
+  , blockTerminatorStart :: !Offset
+  }
 
 ----------------------------------------------------------------------------
 -- applyUPS / undoUPS
@@ -274,10 +283,10 @@ runUPSXorWalk patch source outputSize
                SourceCopyEntirelyInSource ->
                  xorWithSourceLoop 0 (unLength xorDataLength)
                SourceCopyStraddlesSourceEnd inBoundsPrefix zeroFillTail -> do
-                 let phaseTwoStart = unLength inBoundsPrefix
-                     phaseTwoEnd   = phaseTwoStart + unLength zeroFillTail
-                 xorWithSourceLoop 0 phaseTwoStart
-                 xorWithZeroLoop phaseTwoStart phaseTwoEnd
+                 let inBoundsByteCount = unLength inBoundsPrefix
+                     zeroFillEnd       = inBoundsByteCount + unLength zeroFillTail
+                 xorWithSourceLoop 0 inBoundsByteCount
+                 xorWithZeroLoop inBoundsByteCount zeroFillEnd
                SourceCopyEntirelyPastSource ->
                  xorWithZeroLoop 0 (unLength xorDataLength)
 
@@ -289,29 +298,22 @@ runUPSXorWalk patch source outputSize
         -- cursor advance is the caller's responsibility and fires
         -- regardless of how the prefix divides.
         --
-        -- A clipped length may be zero — when @skipLen@ is zero or
+        -- A clipped length may be zero — when @skipLength@ is zero or
         -- when a preceding sub-op consumed the whole prefix. No
         -- guard at this level: 'copySourceSlice' \/ 'xorSourceSlice'
         -- dispatch on 'classifySourceCopy' and a zero-length copy
         -- lands on an arm whose write is itself a no-op.
-        writeStraddlingBlock :: Length
-                             -> Offset -> Length
-                             -> Offset -> Length -> ByteString
-                             -> Offset
-                             -> IO ()
-        writeStraddlingBlock inBoundsPrefix
-                             skipStart skipLen
-                             xorStart  xorLen xorData
-                             terminatorPos = do
-          let clippedSkipLen = minLength skipLen inBoundsPrefix
-              afterSkip      = subtractLength inBoundsPrefix clippedSkipLen
-              clippedXorLen  = minLength xorLen afterSkip
-              afterXor       = subtractLength afterSkip clippedXorLen
-              clippedTermLen = minLength upsTerminatorByteLength afterXor
-          copySourceSlice skipStart clippedSkipLen
-          xorSourceSlice  xorStart  clippedXorLen
-            (ByteString.take (unLength clippedXorLen) xorData)
-          copySourceSlice terminatorPos clippedTermLen
+        writeStraddlingBlock :: Length -> BlockWrite -> IO ()
+        writeStraddlingBlock inBoundsPrefix blockWrite = do
+          let clippedSkipLength = minLength (blockSkipLength blockWrite) inBoundsPrefix
+              afterSkip      = subtractLength inBoundsPrefix clippedSkipLength
+              clippedXorLength  = minLength (blockXorLength blockWrite) afterSkip
+              afterXor       = subtractLength afterSkip clippedXorLength
+              clippedTerminatorLength = minLength upsTerminatorByteLength afterXor
+          copySourceSlice (blockSkipStart blockWrite) clippedSkipLength
+          xorSourceSlice  (blockXorStart blockWrite) clippedXorLength
+            (ByteString.take (unLength clippedXorLength) (blockXorData blockWrite))
+          copySourceSlice (blockTerminatorStart blockWrite) clippedTerminatorLength
 
         -- | The single cursor transition done after every block.
         -- The output cursor advances by the block's full declared
@@ -353,27 +355,32 @@ runUPSXorWalk patch source outputSize
         -- writes all three sub-ops, straddles writes a clipped
         -- prefix of them, phantom writes nothing.
         handleBlock :: ActionIndex -> UPSBlock -> UPSApply ()
-        handleBlock blockIndex (UPSBlock skipLen xorData) = do
+        handleBlock blockIndex (UPSBlock skipLength xorData) = do
           outputPosition <- get
-          let xorLen        = byteLength xorData
-              totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
+          let xorLength        = byteLength xorData
+              totalBlockLength = skipLength <> xorLength <> upsTerminatorByteLength
               skipStart     = outputPosition
-              xorStart      = advance skipStart skipLen
-              terminatorPos = advance xorStart xorLen
+              xorStart      = advance skipStart skipLength
+              terminatorStart = advance xorStart xorLength
+              blockWrite    = BlockWrite
+                { blockSkipStart     = skipStart
+                , blockSkipLength    = skipLength
+                , blockXorStart      = xorStart
+                , blockXorLength     = xorLength
+                , blockXorData       = xorData
+                , blockTerminatorStart = terminatorStart
+                }
               placement     = classifyBlockPlacement
-                                outputPosition totalBlockLen outputSize
+                                outputPosition totalBlockLength outputSize
           case placement of
             BlockFitsWithinOutput -> liftIO $ do
-              copySourceSlice skipStart skipLen
-              xorSourceSlice  xorStart  xorLen xorData
-              copySourceSlice terminatorPos upsTerminatorByteLength
+              copySourceSlice skipStart skipLength
+              xorSourceSlice  xorStart  xorLength xorData
+              copySourceSlice terminatorStart upsTerminatorByteLength
             BlockPartiallyOvershoots inBoundsPrefix -> liftIO $
-              writeStraddlingBlock inBoundsPrefix
-                skipStart skipLen
-                xorStart  xorLen xorData
-                terminatorPos
+              writeStraddlingBlock inBoundsPrefix blockWrite
             BlockEntirelyPhantom -> pure ()
-          advanceOutputByBlock totalBlockLen
+          advanceOutputByBlock totalBlockLength
           applyBlockStream (nextAction blockIndex)
 
       in evalStateT (applyBlockStream firstAction) (Offset 0)
@@ -423,9 +430,9 @@ data OOBWalkState = OOBWalkState
 detectOOBBlocks :: UPSPatch -> ApplyDirection -> FileSize -> [SlapAdvisory]
 detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
   Nothing       -> []
-  Just firstIdx ->
+  Just firstIndex ->
     [ApplyOOBBlocksSkipped LabelUPS direction
-      (oobCount finalState) firstIdx
+      (oobCount finalState) firstIndex
       (oobOvershoot finalState) outputSize]
   where
     initialState = OOBWalkState
@@ -437,27 +444,27 @@ detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
 
     finalState = Vector.ifoldl' walkBlock initialState (upsBlocks patch)
 
-    walkBlock state blockIdx (UPSBlock skipLen xorData) =
-      let xorLen        = byteLength xorData
-          totalBlockLen = skipLen <> xorLen <> upsTerminatorByteLength
-          nextPosition  = advance (oobPosition state) totalBlockLen
+    walkBlock state blockIndex (UPSBlock skipLength xorData) =
+      let xorLength        = byteLength xorData
+          totalBlockLength = skipLength <> xorLength <> upsTerminatorByteLength
+          nextPosition  = advance (oobPosition state) totalBlockLength
           placement     = classifyBlockPlacement
-                            (oobPosition state) totalBlockLen outputSize
+                            (oobPosition state) totalBlockLength outputSize
       in case placement of
            BlockFitsWithinOutput          -> state { oobPosition = nextPosition }
            BlockPartiallyOvershoots inBoundsPrefix ->
-             recordOOBBlock state blockIdx nextPosition
-                            (subtractLength totalBlockLen inBoundsPrefix)
+             recordOOBBlock state blockIndex nextPosition
+                            (subtractLength totalBlockLength inBoundsPrefix)
            BlockEntirelyPhantom           ->
-             recordOOBBlock state blockIdx nextPosition totalBlockLen
+             recordOOBBlock state blockIndex nextPosition totalBlockLength
 
-    recordOOBBlock state blockIdx nextPosition blockOvershoot =
+    recordOOBBlock state blockIndex nextPosition blockOvershoot =
       let OOBBlockCount currentCount = oobCount state
       in state
         { oobPosition   = nextPosition
         , oobCount      = OOBBlockCount (currentCount + 1)
         , oobFirstIndex = case oobFirstIndex state of
             Just _  -> oobFirstIndex state
-            Nothing -> Just (actionAtPosition blockIdx)
+            Nothing -> Just (actionAtPosition blockIndex)
         , oobOvershoot  = oobOvershoot state <> OOBOvershootBytes blockOvershoot
         }

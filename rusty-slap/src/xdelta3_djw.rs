@@ -397,7 +397,7 @@ fn decode_run_coded_values(
     // wire-derived and a hostile one must not command an allocation.
     let mut values: Vec<u8> = Vec::with_capacity(element_count.min(ALPHABET_SIZE * 8));
     let mut pending = PendingWork::DecodeNextSymbol;
-    let mut run_code_shift = 0u32;
+    let mut next_run_digit_position = 0u32;
 
     while values.len() < element_count {
         if zero_skip_stride != 0
@@ -433,13 +433,13 @@ fn decode_run_coded_values(
                     // larger than any sequence being filled, so it is
                     // the overrun verdict the moment it appears.
                     let run_contribution = (symbol + 1)
-                        .checked_shl(run_code_shift)
+                        .checked_shl(next_run_digit_position)
                         .filter(|&contribution| contribution != 0)
                         .ok_or(DjwFault::RepeatRunOvershootsSequence)?;
-                    run_code_shift += 1;
+                    next_run_digit_position += 1;
                     PendingWork::EmitRepeats { remaining: run_contribution }
                 } else {
-                    run_code_shift = 0;
+                    next_run_digit_position = 0;
                     PendingWork::PullToFront { recency_index: symbol - 1 }
                 }
             }

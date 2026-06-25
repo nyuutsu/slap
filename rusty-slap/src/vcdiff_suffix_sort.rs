@@ -75,8 +75,8 @@
 /// and with that module's differential oracle.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct Match {
-    pub u_offset: usize,
-    pub length:   usize,
+    pub superstring_offset: usize,
+    pub length: usize,
 }
 
 /// A longest-match index over the superstring `U = source ++ target`,
@@ -160,7 +160,7 @@ impl SuperstringMatcher {
         if length == 0 {
             None
         } else {
-            Some(Match { u_offset: self.match_u_offset[position], length })
+            Some(Match { superstring_offset: self.match_u_offset[position], length })
         }
     }
 }
@@ -593,10 +593,10 @@ mod tests {
                 };
                 for step in 0..found.length {
                     assert_eq!(
-                        byte_in_superstring(found.u_offset + step),
+                        byte_in_superstring(found.superstring_offset + step),
                         target[position + step],
                         "offset {} step {step} at position {position}",
-                        found.u_offset
+                        found.superstring_offset
                     );
                 }
             }

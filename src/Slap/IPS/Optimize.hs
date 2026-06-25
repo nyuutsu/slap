@@ -326,7 +326,7 @@ partitionDiffRegion offsetWidth _target region
 
     -- For each seed position, the index of its RLE-eligible
     -- predecessor (the previous seed position that lies in the
-    -- same maximal run as this one), or @-1@ when no run spans the
+    -- same maximal run as this one), or 'noPredecessor' when no run spans the
     -- gap. The DP uses these indices to gate RLE-cost candidates:
     -- an RLE record can only span a contiguous subrange of a
     -- single maximal run, so any RLE transition must be between
@@ -351,7 +351,7 @@ partitionDiffRegion offsetWidth _target region
         newArray (0, seedPositionCount - 1) impossiblyExpensiveCost
         :: ST s (STUArray s Int Int)
       predecessorArray <-
-        newArray (0, seedPositionCount - 1) (-1)
+        newArray (0, seedPositionCount - 1) noPredecessor
         :: ST s (STUArray s Int Int)
       writeArray costArray 0 0
 
@@ -369,29 +369,29 @@ partitionDiffRegion offsetWidth _target region
                     -- per-record payload cap, and pick the one whose
                     -- (predecessor cost + copy-record cost) is smallest.
                     -- Returns @(bestCost, bestPredecessorIndex)@.
-                    scanCopyCandidates !bestCost !bestPredecessor !sourceIndex
-                      | sourceIndex < 0 = pure (bestCost, bestPredecessor)
+                    scanCopyCandidates !bestCost !bestPredecessor !predecessorIndex
+                      | not (hasPredecessor predecessorIndex) = pure (bestCost, bestPredecessor)
                       | recordPayloadLength > ipsMaxRecordPayload =
                           pure (bestCost, bestPredecessor)
                       | otherwise = do
-                          predecessorCost <- readArray costArray sourceIndex
+                          predecessorCost <- readArray costArray predecessorIndex
                           let candidateCost =
                                 predecessorCost
                                 + copyRecordOverheadBytes
                                 + unLength recordPayloadLength
                           if candidateCost < bestCost
                             then scanCopyCandidates candidateCost
-                                                    sourceIndex
-                                                    (sourceIndex - 1)
+                                                    predecessorIndex
+                                                    (predecessorIndex - 1)
                             else scanCopyCandidates bestCost
                                                     bestPredecessor
-                                                    (sourceIndex - 1)
+                                                    (predecessorIndex - 1)
                       where
                         recordPayloadLength =
-                          distance (seedPositionArray ! sourceIndex) destinationPosition
+                          distance (seedPositionArray ! predecessorIndex) destinationPosition
 
                 (copyCandidateCost, copyCandidatePredecessor) <-
-                  scanCopyCandidates impossiblyExpensiveCost (-1) (destinationIndex - 1)
+                  scanCopyCandidates impossiblyExpensiveCost noPredecessor (destinationIndex - 1)
 
                 -- RLE candidate: only available when the destination's
                 -- preceding seed position is inside the same maximal run as
@@ -401,13 +401,13 @@ partitionDiffRegion offsetWidth _target region
                 let rleEligiblePredecessor =
                       rleEligiblePredecessorArray ! destinationIndex
                     rleCandidateRunLength
-                      | rleEligiblePredecessor >= 0 =
+                      | hasPredecessor rleEligiblePredecessor =
                           distance (seedPositionArray ! rleEligiblePredecessor)
                                    destinationPosition
                       | otherwise = mempty
 
                 (winningCost, winningPredecessor) <-
-                  if rleEligiblePredecessor >= 0
+                  if hasPredecessor rleEligiblePredecessor
                        && rleCandidateRunLength > rleBreakEvenLength
                     then do
                       rlePredecessorCost <-
@@ -432,23 +432,23 @@ partitionDiffRegion offsetWidth _target region
       let backtrackFrom !destinationIndex !accumulatedRecords
             | destinationIndex <= 0 = pure accumulatedRecords
             | otherwise = do
-                sourceIndex <- readArray predecessorArray destinationIndex
-                let sourcePosition      = seedPositionArray ! sourceIndex
+                predecessorIndex <- readArray predecessorArray destinationIndex
+                let predecessorPosition = seedPositionArray ! predecessorIndex
                     destinationPosition = seedPositionArray ! destinationIndex
-                    sliceLength         = distance sourcePosition destinationPosition
+                    sliceLength         = distance predecessorPosition destinationPosition
                     slicePayload =
                       ByteString.take (unLength sliceLength)
-                                      (ByteString.drop (unOffset sourcePosition) regionPayload)
+                                      (ByteString.drop (unOffset predecessorPosition) regionPayload)
                     -- Region-relative Offset to absolute file Offset by
                     -- advancing the region's absolute start by the
                     -- distance from the region-zero origin.
                     absoluteOffset = advance regionStart
-                                             (distance (Offset 0) sourcePosition)
+                                             (distance (Offset 0) predecessorPosition)
                     chosenRecord = Hunk
                       { hunkOffset  = absoluteOffset
                       , hunkPayload = slicePayload
                       }
-                backtrackFrom sourceIndex (chosenRecord : accumulatedRecords)
+                backtrackFrom predecessorIndex (chosenRecord : accumulatedRecords)
       backtrackFrom (seedPositionCount - 1) []
 
 -- | The smallest run length at which an RLE record is strictly
@@ -547,17 +547,17 @@ sortAndDeduplicate = removeConsecutiveDuplicates . sort
           firstValue
           : removeConsecutiveDuplicates (secondValue : remainingValues)
 
--- | For each seed position, find the previous seed position that
--- lies in the same maximal byte-run, or @-1@ when no run spans the
--- gap. The result is in seed-position order: the @i@-th entry is
--- the predecessor index for the @i@-th seed position, or @-1@ if
--- there is no run-mate predecessor.
---
--- The first entry is always @-1@ (position @0@ has no predecessor
--- of any kind).
+noPredecessor :: Int
+noPredecessor = -1
+
+hasPredecessor :: Int -> Bool
+hasPredecessor candidateIndex = candidateIndex >= 0
+
+-- | For each seed position, the previous seed position in the same maximal byte-run, or 'noPredecessor' when no run spans the gap.
+-- Parallel to the seed list: the @i@-th entry is the predecessor of the @i@-th seed.
 computeRLEEligiblePredecessors :: [Offset] -> [ByteRun] -> [Int]
 computeRLEEligiblePredecessors seedPositions runs =
-  -1 : zipWith
+  noPredecessor : zipWith
          eligibilityForPair
          [1 ..]
          (zip seedPositions (drop 1 seedPositions))
@@ -566,7 +566,7 @@ computeRLEEligiblePredecessors seedPositions runs =
     eligibilityForPair currentIndex (previousPosition, currentPosition)
       | positionsLieInSameRun previousPosition currentPosition =
           currentIndex - 1
-      | otherwise = -1
+      | otherwise = noPredecessor
 
     positionsLieInSameRun :: Offset -> Offset -> Bool
     positionsLieInSameRun previousPosition currentPosition =

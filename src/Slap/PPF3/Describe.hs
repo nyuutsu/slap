@@ -15,11 +15,11 @@ import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ValidationBlock(..),
                         unPPF3FileId,
                         ppf3ValidationOffset)
-import Slap.Measure (Offset(..), Length(..), OffsetRange(..),
+import Slap.Measure (Length(..), OffsetRange(..),
                      advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
-                            ByteCount(TotalPayloadBytes), renderAsText, renderHexAsText)
+                            ByteCount(TotalPayloadBytes), renderAsText, renderOffsetAsHex)
 import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
@@ -35,7 +35,6 @@ import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
-import Data.Word (Word64)
 
 ppf3Meta :: PPF3Patch -> [InfoLine]
 ppf3Meta patch = concat
@@ -54,8 +53,8 @@ ppf3Meta patch = concat
       Nothing -> "none"
       Just (PPF3ValidationBlock blockBytes) ->
         renderAsText (ppf3ImageType patch)
-        <> " block at 0x"
-        <> renderHexAsText (fromIntegral (unOffset (ppf3ValidationOffset (ppf3ImageType patch))) :: Word64)
+        <> " block at "
+        <> renderOffsetAsHex (ppf3ValidationOffset (ppf3ImageType patch))
         <> " (" <> renderAsText (ByteString.length blockBytes) <> " bytes)"
 
 analyzePPF3 :: PPF3Patch -> PatchAnalysis

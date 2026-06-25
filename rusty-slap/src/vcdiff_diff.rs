@@ -9,7 +9,7 @@
 //! matcher in [`crate::vcdiff_suffix_sort`]: at each target position the
 //! parse asks it for the longest run that recurs earlier in the
 //! superstring `U = source ++ target`, takes it when it clears
-//! [`MIN_MATCH`], and otherwise grows the current literal run by a byte.
+//! [`MIN_MATCH_LENGTH`], and otherwise grows the current literal run by a byte.
 
 use crate::vcdiff_suffix_sort::{Match, SuperstringMatcher};
 
@@ -17,7 +17,7 @@ use crate::vcdiff_suffix_sort::{Match, SuperstringMatcher};
 /// it is the smallest size the default code table's COPY rows encode,
 /// and below it a COPY (opcode + coded size + address) does not beat
 /// writing the bytes literally.
-const MIN_MATCH: usize = 4;
+const MIN_MATCH_LENGTH: usize = 4;
 
 /// Whether a cover segment copies earlier bytes or carries literal
 /// target bytes. Crosses the FFI seam as a single tag byte
@@ -52,7 +52,7 @@ pub fn vcdiff_cover(source: &[u8], target: &[u8]) -> Vec<CoverSegment> {
 
 /// Greedily parse a target of `target_length` bytes into a cover: at
 /// each position take the longest match the engine reports when it
-/// clears [`MIN_MATCH`], otherwise extend the pending literal run by one
+/// clears [`MIN_MATCH_LENGTH`], otherwise extend the pending literal run by one
 /// byte. The match engine is a parameter, so the production suffix-array
 /// matcher and the test oracle drive this identical parse — the cover's
 /// shape is decided here, once, and the engine only answers the longest-
@@ -63,22 +63,22 @@ fn greedy_cover(
 ) -> Vec<CoverSegment> {
     let mut segments = Vec::new();
     let mut literal_start = 0; // start, in the target, of the pending literal run
-    let mut position = 0;
-    while position < target_length {
-        match longest_match_at(position) {
-            Some(found) if found.length >= MIN_MATCH => {
-                flush_literal(&mut segments, literal_start, position);
+    let mut target_position = 0;
+    while target_position < target_length {
+        match longest_match_at(target_position) {
+            Some(longest_match) if longest_match.length >= MIN_MATCH_LENGTH => {
+                flush_literal(&mut segments, literal_start, target_position);
                 segments.push(CoverSegment {
                     kind: SegmentKind::Copy,
-                    offset: found.u_offset as u64,
-                    length: found.length as u64,
+                    offset: longest_match.superstring_offset as u64,
+                    length: longest_match.length as u64,
                 });
-                position += found.length;
-                literal_start = position;
+                target_position += longest_match.length;
+                literal_start = target_position;
             }
             // No match, or one too short to be worth a COPY: this byte
             // extends the pending literal run.
-            _ => position += 1,
+            _ => target_position += 1,
         }
     }
     flush_literal(&mut segments, literal_start, target_length);
@@ -111,7 +111,7 @@ mod tests {
     /// The longest run of target bytes beginning at `position` that also
     /// occurs earlier in `U` — at a `U` offset strictly before the write
     /// head (`source.len() + position`). `None` only when no candidate
-    /// matches even one byte; the caller applies the [`super::MIN_MATCH`]
+    /// matches even one byte; the caller applies the [`super::MIN_MATCH_LENGTH`]
     /// floor. The quadratic scan the suffix-array engine replaced, kept
     /// as the exhaustively-correct reference.
     fn naive_longest_match_at(source: &[u8], target: &[u8], position: usize) -> Option<Match> {
@@ -120,7 +120,7 @@ mod tests {
         for candidate in 0..write_head {
             let length = extend_match(source, target, candidate, position);
             if length > 0 && best.as_ref().is_none_or(|found| length > found.length) {
-                best = Some(Match { u_offset: candidate, length });
+                best = Some(Match { superstring_offset: candidate, length });
             }
         }
         best

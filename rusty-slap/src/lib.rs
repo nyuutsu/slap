@@ -127,9 +127,9 @@ pub unsafe extern "C" fn rusty_crc32(input_address: *const u8, input_length: usi
 pub unsafe extern "C" fn rusty_adler32(input_address: *const u8, input_length: usize) -> u32 {
     let input = unsafe { view_caller_buffer(input_address, input_length) };
     let (byte_sum, cumulative_sum) = input.iter().fold((1u32, 0u32), |(byte_sum, cumulative_sum), &byte| {
-        let byte_sum       = (byte_sum + byte as u32) % 65521;
-        let cumulative_sum = (cumulative_sum + byte_sum) % 65521;
-        (byte_sum, cumulative_sum)
+        let next_byte_sum       = (byte_sum + byte as u32) % 65521;
+        let next_cumulative_sum = (cumulative_sum + next_byte_sum) % 65521;
+        (next_byte_sum, next_cumulative_sum)
     });
     (cumulative_sum << 16) | byte_sum
 }

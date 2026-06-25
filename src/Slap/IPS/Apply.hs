@@ -188,25 +188,9 @@ applyIPS (InputFileContents source) patch
 
     runApply outputPointer =
       let
-        -- | Record a clip event into the accumulator. The first
-        -- clip starts the accumulator with count=1 and notes the
-        -- record's index; subsequent clips increment count and add
-        -- to total overshoot, preserving the first index. The
-        -- accumulator lives in the 'IPSApply' state; this action
-        -- updates it in place, leaving the walker free of explicit
-        -- clip-state plumbing.
         recordClip :: ActionIndex -> Length -> IPSApply ()
-        recordClip recordIndex overshootLen = modify $ \current -> Just $ case current of
-          Nothing -> ClipAccumulator
-            { clipCount      = ClippedRecordCount 1
-            , clipFirstIndex = recordIndex
-            , clipOvershoot  = MarkerOvershootBytes overshootLen
-            }
-          Just existing -> existing
-            { clipCount     = ClippedRecordCount
-                                (unClippedRecordCount (clipCount existing) + 1)
-            , clipOvershoot = clipOvershoot existing <> MarkerOvershootBytes overshootLen
-            }
+        recordClip recordIndex overshootLength =
+          modify (<> Just (ClipAccumulator (ClippedRecordCount 1) recordIndex (MarkerOvershootBytes overshootLength)))
 
         -- | Seed every byte of the output buffer before any record
         -- runs. The leading @min sourceSize effectiveSize@ bytes are
@@ -353,6 +337,14 @@ data ClipAccumulator = ClipAccumulator
   , clipFirstIndex :: !ActionIndex
   , clipOvershoot  :: !MarkerOvershootBytes
   }
+
+instance Semigroup ClipAccumulator where
+  earlier <> later = ClipAccumulator
+    { clipCount      = ClippedRecordCount
+                         (unClippedRecordCount (clipCount earlier) + unClippedRecordCount (clipCount later))
+    , clipFirstIndex = clipFirstIndex earlier
+    , clipOvershoot  = clipOvershoot earlier <> clipOvershoot later
+    }
 
 -- | The state monad threaded through the record walk. The state
 -- slot carries the running clip accumulator (initially 'Nothing'),

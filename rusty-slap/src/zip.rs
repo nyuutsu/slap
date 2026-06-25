@@ -9,10 +9,10 @@ use zip::result::ZipError;
 
 /// Entry names, NUL-terminated, read from the central directory.
 pub fn zip_entry_names(input: &[u8]) -> Result<Vec<u8>, String> {
-    let mut archive = ZipArchive::new(Cursor::new(input)).map_err(describe)?;
+    let mut archive = ZipArchive::new(Cursor::new(input)).map_err(describe_zip_error)?;
     let mut joined = Vec::new();
     for index in 0..archive.len() {
-        let entry = archive.by_index_raw(index).map_err(describe)?;
+        let entry = archive.by_index_raw(index).map_err(describe_zip_error)?;
         joined.extend_from_slice(entry.name().as_bytes());
         joined.push(0);
     }
@@ -21,8 +21,8 @@ pub fn zip_entry_names(input: &[u8]) -> Result<Vec<u8>, String> {
 
 /// The decompressed bytes of the named entry.
 pub fn zip_extract_entry(input: &[u8], entry_name: &str) -> Result<Vec<u8>, String> {
-    let mut archive = ZipArchive::new(Cursor::new(input)).map_err(describe)?;
-    let mut entry = archive.by_name(entry_name).map_err(describe)?;
+    let mut archive = ZipArchive::new(Cursor::new(input)).map_err(describe_zip_error)?;
+    let mut entry = archive.by_name(entry_name).map_err(describe_zip_error)?;
     if entry.encrypted() {
         return Err(format!(
             "the entry \"{entry_name}\" is password-protected; slap cannot read encrypted archives"
@@ -36,7 +36,7 @@ pub fn zip_extract_entry(input: &[u8], entry_name: &str) -> Result<Vec<u8>, Stri
 }
 
 /// A reason that keeps encrypted and unsupported distinct from corrupt.
-fn describe(error: ZipError) -> String {
+fn describe_zip_error(error: ZipError) -> String {
     match error {
         ZipError::InvalidArchive(message) => format!("not a valid ZIP archive: {message}"),
         ZipError::UnsupportedArchive(message) => {

@@ -478,33 +478,33 @@ impl AdaptiveTree {
     /// other's old neighbours (an adjacency self-reference rewritten to
     /// name where the partner lands), and each genuinely external
     /// neighbour points back at whoever now fills the vacated slot.
-    fn swap_in_sibling_sequence(&mut self, a: NodeId, b: NodeId) {
-        let a_left = self.node(a).siblings.left;
-        let a_right = self.node(a).siblings.right;
-        let b_left = self.node(b).siblings.left;
-        let b_right = self.node(b).siblings.right;
+    fn swap_in_sibling_sequence(&mut self, forward_node: NodeId, back_node: NodeId) {
+        let forward_left = self.node(forward_node).siblings.left;
+        let forward_right = self.node(forward_node).siblings.right;
+        let back_left = self.node(back_node).siblings.left;
+        let back_right = self.node(back_node).siblings.right;
 
-        self.set_siblings(a, rewriting(b_left, a, b), rewriting(b_right, a, b));
-        self.set_siblings(b, rewriting(a_left, b, a), rewriting(a_right, b, a));
+        self.set_siblings(forward_node, rewriting(back_left, forward_node, back_node), rewriting(back_right, forward_node, back_node));
+        self.set_siblings(back_node, rewriting(forward_left, back_node, forward_node), rewriting(forward_right, back_node, forward_node));
 
-        if let Some(left) = b_left {
-            if left != a {
-                self.node_mut(left).siblings.right = Some(a);
+        if let Some(left) = back_left {
+            if left != forward_node {
+                self.node_mut(left).siblings.right = Some(forward_node);
             }
         }
-        if let Some(right) = b_right {
-            if right != a {
-                self.node_mut(right).siblings.left = Some(a);
+        if let Some(right) = back_right {
+            if right != forward_node {
+                self.node_mut(right).siblings.left = Some(forward_node);
             }
         }
-        if let Some(left) = a_left {
-            if left != b {
-                self.node_mut(left).siblings.right = Some(b);
+        if let Some(left) = forward_left {
+            if left != back_node {
+                self.node_mut(left).siblings.right = Some(back_node);
             }
         }
-        if let Some(right) = a_right {
-            if right != b {
-                self.node_mut(right).siblings.left = Some(b);
+        if let Some(right) = forward_right {
+            if right != back_node {
+                self.node_mut(right).siblings.left = Some(back_node);
             }
         }
     }
@@ -513,18 +513,18 @@ impl AdaptiveTree {
     /// point each parent's child slot at the node that now sits there.
     /// Both child-slot sides are read before either is written, so a
     /// shared parent swaps its two children cleanly.
-    fn swap_in_tree(&mut self, a: NodeId, b: NodeId) {
-        let parent_a = self.node(a).tree.parent;
-        let parent_b = self.node(b).tree.parent;
-        let a_was_right = parent_a.map(|p| self.node(p).tree.right_child == Some(a));
-        let b_was_right = parent_b.map(|p| self.node(p).tree.right_child == Some(b));
-        self.node_mut(a).tree.parent = parent_b;
-        self.node_mut(b).tree.parent = parent_a;
-        if let Some(parent) = parent_a {
-            self.set_child(parent, a_was_right.unwrap(), b);
+    fn swap_in_tree(&mut self, forward_node: NodeId, back_node: NodeId) {
+        let parent_forward = self.node(forward_node).tree.parent;
+        let parent_back = self.node(back_node).tree.parent;
+        let forward_was_right = parent_forward.map(|p| self.node(p).tree.right_child == Some(forward_node));
+        let back_was_right = parent_back.map(|p| self.node(p).tree.right_child == Some(back_node));
+        self.node_mut(forward_node).tree.parent = parent_back;
+        self.node_mut(back_node).tree.parent = parent_forward;
+        if let Some(parent) = parent_forward {
+            self.set_child(parent, forward_was_right.unwrap(), back_node);
         }
-        if let Some(parent) = parent_b {
-            self.set_child(parent, b_was_right.unwrap(), a);
+        if let Some(parent) = parent_back {
+            self.set_child(parent, back_was_right.unwrap(), forward_node);
         }
     }
 

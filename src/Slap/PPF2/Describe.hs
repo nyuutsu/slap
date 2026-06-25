@@ -14,11 +14,11 @@ import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..),
                         unPPF2FileId,
                         unPPF2SourceSize,
                         ppf2ValidationOffset)
-import Slap.Measure (Offset(..), Length(..),
+import Slap.Measure (Length(..),
                      OffsetRange(..), advance, byteLength, distance)
 import Slap.Display.Common (InfoLine(..),
                             Tally(..), CountUnit(Records),
-                            ByteCount(TotalPayloadBytes), renderAsText, renderHexAsText)
+                            ByteCount(TotalPayloadBytes), renderAsText, renderOffsetAsHex)
 import Slap.Display.Analysis
   ( PatchAnalysis(..)
   , AnalysisSection(SectionRegions)
@@ -33,7 +33,6 @@ import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
-import Data.Word (Word64)
 
 ppf2Meta :: PPF2Patch -> [InfoLine]
 ppf2Meta patch = concat
@@ -50,8 +49,8 @@ ppf2Meta patch = concat
   where
     validationBlockBytes = unPPF2ValidationBlock (ppf2ValidationBlock patch)
     validationLine =
-      "BIN block at 0x"
-      <> renderHexAsText (fromIntegral (unOffset ppf2ValidationOffset) :: Word64)
+      "BIN block at "
+      <> renderOffsetAsHex ppf2ValidationOffset
       <> " (" <> renderAsText (ByteString.length validationBlockBytes) <> " bytes)"
 
 analyzePPF2 :: PPF2Patch -> PatchAnalysis

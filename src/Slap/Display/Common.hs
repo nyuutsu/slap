@@ -22,6 +22,7 @@ module Slap.Display.Common
   , renderFormatHeader
     -- * Range rendering
   , renderOffsetRange
+  , renderOffsetAsHex
     -- * Show-to-Text
   , renderAsText
   , renderHexAsText
@@ -32,6 +33,7 @@ module Slap.Display.Common
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Word (Word64)
 import Numeric (showHex)
 import Slap.Display.Primitives (padHex)
 import Slap.FormatLabel (FormatLabel, formatLabelName)
@@ -166,6 +168,9 @@ renderOffsetRange range =
   "0x" <> padHex 6 (unOffset (rangeStart range))
   <> " - 0x"
   <> padHex 6 (unOffset (rangeLastByte range))
+
+renderOffsetAsHex :: Offset -> Text
+renderOffsetAsHex offset = "0x" <> renderHexAsText (fromIntegral (unOffset offset) :: Word64)
 
 ----------------------------------------------------------------------------
 -- FormatHeader

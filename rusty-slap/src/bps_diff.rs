@@ -398,22 +398,22 @@ fn is_outside_not_yet_written_zone(
 fn pick_longer_match(
     bytes: &[u8],
     search_string: &[u8],
-    first_position: usize,
-    second_position: usize,
+    upward_position: usize,
+    downward_position: usize,
 ) -> MatchCandidate {
-    let common_prefix_length = match_len(&bytes[first_position..], &bytes[second_position..]);
+    let common_prefix_length = match_len(&bytes[upward_position..], &bytes[downward_position..]);
     if common_prefix_length >= search_string.len() {
         return MatchCandidate {
-            position_in_concat: first_position,
+            position_in_concat: upward_position,
             length: search_string.len(),
         };
     }
-    let first_extends_into_search = first_position + common_prefix_length < bytes.len()
-        && bytes[first_position + common_prefix_length] == search_string[common_prefix_length];
-    let winning_position = if first_extends_into_search {
-        first_position
+    let upward_extends_into_search = upward_position + common_prefix_length < bytes.len()
+        && bytes[upward_position + common_prefix_length] == search_string[common_prefix_length];
+    let winning_position = if upward_extends_into_search {
+        upward_position
     } else {
-        second_position
+        downward_position
     };
     let extra_match_length = match_len(
         &bytes[winning_position + common_prefix_length..],
@@ -639,11 +639,11 @@ mod tests {
         (0..length)
             .map(|_| {
                 state = state.wrapping_add(0x9e3779b97f4a7c15);
-                let mut z = state;
-                z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-                z ^= z >> 31;
-                z as u8
+                let mut mixed = state;
+                mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d049bb133111eb);
+                mixed ^= mixed >> 31;
+                mixed as u8
             })
             .collect()
     }

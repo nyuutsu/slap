@@ -83,10 +83,11 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
     targetLength = ByteString.length target
     sourceTailAllZero = ByteString.all (== 0) (ByteString.drop targetLength source)
 
-    byteAt :: ByteString -> Int -> Word8
+    byteAt :: ByteString -> Offset -> Word8
     byteAt bytes position
-      | position < ByteString.length bytes = ByteString.index bytes position
+      | byteIndex < ByteString.length bytes = ByteString.index bytes byteIndex
       | otherwise = 0
+      where byteIndex = offsetToInt position
 
     -- Tail-recursive scan. Accumulates skip count while bytes match;
     -- on diff, collects the run and emits a block.
@@ -94,7 +95,7 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
     scan !position !skipCount !accumulatedBlocks
       | offsetToInt position >= targetLength =
           reverse accumulatedBlocks
-      | byteAt source (offsetToInt position) == byteAt target (offsetToInt position) =
+      | byteAt source position == byteAt target position =
           scan (advance position (Length 1))
                (skipCount <> Length 1)
                accumulatedBlocks
@@ -116,14 +117,14 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
           -- unsafeCreate (not create) is sound here: the fill writes
           -- only the freshly-allocated local buffer and is deterministic,
           -- so GHC duplicating the IO action produces identical output.
-          runByteCount    = unLength runLength
-          startByteOffset = offsetToInt start
+          runByteCount = unLength runLength
           runBytes = unsafeCreate runByteCount $ \outputPointer ->
             let writeLoop !byteOffset
                   | byteOffset >= runByteCount = pure ()
                   | otherwise = do
-                      let sourceByte = byteAt source (startByteOffset + byteOffset)
-                          targetByte = byteAt target (startByteOffset + byteOffset)
+                      let absolutePosition = advance start (Length byteOffset)
+                          sourceByte = byteAt source absolutePosition
+                          targetByte = byteAt target absolutePosition
                       pokeByteOff outputPointer byteOffset
                         (sourceByte `xor` targetByte :: Word8)
                       writeLoop (byteOffset + 1)
@@ -137,5 +138,5 @@ diffToBlocks (InputFileContents source) (OutputFileContents target)
     findFirstMatchPosition :: Offset -> Offset
     findFirstMatchPosition !position
       | offsetToInt position >= targetLength = position
-      | byteAt source (offsetToInt position) == byteAt target (offsetToInt position) = position
+      | byteAt source position == byteAt target position = position
       | otherwise = findFirstMatchPosition (advance position (Length 1))

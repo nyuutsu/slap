@@ -88,12 +88,12 @@ checkEncodingByte input
 -- implements this; the reference creator (@makeppf.c@) never emits
 -- it. Other PPF1 producers can.
 parsePPF1Records :: PPF1Origin -> ActionIndex -> ByteParser [PPF1Record]
-parsePPF1Records origin = goRecords
+parsePPF1Records origin = parseRemainingRecords
   where
     readOffsetWord = case origin of
       PPF1OriginPC    -> word32LE
       PPF1OriginAmiga -> word32BE
-    goRecords recordIndex = do
+    parseRemainingRecords recordIndex = do
       remainingBytes <- remaining
       if unLength remainingBytes < 5 then pure []
       else do
@@ -103,31 +103,31 @@ parsePPF1Records origin = goRecords
         record <- if countByte == 0
           then parseRleBody recordIndex remainingAfterHeader recordOffset
           else parseLiteralBody recordIndex remainingAfterHeader recordOffset countByte
-        rest <- goRecords (nextAction recordIndex)
+        rest <- parseRemainingRecords (nextAction recordIndex)
         pure (record : rest)
     parseLiteralBody :: ActionIndex -> Length -> Offset -> Int -> ByteParser PPF1Record
-    parseLiteralBody index remainingAfterHeader writeOffset payloadLength
+    parseLiteralBody recordIndex remainingAfterHeader writeOffset payloadLength
       | unLength remainingAfterHeader < payloadLength =
-          throwByteParserError (ByteParserTruncatedRecord index
+          throwByteParserError (ByteParserTruncatedRecord recordIndex
             (RequiredLength (Length (5 + payloadLength)))
-            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
+            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
       | otherwise = do
           payload <- getBytes (Length payloadLength)
           pure (PPF1Record writeOffset payload)
 
     parseRleBody :: ActionIndex -> Length -> Offset -> ByteParser PPF1Record
-    parseRleBody index remainingAfterHeader writeOffset
+    parseRleBody recordIndex remainingAfterHeader writeOffset
       | unLength remainingAfterHeader < 2 =
-          throwByteParserError (ByteParserTruncatedRecord index
+          throwByteParserError (ByteParserTruncatedRecord recordIndex
             (RequiredLength (Length 7))
-            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
+            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
       | otherwise = do
           dataByte <- getByte
           repeatCount <- fromIntegral <$> getByte
           pure (PPF1Record writeOffset (ByteString.replicate repeatCount dataByte))
 
     -- Add the consumed 5-byte header back so the truncation error's RemainingLength names the whole-record budget, matching RequiredLength.
-    lengthAddingHeader :: Length -> Length
-    lengthAddingHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
+    lengthWithRecordHeader :: Length -> Length
+    lengthWithRecordHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
 
 

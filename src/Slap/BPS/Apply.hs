@@ -202,8 +202,8 @@ applyBPS patch (InputFileContents source)
             copyFromByteOffset !byteOffset
               | byteOffset >= totalBytes = pure ()
               | otherwise = do
-                  byte <- peekByteOff readBase byteOffset :: IO Word8
-                  pokeByteOff writeBase byteOffset byte
+                  copiedByte <- peekByteOff readBase byteOffset :: IO Word8
+                  pokeByteOff writeBase byteOffset copiedByte
                   copyFromByteOffset (byteOffset + 1)
 
         -- | Pure 'IO': takes the write position as an argument and
@@ -217,10 +217,10 @@ applyBPS patch (InputFileContents source)
                TargetCopyNonOverlapping ->
                  copyInPlace outputPointer (unReadOffset readStart) outputOffset copyLength
                TargetCopySingleByteRun -> do
-                 byte <- peekByteOff outputPointer
-                                     (unOffset outputOffset - 1) :: IO Word8
+                 repeatedByte <- peekByteOff outputPointer
+                                             (unOffset outputOffset - 1) :: IO Word8
                  fillBytes (plusOffset outputPointer outputOffset)
-                           byte (unLength copyLength)
+                           repeatedByte (unLength copyLength)
                TargetCopyGeneralOverlap ->
                  generalOverlapLoop readStart writePosition copyLength
 

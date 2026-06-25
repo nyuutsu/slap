@@ -130,10 +130,10 @@ narrowHunk :: EncodingLimits -> SplitHunk -> Either NarrowingFailure EncodedHunk
 narrowHunk limits hunk
   | unOffset offset < 0 =
       Left (NegativeOffset (formatLabel limits) (ActualOffset offset))
-  | unOffset offset > unOffset maximum_ =
+  | unOffset offset > unOffset maximumEncodableOffset =
       Left (OffsetExceedsBound (formatLabel limits)
                                (ActualOffset offset)
-                               (MaxOffset maximum_))
+                               (MaxOffset maximumEncodableOffset))
   | otherwise =
       Right EncodedHunk
         { encodedOffset  = offset
@@ -141,7 +141,7 @@ narrowHunk limits hunk
         }
   where
     offset   = splitOffset hunk
-    maximum_ = maximumOffset limits
+    maximumEncodableOffset = maximumOffset limits
 
 narrowHunks :: EncodingLimits -> [SplitHunk] -> Either NarrowingFailure [EncodedHunk]
 narrowHunks limits = traverse (narrowHunk limits)
@@ -179,10 +179,10 @@ narrowUndoHunk :: EncodingLimits -> SplitUndoHunk -> Either NarrowingFailure Enc
 narrowUndoHunk limits hunk
   | unOffset offset < 0 =
       Left (NegativeOffset (formatLabel limits) (ActualOffset offset))
-  | unOffset offset > unOffset maximum_ =
+  | unOffset offset > unOffset maximumEncodableOffset =
       Left (OffsetExceedsBound (formatLabel limits)
                                (ActualOffset offset)
-                               (MaxOffset maximum_))
+                               (MaxOffset maximumEncodableOffset))
   | otherwise =
       Right EncodedUndoHunk
         { encodedUndoOffset   = offset
@@ -191,7 +191,7 @@ narrowUndoHunk limits hunk
         }
   where
     offset   = splitUndoOffset hunk
-    maximum_ = maximumOffset limits
+    maximumEncodableOffset = maximumOffset limits
 
 narrowUndoHunks :: EncodingLimits -> [SplitUndoHunk] -> Either NarrowingFailure [EncodedUndoHunk]
 narrowUndoHunks limits = traverse (narrowUndoHunk limits)

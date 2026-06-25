@@ -161,9 +161,9 @@ parseActions = walkActions [] []
 -- 'NegativeZeroInBPS' when seen.
 decodeOneAction :: ByteParser BPSDecodedAction
 decodeOneAction = do
-  encoded <- byuuVarint
-  let dataLength = Length (fromIntegral (shiftR encoded 2) + 1)
-  case encoded .&. 3 of
+  packedCommandAndLength <- byuuVarint
+  let dataLength = Length (fromIntegral (shiftR packedCommandAndLength 2) + 1)
+  case packedCommandAndLength .&. 3 of
     0 -> pure BPSDecodedAction  -- SourceRead
            { bpsDecodedActionValue    = SourceRead dataLength
            , bpsDecodedActionWarnings = []

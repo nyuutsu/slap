@@ -120,7 +120,7 @@ parsePPF2Records recordIndex = do
       | unLength remainingAfterHeader < payloadLength =
           throwByteParserError (ByteParserTruncatedRecord index
             (RequiredLength (Length (5 + payloadLength)))
-            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
+            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
       | otherwise = do
           payload <- getBytes (Length payloadLength)
           pure (PPF2Record writeOffset payload)
@@ -130,14 +130,14 @@ parsePPF2Records recordIndex = do
       | unLength remainingAfterHeader < 2 =
           throwByteParserError (ByteParserTruncatedRecord index
             (RequiredLength (Length 7))
-            (RemainingLength (lengthAddingHeader remainingAfterHeader)))
+            (RemainingLength (lengthWithRecordHeader remainingAfterHeader)))
       | otherwise = do
           dataByte <- getByte
           repeatCount <- fromIntegral <$> getByte
           pure (PPF2Record writeOffset (ByteString.replicate repeatCount dataByte))
 
-    lengthAddingHeader :: Length -> Length
-    lengthAddingHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
+    lengthWithRecordHeader :: Length -> Length
+    lengthWithRecordHeader (Length availableAfterHeader) = Length (5 + availableAfterHeader)
 
 
 ----------------------------------------------------------------------------
@@ -160,36 +160,37 @@ parsePPF2Records recordIndex = do
 --
 -- The wire-declared byte count is returned alongside the 'PPF2FileId'
 -- so 'stripFileId' can size the trailer without re-encoding the typed text.
-detectFileId :: EncodingName -> ByteString -> (Maybe (PPF2FileId, Int), [SlapAdvisory])
+detectFileId :: EncodingName -> ByteString -> (Maybe (PPF2FileId, Length), [SlapAdvisory])
 detectFileId metadataEncoding input
-  | ByteString.length input < markerSize + lengthFieldSize = (Nothing, [])
+  | inputLength < markerSize + lengthFieldSize = (Nothing, [])
   | ByteString.take markerSize trailerCandidate /= "@END_FILE_ID.DIZ" = (Nothing, [])
   | otherwise =
-      let dizContentLength = fromIntegral (getWord32LE
-                              (ByteString.length input - lengthFieldSize) input)
-          dizContentEnd    = ByteString.length input - lengthFieldSize - markerSize
+      let dizContentLength = fromIntegral (getWord32LE lengthFieldStart input)
+          dizContentEnd    = markerStart
           dizContentStart  = dizContentEnd - dizContentLength
       in if dizContentStart < 0 then (Nothing, [])
          else let dizContentBytes = ByteString.take dizContentLength
                                       (ByteString.drop dizContentStart input)
                   (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
                   dizAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
-              in (Just (ppf2FileIdFromParsed dizText, dizContentLength), dizAdvisories)
+              in (Just (ppf2FileIdFromParsed dizText, Length dizContentLength), dizAdvisories)
   where
     markerSize        = unLength ppf2FileIdFooterLength
     lengthFieldSize   = unLength ppf2FileIdLengthFieldWidth
-    trailerCandidate  = ByteString.drop (ByteString.length input - lengthFieldSize - markerSize)
-                          (ByteString.take (ByteString.length input - lengthFieldSize) input)
+    inputLength       = ByteString.length input
+    lengthFieldStart  = inputLength - lengthFieldSize
+    markerStart       = lengthFieldStart - markerSize
+    trailerCandidate  = ByteString.take markerSize (ByteString.drop markerStart input)
 
 -- | Trim the FILE_ID.DIZ trailer off the record body, if one was
 -- detected. Leaves the body unchanged otherwise. The trailer size
 -- is computed from the wire-declared content byte count plus the
 -- fixed marker and length-field widths.
-stripFileId :: Maybe (PPF2FileId, Int) -> ByteString -> ByteString
+stripFileId :: Maybe (PPF2FileId, Length) -> ByteString -> ByteString
 stripFileId Nothing body = body
 stripFileId (Just (_, contentByteCount)) body =
   let trailerSize = unLength ppf2FileIdMarkerLength
-                  + contentByteCount
+                  + unLength contentByteCount
                   + unLength ppf2FileIdFooterLength
                   + unLength ppf2FileIdLengthFieldWidth
   in ByteString.take (ByteString.length body - trailerSize) body

@@ -3,7 +3,7 @@
 module Slap.PMSR.Parse
   ( parsePMSR
   , parsePMSRBody
-  , parseLoop
+  , parseRecordStream
   ) where
 
 -- PMSR is the patch format produced by Star Rod (Paper Mario 64 modding tool, Java, big-endian).
@@ -39,25 +39,25 @@ parsePMSRBody :: ByteParser PMSRPatch
 parsePMSRBody = do
   skip (Length 4)  -- magic
   count <- fromIntegral <$> ByteParser.word32BE
-  records  <- parseLoop firstAction count []
+  records  <- parseRecordStream firstAction count []
   pure (PMSRPatch (Vector.fromList records))
 
-parseLoop :: ActionIndex -> Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
-parseLoop _ 0 accumulated = pure (reverse accumulated)
-parseLoop recordIndex count accumulated = do
+parseRecordStream :: ActionIndex -> Int -> [PMSRRecord] -> ByteParser [PMSRRecord]
+parseRecordStream _ 0 accumulated = pure (reverse accumulated)
+parseRecordStream recordIndex count accumulated = do
   offset <- offsetFromParsed <$> ByteParser.word32BE
   dataLength <- fromIntegral <$> ByteParser.word32BE
   available <- remaining
   if dataLength > unLength available
     then throwByteParserError (ByteParserTruncatedRecord recordIndex
-           (RequiredLength (lengthAddingHeader (Length dataLength)))
-           (RemainingLength (lengthAddingHeader available)))
+           (RequiredLength (lengthWithRecordHeader (Length dataLength)))
+           (RemainingLength (lengthWithRecordHeader available)))
     else do
       payload <- getBytes (Length dataLength)
-      parseLoop (nextAction recordIndex) (count - 1) (PMSRRecord offset payload : accumulated)
+      parseRecordStream (nextAction recordIndex) (count - 1) (PMSRRecord offset payload : accumulated)
   where
     -- Restate a byte count "as if" the 8-byte record header (4-byte
     -- offset, 4-byte length) had not been consumed yet, so the error
     -- names the whole-record budget.
-    lengthAddingHeader :: Length -> Length
-    lengthAddingHeader (Length availableAfterHeader) = Length (8 + availableAfterHeader)
+    lengthWithRecordHeader :: Length -> Length
+    lengthWithRecordHeader (Length availableAfterHeader) = Length (8 + availableAfterHeader)
