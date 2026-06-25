@@ -261,7 +261,6 @@ newtype BucketIndex = BucketIndex { unBucketIndex :: Int }
   deriving stock (Eq, Ord, Show)
   deriving newtype (Ix, Enum)
 
--- | Whether any region touches a sparkline column.
 data ColumnOccupancy = ColumnOccupied | ColumnVacant
   deriving stock (Eq)
 
@@ -301,7 +300,7 @@ runRecords, runBytes :: BucketRun -> Int
 runRecords (BucketRun columns) = sum (fmap (tallyRecords . snd) columns)
 runBytes   (BucketRun columns) = sum (fmap (tallyBytes . snd) columns)
 
--- The element at index length/2 of a non-empty list — the upper of the two middles when the length is even.
+-- Returns the upper of the two middles when the length is even.
 middleElement :: NonEmpty a -> a
 middleElement (firstValue :| laterValues) = seekMiddle firstValue laterValues (firstValue : laterValues)
   where

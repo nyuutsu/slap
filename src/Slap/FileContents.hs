@@ -1,10 +1,4 @@
--- | File contents newtypes.
---
--- 'InputFileContents', 'OutputFileContents', and 'PatchFileContents' encode the role each 'ByteString' plays in the patch lifecycle.
--- Apply consumes an 'InputFileContents' and produces an 'OutputFileContents'; parse consumes a 'PatchFileContents'.
--- The names match slap's @--input@ and @--output@ flags; format-specific modules keep their own spec vocabulary where it describes spec-derived concepts.
---
--- Use the @un*@ accessors at boundaries (file I/O, FFI, hash functions) where the underlying 'ByteString' is needed.
+-- | The file-contents role newtypes: apply consumes 'InputFileContents' and produces 'OutputFileContents'; parse consumes 'PatchFileContents'.
 module Slap.FileContents
   ( InputFileContents(..)
   , OutputFileContents(..)

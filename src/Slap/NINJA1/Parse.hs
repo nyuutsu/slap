@@ -133,8 +133,6 @@ data NINJA1BinaryStreamHead
     -- ^ A record begins here, its offset already decoded; the data
     -- width, length, and payload remain to be read.
 
--- How the binary record walk ended.
--- ReachedEOFFooter is a valid patch; EndedWithoutEOFFooter means the footer (the only terminator) was absent, which parseBinary refuses as NINJA1BinaryMissingEOFFooter.
 data NINJA1BinaryTermination = ReachedEOFFooter | EndedWithoutEOFFooter
 
 parseBinaryRecords :: ByteParser (NINJA1BinaryTermination, [NINJA1Record])

@@ -1,10 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The native frontend's archive-unwrap layer: open a single-entry
--- container and hand back the file inside. ZIP is read in-process through
--- "Archive.Zip"; RAR and 7z shell out to @unrar@ and @7z@. The vocabulary
--- it acts on — the recognized formats, detection, and the closed set of
--- unwrap failures — lives engine-side in "Slap.Archive.Types".
+-- | The native frontend's archive-unwrap layer: open a single-entry container and hand back the file inside.
+-- ZIP is read in-process via "Archive.Zip"; RAR and 7z shell out to @unrar@ and @7z@.
 module Archive
   ( unwrapArchive
   ) where

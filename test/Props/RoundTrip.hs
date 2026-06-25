@@ -1872,7 +1872,6 @@ prop_ninja1SourcelessSentinelRejected = once $
          counterexample "expected Left SentinelCollisionUnfixable, got Right" $
            property False
 
--- | A binary NINJA1 patch's [0x03]"EOF" footer is its only record-stream terminator, so a patch with the footer removed is refused rather than parsed.
 prop_ninja1FooterRequired :: Property
 prop_ninja1FooterRequired = forAll genPairNoShrink $ \(source, target) ->
   case createPatch (CreateDirect CreateNINJA1) Nothing (InputFileContents source) (OutputFileContents target) noMetadataRequested Nothing noConstraintsRequested noDialectsRequested of

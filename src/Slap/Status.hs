@@ -565,8 +565,6 @@ data SlapError
   -- space is finite per the format spec.
   | MalformedNINJA1Content NINJA1Malformation
 
-  -- | A binary NINJA1 patch whose record stream ended without the @0x03 "EOF"@ footer that the format defines as its terminator.
-  -- With no terminator the patch is structurally incomplete, so slap rejects it as malformed.
   | NINJA1BinaryMissingEOFFooter
 
   -- | A byte-parser failure surfaced from a per-format parser. The
@@ -1107,9 +1105,8 @@ data SlapAdvisory
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped UndoRecordCount
   | ValidationBlockDropped
-  -- | A BPS metadata blob with no destination channel in the target
-  -- format. The 'Length' is the blob's byte count — a measured span
-  -- of bytes, not a tally.
+  -- | A BPS metadata blob with no destination channel in the target format.
+  -- The 'Length' is the blob's byte count.
   | MetadataDropped Length
 
   -- Conversion: defaults assumed
@@ -2555,8 +2552,7 @@ data VCDIFFCodeTableMalformation
   -- table-build, used or not, since a mode no window could decode is
   -- damage evidence and, with no checksum in this arc, the table check
   -- is the tripwire (docs/vcdiff/rfc-vcdiff/questions.md, "invalid
-  -- decoded-table entries"). The first 'Word8' is the offending mode;
-  -- the second 'Word8' is the highest mode the declared caches reach.
+  -- decoded-table entries").
   | VCDIFFCodeTableCopyModeOutOfRange !Word8 !Word8
   deriving (Eq, Show)
 
@@ -2699,13 +2695,12 @@ vcdiffSectionName VCDIFFDataSection        = "data"
 vcdiffSectionName VCDIFFInstructionSection = "instruction"
 vcdiffSectionName VCDIFFAddressSection     = "address"
 
--- | The three section sizes a BSDiff fixed-width header declares.
 newtype ControlSectionSize = ControlSectionSize { unControlSectionSize :: Int64 } deriving (Eq, Show)
 newtype DiffSectionSize    = DiffSectionSize    { unDiffSectionSize    :: Int64 } deriving (Eq, Show)
 newtype TargetSectionSize  = TargetSectionSize  { unTargetSectionSize  :: Int64 } deriving (Eq, Show)
 
 -- | The structural failures slap raises when validating a BSDiff fixed-width header.
--- 'BSDiffNegativeHeaderSizes' carries the control, diff, and target section sizes; at least one decoded as negative.
+-- 'BSDiffNegativeHeaderSizes': at least one of the three section sizes decoded as negative.
 -- 'BSDiffSectionsExceedPatch' carries the number of bytes by which the declared control and diff blocks overrun the patch body — equivalently a negative extra block, since the extra block is whatever remains after the two.
 data BSDiffHeaderMalformation
   = BSDiffNegativeHeaderSizes !ControlSectionSize !DiffSectionSize !TargetSectionSize

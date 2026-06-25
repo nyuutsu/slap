@@ -1,5 +1,4 @@
--- | ZIP reading via rusty-slap: list the entry names, then pull one entry out.
--- A thin binding over the FFI marshalling helpers in "Slap.FFI".
+-- | ZIP reading via rusty-slap.
 module Archive.Zip
   ( zipEntryNames
   , zipExtractEntry

@@ -342,13 +342,8 @@ emptyContents records = PatchContents
   , contentsMetadata = Nothing
   }
 
--- | Whether these contents carry a usable value for the given field.
--- Total over 'PatchField', so a newly-added field forces a presence
--- rule here rather than slipping past conversion drop-accounting.
--- 'provides' is this predicate's image over every field, so only
--- carried fields ever reach 'fieldNote'. A zeroed checksum or an
--- empty text\/blob is the formats' idiom for "absent", and so is not
--- carried.
+-- | A zeroed checksum, or an empty text\/blob, is the formats' wire
+-- idiom for "absent": such a value counts as not carried.
 carries :: PatchContents -> PatchField -> Bool
 carries contents field = case field of
   FieldRecords         -> True
@@ -805,9 +800,6 @@ ninja1HashAdvisories contents CreateNINJA1
   = [SourceHashesMissing LabelNINJA1]
 ninja1HashAdvisories _ _ = []
 
--- | The drop note for a field the target can't carry. 'carries' has
--- already settled presence, so each arm only extracts the value and
--- renders; the absent arms stand for totality alone.
 fieldNote :: PatchContents -> PatchField -> [SlapAdvisory]
 fieldNote contents field = case field of
   FieldRecords -> []
