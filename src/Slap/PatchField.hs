@@ -24,7 +24,7 @@ data PatchField
   | FieldImageType
   | FieldFileIdDiz
   | FieldMetadata
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Enum, Bounded, Show)
 
 fieldName :: PatchField -> Text
 fieldName FieldRecords         = "records"

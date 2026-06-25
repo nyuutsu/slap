@@ -1107,12 +1107,9 @@ data SlapAdvisory
   | FieldDropped PatchField DroppedValue
   | UndoDataDropped UndoRecordCount
   | ValidationBlockDropped
-  | DisabledEntriesDropped Int
-  | BlockDescriptionsDropped
   -- | A BPS metadata blob with no destination channel in the target
   -- format. The 'Length' is the blob's byte count — a measured span
-  -- of bytes, not a tally, hence not a bare 'Int' like the
-  -- record-counting drop advisories above.
+  -- of bytes, not a tally.
   | MetadataDropped Length
 
   -- Conversion: defaults assumed
@@ -2248,13 +2245,6 @@ renderSlapAdvisory (UndoDataDropped (UndoRecordCount recordCount)) =
 renderSlapAdvisory ValidationBlockDropped =
   "dropping validation block (1024 bytes)"
 
-renderSlapAdvisory (DisabledEntriesDropped entryCount) =
-  "dropping " <> renderAsText entryCount
-  <> plural entryCount " disabled entry" " disabled entries"
-
-renderSlapAdvisory BlockDescriptionsDropped =
-  "dropping block descriptions"
-
 renderSlapAdvisory (MetadataDropped (Length byteCount)) =
   "dropping metadata (" <> renderAsText byteCount
   <> plural byteCount " byte" " bytes" <> ")"
@@ -2961,8 +2951,6 @@ slapAdvisorySeverity advisory = case advisory of
   FieldDropped{}                       -> SeverityNote
   UndoDataDropped{}                    -> SeverityNote
   ValidationBlockDropped               -> SeverityNote
-  DisabledEntriesDropped{}             -> SeverityNote
-  BlockDescriptionsDropped             -> SeverityNote
   MetadataDropped{}                    -> SeverityNote
   DefaultRomType{}                     -> SeverityNote
   DefaultImageType{}                   -> SeverityNote

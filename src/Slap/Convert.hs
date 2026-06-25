@@ -342,21 +342,34 @@ emptyContents records = PatchContents
   , contentsMetadata = Nothing
   }
 
+-- | Whether these contents carry a usable value for the given field.
+-- Total over 'PatchField', so a newly-added field forces a presence
+-- rule here rather than slipping past conversion drop-accounting.
+-- 'provides' is this predicate's image over every field, so only
+-- carried fields ever reach 'fieldNote'. A zeroed checksum or an
+-- empty text\/blob is the formats' idiom for "absent", and so is not
+-- carried.
+carries :: PatchContents -> PatchField -> Bool
+carries contents field = case field of
+  FieldRecords         -> True
+  FieldDescription     -> maybe False (not . Text.null . encodedTextContent) (contentsDescription contents)
+  FieldSourceCRC32     -> maybe False (/= CRC32 0)                     (contentsSourceCRC32 contents)
+  FieldSourceMD5       -> maybe False (not . allZeroBytes . unMD5Hash)  (contentsSourceMD5 contents)
+  FieldSourceSHA1      -> maybe False (not . allZeroBytes . unSHA1Hash) (contentsSourceSHA1 contents)
+  FieldDestinationSize -> isJust (contentsDestinationSize contents)
+  FieldUndoData        -> isJust (contentsUndoData contents)
+  FieldValidation      -> isJust (contentsValidation contents)
+  FieldTruncation      -> isJust (contentsTruncation contents)
+  FieldEBPMeta         -> isJust (contentsEBPMetadata contents)
+  FieldRomType         -> isJust (contentsRomType contents)
+  FieldImageType       -> isJust (contentsImageType contents)
+  FieldFileIdDiz       -> isJust (contentsFileIdDiz contents)
+  FieldMetadata        -> maybe False (not . ByteString.null) (contentsMetadata contents)
+  where
+    allZeroBytes = ByteString.all (== 0)
+
 provides :: PatchContents -> Set.Set PatchField
-provides contents = Set.fromList $ [FieldRecords]
-  ++ [FieldDescription  | isJust (contentsDescription contents)]
-  ++ [FieldSourceCRC32  | isJust (contentsSourceCRC32 contents)]
-  ++ [FieldSourceMD5    | isJust (contentsSourceMD5 contents)]
-  ++ [FieldSourceSHA1   | isJust (contentsSourceSHA1 contents)]
-  ++ [FieldDestinationSize     | isJust (contentsDestinationSize contents)]
-  ++ [FieldUndoData     | isJust (contentsUndoData contents)]
-  ++ [FieldValidation   | isJust (contentsValidation contents)]
-  ++ [FieldTruncation   | isJust (contentsTruncation contents)]
-  ++ [FieldEBPMeta      | isJust (contentsEBPMetadata contents)]
-  ++ [FieldRomType      | isJust (contentsRomType contents)]
-  ++ [FieldImageType    | isJust (contentsImageType contents)]
-  ++ [FieldFileIdDiz    | isJust (contentsFileIdDiz contents)]
-  ++ [FieldMetadata     | isJust (contentsMetadata contents)]
+provides contents = Set.fromList (filter (carries contents) [minBound .. maxBound])
 
 -- | Which 'UndoInclusion' a 'PatchContents' carries today.  Used on the
 -- conversion path when the user didn't specify: if the source patch
@@ -792,25 +805,24 @@ ninja1HashAdvisories contents CreateNINJA1
   = [SourceHashesMissing LabelNINJA1]
 ninja1HashAdvisories _ _ = []
 
+-- | The drop note for a field the target can't carry. 'carries' has
+-- already settled presence, so each arm only extracts the value and
+-- renders; the absent arms stand for totality alone.
 fieldNote :: PatchContents -> PatchField -> [SlapAdvisory]
 fieldNote contents field = case field of
   FieldRecords -> []
   FieldSourceCRC32 -> case contentsSourceCRC32 contents of
-    Just crc | crc /= CRC32 0 -> [FieldDropped FieldSourceCRC32 (DroppedCRC crc)]
-    _ -> []
+    Just crc -> [FieldDropped FieldSourceCRC32 (DroppedCRC crc)]
+    Nothing -> []
   FieldSourceMD5 -> case contentsSourceMD5 contents of
-    Just hash | not (ByteString.all (== 0) (unMD5Hash hash)) -> [FieldDropped FieldSourceMD5 (DroppedMD5 hash)]
-    _ -> []
+    Just hash -> [FieldDropped FieldSourceMD5 (DroppedMD5 hash)]
+    Nothing -> []
   FieldSourceSHA1 -> case contentsSourceSHA1 contents of
-    Just hash | not (ByteString.all (== 0) (unSHA1Hash hash)) -> [FieldDropped FieldSourceSHA1 (DroppedSHA1 hash)]
-    _ -> []
+    Just hash -> [FieldDropped FieldSourceSHA1 (DroppedSHA1 hash)]
+    Nothing -> []
   FieldDescription -> case contentsDescription contents of
-    Just description ->
-      let text = encodedTextContent description
-      in if Text.null text
-           then []
-           else [FieldDropped FieldDescription
-                  (DroppedDescription (DroppedDescriptionText text))]
+    Just description -> [FieldDropped FieldDescription
+                          (DroppedDescription (DroppedDescriptionText (encodedTextContent description)))]
     Nothing -> []
   FieldUndoData -> case contentsUndoData contents of
     Just undoRecords -> [UndoDataDropped (UndoRecordCount (length undoRecords))]
@@ -825,8 +837,8 @@ fieldNote contents field = case field of
   FieldImageType -> [FieldDropped FieldImageType DroppedEmpty | isJust (contentsImageType contents)]
   FieldFileIdDiz -> [FieldDropped FieldFileIdDiz DroppedEmpty | isJust (contentsFileIdDiz contents)]
   FieldMetadata -> case contentsMetadata contents of
-    Just metadataBlob | not (ByteString.null metadataBlob) -> [MetadataDropped (byteLength metadataBlob)]
-    _ -> []
+    Just metadataBlob -> [MetadataDropped (byteLength metadataBlob)]
+    Nothing -> []
 
 ----------------------------------------------------------------------------
 -- Direct conversion (direct → direct)
