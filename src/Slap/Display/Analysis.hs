@@ -17,11 +17,12 @@ module Slap.Display.Analysis
   ) where
 
 import Slap.Checksum (CRC16, showCRC16)
-import Slap.Display.Common (InfoLine(..), renderInfoLine,
+import Slap.Display.Common (InfoLine(..),
                              Tally(..), CountUnit, ByteCount,
                              renderCountUnit, renderByteCount,
                              renderAsText)
 import Slap.Display.Info (PatchInfo(..), renderPatchInfo)
+import Slap.Display.EmbeddedContent (EmbeddedDepth(..))
 import Slap.Display.Primitives (padHex, padNum, padRight, showSigned, hexDump)
 import Slap.Display.Glyph (spacePaddedEnDash)
 import Slap.Measure (Offset(..), Length(..), Delta(..), SignedOffset(unSignedOffset),
@@ -128,7 +129,7 @@ data PayloadCounts = PayloadCounts
 
 renderAnalysisFull :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> Text
 renderAnalysisFull info analysis mSource = Text.unlines $ joinSections
-  [ map renderInfoLine (renderPatchInfo info)
+  [ renderPatchInfo WithPayload info
   , concatMap renderSection (analysisSections analysis)
   , summaryLines (analysisSummary analysis)
   ]
@@ -309,7 +310,7 @@ middleElement (firstValue :| laterValues) = seekMiddle firstValue laterValues (f
 
 renderAnalysisSummary :: PatchInfo -> PatchAnalysis -> Maybe ByteString -> Text
 renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
-  [ map renderInfoLine (renderPatchInfo info)
+  [ renderPatchInfo WithPayload info
   , modifiedLine ++ rangeLine ++ sizeChangeLine
   , regionsBlock ++ recordSizeLine
   , sparkline

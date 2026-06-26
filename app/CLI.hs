@@ -27,6 +27,7 @@ module CLI
   , ConvertOutput(..)
   , ConvertWithSource(..)
   , EmbeddedBlobIntent(..)
+  , DizIntent(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
   , OverwritePolicy(..)
@@ -38,6 +39,7 @@ module CLI
 
 import Slap.Convert (DirectCreate(..), DifferentialCreate(..), CreateFormat(..),
                      RequestedPatchMetadata(..),
+                     FileIdDizRequest(..),
                      RequestedConstraints(..),
                      RequestedDialects(..),
                      UndoInclusion(..), VerificationInclusion(..), PatchStability(..),
@@ -158,19 +160,28 @@ data EmbeddedBlobIntent
   | DropEmbeddedBlob
   deriving (Show, Eq)
 
+-- | The convert-side FILE_ID.DIZ choice: carry the source patch's, set it from a file, or drop it.
+data DizIntent
+  = CarryDiz
+  | SetDizFromFile FilePath
+  | DropDiz
+  deriving (Show, Eq)
+
 -- | What @slap create@ accepts on the metadata side: the parsed metadata fields,
--- with 'requestedEmbeddedBlob' filled by the resolver from the optional @--metadata FILE@ path below.
--- A target that doesn't consume the blob triggers the same metadata-rejection check as any other format-incompatible field.
+-- with 'requestedEmbeddedBlob' / 'requestedFileIdDiz' filled by the resolver from the optional @--metadata FILE@ / @--diz FILE@ paths below.
+-- A target that doesn't consume one triggers the same metadata-rejection check as any other format-incompatible field.
 data CreateMetadataInputs = CreateMetadataInputs
   { createParsedMetadata   :: RequestedPatchMetadata
   , createEmbeddedBlobPath :: Maybe FilePath
+  , createDizPath          :: Maybe FilePath
   }
 
 -- | What @slap convert@ accepts on the metadata side: the parsed metadata fields,
--- with 'requestedEmbeddedBlob' filled by the resolver from the 'EmbeddedBlobIntent' below.
+-- with 'requestedEmbeddedBlob' / 'requestedFileIdDiz' filled by the resolver from the 'EmbeddedBlobIntent' / 'DizIntent' below.
 data ConvertMetadataInputs = ConvertMetadataInputs
   { convertParsedMetadata     :: RequestedPatchMetadata
   , convertEmbeddedBlobIntent :: EmbeddedBlobIntent
+  , convertDizIntent          :: DizIntent
   }
 
 -- | Whether to refuse writing over an existing output file.
@@ -253,9 +264,10 @@ data ConvertCommand = ConvertCommand
   }
 
 data InfoCommand = InfoCommand
-  { infoPatch           :: FilePath
-  , infoExtractMetadata :: Maybe FilePath
-  , infoDialects        :: RequestedDialects
+  { infoPatch            :: FilePath
+  , infoExtractMetadata  :: Maybe FilePath
+  , infoExtractDiz       :: Maybe FilePath
+  , infoDialects         :: RequestedDialects
   , infoMetadataEncoding :: EncodingName
   }
 
@@ -646,6 +658,7 @@ requestedMetadataParser = do
       , requestedStability           = unstable
       , requestedRomType             = romType
       , requestedImageType           = imageType
+      , requestedFileIdDiz           = InheritFileIdDiz
       , requestedGenre               = fmap wrapUtf8 genre
       , requestedLanguage            = fmap wrapUtf8 language
       , requestedDate                = fmap wrapUtf8 date
@@ -659,30 +672,42 @@ requestedMetadataParser = do
     wrapUtf8 :: String -> EncodedText
     wrapUtf8 = EncodedText EncodingUtf8 . Text.pack
 
--- | Create-side metadata: the parsed metadata fields plus an optional @--metadata FILE@ path
--- whose bytes the resolver embeds as the patch's metadata blob (BPS only; the rejection check refuses the flag against any other target).
+-- | Create-side metadata: the parsed fields, plus the optional @--metadata@ blob and @--diz@ FILE_ID.DIZ.
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser
   <*> optional (pathOption (long "metadata" <> metavar "FILE"
-        <> help "Embed bytes from FILE as the output patch's metadata (BPS only)"))
+        <> help "Embed bytes from FILE as the output patch's embedded metadata"))
+  <*> optional (pathOption (long "diz" <> metavar "FILE"
+        <> help "Embed FILE as the output patch's FILE_ID.DIZ (PPF2/PPF3)"))
 
 convertMetadataInputsParser :: Parser ConvertMetadataInputs
 convertMetadataInputsParser = ConvertMetadataInputs
   <$> requestedMetadataParser
   <*> embeddedBlobIntentParser
+  <*> dizIntentParser
 
--- | Parse the BPS embedded-blob intent for @slap convert@.
+-- | Parse the embedded-blob intent for @slap convert@.
 -- @--metadata FILE@ selects 'EmbedFromFile', @--drop-metadata@ selects 'DropEmbeddedBlob', neither selects 'CarryIfPresent'.
 -- The three are mutually exclusive: passing both flags leaves one unconsumed and the top-level parser rejects the command.
 embeddedBlobIntentParser :: Parser EmbeddedBlobIntent
 embeddedBlobIntentParser = asum
   [ EmbedFromFile <$> pathOption (long "metadata" <> metavar "FILE"
-      <> help "Override embedded metadata with bytes from FILE (BPS target only)")
+      <> help "Override the embedded metadata with bytes from FILE")
   , DropEmbeddedBlob <$ flag' () (long "drop-metadata"
-      <> help ("Discard the source patch's embedded metadata (BPS"
-               ++ [rightwardsArrow] ++ "BPS; default is to inherit)"))
+      <> help "Discard the source patch's embedded metadata (default is to inherit)")
   , pure CarryIfPresent
+  ]
+
+-- | The FILE_ID.DIZ counterpart to 'embeddedBlobIntentParser' — @--diz@ sets it,
+-- @--drop-diz@ drops it, and neither carries the source patch's through.
+dizIntentParser :: Parser DizIntent
+dizIntentParser = asum
+  [ SetDizFromFile <$> pathOption (long "diz" <> metavar "FILE"
+      <> help "Set the FILE_ID.DIZ from FILE (PPF2/PPF3 target)")
+  , DropDiz <$ flag' () (long "drop-diz"
+      <> help "Discard the source patch's FILE_ID.DIZ (default is to inherit)")
+  , pure CarryDiz
   ]
 
 -- | Tagging each token in a single table lets the advertised list be derived from the same source the parser uses,
@@ -782,13 +807,16 @@ patchInfoParser :: Parser InfoCommand
 patchInfoParser = do
     patchFile <- pathArgument (metavar "PATCH" <> help "Patch file to inspect")
     extractMetadataPath <- optional (pathOption (long "extract-metadata" <> metavar "FILE"
-        <> help "Write embedded metadata to FILE (BPS)"))
+        <> help "Write embedded metadata to FILE"))
+    extractDizPath <- optional (pathOption (long "extract-diz" <> metavar "FILE"
+        <> help "Write the FILE_ID.DIZ to FILE (PPF2/PPF3)"))
     dialects <- dialectsParser
     metadataEncoding <- metadataEncodingParser
     pure InfoCommand
-      { infoPatch           = patchFile
-      , infoExtractMetadata = extractMetadataPath
-      , infoDialects        = dialects
+      { infoPatch            = patchFile
+      , infoExtractMetadata  = extractMetadataPath
+      , infoExtractDiz       = extractDizPath
+      , infoDialects         = dialects
       , infoMetadataEncoding = metadataEncoding
       }
 

@@ -14,6 +14,7 @@
 module Slap.VCDIFF.Types
   ( VCDIFFPatch(..)
   , XDelta3Header(..)
+  , vcdiffAppHeader
   , RFCHeader(..)
   , CustomCodeTable(..)
   , XDelta3Window(..)
@@ -68,6 +69,12 @@ data XDelta3Header = XDelta3Header
   , xdelta3SecondaryCompressor :: !(Maybe XDelta3SecondaryCompressor)
   }
   deriving (Eq, Show)
+
+-- | The application header a patch carries, across the flavor sum:
+-- present only on xdelta3 (VCD_APPHEADER), absent for RFC and core-only.
+vcdiffAppHeader :: VCDIFFPatch -> Maybe ByteString
+vcdiffAppHeader (PatchXDelta3 header _) = xdelta3AppHeader header
+vcdiffAppHeader _                       = Nothing
 
 -- | The RFC-only header fields. Today just the optional custom code
 -- table (RFC 3284 §7's VCD_CODETABLE) that replaces the default table

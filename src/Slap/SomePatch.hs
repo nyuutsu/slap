@@ -269,7 +269,7 @@ data SomePatch = SomePatch
     -- Populated at parse time without per-record analytical work.
     -- The expensive analytical carrier is 'patchAnalysis'.
   , patchSourceAdvisories    :: [SlapAdvisory]
-  , patchMetadata       :: Maybe ByteString  -- ^ Arbitrary metadata blob (BPS)
+  , patchMetadata       :: Maybe ByteString  -- ^ Opaque embedded metadata blob (BPS metadata / xdelta3 appheader)
   , patchExtractedMeta  :: RequestedPatchMetadata  -- ^ Text metadata extracted at parse time for conversion
   }
 
@@ -335,13 +335,14 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
       , patchAdvisories       = parseAdvisories
                               ++ [EmptyPatch LabelPPF1 EmptyRecords | null records]
       , patchInfo           = PatchInfo
-          { infoFormat = FormatHeader LabelPPF1 Nothing
-          , infoLines  = PPF1.ppf1Meta patch
-          , infoTally  = Tally (length records)
-          , infoUnit   = Records
-          , infoBytes  = Just (TotalPayloadBytes (Length
+          { infoFormat   = FormatHeader LabelPPF1 Nothing
+          , infoLines    = PPF1.ppf1Meta patch
+          , infoEmbedded = []
+          , infoTally    = Tally (length records)
+          , infoUnit     = Records
+          , infoBytes    = Just (TotalPayloadBytes (Length
               (sum (map (ByteString.length . PPF1.ppf1RecordPayload) records))))
-          , infoRange  = PPF1.ppf1RecordsRange records
+          , infoRange    = PPF1.ppf1RecordsRange records
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
@@ -380,13 +381,14 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
       , patchAdvisories       = parseAdvisories
                               ++ [EmptyPatch LabelPPF2 EmptyRecords | null records]
       , patchInfo           = PatchInfo
-          { infoFormat = FormatHeader LabelPPF2 Nothing
-          , infoLines  = PPF2.ppf2Meta patch
-          , infoTally  = Tally (length records)
-          , infoUnit   = Records
-          , infoBytes  = Just (TotalPayloadBytes (Length
+          { infoFormat   = FormatHeader LabelPPF2 Nothing
+          , infoLines    = PPF2.ppf2Meta patch
+          , infoEmbedded = PPF2.ppf2EmbeddedContent patch
+          , infoTally    = Tally (length records)
+          , infoUnit     = Records
+          , infoBytes    = Just (TotalPayloadBytes (Length
               (sum (map (ByteString.length . PPF2.ppf2RecordPayload) records))))
-          , infoRange  = PPF2.ppf2RecordsRange records
+          , infoRange    = PPF2.ppf2RecordsRange records
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
@@ -438,13 +440,14 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
       , patchAdvisories       = parseAdvisories
                               ++ [EmptyPatch LabelPPF3 EmptyRecords | null records]
       , patchInfo           = PatchInfo
-          { infoFormat = FormatHeader LabelPPF3 Nothing
-          , infoLines  = PPF3.ppf3Meta patch
-          , infoTally  = Tally (length records)
-          , infoUnit   = Records
-          , infoBytes  = Just (TotalPayloadBytes (Length
+          { infoFormat   = FormatHeader LabelPPF3 Nothing
+          , infoLines    = PPF3.ppf3Meta patch
+          , infoEmbedded = PPF3.ppf3EmbeddedContent patch
+          , infoTally    = Tally (length records)
+          , infoUnit     = Records
+          , infoBytes    = Just (TotalPayloadBytes (Length
               (sum (map (ByteString.length . PPF3.ppf3RecordPayload) records))))
-          , infoRange  = PPF3.ppf3RecordsRange records
+          , infoRange    = PPF3.ppf3RecordsRange records
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
@@ -487,14 +490,15 @@ parseSomePatchFromPPF4 metadataEncoding patchContents = do
       , patchAdvisories       = parseAdvisories
                               ++ [EmptyPatch LabelPPF4 EmptyRecords | totalRecords == 0]
       , patchInfo           = PatchInfo
-          { infoFormat = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
-          , infoLines  = PPF4.ppf4Meta patch
-          , infoTally  = Tally totalRecords
-          , infoUnit   = Records
-          , infoBytes  = Just (TotalPayloadBytes (Length
+          { infoFormat   = FormatHeader LabelPPF4 (Just " (Pyriel internal format)")
+          , infoLines    = PPF4.ppf4Meta patch
+          , infoEmbedded = []
+          , infoTally    = Tally totalRecords
+          , infoUnit     = Records
+          , infoBytes    = Just (TotalPayloadBytes (Length
               ( sum (map (ByteString.length . PPF4.replaceData) replaces)
               + sum (map (ByteString.length . PPF4.appendData) appends) )))
-          , infoRange  = PPF4.ppf4ReplacesRange replaces
+          , infoRange    = PPF4.ppf4ReplacesRange replaces
           }
       , patchSourceAdvisories    = []
       , patchMetadata       = Nothing
@@ -539,12 +543,13 @@ parseSomePatchFromIPS variant patchContents = do
         , patchAdvisories       = parseAdvisories
                                 ++ [EmptyPatch label EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
-            { infoFormat = FormatHeader label Nothing
-            , infoLines  = IPS.ipsMeta ipsPatch
-            , infoTally  = Tally (Vector.length records)
-            , infoUnit   = Records
-            , infoBytes  = Nothing
-            , infoRange  = IPS.ipsRecordsRange records
+            { infoFormat   = FormatHeader label Nothing
+            , infoLines    = IPS.ipsMeta ipsPatch
+            , infoEmbedded = []
+            , infoTally    = Tally (Vector.length records)
+            , infoUnit     = Records
+            , infoBytes    = Nothing
+            , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
@@ -573,12 +578,13 @@ parseSomePatchFromIPS variant patchContents = do
         , patchAdvisories       = parseAdvisories
                                 ++ [EmptyPatch LabelEBP EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
-            { infoFormat = FormatHeader LabelEBP Nothing
-            , infoLines  = IPS.ebpMeta ebpPatch
-            , infoTally  = Tally (Vector.length records)
-            , infoUnit   = Records
-            , infoBytes  = Nothing
-            , infoRange  = IPS.ipsRecordsRange records
+            { infoFormat   = FormatHeader LabelEBP Nothing
+            , infoLines    = IPS.ebpMeta ebpPatch
+            , infoEmbedded = []
+            , infoTally    = Tally (Vector.length records)
+            , infoUnit     = Records
+            , infoBytes    = Nothing
+            , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
@@ -604,12 +610,13 @@ parseSomePatchFromIPS variant patchContents = do
         , patchAdvisories       = parseAdvisories
                                 ++ [EmptyPatch label EmptyRecords | Vector.null records]
         , patchInfo           = PatchInfo
-            { infoFormat = FormatHeader label Nothing
-            , infoLines  = IPS.ipsMeta truncatedPatch
-            , infoTally  = Tally (Vector.length records)
-            , infoUnit   = Records
-            , infoBytes  = Nothing
-            , infoRange  = IPS.ipsRecordsRange records
+            { infoFormat   = FormatHeader label Nothing
+            , infoLines    = IPS.ipsMeta truncatedPatch
+            , infoEmbedded = []
+            , infoTally    = Tally (Vector.length records)
+            , infoUnit     = Records
+            , infoBytes    = Nothing
+            , infoRange    = IPS.ipsRecordsRange records
             }
         , patchSourceAdvisories    = []
         , patchMetadata       = Nothing
@@ -643,12 +650,13 @@ parseSomePatchFromBPS metadataEncoding patchContents = do
                             ++ [EmptyPatch LabelBPS EmptyActions | Vector.null actions]
                             ++ BPS.bpsMetadataNotes patch
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelBPS Nothing
-        , infoLines  = BPS.bpsMeta metadataEncoding patch
-        , infoTally  = Tally (Vector.length actions)
-        , infoUnit   = Actions
-        , infoBytes  = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelBPS Nothing
+        , infoLines    = BPS.bpsMeta patch
+        , infoEmbedded = BPS.bpsEmbeddedContent metadataEncoding patch
+        , infoTally    = Tally (Vector.length actions)
+        , infoUnit     = Actions
+        , infoBytes    = Just (TotalOutputBytes (BPS.bpsTargetSize patch))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = bpsMetaBlob
@@ -682,12 +690,13 @@ parseSomePatchFromUPS patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelUPS EmptyBlocks | Vector.null blocks]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelUPS Nothing
-        , infoLines  = UPS.upsMeta patch
-        , infoTally  = Tally (Vector.length blocks)
-        , infoUnit   = Blocks
-        , infoBytes  = Just (TotalOutputBytes (UPS.upsTargetSize patch))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelUPS Nothing
+        , infoLines    = UPS.upsMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (Vector.length blocks)
+        , infoUnit     = Blocks
+        , infoBytes    = Just (TotalOutputBytes (UPS.upsTargetSize patch))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -705,6 +714,9 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
       windowCount     = Vector.length windows
       totalOutputSize = FileSize
         (Vector.sum (Vector.map (unFileSize . VCDIFF.windowTargetSize) windows))
+      appHeaderBlob   = case VCDIFF.vcdiffAppHeader patch of
+                          Just bytes | not (ByteString.null bytes) -> Just bytes
+                          _                                        -> Nothing
   Right SomePatch
     { patchFormat       = LabelVCDIFF
     , patchAnalysis     = VCDIFFDescribe.analyzeVCDIFF patch
@@ -717,16 +729,17 @@ parseSomePatchFromVCDIFF metadataEncoding patchContents = do
     , patchAdvisories   = parseAdvisories
                         ++ [EmptyPatch LabelVCDIFF EmptyWindows | windowCount == 0]
     , patchInfo         = PatchInfo
-        { infoFormat = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
-        , infoLines  = VCDIFFDescribe.vcdiffMeta metadataEncoding patch
-        , infoTally  = Tally windowCount
-        , infoUnit   = Windows
-        , infoBytes  = Just (TotalOutputBytes totalOutputSize)
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelVCDIFF (vcdiffFlavorQualifier patch)
+        , infoLines    = VCDIFFDescribe.vcdiffMeta patch
+        , infoEmbedded = VCDIFFDescribe.vcdiffEmbeddedContent metadataEncoding patch
+        , infoTally    = Tally windowCount
+        , infoUnit     = Windows
+        , infoBytes    = Just (TotalOutputBytes totalOutputSize)
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories = []
-    , patchMetadata     = Nothing
-    , patchExtractedMeta = noMetadataRequested
+    , patchMetadata     = appHeaderBlob
+    , patchExtractedMeta = noMetadataRequested { requestedEmbeddedBlob = appHeaderBlob }
     }
 
 -- | The flavor verdict as a format-header qualifier, in the
@@ -789,12 +802,13 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelAPSN64 EmptyRecords | Vector.null records]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelAPSN64 Nothing
-        , infoLines  = APSN64.apsN64Meta patch
-        , infoTally  = Tally (Vector.length records)
-        , infoUnit   = Records
-        , infoBytes  = Just (TotalOutputBytes (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header)))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelAPSN64 Nothing
+        , infoLines    = APSN64.apsN64Meta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (Vector.length records)
+        , infoUnit     = Records
+        , infoBytes    = Just (TotalOutputBytes (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header)))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -829,12 +843,13 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
                              ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
                              ++ platformAdvisories
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelNINJA2 Nothing
-        , infoLines  = NINJA2.ninja2Meta patch
-        , infoTally  = Tally (length (NINJA2.ninja2Records patch))
-        , infoUnit   = Records
-        , infoBytes  = Nothing
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelNINJA2 Nothing
+        , infoLines    = NINJA2.ninja2Meta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length (NINJA2.ninja2Records patch))
+        , infoUnit     = Records
+        , infoBytes    = Nothing
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -888,14 +903,15 @@ parseSomePatchFromNINJA1 patchContents = do
         }
     , patchAdvisories       = warnings
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelNINJA1
+        { infoFormat   = FormatHeader LabelNINJA1
             (Just (" (" <> NINJA1.subFormatName (NINJA1.ninja1SubFormat patch) <> ")"))
-        , infoLines  = NINJA1.ninja1Meta patch
-        , infoTally  = Tally (length records)
-        , infoUnit   = Records
-        , infoBytes  = Just (TotalPayloadBytes (Length
+        , infoLines    = NINJA1.ninja1Meta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length records)
+        , infoUnit     = Records
+        , infoBytes    = Just (TotalPayloadBytes (Length
             (sum (map (ByteString.length . NINJA1.ninja1RecordData) records))))
-        , infoRange  = NINJA1.ninja1RecordsRange records
+        , infoRange    = NINJA1.ninja1RecordsRange records
         }
     , patchSourceAdvisories    = sourceAdvisories
     , patchMetadata       = Nothing
@@ -917,12 +933,13 @@ parseSomePatchFromBSDiff patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelBSDiff EmptyInstructions | null (BSDiff.bsdiffInstructions patch)]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelBSDiff Nothing
-        , infoLines  = BSDiff.bsdiffMeta patch
-        , infoTally  = Tally (length (BSDiff.bsdiffInstructions patch))
-        , infoUnit   = Instructions
-        , infoBytes  = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelBSDiff Nothing
+        , infoLines    = BSDiff.bsdiffMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length (BSDiff.bsdiffInstructions patch))
+        , infoUnit     = Instructions
+        , infoBytes    = Just (TotalOutputBytes (BSDiff.bsdiffTargetSize patch))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -943,12 +960,13 @@ parseSomePatchFromGDIFF patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelGDIFF EmptyCommands | null (GDIFF.gdiffCommands patch)]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelGDIFF Nothing
-        , infoLines  = GDIFF.gdiffMeta patch
-        , infoTally  = Tally (length (GDIFF.gdiffCommands patch))
-        , infoUnit   = Commands
-        , infoBytes  = Nothing
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelGDIFF Nothing
+        , infoLines    = GDIFF.gdiffMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length (GDIFF.gdiffCommands patch))
+        , infoUnit     = Commands
+        , infoBytes    = Nothing
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -979,12 +997,13 @@ parseSomePatchFromXDelta1 metadataEncoding patchContents = do
     , patchAdvisories       = otherWarnings
                             ++ [EmptyPatch LabelXDelta1 EmptyInstructions | null (XDelta1.xdelta1Instructions patch)]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelXDelta1 Nothing
-        , infoLines  = XDelta1.xdelta1Meta patch
-        , infoTally  = Tally (length (XDelta1.xdelta1Instructions patch))
-        , infoUnit   = Instructions
-        , infoBytes  = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelXDelta1 Nothing
+        , infoLines    = XDelta1.xdelta1Meta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length (XDelta1.xdelta1Instructions patch))
+        , infoUnit     = Instructions
+        , infoBytes    = Just (TotalOutputBytes (XDelta1.xdelta1TargetLength patch))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = dataNameNotices
     , patchMetadata       = Nothing
@@ -1020,14 +1039,15 @@ parseSomePatchFromPMSR patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelPMSR EmptyRecords | Vector.null records]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelPMSR Nothing
-        , infoLines  = PMSR.pmsrMeta patch
-        , infoTally  = Tally (Vector.length records)
-        , infoUnit   = Records
-        , infoBytes  = Just (TotalPayloadBytes (Length
+        { infoFormat   = FormatHeader LabelPMSR Nothing
+        , infoLines    = PMSR.pmsrMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (Vector.length records)
+        , infoUnit     = Records
+        , infoBytes    = Just (TotalPayloadBytes (Length
             (Vector.foldl' (\runningTotal record ->
                               runningTotal + ByteString.length (PMSR.pmsrData record)) 0 records)))
-        , infoRange  = PMSR.pmsrRecordsRange records
+        , infoRange    = PMSR.pmsrRecordsRange records
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -1055,12 +1075,13 @@ parseSomePatchFromAPSGBA patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelAPSGBA EmptyBlocks | null records]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelAPSGBA Nothing
-        , infoLines  = APSGBA.apsGBAMeta patch
-        , infoTally  = Tally (length records)
-        , infoUnit   = Blocks
-        , infoBytes  = Just (TotalOutputBytes (APSGBA.apsGbaTargetSize header))
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelAPSGBA Nothing
+        , infoLines    = APSGBA.apsGBAMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length records)
+        , infoUnit     = Blocks
+        , infoBytes    = Just (TotalOutputBytes (APSGBA.apsGbaTargetSize header))
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing
@@ -1083,12 +1104,13 @@ parseSomePatchFromDPS metadataEncoding patchContents = do
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelDPS EmptyRecords | null records]
     , patchInfo           = PatchInfo
-        { infoFormat = FormatHeader LabelDPS Nothing
-        , infoLines  = DPS.dpsMeta patch
-        , infoTally  = Tally (length records)
-        , infoUnit   = Records
-        , infoBytes  = Nothing
-        , infoRange  = Nothing
+        { infoFormat   = FormatHeader LabelDPS Nothing
+        , infoLines    = DPS.dpsMeta patch
+        , infoEmbedded = []
+        , infoTally    = Tally (length records)
+        , infoUnit     = Records
+        , infoBytes    = Nothing
+        , infoRange    = Nothing
         }
     , patchSourceAdvisories    = []
     , patchMetadata       = Nothing

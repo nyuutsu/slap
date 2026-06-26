@@ -19,21 +19,26 @@ import Integration.Skip
   , requireFixture
   )
 import Slap.Status (CreateResult(..), renderSlapError)
-import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
+import Slap.Display.Analysis (renderAnalysisSummary)
+import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
+import Slap.Display.Info (renderPatchInfo)
 import Slap.FileContents
   (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
-import Slap.SomePatch (SomePatch(..), parseSome)
-import Slap.Text (EncodingName(EncodingUtf8))
+import Slap.SomePatch (SomePatch(..), PatchKind(..), parseSome)
+import Slap.Text (EncodingName(EncodingUtf8), EncodedText(..))
 import Slap.Convert
   ( DirectCreate(..)
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
+  , FileIdDizRequest(..)
   , UndoInclusion(..)
   , VerificationInclusion(..)
+  , contentsFileIdDiz
   , noMetadataRequested
+  , noConstraintsRequested
   , noDialectsRequested
   )
-import Slap.Create (createBPS)
+import Slap.Create (createBPS, createPatch)
 import Slap.BPS.Types (BPSMetadata(..))
 
 import qualified Data.ByteString as ByteString
@@ -54,9 +59,12 @@ metadataTests :: Tier -> IO GroupPlan
 metadataTests tier = do
   repo <- repoDir
   let inTierCases = restrictToTier tier caseIsHeavy metadataCases
-  caseMaybes <- concat <$> mapM (planMetadataCase repo) inTierCases
-  let bpsMaybes = map WillRun (testTreesFromGroup bpsMetadataGroup)
-  pure (namedGroup "metadata" (caseMaybes ++ bpsMaybes))
+  caseMaybes      <- concat <$> mapM (planMetadataCase repo) inTierCases
+  appHeaderMaybes <- planAppHeaderLiftCase repo
+  let programmaticMaybes =
+        map WillRun (testTreesFromGroup bpsMetadataGroup)
+        ++ map WillRun (testTreesFromGroup ppfFileIdDizGroup)
+  pure (namedGroup "metadata" (caseMaybes ++ appHeaderMaybes ++ programmaticMaybes))
   where
     caseIsHeavy (_format, relPath, _fields) = isHeavyPath relPath
 
@@ -149,7 +157,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> assertEqual "patchMetadata" Nothing (patchMetadata parsed)
 
-  , testCase "info shows metadata preview" $ do
+  , testCase "info shows the metadata size; explain shows the content" $ do
       let source = ByteString.pack [0..63]
           target = ByteString.pack [64..127]
           meta   = ByteString8.pack "hello-world-metadata"
@@ -157,11 +165,12 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome noDialectsRequested EncodingUtf8 patchBytes of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed -> do
-          let info = renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing
-          assertBool "info mentions metadata content"
-            ("hello-world-metadata" `Text.isInfixOf` info)
-          assertBool "info shows byte count"
-            ("20 bytes" `Text.isInfixOf` info)
+          assertBool "info shows the byte count"
+            ("20 bytes" `Text.isInfixOf` infoView parsed)
+          assertBool "info withholds the content"
+            (not ("hello-world-metadata" `Text.isInfixOf` infoView parsed))
+          assertBool "explain shows the content"
+            ("hello-world-metadata" `Text.isInfixOf` explainView parsed)
 
   , testCase "info shows (none) without metadata" $ do
       let source = ByteString.pack [0..63]
@@ -170,7 +179,7 @@ bpsMetadataGroup = testGroup "bps-metadata"
       case parseSome noDialectsRequested EncodingUtf8 patchBytes of
         Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
         Right parsed ->
-          assertBool "info shows (none)" ("(none)" `Text.isInfixOf` renderAnalysisFull (patchInfo parsed) (patchAnalysis parsed) Nothing)
+          assertBool "info shows (none)" ("(none)" `Text.isInfixOf` infoView parsed)
   ]
 
 -- | Run 'createBPS' and unwrap. Test inputs are small and well-formed,
@@ -181,3 +190,142 @@ createBPSOrFail source target meta =
     Left slapError ->
       assertFailureT ("createBPS failed: " <> renderSlapError slapError)
     Right (CreateResult patchBytes _) -> pure patchBytes
+
+-- | The lines @slap info@ prints — glances only.
+infoView :: SomePatch -> Text.Text
+infoView parsed = Text.unlines (renderPatchInfo SizeOnly (patchInfo parsed))
+
+-- | The text @slap explain@ prints — glances opened to their content.
+explainView :: SomePatch -> Text.Text
+explainView parsed = renderAnalysisSummary (patchInfo parsed) (patchAnalysis parsed) Nothing
+
+----------------------------------------------------------------------------
+-- FILE_ID.DIZ (PPF2/PPF3): create, display, carry, drop, override, refuse
+----------------------------------------------------------------------------
+
+-- | PPF2's create path samples a 1024-byte validation block at source
+-- offset 0x9320, so the source must reach 0x9720 bytes. Source and
+-- target differ at offset 0 to force a single write record.
+ppf2DizSource :: ByteString.ByteString
+ppf2DizSource = ByteString.replicate 0x9720 0
+
+ppf2DizTarget :: ByteString.ByteString
+ppf2DizTarget = ByteString.cons 0xFF (ByteString.drop 1 ppf2DizSource)
+
+ppfFileIdDizGroup :: TestTree
+ppfFileIdDizGroup = testGroup "ppf-fileiddiz"
+  [ testCase "PPF2 round-trips a FILE_ID.DIZ" $ do
+      let fileIdDiz = EncodedText EncodingUtf8 (Text.pack "Cool Patch v1.0\nby tester")
+          meta      = noMetadataRequested { requestedFileIdDiz = SetFileIdDiz fileIdDiz }
+      patchBytes <- createPPF2OrFail ppf2DizSource ppf2DizTarget meta
+      case parseSome noDialectsRequested EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
+        Right parsed   -> assertEqual "FILE_ID.DIZ" (Just fileIdDiz) (parsedFileIdDiz parsed)
+
+  , testCase "a PPF2 without a FILE_ID.DIZ carries none" $ do
+      patchBytes <- createPPF2OrFail ppf2DizSource ppf2DizTarget noMetadataRequested
+      case parseSome noDialectsRequested EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
+        Right parsed   -> assertEqual "FILE_ID.DIZ" Nothing (parsedFileIdDiz parsed)
+
+  , testCase "info shows the FILE_ID.DIZ size; explain shows the content" $ do
+      let fileIdDiz = EncodedText EncodingUtf8 (Text.pack "ASCII-ART-HEADER-XYZZY")
+          meta      = noMetadataRequested { requestedFileIdDiz = SetFileIdDiz fileIdDiz }
+      patchBytes <- createPPF2OrFail ppf2DizSource ppf2DizTarget meta
+      case parseSome noDialectsRequested EncodingUtf8 patchBytes of
+        Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
+        Right parsed   -> do
+          assertBool "info shows the character count"
+            ("22 characters" `Text.isInfixOf` infoView parsed)
+          assertBool "info withholds the content"
+            (not ("XYZZY" `Text.isInfixOf` infoView parsed))
+          assertBool "explain shows the content"
+            ("XYZZY" `Text.isInfixOf` explainView parsed)
+
+  , testCase "convert PPF2 -> PPF3 inherits the FILE_ID.DIZ" $ do
+      let fileIdDiz = EncodedText EncodingUtf8 (Text.pack "carried-across-formats")
+      result <- convertedPPF3FileIdDiz (SetFileIdDiz fileIdDiz) noMetadataRequested
+      assertEqual "inherited FILE_ID.DIZ" (Right (Just fileIdDiz)) result
+
+  , testCase "convert PPF2 -> PPF3 with a drop request drops the FILE_ID.DIZ" $ do
+      let fileIdDiz = EncodedText EncodingUtf8 (Text.pack "to-be-dropped")
+      result <- convertedPPF3FileIdDiz (SetFileIdDiz fileIdDiz)
+                  (noMetadataRequested { requestedFileIdDiz = DropFileIdDiz })
+      assertEqual "dropped FILE_ID.DIZ" (Right Nothing) result
+
+  , testCase "convert PPF2 -> PPF3 with a set request overrides the FILE_ID.DIZ" $ do
+      let sourceDiz   = EncodedText EncodingUtf8 (Text.pack "from-source")
+          overrideDiz = EncodedText EncodingUtf8 (Text.pack "from-the-flag")
+      result <- convertedPPF3FileIdDiz (SetFileIdDiz sourceDiz)
+                  (noMetadataRequested { requestedFileIdDiz = SetFileIdDiz overrideDiz })
+      assertEqual "overridden FILE_ID.DIZ" (Right (Just overrideDiz)) result
+
+  , testCase "an over-long FILE_ID.DIZ is refused (PPF3 16-bit length)" $ do
+      let overLongDiz = EncodedText EncodingUtf8 (Text.replicate 70000 (Text.pack "x"))
+      result <- convertedPPF3FileIdDiz InheritFileIdDiz
+                  (noMetadataRequested { requestedFileIdDiz = SetFileIdDiz overLongDiz })
+      case result of
+        Left _  -> pure ()
+        Right _ -> assertFailure "expected an over-long FILE_ID.DIZ to be refused"
+  ]
+
+-- | The FILE_ID.DIZ a parsed PPF2/PPF3 carries in its 'PatchContents'.
+parsedFileIdDiz :: SomePatch -> Maybe EncodedText
+parsedFileIdDiz parsed = case patchKind parsed of
+  Direct (Just contents) -> contentsFileIdDiz contents
+  _                      -> Nothing
+
+-- | Drive a PPF2 create with @sourceDiz@ baked in, parse it, convert to
+-- PPF3 under @convertMeta@, and report the FILE_ID.DIZ the PPF3 carries
+-- (or the convert's rendered refusal).
+convertedPPF3FileIdDiz
+  :: FileIdDizRequest
+  -> RequestedPatchMetadata
+  -> IO (Either String (Maybe EncodedText))
+convertedPPF3FileIdDiz sourceDiz convertMeta = do
+  ppf2Bytes <- createPPF2OrFail ppf2DizSource ppf2DizTarget
+                 (noMetadataRequested { requestedFileIdDiz = sourceDiz })
+  case parseSome noDialectsRequested EncodingUtf8 ppf2Bytes of
+    Left slapError -> assertFailureT ("parseSome PPF2 failed: " <> renderSlapError slapError)
+    Right ppf2 -> do
+      converted <- attemptConvert ppf2 (CreateDirect CreatePPF3) Nothing convertMeta
+      case converted of
+        Left errorMessage -> pure (Left errorMessage)
+        Right (CreateResult ppf3Bytes _) ->
+          case parseSome noDialectsRequested EncodingUtf8 ppf3Bytes of
+            Left slapError -> assertFailureT ("parseSome PPF3 failed: " <> renderSlapError slapError)
+            Right ppf3     -> pure (Right (parsedFileIdDiz ppf3))
+
+-- | Run a PPF2 'createPatch' and unwrap; a 'Left' on these small,
+-- well-formed inputs is a test-infrastructure bug, not an expected path.
+createPPF2OrFail
+  :: ByteString.ByteString -> ByteString.ByteString -> RequestedPatchMetadata
+  -> IO PatchFileContents
+createPPF2OrFail source target meta =
+  case createPatch (CreateDirect CreatePPF2) Nothing
+                   (InputFileContents source) (OutputFileContents target)
+                   meta Nothing noConstraintsRequested noDialectsRequested of
+    Left slapError -> assertFailureT ("createPPF2 failed: " <> renderSlapError slapError)
+    Right (CreateResult patchBytes _) -> pure patchBytes
+
+----------------------------------------------------------------------------
+-- xdelta3 application header lifts into the embedded-blob channel
+----------------------------------------------------------------------------
+
+-- | The xdelta3 application header must surface as 'patchMetadata' — the
+-- lift that lets @info --extract-metadata@, convert carry, and
+-- @--drop-metadata@ reach it, exactly as for the BPS blob. dm4y's vcdiff
+-- is local-only, so the test is gated on its presence.
+planAppHeaderLiftCase :: FilePath -> IO [MaybeTest]
+planAppHeaderLiftCase repo =
+  requireFixture (repo </> "test/data/dm4y/patch.vcdiff") $ \patchPath ->
+    pure [WillRun (testCase "xdelta3 app header lifts into patchMetadata" (assertAppHeaderLift patchPath))]
+
+assertAppHeaderLift :: FilePath -> IO ()
+assertAppHeaderLift patchPath = do
+  patchBytes <- ByteString.readFile patchPath
+  case parseSome noDialectsRequested EncodingUtf8 (PatchFileContents patchBytes) of
+    Left slapError -> assertFailureT ("parseSome failed: " <> renderSlapError slapError)
+    Right parsed   -> assertEqual "patchMetadata"
+      (Just (ByteString8.pack "dm4y-output.gbc//dm4y-input.gbc/"))
+      (patchMetadata parsed)

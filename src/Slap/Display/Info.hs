@@ -15,11 +15,12 @@ module Slap.Display.Info
 
 import Data.Text (Text)
 import qualified Data.Text as Text
-import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit, ByteCount,
+import Slap.Display.Common (InfoLine(..), renderInfoLine, Tally(..), CountUnit, ByteCount,
                              FormatHeader, renderFormatHeader,
                              renderCountUnit, pluralCountUnit,
                              renderByteCount, renderOffsetRange,
                              renderAsText)
+import Slap.Display.EmbeddedContent (EmbeddedContent, EmbeddedDepth(..), renderEmbedded)
 import Slap.Display.Glyph (spacePaddedRightwardsArrow)
 import Slap.Measure (OffsetRange)
 
@@ -33,27 +34,32 @@ import Slap.Measure (OffsetRange)
 -- * the format-name with optional elaboration ('infoFormat'),
 -- * the format-specific metadata fields ('infoLines') already
 --   rendered to display text,
+-- * the embedded content the patch carries ('infoEmbedded'), each shown
+--   here as a size glance and in @explain@ as its full payload,
 -- * a 'Tally' of items in the patch with optional 'ByteCount',
 -- * an optional 'OffsetRange' surfacing where the patch operates,
 --   populated only when computing it is cheap (formats whose records
 --   carry sortable absolute offsets).
 data PatchInfo = PatchInfo
-  { infoFormat :: !FormatHeader
-  , infoLines  :: ![InfoLine]
-  , infoTally  :: !Tally
-  , infoUnit   :: !CountUnit
-  , infoBytes  :: !(Maybe ByteCount)
-  , infoRange  :: !(Maybe OffsetRange)
+  { infoFormat   :: !FormatHeader
+  , infoLines    :: ![InfoLine]
+  , infoEmbedded :: ![EmbeddedContent]
+  , infoTally    :: !Tally
+  , infoUnit     :: !CountUnit
+  , infoBytes    :: !(Maybe ByteCount)
+  , infoRange    :: !(Maybe OffsetRange)
   } deriving (Eq, Show)
 
--- | Render a 'PatchInfo' as a list of 'InfoLine' rows. The caller
--- ('doInfo') maps 'renderInfoLine' over the result.
-renderPatchInfo :: PatchInfo -> [InfoLine]
-renderPatchInfo info =
-  [ InfoLine "format" (renderFormatHeader (infoFormat info)) ]
-  ++ infoLines info
-  ++ [ countLine ]
-  ++ rangeLineList
+-- | Render a 'PatchInfo' to its display lines.
+-- 'SizeOnly' is the @slap info@ glance;
+-- 'WithPayload' opens each embedded field's content beneath its size line — the extra @slap explain@ shows.
+renderPatchInfo :: EmbeddedDepth -> PatchInfo -> [Text]
+renderPatchInfo depth info =
+  renderInfoLine (InfoLine "format" (renderFormatHeader (infoFormat info)))
+  : map renderInfoLine (infoLines info)
+  ++ concatMap (renderEmbedded depth) (infoEmbedded info)
+  ++ [ renderInfoLine countLine ]
+  ++ rangeLines
   where
     tally       = infoTally info
     countUnit   = infoUnit  info
@@ -62,9 +68,9 @@ renderPatchInfo info =
       Nothing    -> countPhrase
       Just bytes -> countPhrase <> ", " <> renderByteCount bytes
     countLine = InfoLine (pluralCountUnit countUnit) countValue
-    rangeLineList = case infoRange info of
+    rangeLines = case infoRange info of
       Nothing    -> []
-      Just range -> [InfoLine "range" (renderOffsetRange range)]
+      Just range -> [ renderInfoLine (InfoLine "range" (renderOffsetRange range)) ]
 
 -- | Render a one-line action announcement: @"\<verb\> \<count and
 -- bytes\> → \<path\>"@. Used by 'doApply' for both the success path

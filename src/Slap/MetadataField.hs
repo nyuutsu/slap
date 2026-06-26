@@ -26,6 +26,7 @@ data MetadataField
   | MetadataStability
   | MetadataRomType
   | MetadataImageType
+  | MetadataFileIdDiz
   | MetadataGenre
   | MetadataLanguage
   | MetadataDate
@@ -48,6 +49,7 @@ metadataFieldName MetadataPatchCompression    = "patch compression"
 metadataFieldName MetadataStability           = "stability flag"
 metadataFieldName MetadataRomType             = "ROM type"
 metadataFieldName MetadataImageType           = "image type"
+metadataFieldName MetadataFileIdDiz           = "FILE_ID.DIZ"
 metadataFieldName MetadataGenre               = "genre"
 metadataFieldName MetadataLanguage            = "language"
 metadataFieldName MetadataDate                = "date"
@@ -71,6 +73,7 @@ metadataFieldFlagName MetadataPatchCompression    = "no-compress"
 metadataFieldFlagName MetadataStability           = "unstable"
 metadataFieldFlagName MetadataRomType             = "rom-type"
 metadataFieldFlagName MetadataImageType           = "image-type"
+metadataFieldFlagName MetadataFileIdDiz           = "diz"
 metadataFieldFlagName MetadataGenre               = "genre"
 metadataFieldFlagName MetadataLanguage            = "language"
 metadataFieldFlagName MetadataDate                = "date"

@@ -13,6 +13,7 @@
 -- analysis side is the per-instruction walk only @slap explain@ forces.
 module Slap.VCDIFF.Describe
   ( vcdiffMeta
+  , vcdiffEmbeddedContent
   , analyzeVCDIFF
   , makeVCDIFFRegion
   ) where
@@ -34,7 +35,7 @@ import Slap.Display.Analysis
   , Annotation(..), OffsetKind(..), AnnotDetail(..) )
 import Slap.Display.Common
   ( InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText )
-import Slap.Display.OpaqueField (renderOpaqueFieldBytes)
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
 import Slap.Display.Primitives (padHex)
 import Slap.Checksum (Adler32, showAdler32)
 import Slap.Text (EncodingName)
@@ -56,21 +57,19 @@ import qualified Data.Vector as Vector
 -- flavor: a core-only patch holds nothing but its windows, so it speaks
 -- only of where those windows draw their copies from (the source file,
 -- the produced target, or nowhere); an RFC patch adds the custom code
--- table when it carries one; an xdelta3 patch adds the three things only
--- its arc can carry — the application header, the declared secondary
--- compressor, and the per-window checksums.
+-- table when it carries one; an xdelta3 patch adds the declared secondary
+-- compressor and the per-window checksums. The application header is
+-- embedded content, surfaced through 'vcdiffEmbeddedContent'.
 --
 -- Exhaustive over the three flavors, no wildcard.
-vcdiffMeta :: EncodingName -> VCDIFFPatch -> [InfoLine]
-vcdiffMeta metadataEncoding patch = case patch of
+vcdiffMeta :: VCDIFFPatch -> [InfoLine]
+vcdiffMeta patch = case patch of
   PatchCoreOnly windows  -> originRollup (Vector.toList windows)
   PatchRFC header windows ->
     codeTableLines (rfcCustomCodeTable header) ++ originRollup (Vector.toList windows)
   PatchXDelta3 header xdelta3Windows ->
     let windowList = Vector.toList xdelta3Windows
-    in  InfoLine "app header"
-          (renderAppHeaderLine metadataEncoding (classifyAppHeader (xdelta3AppHeader header)))
-      : compressorLines (xdelta3SecondaryCompressor header)
+    in  compressorLines (xdelta3SecondaryCompressor header)
      ++ originRollup (map xdelta3WindowBody windowList)
      ++ adlerRollup windowList
 
@@ -108,22 +107,24 @@ data AppHeaderShape
   deriving (Eq, Show)
 
 -- | Frame an application header by presence alone. Flag-free and pure;
--- the encoding-dependent reading of its bytes belongs to
--- 'renderAppHeaderLine' and the shared lens beneath it.
+-- 'vcdiffEmbeddedContent' turns the framing into the displayed field.
 classifyAppHeader :: Maybe ByteString -> AppHeaderShape
 classifyAppHeader Nothing = AppHeaderAbsent
 classifyAppHeader (Just headerBytes)
   | ByteString.null headerBytes = AppHeaderEmpty
   | otherwise                   = AppHeaderPresent headerBytes
 
--- | The @app header@ line: the absent and empty framings render
--- verbatim, and present bytes go through the shared
--- @--metadata-encoding@ lens — shown as text where they read as text
--- under the chosen encoding, as a byte count where they don't.
-renderAppHeaderLine :: EncodingName -> AppHeaderShape -> Text
-renderAppHeaderLine _        AppHeaderAbsent          = "(none)"
-renderAppHeaderLine _        AppHeaderEmpty           = "(empty)"
-renderAppHeaderLine encoding (AppHeaderPresent bytes) = renderOpaqueFieldBytes encoding bytes
+-- | The application header as embedded content — only the xdelta3 flavor
+-- carries one; RFC and core-only patches have none to show.
+vcdiffEmbeddedContent :: EncodingName -> VCDIFFPatch -> [EmbeddedContent]
+vcdiffEmbeddedContent metadataEncoding patch = case patch of
+  PatchXDelta3 header _ ->
+    [ EmbeddedContent "app header" (appHeaderField (classifyAppHeader (xdelta3AppHeader header))) ]
+  _ -> []
+  where
+    appHeaderField AppHeaderAbsent          = FieldAbsent
+    appHeaderField AppHeaderEmpty           = FieldEmpty
+    appHeaderField (AppHeaderPresent bytes) = FieldOpaque metadataEncoding bytes
 
 -- | The @compression@ line, when a secondary compressor was declared.
 -- Named, and named as a /declaration/ — the decoded form has long since

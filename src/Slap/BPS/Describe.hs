@@ -2,6 +2,7 @@
 
 module Slap.BPS.Describe
   ( bpsMeta
+  , bpsEmbeddedContent
   , bpsMetadataNotes
   , analyzeBPS
   , BPSRegionState(..)
@@ -22,14 +23,12 @@ import Slap.FormatLabel (FormatLabel(LabelBPS))
 import Slap.Status (SlapAdvisory(..), BPSMetadataDivergence(..),
                    CursorKind(SourceCursor))
 import Slap.Display.Common (InfoLine(..), Tally(..), CountUnit(..), ByteCount(..), renderAsText)
-import Slap.Display.OpaqueField (renderOpaqueFieldBytes)
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
 import Slap.Text (EncodingName)
 import Slap.Measure (Offset(..), FileSize(..),
                      SignedOffset(SignedOffset),
                      SignedOffsetSign(..), Cursor(..),
                      examineSignedOffset, byteLength)
-
-import Data.Text (Text)
 
 import qualified Data.ByteString as ByteString
 import Data.Char (isControl, isSpace)
@@ -37,33 +36,26 @@ import Data.List (mapAccumL)
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
-bpsMeta :: EncodingName -> BPSPatch -> [InfoLine]
-bpsMeta metadataEncoding patch = concat
+bpsMeta :: BPSPatch -> [InfoLine]
+bpsMeta patch = concat
   [ [InfoLine "source size" (renderAsText (unFileSize (bpsSourceSize patch)))]
   , [InfoLine "target size" (renderAsText (unFileSize (bpsTargetSize patch)))]
-  , [InfoLine "metadata" (renderMetadataLine metadataEncoding (bpsMetadata patch))]
   , [InfoLine "source CRC" (showCRC32 (bpsSourceCRC patch))]
   , [InfoLine "target CRC" (showCRC32 (bpsTargetCRC patch))]
   , [InfoLine "patch CRC" (showCRC32 (bpsPatchCRC patch))]
   ]
 
--- | The @metadata@ info line: a glance at the BPS metadata blob, read
--- through the @--metadata-encoding@ lens. An absent field reads
--- "(none)"; present bytes go to the shared 'renderOpaqueFieldBytes',
--- which shows them as text where they decode under the chosen encoding
--- and as a byte count where they don't. The blob itself is never
--- altered; this is a read-only view.
---
--- The viewing lens is deliberately separate from the spec-conformance
--- judgment 'bpsMetadataNotes' raises: the BPS spec recommends UTF-8 XML,
--- so the @BPSMetadataNonConformant@ remark stays anchored to UTF-8
--- through 'classifyBPSMetadata' regardless of how the user asks to view
--- the bytes. Showing a cp1252 blob as readable text and noting that it
--- diverges from the spec's UTF-8 are both true at once.
-renderMetadataLine :: EncodingName -> BPSMetadata -> Text
-renderMetadataLine metadataEncoding (BPSMetadata bytes)
-  | ByteString.null bytes = "(none)"
-  | otherwise             = renderOpaqueFieldBytes metadataEncoding bytes
+-- | BPS always has a metadata field, so an empty blob reports "(none)" rather than vanishing.
+-- The encoding only governs how the bytes read for display —
+-- 'bpsMetadataNotes' judges conformance against UTF-8 however they are viewed.
+bpsEmbeddedContent :: EncodingName -> BPSPatch -> [EmbeddedContent]
+bpsEmbeddedContent metadataEncoding patch =
+  [ EmbeddedContent "embedded data" metadataField ]
+  where
+    metadataBytes = unBPSMetadata (bpsMetadata patch)
+    metadataField
+      | ByteString.null metadataBytes = FieldAbsent
+      | otherwise                     = FieldOpaque metadataEncoding metadataBytes
 
 -- | The remark companion to 'renderMetadataLine': a note-severity
 -- 'SlapAdvisory' when the BPS metadata blob isn't the spec-recommended

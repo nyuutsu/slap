@@ -1042,7 +1042,7 @@ vcdiffGrownCacheGeometryVisible =
                (unNearSlotCount (nearSlotCount (customCodeTableCacheConfig customTable)) > 4)
              assertBool "info/explain surfaces an address-cache line"
                (any (\(InfoLine infoLabel _) -> infoLabel == "address cache")
-                    (vcdiffMeta SlapText.EncodingUtf8 parsed))
+                    (vcdiffMeta parsed))
          _ -> assertFailure "expected PatchRFC for a grown-cache patch"
 
 -- | The grow stops where a larger cache stops paying: a pair whose copies

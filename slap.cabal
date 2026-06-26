@@ -59,8 +59,8 @@ library slap-internal
     , Slap.Detect
     , Slap.Display.Analysis
     , Slap.Display.Common
+    , Slap.Display.EmbeddedContent
     , Slap.Display.Info
-    , Slap.Display.OpaqueField
     , Slap.FileContents
     , Slap.Status
     , Slap.GDIFF.Apply

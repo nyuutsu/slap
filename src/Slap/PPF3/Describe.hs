@@ -7,6 +7,7 @@
 -- and an optional FILE_ID.DIZ.
 module Slap.PPF3.Describe
   ( ppf3Meta
+  , ppf3EmbeddedContent
   , analyzePPF3
   , ppf3RecordsRange
   ) where
@@ -31,6 +32,7 @@ import Slap.Display.Analysis
   , OffsetKind(AtOffset)
   , AnnotDetail(DetailUndo)
   )
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
 import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
@@ -42,11 +44,6 @@ ppf3Meta patch = concat
     in [InfoLine "description" description | not (Text.null description)]
   , [InfoLine "validation" validationLine]
   , [InfoLine "undo data" (if ppf3HasUndo patch then "yes" else "no")]
-  , case ppf3FileId patch of
-      Nothing  -> []
-      Just fid -> [InfoLine "file_id.diz"
-                     (renderAsText (Text.length (encodedTextContent (unPPF3FileId fid)))
-                       <> " characters")]
   ]
   where
     validationLine = case ppf3ValidationBlock patch of
@@ -56,6 +53,11 @@ ppf3Meta patch = concat
         <> " block at "
         <> renderOffsetAsHex (ppf3ValidationOffset (ppf3ImageType patch))
         <> " (" <> renderAsText (ByteString.length blockBytes) <> " bytes)"
+
+ppf3EmbeddedContent :: PPF3Patch -> [EmbeddedContent]
+ppf3EmbeddedContent patch = case ppf3FileId patch of
+  Nothing        -> []
+  Just fileIdDiz -> [EmbeddedContent "file_id.diz" (FieldText (unPPF3FileId fileIdDiz))]
 
 analyzePPF3 :: PPF3Patch -> PatchAnalysis
 analyzePPF3 patch = PatchAnalysis

@@ -5,6 +5,7 @@
 -- a 1024-byte validation block, and an optional FILE_ID.DIZ.
 module Slap.PPF2.Describe
   ( ppf2Meta
+  , ppf2EmbeddedContent
   , analyzePPF2
   , ppf2RecordsRange
   ) where
@@ -29,6 +30,7 @@ import Slap.Display.Analysis
   , Annotation(AnnotationAt)
   , OffsetKind(AtOffset)
   )
+import Slap.Display.EmbeddedContent (EmbeddedContent(..), EmbeddedField(..))
 import Slap.Text (encodedTextContent)
 
 import qualified Data.ByteString as ByteString
@@ -40,11 +42,6 @@ ppf2Meta patch = concat
     in [InfoLine "description" description | not (Text.null description)]
   , [InfoLine "file size" (renderAsText (unPPF2SourceSize (ppf2SourceFileSize patch)) <> " bytes (validation)")]
   , [InfoLine "validation" validationLine]
-  , case ppf2FileId patch of
-      Nothing  -> []
-      Just fid -> [InfoLine "file_id.diz"
-                     (renderAsText (Text.length (encodedTextContent (unPPF2FileId fid)))
-                       <> " characters")]
   ]
   where
     validationBlockBytes = unPPF2ValidationBlock (ppf2ValidationBlock patch)
@@ -52,6 +49,11 @@ ppf2Meta patch = concat
       "BIN block at "
       <> renderOffsetAsHex ppf2ValidationOffset
       <> " (" <> renderAsText (ByteString.length validationBlockBytes) <> " bytes)"
+
+ppf2EmbeddedContent :: PPF2Patch -> [EmbeddedContent]
+ppf2EmbeddedContent patch = case ppf2FileId patch of
+  Nothing         -> []
+  Just fileIdDiz  -> [EmbeddedContent "file_id.diz" (FieldText (unPPF2FileId fileIdDiz))]
 
 analyzePPF2 :: PPF2Patch -> PatchAnalysis
 analyzePPF2 patch = PatchAnalysis

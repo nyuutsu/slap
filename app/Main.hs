@@ -17,15 +17,17 @@ import Slap.SomePatch
   , applySourcePreHash
   , parseSome
   )
-import Slap.Display.Common (renderInfoLine, pathText)
+import Slap.Display.Common (pathText)
 import Slap.Display.Info (renderPatchInfo, renderActionLine)
 import Slap.Display.Analysis (renderAnalysisFull, renderAnalysisSummary)
+import Slap.Display.EmbeddedContent (EmbeddedDepth(SizeOnly))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
-                     ExpectedSize(..), ActualSize(..), byteLength)
+                     ExpectedSize(..), ActualSize(..))
 import Slap.Convert (CreateFormat(..), DifferentialCreate(..),
-                     PatchContents,
+                     PatchContents, contentsFileIdDiz,
                      RequestedPatchMetadata(..),
+                     FileIdDizRequest(..),
                      RequestedDialects,
                      rejectIncompatibleConstraints,
                      noDialectsRequested,
@@ -39,7 +41,9 @@ import Slap.XDelta1.Types (ResolvedXDelta1FileNames,
                            requireXDelta1FileNames,
                            XDelta1FromName(..), XDelta1ToName(..))
 import Slap.Create (createPatch)
-import Slap.Text (EncodingName(EncodingUtf8))
+import Slap.Text (EncodingName(EncodingUtf8),
+                  decodeTextLenient, encodeTextLenient,
+                  encodedTextEncoding, encodedTextContent)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
@@ -68,6 +72,7 @@ import CLI
   , ConvertOutput(..)
   , ConvertWithSource(..)
   , EmbeddedBlobIntent(..)
+  , DizIntent(..)
   , CreateMetadataInputs(..)
   , ConvertMetadataInputs(..)
   , FileReadingOptions(..)
@@ -149,22 +154,39 @@ readMaybeUnwrap fileReadingOptions = case fileReadingArchiveHandling fileReading
   AutoUnwrapSingleEntryArchives -> readUnwrap
   ReadBytesVerbatim             -> readInputFile
 
--- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ is read into the embedded blob.
+-- | Resolve @slap create@'s metadata inputs: @--metadata FILE@ becomes the embedded blob, @--diz FILE@ the FILE_ID.DIZ.
 resolveCreateMetadata :: CreateMetadataInputs -> IO RequestedPatchMetadata
 resolveCreateMetadata inputs = do
   embeddedBlob <- traverse readInputFile (createEmbeddedBlobPath inputs)
-  pure (createParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
+  fileIdDiz    <- resolveCreateFileIdDiz (createDizPath inputs)
+  pure (createParsedMetadata inputs)
+    { requestedEmbeddedBlob = embeddedBlob
+    , requestedFileIdDiz    = fileIdDiz
+    }
 
--- | Resolve @slap convert@'s metadata inputs.
--- Only 'EmbedFromFile' triggers IO and produces a 'Just'; 'CarryIfPresent' and 'DropEmbeddedBlob' both leave the field 'Nothing' here.
--- The two 'Nothing' cases diverge only later, in 'doConvert' after the source-patch merge.
-resolveConvertMetadata :: ConvertMetadataInputs -> IO RequestedPatchMetadata
-resolveConvertMetadata inputs = do
+-- | The @--diz@ file is read as UTF-8 — create writes every text field as UTF-8
+-- and has no @--metadata-encoding@ knob to say otherwise.
+resolveCreateFileIdDiz :: Maybe FilePath -> IO FileIdDizRequest
+resolveCreateFileIdDiz Nothing     = pure InheritFileIdDiz
+resolveCreateFileIdDiz (Just path) =
+  SetFileIdDiz . fst . decodeTextLenient EncodingUtf8 <$> readInputFile path
+
+-- | 'CarryIfPresent' and 'DropEmbeddedBlob' both leave the blob 'Nothing' here;
+-- the two only diverge later, in 'doConvert', after the source-patch merge.
+resolveConvertMetadata :: EncodingName -> ConvertMetadataInputs -> IO RequestedPatchMetadata
+resolveConvertMetadata metadataEncoding inputs = do
   embeddedBlob <- case convertEmbeddedBlobIntent inputs of
     EmbedFromFile path -> Just <$> readInputFile path
     DropEmbeddedBlob   -> pure Nothing
     CarryIfPresent     -> pure Nothing
-  pure (convertParsedMetadata inputs) { requestedEmbeddedBlob = embeddedBlob }
+  fileIdDiz <- case convertDizIntent inputs of
+    SetDizFromFile path -> SetFileIdDiz . fst . decodeTextLenient metadataEncoding <$> readInputFile path
+    DropDiz             -> pure DropFileIdDiz
+    CarryDiz            -> pure InheritFileIdDiz
+  pure (convertParsedMetadata inputs)
+    { requestedEmbeddedBlob = embeddedBlob
+    , requestedFileIdDiz    = fileIdDiz
+    }
 
 ----------------------------------------------------------------------------
 -- Info & Explain
@@ -177,7 +199,7 @@ doInfo parsedCommand = do
             (acceptedDialects (patchFormat parsed))
             (patchFormat parsed)
             (infoDialects parsedCommand))
-  mapM_ (TextIO.putStrLn . renderInfoLine) (renderPatchInfo (patchInfo parsed))
+  mapM_ TextIO.putStrLn (renderPatchInfo SizeOnly (patchInfo parsed))
   emitAdvisories (patchAdvisories parsed)
   case infoExtractMetadata parsedCommand of
     Nothing -> pure ()
@@ -186,6 +208,13 @@ doInfo parsedCommand = do
       Just metadataBytes -> do
         ByteString.writeFile outPath metadataBytes
         TextIO.putStrLn ("wrote metadata to " <> pathText outPath)
+  case infoExtractDiz parsedCommand of
+    Nothing -> pure ()
+    Just outPath -> case patchContentsOf parsed >>= contentsFileIdDiz of
+      Nothing        -> TextIO.hPutStrLn stderr "slap: no FILE_ID.DIZ in this patch"
+      Just fileIdDiz -> do
+        ByteString.writeFile outPath (fst (encodeTextLenient (encodedTextEncoding fileIdDiz) (encodedTextContent fileIdDiz)))
+        TextIO.putStrLn ("wrote FILE_ID.DIZ to " <> pathText outPath)
 
 doExplain :: ExplainCommand -> IO ()
 doExplain parsedCommand = do
@@ -388,7 +417,7 @@ patchContentsOf parsed = case patchKind parsed of
 
 doConvert :: ConvertCommand -> IO ()
 doConvert parsedCommand = do
-  cliMeta <- resolveConvertMetadata (convertMetadata parsedCommand)
+  cliMeta <- resolveConvertMetadata (convertMetadataEncoding parsedCommand) (convertMetadata parsedCommand)
   orBail (rejectIncompatibleMetadata    (convertTo parsedCommand) cliMeta)
   orBail (rejectIncompatibleConstraints (convertTo parsedCommand) (convertConstraints parsedCommand))
   parsed <- readAndParsePatch (convertDialects parsedCommand) (convertMetadataEncoding parsedCommand) (convertPatch parsedCommand)
@@ -409,7 +438,6 @@ doConvert parsedCommand = do
           (mergeRequestedMetadata cliMeta (patchExtractedMeta parsed))
             { requestedEmbeddedBlob = Nothing }
         _ -> mergeRequestedMetadata cliMeta (patchExtractedMeta parsed)
-      bpsDropAdvisories = computeBPSDropAdvisories parsed (convertTo parsedCommand)
   resolvedXDelta1Names <- orBail (resolveConvertXDelta1Names parsedCommand parsed mergedMeta)
   case chooseConvertDispatch parsedCommand parsed of
     ApplyAndRecreate withSource -> do
@@ -418,7 +446,7 @@ doConvert parsedCommand = do
       verifySource (convertWithVerification withSource) (patchVerification parsed) source
       target <- applyForConvert parsed source
       createResult <- orBail (createPatch (convertTo parsedCommand) resolvedXDelta1Names (InputFileContents sourceBytes) target mergedMeta (patchContentsOf parsed) (convertConstraints parsedCommand) noDialectsRequested)
-      emitAdvisories (patchSourceAdvisories parsed ++ bpsDropAdvisories
+      emitAdvisories (patchSourceAdvisories parsed
                         ++ createDefaultAdvisories (convertTo parsedCommand) mergedMeta
                         ++ resultAdvisories createResult)
       ByteString.writeFile outputFile (unPatchFileContents (resultBytes createResult))
@@ -478,15 +506,6 @@ needSourceMessage somePatch =
         { sourceRequiredCause       = "can't be converted directly into another patch format"
         , sourceRequiredConsequence = convertConsequence
         }
-
--- | Warn when the source patch carries embedded BPS metadata bytes
--- and the target format has no metadata channel to put them in — conversion silently drops the bytes.
--- Returns @[]@ for BPS→BPS (the merge carries the bytes through), and for any source patch that had no metadata to begin with.
-computeBPSDropAdvisories :: SomePatch -> CreateFormat -> [SlapAdvisory]
-computeBPSDropAdvisories parsed targetFormat = case patchMetadata parsed of
-  Just metaBytes | targetFormat /= CreateDifferential CreateBPS ->
-    [MetadataDropped (byteLength metaBytes)]
-  _ -> []
 
 ----------------------------------------------------------------------------
 -- Helpers

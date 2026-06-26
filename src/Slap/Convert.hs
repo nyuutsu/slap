@@ -7,6 +7,7 @@ module Slap.Convert
   , DifferentialCreate(..)
   , CreateFormat(..)
   , RequestedPatchMetadata(..)
+  , FileIdDizRequest(..)
   , UndoInclusion(..)
   , VerificationInclusion(..)
   , PatchStability(..)
@@ -225,6 +226,8 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- PlatformType represents the union; format-specific conversion
     -- (platformToNINJA1, platformToNINJA2) handles lossy mappings.
   , requestedImageType            :: Maybe PPF3ImageType
+  , requestedFileIdDiz            :: FileIdDizRequest
+    -- ^ PPF2/PPF3 FILE_ID.DIZ: carry the source's, set it, or drop it.
   , requestedGenre                :: Maybe EncodedText
     -- ^ NINJA2-only metadata text. Typed across the convert seam so
     -- the source-patch's encoding tag rides through into the
@@ -251,6 +254,14 @@ data RequestedPatchMetadata = RequestedPatchMetadata
     -- ^ xdelta1 only: counterpart to 'requestedXDelta1FromName' for
     -- the to-name slot.
   }
+
+-- | What to do with a PPF2/PPF3 FILE_ID.DIZ on create or convert:
+-- keep whatever the source carried, replace it, or drop it.
+data FileIdDizRequest
+  = InheritFileIdDiz
+  | SetFileIdDiz EncodedText
+  | DropFileIdDiz
+  deriving (Eq, Show)
 
 -- | Stability flag for DPS patches.
 --
@@ -285,6 +296,7 @@ noMetadataRequested = RequestedPatchMetadata
   , requestedStability           = Nothing
   , requestedRomType             = Nothing
   , requestedImageType           = Nothing
+  , requestedFileIdDiz           = InheritFileIdDiz
   , requestedGenre               = Nothing
   , requestedLanguage            = Nothing
   , requestedDate                = Nothing
@@ -309,6 +321,9 @@ mergeRequestedMetadata cli source = RequestedPatchMetadata
   , requestedStability           = requestedStability cli           <|> requestedStability source
   , requestedRomType             = requestedRomType cli             <|> requestedRomType source
   , requestedImageType           = requestedImageType cli           <|> requestedImageType source
+  , requestedFileIdDiz           = case requestedFileIdDiz cli of
+                                     InheritFileIdDiz -> requestedFileIdDiz source
+                                     chosen           -> chosen
   , requestedGenre               = requestedGenre cli               <|> requestedGenre source
   , requestedLanguage            = requestedLanguage cli            <|> requestedLanguage source
   , requestedDate                = requestedDate cli                <|> requestedDate source
@@ -436,8 +451,8 @@ acceptedMetadataFields (CreateDirect format) = case format of
   CreateIPS32  -> Set.empty
   CreateEBP    -> Set.fromList [MetadataTitle, MetadataAuthor, MetadataDescription]
   CreatePPF1   -> Set.fromList [MetadataDescription]
-  CreatePPF2   -> Set.fromList [MetadataDescription]
-  CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataUndoInclusion, MetadataVerificationInclusion]
+  CreatePPF2   -> Set.fromList [MetadataDescription, MetadataFileIdDiz]
+  CreatePPF3   -> Set.fromList [MetadataDescription, MetadataImageType, MetadataFileIdDiz, MetadataUndoInclusion, MetadataVerificationInclusion]
   CreatePPF4   -> Set.empty
   CreateNINJA1 -> Set.fromList [MetadataRomType]
   CreatePMSR   -> Set.empty
@@ -469,6 +484,7 @@ requestedMetadataFields meta = Set.fromList $ concat
   , [MetadataStability           | isJust (requestedStability           meta)]
   , [MetadataRomType             | isJust (requestedRomType             meta)]
   , [MetadataImageType           | isJust (requestedImageType           meta)]
+  , [MetadataFileIdDiz           | requestedFileIdDiz meta /= InheritFileIdDiz]
   , [MetadataGenre               | isJust (requestedGenre               meta)]
   , [MetadataLanguage            | isJust (requestedLanguage            meta)]
   , [MetadataDate                | isJust (requestedDate                meta)]
@@ -777,9 +793,28 @@ defaultAssumptionAdvisories target meta sourceRomType sourceImageType = concat
 -- | Default-assumption notes for the create and --with convert paths,
 -- where no source PatchContents is available.
 createDefaultAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
-createDefaultAdvisories (CreateDirect target) meta = defaultAssumptionAdvisories target meta Nothing Nothing
-  ++ undoVerificationAdvisories target meta
-createDefaultAdvisories (CreateDifferential _) _ = []
+createDefaultAdvisories format meta =
+  droppedEmbeddedBlobAdvisories format meta ++ case format of
+    CreateDirect target  -> defaultAssumptionAdvisories target meta Nothing Nothing
+                            ++ undoVerificationAdvisories target meta
+    CreateDifferential _ -> []
+
+-- | A metadata blob the target format can't carry is dropped —
+-- an advisory, not a refusal, since it doesn't change the applied output.
+-- It covers the BPS metadata blob and the xdelta3 appheader alike, both riding 'requestedEmbeddedBlob'.
+droppedEmbeddedBlobAdvisories :: CreateFormat -> RequestedPatchMetadata -> [SlapAdvisory]
+droppedEmbeddedBlobAdvisories format meta =
+  [ MetadataDropped (byteLength blob)
+  | Just blob <- [requestedEmbeddedBlob meta]
+  , MetadataEmbeddedBlob `Set.notMember` acceptedMetadataFields format
+  ]
+
+-- | The FILE_ID.DIZ to emit: the request overrides the source-inherited DIZ.
+effectiveFileIdDiz :: RequestedPatchMetadata -> PatchContents -> Maybe EncodedText
+effectiveFileIdDiz meta contents = case requestedFileIdDiz meta of
+  InheritFileIdDiz -> contentsFileIdDiz contents
+  SetFileIdDiz diz -> Just diz
+  DropFileIdDiz    -> Nothing
 
 -- | Warn when undo / verification are included by default (no CLI
 -- flag, no inherited source value). Same pattern as rom-type
@@ -958,7 +993,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
                            descriptionTyped
                            sourceSize
                            (PPF2ValidationBlock validationBytes)
-        case contentsFileIdDiz contents of
+        case effectiveFileIdDiz meta contents of
           Nothing  -> Right ppf2Result
           Just diz -> do
             fid <- narrowPPF2FileId diz
@@ -980,7 +1015,7 @@ encodeDirect contents source target meta limits constraints dialects = case targ
         ppfResult   = PPF3.encodePPF3 records descriptionTyped undoEncoded
                         (fmap PPF3ValidationBlock (contentsValidation contents))
                         imageType
-    case contentsFileIdDiz contents of
+    case effectiveFileIdDiz meta contents of
       Nothing  -> Right ppfResult
       Just diz -> do
         fid <- narrowPPF3FileId diz
