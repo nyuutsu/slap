@@ -59,11 +59,10 @@ encodePPF1 origin records description =
 -- primitive because PPF3 pads the same field with @0x00@.
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
-  let width = unLength ppf1DescriptionLength
-      (truncatedBytes, notices) =
-        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
+  let (truncatedBytes, notices) =
+        encodeTextBounded EncodingUtf8 ppf1DescriptionLength (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
+                 (max 0 (unLength ppf1DescriptionLength - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF1 FieldDescription notices
   in (padded, advisories)
 

@@ -65,7 +65,7 @@ parseN64 metadataEncoding patchType = do
   skip (byteLength apsN64MagicBytes)  -- "APS10"
   skip (Length 1)                     -- patch-type byte (pre-validated)
   encodingMethod    <- toAPSRecordEncoding <$> getByte
-  descriptionBytes  <- getBytes (Length apsN64DescriptionWidth)
+  descriptionBytes  <- getBytes apsN64DescriptionWidth
   let (description, descriptionAdvisories) =
         decodeFixedWidthTextField metadataEncoding LabelAPSN64 FieldDescription descriptionBytes
   case patchType of

@@ -10,6 +10,7 @@ module Slap.PPF4.Types
   , ppf4DescriptionLength
   , ppf4PostDescriptionLength
   , ppf4MaxRecordPayload
+  , ppf4RecordHeaderLength
     -- * Encoding limits
   , ppf4Limits
     -- * Source/target size-pair rule
@@ -95,6 +96,11 @@ ppf4PostDescriptionLength = Length 4
 -- payload at @0xFF = 255@.
 ppf4MaxRecordPayload :: Length
 ppf4MaxRecordPayload = Length 255
+
+-- | Fixed per-record header: 1-byte command + 4-byte LE offset
+-- + 1-byte payload count. Equal to 'ppf4PreambleLength' by coincidence.
+ppf4RecordHeaderLength :: Length
+ppf4RecordHeaderLength = Length 6
 
 -- | PPF4's wire-format offset cap. The Replace record's offset field is
 -- 4 bytes; offsets ≥ 2^32 cannot be expressed. Append records carry no

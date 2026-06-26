@@ -41,28 +41,28 @@ isDPS input
   | ByteString.length input < dpsMinimumFileSize = False
   | ByteString.index input dpsVersionOffset /= 1 = False
   | ByteString.index input dpsStabilityOffset > 1 = False
-  | otherwise = walkRecords dpsMinimumFileSize
+  | otherwise = recordsConsumeToEnd dpsMinimumFileSize
   where
     inputLength = ByteString.length input
     -- Tentative record walk: each record starts with a mode byte, then
     -- mode 0 (CopyFromROM): outputOffset(4) + sourceOffset(4) + length(4)
     -- mode 1 (EnclosedData): outputOffset(4) + dataLength(4) + data(dataLength)
     -- Records must consume the remaining bytes exactly.
-    walkRecords position
+    recordsConsumeToEnd position
       | position == inputLength = True
       | position > inputLength  = False
       | otherwise =
           let modeByte = ByteString.index input position
           in if modeByte == dpsCopyFromROMMode
              then position + dpsCopyRecordSize <= inputLength
-                  && walkRecords (position + dpsCopyRecordSize)
+                  && recordsConsumeToEnd (position + dpsCopyRecordSize)
              else if modeByte == dpsEnclosedDataMode
              then let fixedSize = dpsRecordHeaderSize + 4  -- + dataLength field
                   in position + fixedSize <= inputLength
-                     && let dataLength = word32LEAt (position + dpsRecordHeaderSize)
-                        in walkRecords (position + fixedSize + dataLength)
+                     && let dataLength = readWord32LEAt (position + dpsRecordHeaderSize)
+                        in recordsConsumeToEnd (position + fixedSize + dataLength)
              else False
-    word32LEAt offset
+    readWord32LEAt offset
       | offset + 4 > inputLength = inputLength  -- out of bounds → force walk failure
       | otherwise =
           let byte0 = fromIntegral (ByteString.index input offset) :: Int
@@ -91,7 +91,7 @@ parseDPS metadataEncoding (PatchFileContents input)
 -- 'FieldName'.
 parseMetadataField :: EncodingName -> FieldName -> ByteParser (EncodedText, [SlapAdvisory])
 parseMetadataField metadataEncoding fieldName = do
-  bytes <- getBytes (Length dpsFieldWidth)
+  bytes <- getBytes dpsFieldWidth
   pure (decodeFixedWidthTextField metadataEncoding LabelDPS fieldName bytes)
 
 parseDPSBody :: EncodingName -> ByteParser (Either SlapError (DPSPatch, [SlapAdvisory]))

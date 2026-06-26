@@ -8,7 +8,7 @@ module Slap.PPF4.Parse (parsePPF4) where
 
 import Slap.PPF4.Types (PPF4Patch(..), PPF4Replace(..), PPF4Append(..),
                         ppf4PreambleLength, ppf4DescriptionLength,
-                        ppf4PostDescriptionLength)
+                        ppf4PostDescriptionLength, ppf4RecordHeaderLength)
 import Slap.Status (SlapError(..), SlapAdvisory, ByteParserError(..), Parsed(..))
 import Slap.FieldName (FieldName(..))
 import Slap.FileContents (PatchFileContents(..))
@@ -95,7 +95,7 @@ ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 parsePPF4Records :: ActionIndex -> [PPF4WireRecord] -> ByteParser [PPF4WireRecord]
 parsePPF4Records recordIndex accumulatedReversed = do
   remainingBytes <- remaining
-  if unLength remainingBytes < 6
+  if unLength remainingBytes < unLength ppf4RecordHeaderLength
     then pure (reverse accumulatedReversed)
     else do
       commandByte <- getByte
@@ -104,7 +104,7 @@ parsePPF4Records recordIndex accumulatedReversed = do
       remainingAfterHeader <- remaining
       when (unLength remainingAfterHeader < count) $
         throwByteParserError (ByteParserTruncatedRecord recordIndex
-          (RequiredLength (Length (6 + count)))
+          (RequiredLength (Length (unLength ppf4RecordHeaderLength + count)))
           (RemainingLength remainingBytes))
       payload    <- getBytes (Length count)
       wireRecord <- case commandByte of

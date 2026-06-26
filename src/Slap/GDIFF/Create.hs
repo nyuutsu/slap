@@ -108,20 +108,27 @@ data CopyEncoding
   | Copy255 Int64  Word32  -- ^ long   offset, int    length
   deriving (Show, Eq)
 
+-- | The corecursion state 'planCopy' threads through 'unfoldr':
+-- the source offset where the next chunk starts,
+-- and how many bytes are still to be planned.
+data CopyPlanCursor = CopyPlanCursor !Offset !Length
+
 -- | Split a COPY request into a sequence of in-range 'CopyEncoding'
 -- chunks. Implemented as an 'unfoldr' because the work is a corecursion:
--- one chunk per step, threading a @(cursor, remaining)@ state until
+-- one chunk per step, advancing a 'CopyPlanCursor' until it is
 -- exhausted. Above 'maxSingleCommandLength' this yields a run of
 -- 'Copy255' commands; below it, a singleton.
 planCopy :: Offset -> Length -> [CopyEncoding]
-planCopy initialOffset initialLength = unfoldr peelChunk (initialOffset, initialLength)
+planCopy initialOffset initialLength =
+  unfoldr peelChunk (CopyPlanCursor initialOffset initialLength)
   where
-    peelChunk (_, Length 0) = Nothing
-    peelChunk (currentOffset, remainingLength) =
+    peelChunk (CopyPlanCursor _ (Length 0)) = Nothing
+    peelChunk (CopyPlanCursor currentOffset remainingLength) =
       let chunkLength    = minLength maxSingleCommandLength remainingLength
           nextOffset     = advance currentOffset chunkLength
           remainingAfter = subtractLength remainingLength chunkLength
-      in Just (selectCopy currentOffset chunkLength, (nextOffset, remainingAfter))
+      in Just (selectCopy currentOffset chunkLength,
+               CopyPlanCursor nextOffset remainingAfter)
 
 -- | Choose the narrowest 'CopyEncoding' opcode whose offset and length
 -- fields fit the inputs. Total over inputs whose length fits in

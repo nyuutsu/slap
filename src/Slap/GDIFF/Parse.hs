@@ -28,55 +28,29 @@ parseGDIFF (PatchFileContents input)
   where
     parseCommands accumulated = do
       opcode <- getByte
+      let copy offsetReader lengthReader = do
+            offset     <- offsetReader
+            copyLength <- lengthReader
+            parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset
+                                            , gdiffCopyLength = Length copyLength } : accumulated)
+          dataCommand lengthReader = do
+            dataLength <- lengthReader
+            payload    <- getBytes (Length dataLength)
+            parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
+      -- One line per opcode, reading as the W3C GDIFF command table:
+      -- the COPY opcodes pair an offset reader with a length reader,
+      -- the DATA opcodes carry a length reader alone.
       case opcode of
-        0 -> pure (GDiffPatch (reverse accumulated))
-
-        -- DATA with ushort length
-        247 -> do dataLength <- fromIntegral <$> word16BE
-                  payload <- getBytes (Length dataLength)
-                  parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
-
-        -- DATA with int length
-        248 -> do dataLength <- fromIntegral <$> word32BE
-                  payload <- getBytes (Length dataLength)
-                  parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
-
-        -- COPY ushort offset, ubyte length
-        249 -> do offset <- fromIntegral <$> word16BE
-                  copyLength <- fromIntegral <$> getByte
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY ushort offset, ushort length
-        250 -> do offset <- fromIntegral <$> word16BE
-                  copyLength <- fromIntegral <$> word16BE
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY ushort offset, int length
-        251 -> do offset <- fromIntegral <$> word16BE
-                  copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY int offset, ubyte length
-        252 -> do offset <- fromIntegral <$> word32BE
-                  copyLength <- fromIntegral <$> getByte
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY int offset, ushort length
-        253 -> do offset <- fromIntegral <$> word32BE
-                  copyLength <- fromIntegral <$> word16BE
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY int offset, int length
-        254 -> do offset <- fromIntegral <$> word32BE
-                  copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- COPY long offset, int length
-        255 -> do offset <- fromIntegral <$> int64BE
-                  copyLength <- fromIntegral <$> word32BE
-                  parseCommands (GDiffCommandCopy { gdiffCopyOffset = Offset offset, gdiffCopyLength = Length copyLength } : accumulated)
-
-        -- DATA: the opcode is itself the length (1-246 bytes); 0 and
-        -- 247-255 are matched above, so this arm is exactly that range.
-        _ -> do payload <- getBytes (Length (fromIntegral opcode))
-                parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
+        0   -> pure (GDiffPatch (reverse accumulated))
+        247 -> dataCommand (fromIntegral <$> word16BE)
+        248 -> dataCommand (fromIntegral <$> word32BE)
+        249 -> copy (fromIntegral <$> word16BE) (fromIntegral <$> getByte)
+        250 -> copy (fromIntegral <$> word16BE) (fromIntegral <$> word16BE)
+        251 -> copy (fromIntegral <$> word16BE) (fromIntegral <$> word32BE)
+        252 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> getByte)
+        253 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> word16BE)
+        254 -> copy (fromIntegral <$> word32BE) (fromIntegral <$> word32BE)
+        255 -> copy (fromIntegral <$> int64BE)  (fromIntegral <$> word32BE)
+        -- DATA whose opcode is itself the length (1-246 bytes);
+        -- 0 and 247-255 are matched above, so this arm is exactly that range.
+        _   -> dataCommand (pure (fromIntegral opcode))

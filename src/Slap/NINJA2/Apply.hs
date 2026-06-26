@@ -5,7 +5,7 @@ module Slap.NINJA2.Apply
 import Slap.NINJA2.Types
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
-import Slap.Binary (copyByteStringRange, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      ActionIndex, RequestedLength(..),
                      byteLength, fitsWithin,
@@ -70,7 +70,7 @@ applyNINJA2 patch (InputFileContents source)
     -- past the source.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer outputPointer = do
-      copyByteStringRange outputPointer 0 source 0 (min sourceLength outputLength)
+      copyRegion outputPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputLength))
       when (outputLength > sourceLength) $
         fillBytes (outputPointer `plusPtr` sourceLength)
                   (0 :: Word8)
@@ -142,8 +142,8 @@ applyNINJA2 patch (InputFileContents source)
           in case checkRecordFits overflowActionIndex appendPosition decodedLength of
                Left err -> pure (Just err)
                Right () -> do
-                 copyByteStringRange outputPointer (unOffset appendPosition)
-                                     decoded 0 (ByteString.length decoded)
+                 copyRegion outputPointer appendPosition
+                            decoded (Offset 0) (byteLength decoded)
                  pure Nothing
         _ -> pure Nothing
 

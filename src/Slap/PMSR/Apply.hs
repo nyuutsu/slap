@@ -3,9 +3,9 @@ module Slap.PMSR.Apply
   ) where
 
 import Slap.PMSR.Types (PMSRPatch(..), PMSRRecord(..))
-import Slap.Binary (copyByteStringRange)
+import Slap.Binary (copyRegion)
 import Slap.Status (SlapError)
-import Slap.Measure (offsetToInt,
+import Slap.Measure (Offset(..), Length(..), offsetToInt, byteLength,
                      ActionIndex(unActionIndex),
                      firstAction, nextAction, streamEndIndex)
 
@@ -22,17 +22,17 @@ import Foreign.Ptr (plusPtr)
 -- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
 applyPMSR :: PMSRPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyPMSR patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer -> do
-    copyByteStringRange targetPointer 0 source 0 (min sourceLength outputSize)
+    copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputSize))
     when (outputSize > sourceLength) $
       fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputSize - sourceLength)
     let applyRecordStream !recordIndex
           | recordIndex >= recordStreamEnd = pure ()
           | otherwise = do
               let record = Vector.unsafeIndex records (unActionIndex recordIndex)
-              copyByteStringRange targetPointer
-                (offsetToInt (pmsrOffset record))
-                (pmsrData record) 0
-                (ByteString.length (pmsrData record))
+              copyRegion targetPointer
+                (pmsrOffset record)
+                (pmsrData record) (Offset 0)
+                (byteLength (pmsrData record))
               applyRecordStream (nextAction recordIndex)
     applyRecordStream firstAction
   where

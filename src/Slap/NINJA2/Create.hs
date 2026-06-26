@@ -46,7 +46,7 @@ encodeBoundedField fieldName fieldWidth = \case
   Just inputText ->
     let (encodedBytes, notices) =
           encodeTextBounded EncodingUtf8
-                            (unLength fieldWidth)
+                            fieldWidth
                             (encodedTextContent inputText)
         padded     = encodedBytes
                   <> ByteString.replicate

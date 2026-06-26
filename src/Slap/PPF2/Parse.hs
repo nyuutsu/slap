@@ -39,7 +39,7 @@ import Data.Bifunctor (first)
 -- | Intermediate result of running the PPF2 header parser. Reshaped
 -- by 'parsePPF2' into the final 'PPF2Patch' once the trailing record
 -- stream (and optional FILE_ID.DIZ trailer) have been parsed
--- separately. Parallel to 'Slap.PPF3.Parse.PPF3ParsedHeader'.
+-- separately.
 data PPF2ParsedHeader = PPF2ParsedHeader
   { ppf2HeaderDescription           :: !EncodedText
   , ppf2HeaderDescriptionAdvisories :: ![SlapAdvisory]
@@ -55,22 +55,19 @@ parsePPF2 metadataEncoding (PatchFileContents input)
               (ActualLength (byteLength input)))
   | otherwise = do
       () <- checkEncodingByte input
-      let (detectedFileId, fileIdAdvisories) = detectFileId metadataEncoding input
-          fileId     = fmap fst detectedFileId
-          recordBody = stripFileId detectedFileId
-                          (ByteString.drop (unLength ppf2HeaderLength) input)
+      let fileIdSplit = splitFileIdTrailer metadataEncoding ppf2HeaderLength input
       header <- first (ParseError LabelPPF2) (runByteParser parsePPF2Header input)
       records <- first (ParseError LabelPPF2)
-                       (runByteParser (parsePPF2Records firstAction) recordBody)
+                       (runByteParser (parsePPF2Records firstAction) (ppf2SplitRecordBody fileIdSplit))
       pure (Parsed
         PPF2Patch
           { ppf2Description     = ppf2HeaderDescription header
           , ppf2SourceFileSize  = ppf2HeaderSourceFileSize header
           , ppf2ValidationBlock = ppf2HeaderValidationBlock header
           , ppf2Records         = records
-          , ppf2FileId          = fileId
+          , ppf2FileId          = ppf2SplitFileId fileIdSplit
           }
-        (ppf2HeaderDescriptionAdvisories header ++ fileIdAdvisories))
+        (ppf2HeaderDescriptionAdvisories header ++ ppf2SplitAdvisories fileIdSplit))
   where
     parsePPF2Header :: ByteParser PPF2ParsedHeader
     parsePPF2Header = do
@@ -141,56 +138,57 @@ parsePPF2Records recordIndex = do
 
 
 ----------------------------------------------------------------------------
--- FILE_ID.DIZ trailer detection (PPF2-specific 4-byte length field)
+-- FILE_ID.DIZ trailer split (PPF2-specific 4-byte length field)
 ----------------------------------------------------------------------------
 
--- | Look at the very end of the patch for a FILE_ID.DIZ trailer.
--- The wire shape is:
+-- | The optional FILE_ID.DIZ trailer separated from a PPF2 record body:
+-- the typed metadata when present, the record body with the trailer
+-- removed, and any decode advisories.
+data PPF2FileIdSplit = PPF2FileIdSplit
+  { ppf2SplitFileId     :: !(Maybe PPF2FileId)
+  , ppf2SplitRecordBody :: !ByteString
+  , ppf2SplitAdvisories :: ![SlapAdvisory]
+  }
+
+-- | Detect and peel a PPF2 FILE_ID.DIZ trailer off the record body.
+-- @headerLength@ marks where the body begins; the trailer, when
+-- present, sits at the very end of @input@ with the wire shape
 --
 -- "@BEGIN_FILE_ID.DIZ" then content, then "@END_FILE_ID.DIZ", then a
--- 4-byte LE32 length
+-- 4-byte LE32 content length
 --
--- with the @<length>@ four bytes naming the @<content>@ length and
--- letting us walk backwards to find the start. Returns 'Nothing' if
--- the "@END_FILE_ID.DIZ" marker isn't where the length suffix
--- says it should be. When the trailer is present, the content bytes
--- are decoded leniently under the chosen metadata encoding; any
--- decode substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
--- advisories alongside the typed 'PPF2FileId'.
---
--- The wire-declared byte count is returned alongside the 'PPF2FileId'
--- so 'stripFileId' can size the trailer without re-encoding the typed text.
-detectFileId :: EncodingName -> ByteString -> (Maybe (PPF2FileId, Length), [SlapAdvisory])
-detectFileId metadataEncoding input
-  | inputLength < markerSize + lengthFieldSize = (Nothing, [])
-  | ByteString.take markerSize trailerCandidate /= "@END_FILE_ID.DIZ" = (Nothing, [])
-  | otherwise =
-      let dizContentLength = fromIntegral (getWord32LE lengthFieldStart input)
-          dizContentEnd    = markerStart
-          dizContentStart  = dizContentEnd - dizContentLength
-      in if dizContentStart < 0 then (Nothing, [])
-         else let dizContentBytes = ByteString.take dizContentLength
-                                      (ByteString.drop dizContentStart input)
-                  (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
-                  dizAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
-              in (Just (ppf2FileIdFromParsed dizText, Length dizContentLength), dizAdvisories)
+-- whose length suffix lets us walk back to the content start. The
+-- content is decoded leniently under the chosen metadata encoding; any
+-- substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
+-- advisories. The on-wire content byte count stays a local here, sizing
+-- the trim in place. An absent or unrecognized trailer (no
+-- "@END_FILE_ID.DIZ" where the suffix points) leaves the body as the
+-- whole post-header slice.
+splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF2FileIdSplit
+splitFileIdTrailer metadataEncoding headerLength input
+  | inputLength < markerSize + lengthFieldSize = withoutTrailer
+  | trailerCandidate /= "@END_FILE_ID.DIZ"     = withoutTrailer
+  | dizContentStart < 0                         = withoutTrailer
+  | otherwise = PPF2FileIdSplit
+      { ppf2SplitFileId     = Just (ppf2FileIdFromParsed dizText)
+      , ppf2SplitRecordBody =
+          ByteString.take (ByteString.length recordBody - trailerSize) recordBody
+      , ppf2SplitAdvisories = decodeLossAdvisories LabelPPF2 FieldFileIdDiz dizNotices
+      }
   where
-    markerSize        = unLength ppf2FileIdFooterLength
-    lengthFieldSize   = unLength ppf2FileIdLengthFieldWidth
-    inputLength       = ByteString.length input
-    lengthFieldStart  = inputLength - lengthFieldSize
-    markerStart       = lengthFieldStart - markerSize
-    trailerCandidate  = ByteString.take markerSize (ByteString.drop markerStart input)
+    inputLength      = ByteString.length input
+    markerSize       = unLength ppf2FileIdFooterLength
+    lengthFieldSize  = unLength ppf2FileIdLengthFieldWidth
+    recordBody       = ByteString.drop (unLength headerLength) input
+    withoutTrailer   = PPF2FileIdSplit Nothing recordBody []
 
--- | Trim the FILE_ID.DIZ trailer off the record body, if one was
--- detected. Leaves the body unchanged otherwise. The trailer size
--- is computed from the wire-declared content byte count plus the
--- fixed marker and length-field widths.
-stripFileId :: Maybe (PPF2FileId, Length) -> ByteString -> ByteString
-stripFileId Nothing body = body
-stripFileId (Just (_, contentByteCount)) body =
-  let trailerSize = unLength ppf2FileIdMarkerLength
-                  + unLength contentByteCount
-                  + unLength ppf2FileIdFooterLength
-                  + unLength ppf2FileIdLengthFieldWidth
-  in ByteString.take (ByteString.length body - trailerSize) body
+    lengthFieldStart = inputLength - lengthFieldSize
+    markerStart      = lengthFieldStart - markerSize
+    trailerCandidate = ByteString.take markerSize (ByteString.drop markerStart input)
+    dizContentLength = fromIntegral (getWord32LE lengthFieldStart input)
+    dizContentStart  = markerStart - dizContentLength
+    (dizText, dizNotices) =
+      decodeTextLenient metadataEncoding
+        (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
+    trailerSize = unLength ppf2FileIdMarkerLength + dizContentLength
+                + unLength ppf2FileIdFooterLength + unLength ppf2FileIdLengthFieldWidth

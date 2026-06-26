@@ -47,24 +47,23 @@ import Data.Maybe (isJust)
 -- PPF3, so the shared bounded primitive stays padding-agnostic.
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
-  let width = unLength ppf3DescriptionLength
-      (truncatedBytes, notices) =
-        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
+  let (truncatedBytes, notices) =
+        encodeTextBounded EncodingUtf8 ppf3DescriptionLength (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
+                 (max 0 (unLength ppf3DescriptionLength - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF3 FieldDescription notices
   in (padded, advisories)
 
-buildHeader :: ByteString -> Bool -> Bool -> ByteString -> PPF3ImageType -> Builder
-buildHeader description blockCheck hasUndo validationBlock imageType =
-  byteString "PPF30"                                    -- magic + version
-  <> word8 0x02                                          -- encoding method
-  <> byteString description                              -- 50-byte description
-  <> word8 (fromImageType imageType)                     -- image type
-  <> word8 (if blockCheck then 0x01 else 0x00)           -- block-check flag
-  <> word8 (if hasUndo then 0x01 else 0x00)              -- undo flag
-  <> word8 0x00                                          -- dummy
-  <> if blockCheck then byteString validationBlock else mempty
+buildHeader :: ByteString -> Maybe PPF3ValidationBlock -> Bool -> PPF3ImageType -> Builder
+buildHeader description validationBlock hasUndo imageType =
+  byteString "PPF30"                                       -- magic + version
+  <> word8 0x02                                             -- encoding method
+  <> byteString description                                 -- 50-byte description
+  <> word8 (fromImageType imageType)                        -- image type
+  <> word8 (if isJust validationBlock then 0x01 else 0x00)  -- block-check flag
+  <> word8 (if hasUndo               then 0x01 else 0x00)  -- undo flag
+  <> word8 0x00                                             -- dummy
+  <> maybe mempty (byteString . unPPF3ValidationBlock) validationBlock
 
 encodeUndoRecord :: EncodedUndoHunk -> Builder
 encodeUndoRecord ehunk =
@@ -95,11 +94,8 @@ encodePPF3 :: [EncodedHunk]
            -> CreateResult
 encodePPF3 records description undoHunks validationBlock imageType =
   let (descriptionBytes, descriptionAdvisories) = padDescription description
-      hasValidate = isJust validationBlock
-      hasUndo     = isJust undoHunks
-      validationBytes = maybe ByteString.empty unPPF3ValidationBlock validationBlock
-      header = buildHeader descriptionBytes hasValidate hasUndo
-                 validationBytes imageType
+      hasUndo = isJust undoHunks
+      header  = buildHeader descriptionBytes validationBlock hasUndo imageType
       body = case undoHunks of
         Just hunks -> foldMap encodeUndoRecord hunks
         Nothing    -> foldMap encodeWriteRecord records

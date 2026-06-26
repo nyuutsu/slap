@@ -5,7 +5,7 @@ module Slap.APSGBA.Apply
   ) where
 
 import Slap.APSGBA.Types
-import Slap.Binary (copyByteStringRange, fillNewBuffer)
+import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Status (SlapError(..), ApplyError(..))
 import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
@@ -66,7 +66,7 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
     -- length if shrinking) and zero-fill any tail past the source.
     seedBuffer :: Ptr Word8 -> IO ()
     seedBuffer targetPointer = do
-      copyByteStringRange targetPointer 0 source 0 (min sourceLength targetSize)
+      copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength targetSize))
       when (targetSize > sourceLength) $
         fillBytes (targetPointer `plusPtr` sourceLength)
                   (0 :: Word8)

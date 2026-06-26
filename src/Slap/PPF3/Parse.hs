@@ -8,6 +8,7 @@ module Slap.PPF3.Parse (parsePPF3, parsePPF3Records) where
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..),
                         PPF3ImageType(..), PPF3ValidationBlock(..),
                         PPF3FileId, ppf3FileIdFromParsed,
+                        ppf3PreambleLength, ppf3RecordHeaderLength,
                         ppf3DescriptionLength, ppf3MinHeaderLength,
                         ppf3ValidationSize,
                         ppf3FileIdLengthFieldWidth,
@@ -59,13 +60,10 @@ parsePPF3 metadataEncoding (PatchFileContents input)
       let headerLength = if ppf3HeaderHasBlockCheck header
                            then ppf3MinHeaderLength <> ppf3ValidationSize
                            else ppf3MinHeaderLength
-          (detectedFileId, fileIdAdvisories) = detectFileId metadataEncoding input
-          fileId     = fmap fst detectedFileId
-          recordBody = stripFileId detectedFileId
-                            (ByteString.drop (unLength headerLength) input)
+          fileIdSplit = splitFileIdTrailer metadataEncoding headerLength input
       records <- first (ParseError LabelPPF3)
                        (runByteParser (parsePPF3Records (ppf3HeaderHasUndo header) firstAction)
-                                      recordBody)
+                                      (ppf3SplitRecordBody fileIdSplit))
       pure (Parsed
         PPF3Patch
           { ppf3Description     = ppf3HeaderDescription header
@@ -73,13 +71,13 @@ parsePPF3 metadataEncoding (PatchFileContents input)
           , ppf3HasUndo         = ppf3HeaderHasUndo header
           , ppf3ValidationBlock = ppf3HeaderValidationBlock header
           , ppf3Records         = records
-          , ppf3FileId          = fileId
+          , ppf3FileId          = ppf3SplitFileId fileIdSplit
           }
-        (ppf3HeaderDescriptionAdvisories header ++ fileIdAdvisories))
+        (ppf3HeaderDescriptionAdvisories header ++ ppf3SplitAdvisories fileIdSplit))
   where
     parseHeader :: ByteParser PPF3ParsedHeader
     parseHeader = do
-      skip (Length 6)
+      skip ppf3PreambleLength
       descriptionBytes <- getBytes ppf3DescriptionLength
       let (descriptionText, descriptionAdvisories) =
             decodeFixedWidthTextField metadataEncoding LabelPPF3 FieldDescription descriptionBytes
@@ -99,8 +97,11 @@ parsePPF3 metadataEncoding (PatchFileContents input)
         , ppf3HeaderValidationBlock       = validationBlock
         }
 
+-- | Minimum bytes 'parsePPF3' needs before indexing: the preamble, so
+-- 'checkEncodingByte' can read the encoding byte at offset 5 and
+-- 'parseHeader' can skip past it.
 minimumPPF3ParseLength :: Length
-minimumPPF3ParseLength = Length 6
+minimumPPF3ParseLength = ppf3PreambleLength
 
 -- | Verify the encoding-method byte at offset 5 is @0x02@.
 checkEncodingByte :: ByteString -> Either SlapError ()
@@ -116,11 +117,11 @@ checkEncodingByte input
 parsePPF3Records :: Bool -> ActionIndex -> ByteParser [PPF3Record]
 parsePPF3Records hasUndo recordIndex = do
   remainingBytes <- remaining
-  if unLength remainingBytes < 9 then pure []
+  if unLength remainingBytes < unLength ppf3RecordHeaderLength then pure []
   else do
     recordOffset <- offsetFromParsed <$> int64LE
     payloadLength <- fromIntegral <$> getByte
-    let totalNeeded = 9 + payloadLength + (if hasUndo then payloadLength else 0)
+    let totalNeeded = unLength ppf3RecordHeaderLength + payloadLength + (if hasUndo then payloadLength else 0)
     if totalNeeded > unLength remainingBytes
       then throwByteParserError (ByteParserTruncatedRecord recordIndex
              (RequiredLength (Length totalNeeded))
@@ -135,41 +136,51 @@ parsePPF3Records hasUndo recordIndex = do
 
 
 ----------------------------------------------------------------------------
--- FILE_ID.DIZ trailer detection (PPF3-specific 2-byte length field)
+-- FILE_ID.DIZ trailer split (PPF3-specific 2-byte length field)
 ----------------------------------------------------------------------------
 
--- | Look at the end of the patch for a FILE_ID.DIZ trailer; PPF3's
--- length suffix is two bytes (vs PPF2's four). Returns both the
--- typed FILE_ID.DIZ and the inner-content byte count as declared on
--- the wire (alongside any decode advisories). The byte count is
--- plumbed back to 'stripFileId' so the body-trim doesn't have to
--- re-encode the typed text just to recover the on-wire size.
-detectFileId :: EncodingName -> ByteString -> (Maybe (PPF3FileId, Int), [SlapAdvisory])
-detectFileId metadataEncoding input
-  | ByteString.length input < markerSize + lengthFieldSize = (Nothing, [])
-  | ByteString.take markerSize trailerCandidate /= "@END_FILE_ID.DIZ" = (Nothing, [])
-  | otherwise =
-      let dizContentLength = fromIntegral (getWord16LE
-                              (ByteString.length input - lengthFieldSize) input)
-          dizContentEnd    = ByteString.length input - lengthFieldSize - markerSize
-          dizContentStart  = dizContentEnd - dizContentLength
-      in if dizContentStart < 0 then (Nothing, [])
-         else let dizContentBytes = ByteString.take dizContentLength
-                                      (ByteString.drop dizContentStart input)
-                  (dizText, dizNotices) = decodeTextLenient metadataEncoding dizContentBytes
-                  dizAdvisories = decodeLossAdvisories LabelPPF3 FieldFileIdDiz dizNotices
-              in (Just (ppf3FileIdFromParsed dizText, dizContentLength), dizAdvisories)
+-- | The optional FILE_ID.DIZ trailer separated from a PPF3 record body:
+-- the typed metadata when present, the record body with the trailer
+-- removed, and any decode advisories.
+data PPF3FileIdSplit = PPF3FileIdSplit
+  { ppf3SplitFileId     :: !(Maybe PPF3FileId)
+  , ppf3SplitRecordBody :: !ByteString
+  , ppf3SplitAdvisories :: ![SlapAdvisory]
+  }
+
+-- | Detect and peel a PPF3 FILE_ID.DIZ trailer off the record body.
+-- @headerLength@ marks where the body begins; the trailer, when
+-- present, sits at the very end of @input@, its content length declared
+-- by the 2-byte LE suffix (PPF3's suffix is two bytes; PPF2's is four).
+-- The content is decoded leniently under the chosen metadata encoding;
+-- any substitutions surface as 'Slap.Status.FieldDecodedSubstituted'
+-- advisories. The on-wire content byte count stays a local here, sizing
+-- the trim in place. An absent or unrecognized trailer leaves the body
+-- as the whole post-header slice.
+splitFileIdTrailer :: EncodingName -> Length -> ByteString -> PPF3FileIdSplit
+splitFileIdTrailer metadataEncoding headerLength input
+  | inputLength < markerSize + lengthFieldSize = withoutTrailer
+  | trailerCandidate /= "@END_FILE_ID.DIZ"     = withoutTrailer
+  | dizContentStart < 0                         = withoutTrailer
+  | otherwise = PPF3FileIdSplit
+      { ppf3SplitFileId     = Just (ppf3FileIdFromParsed dizText)
+      , ppf3SplitRecordBody =
+          ByteString.take (ByteString.length recordBody - trailerSize) recordBody
+      , ppf3SplitAdvisories = decodeLossAdvisories LabelPPF3 FieldFileIdDiz dizNotices
+      }
   where
+    inputLength      = ByteString.length input
     markerSize       = unLength ppf3FileIdFooterLength
     lengthFieldSize  = unLength ppf3FileIdLengthFieldWidth
-    trailerCandidate = ByteString.drop (ByteString.length input - lengthFieldSize - markerSize)
-                         (ByteString.take (ByteString.length input - lengthFieldSize) input)
+    recordBody       = ByteString.drop (unLength headerLength) input
+    withoutTrailer   = PPF3FileIdSplit Nothing recordBody []
 
-stripFileId :: Maybe (PPF3FileId, Int) -> ByteString -> ByteString
-stripFileId Nothing body = body
-stripFileId (Just (_, contentByteCount)) body =
-  let trailerSize = unLength ppf3FileIdMarkerLength
-                  + contentByteCount
-                  + unLength ppf3FileIdFooterLength
-                  + unLength ppf3FileIdLengthFieldWidth
-  in ByteString.take (ByteString.length body - trailerSize) body
+    trailerCandidate = ByteString.take markerSize
+                         (ByteString.drop (inputLength - lengthFieldSize - markerSize) input)
+    dizContentLength = fromIntegral (getWord16LE (inputLength - lengthFieldSize) input)
+    dizContentStart  = inputLength - lengthFieldSize - markerSize - dizContentLength
+    (dizText, dizNotices) =
+      decodeTextLenient metadataEncoding
+        (ByteString.take dizContentLength (ByteString.drop dizContentStart input))
+    trailerSize = unLength ppf3FileIdMarkerLength + dizContentLength
+                + unLength ppf3FileIdFooterLength + unLength ppf3FileIdLengthFieldWidth

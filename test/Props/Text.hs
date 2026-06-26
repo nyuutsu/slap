@@ -213,7 +213,7 @@ prop_utf8LenientDecodesArbitraryBytesWithoutBottom ints =
 prop_boundedAtMostCap :: NonNegative Int -> String -> Property
 prop_boundedAtMostCap (NonNegative cap) sourceString =
   let text = Text.pack sourceString
-      (bytes, _notices) = encodeTextBounded EncodingUtf8 cap text
+      (bytes, _notices) = encodeTextBounded EncodingUtf8 (Length cap) text
   in property (ByteString.length bytes <= cap)
 
 -- | 100 ASCII chars under a 50-byte cap: exactly 50 bytes out,
@@ -221,7 +221,7 @@ prop_boundedAtMostCap (NonNegative cap) sourceString =
 test_boundedAsciiCap50 :: IO ()
 test_boundedAsciiCap50 = do
   let source = Text.pack (replicate 100 'x')
-      (bytes, notices) = encodeTextBounded EncodingUtf8 50 source
+      (bytes, notices) = encodeTextBounded EncodingUtf8 (Length 50) source
   assertEqual "50 bytes out" 50 (ByteString.length bytes)
   assertEqual "one notice"   1  (length notices)
   case notices of
@@ -234,7 +234,7 @@ test_boundedAsciiCap50 = do
 test_boundedAsciiExact :: IO ()
 test_boundedAsciiExact = do
   let source = Text.pack (replicate 50 'a')
-      (bytes, notices) = encodeTextBounded EncodingUtf8 50 source
+      (bytes, notices) = encodeTextBounded EncodingUtf8 (Length 50) source
   assertEqual "50 bytes out" 50 (ByteString.length bytes)
   assertEqual "no notices"   [] notices
 
@@ -244,7 +244,7 @@ test_boundedAsciiExact = do
 test_boundedJapaneseCap7 :: IO ()
 test_boundedJapaneseCap7 = do
   let source = Text.pack "\x65E5\x672C\x8A9E"  -- 9 bytes total in UTF-8
-      (bytes, notices) = encodeTextBounded EncodingUtf8 7 source
+      (bytes, notices) = encodeTextBounded EncodingUtf8 (Length 7) source
   assertEqual "6 bytes out (two codepoints fit)" 6 (ByteString.length bytes)
   case notices of
     [TruncatedToFitBound (OriginalLength original) (TruncatedLength written)] -> do
@@ -256,8 +256,8 @@ test_boundedJapaneseCap7 = do
 -- truncation is reported.
 test_boundedCapZero :: IO ()
 test_boundedCapZero = do
-  let (bytes1, notices1) = encodeTextBounded EncodingUtf8 0 (Text.pack "")
-      (bytes2, notices2) = encodeTextBounded EncodingUtf8 0 (Text.pack "x")
+  let (bytes1, notices1) = encodeTextBounded EncodingUtf8 (Length 0) (Text.pack "")
+      (bytes2, notices2) = encodeTextBounded EncodingUtf8 (Length 0) (Text.pack "x")
   assertEqual "empty source, cap 0" ByteString.empty bytes1
   assertEqual "empty source, no notice" [] notices1
   assertEqual "non-empty source, cap 0" ByteString.empty bytes2
@@ -280,7 +280,7 @@ test_boundedTruncationCounts =
     ]
   where
     checkOne (caseLabel, text, cap) = do
-      let (bytes, notices) = encodeTextBounded EncodingUtf8 cap text
+      let (bytes, notices) = encodeTextBounded EncodingUtf8 (Length cap) text
       assertBool (caseLabel ++ ": output ≤ cap")
         (ByteString.length bytes <= cap)
       case [n | n@TruncatedToFitBound{} <- notices] of

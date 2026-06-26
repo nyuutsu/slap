@@ -12,7 +12,8 @@ import Slap.DPS.Types (DPSCreateMetadata(..), DPSStability, fromDPSStability,
                        narrowDPSRecords, narrowDPSSourceSize,
                        unDPSSourceSize, dpsFieldWidth)
 import Slap.Binary (putWord32LE, diffHunks)
-import Slap.Measure (Offset(..), Hunk(..), byteFileSize, distance)
+import Slap.Measure (Offset(..), Hunk(..), byteFileSize, byteLength,
+                     distance, hunkEnd, lengthToOffset, unLength)
 import Slap.Text (EncodedText, EncodingName(..),
                   encodedTextContent, encodeTextBounded, encodeLossAdvisories)
 import Slap.Status (SlapError, SlapAdvisory, CreateResult(..))
@@ -62,7 +63,7 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
             encodeTextBounded EncodingUtf8 dpsFieldWidth (encodedTextContent fieldText)
           padded = truncatedBytes
                 <> ByteString.replicate
-                     (max 0 (dpsFieldWidth - ByteString.length truncatedBytes))
+                     (max 0 (unLength dpsFieldWidth - ByteString.length truncatedBytes))
                      0x00
           advisories = encodeLossAdvisories LabelDPS fieldName notices
       in (padded, advisories)
@@ -70,24 +71,22 @@ createDPS inputContents@(InputFileContents original) outputContents metadata sta
 dpsRecordsFromDiff :: InputFileContents -> OutputFileContents -> [DPSRecord]
 dpsRecordsFromDiff _sourceContents (OutputFileContents modified) | ByteString.null modified = []
 dpsRecordsFromDiff inputContents outputContents@(OutputFileContents modified) =
-  buildRecords 0 (diffHunks inputContents outputContents)
+  buildRecords (Offset 0) (diffHunks inputContents outputContents)
   where
-    modifiedLength = ByteString.length modified
-    trailingCopy position
-      | position < modifiedLength =
-          [DPSCopyFromROM (Offset position)
-             (Offset position) (distance (Offset position) (Offset modifiedLength))]
+    modifiedEnd = lengthToOffset (byteLength modified)
+    trailingCopy outputCursor
+      | outputCursor < modifiedEnd =
+          [DPSCopyFromROM outputCursor outputCursor (distance outputCursor modifiedEnd)]
       | otherwise = []
-    buildRecords position [] = trailingCopy position
-    buildRecords position (Hunk rawOffset rawData : rest) =
-      let intOffset = unOffset rawOffset
-      in if intOffset > position
-         then DPSCopyFromROM (Offset position)
-                (Offset position) (distance (Offset position) rawOffset)
-              : DPSEnclosedData rawOffset rawData
-              : buildRecords (intOffset + ByteString.length rawData) rest
-         else DPSEnclosedData rawOffset rawData
-              : buildRecords (intOffset + ByteString.length rawData) rest
+    buildRecords outputCursor [] = trailingCopy outputCursor
+    buildRecords outputCursor (currentHunk : rest) =
+      let hunkStart  = hunkOffset currentHunk
+          dataRecord = DPSEnclosedData hunkStart (hunkPayload currentHunk)
+          continue   = buildRecords (hunkEnd currentHunk) rest
+      in if hunkStart > outputCursor
+         then DPSCopyFromROM outputCursor outputCursor (distance outputCursor hunkStart)
+              : dataRecord : continue
+         else dataRecord : continue
 
 -- | Serialise an 'EncodedDPSRecord' to wire bytes. The 'Word32'
 -- selectors carry values 'narrowDPSRecord' already validated against the

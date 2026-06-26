@@ -20,9 +20,12 @@ module Slap.PPF3.Types
   , fromImageType
     -- * Named constants
   , ppf3MagicBytes
+  , ppf3PreambleLength
   , ppf3DescriptionLength
+  , ppf3PostDescriptionLength
   , ppf3MinHeaderLength
   , ppf3MaxRecordPayload
+  , ppf3RecordHeaderLength
   , ppf3ValidationOffset
   , ppf3ValidationSize
   , ppf3FileIdLengthFieldWidth
@@ -122,22 +125,36 @@ data PPF3Patch = PPF3Patch
 ppf3MagicBytes :: ByteString
 ppf3MagicBytes = "PPF3"
 
+-- | Header preamble before the description field: 4 magic + 1 version
+-- + 1 encoding = 6 bytes.
+ppf3PreambleLength :: Length
+ppf3PreambleLength = Length 6
+
 -- | Length of the description field: 50 bytes.
 ppf3DescriptionLength :: Length
 ppf3DescriptionLength = Length 50
 
+-- | Flag and padding bytes after the description: 1 image type
+-- + 1 block-check flag + 1 undo flag + 1 dummy = 4 bytes.
+ppf3PostDescriptionLength :: Length
+ppf3PostDescriptionLength = Length 4
+
 -- | Minimum PPF3 header length, before any optional 1024-byte
--- validation block: 4 magic + 1 version + 1 encoding +
--- 50 description + 1 image type + 1 block-check flag +
--- 1 undo flag + 1 dummy = 60.
+-- validation block: the preamble, the description, and the four
+-- post-description flag/padding bytes.
 ppf3MinHeaderLength :: Length
-ppf3MinHeaderLength = Length 60
+ppf3MinHeaderLength =
+  ppf3PreambleLength <> ppf3DescriptionLength <> ppf3PostDescriptionLength
 
 -- | Maximum payload bytes a single PPF3 record can carry. The
 -- record format uses a single-byte size field, capping payload
 -- (and undo-payload) at @0xFF = 255@.
 ppf3MaxRecordPayload :: Length
 ppf3MaxRecordPayload = Length 255
+
+-- | Fixed per-record header: 8-byte LE offset + 1-byte payload count.
+ppf3RecordHeaderLength :: Length
+ppf3RecordHeaderLength = Length 9
 
 -- | The source-ROM offset the validation block is read from,
 -- depending on the image-type byte.

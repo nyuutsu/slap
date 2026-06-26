@@ -293,6 +293,8 @@ newtype EncodingMethodByte = EncodingMethodByte { unEncodingMethodByte :: Word8 
 -- Records
 ----------------------------------------------------------------------------
 
+-- | A raw edit span — a target 'Offset' and the payload bytes to write there — as produced by 'Slap.Binary.diffHunks' before any per-record size check.
+-- 'splitHunk' / 'splitHunks' refine it into a 'SplitHunk' whose payload respects a format's per-record cap; only that refined form reaches an encoder.
 data Hunk = Hunk
   { hunkOffset  :: !Offset
   , hunkPayload :: !ByteString
@@ -659,12 +661,12 @@ hunkEnd hunk = advance (hunkOffset hunk) (byteLength (hunkPayload hunk))
 -- 'EncodedHunk', which can only be produced by narrowing a 'SplitHunk'
 -- in 'Slap.Narrow'.
 splitHunk :: Length -> Hunk -> [SplitHunk]
-splitHunk maxLength (Hunk hunkOffset hunkPayload)
-  | byteLength hunkPayload <= maxLength = [SplitHunk hunkOffset hunkPayload]
+splitHunk maxLength (Hunk startOffset payload)
+  | byteLength payload <= maxLength = [SplitHunk startOffset payload]
   | otherwise =
-      let (chunk, remaining) = ByteString.splitAt (unLength maxLength) hunkPayload
-          nextOffset         = advance hunkOffset maxLength
-      in SplitHunk hunkOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
+      let (chunk, remaining) = ByteString.splitAt (unLength maxLength) payload
+          nextOffset         = advance startOffset maxLength
+      in SplitHunk startOffset chunk : splitHunk maxLength (Hunk nextOffset remaining)
 
 -- | Split a list of hunks so every emitted 'SplitHunk' carries a
 -- payload of at most @maxLength@ bytes.

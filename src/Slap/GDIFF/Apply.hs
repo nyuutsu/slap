@@ -44,14 +44,14 @@ applyGDIFF patch (InputFileContents source) =
       let
         applyLoop :: Offset -> [GDiffCommand] -> IO ()
         applyLoop _outputPosition [] = pure ()
-        applyLoop !outputPosition (command : remaining) = case command of
+        applyLoop !outputPosition (command : remainingCommands) = case command of
           GDiffCommandData { gdiffDataPayload = payload } -> do
             let dataLength = byteLength payload
             copyRegion outputPointer outputPosition payload (Offset 0) dataLength
-            applyLoop (advance outputPosition dataLength) remaining
+            applyLoop (advance outputPosition dataLength) remainingCommands
           GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength } -> do
             copyRegion outputPointer outputPosition source sourceOffset copyLength
-            applyLoop (advance outputPosition copyLength) remaining
+            applyLoop (advance outputPosition copyLength) remainingCommands
       in applyLoop (Offset 0) commands
 
 -- | Pre-flight bounds check on a GDIFF command stream. Walks the
@@ -77,6 +77,8 @@ validateCommands sourceSize = validateCommandStream firstAction (Length 0)
                (accumulatedOutput <> payloadLength)
                remainingCommands
         GDiffCommandCopy { gdiffCopyOffset = sourceOffset, gdiffCopyLength = copyLength }
+          -- Opcode 255's offset is a signed int64BE; the other COPY opcodes read unsigned 16/32-bit fields,
+          -- so only a 255 command can present a negative offset.
           | unOffset sourceOffset < 0 ->
               Left (ApplyNegativeRecordOffset actionIndex sourceOffset)
           | not (fitsWithin sourceOffset copyLength sourceSize) ->

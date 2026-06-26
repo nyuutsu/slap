@@ -66,19 +66,19 @@ applyDPS patch (InputFileContents source)
       let
         applyRecordStream :: ActionIndex -> [DPSRecord] -> IO (Maybe ApplyError)
         applyRecordStream !_recordIndex [] = pure Nothing
-        applyRecordStream !recordIndex (record : remaining) =
-          handleRecord recordIndex record remaining
+        applyRecordStream !recordIndex (record : remainingRecords) =
+          handleRecord recordIndex record remainingRecords
 
         handleRecord :: ActionIndex -> DPSRecord -> [DPSRecord] -> IO (Maybe ApplyError)
 
-        handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remaining =
+        handleRecord recordIndex (DPSCopyFromROM outputOffset sourceOffset copyLength) remainingRecords =
           case checkCopyFromRomPreconditions recordIndex outputOffset sourceOffset copyLength of
             Left err -> pure (Just err)
             Right () -> do
               copyRegion outputPointer outputOffset source sourceOffset copyLength
-              applyRecordStream (nextAction recordIndex) remaining
+              applyRecordStream (nextAction recordIndex) remainingRecords
 
-        handleRecord recordIndex (DPSEnclosedData outputOffset payload) remaining =
+        handleRecord recordIndex (DPSEnclosedData outputOffset payload) remainingRecords =
           let writeLength    = byteLength payload
               remainingSpace = remainingFromOffset outputOffset outputSize
           in if not (fitsWithin outputOffset writeLength outputSize)
@@ -87,6 +87,6 @@ applyDPS patch (InputFileContents source)
                                   (RemainingLength remainingSpace)))
                else do
                  copyRegion outputPointer outputOffset payload (Offset 0) writeLength
-                 applyRecordStream (nextAction recordIndex) remaining
+                 applyRecordStream (nextAction recordIndex) remainingRecords
 
       in applyRecordStream firstAction records

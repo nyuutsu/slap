@@ -5,7 +5,7 @@ module Slap.Detect (detectFormat) where
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.List (find)
-import qualified Slap.APSGBA.Parse as APSGBA (apsGbaStructure)
+import qualified Slap.APSGBA.Parse as APSGBA (isAPSGBAStructured)
 import Slap.APSGBA.Types (apsGbaMagicBytes)
 import Slap.APSN64.Types (apsN64MagicBytes)
 import Slap.BPS.Types (bpsMagicBytes)
@@ -107,5 +107,5 @@ detectFormat patchFile =
     -- Other probe results pass through unchanged.
     resolveAmbiguity :: PatchFormat -> PatchFormat
     resolveAmbiguity (PatchDirect FormatAPSN64)
-      | APSGBA.apsGbaStructure fileBytes = PatchDifferential FormatAPSGBA
+      | APSGBA.isAPSGBAStructured fileBytes = PatchDifferential FormatAPSGBA
     resolveAmbiguity format = format

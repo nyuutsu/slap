@@ -74,11 +74,10 @@ encodePPF2 records description sourceSize (PPF2ValidationBlock validationBytes) 
 -- @memset(buf,' ',50)@ + @strcpy@ + @space-overwrite@ idiom).
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
-  let width = unLength ppf2DescriptionLength
-      (truncatedBytes, notices) =
-        encodeTextBounded EncodingUtf8 width (encodedTextContent description)
+  let (truncatedBytes, notices) =
+        encodeTextBounded EncodingUtf8 ppf2DescriptionLength (encodedTextContent description)
       padded = truncatedBytes <> ByteString.replicate
-                 (max 0 (width - ByteString.length truncatedBytes)) 0x20
+                 (max 0 (unLength ppf2DescriptionLength - ByteString.length truncatedBytes)) 0x20
       advisories = encodeLossAdvisories LabelPPF2 FieldDescription notices
   in (padded, advisories)
 

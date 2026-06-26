@@ -77,26 +77,25 @@ data DPSCreateMetadata = DPSCreateMetadata
   } deriving (Show, Eq)
 
 data DPSPatch = DPSPatch
-  { dpsName       :: !EncodedText
-    -- ^ Wire format: 64-byte null-padded field, decoded at parse time
-    -- under the process locale. Re-encoded under the same locale on
-    -- create via 'Slap.DPS.Create.encodeField'.
-  , dpsAuthor     :: !EncodedText
-  , dpsVersion    :: !EncodedText
-  , dpsStability       :: DPSStability
-  , dpsFormatVersion :: DPSFormatVersion
-  , dpsOriginalSize   :: !DPSSourceSize  -- original ROM size, narrowed to the wire field's 4-byte LE Word32
-  , dpsRecords    :: [DPSRecord]
+  { dpsName          :: !EncodedText
+    -- ^ Wire format: 64-byte null-padded field, decoded at parse time under the process locale.
+    -- Re-encoded under the same locale on create via 'Slap.DPS.Create.encodeField'.
+  , dpsAuthor        :: !EncodedText
+  , dpsVersion       :: !EncodedText
+  , dpsStability     :: !DPSStability
+  , dpsFormatVersion :: !DPSFormatVersion
+  , dpsOriginalSize  :: !DPSSourceSize
+  , dpsRecords       :: ![DPSRecord]
   } deriving (Show)
 
 data DPSRecord
   = DPSCopyFromROM
-      { dpsCopyOutputOffset :: !Offset   -- write position in output
-      , dpsCopySourceOffset :: !Offset   -- source ROM offset to copy from
-      , dpsCopyLength       :: !Length   -- bytes to copy
+      { dpsCopyOutputOffset :: !Offset
+      , dpsCopySourceOffset :: !Offset
+      , dpsCopyLength       :: !Length
       }
   | DPSEnclosedData
-      { dpsDataOutputOffset :: !Offset   -- write position in output
+      { dpsDataOutputOffset :: !Offset
       , dpsDataPayload      :: !ByteString
       }
   deriving (Show)
@@ -180,8 +179,8 @@ narrowDPSRecords = traverse narrowDPSRecord
 ----------------------------------------------------------------------------
 
 -- | Each metadata field (name, author, version) is 64 bytes, null-padded.
-dpsFieldWidth :: Int
-dpsFieldWidth = 64
+dpsFieldWidth :: Length
+dpsFieldWidth = Length 64
 
 -- | Number of metadata fields in the header.
 dpsFieldCount :: Int
@@ -189,7 +188,7 @@ dpsFieldCount = 3
 
 -- | Total metadata size: 3 × 64 = 192 bytes.
 dpsMetadataSize :: Int
-dpsMetadataSize = dpsFieldCount * dpsFieldWidth
+dpsMetadataSize = dpsFieldCount * unLength dpsFieldWidth
 
 -- | Minimum valid DPS file: 192 (metadata) + 1 (flag) + 1 (version) + 4 (orig size).
 dpsMinimumFileSize :: Int
@@ -228,10 +227,10 @@ dpsCopyRecordSize = 13
 -- records. Returns @FileSize 0@ for an empty record list — the caller
 -- decides whether that means an empty output or a parse-level warning.
 dpsOutputExtent :: [DPSRecord] -> FileSize
-dpsOutputExtent = foldl' stepMaxEnd (FileSize 0)
+dpsOutputExtent = foldl' extendMaxWith (FileSize 0)
   where
-    stepMaxEnd :: FileSize -> DPSRecord -> FileSize
-    stepMaxEnd currentMax (DPSCopyFromROM outputOffset _sourceOffset copyLength) =
+    extendMaxWith :: FileSize -> DPSRecord -> FileSize
+    extendMaxWith currentMax (DPSCopyFromROM outputOffset _sourceOffset copyLength) =
       max currentMax (offsetToFileSize (advance outputOffset copyLength))
-    stepMaxEnd currentMax (DPSEnclosedData outputOffset payload) =
+    extendMaxWith currentMax (DPSEnclosedData outputOffset payload) =
       max currentMax (offsetToFileSize (advance outputOffset (byteLength payload)))

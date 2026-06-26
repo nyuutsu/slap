@@ -28,7 +28,6 @@ module Slap.Binary
   , sha1
   , sha256
     -- * Bulk memory operations
-  , copyByteStringRange
   , copyRegion
   , copyInPlace
   , viewBytesInRange
@@ -139,6 +138,13 @@ data VarintReadFailure
   -- byuu's varint drawing no signed/unsigned distinction at this band.
   | VarintExceedsSignedButFitsUnsigned
   deriving (Eq, Show)
+
+-- | A decoded variable-length integer: its value, and how many bytes it consumed.
+data VarintResult = VarintResult
+  { varintDecodedValue  :: !Int64
+  , varintBytesConsumed :: !Int
+  }
+  deriving (Show)
 
 -- | byuu/Near-style varint used by BPS and UPS.
 -- LSB-first encoding: each 7-bit group is stored low byte first.
@@ -315,15 +321,6 @@ sha256 = ByteArray.convert . Hash.hashWith Hash.SHA256
 -- Bulk memory operations
 ----------------------------------------------------------------------------
 
--- | Bulk copy @copyLength@ bytes from a ByteString (at @sourceOffset@) to a raw pointer (at @destinationOffset@).
-copyByteStringRange :: Ptr Word8 -> Int -> ByteString -> Int -> Int -> IO ()
-copyByteStringRange destination destinationOffset source sourceOffset copyLength =
-  when (copyLength > 0) $
-    UnsafeByteString.unsafeUseAsCStringLen source $ \(sourcePointer, _) ->
-      copyBytes (destination `plusPtr` destinationOffset)
-                (castPtr sourcePointer `plusPtr` sourceOffset)
-                copyLength
-
 -- | Bulk copy @regionLength@ bytes from a ByteString (at a typed
 -- 'Offset') to a raw pointer (at a typed 'Offset'). Uses memcpy
 -- internally. A no-op when @regionLength@ is zero or negative.
@@ -435,15 +432,15 @@ diffHunks (InputFileContents original) (OutputFileContents modified) =
       | otherwise = position
     mergeNearby [] = []
     mergeNearby [hunk] = [hunk]
-    mergeNearby (Hunk firstOffset firstData : Hunk nextOffset nextData : rest)
+    mergeNearby (Hunk firstOffset firstPayload : Hunk nextOffset nextPayload : remainingHunks)
       | gapBetween <= Length mergeGapThreshold =
           let merged = ByteString.take (unLength mergedLength)
                          (ByteString.drop (unOffset firstOffset) modified)
-          in mergeNearby (Hunk firstOffset merged : rest)
-      | otherwise = Hunk firstOffset firstData : mergeNearby (Hunk nextOffset nextData : rest)
+          in mergeNearby (Hunk firstOffset merged : remainingHunks)
+      | otherwise = Hunk firstOffset firstPayload : mergeNearby (Hunk nextOffset nextPayload : remainingHunks)
       where
-        gapBetween   = distance (advance firstOffset (byteLength firstData)) nextOffset
-        mergedLength = distance firstOffset (advance nextOffset (byteLength nextData))
+        gapBetween   = distance (advance firstOffset (byteLength firstPayload)) nextOffset
+        mergedLength = distance firstOffset (advance nextOffset (byteLength nextPayload))
 
 
 ----------------------------------------------------------------------------
@@ -487,17 +484,4 @@ putInt64BE value =
   <> word8 (fromIntegral ((value `shiftR` 8) .&. 0xFF))
   <> word8 (fromIntegral (value .&. 0xFF))
 
-----------------------------------------------------------------------------
--- Variable-length integer result
-----------------------------------------------------------------------------
-
--- | Result of decoding a variable-length integer: the decoded value
--- and the number of bytes it consumed from the input. The fields are
--- named for readability; the positional constructor still matches, so
--- existing @VarintResult value consumed@ patterns are undisturbed.
-data VarintResult = VarintResult
-  { varintDecodedValue  :: !Int64
-  , varintBytesConsumed :: !Int
-  }
-  deriving (Show)
 

@@ -216,17 +216,17 @@ data APSN64Patch = APSN64Patch APSN64Header !(Vector APSN64Record)
   deriving (Show)
 
 data APSN64Header = APSN64Header
-  { apsN64PatchType   :: APSPatchType
-  , apsN64Encoding    :: APSRecordEncoding
-  , apsN64Description :: EncodedText
+  { apsN64PatchType       :: APSPatchType
+  , apsN64Encoding        :: APSRecordEncoding
+  , apsN64Description     :: EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
     -- process locale. Same encoding model as PPF1\/PPF2\/PPF3\/PPF4;
     -- the wire field is space-padded on encode.
-  , apsN64ImageFormat :: Maybe APSImageFormat
-  , apsN64CartId      :: Maybe N64CartId
-  , apsN64Country     :: Maybe APSN64Country
-  , apsN64Crc         :: Maybe N64ChecksumPair
-  , apsN64DestinationSize    :: APSN64DestinationSize
+  , apsN64ImageFormat     :: Maybe APSImageFormat
+  , apsN64CartId          :: Maybe N64CartId
+  , apsN64Country         :: Maybe APSN64Country
+  , apsN64Crc             :: Maybe N64ChecksumPair
+  , apsN64DestinationSize :: APSN64DestinationSize
   } deriving (Show)
 
 data APSN64Record
@@ -247,8 +247,8 @@ apsN64MagicBytes :: ByteString
 apsN64MagicBytes = "APS10"
 
 -- | Description field width: 50 bytes, space-padded.
-apsN64DescriptionWidth :: Int
-apsN64DescriptionWidth = 50
+apsN64DescriptionWidth :: Length
+apsN64DescriptionWidth = Length 50
 
 -- | Maximum data bytes per APS-N64 record (8-bit length field).
 apsN64MaxChunkSize :: Length
@@ -274,7 +274,7 @@ apsN64Limits = EncodingLimits
 -- refuses a value past @0xFFFFFFFF@ rather than masking it) or
 -- 'apsN64DestinationSizeFromParsed' (parse-time trust). APS-N64 imposes
 -- no source/target size-pair rule, so this rides the create path on its
--- own channel. Sibling of 'Slap.DPS.Types.DPSSourceSize'.
+-- own channel.
 newtype APSN64DestinationSize =
   APSN64DestinationSize { unAPSN64DestinationSize :: Word32 }
   deriving (Show, Eq)

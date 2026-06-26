@@ -4,7 +4,7 @@ module Slap.APSGBA.Parse
   ( parseAPSGBA
   , parseGBA
   , parseGBARecords
-  , apsGbaStructure
+  , isAPSGBAStructured
   ) where
 
 -- Canonical reference: https://github.com/btimofeev/UniPatcher/wiki/APS-(GBA)
@@ -25,18 +25,19 @@ import Slap.Measure (Length(..), FileSize(..), offsetFromParsed,
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 
--- | Structural check for APS-GBA: header + N * 65544-byte records,
--- each record offset 64KB-aligned.  Used to disambiguate "APS10"
--- (APSN64) from "APS1" + source_size when size mod 256 == 48.
-apsGbaStructure :: ByteString -> Bool
-apsGbaStructure input =
-  let dataLength = ByteString.length input - apsGbaHeaderSize
-      recordCount = dataLength `div` apsGbaRecordSize
+-- | Structural check for APS-GBA: a header followed by N 65544-byte records, each at a 64KB-aligned offset.
+-- Used to disambiguate "APS10" (APSN64) from "APS1" + source_size when size mod 256 == 48.
+isAPSGBAStructured :: ByteString -> Bool
+isAPSGBAStructured input =
+  let dataLength   = ByteString.length input - apsGbaHeaderSize
+      recordCount  = dataLength `div` apsGbaRecordSize
+      recordOffsetIs64KBAligned recordIndex =
+        let recordHeaderStart = apsGbaHeaderSize + recordIndex * apsGbaRecordSize
+        in ByteString.index input recordHeaderStart == 0
+           && ByteString.index input (recordHeaderStart + 1) == 0
   in dataLength == 0
      || (dataLength >= apsGbaRecordSize && dataLength `mod` apsGbaRecordSize == 0
-         && all (\index -> let position = apsGbaHeaderSize + index * apsGbaRecordSize
-                       in ByteString.index input position == 0 && ByteString.index input (position + 1) == 0)
-                [0 .. recordCount - 1])
+         && all recordOffsetIs64KBAligned [0 .. recordCount - 1])
 
 parseAPSGBA :: PatchFileContents -> Either SlapError (Parsed APSGBAPatch)
 parseAPSGBA (PatchFileContents input)

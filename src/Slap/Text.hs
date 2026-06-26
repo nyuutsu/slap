@@ -133,7 +133,7 @@ import qualified Data.Text.Encoding as TextEncoding
 import Slap.FieldName (FieldName)
 import Slap.FormatLabel (FormatLabel)
 import Slap.Measure (Length(..), OriginalLength(..), TruncatedLength(..),
-                     SubstitutionCount(..))
+                     SubstitutionCount(..), byteLength)
 import Slap.Status (SlapAdvisory(..))
 
 ----------------------------------------------------------------------------
@@ -360,16 +360,16 @@ encodeTextLenient (EncodingNamed named) text =
 -- the right offsets.
 substituteUnencodeable
   :: Encoding.DynEncoding -> Char -> [Char] -> ([Char], [LossNotice])
-substituteUnencodeable encoder substitute = walk 0 [] []
+substituteUnencodeable encoder substitute = substituteFrom 0 [] []
   where
-    walk _ accChars accNotices [] =
-      (reverse accChars, reverse accNotices)
-    walk position accChars accNotices (char : rest)
+    substituteFrom _ charsReversed noticesReversed [] =
+      (reverse charsReversed, reverse noticesReversed)
+    substituteFrom position charsReversed noticesReversed (char : rest)
       | Encoding.encodeable encoder char =
-          walk (position + 1) (char : accChars) accNotices rest
+          substituteFrom (position + 1) (char : charsReversed) noticesReversed rest
       | otherwise =
           let notice = SubstitutedCodepoint char position
-          in walk (position + 1) (substitute : accChars) (notice : accNotices) rest
+          in substituteFrom (position + 1) (substitute : charsReversed) (notice : noticesReversed) rest
 
 -- | Pick the substitute character for an encoding. U+FFFD is the
 -- Unicode replacement character and is what every modern encoder
@@ -442,9 +442,9 @@ recoveringDecode
   :: (ByteString -> Either failure Text)
   -> ByteString
   -> (Text, [LossNotice])
-recoveringDecode strictDecode = walkAt 0
+recoveringDecode strictDecode = decodeFrom 0
   where
-    walkAt offset bytes
+    decodeFrom offset bytes
       | ByteString.null bytes = (Text.empty, [])
       | otherwise = case strictDecode bytes of
           Right text   -> (text, [])
@@ -456,7 +456,7 @@ recoveringDecode strictDecode = walkAt 0
                                       (strictDecode prefixBytes)
                 badByteOffset = offset + prefixLength
                 (restText, restNotices) =
-                  walkAt (badByteOffset + 1) remainingBytes
+                  decodeFrom (badByteOffset + 1) remainingBytes
             in ( prefixText <> Text.singleton '\xFFFD' <> restText
                , SubstitutedByteSequence badByteOffset : restNotices )
 
@@ -493,7 +493,7 @@ recoveringDecode strictDecode = walkAt 0
 -- bytes to the format's exact field width (with whichever byte that
 -- format uses) stays at the call site; this primitive does the
 -- encoding and truncation only.
-encodeTextBounded :: EncodingName -> Int -> Text -> (ByteString, [LossNotice])
+encodeTextBounded :: EncodingName -> Length -> Text -> (ByteString, [LossNotice])
 encodeTextBounded encodingName cap text =
   let perCodepoint = zipWith (encodeSingleCodepoint encodingName)
                              [0 ..] (Text.unpack text)
@@ -533,17 +533,17 @@ encodeSingleCodepoint (EncodingNamed named) position char =
 -- caller can compute the truncated byte count and the would-be
 -- original count in one walk.
 takeChunksUnderCap
-  :: Int
+  :: Length
   -> [(ByteString, a)]
   -> ([(ByteString, a)], [(ByteString, a)])
-takeChunksUnderCap cap = walk 0 []
+takeChunksUnderCap cap = accumulateUnderCap mempty []
   where
-    walk _    takenReversed [] = (reverse takenReversed, [])
-    walk used takenReversed (chunk@(bytes, _) : rest) =
-      let nextUsed = used + ByteString.length bytes
+    accumulateUnderCap _    takenReversed [] = (reverse takenReversed, [])
+    accumulateUnderCap used takenReversed (chunk@(bytes, _) : rest) =
+      let nextUsed = used <> byteLength bytes
       in if nextUsed > cap
            then (reverse takenReversed, chunk : rest)
-           else walk nextUsed (chunk : takenReversed) rest
+           else accumulateUnderCap nextUsed (chunk : takenReversed) rest
 
 ----------------------------------------------------------------------------
 -- Fixed-width text fields
