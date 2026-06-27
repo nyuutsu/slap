@@ -60,7 +60,8 @@ import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
   ( AddressCacheConfig(..), NearSlotCount(..), SameBlockCount(..)
   , freshAddressCache, defaultAddressCacheConfig
-  , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..) )
+  , selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
+  , SameSlotByte(..) )
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.Binary (putVcdiffVarint, viewBytesInRange)
 import Slap.Status (SlapError, CreateResult(..))
@@ -112,10 +113,8 @@ createConsideringCustomTable (InputFileContents source) (OutputFileContents targ
 -- Cover -> instructions
 ----------------------------------------------------------------------------
 
--- | Choose an instruction for each cover segment. A copy passes straight
--- through to 'Copy'. A literal's bytes are sliced from the target and
--- become a 'Run' when they are a single byte repeated (strictly smaller
--- than the equivalent 'Add' once length ≥ 2), an 'Add' otherwise.
+-- | Choose an instruction for each cover segment.
+-- A copy passes through to 'Copy'; a literal becomes a 'Run' when its bytes are one byte repeated three or more times, otherwise an 'Add'.
 coverToInstructions :: ByteString -> Cover -> [VCDIFFInstruction]
 coverToInstructions target (Cover segments) = map segmentToInstruction segments
   where
@@ -132,13 +131,12 @@ literalToInstruction literalBytes
       Run (byteLength literalBytes) (ByteString.head literalBytes)
   | otherwise = Add literalBytes
 
--- | Whether a run is two or more copies of one byte — the case a 'Run'
--- encodes strictly smaller than an 'Add'. A length-1 (or empty) run is
--- not "repeated" and stays an 'Add', so 'ByteString.head' below it is
--- only reached on a non-empty run.
+-- | Whether a literal is three or more copies of one byte.
+-- From length 3 a coded 'Run' is never larger than the equivalent 'Add'.
+-- At length 2 the two tie, and only an 'Add' can fold into a combined ADD+COPY, so a two-byte repeat stays an 'Add'.
 isSingleRepeatedByte :: ByteString -> Bool
 isSingleRepeatedByte bytes =
-  byteLength bytes >= Length 2 && ByteString.all (== ByteString.head bytes) bytes
+  byteLength bytes >= Length 3 && ByteString.all (== ByteString.head bytes) bytes
 
 ----------------------------------------------------------------------------
 -- Instructions -> resolved instructions (address selection)
@@ -235,16 +233,16 @@ instance Monoid SectionBuilders where
 -- Greedy left-to-right takes a maximal set of non-overlapping pairs, each pairing saving one opcode.
 -- No cache here: the modes and operands were fixed by 'resolveInstructionAddresses', so packing is pure opcode lookup over the resolved stream.
 packInstructions :: DenseOpcodes -> [ResolvedInstruction] -> SectionBuilders
-packInstructions resolver = packFrom
+packInstructions opcodeResolver = packFrom
   where
     packFrom [] = mempty
     packFrom (ResolvedAdd literal : ResolvedCopy copyLength mode operand : rest)
-      | Just opcode <- combinedAddCopyOpcode resolver (byteLength literal) copyLength mode =
+      | Just opcode <- combinedAddCopyOpcode opcodeResolver (byteLength literal) copyLength mode =
           combinedSections opcode literal operand <> packFrom rest
     packFrom (ResolvedCopy copyLength mode operand : ResolvedAdd literal : rest)
-      | Just opcode <- combinedCopyAddOpcode resolver copyLength mode (byteLength literal) =
+      | Just opcode <- combinedCopyAddOpcode opcodeResolver copyLength mode (byteLength literal) =
           combinedSections opcode literal operand <> packFrom rest
-    packFrom (instruction : rest) = packSingle resolver instruction <> packFrom rest
+    packFrom (instruction : rest) = packSingle opcodeResolver instruction <> packFrom rest
 
 -- | The combined code-table entry an ADD(addLength) immediately followed by
 -- a COPY(copyLength, mode) packs into, when both lengths name fixed-size
@@ -271,14 +269,14 @@ copyAddEntry copyLength mode addLength = do
 -- 'resolveInstructionAddresses' already selected, so a combine never shifts
 -- the COPY off the cheapest address mode.
 combinedAddCopyOpcode :: DenseOpcodes -> Length -> Length -> Table.CopyAddressMode -> Maybe Table.Opcode
-combinedAddCopyOpcode resolver addLength copyLength mode =
-  addCopyEntry addLength copyLength mode >>= opcodeFor resolver
+combinedAddCopyOpcode opcodeResolver addLength copyLength mode =
+  addCopyEntry addLength copyLength mode >>= opcodeFor opcodeResolver
 
 -- | The opcode a COPY-then-ADD adjacency packs into under a table — the
 -- mirror of 'combinedAddCopyOpcode'.
 combinedCopyAddOpcode :: DenseOpcodes -> Length -> Table.CopyAddressMode -> Length -> Maybe Table.Opcode
-combinedCopyAddOpcode resolver copyLength mode addLength =
-  copyAddEntry copyLength mode addLength >>= opcodeFor resolver
+combinedCopyAddOpcode opcodeResolver copyLength mode addLength =
+  copyAddEntry copyLength mode addLength >>= opcodeFor opcodeResolver
 
 -- | The three section contributions of a combined opcode: the single
 -- instruction byte (both halves carry a fixed size, so no out-of-line
@@ -297,10 +295,10 @@ combinedSections opcode literal operand = SectionBuilders
 -- Each takes the densest single opcode: the fixed-size entry where the table names the size (no size varint trails), the coded-size entry otherwise.
 -- RUN has only the coded form.
 packSingle :: DenseOpcodes -> ResolvedInstruction -> SectionBuilders
-packSingle resolver = \case
+packSingle opcodeResolver = \case
   ResolvedAdd literal ->
     let (opcode, sizeVarint) =
-          singleSize resolver (byteLength literal)
+          singleSize opcodeResolver (byteLength literal)
             (\size -> Table.CodeTableEntry (Table.Add size) Table.Noop)
     in SectionBuilders
          { dataStream        = byteString literal
@@ -313,26 +311,26 @@ packSingle resolver = \case
       , addressStream     = mempty }
   ResolvedCopy copyLength mode operand ->
     let (opcode, sizeVarint) =
-          singleSize resolver copyLength
+          singleSize opcodeResolver copyLength
             (\size -> Table.CodeTableEntry (Table.Copy size mode) Table.Noop)
     in SectionBuilders
          { dataStream        = mempty
          , instructionStream = word8 (Table.unOpcode opcode) <> sizeVarint
          , addressStream     = renderOperand operand }
   where
-    codedRunOpcode = requireOpcode resolver
+    codedRunOpcode = requireOpcode opcodeResolver
       (Table.CodeTableEntry (Table.Run Table.SizeCodedSeparately) Table.Noop)
 
 -- | The address-section bytes a chosen mode's operand contributes: a
 -- varint for SELF \/ HERE \/ NEAR, a single byte for SAME.
 renderOperand :: CopyAddressOperand -> Builder
 renderOperand (AddressVarint value) = putVcdiffVarint value
-renderOperand (AddressSameByte byte) = word8 byte
+renderOperand (AddressSameByte (SameSlotByte byte)) = word8 byte
 
 -- | The densest opcode the active table offers for an exact entry shape,
 -- or 'Nothing' when the table holds no such entry. Built once per table
 -- by scanning 'Table.codeTableEntries' — so a custom table feeds its own
--- opcode set through this resolver unchanged — and keyed by the whole
+-- opcode set through this opcodeResolver unchanged — and keyed by the whole
 -- entry, so one lookup answers every query: a single instruction (a
 -- 'Table.Noop' second half) or a combined pair (two real halves). The
 -- lowest index wins a shape that repeats; the default table holds each
@@ -354,7 +352,7 @@ opcodeFor (DenseOpcodes opcodes) entry = Map.lookup entry opcodes
 -- would too, so a miss means a broken table, surfaced the proof-by-
 -- provenance way the table lookups elsewhere here are.
 requireOpcode :: DenseOpcodes -> Table.CodeTableEntry -> Table.Opcode
-requireOpcode resolver entry = case opcodeFor resolver entry of
+requireOpcode opcodeResolver entry = case opcodeFor opcodeResolver entry of
   Just opcode -> opcode
   Nothing     -> error ("Slap.VCDIFF.Create: active code table lacks the entry " <> show entry)
 
@@ -377,11 +375,11 @@ singleSize
   :: DenseOpcodes -> Length
   -> (Table.InstructionSize -> Table.CodeTableEntry)
   -> (Table.Opcode, Builder)
-singleSize resolver size entryFor =
-  case fixedSizeFor size >>= opcodeFor resolver . entryFor of
+singleSize opcodeResolver size entryFor =
+  case fixedSizeFor size >>= opcodeFor opcodeResolver . entryFor of
     Just opcode -> (opcode, mempty)
     Nothing     ->
-      ( requireOpcode resolver (entryFor Table.SizeCodedSeparately)
+      ( requireOpcode opcodeResolver (entryFor Table.SizeCodedSeparately)
       , varintOfLength size )
 
 -- | Render a window's three section streams to bytes under a table.
@@ -389,13 +387,13 @@ singleSize resolver size entryFor =
 -- opcodes and combining adjacent pairs — and yields the three streams as
 -- one 'SectionBuilders'; this realizes them.
 layoutSections :: DenseOpcodes -> [ResolvedInstruction] -> Sections
-layoutSections resolver resolved = Sections
+layoutSections opcodeResolver resolved = Sections
   { sectionData         = builderBytes (dataStream combined)
   , sectionInstructions = builderBytes (instructionStream combined)
   , sectionAddresses    = builderBytes (addressStream combined)
   }
   where
-    combined = packInstructions resolver resolved
+    combined = packInstructions opcodeResolver resolved
 
 ----------------------------------------------------------------------------
 -- Cover -> patch (default table, and the custom-table consideration)

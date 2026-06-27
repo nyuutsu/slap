@@ -58,9 +58,10 @@ import Slap.Display.Common (InfoLine(..))
 import Slap.VCDIFF.Cover (Cover(..), CoverSegment(..))
 import Slap.VCDIFF.FFI (vcdiffCover)
 import Slap.VCDIFF.AddressCache
-  ( selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..)
+  ( selectCopyAddressMode, SelectedCopyAddress(..), CopyAddressOperand(..), SameSlotByte(..)
   , recordAddress, freshAddressCache, defaultAddressCacheConfig
   , nearSlotCount, unNearSlotCount
+  , classifyAddressMode, modeFamilyToByte, modeCeiling
   , decodeCopyAddress, CopyAddressReading(..) )
 import qualified Slap.XDelta1.Apply as XDelta1
 import qualified Slap.XDelta1.Parse as XDelta1
@@ -175,6 +176,7 @@ roundTripTests = testGroup "RoundTrip"
       , testCase     "cover: instruction selection at the RUN/ADD boundary" vcdiffInstructionSelection
       , testCase     "address modes: SAME emits a single address byte" vcdiffSameModeIsOneByte
       , testCase     "address modes: the address section shrinks below SELF-only" vcdiffAddressModesShrinkTheAddressSection
+      , testCase     "address modes: every mode byte round-trips through the family classifier" vcdiffAddressModeByteRoundTrip
       , testProperty "address modes: encode/decode round-trip at large addresses" prop_vcdiffAddressModeRoundTrips
       , testCase     "dense: combined ADD+COPY is one opcode for the pair" vcdiffCombinedAddCopyIsOneOpcode
       , testCase     "dense: combined COPY+ADD is one opcode for the pair" vcdiffCombinedCopyAddIsOneOpcode
@@ -585,7 +587,7 @@ vcdiffSameModeIsOneByte =
   in do
        assertEqual "same-mode opcode (block 0)" 6 (selectedAddressMode selected)
        case selectedAddressOperand selected of
-         AddressSameByte byte -> assertEqual "single same-slot byte" 200 byte
+         AddressSameByte (SameSlotByte byte) -> assertEqual "single same-slot byte" 200 byte
          other -> assertFailure ("expected a one-byte same operand, got " ++ show other)
 
 -- | The address section shrinks below a SELF-only encoding. Three copies
@@ -801,7 +803,7 @@ prop_vcdiffAddressModeRoundTrips addressRaw recentSteps hereBump =
     selected     = selectCopyAddressMode cache here address
     operandBytes = case selectedAddressOperand selected of
       AddressVarint value -> LazyByteString.toStrict (toLazyByteString (putVcdiffVarint value))
-      AddressSameByte byte -> ByteString.singleton byte
+      AddressSameByte (SameSlotByte byte) -> ByteString.singleton byte
 
 -- | A COPY whose read overruns the write head — the run-length / overlap
 -- case the decoder expands byte by byte ('ExpandForward'). The target
@@ -834,24 +836,36 @@ vcdiffInterleavedRoundTrips =
         , CoverCopy (Length 2) (Offset 5) ]     -- U offset 5 = produced-target[0..2) = "XY"
   in assertCoverRoundTrips source target coverPlan
 
--- | Instruction selection pinned directly on 'coverToInstructions',
--- across the RUN/ADD boundary: a one-byte literal stays an ADD, a
--- two-byte repeated literal is the smallest RUN, a two-byte non-repeated
--- literal stays an ADD, and a copy passes straight through to COPY.
+-- | Instruction selection pinned directly on 'coverToInstructions', across the RUN/ADD boundary.
+-- A one-byte literal and a two-byte repeat both stay ADD, a three-byte repeat is the smallest RUN, a two-byte non-repeat stays ADD, and a copy passes through to COPY.
 vcdiffInstructionSelection :: Assertion
 vcdiffInstructionSelection =
-  let target = ByteString.pack [0x41, 0x42, 0x42, 0x43, 0x44]   -- "A" "BB" "CD"
+  let target = ByteString.pack [0x41, 0x42, 0x42, 0x43, 0x43, 0x43, 0x44, 0x45]   -- "A" "BB" "CCC" "DE"
       coverPlan = Cover
-        [ CoverLiteral (Offset 0) (Length 1)   -- "A"  -> Add (length 1, not "repeated")
-        , CoverLiteral (Offset 1) (Length 2)   -- "BB" -> Run 2 (the smallest RUN)
-        , CoverLiteral (Offset 3) (Length 2)   -- "CD" -> Add (length 2, not repeated)
+        [ CoverLiteral (Offset 0) (Length 1)   -- "A"   -> Add (length 1, not "repeated")
+        , CoverLiteral (Offset 1) (Length 2)   -- "BB"  -> Add (a two-byte repeat is below the boundary)
+        , CoverLiteral (Offset 3) (Length 3)   -- "CCC" -> Run 3 (the smallest RUN)
+        , CoverLiteral (Offset 6) (Length 2)   -- "DE"  -> Add (length 2, not repeated)
         , CoverCopy (Length 4) (Offset 7) ]    -- passes through unchanged
   in assertEqual "cover instruction selection"
        [ Add (ByteString.pack [0x41])
-       , Run (Length 2) 0x42
-       , Add (ByteString.pack [0x43, 0x44])
+       , Add (ByteString.pack [0x42, 0x42])
+       , Run (Length 3) 0x43
+       , Add (ByteString.pack [0x44, 0x45])
        , Copy (Length 4) (Offset 7) ]
        (coverToInstructions target coverPlan)
+
+-- | Every defined mode byte round-trips: 'classifyAddressMode' then 'modeFamilyToByte' is the identity over @[0, modeCeiling)@.
+vcdiffAddressModeByteRoundTrip :: Assertion
+vcdiffAddressModeByteRoundTrip =
+  mapM_ roundTripsAt [0 .. modeCeiling config - 1]
+  where
+    config = defaultAddressCacheConfig
+    roundTripsAt mode =
+      let modeByte = fromIntegral mode
+      in assertEqual ("mode byte " ++ show mode)
+           (Just modeByte)
+           (modeFamilyToByte config <$> classifyAddressMode config modeByte)
 
 -- | A lopsided (source, target, cover) for the custom-table cases: @n@
 -- repetitions of a five-byte literal then a four-byte copy of the source

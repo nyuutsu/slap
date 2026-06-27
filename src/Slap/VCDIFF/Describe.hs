@@ -197,7 +197,8 @@ analyzeVCDIFF patch = PatchAnalysis
   }
   where
     windows         = Vector.toList (patchWindowsWithChecksums patch)
-    numberedWindows = zip [1 ..] windows
+    windowNumbers   = [1 ..]
+    numberedWindows = zip windowNumbers windows
     totalOutput     = FileSize (sum [ unFileSize (windowTargetSize (windowWithChecksumBody pairedWindow))
                                     | pairedWindow <- windows ])
 

@@ -28,6 +28,7 @@ module Slap.VCDIFF.AddressCache
   , defaultAddressCacheConfig
   , NearSlotIndex(..)
   , SameBlockIndex(..)
+  , SameSlotByte(..)
   , AddressCache(..)
   , slotsPerSameBlock
   , sameSlotCount
@@ -38,12 +39,15 @@ module Slap.VCDIFF.AddressCache
   , freshAddressCache
   , recordAddress
     -- * Address-mode layout
+  , selfMode
+  , hereMode
   , firstNearMode
   , firstSameMode
   , modeCeiling
     -- * Mode classification
   , AddressModeFamily(..)
   , classifyAddressMode
+  , modeFamilyToByte
     -- * Decode (mode + operand -> address)
   , decodeCopyAddress
   , CopyAddressReading(..)
@@ -121,6 +125,11 @@ newtype NearSlotIndex = NearSlotIndex Int
 newtype SameBlockIndex = SameBlockIndex Int
   deriving (Eq, Show)
 
+-- | A same-cache within-block slot byte: the one-byte SAME operand that indexes a 'SameBlockIndex'.
+-- A 'Word8' because a same block holds 256 slots.
+newtype SameSlotByte = SameSlotByte Word8
+  deriving (Eq, Show)
+
 -- | The two address caches a VCDIFF decoder maintains in lockstep with
 -- the encoder (docs/vcdiff/core/spec.md "Address cache"), the
 -- configuration that sizes them, and the next near slot to overwrite.
@@ -175,9 +184,9 @@ nearSlotIndices config =
 -- | The address held in one same slot; the block index and the one-byte
 -- operand select the slot within the block's 256-slot span, and an
 -- untouched slot holds zero.
-readSameSlot :: SameBlockIndex -> Int -> IntMap Offset -> Offset
-readSameSlot (SameBlockIndex block) slotByte =
-  IntMap.findWithDefault (Offset 0) (block * slotsPerSameBlock + slotByte)
+readSameSlot :: SameBlockIndex -> SameSlotByte -> IntMap Offset -> Offset
+readSameSlot (SameBlockIndex block) (SameSlotByte slotByte) =
+  IntMap.findWithDefault (Offset 0) (block * slotsPerSameBlock + fromIntegral slotByte)
 
 -- | A zeroed cache for the given configuration, as at the start of each
 -- window.
@@ -207,6 +216,12 @@ recordAddress cache address = cache
 ----------------------------------------------------------------------------
 -- The address-mode layout
 ----------------------------------------------------------------------------
+
+-- | SELF (0) and HERE (1): the two fixed modes before the near band.
+-- SELF reads the address as a varint; HERE reads it as a distance back from the write head.
+selfMode, hereMode :: Int
+selfMode = 0
+hereMode = 1
 
 -- | The first address mode that names a near slot. SELF (mode 0) and HERE
 -- (mode 1) precede the near band, so it always begins at mode 2, whatever
@@ -259,13 +274,21 @@ data AddressModeFamily
 -- band, so neither can name a slot the cache lacks.
 classifyAddressMode :: AddressCacheConfig -> Word8 -> Maybe AddressModeFamily
 classifyAddressMode config mode
-  | modeNumber == 0                   = Just SelfAddress
-  | modeNumber == 1                   = Just HereAddress
+  | modeNumber == selfMode            = Just SelfAddress
+  | modeNumber == hereMode            = Just HereAddress
   | modeNumber < firstSameMode config = Just (NearAddress (NearSlotIndex (modeNumber - firstNearMode)))
   | modeNumber < modeCeiling config   = Just (SameAddress (SameBlockIndex (modeNumber - firstSameMode config)))
   | otherwise                         = Nothing
   where
     modeNumber = fromIntegral mode
+
+-- | The mode byte that names a family — the inverse of 'classifyAddressMode'.
+modeFamilyToByte :: AddressCacheConfig -> AddressModeFamily -> Word8
+modeFamilyToByte config family = case family of
+  SelfAddress                        -> fromIntegral selfMode
+  HereAddress                        -> fromIntegral hereMode
+  NearAddress (NearSlotIndex slot)   -> fromIntegral (firstNearMode + slot)
+  SameAddress (SameBlockIndex block) -> fromIntegral (firstSameMode config + block)
 
 ----------------------------------------------------------------------------
 -- Decode (mode + operand -> address)
@@ -332,7 +355,7 @@ decodeCopyAddress cache here mode addrSection cursor =
 
     fromSameByte sameBlock
       | fitsWithin cursor (Length 1) (byteFileSize addrSection) =
-          let slotByte = fromIntegral (ByteString.index addrSection (offsetToInt cursor))
+          let slotByte = SameSlotByte (ByteString.index addrSection (offsetToInt cursor))
           in Right (readingOf (readSameSlot sameBlock slotByte (sameAddresses cache))
                               (advance cursor (Length 1)))
       | otherwise = Left AddressSectionExhausted
@@ -353,7 +376,7 @@ data CopyAddressOperand
   = AddressVarint !Int64
     -- ^ The varint a SELF, HERE, or NEAR mode reads: the address, the
     -- distance back from @here@, or the distance forward from a near slot.
-  | AddressSameByte !Word8
+  | AddressSameByte !SameSlotByte
     -- ^ The single byte a SAME mode reads to index its block.
   deriving (Eq, Show)
 
@@ -420,12 +443,13 @@ selectCopyAddressMode cache here address = recordInto chosen
     sameCandidate :: Maybe AddressCandidate
     sameCandidate
       | readSameSlot (SameBlockIndex block) slotByte (sameAddresses cache) == address =
-          Just (AddressCandidate (sameModeByte block) (AddressSameByte (fromIntegral slotByte)) 1)
+          Just (AddressCandidate (modeFamilyToByte config (SameAddress (SameBlockIndex block))) (AddressSameByte slotByte) 1)
       | otherwise = Nothing
       where
         globalSlot = addressInt `mod` sameSlotCount config
         block      = globalSlot `div` slotsPerSameBlock
-        slotByte   = globalSlot `mod` slotsPerSameBlock
+        -- The remainder is in @[0, 256)@, the exact 'Word8' range.
+        slotByte   = SameSlotByte (fromIntegral (globalSlot `mod` slotsPerSameBlock))
 
     -- NEAR: the slot with the smallest forward delta among those whose
     -- cached address does not exceed this one.
@@ -433,7 +457,7 @@ selectCopyAddressMode cache here address = recordInto chosen
     nearCandidate = case forwardNearSlots of
       []    -> []
       slots -> let (slot, delta) = minimumBy (comparing snd) slots
-               in [varintCandidate (nearModeByte slot) delta]
+               in [varintCandidate (modeFamilyToByte config (NearAddress slot)) delta]
 
     forwardNearSlots :: [(NearSlotIndex, Int)]   -- (slot, forward delta)
     forwardNearSlots =
@@ -443,16 +467,13 @@ selectCopyAddressMode cache here address = recordInto chosen
       , slotAddrInt <= addressInt
       ]
 
-    hereCandidate = varintCandidate 1 (hereInt - addressInt)
-    selfCandidate = varintCandidate 0 addressInt
+    hereCandidate = varintCandidate (modeFamilyToByte config HereAddress) (hereInt - addressInt)
+    selfCandidate = varintCandidate (modeFamilyToByte config SelfAddress) addressInt
 
     varintCandidate :: Word8 -> Int -> AddressCandidate
     varintCandidate mode value =
       AddressCandidate mode (AddressVarint (fromIntegral value))
         (minimalVcdiffVarintLength (fromIntegral value))
-
-    nearModeByte (NearSlotIndex slot) = fromIntegral (firstNearMode + slot)
-    sameModeByte block     = fromIntegral (firstSameMode config + block)
 
     recordInto candidate = SelectedCopyAddress
       { selectedAddressMode       = candidateMode candidate
