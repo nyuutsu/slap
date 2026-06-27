@@ -47,7 +47,7 @@ import Slap.Text (EncodingName(EncodingUtf8),
 import Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TextIO
-import Slap.Archive.Types (detectArchive)
+import Slap.Archive.Types (detectArchive, EntryName(unEntryName))
 import Slap.Binary (crc16, md5, sha1, viewBytesInRange)
 import Slap.Checksum (CRC32(..), CRC16, Adler32(..),
                       ExpectedCRC32(..), ActualCRC32(..), showCRC32)
@@ -95,7 +95,7 @@ import System.Exit (exitSuccess)
 import System.FilePath (dropExtension, replaceExtension, takeBaseName, takeExtension)
 import System.IO (hSetEncoding, stderr, stdout)
 import System.IO.Error (isDoesNotExistError, ioeGetErrorString)
-import GHC.IO.Encoding (setFileSystemEncoding, utf8)
+import GHC.IO.Encoding (setFileSystemEncoding, setLocaleEncoding, utf8)
 import GHC.IO.Encoding.UTF8 (mkUTF8)
 import GHC.IO.Encoding.Failure (CodingFailureMode(TransliterateCodingFailure))
 
@@ -108,8 +108,10 @@ main = do
   -- Slap is a UTF-8 program on both sides:
   -- setFileSystemEncoding utf8 pins argument decoding to UTF-8 and setStdoutAndStderrToLenientUtf8 pins output,
   -- so LANG/LC_CTYPE cannot change how slap reads its arguments or what it prints.
+  -- setLocaleEncoding utf8 pins the entry listings slap reads back from shelled-out archive tools.
   -- The filesystem pin must run first, before parseCommandLine decodes argv.
   setFileSystemEncoding utf8
+  setLocaleEncoding utf8
   setStdoutAndStderrToLenientUtf8
   parsedCommand <- parseCommandLine
   case parsedCommand of
@@ -146,7 +148,7 @@ readUnwrap path = do
       case result of
         Left unwrapError -> bailError (ArchiveUnwrapFailed path format unwrapError)
         Right (unwrappedBytes, entryName) -> do
-          TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> Text.pack entryName)
+          TextIO.hPutStrLn stderr ("slap: unwrapped " <> pathText path <> spacePaddedRightwardsArrow <> unEntryName entryName)
           pure unwrappedBytes
 
 readMaybeUnwrap :: FileReadingOptions -> FilePath -> IO ByteString

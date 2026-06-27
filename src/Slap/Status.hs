@@ -90,7 +90,7 @@ import Slap.Checksum (CRC32, Adler32, MD5Hash(..), SHA1Hash(..),
                       showCRC32, showAdler32,
                       ExpectedCRC32(..), ActualCRC32(..))
 import Slap.Display.Common (renderAsText, renderHexAsText, pathText)
-import Slap.Archive.Types (ArchiveFormat, archiveFormatName,
+import Slap.Archive.Types (ArchiveFormat, archiveFormatName, toolsFor,
                            ToolName(..), ToolDiagnostic(..),
                            EntryName(..), SeenEntryCount(..),
                            UnreadableReason(..), UnwrapError(..))
@@ -1551,9 +1551,9 @@ renderByteParserError (ByteParserUnexpectedDoPatternFailure message) =
 -- | Render an archive-unwrap failure: name the archive and its format,
 -- and give the corrective action that fits each failure shape.
 renderUnwrapError :: FilePath -> ArchiveFormat -> UnwrapError -> Text
-renderUnwrapError path format (NoToolForArchive tools) =
+renderUnwrapError path format NoToolForArchive =
   archiveFormatName format <> " archive " <> pathText path
-    <> " needs " <> renderToolAlternatives tools <> " on PATH to unwrap; none were found."
+    <> " needs " <> renderToolAlternatives (toolsFor format) <> " on PATH to unwrap; none were found."
     <> " Install one, or pass --raw if this isn't really an archive."
 renderUnwrapError path format (ArchiveToolFailed (ToolName tool) (ToolDiagnostic diagnostic)) =
   tool <> " failed while reading the " <> archiveFormatName format

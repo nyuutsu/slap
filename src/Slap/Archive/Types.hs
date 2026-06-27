@@ -87,9 +87,11 @@ newtype UnreadableReason = UnreadableReason { unUnreadableReason :: Text }
 -- what distinguishes one failure shape from another.
 data UnwrapError
   = -- | The format was recognized but none of the tools that could open
-    -- it ('toolsFor') are on @PATH@. Carries those tools so the message
-    -- can name the alternatives to install.
-    NoToolForArchive [ToolName]
+    -- it ('toolsFor') are on @PATH@. The format on the
+    -- 'Slap.Status.ArchiveUnwrapFailed' wrapper determines the
+    -- alternatives via 'toolsFor' at render time, so this variant
+    -- carries nothing.
+    NoToolForArchive
   | -- | A tool was invoked and exited nonzero. Carries which tool, and
     -- the diagnostic it printed.
     ArchiveToolFailed ToolName ToolDiagnostic

@@ -10,11 +10,11 @@ import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Char (toLower)
-import Data.List (isSuffixOf, stripPrefix)
+import Data.List (stripPrefix)
 import Data.Maybe (mapMaybe)
 import qualified Data.Text as Text
 import Slap.Archive.Types
-  ( ArchiveFormat(..), toolsFor
+  ( ArchiveFormat(..)
   , ToolName(..), ToolDiagnostic(..), EntryName(..), SeenEntryCount(..)
   , UnwrapError(..) )
 import Archive.Zip (zipEntryNames, zipExtractEntry)
@@ -27,7 +27,7 @@ import System.IO (hClose, openBinaryTempFile)
 import System.Process (readProcessWithExitCode)
 
 -- | Unwrap a single-entry archive → (content bytes, entry name).
-unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either UnwrapError (ByteString, String))
+unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
 unwrapArchive ArchiveZIP path = unwrapZip path
 unwrapArchive ArchiveRAR path = unwrapViaExternalTool ExternalRAR path
 unwrapArchive Archive7z  path = unwrapViaExternalTool External7z  path
@@ -38,19 +38,19 @@ unwrapArchive Archive7z  path = unwrapViaExternalTool External7z  path
 
 -- | Filter chaff (readmes, images, docs) and pick the single patch worth
 -- extracting, or say why we can't.
-selectCandidate :: [String] -> Either UnwrapError String
+selectCandidate :: [EntryName] -> Either UnwrapError EntryName
 selectCandidate names = case filter isCandidate names of
-  []     -> Left (ArchiveHasNoCandidate (SeenEntryCount (length names)))
-  [name] -> Right name
-  many   -> Left (ArchiveHasManyCandidates (map (EntryName . Text.pack) many))
+  []                 -> Left (ArchiveHasNoCandidate (SeenEntryCount (length names)))
+  [name]             -> Right name
+  multipleCandidates -> Left (ArchiveHasManyCandidates multipleCandidates)
 
-isCandidate :: String -> Bool
-isCandidate name
-  | "/" `isSuffixOf` name = False
+isCandidate :: EntryName -> Bool
+isCandidate (EntryName name)
+  | "/" `Text.isSuffixOf` name       = False
   | extension `elem` chaffExtensions = False
-  | otherwise            = True
+  | otherwise                        = True
   where
-    extension = map toLower (takeExtension name)
+    extension = map toLower (takeExtension (Text.unpack name))
 
 chaffExtensions :: [String]
 chaffExtensions =
@@ -63,13 +63,13 @@ chaffExtensions =
 -- In-house ZIP
 ----------------------------------------------------------------------------
 
-unwrapZip :: FilePath -> IO (Either UnwrapError (ByteString, String))
+unwrapZip :: FilePath -> IO (Either UnwrapError (ByteString, EntryName))
 unwrapZip path = do
   archiveBytes <- ByteString.readFile path
   pure $ do
     names      <- first ArchiveUnreadable (zipEntryNames archiveBytes)
-    name       <- selectCandidate (map Text.unpack names)
-    entryBytes <- first ArchiveUnreadable (zipExtractEntry archiveBytes (Text.pack name))
+    name       <- selectCandidate (map EntryName names)
+    entryBytes <- first ArchiveUnreadable (zipExtractEntry archiveBytes (unEntryName name))
     pure (entryBytes, name)
 
 ----------------------------------------------------------------------------
@@ -79,12 +79,7 @@ unwrapZip path = do
 -- | The formats unwrapped by shelling out to an external tool.
 data ExternalFormat = ExternalRAR | External7z
 
--- | The 'ArchiveFormat' an 'ExternalFormat' corresponds to.
-externalArchiveFormat :: ExternalFormat -> ArchiveFormat
-externalArchiveFormat ExternalRAR = ArchiveRAR
-externalArchiveFormat External7z  = Archive7z
-
-unwrapViaExternalTool :: ExternalFormat -> FilePath -> IO (Either UnwrapError (ByteString, String))
+unwrapViaExternalTool :: ExternalFormat -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
 unwrapViaExternalTool format path = do
   entries <- listEntries format path
   case entries >>= selectCandidate of
@@ -95,33 +90,37 @@ unwrapViaExternalTool format path = do
 toolDiagnostic :: String -> ToolDiagnostic
 toolDiagnostic = ToolDiagnostic . Text.pack
 
-listEntries :: ExternalFormat -> FilePath -> IO (Either UnwrapError [String])
+-- | Wrap a raw entry path from a tool listing as an 'EntryName'.
+toEntryName :: String -> EntryName
+toEntryName = EntryName . Text.pack
+
+listEntries :: ExternalFormat -> FilePath -> IO (Either UnwrapError [EntryName])
 listEntries ExternalRAR path = do
   maybeUnrar <- findExecutable "unrar"
   case maybeUnrar of
     Just _ -> do
       (exitCode, stdout, stderr) <- readProcessWithExitCode "unrar" ["lb", path] ""
       pure $ case exitCode of
-        ExitSuccess -> Right (filter (not . null) (lines stdout))
+        ExitSuccess -> Right (map toEntryName (filter (not . null) (lines stdout)))
         _           -> Left (ArchiveToolFailed (ToolName "unrar") (toolDiagnostic stderr))
     Nothing -> do
       maybe7z <- findExecutable "7z"
       case maybe7z of
-        Nothing -> pure (Left (NoToolForArchive (toolsFor (externalArchiveFormat ExternalRAR))))
+        Nothing -> pure (Left NoToolForArchive)
         Just _  -> list7z path
 
 listEntries External7z path = do
   maybe7z <- findExecutable "7z"
   case maybe7z of
-    Nothing -> pure (Left (NoToolForArchive (toolsFor (externalArchiveFormat External7z))))
+    Nothing -> pure (Left NoToolForArchive)
     Just _  -> list7z path
 
 -- | List entries using 7z's machine-readable output.
-list7z :: FilePath -> IO (Either UnwrapError [String])
+list7z :: FilePath -> IO (Either UnwrapError [EntryName])
 list7z path = do
   (exitCode, stdout, stderr) <- readProcessWithExitCode "7z" ["l", "-ba", "-slt", path] ""
   pure $ case exitCode of
-    ExitSuccess -> Right (parse7zList stdout)
+    ExitSuccess -> Right (map toEntryName (parse7zList stdout))
     _           -> Left (ArchiveToolFailed (ToolName "7z") (toolDiagnostic stderr))
 
 -- | Pull the entry paths out of 7z's @-slt@ listing, whose lines read
@@ -129,24 +128,25 @@ list7z path = do
 parse7zList :: String -> [String]
 parse7zList = mapMaybe (stripPrefix "Path = ") . lines
 
-extractEntry :: ExternalFormat -> FilePath -> String -> IO (Either UnwrapError (ByteString, String))
+extractEntry :: ExternalFormat -> FilePath -> EntryName -> IO (Either UnwrapError (ByteString, EntryName))
 extractEntry format archivePath entryName = do
   systemTemporaryDirectory <- getTemporaryDirectory
   (temporaryFile, handle) <- openBinaryTempFile systemTemporaryDirectory "slap-archive"
   hClose handle
   let temporaryDirectory = temporaryFile ++ ".d"
+      entryPath = Text.unpack (unEntryName entryName)
   createDirectoryIfMissing True temporaryDirectory
-  result <- doExtract format archivePath entryName temporaryDirectory
+  result <- doExtract format archivePath entryPath temporaryDirectory
   case result of
     Left unwrapError -> do
       cleanup temporaryFile temporaryDirectory
       pure (Left unwrapError)
     Right () -> do
-      extracted <- findExtracted temporaryDirectory entryName
+      extracted <- findExtracted temporaryDirectory entryPath
       case extracted of
         Nothing -> do
           cleanup temporaryFile temporaryDirectory
-          pure (Left (ExtractedEntryMissing (EntryName (Text.pack entryName))))
+          pure (Left (ExtractedEntryMissing entryName))
         Just extractedPath -> do
           extractedBytes <- ByteString.readFile extractedPath
           cleanup temporaryFile temporaryDirectory

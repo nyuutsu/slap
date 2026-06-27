@@ -40,20 +40,20 @@ newtype ExpectedCRC32 = ExpectedCRC32 { unExpectedCRC32 :: CRC32 }
 newtype ActualCRC32 = ActualCRC32 { unActualCRC32 :: CRC32 }
   deriving (Eq, Show)
 
+-- | A 'Word64' as zero-padded lowercase hex of the given digit width.
+showZeroPaddedHex :: Int -> Word64 -> Text
+showZeroPaddedHex width value =
+  let digits = showHex value ""
+  in Text.pack (replicate (width - length digits) '0' ++ digits)
+
 -- | "001A3B4C" — 8-digit zero-padded hex.
 showCRC32 :: CRC32 -> Text
-showCRC32 (CRC32 value) =
-  let digits = showHex (fromIntegral value :: Word64) ""
-  in Text.pack (replicate (8 - length digits) '0' ++ digits)
+showCRC32 (CRC32 value) = showZeroPaddedHex 8 (fromIntegral value)
 
 -- | "1A3B" — 4-digit zero-padded hex.
 showCRC16 :: CRC16 -> Text
-showCRC16 (CRC16 value) =
-  let digits = showHex (fromIntegral value :: Word64) ""
-  in Text.pack (replicate (4 - length digits) '0' ++ digits)
+showCRC16 (CRC16 value) = showZeroPaddedHex 4 (fromIntegral value)
 
 -- | "001A3B4C" — 8-digit zero-padded hex.
 showAdler32 :: Adler32 -> Text
-showAdler32 (Adler32 value) =
-  let digits = showHex (fromIntegral value :: Word64) ""
-  in Text.pack (replicate (8 - length digits) '0' ++ digits)
+showAdler32 (Adler32 value) = showZeroPaddedHex 8 (fromIntegral value)
