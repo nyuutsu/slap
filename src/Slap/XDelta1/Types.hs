@@ -19,6 +19,8 @@ module Slap.XDelta1.Types
   , resolveXDelta1FileNames
   , requireXDelta1FileNames
     -- * Named constants
+  , xdelta1MagicLength
+  , xdelta1HeaderBlockLength
   , xdelta1TrailerSize
   , xdelta1EmptyInputMD5Sentinel
   , xdelta1DataRecordName
@@ -276,6 +278,14 @@ data XDelta1Instruction = XDelta1Instruction
   , xdelta1InstructionOffset :: Offset
   , xdelta1InstructionLength :: FileSize
   } deriving (Show, Eq)
+
+-- | Length of the magic prefix that opens, and closes, every xdelta1 patch.
+xdelta1MagicLength :: Int
+xdelta1MagicLength = 8
+
+-- | Length of the fixed header block: six uint32 BE words after the magic.
+xdelta1HeaderBlockLength :: Int
+xdelta1HeaderBlockLength = 24
 
 -- | Trailer size: 4-byte control offset + 8-byte trailing magic.
 xdelta1TrailerSize :: Int

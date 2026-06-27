@@ -125,21 +125,20 @@ parseParallelInstructions
   -> ByteString
   -> ByteString
   -> Either SlapError [XDelta1Instruction]
-parseParallelInstructions targetTags sourceOffsetBytes lengthBytes
-  | ByteString.length sourceOffsetBytes /= 8 * instructionCount =
-      Left $ ffiInvariantFailure $
-        "instruction-source-offsets buffer is " <> renderAsText (ByteString.length sourceOffsetBytes)
-        <> " bytes, expected " <> renderAsText (8 * instructionCount)
-        <> " (8 LE bytes per instruction × " <> renderAsText instructionCount <> " instructions)"
-  | ByteString.length lengthBytes /= 8 * instructionCount =
-      Left $ ffiInvariantFailure $
-        "instruction-lengths buffer is " <> renderAsText (ByteString.length lengthBytes)
-        <> " bytes, expected " <> renderAsText (8 * instructionCount)
-        <> " (8 LE bytes per instruction × " <> renderAsText instructionCount <> " instructions)"
-  | otherwise =
-      traverse decodeOneInstruction [0 .. instructionCount - 1]
+parseParallelInstructions targetTags sourceOffsetBytes lengthBytes = do
+  requireBufferLength "instruction-source-offsets" sourceOffsetBytes
+  requireBufferLength "instruction-lengths"        lengthBytes
+  traverse decodeOneInstruction [0 .. instructionCount - 1]
   where
     instructionCount = ByteString.length targetTags
+
+    requireBufferLength :: Text -> ByteString -> Either SlapError ()
+    requireBufferLength bufferRole buffer
+      | ByteString.length buffer == 8 * instructionCount = Right ()
+      | otherwise = Left $ ffiInvariantFailure $
+          bufferRole <> " buffer is " <> renderAsText (ByteString.length buffer)
+          <> " bytes, expected " <> renderAsText (8 * instructionCount)
+          <> " (8 LE bytes per instruction × " <> renderAsText instructionCount <> " instructions)"
 
     decodeOneInstruction index = do
       instructionTarget <- decodeTargetTag (ByteString.index targetTags index)

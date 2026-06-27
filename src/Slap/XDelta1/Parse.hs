@@ -26,6 +26,8 @@ import Slap.XDelta1.Types
     , XDelta1FileAtDeltaTime(..)
     , XDelta1FromName(..)
     , XDelta1ToName(..)
+    , xdelta1MagicLength
+    , xdelta1HeaderBlockLength
     , xdelta1TrailerSize
     , xdelta1EmptyInputMD5Sentinel
     , xdelta1DataRecordName
@@ -58,6 +60,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import Data.Bits ((.&.), shiftR)
 import Data.Int (Int64)
+import Data.List (mapAccumL)
 import Numeric (showHex)
 
 ----------------------------------------------------------------------------
@@ -114,14 +117,18 @@ data ParsedSourceKind
 
 parseXDelta1 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed XDelta1Patch)
 parseXDelta1 metadataEncoding patchContents@(PatchFileContents input)
-  | ByteString.length input < 20 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 20)) (ActualLength (byteLength input)))
+    -- coarse floor; the real minimum is checked in parseVersion1Point1
+  | ByteString.length input < xdelta1MagicLength + xdelta1TrailerSize =
+      Left (InputTooShort LabelXDelta1
+              (RequiredLength (Length (xdelta1MagicLength + xdelta1TrailerSize)))
+              (ActualLength (byteLength input)))
   | magic == "%XDZ004%" = parseVersion1Point1 metadataEncoding patchContents (ExpectedMagic magic)
   | magic == "%XDZ003%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0_4)
   | magic == "%XDZ002%" = Left (UnsupportedXDelta1Subformat XDelta1_1_0)
   | ByteString.take 7 input == "%XDELTA" = Left (UnsupportedXDelta1Subformat XDelta1_0_14)
-  | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take 8 input)))
+  | otherwise = Left (BadMagic LabelXDelta1 (ActualMagic (ByteString.take xdelta1MagicLength input)))
   where
-    magic = ByteString.take 8 input
+    magic = ByteString.take xdelta1MagicLength input
 
 -- | Body parser for @%XDZ004%@ (xdelta 1.1.x), the only xdelta1 era
 -- slap currently supports. Sibling body parsers for other eras
@@ -129,7 +136,10 @@ parseXDelta1 metadataEncoding patchContents@(PatchFileContents input)
 -- alongside this one and be dispatched to by 'parseXDelta1'.
 parseVersion1Point1 :: EncodingName -> PatchFileContents -> ExpectedMagic -> Either SlapError (Parsed XDelta1Patch)
 parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
-  | totalLength < 44 = Left (InputTooShort LabelXDelta1 (RequiredLength (Length 44)) (ActualLength (Length totalLength)))
+  | totalLength < xdelta1MagicLength + xdelta1HeaderBlockLength + xdelta1TrailerSize =
+      Left (InputTooShort LabelXDelta1
+              (RequiredLength (Length (xdelta1MagicLength + xdelta1HeaderBlockLength + xdelta1TrailerSize)))
+              (ActualLength (Length totalLength)))
   | trailingMagic /= unExpectedMagic expectedMagic = Left (TrailingMagicMismatch LabelXDelta1 expectedMagic (ActualMagic trailingMagic))
   | otherwise = do
       decompressedData    <- safeDecompressGZip dataSegmentRaw
@@ -169,19 +179,21 @@ parseVersion1Point1 metadataEncoding (PatchFileContents input) expectedMagic
 
     totalLength = ByteString.length input
 
-    -- Header: 6 x uint32 BE at offset 8
-    flags    = getWord32BE 8 input
-    nameLengths = getWord32BE 12 input
+    fixedPrefixLength = xdelta1MagicLength + xdelta1HeaderBlockLength
+
+    -- Header: 6 x uint32 BE immediately after the magic
+    flags    = getWord32BE xdelta1MagicLength input
+    nameLengths = getWord32BE (xdelta1MagicLength + 4) input
     fromNameLength = fromIntegral (nameLengths `shiftR` 16) :: Int
     toNameLength   = fromIntegral (nameLengths .&. 0xFFFF) :: Int
-    fromNameBytes = ByteString.take fromNameLength (ByteString.drop 32 input)
-    toNameBytes   = ByteString.take toNameLength (ByteString.drop (32 + fromNameLength) input)
-    headerOffset = 32 + fromNameLength + toNameLength
+    fromNameBytes = ByteString.take fromNameLength (ByteString.drop fixedPrefixLength input)
+    toNameBytes   = ByteString.take toNameLength (ByteString.drop (fixedPrefixLength + fromNameLength) input)
+    headerOffset = fixedPrefixLength + fromNameLength + toNameLength
 
     -- Trailer: last 12 bytes = control_offset (4B) + magic (8B)
     trailerOffset = totalLength - xdelta1TrailerSize
     controlOffset = fromIntegral (getWord32BE trailerOffset input) :: Int
-    trailingMagic = ByteString.take 8 (ByteString.drop (totalLength - 8) input)
+    trailingMagic = ByteString.take xdelta1MagicLength (ByteString.drop (totalLength - xdelta1MagicLength) input)
 
     -- Decompress segments if FLAG_PATCH_COMPRESSED (bit 3)
     compressed   = flags .&. xdelta1FlagPatchCompressed /= 0
@@ -452,11 +464,11 @@ requireDataAndFileRecords sources = case sources of
     (ParsedDataKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1TwoDataSources)
     (ParsedFileKind, ParsedDataKind) -> Left (UnsupportedXDelta1Shape XDelta1ReversedDataFileOrder)
     (ParsedFileKind, ParsedFileKind) -> Left (UnsupportedXDelta1Shape XDelta1TwoFileSources)
-  []        -> Left (UnsupportedXDelta1Shape XDelta1ZeroSources)
-  [single]  -> case parsedSourceKind single of
+  []             -> Left (UnsupportedXDelta1Shape XDelta1ZeroSources)
+  [single]       -> case parsedSourceKind single of
     ParsedDataKind -> Left (UnsupportedXDelta1Shape XDelta1OneDataSource)
     ParsedFileKind -> Left (UnsupportedXDelta1Shape XDelta1OneFileSource)
-  many      -> Left (UnsupportedXDelta1Shape (XDelta1TooManySources (length many)))
+  surplusSources -> Left (UnsupportedXDelta1Shape (XDelta1TooManySources (length surplusSources)))
 
 -- | Translate the wire-level source index of an instruction to the
 -- 'XDelta1InstructionTarget' sum, or refuse with
@@ -495,7 +507,7 @@ parseInstructions count = do
 -- instructions maintaining a per-target running position.
 fixSequentialOffsets :: XDelta1OffsetMode -> XDelta1OffsetMode -> [XDelta1Instruction] -> [XDelta1Instruction]
 fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
-  reverse (snd (foldl' resolveSequentialOffset (initialPositions, []) instructions))
+  snd (mapAccumL resolveSequentialOffset initialPositions instructions)
   where
     dataIsSequential = dataOffsetMode == SequentialOffsets
     fileIsSequential = fileOffsetMode == SequentialOffsets
@@ -506,26 +518,26 @@ fixSequentialOffsets dataOffsetMode fileOffsetMode instructions =
       , filePosition = 0
       }
 
-    resolveSequentialOffset (positions, accumulated) instruction =
+    resolveSequentialOffset :: SequentialPositions -> XDelta1Instruction
+                            -> (SequentialPositions, XDelta1Instruction)
+    resolveSequentialOffset positions instruction =
       case xdelta1InstructionTarget instruction of
         FromDataSource
           | dataIsSequential ->
               let rawOffset = dataPosition positions
                   advanced  = rawOffset + unFileSize (xdelta1InstructionLength instruction)
-                  updated   = positions { dataPosition = advanced }
-              in ( updated
-                 , instruction { xdelta1InstructionOffset = Offset rawOffset } : accumulated
+              in ( positions { dataPosition = advanced }
+                 , instruction { xdelta1InstructionOffset = Offset rawOffset }
                  )
-          | otherwise -> (positions, instruction : accumulated)
+          | otherwise -> (positions, instruction)
         FromFileSource
           | fileIsSequential ->
               let rawOffset = filePosition positions
                   advanced  = rawOffset + unFileSize (xdelta1InstructionLength instruction)
-                  updated   = positions { filePosition = advanced }
-              in ( updated
-                 , instruction { xdelta1InstructionOffset = Offset rawOffset } : accumulated
+              in ( positions { filePosition = advanced }
+                 , instruction { xdelta1InstructionOffset = Offset rawOffset }
                  )
-          | otherwise -> (positions, instruction : accumulated)
+          | otherwise -> (positions, instruction)
 
 -- | Per-target running positions for 'fixSequentialOffsets'.
 -- Replaces the prior association-list lookup with two named fields;

@@ -12,7 +12,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Binary (copyRegion, fillNewBuffer)
 import Slap.Measure (Offset(..), Length(..), FileSize(..), Cursor(..),
                      ActionIndex, RequestedLength(..), RemainingLength(..),
-                     ExpectedSize(..), WritePosition(..),
+                     ExpectedSize(..), WritePosition(..), ReadOffset(..),
                      fitsWithin, remainingFromOffset, byteFileSize,
                      firstAction, nextAction)
 
@@ -78,10 +78,10 @@ applyXDelta1 patch sourceContents =
     -- resolved source (data segment or file, as 'sourceBytesFor'
     -- resolves).
     checkInstructionPreconditions :: ActionIndex -> Length
-                                  -> Offset -> Offset -> FileSize
+                                  -> WritePosition -> ReadOffset -> FileSize
                                   -> Either ApplyError ()
     checkInstructionPreconditions actionIndex instructionLength
-                                  outputPosition instructionOffset sourceFileSize
+                                  (WritePosition outputPosition) (ReadOffset instructionOffset) sourceFileSize
       | not (fitsWithin outputPosition instructionLength targetFileSize) =
           Left (ApplyWritesPastTarget actionIndex
                  (RequestedLength instructionLength)
@@ -123,7 +123,7 @@ applyXDelta1 patch sourceContents =
                   sourceBytes       = sourceBytesFor source (xdelta1InstructionTarget instruction)
                   sourceFileSize    = byteFileSize sourceBytes
               case checkInstructionPreconditions actionIndex instructionLength
-                                                 outputPosition instructionOffset sourceFileSize of
+                                                 (WritePosition outputPosition) (ReadOffset instructionOffset) sourceFileSize of
                 Left err -> pure (Just err)
                 Right () -> do
                   liftIO (copyRegion targetPointer outputPosition
