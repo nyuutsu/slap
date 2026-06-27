@@ -210,34 +210,8 @@ data IPSPatch = IPSPatch
     -- is 'IPS32', 'ipsTruncatedTargetSize' is always 'Nothing'.
   } deriving (Show)
 
--- | The parsed content of the JSON metadata trailer carried by an
--- EBP patch. EBP's format is "IPS records followed by a JSON object
--- containing these four fields", so the metadata is structured data
--- the format itself defines — not opaque bytes for someone else to
--- handle. 'Slap.IPS.Parse' decodes the trailing bytes through
--- 'Slap.JSON.parseEBPMetadata' before the patch leaves the parse
--- layer; everything downstream reads the four fields directly.
---
--- Each field is a 'Maybe' 'EncodedText': 'Nothing' when the wire
--- JSON did not contain the key (or carried a non-string value),
--- 'Just' the field's content when it did. Field lookup is
--- case-insensitive at parse time — EBPatcher (the Python reference)
--- writes lowercase keys, RomPatcher.js writes capitalised ones for
--- the user-facing three — and absent fields are tolerated because
--- RomPatcher.js's writer skips empty fields entirely.
---
--- Encoding tag on extracted values is always 'EncodingUtf8': JSON
--- is UTF-8 by RFC 8259, and aeson enforces that at the parse
--- boundary. The tag travels with the value across the convert
--- seam so a downstream re-encode through, say, a locale-encoded
--- text field can see the value's provenance at the type level.
---
--- If the wire bytes were malformed (not valid JSON, or a JSON root
--- that is not an object), 'Slap.JSON.parseEBPMetadata' returns the
--- all-'Nothing' value and surfaces an 'EBPMetadataMalformed'
--- advisory alongside the parse result. The patch's records are
--- unaffected; apply and convert paths proceed normally with empty
--- metadata.
+-- | The JSON metadata trailer an EBP patch carries after its IPS records:
+-- four optional text fields, decoded at the parse layer by 'Slap.JSON.parseEBPMetadata'.
 data EBPMetadata = EBPMetadata
   { ebpMetadataTitle       :: !(Maybe EncodedText)
   , ebpMetadataAuthor      :: !(Maybe EncodedText)

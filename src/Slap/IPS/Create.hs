@@ -174,19 +174,16 @@ encodeEBPPatch records metadata =
 -- Wire-emission helpers
 ----------------------------------------------------------------------------
 
--- | Encode a single 'EncodedHunk' as one IPS record. The
--- constructor choice (RLE vs. literal) is made here, by the same
--- heuristic the DP optimizer uses internally: a payload of length
--- ≥ 3 whose every byte is identical is emitted as an RLE record
--- (8 bytes for 'StandardIPS', 9 bytes for 'IPS32', regardless of
--- run length); everything else is emitted as a literal copy
--- record.
+-- | Encode a single 'EncodedHunk' as one IPS record.
+-- The constructor choice (RLE vs. literal) is made here, by the same heuristic the DP optimizer uses internally:
+-- a payload of length ≥ 4 whose every byte is identical is emitted as an RLE record
+-- (8 bytes for 'StandardIPS', 9 bytes for 'IPS32', regardless of run length);
+-- everything else is emitted as a literal copy record.
 --
--- The size threshold of 3 is the smallest run for which RLE ties
--- copy on bytes — for runs of length ≥ 4 RLE is strictly cheaper.
--- We accept the tie at length 3 because emitting RLE there
--- preserves byte-identity with patches generated under the same
--- heuristic by the upstream tool ecosystem (Flips, Lunar IPS).
+-- At length 3 an RLE record ties a copy record on bytes, so copy wins;
+-- only for runs of length ≥ 4 is RLE strictly cheaper.
+-- We emit RLE only when it strictly saves bytes, so the length-3 tie resolves to copy,
+-- in step with the DP's break-even (@rleBreakEvenRunLength@ in 'Slap.IPS.Optimize').
 encodeIPSRecord :: OffsetWidth -> EncodedHunk -> Builder
 encodeIPSRecord offsetWidth ehunk =
   encodeOffset offsetWidth (offsetToInt recordOffset)
@@ -213,11 +210,12 @@ encodeIPSRecord offsetWidth ehunk =
       <> byteString recordPayload
 
 -- | Decide whether a payload should be encoded as an RLE record.
--- True when the payload is at least three bytes long and every
--- byte is identical. See 'encodeIPSRecord' for the cost analysis.
+-- True when the payload is at least four bytes long and every byte is identical.
+-- Four, not three: at length 3 RLE ties copy on bytes, so copy wins.
+-- See 'encodeIPSRecord' for the cost analysis.
 shouldEncodeAsRLE :: ByteString -> Bool
 shouldEncodeAsRLE payload =
-  ByteString.length payload >= 3
+  ByteString.length payload >= 4
   && ByteString.all (== ByteString.index payload 0) payload
 
 -- | Encode an integer as a big-endian offset field whose width is

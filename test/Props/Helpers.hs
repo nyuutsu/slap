@@ -186,7 +186,7 @@ ipsEncodedSize :: Int -> [ByteString] -> Int
 ipsEncodedSize offWidth = sum . map recordSize
   where
     recordSize payload
-      | ByteString.length payload >= 3, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
+      | ByteString.length payload >= 4, ByteString.all (== ByteString.index payload 0) payload = offWidth + 5
       | otherwise = offWidth + 2 + ByteString.length payload
 
 -- | Test helper: narrow a single hunk, fail loudly if it overflows.
