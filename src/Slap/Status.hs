@@ -2630,13 +2630,9 @@ data VCDIFFMalformation
   -- | A COPY's code-table entry named an address mode outside the
   -- range the cache configuration defines. The 'Word8' is the mode.
   | VCDIFFInvalidCopyAddressMode !Word8
-  -- | A window's declared delta-encoding length disagrees with the
-  -- measured span of its own fields — self-consistency the core
-  -- ruling demands (docs/vcdiff/core/questions.md,
-  -- "delta-encoding-length"): the length is the boundary a reader
-  -- navigates windows by, so once slap steers by it, verifying it is
-  -- obligatory. The 'ExpectedSize' is the wire declaration; the
-  -- 'ActualSize' is the span the framer measured.
+  -- | A window's declared delta-encoding length disagrees with the measured span of its own fields.
+  -- A self-consistency check the core ruling demands, not a boundary slap navigates by: a mismatch catches corruption (docs/vcdiff/core/questions.md, "delta-encoding-length").
+  -- The 'ExpectedSize' is the wire declaration; the 'ActualSize' is the span the framer measured.
   | VCDIFFDeltaEncodingLengthMismatch !ExpectedSize !ActualSize
   -- | A section flagged secondary-compressed whose bytes cannot
   -- supply the decompressed-size varint every compressed section

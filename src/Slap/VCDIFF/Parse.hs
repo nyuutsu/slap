@@ -1,23 +1,13 @@
 -- | Read a VCDIFF patch into the 'Slap.VCDIFF.Types' vocabulary, source-free.
--- Reads the core (default table, framing, instructions), the xdelta3 arc (checksums and secondary compression), and the RFC arc (VCD_TARGET windows and custom code tables).
--- Each feature's read and each decline reason live where it is handled.
+-- Reads the core (default table, framing, instructions), the xdelta3 arc (checksums and secondary compression), and the RFC arc (VCD_TARGET windows and custom code tables), each feature's read and decline reason living where it is handled.
 --
--- Parsing is two passes with one clean seam.
--- 'parseRawPatch' is the byte-level walk: it reads the header and frames each window, surfacing only truncation ('ParseError').
--- 'classifyAndDecode' is the semantic pass, in three stages:
+-- Parsing is two passes with one seam. 'parseRawPatch' is the byte-level walk: it reads the header and frames each window, surfacing only truncation ('ParseError'). 'classifyAndDecode' is the semantic pass, in three stages, then names the flavor:
 --
 --   * vet each window's framing ('vetWindowFraming')
 --   * resolve secondary compression so each window holds plain sections ('resolveSecondaryCompression')
 --   * decode each window's instruction stream ('decodeWindow'), enforcing the three core invariants (docs/vcdiff/core/spec.md "Core invariants")
 --
--- and name the flavor.
---
--- The address cache lives here, as decode mechanism: it is reset per
--- window, updated after every COPY, and gone once the window's
--- absolute offsets are in hand. 'decodeCopyAddress' — the cache decode
--- — is exported so a property test can exercise its round-robin and
--- modulo-slotted updates in isolation; it is the most error-prone
--- piece.
+-- The address cache lives here as decode mechanism, gone once the window's absolute offsets are in hand. 'decodeCopyAddress', the cache decode, is exported so a property test can exercise its round-robin and modulo-slotted updates in isolation: it is the most error-prone piece.
 module Slap.VCDIFF.Parse
   ( parseVCDIFF
     -- * Address cache (exported for testing)
@@ -35,10 +25,8 @@ import Slap.VCDIFF.Types
   ( VCDIFFPatch(..), Window(..), VCDIFFInstruction(..)
   , XDelta3Header(..), XDelta3Window(..), RFCHeader(..), CustomCodeTable(..)
   , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
--- Qualified: 'InstructionTemplate' shares the constructor names Add /
--- Run / Copy with 'VCDIFFInstruction'. The template (code-table) side
--- is qualified; the decoded-instruction side stays unqualified, so the
--- two are visibly distinct at every use.
+-- Qualified: 'InstructionTemplate' shares the constructor names Add / Run / Copy with 'VCDIFFInstruction'.
+-- The template (code-table) side is qualified; the decoded-instruction side stays unqualified, so the two are visibly distinct at every use.
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.SecondaryCompression
   ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
@@ -91,12 +79,9 @@ import Data.Word (Word8)
 -- Entry point
 ----------------------------------------------------------------------------
 
--- | Whether a patch being parsed may carry a custom code table. The
--- top-level parse permits it ('CustomTablesAllowed'); the inner delta a
--- custom table is built from is parsed with it forbidden
--- ('CustomTablesForbidden'), because RFC 3284 §7c requires that delta to
--- use the default table — a nested table would recurse with no base
--- case. The forbidden case is the one door to 'VCDIFFNestedCustomCodeTable'.
+-- | Whether a patch being parsed may carry a custom code table.
+-- The top-level parse permits it ('CustomTablesAllowed'); the inner delta a custom table is built from is parsed with it forbidden ('CustomTablesForbidden'), because RFC 3284 §7c requires that delta to use the default table and a nested table would recurse with no base case.
+-- The forbidden case is the one door to 'VCDIFFNestedCustomCodeTable'.
 data CustomTablePolicy
   = CustomTablesAllowed
   | CustomTablesForbidden
@@ -105,10 +90,7 @@ data CustomTablePolicy
 parseVCDIFF :: PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
 parseVCDIFF = parseVCDIFFWith CustomTablesAllowed
 
--- | Parse a VCDIFF patch under a given custom-table policy. The public
--- 'parseVCDIFF' fixes 'CustomTablesAllowed'; 'buildCustomTable' reuses
--- this with 'CustomTablesForbidden' to decode a custom table's inner
--- delta, which is itself a self-contained VCDIFF patch.
+-- | Parse a VCDIFF patch under a given custom-table policy. The public 'parseVCDIFF' fixes 'CustomTablesAllowed'; 'buildCustomTable' reuses this with 'CustomTablesForbidden' to decode a custom table's inner delta, itself a self-contained VCDIFF patch.
 parseVCDIFFWith :: CustomTablePolicy -> PatchFileContents -> Either SlapError (Parsed VCDIFFPatch)
 parseVCDIFFWith tablePolicy (PatchFileContents input)
   | ByteString.length input < magicLength =
@@ -126,39 +108,27 @@ parseVCDIFFWith tablePolicy (PatchFileContents input)
   where
     magicLength = ByteString.length vcdiffMagicBytes
 
--- | The note-severity advisories the framing stage produces: overlong
--- (non-canonical) varint encodings in wire order, then the framer's
--- trailing remnant, then any VCD_TARGET window that reaches nothing.
--- All are readings of the framed patch, attached only on a parse that
--- succeeds. The decode stage's notes are gathered separately, in
--- 'classifyAndDecode'.
+-- | The note-severity advisories the framing stage produces: overlong (non-canonical) varint encodings in wire order, then the framer's trailing remnant, then any VCD_TARGET window that reaches nothing.
+-- All are readings of the framed patch, attached only on a parse that succeeds; the decode stage's notes are gathered separately, in 'classifyAndDecode'.
 parseNotes :: RawPatch -> [SlapAdvisory]
 parseNotes rawPatch =
   framingVarintNotes rawPatch
     ++ trailingRemnantNotes rawPatch
     ++ emptyTargetSegmentNotes rawPatch
 
--- | Every overlong-varint note the framing stage gathered: the header's
--- length-field notes first, then each window's framing-field notes in
--- wire order ('rawVarintNotes').
+-- | Every overlong-varint note the framing stage gathered, in wire order: the header's length-field notes, then each window's framing-field notes ('rawVarintNotes').
 framingVarintNotes :: RawPatch -> [SlapAdvisory]
 framingVarintNotes rawPatch =
   rawHeaderVarintNotes rawPatch
     ++ concatMap rawVarintNotes (rawWindows rawPatch)
 
--- | The advisory the framer's trailing-remnant recognition surfaces,
--- when it consumed one (see 'isTrailingRemnant'). The remnant is the
--- whole of what the patch says about itself here — its bytes are not
--- patch semantics and go no further than this note.
+-- | The advisory the framer's trailing-remnant recognition surfaces, when it consumed one (see 'isTrailingRemnant'). The remnant's bytes are not patch semantics and go no further than this note.
 trailingRemnantNotes :: RawPatch -> [SlapAdvisory]
 trailingRemnantNotes rawPatch = case rawTrailingRemnant rawPatch of
   Nothing            -> []
   Just remnantLength -> [VCDIFFTrailingRemnant remnantLength]
 
--- | A note for each VCD_TARGET window whose declared source segment is
--- empty: it draws nothing from the produced target, the only legal
--- shape a first-window VCD_TARGET can take and a pointless one
--- anywhere. The window's position in the stream rides in the note.
+-- | A note for each VCD_TARGET window whose declared source segment is empty: it draws nothing from the produced target, the only legal shape a first-window VCD_TARGET can take and a pointless one anywhere. The window's position rides in the note.
 emptyTargetSegmentNotes :: RawPatch -> [SlapAdvisory]
 emptyTargetSegmentNotes rawPatch =
   [ VCDIFFEmptyTargetWindowSegment (actionAtPosition windowPosition)
@@ -174,46 +144,30 @@ emptyTargetSegmentNotes rawPatch =
 -- Byte-level framing
 ----------------------------------------------------------------------------
 
--- | The header plus a framed-but-not-yet-interpreted window list. The
--- indicator bytes are carried verbatim so 'classifyAndDecode' can read
--- their bits; the compressor id is carried as read, looked up against
--- the catalog only during classification; the application header is
--- opaque by definition and is carried as read; the sections are raw
--- slices, decoded only for a window that survives classification.
+-- | The header plus a framed-but-not-yet-interpreted window list.
+-- The indicator bytes are carried verbatim so 'classifyAndDecode' can read their bits; the compressor id as read, looked up against the catalog only during classification; the application header opaque by definition; the sections raw slices, decoded only for a window that survives classification.
 data RawPatch = RawPatch
   { rawVersion         :: !Word8
   , rawHeaderIndicator :: !Word8
   , rawCompressorId    :: !(Maybe Word8)
   , rawCodeTableData   :: !(Maybe ByteString)
-    -- ^ The custom code table's data section, as read: the two
-    -- cache-size bytes followed by the inner delta, carried verbatim
-    -- when VCD_CODETABLE was set. 'classifyAndDecode' hands it to
-    -- 'buildCustomTable', which peels the cache sizes and decodes the
-    -- inner delta; 'Nothing' means the default table is in force.
+    -- ^ The custom code table's data section, as read: the two cache-size bytes then the inner delta, carried verbatim when VCD_CODETABLE was set.
+    -- 'classifyAndDecode' hands it to 'buildCustomTable', which peels the cache sizes and decodes the inner delta; 'Nothing' means the default table is in force.
   , rawAppHeader       :: !(Maybe ByteString)
   , rawWindows         :: ![RawWindow]
   , rawTrailingRemnant :: !(Maybe Length)
-    -- ^ The byte count of the recognized trailing remnant the framer
-    -- consumed after the last window, when one was present (see
-    -- 'isTrailingRemnant'). Carried for the advisory channel only:
-    -- the bytes are not patch semantics, so they reach neither the
-    -- decoded 'VCDIFFPatch' nor anything downstream of it.
+    -- ^ The byte count of the trailing remnant the framer consumed after the last window, when one was present (see 'isTrailingRemnant').
+    -- Advisory channel only: the bytes are not patch semantics, so they reach neither the decoded 'VCDIFFPatch' nor anything downstream.
   , rawHeaderVarintNotes :: ![SlapAdvisory]
-    -- ^ Overlong-varint notes from the header's own length fields (the
-    -- code-table-data and application-header lengths), in wire order.
-    -- Advisory-only, like 'rawTrailingRemnant'; the per-window framing
-    -- varints carry their notes in 'rawVarintNotes'.
+    -- ^ Overlong-varint notes from the header's own length fields (the code-table-data and application-header lengths), in wire order.
+    -- Advisory-only; the per-window framing varints carry their notes in 'rawVarintNotes'.
   }
 
 data RawWindow = RawWindow
   { rawWindowIndicator :: !Word8
   , rawSourceSegment   :: !(Maybe RawSegment)
-    -- | The delta-encoding length the window declares: the byte span
-    -- of everything after the length field itself, through the end of
-    -- the address section. The boundary a reader navigates windows
-    -- by, so 'classifyWindow' holds it against
-    -- 'rawMeasuredEncodingLength' (docs/vcdiff/core/questions.md,
-    -- "delta-encoding-length").
+    -- | The delta-encoding length the window declares: the byte span of everything after the length field itself, through the end of the address section.
+    -- Not a boundary slap navigates by (the per-section length varints do that): a self-consistency check 'vetWindowFraming' holds against 'rawMeasuredEncodingLength', the span the fields actually occupy, catching corruption (docs/vcdiff/core/questions.md, "delta-encoding-length").
   , rawDeclaredEncodingLength :: !Length
     -- | The span the framer actually consumed over the same fields.
   , rawMeasuredEncodingLength :: !Length
@@ -224,28 +178,18 @@ data RawWindow = RawWindow
   , rawInstSection     :: !ByteString
   , rawAddrSection     :: !ByteString
   , rawVarintNotes     :: ![SlapAdvisory]
-    -- ^ Overlong-varint notes from this window's framing fields
-    -- (segment length and position, the delta-encoding length, the
-    -- target size, and the three section lengths), in wire order.
+    -- ^ Overlong-varint notes from this window's framing fields (segment length and position, the delta-encoding length, the target size, the three section lengths), in wire order.
     -- Advisory-only; 'parseNotes' gathers them across windows.
   }
 
--- | A window's source-segment position and length as read off the wire.
--- Which side it is cut from is decided in 'classifyAndDecode' from the
--- window indicator bits, not here.
+-- | A window's source-segment position and length as read off the wire. Which side it is cut from is decided in 'classifyAndDecode' from the window indicator bits, not here.
 data RawSegment = RawSegment
   { rawSegmentPosition :: !Offset
   , rawSegmentLength   :: !Length
   }
 
--- | The byte-level walk. Reads the version and header indicator, then
--- the optional header fields in wire order — the secondary-compressor
--- id, the custom-code-table data, the application header — and frames
--- the windows. It does this only when the header is built from bits
--- slap recognizes; a header carrying a reserved bit has a byte-shape
--- the framer cannot trust, so it leaves the window list empty and lets
--- 'classifyAndDecode' decline on the header before it would read
--- windows it could not have framed.
+-- | The byte-level walk. Reads the version and header indicator, then the optional header fields in wire order (the secondary-compressor id, the custom-code-table data, the application header), and frames the windows.
+-- Only when the header is built from bits slap recognizes: a header carrying a reserved bit has a byte-shape the framer cannot trust, so it leaves the window list empty and lets 'classifyAndDecode' decline on the header before it would read windows it could not have framed.
 parseRawPatch :: ByteParser RawPatch
 parseRawPatch = do
   version          <- getByte
@@ -271,58 +215,37 @@ parseRawPatch = do
                      (catMaybes [codeTableNote, appHeaderNote]))
     else pure (RawPatch version headerIndicator Nothing Nothing Nothing [] Nothing [])
 
--- | Whether the header indicator is built only from bits slap
--- recognizes — the three RFC-and-xdelta3 bits VCD_DECOMPRESS,
--- VCD_CODETABLE, and VCD_APPHEADER (bits 0–2), which are exactly the
--- complement of 'reservedIndicatorMask'. A set reserved bit (3–7)
--- names a feature from beyond what slap reads, belonging to neither
--- dialect; the framer cannot trust the byte-shape that follows such a
--- header, so it declines to frame and 'classifyAndDecode' surfaces the
--- honest 'VCDIFFReservedIndicatorBits' reason rather than failing as
--- framing garbage.
+-- | Whether the header indicator is built only from bits slap recognizes: the three bits VCD_DECOMPRESS, VCD_CODETABLE, and VCD_APPHEADER (0–2), exactly the complement of 'reservedIndicatorMask'.
+-- A set reserved bit (3–7) names a feature beyond what slap reads, belonging to neither dialect; the framer cannot trust the byte-shape that follows, so it declines to frame and 'classifyAndDecode' surfaces the honest 'VCDIFFReservedIndicatorBits' reason rather than failing as framing garbage.
 headerUsesOnlyRecognizedBits :: Word8 -> Bool
 headerUsesOnlyRecognizedBits headerIndicator =
   headerIndicator .&. reservedIndicatorMask == 0
 
--- | The custom-code-table data's wire shape: a varint length, then that
--- many bytes (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
--- The bytes are carried verbatim — the cache-size header and the inner
--- delta within them are peeled by 'buildCustomTable', not here. On the
--- wire this field follows the compressor-id byte (RFC 3284 §4.1's
--- header order) and precedes the application header.
+-- | The custom-code-table data's wire shape: a varint length, then that many bytes (docs/vcdiff/rfc-vcdiff/spec.md "Custom code tables").
+-- Carried verbatim: the cache-size header and inner delta within them are peeled by 'buildCustomTable', not here. On the wire the field follows the compressor-id byte (RFC 3284 §4.1's header order) and precedes the application header.
 parseCodeTableData :: ByteParser (ByteString, Maybe SlapAdvisory)
 parseCodeTableData = do
   declaredLength <- vcdiffVarintReportingCanonicality
   bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
   pure (bytes, vcdiffVarintAdvisory declaredLength)
 
--- | The application header's wire shape: a varint length, then that
--- many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application
--- header"). On the wire the field follows the compressor-id byte and
--- the code-table data (both read above when declared), so here it
--- follows whichever of those preceded it.
+-- | The application header's wire shape: a varint length, then that many opaque bytes (docs/vcdiff/xdelta3/spec.md "Application header").
+-- On the wire the field follows the compressor-id byte and the code-table data (both read above when declared), so here it follows whichever of those preceded it.
 parseApplicationHeader :: ByteParser (ByteString, Maybe SlapAdvisory)
 parseApplicationHeader = do
   declaredLength <- vcdiffVarintReportingCanonicality
   bytes <- getBytes (Length (fromIntegral (vcdiffVarintValue declaredLength)))
   pure (bytes, vcdiffVarintAdvisory declaredLength)
 
--- | What 'parseRawWindows' finds where the next window would begin:
--- input spent, the one trailing shape slap recognizes, or another
--- window to frame. The collect loop's three outcomes as data, in the
--- house classify-then-dispatch shape, so the loop reads as policy
--- and the looking lives in 'peekWindowStreamHead'.
+-- | What 'parseRawWindows' finds where the next window would begin: input spent, the one trailing shape slap recognizes, or another window to frame.
+-- The collect loop's three outcomes as data, in the classify-then-dispatch shape, so the loop reads as policy and the looking lives in 'peekWindowStreamHead'.
 data WindowStreamHead
   = StreamSpent
   | RemnantToEnd !Length
   | WindowAhead
 
--- | Collect windows until the input ends — or until what sits where
--- the next window would begin is the one trailing shape slap
--- recognizes instead ('isTrailingRemnant'). A recognized remnant is
--- consumed whole and reported by its byte count. The peek classifies
--- uniformly on every iteration, so a zero-window patch wearing the
--- tail gets the same recognition as a many-window one.
+-- | Collect windows until the input ends, or until what sits where the next window would begin is the one trailing shape slap recognizes ('isTrailingRemnant'), consumed whole and reported by its byte count.
+-- The peek classifies uniformly every iteration, so a zero-window patch wearing the tail gets the same recognition as a many-window one.
 parseRawWindows :: ByteParser ([RawWindow], Maybe Length)
 parseRawWindows = collect []
   where
@@ -337,9 +260,7 @@ parseRawWindows = collect []
           window <- parseRawWindow
           collect (window : accumulatedReversed)
 
--- | Classify the rest of the input without moving the cursor;
--- 'parseRawWindows' performs whatever consumption the verdict calls
--- for.
+-- | Classify the rest of the input without moving the cursor; 'parseRawWindows' performs whatever consumption the verdict calls for.
 peekWindowStreamHead :: ByteParser WindowStreamHead
 peekWindowStreamHead = do
   done <- atEnd
@@ -352,13 +273,8 @@ peekWindowStreamHead = do
                then RemnantToEnd bytesLeft
                else WindowAhead
 
--- | The one trailing shape slap recognizes after the last window:
--- the four marker bytes, then nothing but zero padding (none
--- included) to end of input. Some patches carry this harmless
--- trailer, and slap lets it through rather than blocking them
--- (docs/vcdiff/questions.md, "How does a decoder know the patch is
--- over"). Any other trailing bytes keep framing as a window and
--- failing as one.
+-- | The one trailing shape slap recognizes after the last window: the four marker bytes, then nothing but zero padding to end of input.
+-- Some patches carry this harmless trailer, and slap lets it through rather than blocking them (docs/vcdiff/questions.md, "How does a decoder know the patch is over"). Any other trailing bytes keep framing as a window and failing as one.
 isTrailingRemnant :: ByteString -> Bool
 isTrailingRemnant trailingBytes =
   ByteString.take markerLength trailingBytes == trailingRemnantMarker
@@ -391,10 +307,7 @@ parseRawWindow = do
   dataLength <- vcdiffVarintReportingCanonicality
   instLength <- vcdiffVarintReportingCanonicality
   addrLength <- vcdiffVarintReportingCanonicality
-  -- The per-window checksum, when present, sits between the section
-  -- lengths and the data section: four bytes, big-endian, presence
-  -- decided by the indicator bit alone (docs/vcdiff/xdelta3/spec.md
-  -- "Per-window Adler32").
+  -- The per-window checksum, when present, sits between the section lengths and the data section: four bytes, big-endian, presence decided by the indicator bit alone (docs/vcdiff/xdelta3/spec.md "Per-window Adler32").
   adlerChecksum <- if testBit windowIndicator vcdAdler32Bit
                      then Just . Adler32 <$> word32BE
                      else pure Nothing
@@ -436,18 +349,13 @@ vcdSourceBit  = 0   -- VCD_SOURCE:  copies address a segment of the source file
 vcdTargetBit  = 1   -- VCD_TARGET:  copies address a segment of produced target
 vcdAdler32Bit = 2   -- VCD_ADLER32: a per-window Adler32 follows the section lengths
 
--- Delta indicator (Delta_Indicator): one bit per section kind,
--- marking that kind's section of this window as a compressed piece
--- of the kind's continuous secondary stream.
+-- Delta indicator (Delta_Indicator): one bit per section kind, marking that kind's section of this window as a compressed piece of the kind's continuous secondary stream.
 vcdDataCompBit, vcdInstCompBit, vcdAddrCompBit :: Int
 vcdDataCompBit = 0   -- VCD_DATACOMP: the data section is compressed
 vcdInstCompBit = 1   -- VCD_INSTCOMP: the instruction section is compressed
 vcdAddrCompBit = 2   -- VCD_ADDRCOMP: the address section is compressed
 
--- | The three Delta_Indicator compression bits, each paired with the
--- section kind it governs. The single place the bit-to-kind pairing
--- lives; both the carriage builder and the compressed-kind scans
--- below read it.
+-- | The three Delta_Indicator compression bits, each paired with the section kind it governs. The single place the bit-to-kind pairing lives; both the carriage builder and the compressed-kind scans below read it.
 sectionCompressionBits :: [(Int, VCDIFFSection)]
 sectionCompressionBits =
   [ (vcdDataCompBit, VCDIFFDataSection)
@@ -455,10 +363,7 @@ sectionCompressionBits =
   , (vcdAddrCompBit, VCDIFFAddressSection)
   ]
 
--- | Mask of the bits each indicator byte leaves undefined in the core.
--- A set bit here is reserved for future definition: slap cannot
--- interpret it, so the patch is declined as unreadable
--- ('VCDIFFReservedIndicatorBits'), not called malformed.
+-- | Mask of the bits each indicator byte leaves undefined in the core. A set bit is reserved for future definition: slap cannot interpret it, so the patch is declined as unreadable ('VCDIFFReservedIndicatorBits'), not called malformed.
 reservedIndicatorMask :: Word8
 reservedIndicatorMask = 0xF8
 
@@ -466,18 +371,9 @@ reservedIndicatorMask = 0xF8
 -- Semantic classification and decode
 ----------------------------------------------------------------------------
 
--- | Interpret a framed patch: refuse an unreadable version or header,
--- settle the code table the windows decode against, vet every window's
--- framing, resolve secondary compression so each window holds plain
--- sections, decode each window, then name the flavor. Returns the
--- decoded patch alongside the decode stage's advisories — a custom
--- table's do-nothing entries, and any overlong inline size varint a
--- window's instructions carried.
+-- | Interpret a framed patch and name its flavor, returning the decoded patch alongside the decode stage's advisories: a custom table's do-nothing entries, and any overlong inline size varint a window's instructions carried.
 --
--- Vetting runs before resolution on purpose: a window whose delta
--- indicator carries reserved bits is declined before its compression
--- bits are believed, because slap cannot claim to interpret three
--- bits of a byte it does not understand the rest of.
+-- Vetting runs before resolution on purpose: a window whose delta indicator carries reserved bits is declined before its compression bits are believed, because slap cannot claim to interpret three bits of a byte it does not understand the rest of.
 classifyAndDecode :: CustomTablePolicy -> RawPatch -> Either SlapError (VCDIFFPatch, [SlapAdvisory])
 classifyAndDecode tablePolicy rawPatch
   | rawVersion rawPatch /= 0 =
@@ -498,40 +394,26 @@ classifyAndDecode tablePolicy rawPatch
   where
     headerIndicator = rawHeaderIndicator rawPatch
 
--- | The code table a patch's windows decode against, plus how the
--- decode names it. 'resolvedActiveTable' is the table-and-cache-config
--- the instruction walk uses; 'resolvedCustomTable' is 'Just' only for a
--- patch that supplied its own table, with the cache geometry that table
--- declared (the classifier's RFC-exclusive signal, and what 'RFCHeader'
--- records); 'resolvedTableNotes' carries
--- any advisory building the table raised.
+-- | The code table a patch's windows decode against, plus how the decode names it.
+-- 'resolvedActiveTable' is the table-and-cache-config the instruction walk uses; 'resolvedCustomTable' is 'Just' only for a patch that supplied its own table, with the cache geometry it declared (the classifier's RFC-exclusive signal, and what 'RFCHeader' records); 'resolvedTableNotes' carries any advisory building the table raised.
 data ResolvedTable = ResolvedTable
   { resolvedActiveTable :: !ActiveTable
   , resolvedCustomTable :: !(Maybe CustomCodeTable)
   , resolvedTableNotes  :: ![SlapAdvisory]
   }
 
--- | The code table and address-cache configuration a window's
--- instruction walk decodes against — the default pair for an ordinary
--- patch, the built pair for one carrying a custom table. Bundled so the
--- two travel together and a window can never be decoded against one
--- patch's table and another's cache sizes.
+-- | The code table and address-cache configuration a window's instruction walk decodes against: the default pair for an ordinary patch, the built pair for one carrying a custom table.
+-- Bundled so the two travel together and a window can never be decoded against one patch's table and another's cache sizes.
 data ActiveTable = ActiveTable
   { activeCodeTable   :: !Table.CodeTable
   , activeCacheConfig :: !AddressCacheConfig
   }
 
--- | The core's pairing: the RFC §5.6 default table with the default
--- four-near / three-same cache configuration. In force for every patch
--- that supplies no custom table.
+-- | The core's pairing: the RFC §5.6 default table with the default four-near \/ three-same cache configuration. In force for every patch that supplies no custom table.
 defaultActiveTable :: ActiveTable
 defaultActiveTable = ActiveTable Table.defaultCodeTable defaultAddressCacheConfig
 
--- | Settle which table the windows decode against. With VCD_CODETABLE
--- unset, the default pair. With it set, build the custom table from the
--- header's data section — unless custom tables are forbidden here (the
--- inner delta of a table being built), where the bit is the no-nesting
--- refusal pointing at the table declaration, not the inner body.
+-- | Settle which table the windows decode against. With VCD_CODETABLE unset, the default pair. With it set, build the custom table from the header's data section, unless custom tables are forbidden here (the inner delta of a table being built), where the bit is the no-nesting refusal pointing at the table declaration, not the inner body.
 resolveActiveTable
   :: CustomTablePolicy -> Word8 -> Maybe ByteString -> Either SlapError ResolvedTable
 resolveActiveTable tablePolicy headerIndicator maybeTableData
@@ -547,18 +429,9 @@ resolveActiveTable tablePolicy headerIndicator maybeTableData
         , resolvedTableNotes  = []
         }
 
--- | Build a patch's custom code table from its data section (RFC 3284
--- §7): peel the two cache-size bytes, decode the inner delta — itself a
--- self-contained VCDIFF patch — against the serialized default table,
--- read the 1536-byte result back into a table, and check the one thing
--- the image alone could not (a COPY mode the declared caches do not
--- reach). Yields the 'ResolvedTable' the windows decode against — the
--- built table paired with its cache config, the same table as the
--- classifier's RFC signal, and any do-nothing-entry advisory. Everything
--- from the inner decode onward — the inner-delta parse and apply, the
--- read-back, the mode check — is wrapped with the custom-code-table
--- context so its precision survives; only the cache-size peel, which
--- fails before any of that, keeps its own bare error.
+-- | Build a patch's custom code table from its data section (RFC 3284 §7): peel the two cache-size bytes, decode the inner delta (itself a self-contained VCDIFF patch) against the serialized default table, read the 1536-byte result back into a table, and check the one thing the image alone could not (a COPY mode the declared caches do not reach).
+-- Yields the 'ResolvedTable' the windows decode against: the built table paired with its cache config, the same table as the classifier's RFC signal, and any do-nothing-entry advisory.
+-- Everything from the inner decode onward (the inner-delta parse and apply, the read-back, the mode check) is wrapped with the custom-code-table context so its precision survives; only the cache-size peel, failing before any of that, keeps its own bare error.
 buildCustomTable :: Maybe ByteString -> Either SlapError ResolvedTable
 buildCustomTable maybeTableData = do
   (config, innerDelta) <- peelCodeTableHeader maybeTableData
@@ -573,10 +446,8 @@ buildCustomTable maybeTableData = do
   where
     wrapTableDecode = either (Left . VCDIFFCustomCodeTableDecodeFailed) Right
 
--- | Peel the two cache-size bytes (@s_near@, @s_same@) off the front of
--- the code-table data, leaving the inner delta. The data must hold at
--- least those two bytes (RFC 3284 §7); fewer cannot name a cache
--- configuration at all, so it is 'VCDIFFCodeTableHeaderTooShort'.
+-- | Peel the two cache-size bytes (@s_near@, @s_same@) off the front of the code-table data, leaving the inner delta.
+-- The data must hold at least those two bytes (RFC 3284 §7); fewer cannot name a cache configuration at all, so it is 'VCDIFFCodeTableHeaderTooShort'.
 peelCodeTableHeader
   :: Maybe ByteString -> Either SlapError (AddressCacheConfig, ByteString)
 peelCodeTableHeader (Just tableData)
@@ -588,14 +459,8 @@ peelCodeTableHeader (Just tableData)
 peelCodeTableHeader _ =
   Left (MalformedVCDIFFCodeTable VCDIFFCodeTableHeaderTooShort)
 
--- | Decode a custom table's inner delta against the serialized default
--- table, yielding the raw image 'Table.deserializeCodeTable' reads
--- back. The inner delta is a self-contained VCDIFF patch (RFC 3284 §7),
--- so this reuses slap's own parse and apply rather than a second
--- decoder — parsed with custom tables forbidden, so a nested table
--- surfaces as its own 'VCDIFFNestedCustomCodeTable' (pointing at the
--- header), while every other inner parse or apply failure is wrapped
--- with the custom-code-table context.
+-- | Decode a custom table's inner delta against the serialized default table, yielding the raw image 'Table.deserializeCodeTable' reads back.
+-- The inner delta is a self-contained VCDIFF patch (RFC 3284 §7), so this reuses slap's own parse and apply rather than a second decoder, parsed with custom tables forbidden so a nested table surfaces as its own 'VCDIFFNestedCustomCodeTable' (pointing at the header), every other inner parse or apply failure wrapped with the custom-code-table context.
 decodeInnerTableImage :: ByteString -> Either SlapError ByteString
 decodeInnerTableImage innerDelta =
   case parseVCDIFFWith CustomTablesForbidden (PatchFileContents innerDelta) of
@@ -608,13 +473,8 @@ decodeInnerTableImage innerDelta =
   where
     defaultTableImage = Table.serializeCodeTable Table.defaultCodeTable
 
--- | Reject any COPY template in the built table whose address mode the
--- declared caches do not reach — the cache-dependent check
--- 'Table.deserializeCodeTable' deliberately defers (it carries the mode
--- verbatim). The admissible band is exactly the one
--- 'classifyAddressMode' uses at decode, consulted here so the eager
--- check and the decode-time check cannot drift
--- (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
+-- | Reject any COPY template in the built table whose address mode the declared caches do not reach: the cache-dependent check 'Table.deserializeCodeTable' defers (it carries the mode verbatim).
+-- The admissible band is exactly the one 'classifyAddressMode' uses at decode, consulted here so the eager check and the decode-time check cannot drift (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
 checkCustomTableCopyModes
   :: AddressCacheConfig -> Table.CodeTable -> Either SlapError ()
 checkCustomTableCopyModes config table =
@@ -628,17 +488,11 @@ checkCustomTableCopyModes config table =
                   (VCDIFFCodeTableCopyModeOutOfRange mode (highestValidAddressMode config)))
     checkTemplate _ = Right ()
 
--- | The highest COPY address mode the caches reach: one below the layout's
--- mode ceiling. Reads that one boundary from 'modeCeiling' rather than
--- re-deriving the band arithmetic 'classifyAddressMode' steers by.
+-- | The highest COPY address mode the caches reach: one below the layout's mode ceiling. Reads that boundary from 'modeCeiling' rather than re-deriving the band arithmetic 'classifyAddressMode' steers by.
 highestValidAddressMode :: AddressCacheConfig -> Word8
 highestValidAddressMode config = fromIntegral (modeCeiling config - 1)
 
--- | A presence advisory if the built table holds any do-nothing
--- (NOOP-then-NOOP) entry, or none. Legal but remarkable — the default
--- table has no such entry, so one means the table was deliberately
--- shaped to carry it (docs/vcdiff/rfc-vcdiff/questions.md, "invalid
--- decoded-table entries").
+-- | A presence advisory if the built table holds any do-nothing (NOOP-then-NOOP) entry, or none. Legal but remarkable: the default table has no such entry, so one means the table was deliberately shaped to carry it (docs/vcdiff/rfc-vcdiff/questions.md, "invalid decoded-table entries").
 noopNoopAdvisories :: Table.CodeTable -> [SlapAdvisory]
 noopNoopAdvisories table =
   [ VCDIFFCustomTableNoopNoopEntries doNothingCount | doNothingCount > 0 ]
@@ -648,10 +502,7 @@ noopNoopAdvisories table =
                   , Table.firstTemplate  entry == Table.Noop
                   , Table.secondTemplate entry == Table.Noop ]
 
--- | Resolve a framed compressor id against the catalog. An id the
--- catalog does not name is the decline shape — slap does not know
--- what algorithm such a patch is asking for, so it cannot call the
--- patch malformed (see 'VCDIFFUnknownSecondaryCompressor').
+-- | Resolve a framed compressor id against the catalog. An id the catalog does not name is the decline shape: slap does not know what algorithm such a patch is asking for, so it cannot call the patch malformed (see 'VCDIFFUnknownSecondaryCompressor').
 lookupDeclaredCompressor
   :: Maybe Word8 -> Either SlapError (Maybe XDelta3SecondaryCompressor)
 lookupDeclaredCompressor Nothing = Right Nothing
@@ -660,44 +511,23 @@ lookupDeclaredCompressor (Just compressorId) =
     Nothing         -> Left (VCDIFFUnknownSecondaryCompressor compressorId)
     Just compressor -> Right (Just compressor)
 
--- | One decoded window, before the patch-level flavor verdict: the
--- shared 'Window', plus the checksum it carried if any. A VCDIFF
--- window and nothing more — which flavor it belongs to is a fact
--- about the whole patch, rendered by 'classifyFlavor' after every
--- window is decoded, and only then do these become 'XDelta3Window's
--- (or shed their absent checksums and stay plain 'Window's).
+-- | One decoded window, before the patch-level flavor verdict: the shared 'Window' plus the checksum it carried, if any.
+-- A VCDIFF window and nothing more: which flavor it belongs to is a fact about the whole patch, rendered by 'classifyFlavor' after every window is decoded, and only then do these become 'XDelta3Window's (or shed their absent checksums and stay plain 'Window's).
 data DecodedWindow = DecodedWindow
   { decodedWindowBody     :: !Window
   , decodedWindowChecksum :: !(Maybe Adler32)
   , decodedWindowNotes    :: ![SlapAdvisory]
   }
 
--- | Name the decoded patch for what it is, from two independent
--- readings of its windows: whether it carries an xdelta3 extension, and
--- whether it carries an RFC-exclusive feature. The four combinations
--- are exhaustive and each has one honest answer:
+-- | Name the decoded patch for what it is, from two independent readings of its windows: whether it carries an xdelta3 extension, and whether it carries an RFC-exclusive feature.
+-- The four combinations are exhaustive and each has one honest answer:
 --
---   * an xdelta3 extension, no RFC-exclusive feature → 'PatchXDelta3'.
---     A declared secondary compressor (an xdelta3 signal even when no
---     window exercises it, because xdelta3's catalog is the only
---     registry of compressor ids there is), an application header, or
---     any window's Adler32 is enough.
---   * an RFC-exclusive feature, no xdelta3 extension → 'PatchRFC',
---     carrying the custom code table when there was one ('Nothing' for a
---     VCD_TARGET-only patch). Either a produced-target window or a custom
---     code table is that signal.
---   * neither → 'PatchCoreOnly', decoding identically under either
---     flavor (docs/vcdiff/xdelta3/spec.md "Classification").
---   * both → refused. The patch is neither dialect — RFC 3284 defines
---     no xdelta3 extension and xdelta3 refuses both RFC-exclusive
---     features — so slap, which reads only those two dialects, declines,
---     naming the RFC feature and the xdelta3 extension it found. The
---     Adler32 reaches this verdict read and used, never dropped: the
---     type forbids carrying it into a 'PatchRFC' at all.
+--   * xdelta3 extension, no RFC-exclusive feature: 'PatchXDelta3'. A declared secondary compressor (an xdelta3 signal even when no window exercises it, xdelta3's catalog being the only registry of compressor ids there is), an application header, or any window's Adler32 is enough.
+--   * RFC-exclusive feature, no xdelta3 extension: 'PatchRFC', carrying the custom code table when there was one ('Nothing' for a VCD_TARGET-only patch). A produced-target window or a custom code table is that signal.
+--   * neither: 'PatchCoreOnly', decoding identically under either flavor (docs/vcdiff/xdelta3/spec.md "Classification").
+--   * both: refused. The patch is neither dialect, RFC 3284 defining no xdelta3 extension and xdelta3 refusing both RFC-exclusive features, so slap declines, naming the RFC feature and the xdelta3 extension it found. The Adler32 reaches this verdict read and used, never dropped: the type forbids carrying it into a 'PatchRFC' at all.
 --
--- The mixed case is an explicit 'Left' with no wildcard; both halves of
--- the two RFC-exclusive features are accounted for, so the compiler
--- points here if a third signal is ever added.
+-- The mixed case is an explicit 'Left' with no wildcard, both halves of the two RFC-exclusive features accounted for, so the compiler points here if a third signal is ever added.
 classifyFlavor
   :: Maybe CustomCodeTable -> Maybe XDelta3SecondaryCompressor -> Maybe ByteString
   -> Vector DecodedWindow -> Either SlapError VCDIFFPatch
@@ -721,16 +551,12 @@ classifyFlavor maybeCustomTable declaredCompressor maybeAppHeader decodedWindows
         Just segment -> sourceSegmentOrigin segment == FromProducedTarget
         Nothing      -> False
 
-    -- Which RFC feature to name in the refusal; reached only when
-    -- 'carriesRFCExclusiveFeature' holds, so the final arm means the
-    -- custom code table is what made it true.
+    -- Which RFC feature to name in the refusal; reached only when 'carriesRFCExclusiveFeature' holds, so the final arm means the custom code table made it true.
     presentRFCFeature
       | hasTargetWindow = RFCFeatureTargetWindow
       | otherwise       = RFCFeatureCustomCodeTable
 
-    -- Which extension to name in the refusal, in detection priority;
-    -- reached only when 'carriesXDelta3Extension' holds, so the final
-    -- arm means a window checksum is what made it true.
+    -- Which extension to name in the refusal, in detection priority; reached only when 'carriesXDelta3Extension' holds, so the final arm means a window checksum made it true.
     presentXDelta3Feature
       | isJust declaredCompressor = XDelta3FeatureSecondaryCompressor
       | isJust maybeAppHeader     = XDelta3FeatureApplicationHeader
@@ -740,11 +566,8 @@ classifyFlavor maybeCustomTable declaredCompressor maybeAppHeader decodedWindows
       XDelta3Window (decodedWindowBody decodedWindow)
                     (decodedWindowChecksum decodedWindow)
 
--- | Vet one framed window's framing: refuse any unlanded feature on
--- its indicator bytes, and hold the window to its own declared
--- length. Runs over every window before secondary compression is
--- resolved, so the resolution pass reads compression bits only out
--- of indicator bytes this vetting has fully accounted for.
+-- | Vet one framed window's framing: refuse any unlanded feature on its indicator bytes, and hold the window to its own declared length.
+-- Runs over every window before secondary compression is resolved, so the resolution pass reads compression bits only out of indicator bytes this vetting has fully accounted for.
 vetWindowFraming :: RawWindow -> Either SlapError ()
 vetWindowFraming rawWindow
   | windowIndicator .&. reservedIndicatorMask /= 0 =
@@ -761,16 +584,11 @@ vetWindowFraming rawWindow
   where
     windowIndicator = rawWindowIndicator rawWindow
 
--- | Decode one resolved window's instruction stream against the active
--- code table — the default pair for an ordinary patch, the built pair
--- for one carrying a custom table. The 'ResolvedWindow' proof is what
--- lets the body read the sections as plain bytes without checking — the
--- instruction decode never learns that compression existed.
+-- | Decode one resolved window's instruction stream against the active code table (the default pair for an ordinary patch, the built pair for one carrying a custom table).
+-- The 'ResolvedWindow' proof is what lets the body read the sections as plain bytes without checking: the instruction decode never learns that compression existed.
 decodeWindow :: ActiveTable -> ResolvedWindow -> Either SlapError DecodedWindow
 decodeWindow activeTable (ResolvedWindow rawWindow) = do
-  let -- The window's two copy-source bits are mutually exclusive
-      -- ('vetWindowFraming' rejects both at once), so the VCD_TARGET bit
-      -- alone decides which side a present segment is cut from.
+  let -- The window's two copy-source bits are mutually exclusive ('vetWindowFraming' rejects both at once), so the VCD_TARGET bit alone decides which side a present segment is cut from.
       segmentOrigin
         | testBit (rawWindowIndicator rawWindow) vcdTargetBit = FromProducedTarget
         | otherwise                                           = FromSourceFile
@@ -802,30 +620,16 @@ decodeWindow activeTable (ResolvedWindow rawWindow) = do
 -- Secondary-compression resolution
 ----------------------------------------------------------------------------
 
--- | The proof that 'resolveSecondaryCompression' has run: a window
--- whose sections are plain bytes, whatever the wire carried. Its
--- still-set Delta_Indicator compression bits are history, not
--- instruction — they record what the wire did; the type says it has
--- been dealt with. 'decodeWindow' accepts only this, so decoding an
--- unresolved window is a compile error.
+-- | The proof that 'resolveSecondaryCompression' has run: a window whose sections are plain bytes, whatever the wire carried.
+-- Its still-set Delta_Indicator compression bits are history, not instruction: they record what the wire did, the type says it has been dealt with. 'decodeWindow' accepts only this, so decoding an unresolved window is a compile error.
 newtype ResolvedWindow = ResolvedWindow RawWindow
 
--- | Resolve every window's compressed sections into plain ones, or
--- refuse. The dispositions, decided by the declared compressor:
+-- | Resolve every window's compressed sections into plain ones, or refuse. The dispositions, decided by the declared compressor:
 --
---   * No compressor declared: any compression-flagged section is a
---     wire self-contradiction ('VCDIFFCompressedSectionWithoutCompressor').
---   * A compressor declared: each kind runs through that compressor's
---     decode path — per-section for DJW and FGK, gathered for LZMA —
---     and every window comes out holding plain sections. A compressor
---     declared but exercised by no window passes every section through
---     untouched and arrives at the same place, which is the valid
---     declared-but-unused case (docs/vcdiff/xdelta3/secondary-
---     compression.md "Catalog").
+--   * No compressor declared: any compression-flagged section is a wire self-contradiction ('VCDIFFCompressedSectionWithoutCompressor').
+--   * A compressor declared: each kind runs through that compressor's decode path (per-section for DJW, gathered for LZMA and FGK) and every window comes out holding plain sections. A compressor declared but exercised by no window passes every section through untouched to the same place, the valid declared-but-unused case (docs/vcdiff/xdelta3/secondary-compression.md "Catalog").
 --
--- The arms stay explicit rather than factored through a shared projection:
--- the dispositions above appear one-to-one in the code, and a new catalog entry fires '-Wincomplete-patterns' here, at the decision point.
--- The catalog refuses nothing here: all three compressors are decode paths.
+-- The arms stay explicit rather than factored through a shared projection: the dispositions appear one-to-one in the code, and a new catalog entry fires '-Wincomplete-patterns' here, at the decision point. The catalog refuses nothing here; all three compressors are decode paths.
 resolveSecondaryCompression
   :: Maybe XDelta3SecondaryCompressor -> [RawWindow]
   -> Either SlapError [ResolvedWindow]
@@ -839,8 +643,7 @@ resolveSecondaryCompression declaredCompressor rawWindows =
     Just SecondaryFGK  -> decompressSectionsThrough decodeFGKCompressedKind rawWindows
     Just SecondaryLZMA -> decompressSectionsThrough decodeLZMACompressedKind rawWindows
 
--- | The section kinds a window's Delta_Indicator flags as
--- compressed, in kind order.
+-- | The section kinds a window's Delta_Indicator flags as compressed, in kind order.
 compressedKindsOf :: RawWindow -> [VCDIFFSection]
 compressedKindsOf rawWindow =
   [ kind
@@ -848,15 +651,8 @@ compressedKindsOf rawWindow =
   , testBit (rawDeltaIndicator rawWindow) compressionBit
   ]
 
--- | Run each of the three kinds through a compressor's kind-decode
--- path and hand every window back with plain sections. Each kind is
--- decoded independently of the others; a kind no window compresses
--- passes through untouched. The argument is the per-compressor
--- machine — 'decodeLZMACompressedKind' gathers a kind's continuous
--- stream, 'decodeDJWCompressedKind' decodes each section on its own —
--- and this walker owns only what the compressors share: pairing each
--- window's Delta_Indicator bit with its section bytes on the way in,
--- and reassembling windows on the way out.
+-- | Run each of the three kinds through a compressor's kind-decode path and hand every window back with plain sections. Each kind decodes independently of the others; a kind no window compresses passes through untouched.
+-- The argument is the per-compressor machine ('decodeLZMACompressedKind' gathers a kind's continuous stream, 'decodeDJWCompressedKind' decodes each section on its own), and this walker owns only what the compressors share: pairing each window's Delta_Indicator bit with its section bytes on the way in, reassembling windows on the way out.
 decompressSectionsThrough
   :: (VCDIFFSection -> [SectionCarriage] -> Either SlapError [ByteString])
   -> [RawWindow] -> Either SlapError [RawWindow]
@@ -877,9 +673,7 @@ decompressSectionsThrough decodeCompressedKind rawWindows = do
         | rawWindow <- rawWindows
         ]
 
-    -- The three plain sections arrive positionally in data, inst,
-    -- addr order — the same order the 'do' block above binds them in,
-    -- so a transposition is visible at the 'zipWith4' call site.
+    -- The three plain sections arrive positionally in data, inst, addr order, the same order the 'do' block above binds them in, so a transposition is visible at the 'zipWith4' call site.
     windowWithPlainSections :: RawWindow -> ByteString -> ByteString -> ByteString
                             -> RawWindow
     windowWithPlainSections rawWindow dataSection instSection addrSection =
@@ -893,15 +687,8 @@ decompressSectionsThrough decodeCompressedKind rawWindows = do
 -- Instruction-stream decode
 ----------------------------------------------------------------------------
 
--- | Cursors into one window's three sections. Role-wrapped so a
--- transition meant for one section cannot compile against another —
--- the same reason 'Slap.BPS.Apply' role-wraps its two relative
--- cursors — and 'Offset'-backed: each names a byte position in its
--- section slice, squarely inside 'Offset''s charter of byte positions
--- in zero-indexed buffers. The walk's byte-level primitives
--- ('ByteString.index', 'getVcdiffVarint') peel both layers at their
--- call sites; everywhere else the cursors move only through the
--- named transitions below.
+-- | Cursors into one window's three sections. Role-wrapped so a transition meant for one section cannot compile against another (the same reason 'Slap.BPS.Apply' role-wraps its two relative cursors), and 'Offset'-backed: each names a byte position in its section slice, squarely inside 'Offset''s charter of byte positions in zero-indexed buffers.
+-- The walk's byte-level primitives ('ByteString.index', 'getVcdiffVarint') peel both layers at their call sites; everywhere else the cursors move only through the named transitions below.
 newtype InstructionSectionCursor = InstructionSectionCursor Offset
   deriving (Eq, Ord, Show)
 
@@ -909,10 +696,7 @@ newtype InstructionSectionCursor = InstructionSectionCursor Offset
 newtype DataSectionCursor = DataSectionCursor Offset
   deriving (Eq, Ord, Show)
 
--- | See 'InstructionSectionCursor'. The address cursor has no
--- 'Cursor' instance: it never advances by a stride — the address
--- kernel returns its absolute post-position, adopted whole by
--- 'adoptCopyAddressReading'.
+-- | See 'InstructionSectionCursor'. The address cursor has no 'Cursor' instance: it never advances by a stride, the address kernel returning its absolute post-position, adopted whole by 'adoptCopyAddressReading'.
 newtype AddressSectionCursor = AddressSectionCursor Offset
   deriving (Eq, Ord, Show)
 
@@ -924,15 +708,9 @@ instance Cursor DataSectionCursor where
   advance  (DataSectionCursor position) stride = DataSectionCursor (advance  position stride)
   displace (DataSectionCursor position) delta  = DataSectionCursor (displace position delta)
 
--- | Cursors and accumulators carried through one window's decode by
--- 'WindowDecode'. The three sections each have their own role-typed
--- cursor; 'producedBytes' tracks how much of the target this window
--- has emitted, which fixes @here@ for the next COPY; and
--- 'instructionIndex' numbers the decoded instructions for error
--- reporting — deliberately instructions, not instruction-section
--- bytes: one code byte can carry two instructions, and an inline
--- size varint widens others, so an error's index counts what the
--- stream means rather than where it sits.
+-- | Cursors and accumulators carried through one window's decode by 'WindowDecode'.
+-- The three sections each have their own role-typed cursor; 'producedBytes' tracks how much of the target this window has emitted, fixing @here@ for the next COPY; 'instructionIndex' numbers the decoded instructions for error reporting.
+-- Deliberately instructions, not instruction-section bytes: one code byte can carry two instructions and an inline size varint widens others, so an error's index counts what the stream means rather than where it sits.
 data DecodeState = DecodeState
   { instCursor       :: !InstructionSectionCursor
   , dataCursor       :: !DataSectionCursor
@@ -944,50 +722,37 @@ data DecodeState = DecodeState
   , notesReversed    :: ![SlapAdvisory]
   }
 
--- | The window-decode monad: 'DecodeState' threaded over the same
--- 'Either' the rest of parse answers in, the way 'Slap.BPS.Apply'
--- threads its cursors over 'IO'.
+-- | The window-decode monad: 'DecodeState' threaded over the same 'Either' the rest of parse answers in, the way 'Slap.BPS.Apply' threads its cursors over 'IO'.
 type WindowDecode = StateT DecodeState (Either SlapError)
 
--- | Refuse the window with a malformation verdict. Every refusal the
--- instruction walk raises is a 'VCDIFFMalformation'; this is the one
--- door into the 'Left' lane.
+-- | Refuse the window with a malformation verdict. Every refusal the instruction walk raises is a 'VCDIFFMalformation'; this is the one door into the 'Left' lane.
 failDecode :: VCDIFFMalformation -> WindowDecode a
 failDecode = lift . Left . MalformedVCDIFF
 
--- | Refuse the window: an instruction demanded more bytes than the
--- named section holds.
+-- | Refuse the window: an instruction demanded more bytes than the named section holds.
 sectionExhausted :: VCDIFFSection -> WindowDecode a
 sectionExhausted section = do
   failingInstruction <- gets instructionIndex
   failDecode (VCDIFFSectionExhausted section failingInstruction)
 
--- | Advance the instruction-section cursor past a consumed code byte
--- or inline size varint.
+-- | Advance the instruction-section cursor past a consumed code byte or inline size varint.
 advanceInstCursor :: Length -> DecodeState -> DecodeState
 advanceInstCursor consumed decodeState =
   decodeState { instCursor = advance (instCursor decodeState) consumed }
 
--- | Advance the data-section cursor past consumed ADD literal bytes
--- or a RUN fill byte.
+-- | Advance the data-section cursor past consumed ADD literal bytes or a RUN fill byte.
 advanceDataCursor :: Length -> DecodeState -> DecodeState
 advanceDataCursor consumed decodeState =
   decodeState { dataCursor = advance (dataCursor decodeState) consumed }
 
--- | Move the state to a 'CopyAddressReading''s post-state: the cache
--- with the address recorded, the address-section cursor past the
--- consumed bytes. The address kernel answers in 'Int' (see
--- 'CopyAddressReading'); its post-state re-enters the typed walk
--- here.
+-- | Move the state to a 'CopyAddressReading''s post-state: the cache with the address recorded, the address-section cursor past the consumed bytes.
+-- The address kernel answers in 'Int' (see 'CopyAddressReading'); its post-state re-enters the typed walk here.
 adoptCopyAddressReading :: CopyAddressReading -> DecodeState -> DecodeState
 adoptCopyAddressReading reading decodeState = decodeState
   { addrCursor   = AddressSectionCursor (copyAddressCursorAfter reading)
   , addressCache = copyAddressCacheAfter reading
   }
 
--- | Account for an emitted instruction: the produced-byte count grows
--- by the instruction's output size, the instruction counter steps,
--- and the instruction joins the reversed accumulator.
 emitInstruction :: VCDIFFInstruction -> Length -> DecodeState -> DecodeState
 emitInstruction instruction outputSize decodeState = decodeState
   { producedBytes    = producedBytes decodeState <> outputSize
@@ -995,21 +760,13 @@ emitInstruction instruction outputSize decodeState = decodeState
   , emittedReversed  = instruction : emittedReversed decodeState
   }
 
--- | Record a note raised mid-walk (an overlong inline size varint),
--- newest-first; 'finishWindow' reverses the accumulator into wire
--- order. Peer to 'emitInstruction', the way the IPS record walk
--- carries its own walker-time warnings.
+-- | Record a note raised mid-walk (an overlong inline size varint), newest-first; 'finishWindow' reverses the accumulator into wire order. Peer to 'emitInstruction', the way the IPS record walk carries its own walker-time warnings.
 noteAdvisory :: SlapAdvisory -> DecodeState -> DecodeState
 noteAdvisory advisory decodeState = decodeState
   { notesReversed = advisory : notesReversed decodeState }
 
--- | Decode one window's instruction stream into already-resolved
--- 'VCDIFFInstruction's, enforcing the three core invariants. Each
--- instruction byte indexes the default code table for up to two
--- templates; a deferred (zero) size is read inline from the
--- instruction section; ADD slices its literal bytes from the data
--- section; RUN takes its fill byte; COPY decodes its absolute
--- superstring offset through the address cache.
+-- | Decode one window's instruction stream into already-resolved 'VCDIFFInstruction's, enforcing the three core invariants.
+-- Each instruction byte indexes the active code table for up to two templates; a deferred (zero) size is read inline from the instruction section; ADD slices its literal bytes from the data section; RUN takes its fill byte; COPY decodes its absolute superstring offset through the address cache.
 decodeWindowInstructions
   :: ActiveTable  -- ^ the active code table and cache configuration
   -> Length       -- ^ source-segment length, @len(S)@
@@ -1032,30 +789,22 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       , notesReversed    = []
       }
 
-    -- | The sections measured as the whole spaces their cursors
-    -- address. 'FileSize' is the role 'fitsWithin' and
-    -- 'remainingFromOffset' read their last argument in — the total
-    -- extent a region is checked against — and within this walk each
-    -- section is exactly that whole, even though one layer up it is a
-    -- region of the patch file.
+    -- | The sections measured as the whole spaces their cursors address.
+    -- 'FileSize' is the role 'fitsWithin' and 'remainingFromOffset' read their last argument in, the total extent a region is checked against, and within this walk each section is exactly that whole, even though one layer up it is a region of the patch file.
     instructionSectionSize, dataSectionSize :: FileSize
     instructionSectionSize = byteFileSize instSection
     dataSectionSize        = byteFileSize dataSection
 
-    -- | @len(S)@ as the position where the source segment ends in the
-    -- superstring @U = S + T@: a COPY address below it reads the segment,
-    -- at or above it reads the produced target.
+    -- | @len(S)@ as the position where the source segment ends in @U@: a COPY address below it reads the segment, at or above it the produced target.
     segmentEnd :: Offset
     segmentEnd = lengthToOffset segmentLength
 
-    -- | The current write position in the superstring @U = S + T@:
-    -- @len(S)@ plus the target bytes produced so far.
+    -- | The current write position in @U@: @len(S)@ plus the target bytes produced so far.
     superstringWriteHead :: DecodeState -> Offset
     superstringWriteHead decodeState =
       lengthToOffset (segmentLength <> producedBytes decodeState)
 
-    -- | Decode table entries until the instruction section is spent,
-    -- then close the window out.
+    -- | Decode table entries until the instruction section is spent, then close the window out.
     walkInstructionSection :: WindowDecode (Vector VCDIFFInstruction, [SlapAdvisory])
     walkInstructionSection = do
       sectionSpent <- gets (instructionSectionSpent . instCursor)
@@ -1063,14 +812,11 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
         then finishWindow
         else decodeTableEntry >> walkInstructionSection
 
-    -- | Whether the instruction section has no bytes left to decode.
     instructionSectionSpent :: InstructionSectionCursor -> Bool
     instructionSectionSpent (InstructionSectionCursor position) =
       remainingFromOffset position instructionSectionSize == Length 0
 
-    -- | Core invariant 3 — the instructions must produce exactly the
-    -- declared target size — then the reversed accumulator
-    -- materialises as the decoded stream.
+    -- | Core invariant 3, the instructions must produce exactly the declared target size, then the reversed accumulator materialises as the decoded stream.
     finishWindow :: WindowDecode (Vector VCDIFFInstruction, [SlapAdvisory])
     finishWindow = do
       producedSize <- gets (lengthToFileSize . producedBytes)
@@ -1091,9 +837,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       applyTemplate (Table.firstTemplate entry)
       applyTemplate (Table.secondTemplate entry)
 
-    -- | The next byte of the instruction section. Total:
-    -- 'walkInstructionSection' only descends here when the cursor is
-    -- strictly inside the section.
+    -- | The next byte of the instruction section. Total: 'walkInstructionSection' only descends here when the cursor is strictly inside the section.
     nextInstructionByte :: WindowDecode Table.Opcode
     nextInstructionByte = do
       InstructionSectionCursor (Offset codeBytePosition) <- gets instCursor
@@ -1136,8 +880,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
       modify (adoptCopyAddressReading reading)
       modify (emitInstruction (Copy size address) size)
 
-    -- | Resolve an instruction's size: a fixed table size as-is, or a
-    -- deferred (zero) size read inline from the instruction section.
+    -- | Resolve an instruction's size: a fixed table size as-is, or a deferred (zero) size read inline from the instruction section.
     resolveSize :: Table.InstructionSize -> WindowDecode Length
     resolveSize (Table.SizeIs (Table.FixedInstructionSize fixed)) =
       pure (Length (fromIntegral fixed))
@@ -1150,8 +893,7 @@ decodeWindowInstructions activeTable segmentLength targetWindowSize dataSection 
           traverse_ (modify . noteAdvisory) (nonCanonicalVcdiffVarintNote value consumed)
           pure (Length (fromIntegral value))
 
-    -- | Decode one COPY address through the cache, mapping the
-    -- kernel's failures onto the malformation vocabulary.
+    -- | Decode one COPY address through the cache, mapping the kernel's failures onto the malformation vocabulary.
     readCopyAddress :: Offset -> Word8 -> WindowDecode CopyAddressReading
     readCopyAddress here mode = do
       AddressSectionCursor cursor <- gets addrCursor

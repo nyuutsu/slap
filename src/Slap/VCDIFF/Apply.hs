@@ -1,19 +1,6 @@
 -- | Apply a parsed VCDIFF patch to a source file, producing the target.
 --
--- The patch arrives already validated by 'Slap.VCDIFF.Parse': the three
--- core invariants hold, so every instruction is in-bounds against the
--- superstring. The only checks left are the ones parse
--- could not make without the source — that a window's source segment
--- actually lies within the source (or, for a target-sourced window,
--- within the target produced so far).
---
--- The target is the windows' outputs concatenated. Each window builds
--- its output @T@ by executing its instructions: ADD appends literal
--- bytes, RUN repeats one byte, and COPY first resolves where its bytes
--- physically live — the source file, or the output buffer — through
--- 'resolveCopyAddress', and then moves them.
--- The superstring @U = S + T@ that COPY addresses index is Parse's vocabulary, not apply's.
--- Shape and buffer handling mirror 'Slap.BPS.Apply'.
+-- Parse has already checked the three core invariants, so the only checks left here are the ones that need the source: each window's source segment must lie within the source file, or within the target produced so far.
 module Slap.VCDIFF.Apply
   ( applyVCDIFF
     -- * COPY resolution (exported for testing)
@@ -50,73 +37,33 @@ import System.IO.Unsafe (unsafePerformIO)
 -- COPY resolution
 ----------------------------------------------------------------------------
 
--- | Where a window's output stands in the buffer: the position its
--- first byte occupies, and how much of it exists so far. The two
--- together fix the write head ('windowOutputBase' advanced by
--- 'windowProducedSoFar'), and 'resolveCopyAddress' needs both — the
--- base to place reads of the window's own output (a COPY's
--- target-side addresses are window-relative), the head for the
--- overrun decision. A record rather than two positional arguments so
--- the produced count can never be transposed with the COPY's length.
+-- | Where the window's output stands: its base, and how much exists so far. 'resolveCopyAddress' needs the base to place reads of the window's own output, the head to spot an overrun.
 data WindowWriteContext = WindowWriteContext
   { windowOutputBase    :: !WritePosition
-    -- ^ The write position at which this window's output begins.
   , windowProducedSoFar :: !Length
-    -- ^ How much of the window's output exists already.
   }
   deriving (Eq, Show)
 
--- | Where a COPY's bytes physically live, resolved against the
--- superstring @U = S ++ T@. The address space is Parse's concern; by
--- the time bytes move there are only two stores — the source file and
--- the output buffer — and one wrinkle, a read that overruns the write
--- head. 'resolveCopyAddress' decides this in full before any IO;
--- execution is a total dispatch that only moves bytes.
+-- | Where a COPY's bytes physically live, resolved against the superstring @U@.
 data CopyRead
   = CopyFromSource !ReadOffset !Length
-    -- ^ The address falls in a source-file-backed segment: one bulk
-    -- read from the source file.
   | CopyFromTarget !ReadOffset !Length
-    -- ^ The address falls in output bytes settled before the write
-    -- head: one bulk in-buffer copy. Reached by a window's
-    -- non-overrunning read of its own output, and by a VCD_TARGET
-    -- window's source segment — a slice of the target produced by
-    -- earlier windows — which 'resolveCopyAddress' routes here through
-    -- its 'FromProducedTarget' origin.
   | ExpandFromTarget !ReadOffset !Length !TargetExpansion
-    -- ^ The address falls in this window's own output and the read
-    -- overruns the write head: VCDIFF's run-length back-reference,
-    -- where bytes written now feed the rest of the read.
+    -- ^ The read overruns the write head: VCDIFF's run-length back-reference, where bytes written now feed the rest of the read.
   deriving (Eq, Show)
 
--- | How an overrunning COPY expands.
--- 'ExpandByteRun' is correct only for a read one byte behind the head;
--- that distance is a discipline of 'resolveCopyAddress', not a type guarantee —
--- the same trade 'Slap.BPS.Apply.TargetCopyStrategy' makes.
 data TargetExpansion
   = ExpandByteRun
-    -- ^ The read is the single byte just behind the head: that byte,
-    -- repeated (a memset).
+    -- ^ Correct only when the read is exactly one byte behind the head; 'resolveCopyAddress' guarantees that distance, the types do not.
   | ExpandForward
-    -- ^ A forward byte-by-byte expansion; each written byte extends
-    -- the read.
   deriving (Eq, Show)
 
--- | Resolve a COPY against the superstring: which store its bytes
--- live in, at what offset, and whether the read overruns the write
--- head. The downstream half of the pipeline that begins at
--- 'Slap.VCDIFF.Parse.decodeCopyAddress' — decode turns wire address
--- modes into one absolute @U@ offset, and this turns that offset into
--- a physical read. A 'Nothing' segment means the window has no @S@,
--- so every COPY resolves against @T@ alone: the absence is a real
--- case, not a zero-length segment.
---
--- Assumes the parse-side core invariants (a COPY neither reads at or past the write head nor crosses the segment boundary) and that 'checkSourceSegment' has accepted the window:
--- resolution is only meaningful on valid inputs, the same contract as 'Slap.BPS.Apply.classifyTargetCopy'.
+-- | The downstream half of Parse's 'decodeCopyAddress': decode produces one absolute @U@ offset, this turns it into a physical read.
+-- Assumes parse's core invariants hold and 'checkSourceSegment' has accepted the window: a COPY reading past the head or across the segment boundary resolves to garbage here.
 resolveCopyAddress
-  :: Maybe SourceSegment   -- ^ the window's source segment, as parsed
-  -> WindowWriteContext    -- ^ where the window's output stands
-  -> Length                -- ^ the COPY's length
+  :: Maybe SourceSegment
+  -> WindowWriteContext
+  -> Length
   -> Offset                -- ^ the COPY's decoded superstring address
   -> CopyRead
 resolveCopyAddress maybeSegment writeContext copyLength copyAddress =
@@ -135,10 +82,6 @@ resolveCopyAddress maybeSegment writeContext copyLength copyAddress =
     windowBase = unOffset (unWritePosition (windowOutputBase writeContext))
     writeHead  = windowBase + unLength (windowProducedSoFar writeContext)
 
-    -- | A read of the window's own output: place the window-relative
-    -- address absolutely, then classify the read against the head.
-    -- The argument is the length @S@ contributes to @U@ — 'mempty'
-    -- when the window has no segment.
     readOwnOutput :: Length -> CopyRead
     readOwnOutput contributedBySource
       | readStart + count <= writeHead = CopyFromTarget ownRead copyLength
@@ -171,10 +114,7 @@ applyVCDIFF patch (InputFileContents source)
     totalTargetSize =
       FileSize (Vector.sum (Vector.map (unFileSize . windowTargetSize) windows))
 
-    -- | Walk the windows, writing each at its base position in the
-    -- output buffer. Each window's source segment is validated against
-    -- the bytes it claims before its instructions run; a bad segment is
-    -- the only failure apply can surface.
+    -- | Walk the windows, writing each at its base. The source-segment check is the only thing apply can reject.
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply outputPointer =
         walkWindows (WritePosition (Offset 0)) firstAction (Vector.toList windows)
@@ -190,15 +130,10 @@ applyVCDIFF patch (InputFileContents source)
                           (nextAction windowIndex)
                           rest
 
-    -- | The settled region of the output:
-    -- every byte before the window's base, measured as the whole space a target-backed segment may address.
     settledBeforeWindow :: WritePosition -> FileSize
     settledBeforeWindow (WritePosition base) = offsetToFileSize base
 
-    -- | A window's source segment must lie within the bytes it draws
-    -- from: the source file, or — for a target-sourced window — the
-    -- target produced by earlier windows (everything before this
-    -- window's base).
+    -- | A source segment must lie within what it draws from: the source file, or for a target-backed window the target produced by earlier windows (everything before this window's base).
     checkSourceSegment :: WritePosition -> ActionIndex -> Window -> Maybe ApplyError
     checkSourceSegment windowBase windowIndex window =
       case windowSourceSegment window of
@@ -217,10 +152,6 @@ applyVCDIFF patch (InputFileContents source)
                                    (ReadOffset (advance position segmentLength))
                                    windowBase)
 
-    -- | Execute one window's instructions, writing into the output
-    -- buffer from @windowBase@ onward. The within-window state is the
-    -- bytes produced so far; the write head is @windowBase@ advanced
-    -- by it.
     executeWindow :: Ptr Word8 -> WritePosition -> Window -> IO ()
     executeWindow outputPointer windowBase window =
       walkInstructions mempty (Vector.toList (windowInstructions window))
@@ -253,8 +184,6 @@ applyVCDIFF patch (InputFileContents source)
                       address)
                  pure count
 
-        -- | Move the bytes a resolved COPY names:
-        -- a dispatch with no arithmetic, since every offset was already placed by 'resolveCopyAddress'.
         executeCopyRead :: WritePosition -> CopyRead -> IO ()
         executeCopyRead writeHead copyRead = case copyRead of
           CopyFromSource (ReadOffset sourceStart) count ->
@@ -269,8 +198,6 @@ applyVCDIFF patch (InputFileContents source)
           ExpandFromTarget (ReadOffset readStart) count ExpandForward ->
             expandForward readStart writeHead count
 
-        -- | The forward byte-by-byte expansion: each written byte
-        -- becomes part of the read for subsequent iterations.
         expandForward :: Offset -> WritePosition -> Length -> IO ()
         expandForward readStart writeHead count = copyByteByByte 0
           where

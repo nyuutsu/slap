@@ -1,21 +1,11 @@
--- | A /cover/ of the target: an ordered segmentation into copies and
--- literals that together reconstruct the target exactly.
+-- | A /cover/ is a plan for rebuilding the target: an ordered run of copies and literals.
+-- A copy takes a stretch of bytes you already have, a literal writes a few fresh ones, and running them in order rebuilds the target exactly.
 --
--- This is the seam between the two halves of VCDIFF creation. The
--- matcher (a later, Rust-backed stage) /produces/ a cover; the emitter
--- ('Slap.VCDIFF.Create') /serializes/ one into wire bytes. Keeping the
--- cover a small, dependency-light type — it knows only 'Offset' and
--- 'Length', never instructions or bytes — lets a future
--- @Slap.VCDIFF.FFI@ fill it without dragging the emitter along, and
--- lets a cover bug and a serialization bug stay distinguishable.
+-- It is its own type to keep two jobs apart: the matcher ('Slap.VCDIFF.FFI.vcdiffCover', Rust-backed) works out the plan, the emitter ('Slap.VCDIFF.Create') turns it into wire bytes.
+-- That split keeps a wrong plan (a matcher bug) separate from garbled bytes (an encoder bug).
 --
--- A literal carries an offset and length /into the target/: the matcher
--- holds the target and names a slice of it rather than copying bytes
--- out. A copy carries a length and an absolute offset into the
--- superstring @U = source ++ produced-target@ — the same space
--- 'Slap.VCDIFF.Apply' resolves a 'Slap.VCDIFF.Types.Copy' against. The
--- matcher does not choose ADD-versus-RUN for a literal; that is
--- instruction selection, and it lives with the emitter.
+-- A literal holds no bytes: it names a slice of the target, by offset and length.
+-- A copy's offset points into the superstring @U@, the same space 'Slap.VCDIFF.Apply' uses, so the two agree on what an address means.
 module Slap.VCDIFF.Cover
   ( Cover(..)
   , CoverSegment(..)
@@ -23,18 +13,16 @@ module Slap.VCDIFF.Cover
 
 import Slap.Measure (Offset, Length)
 
--- | One segment of a cover.
 data CoverSegment
   = CoverCopy
       !Length   -- ^ number of bytes copied
-      !Offset   -- ^ absolute offset into the superstring @U = source ++ produced-target@
+      !Offset   -- ^ absolute offset into the superstring @U@
   | CoverLiteral
       !Offset   -- ^ offset into the target where the literal run begins
       !Length   -- ^ length of the literal run
   deriving (Eq, Show)
 
--- | An ordered list of segments covering the whole target, in target
--- order, with no gaps or overlaps. The exact-coverage invariant is the
--- producer's to uphold; the emitter trusts it.
+-- | An ordered list of segments covering the whole target, no gaps or overlaps.
+-- The producer upholds that invariant; the emitter trusts it.
 newtype Cover = Cover { coverSegments :: [CoverSegment] }
   deriving (Eq, Show)

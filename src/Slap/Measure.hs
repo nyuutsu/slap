@@ -346,7 +346,7 @@ data SplitUndoHunk = SplitUndoHunk
 -- Held as start-plus-length rather than start-plus-end so the span's
 -- length is a typed 'Length' (cannot be transposed with an offset)
 -- and so an empty range is impossible to construct accidentally — an
--- absent range is 'Nothing', not a degenerate @start == end@. The
+-- absent range is 'Nothing', not an empty @start == end@. The
 -- end offset is recovered via 'rangeEndExclusive' when needed.
 data OffsetRange = OffsetRange
   { rangeStart  :: !Offset

@@ -265,7 +265,7 @@ renderMaxOffset (Offset offsetValue) = "0x" <> padHex 8 offsetValue
 -- on plain IPS, IPS32, and EBP — all three carry the same record
 -- shape, so a single helper covers them. Returns 'Nothing' on an
 -- empty stream so the display layer suppresses the range line
--- rather than printing a degenerate @0x0 - 0x0@.
+-- rather than printing an empty @0x0 - 0x0@.
 ipsRecordsRange :: Vector IPSRecord -> Maybe OffsetRange
 ipsRecordsRange records
   | Vector.null records = Nothing

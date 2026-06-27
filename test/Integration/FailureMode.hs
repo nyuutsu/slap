@@ -888,7 +888,7 @@ xdelta1InputPreCompressionTests fixturePath =
       BothFilesWereGzipStreams
 
   -- The previous three cases exercise the gate via wire-byte
-  -- fiddling on a real fixture. This fourth case pins a degenerate
+  -- fiddling on a real fixture. This fourth case pins a
   -- corner that wire fiddling can't reach cheaply: 'xdelta1TargetLength'
   -- lives inside the EDSIO control segment (past gzip decompression),
   -- so constructing a target_length=0 flagged patch from on-disk

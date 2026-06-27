@@ -1,15 +1,8 @@
 -- | VCDIFF cover-matcher binding to rusty-slap.
 --
--- The Rust side owns the longest-match search over the superstring
--- @U = source ++ produced-target@: a greedy cover walk
--- (@rusty-slap/src/vcdiff_diff.rs@) driven by a suffix-array matcher
--- (@rusty-slap/src/vcdiff_suffix_sort.rs@). This module is the seam: it
--- assembles the FFI call and zips the three parallel-array buffers back
--- into a typed 'Cover'.
+-- The Rust side owns the longest-match search over the superstring @U@: a greedy cover walk (@rusty-slap/src/vcdiff_diff.rs@) driven by a suffix-array matcher (@rusty-slap/src/vcdiff_suffix_sort.rs@).
 --
--- It is total — every input yields a cover, the empty target included —
--- so it follows 'Slap.BPS.FFI.bpsDiff''s shape (no error channel) rather than 'Slap.XDelta1.FFI.xdelta1Diff''s.
--- A malformed buffer is a loud 'error', not a silently defaulted segment.
+-- Total: every input yields a cover, the empty target included, so there is no error channel. A malformed buffer is a loud 'error', not a silently defaulted segment.
 module Slap.VCDIFF.FFI
   ( vcdiffCover
   ) where
@@ -35,8 +28,7 @@ foreign import ccall unsafe "rusty_vcdiff_cover"
     -> Ptr (Ptr Word8) -> Ptr CSize    -- lengths
     -> IO CInt
 
--- | Segment a target into a 'Cover' against a source, via the Rust
--- matcher. It cannot fail, so its return code is ignored.
+-- | The Rust matcher cannot fail, so its return code is ignored.
 vcdiffCover :: InputFileContents -> OutputFileContents -> Cover
 vcdiffCover (InputFileContents source) (OutputFileContents target) =
   unsafePerformIO $
@@ -59,8 +51,7 @@ vcdiffCover (InputFileContents source) (OutputFileContents target) =
       lengthBytes <- readByteString lengthsAddressPointer lengthsLengthPointer
       pure (decodeCover kindBytes offsetBytes lengthBytes)
 
--- | Zip the three parallel buffers — one kind byte, eight LE offset bytes, and eight LE length bytes per segment — back into a 'Cover', preserving segment order.
--- A buffer-shape mismatch or a kind byte outside {0, 1} is a torn cover: a loud 'error', per the header.
+-- | Zip the three parallel buffers (one kind byte, eight LE offset bytes, eight LE length bytes per segment) back into a 'Cover', in order.
 decodeCover :: ByteString -> ByteString -> ByteString -> Cover
 decodeCover kindBytes offsetBytes lengthBytes
   | ByteString.length offsetBytes /= 8 * segmentCount = tornCover "offsets" offsetBytes

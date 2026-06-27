@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     /// A code-length-code table that assigns no codes at all: the
-    /// degenerate decoder builds (as xd3's does), and the first
+    /// decoder builds it anyway (as xd3's does), and the first
     /// symbol wanted from it refuses.
     #[test]
     fn table_with_no_codes_refuses_first_symbol() {
