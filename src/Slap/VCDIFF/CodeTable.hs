@@ -83,7 +83,9 @@ data CodeTableEntry = CodeTableEntry
   deriving (Eq, Ord, Show)
 
 -- | A complete VCDIFF code table: exactly 'codeTableEntryCount' entries, indexed by the instruction-stream byte.
--- The constructor is not exported, so every 'CodeTable' came from 'defaultCodeTable', 'deserializeCodeTable', or 'codeTableWithEntriesReplaced', all provably 256-wide, making 'codeTableEntry' total: the same proof-by-provenance discipline as 'Slap.Measure.SplitHunk'.
+-- The constructor is not exported, so every 'CodeTable' came from 'defaultCodeTable', 'deserializeCodeTable',
+-- or 'codeTableWithEntriesReplaced', each of which builds exactly 256 entries, making 'codeTableEntry' total —
+-- the same discipline as 'Slap.Measure.SplitHunk'.
 newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
   deriving (Eq, Show)
 
@@ -93,7 +95,8 @@ newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
 newtype Opcode = Opcode { unOpcode :: Word8 }
   deriving (Eq, Ord, Show)
 
--- | The entry an opcode selects. Total by provenance: an 'Opcode' wraps a 'Word8' so the index lands in @[0, 'codeTableEntryCount')@, and every 'CodeTable' is that wide.
+-- | The entry an opcode selects, total because an 'Opcode' wraps a 'Word8'
+-- (so the index lands in @[0, 'codeTableEntryCount')@) and every 'CodeTable' holds exactly that many entries.
 -- The window decoder's per-instruction lookup, with the raw 'Vector.!' kept here, not at the call site.
 codeTableEntry :: CodeTable -> Opcode -> CodeTableEntry
 codeTableEntry (CodeTable entries) (Opcode opcode) = entries Vector.! fromIntegral opcode

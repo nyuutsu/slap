@@ -261,7 +261,8 @@ opcodeFor :: DenseOpcodes -> Table.CodeTableEntry -> Maybe Table.Opcode
 opcodeFor (DenseOpcodes opcodes) entry = Map.lookup entry opcodes
 
 -- | The opcode for an entry the active table must carry: the coded-size singles every usable table holds.
--- Loud, not silent, if absent: the default table carries them all and a custom table the encoder emits would too, so a miss means a broken table, surfaced the proof-by-provenance way the other table lookups here are.
+-- Loud, not silent, if absent: the default table carries them all and a custom table the encoder emits would too,
+-- so a miss means a broken table, surfaced as a loud 'error' the way the other must-hold lookups here are.
 requireOpcode :: DenseOpcodes -> Table.CodeTableEntry -> Table.Opcode
 requireOpcode opcodeResolver entry = case opcodeFor opcodeResolver entry of
   Just opcode -> opcode
@@ -429,7 +430,8 @@ grownCacheCandidate source target cover =
   where
     candidateAt = candidatePatchForConfig source target cover
 
-    -- The default geometry admits no mode past the default nine, so its candidate is always feasible; the 'fromMaybe' is a proof-by-provenance assertion, not a reachable branch.
+    -- The default geometry admits no mode past the default nine, so its candidate is always feasible:
+    -- the 'fromMaybe' marks an unreachable branch, since 'candidateAt' never returns 'Nothing' for this config.
     defaultProbe = CacheProbe defaultAddressCacheConfig
       (fromMaybe
         (error "Slap.VCDIFF.Create.grownCacheCandidate: the default cache geometry is infeasible")
