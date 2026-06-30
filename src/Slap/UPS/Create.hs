@@ -68,7 +68,7 @@ encodeUPSBlock (UPSBlock skipLength xorData) =
 -- rejection: it produces a block whose terminator's "phantom"
 -- position lands at @targetLength@, past the last written byte.
 -- This matches what beat, NUPS, and Tsukuyomi produce in practice
--- (see @docs\/ups\/findings.md@: @crystalleaf@, @FE1+2_GBA@,
+-- (see @docs/ups/findings.md@: @crystalleaf@, @FE1+2_GBA@,
 -- @smbs-1.0~rc1@ all exhibit one such block at the tail). The
 -- apply path in "Slap.UPS.Apply" already clips that terminator's
 -- write against the output buffer; 'detectOOBBlocks' summarises it

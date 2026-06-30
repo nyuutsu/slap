@@ -447,7 +447,6 @@ grownCacheCandidate source target cover =
         _ -> probe
 
 -- | Enlarge the near cache by one slot, or 'Nothing' at the one-byte @s_near@ wire ceiling.
--- The grow stops well before this on any real input (a slot that buys nothing ends it first), so the cap is a wire-validity guard, not the usual stopping rule.
 growNearSlot :: AddressCacheConfig -> Maybe AddressCacheConfig
 growNearSlot geometry
   | slots < maxCacheDimension = Just geometry { nearSlotCount = NearSlotCount (slots + 1) }

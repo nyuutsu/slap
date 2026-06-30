@@ -1153,13 +1153,33 @@ data SlapAdvisory
 
   -- Platform conversion
   --
-  -- | The source patch named a platform that the target format
-  -- has no wire encoding for; slap falls back to the format's Raw
-  -- placeholder and surfaces the change.
+  -- | A requested (@--rom-type@) or inherited platform the target format
+  -- has no wire encoding for; slap writes the format's Raw placeholder
+  -- instead and surfaces the change.
   | PlatformNotAvailable FormatLabel PlatformType
   -- | NINJA2's combined SMS/Game Gear slot is ambiguous on convert to a sibling format: slap defaults to SMS.
   -- The user can override with @--rom-type gg@.
   | NINJA2SMSGameGearAmbiguity
+
+  -- NINJA rom-type handling
+  --
+  -- | A NINJA patch's ROM type calls for a normalization slap does not run,
+  -- so an input not already in that form will fail the source check.
+  | RomTypeNormalizationUnsupported FormatLabel PlatformType
+  -- | A non-Raw NINJA ROM type the spec defines no normalization for: slap
+  -- has nothing to run and applies the patch as-is.
+  | RomTypeWithoutNormalization FormatLabel PlatformType
+  -- | A NINJA patch's ROM-type byte is not one the format names. slap keeps
+  -- the byte, applies the records unchanged, and cannot say what
+  -- preprocessing it implies.
+  | UnrecognizedRomType FormatLabel Word8
+  -- | The textual sibling of 'UnrecognizedRomType': a NINJA1 textual patch
+  -- named a ROM type the format does not define, carried as the name.
+  | UnrecognizedRomTypeName FormatLabel Text
+  -- | The refusal for an unrecognized ROM type with no source checksum to
+  -- fall back on: nothing confirms the patch belongs to the input. Gated by
+  -- the apply's verification policy, so @--no-verify@ overrides it.
+  | UnrecognizedRomTypeWithoutChecksum FormatLabel
 
   -- Apply: out-of-bounds block clipping
   | ApplyOOBBlocksSkipped FormatLabel ApplyDirection OOBBlockCount ActionIndex OOBOvershootBytes FileSize
@@ -1685,7 +1705,6 @@ renderSlapError (MalformedNINJA1Content malformation) =
     NINJA1EmptyTextualPatch                          -> "empty textual patch"
     NINJA1InvalidOffsetInTextRecord (OffsetTokenText t) -> "invalid offset in text record: " <> t
     NINJA1MalformedTextRecord       (LineText line)  -> "malformed text record: " <> line
-    NINJA1UnknownTextualRomType     name             -> "unknown ROM type name in text header: " <> name
 
 renderSlapError (ParseError label parserError) =
   formatLabelName label <> ": " <> renderByteParserError parserError
@@ -2286,13 +2305,34 @@ renderSlapAdvisory (FieldContentPastEnd label name (Length dropped)) =
   <> " past a NUL terminator (dropped on re-encode)"
 
 renderSlapAdvisory (PlatformNotAvailable label platform) =
-  "platform " <> platformName platform
-  <> " not available in " <> formatLabelName label <> "; using Raw"
+  formatLabelName label <> " has no type for " <> platformName platform
+  <> "; written as Raw"
 
 renderSlapAdvisory NINJA2SMSGameGearAmbiguity =
   formatLabelName LabelNINJA2 <> " ROM type SMS/Game Gear"
   <> " is ambiguous; defaults to SMS"
   <> " on conversion (override with --rom-type gg)"
+
+renderSlapAdvisory (RomTypeNormalizationUnsupported label platform) =
+  formatLabelName label <> ": ROM type " <> platformName platform
+  <> " calls for a normalization slap does not perform yet;"
+  <> " an input not already in that form will fail the source check"
+
+renderSlapAdvisory (RomTypeWithoutNormalization label platform) =
+  formatLabelName label <> ": ROM type " <> platformName platform
+  <> " carries no normalization; the patch is applied as-is"
+
+renderSlapAdvisory (UnrecognizedRomType label romByte) =
+  formatLabelName label <> ": unrecognized ROM type 0x" <> padHex 2 romByte
+  <> "; records are applied unchanged, but any preprocessing it implies is unknown"
+
+renderSlapAdvisory (UnrecognizedRomTypeName label romName) =
+  formatLabelName label <> ": unrecognized ROM type \"" <> romName
+  <> "\"; records are applied unchanged, but any preprocessing it implies is unknown"
+
+renderSlapAdvisory (UnrecognizedRomTypeWithoutChecksum label) =
+  formatLabelName label <> ": unrecognized ROM type and no source checksum,"
+  <> " so slap cannot confirm this patch matches the input"
 
 renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
   formatLabelName label <> " " <> directionVerb direction <> ": "
@@ -2722,14 +2762,6 @@ data NINJA1Malformation
   = NINJA1EmptyTextualPatch
   | NINJA1InvalidOffsetInTextRecord OffsetTokenText
   | NINJA1MalformedTextRecord       LineText
-  -- | A textual NINJA1 patch's header line declared a ROM type
-  -- name slap doesn't recognize. The NINJA1 spec
-  -- (@docs\/ninja1\/upstream\/ninja1-filespec10.txt@, §"SYSTEM
-  -- SPECIFIC") says implementations encountering an unsupported
-  -- mode "print an error message and exit"; the carried 'Text'
-  -- is the offending name from the wire so the renderer can name
-  -- it.
-  | NINJA1UnknownTextualRomType Text
   deriving (Eq, Show)
 
 -- | The shape of a NINJA1 subformat conversion noticed at parse time.
@@ -2845,8 +2877,8 @@ data ByteParserError
   -- | A varint decoded a value too large to represent at all. Raised
   -- by all three slap varint readers (byuu, VCDIFF, EDSIO): byuu and
   -- EDSIO use it as their single over-width verdict, VCDIFF only for
-  -- the @>= 2^64@ band beyond even xd3's @uint64@ (the @[2^63, 2^64)@
-  -- band is the apologetic 'ByteParserVarintExceedsSignedRange'). byuu
+  -- values @>= 2^64@ beyond even xd3's @uint64@ (a value in @[2^63, 2^64)@
+  -- is the apologetic 'ByteParserVarintExceedsSignedRange'). byuu
   -- and VCDIFF detect the condition by value; EDSIO still bails on its
   -- bit-offset. The constructor takes no payload because the only
   -- thing the variant says is "the value can't be represented".
@@ -2855,7 +2887,7 @@ data ByteParserError
   -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@ — one that
   -- xd3's unsigned @uint64@ reader accepts but slap's signed 'Int'
   -- declines. The apologetic arm: distinct from
-  -- 'ByteParserVarintExceededWidth' (which is the @>= 2^64@ band,
+  -- 'ByteParserVarintExceededWidth' (which is values @>= 2^64@,
   -- beyond xd3 too) precisely so the renderer can concede the one bit
   -- slap gives up rather than blame the input. Only the VCDIFF reader
   -- raises it; the byuu reader caps at the same value as a plain
@@ -2952,6 +2984,11 @@ slapAdvisorySeverity advisory = case advisory of
   FieldDecodedSubstituted{}            -> SeverityNote
   FieldEncodedSubstituted{}            -> SeverityNote
   FieldContentPastEnd{}                -> SeverityWarning
-  PlatformNotAvailable{}               -> SeverityNote
+  PlatformNotAvailable{}               -> SeverityWarning
   NINJA2SMSGameGearAmbiguity           -> SeverityNote
+  RomTypeNormalizationUnsupported{}    -> SeverityWarning
+  RomTypeWithoutNormalization{}        -> SeverityNote
+  UnrecognizedRomType{}                -> SeverityWarning
+  UnrecognizedRomTypeName{}            -> SeverityWarning
+  UnrecognizedRomTypeWithoutChecksum{} -> SeverityWarning
   SubformatConverted{}                 -> SeverityNote

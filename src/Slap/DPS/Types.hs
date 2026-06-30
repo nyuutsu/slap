@@ -122,7 +122,7 @@ dpsSourceSizeFromParsed :: Word32 -> DPSSourceSize
 dpsSourceSizeFromParsed = DPSSourceSize
 
 -- | Lift a 'DPSSourceSize' back to a 'FileSize' for callers that work
--- in the application's general size currency ("Slap.SomePatch"'s
+-- in the application's general size type ("Slap.SomePatch"'s
 -- file-size verification gate, "Slap.DPS.Describe"'s info line).
 -- Word32 → Int is widening on every host slap supports (GHC's 'Int'
 -- is always at least 30 bits and is 64 bits on 64-bit hosts), so the

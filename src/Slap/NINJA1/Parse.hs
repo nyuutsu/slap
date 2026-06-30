@@ -199,18 +199,15 @@ parseText format (PatchFileContents payload) = do
   where
     isSkippable line = ByteString.null line || ByteString8.head line == '#'
 
--- | Decode the single textual NINJA1 header line. The ROM type
--- token is the only mandatory field; absent or unrecognized ROM
--- type names are refused with 'NINJA1UnknownTextualRomType' (or
--- 'NINJA1MalformedTextRecord' when the line has no tokens at
--- all). CRC32, MD5, and SHA1 fields are optional and tolerate the
--- spec-defined @"unk"@/@"unk."@ placeholders.
+-- | Decode the single textual NINJA1 header line. The ROM type token is the
+-- only mandatory field; an unrecognized name is kept (see 'romTypeFromName'),
+-- and only a line with no tokens at all is refused ('NINJA1MalformedTextRecord').
+-- CRC32, MD5, and SHA1 are optional and tolerate the spec's @"unk"@/@"unk."@
+-- placeholders.
 parseTextHeader :: ByteString -> Either SlapError NINJA1TextHeader
 parseTextHeader line = do
   romType <- case tokens of
-    (formatName:_) -> case romTypeFromName formatName of
-      Just typed -> Right typed
-      Nothing    -> Left (MalformedNINJA1Content (NINJA1UnknownTextualRomType (Text.pack formatName)))
+    (formatName:_) -> Right (romTypeFromName formatName)
     _              -> Left (MalformedNINJA1Content (NINJA1MalformedTextRecord (LineText (Text.pack (ByteString8.unpack line)))))
   Right NINJA1TextHeader
     { ninja1TextRomType    = romType
@@ -251,17 +248,15 @@ hexToBS text = ByteString.pack (parseHexPairs text)
       [(value, "")] -> value : parseHexPairs rest
       _             -> []
 
--- | Decode the textual NINJA1 ROM type identifier (the first token
--- of the header line). 'Nothing' means the name doesn't match any
--- spec-defined identifier; the caller turns that into
--- 'NINJA1UnknownTextualRomType'. Comparison is case-insensitive
--- via lowercasing the input, matching the PHP reference's
--- @strtolower@ behavior at the corresponding site.
-romTypeFromName :: String -> Maybe NINJA1RomType
+-- | Decode the textual NINJA1 ROM type name (the header line's first token).
+-- An unrecognized name is kept as 'RomUnknownName', mirroring the binary
+-- path's 'RomUnknown' byte. Matching is case-insensitive, like the PHP
+-- reference's @strtolower@.
+romTypeFromName :: String -> NINJA1RomType
 romTypeFromName text = case map toLower text of
-  "raw"  -> Just RomRAW;     "nes"  -> Just RomNES;     "snes" -> Just RomSNES;     "n64"  -> Just RomN64
-  "gb"   -> Just RomGB;      "gbc"  -> Just RomGBC;     "gba"  -> Just RomGBA;      "ngp"  -> Just RomNGP
-  "ngpc" -> Just RomNGPC;    "sms"  -> Just RomSMS;     "gg"   -> Just RomGameGear; "mega" -> Just RomGenesis
-  "pce"  -> Just RomPCEngine; "ws"  -> Just RomWonderSwan; "wsc" -> Just RomWonderSwanColor
-  "lynx" -> Just RomLynx;    "jag"  -> Just RomJaguar;  "gp32" -> Just RomGP32
-  _      -> Nothing
+  "raw"  -> RomRAW;      "nes"  -> RomNES;      "snes" -> RomSNES;        "n64"  -> RomN64
+  "gb"   -> RomGB;       "gbc"  -> RomGBC;      "gba"  -> RomGBA;         "ngp"  -> RomNGP
+  "ngpc" -> RomNGPC;     "sms"  -> RomSMS;      "gg"   -> RomGameGear;    "mega" -> RomGenesis
+  "pce"  -> RomPCEngine; "ws"   -> RomWonderSwan; "wsc" -> RomWonderSwanColor
+  "lynx" -> RomLynx;     "jag"  -> RomJaguar;   "gp32" -> RomGP32
+  _      -> RomUnknownName (Text.pack text)

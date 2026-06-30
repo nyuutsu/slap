@@ -4,7 +4,7 @@
 -- slap recognizes, how it detects them, which external tools can open
 -- each, and the closed set of ways unwrapping can fail. The IO that acts
 -- on these — listing entries, extracting, shelling out — lives in the
--- native frontend, in @Archive@ (@app\/Archive.hs@). Keeping the types
+-- native frontend, in @Archive@ (@app/Archive.hs@). Keeping the types
 -- here lets "Slap.Status" embed an
 -- 'UnwrapError' in 'Slap.Status.SlapError' without dragging the process
 -- and directory machinery under every module that renders an error.

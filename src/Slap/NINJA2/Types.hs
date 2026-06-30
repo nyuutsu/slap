@@ -18,6 +18,7 @@ module Slap.NINJA2.Types
   , NINJA2RomType(..)
   , toNINJA2RomType
   , fromNINJA2RomType
+  , ninja2RomTypeNeedsNormalization
   , ninja2RomTypeName
   , parsePackedInteger
   , parsePackedByteString
@@ -49,7 +50,7 @@ module Slap.NINJA2.Types
 -- Canonical reference: docs/ninja2/upstream/ninja2-filespec20.txt (Derrick Sobodash, 2006)
 -- Archived from http://ninja.cinnamonpirate.com/files/filespec20.txt
 -- Secondary: RomPatcher.js modules/RomPatcher.format.rup.js
--- NINJA2 ROM type numbering differs from NINJA1 (10 types vs 18); see docs/ninja2/upstream/ninja2-cliusage.txt.
+-- NINJA2 ROM type numbering is defined in docs/ninja2/upstream/ninja2-cliusage.txt.
 -- Cross-format conversion goes through 'Slap.PlatformType.PlatformType'.
 
 import Slap.Checksum (MD5Hash)
@@ -121,7 +122,6 @@ ninja2TextModeName TextModeUndeclared = "undeclared"
 
 -- | ROM platform type per ninja2-cliusage.txt.  Values 0-9 are
 -- documented; NINJA2UnknownRomType preserves any future/unknown value.
--- Numbering diverges from NINJA1 at value 2 (FDS vs SNES).
 data NINJA2RomType
   = NINJA2Raw           -- 0: Raw Binary
   | NINJA2NES           -- 1: NES/Famicom
@@ -161,6 +161,21 @@ fromNINJA2RomType NINJA2Genesis                  = 7
 fromNINJA2RomType NINJA2PCEngine                 = 8
 fromNINJA2RomType NINJA2Lynx                     = 9
 fromNINJA2RomType (NINJA2UnknownRomType value)   = value
+
+-- | True for the ROM types NINJA2 defines a normalization for that slap does
+-- not yet run: NES, SNES, N64, Game Boy, SMS and Game Gear, Genesis, PC-Engine,
+-- and Lynx (@docs/ninja2/upstream/ninja2-convroms.txt@). Raw and FDS have none.
+ninja2RomTypeNeedsNormalization :: NINJA2RomType -> Bool
+ninja2RomTypeNeedsNormalization romType = case romType of
+  NINJA2NES         -> True
+  NINJA2SNES        -> True
+  NINJA2N64         -> True
+  NINJA2GB          -> True
+  NINJA2SMSGameGear -> True
+  NINJA2Genesis     -> True
+  NINJA2PCEngine    -> True
+  NINJA2Lynx        -> True
+  _                 -> False
 
 ninja2RomTypeName :: NINJA2RomType -> Text
 ninja2RomTypeName NINJA2Raw                    = "Raw Binary"

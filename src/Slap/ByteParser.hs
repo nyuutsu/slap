@@ -274,7 +274,7 @@ liftRead readWidth@(Length width) reader = do
 -- that starts inside the buffer but whose continuation bytes run past
 -- the end is 'ByteParserVarintOverranBuffer'; a value too large to
 -- represent at all is 'ByteParserVarintExceededWidth'; and a VCDIFF
--- value in the unsigned-only @[2^63, 2^64)@ band is the apologetic
+-- value in the unsigned-only @[2^63, 2^64)@ is the apologetic
 -- 'ByteParserVarintExceedsSignedRange'. The mapping lives in the
 -- shared 'readVarintAdvancing' core.
 liftReadVarint :: (Int -> ByteString -> Either VarintReadFailure VarintResult)

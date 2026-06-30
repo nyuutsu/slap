@@ -570,6 +570,12 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
     enforceHash verificationPolicy SourceSide MD5 expected (md5 preprocessed)
   forM_ (verifySourceSHA1 verification) $ \expected ->
     enforceHash verificationPolicy SourceSide SHA1 expected (sha1 preprocessed)
+  -- Only when no source checksum can vouch the input; a present checksum is the stronger gate and handles that case itself.
+  forM_ (verifyRomTypeUnrecognized verification) $ \label ->
+    case (verifySourceCRC32 verification, verifySourceMD5 verification, verifySourceSHA1 verification) of
+      (Nothing, Nothing, Nothing) ->
+        enforceMismatch verificationPolicy (UnrecognizedRomTypeWithoutChecksum label)
+      _ -> pure ()
 
 verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
 verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do

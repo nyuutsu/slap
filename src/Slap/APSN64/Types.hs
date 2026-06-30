@@ -291,7 +291,7 @@ apsN64DestinationSizeFromParsed :: Word32 -> APSN64DestinationSize
 apsN64DestinationSizeFromParsed = APSN64DestinationSize
 
 -- | Lift a 'APSN64DestinationSize' back to a 'FileSize' for callers in
--- the application's general size currency ('Slap.SomePatch''s output
+-- the application's general size type ('Slap.SomePatch''s output
 -- size, 'Slap.APSN64.Describe''s info line). 'Int' is 64-bit in slap,
 -- so the 'Word32' → 'Int' conversion never truncates.
 apsN64DestinationSizeAsFileSize :: APSN64DestinationSize -> FileSize

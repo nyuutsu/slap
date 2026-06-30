@@ -120,7 +120,7 @@ data VarintReadFailure
   -- accumulation would exceed the largest 'Int64' slap can carry —
   -- rather than by a byte-count proxy: a nine-byte byuu varint can
   -- already encode a value past 'Int64', so counting bytes would let
-  -- it wrap silently. For VCDIFF this is the @>= 2^64@ band, beyond
+  -- it wrap silently. For VCDIFF this is values @>= 2^64@, beyond
   -- even xd3's @uint64@; for byuu it is the single over-width verdict
   -- (see 'VarintExceedsSignedButFitsUnsigned').
   = VarintTooManyContinuationBytes
@@ -131,11 +131,11 @@ data VarintReadFailure
   | VarintRanPastEndOfInput
   -- | A VCDIFF varint decoded a value in @[2^63, 2^64)@: representable
   -- by xd3's unsigned @uint64@ reader, but not by the signed 'Int64'
-  -- slap threads sizes and offsets through. The apologetic verdict —
-  -- the format's effective definition admits these and slap, knowingly,
-  -- does not. Only 'getVcdiffVarint' produces it; the byuu reader caps
-  -- at the same value with the plain 'VarintTooManyContinuationBytes',
-  -- byuu's varint drawing no signed/unsigned distinction at this band.
+  -- slap threads sizes and offsets through. The format's effective
+  -- definition admits these and slap, knowingly, does not. Only
+  -- 'getVcdiffVarint' produces it; the byuu reader caps at the same
+  -- value with the plain 'VarintTooManyContinuationBytes', byuu's varint
+  -- drawing no signed/unsigned distinction at this magnitude.
   | VarintExceedsSignedButFitsUnsigned
   deriving (Eq, Show)
 

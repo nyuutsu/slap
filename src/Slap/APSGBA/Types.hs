@@ -52,7 +52,7 @@ data APSGBARecord = APSGBARecord
 -- 'narrowAPSGBASourceSize'. APS-GBA has no parser-side exit because
 -- the parser does not roundtrip through 'APSGBASourceSize' — its
 -- 'APSGBAHeader' carries the raw 'FileSize' instead, since the apply
--- side needs the file-size currency directly.
+-- side needs the file-size type directly.
 newtype APSGBASourceSize = APSGBASourceSize { unAPSGBASourceSize :: Word32 }
   deriving (Show, Eq)
 

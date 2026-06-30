@@ -332,7 +332,7 @@ narrowXDelta1ControlOffset value =
 -- under 'CreatorOptedOutOfVerification'); length is the data
 -- segment's byte count; kind byte is @1@ (data); offset-mode byte
 -- is @1@ (sequential — slap's differ never emits non-sequential
--- data emits). The source-file record's bytes come from the patch's
+-- data). The source-file record's bytes come from the patch's
 -- flat @xdelta1Source*@ fields.
 encodeControl :: XDelta1Patch -> ByteString
 encodeControl patch = LazyByteString.toStrict (toLazyByteString builder)

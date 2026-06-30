@@ -176,7 +176,7 @@ data PatchContents = PatchContents
 
 -- | Direct creation target.  Some format families have multiple creation
 -- variants: IPS has three (IPS, IPS32, EBP) distinguished by offset width
--- and metadata; PPF exposes only version 3.
+-- and metadata.
 data DirectCreate
   = CreateIPS | CreateIPS32 | CreateEBP | CreatePPF1 | CreatePPF2 | CreatePPF3
   | CreatePPF4 | CreateNINJA1 | CreatePMSR | CreateAPSN64

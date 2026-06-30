@@ -110,11 +110,11 @@ applyPPF3 patch (InputFileContents source) =
 -- has no operation that shortens the file, so a patch that grew the
 -- file has no coherent inverse — the added length has nowhere to return
 -- to. slap leaves this undefended because it cannot be detected:
--- a PPF3 patch stores no original size, so at undo time (the patch plus the modified file, and nothing else) there is no signal that the patch grew anything.
--- slap separately
--- refuses to create growing PPF3 patches (see
--- 'Slap.PPF3.Types.ppf3RejectIncompatibleSizeChange') and warns when a
--- parsed PPF3 patch grows the file on apply.
+-- a PPF3 patch stores no original size, so at undo time (the patch plus
+-- the modified file, and nothing else) there is no signal that the patch
+-- grew anything. slap separately refuses to create growing PPF3 patches
+-- (see 'Slap.PPF3.Types.ppf3RejectIncompatibleSizeChange') and warns when
+-- a parsed PPF3 patch grows the file on apply.
 undoPPF3 :: PPF3Patch -> OutputFileContents -> Either SlapError InputFileContents
 undoPPF3 patch (OutputFileContents input)
   | inputLength == 0 =

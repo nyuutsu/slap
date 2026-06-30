@@ -165,6 +165,10 @@ data Verification = Verification
   , verifyWindowAdler32 :: [WindowCheck]
   , verifySourceBytes   :: [ByteCheck]
   , verifySourcePreHash :: SourcePreHash
+    -- | 'Just' the format when the patch's ROM-type byte is unrecognized,
+    -- 'Nothing' otherwise (set by the NINJA parsers). Drives the
+    -- 'UnrecognizedRomTypeWithoutChecksum' refusal.
+  , verifyRomTypeUnrecognized :: Maybe FormatLabel
   }
 
 -- | Per-block CRC16 check (APS-GBA).
@@ -219,6 +223,7 @@ noVerification = Verification
   , verifyPPFBlock = Nothing, verifyFileSize = Nothing
   , verifyWindowAdler32 = [], verifySourceBytes = []
   , verifySourcePreHash = HashWholeSource
+  , verifyRomTypeUnrecognized = Nothing
   }
 
 -- | Strategy for undoing a patch.
@@ -464,7 +469,7 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
 -- | Build a 'SomePatch' from a parsed PPF4 patch. PPF4 is a two-phase
 -- format (Replace records, then Append records) with no validation
 -- block, no undo, no image type, and no File_ID.diz trailer — none of
--- the metadata that 'parseSomePatchFromPPF' carries for PPF1/2/3.
+-- the metadata PPF1/2/3 carry.
 -- Source-less conversion is structurally possible only when the patch
 -- has no Append records (Appends carry no meaningful offset, and so
 -- can't be expressed as 'Hunk's).
@@ -828,6 +833,17 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
         Just open -> NINJA2.openNewFileRomType open
         Nothing   -> NINJA2.NINJA2Raw
       (platformType, platformAdvisories) = ninja2ToPlatform romTypeForPlatformConversion
+      romTypeAdvisories = case romTypeForPlatformConversion of
+        NINJA2.NINJA2Raw                 -> []
+        NINJA2.NINJA2UnknownRomType byte -> [UnrecognizedRomType LabelNINJA2 byte]
+        romType
+          | NINJA2.ninja2RomTypeNeedsNormalization romType ->
+              [RomTypeNormalizationUnsupported LabelNINJA2 platformType]
+          | otherwise ->
+              [RomTypeWithoutNormalization LabelNINJA2 platformType]
+      romTypeUnrecognized = case romTypeForPlatformConversion of
+        NINJA2.NINJA2UnknownRomType _ -> Just LabelNINJA2
+        _                             -> Nothing
   Right SomePatch
     { patchFormat         = LabelNINJA2
     , patchAnalysis       = NINJA2.analyzeNINJA2 patch
@@ -838,10 +854,12 @@ parseSomePatchFromNINJA2 metadataEncoding patchContents = do
     , patchVerification   = noVerification
         { verifySourceMD5 = filterZeroMD5 (fmap NINJA2.openNewFileSourceMD5 openNewFile)
         , verifyTargetMD5 = filterZeroMD5 (fmap NINJA2.openNewFileTargetMD5 openNewFile)
+        , verifyRomTypeUnrecognized = romTypeUnrecognized
         }
     , patchAdvisories       = parseAdvisories
                              ++ [EmptyPatch LabelNINJA2 EmptyRecords | null (NINJA2.ninja2Records patch)]
                              ++ platformAdvisories
+                             ++ romTypeAdvisories
     , patchInfo           = PatchInfo
         { infoFormat   = FormatHeader LabelNINJA2 Nothing
         , infoLines    = NINJA2.ninja2Meta patch
@@ -873,9 +891,23 @@ parseSomePatchFromNINJA1 patchContents = do
   Parsed patch parseAdvisories <- NINJA1.parseNINJA1 patchContents
   let records = NINJA1.ninja1Records patch
       hunkOf ninja1Record = Hunk (NINJA1.ninja1RecordOffset ninja1Record) (NINJA1.ninja1RecordData ninja1Record)
+      romTypeAdvisories = case NINJA1.ninja1RomType patch of
+        NINJA1.RomRAW          -> []
+        NINJA1.RomUnknown byte -> [UnrecognizedRomType LabelNINJA1 byte]
+        NINJA1.RomUnknownName name -> [UnrecognizedRomTypeName LabelNINJA1 name]
+        romType
+          | NINJA1.ninja1RomTypeNeedsNormalization romType ->
+              [RomTypeNormalizationUnsupported LabelNINJA1 (ninja1ToPlatform romType)]
+          | otherwise ->
+              [RomTypeWithoutNormalization LabelNINJA1 (ninja1ToPlatform romType)]
+      romTypeUnrecognized = case NINJA1.ninja1RomType patch of
+        NINJA1.RomUnknown _     -> Just LabelNINJA1
+        NINJA1.RomUnknownName _ -> Just LabelNINJA1
+        _                       -> Nothing
       warnings = concat
         [ parseAdvisories
         , [EmptyPatch LabelNINJA1 EmptyRecords | null records]
+        , romTypeAdvisories
         ]
       compressed = NINJA1.ninja1SubFormat patch `elem` [NINJA1.NINJA1BinaryCompressed, NINJA1.NINJA1TextCompressed]
       sourceAdvisories = case NINJA1.ninja1SubFormat patch of
@@ -900,6 +932,7 @@ parseSomePatchFromNINJA1 patchContents = do
         , verifySourceMD5    = NINJA1.ninja1SourceMD5 patch
         , verifySourceSHA1   = NINJA1.ninja1SourceSHA1 patch
         , verifySourcePreHash = HashNINJA1Sample
+        , verifyRomTypeUnrecognized = romTypeUnrecognized
         }
     , patchAdvisories       = warnings
     , patchInfo           = PatchInfo

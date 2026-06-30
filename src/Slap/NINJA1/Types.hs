@@ -10,6 +10,7 @@ module Slap.NINJA1.Types
   , NINJA1Compression(..)
   , toNINJA1RomType
   , fromNINJA1RomType
+  , ninja1RomTypeNeedsNormalization
   , toNINJA1SubFormat
   , romTypeName
   , subFormatName
@@ -63,14 +64,16 @@ toNINJA1SubFormat bytes
 data NINJA1Compression = NINJA1Uncompressed | NINJA1Compressed
   deriving (Show, Eq)
 
--- | ROM platform type. Values 0-17 are defined by the NINJA1 spec;
--- RomUnknown preserves any future/unknown value without crashing.
+-- | ROM platform type. Values 0-17 are defined by the NINJA1 spec; an
+-- unrecognized value is kept — 'RomUnknown' for a binary patch's type byte,
+-- 'RomUnknownName' for a textual patch's type name.
 data NINJA1RomType
   = RomRAW | RomNES | RomSNES | RomN64 | RomGB | RomGBC | RomGBA
   | RomNGP | RomNGPC | RomSMS | RomGameGear | RomGenesis
   | RomPCEngine | RomWonderSwan | RomWonderSwanColor
   | RomLynx | RomJaguar | RomGP32
   | RomUnknown Word8
+  | RomUnknownName Text
   deriving (Show, Eq)
 
 toNINJA1RomType :: Word8 -> NINJA1RomType
@@ -114,6 +117,19 @@ fromNINJA1RomType RomLynx           = 15
 fromNINJA1RomType RomJaguar         = 16
 fromNINJA1RomType RomGP32           = 17
 fromNINJA1RomType (RomUnknown value) = value
+-- A textual patch's unrecognized name has no wire byte; only recognized types
+-- reach the encoder (via 'Slap.Platform.platformToNINJA1'), so RAW is a dead fallback.
+fromNINJA1RomType (RomUnknownName _)  = 0
+
+-- | True for the ROM types NINJA1 defines a normalization for — a header
+-- strip or deinterleave — that slap does not yet run: SNES, Sega Megadrive,
+-- and Game Boy (@docs/ninja1/upstream/ninja1-filespec10.txt@). The rest have none.
+ninja1RomTypeNeedsNormalization :: NINJA1RomType -> Bool
+ninja1RomTypeNeedsNormalization romType = case romType of
+  RomSNES    -> True
+  RomGenesis -> True
+  RomGB      -> True
+  _          -> False
 
 data NINJA1TextHeader = NINJA1TextHeader
   { ninja1TextRomType    :: !NINJA1RomType
@@ -186,6 +202,7 @@ romTypeName RomLynx           = "Lynx"
 romTypeName RomJaguar         = "Jaguar"
 romTypeName RomGP32           = "GP32"
 romTypeName (RomUnknown value) = "unknown (" <> Text.pack (show value) <> ")"
+romTypeName (RomUnknownName name) = "unknown (" <> name <> ")"
 
 subFormatName :: NINJA1SubFormat -> Text
 subFormatName NINJA1Binary           = "binary"

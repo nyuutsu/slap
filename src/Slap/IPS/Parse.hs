@@ -80,8 +80,8 @@ import Data.Word (Word8)
 -- 'Parsed' warnings channel by a 'NoEOFMarker' warning. The error
 -- channel is reserved for inputs that violate the wire format in
 -- ways no shape covers — bad magic, variant-ceiling overrun,
--- zero-count RLE, unrecognized trailing bytes after a valid
--- @"EOF"@\/@"EEOF"@ marker, and so on.
+-- unrecognized trailing bytes after a valid @"EOF"@\/@"EEOF"@
+-- marker, and so on.
 --
 -- The variant ('StandardIPS' vs 'IPS32') is decided once, by reading
 -- the first 'ipsMagicLength' bytes against each variant's
@@ -378,7 +378,7 @@ parseIPSBody variant = bodyLoop [] [] firstAction
                    (nextAction currentIndex)
 
 ----------------------------------------------------------------------------
--- Pure validation pass — variant ceiling and RLE-zero rejection
+-- Pure validation pass — variant ceiling check
 ----------------------------------------------------------------------------
 
 -- | Walk the parsed record list, rejecting any record that would

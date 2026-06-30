@@ -36,6 +36,7 @@ ninja1ToPlatform RomLynx           = PlatformLynx
 ninja1ToPlatform RomJaguar         = PlatformJaguar
 ninja1ToPlatform RomGP32           = PlatformGP32
 ninja1ToPlatform (RomUnknown _)    = PlatformRaw
+ninja1ToPlatform (RomUnknownName _) = PlatformRaw
 
 -- | Convert a shared platform to NINJA1.  Only FDS has no NINJA1
 -- representation and falls back to Raw with an advisory.
