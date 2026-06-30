@@ -68,15 +68,13 @@ data BPSPatch = BPSPatch
 newtype BPSMetadata = BPSMetadata { unBPSMetadata :: ByteString }
   deriving (Eq, Show)
 
--- | BPS magic bytes (@"BPS1"@) at the start of every patch.
+-- | Wire-format magic prefix.
 bpsMagicBytes :: ByteString
 bpsMagicBytes = "BPS1"
 
--- | Length of the BPS magic ("BPS1") at the start of every patch.
 bpsMagicLength :: Length
 bpsMagicLength = Length 4
 
--- | Length of one CRC32 field in a BPS patch.
 bpsCRC32Length :: Length
 bpsCRC32Length = Length 4
 
@@ -84,8 +82,7 @@ bpsCRC32Length = Length 4
 bpsFooterLength :: Length
 bpsFooterLength = bpsCRC32Length <> bpsCRC32Length <> bpsCRC32Length
 
--- | Total framing overhead of a BPS patch: magic plus footer. The body
--- bytes (sizes, metadata, action stream) occupy the remainder.
+-- | Everything past this overhead — sizes, metadata, the action stream — is the body.
 bpsOverheadLength :: Length
 bpsOverheadLength = bpsMagicLength <> bpsFooterLength
 
@@ -98,7 +95,6 @@ decodeSignedVarint encoded =
 -- | Recognize the non-canonical @0x81@ encoding of zero in a BPS signed-delta varint.
 -- The sign-magnitude scheme used by 'decodeSignedVarint' admits two encodings for delta zero:
 -- @0x80@ (sign 0, magnitude 0) is canonical, and @0x81@ (sign 1, magnitude 0) is "negative zero" — semantically identical to @0x80@ but distinct on the wire.
--- The matched bit pattern is exactly the @0x81@ shape after byuu-varint decoding (the @0x81@ byte decodes to unsigned varint 1).
 --
 -- The 'Int64' input is grandfathered from 'decodeSignedVarint': both
 -- functions consume the post-'byuuVarint' integer rather than the

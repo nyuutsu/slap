@@ -210,8 +210,6 @@ encodeIPSRecord offsetWidth ehunk =
       <> byteString recordPayload
 
 -- | Decide whether a payload should be encoded as an RLE record.
--- True when the payload is at least four bytes long and every byte is identical.
--- Four, not three: at length 3 RLE ties copy on bytes, so copy wins.
 -- See 'encodeIPSRecord' for the cost analysis.
 shouldEncodeAsRLE :: ByteString -> Bool
 shouldEncodeAsRLE payload =

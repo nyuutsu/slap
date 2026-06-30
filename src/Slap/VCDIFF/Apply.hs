@@ -1,6 +1,5 @@
--- | Apply a parsed VCDIFF patch to a source file, producing the target.
---
--- Parse has already checked the three core invariants, so the only checks left here are the ones that need the source: each window's source segment must lie within the source file, or within the target produced so far.
+-- | Parse has already checked the three core invariants, so the only checks left here are the ones that need the source:
+-- each window's source segment must lie within the source file, or within the target produced so far.
 module Slap.VCDIFF.Apply
   ( applyVCDIFF
     -- * COPY resolution (exported for testing)
@@ -37,7 +36,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- COPY resolution
 ----------------------------------------------------------------------------
 
--- | Where the window's output stands: its base, and how much exists so far. 'resolveCopyAddress' needs the base to place reads of the window's own output, the head to spot an overrun.
+-- | 'resolveCopyAddress' needs the base to place reads of the window's own output, and the head to spot an overrun.
 data WindowWriteContext = WindowWriteContext
   { windowOutputBase    :: !WritePosition
   , windowProducedSoFar :: !Length
@@ -114,7 +113,7 @@ applyVCDIFF patch (InputFileContents source)
     totalTargetSize =
       FileSize (Vector.sum (Vector.map (unFileSize . windowTargetSize) windows))
 
-    -- | Walk the windows, writing each at its base. The source-segment check is the only thing apply can reject.
+    -- | The source-segment check is the only thing apply can reject.
     runApply :: Ptr Word8 -> IO (Maybe ApplyError)
     runApply outputPointer =
         walkWindows (WritePosition (Offset 0)) firstAction (Vector.toList windows)

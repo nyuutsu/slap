@@ -119,7 +119,6 @@ data AddressCache = AddressCache
 slotsPerSameBlock :: Int
 slotsPerSameBlock = 256
 
--- | The same cache's total slot count for a configuration: 'sameBlockCount' blocks of 'slotsPerSameBlock'.
 sameSlotCount :: AddressCacheConfig -> Int
 sameSlotCount config = unSameBlockCount (sameBlockCount config) * slotsPerSameBlock
 
@@ -153,7 +152,6 @@ freshAddressCache config = AddressCache
   }
 
 -- | Write a freshly-handled address into both caches: the near cache at the current write slot (then advancing round-robin) and the same cache at @address mod (256 * s_same)@.
--- The one definition both directions run, the decoder after reading an address and the encoder after choosing one, so their caches are a single state, not two kept in step.
 recordAddress :: AddressCache -> Offset -> AddressCache
 recordAddress cache address = cache
   { nearAddresses     = IntMap.insert writeSlot address (nearAddresses cache)
@@ -236,7 +234,6 @@ data AddressDecodeFailure
   deriving (Eq, Show)
 
 -- | The product of one COPY-address decode: the absolute address into the superstring, plus the post-state the decode leaves behind, the cache with the address recorded and the address-section cursor advanced past the consumed bytes.
--- Named so callers read the three by name, not by tuple position, in the manner of 'Slap.Binary.VarintResult'.
 data CopyAddressReading = CopyAddressReading
   { copyAddressDecoded     :: !Offset
     -- ^ The absolute superstring address the COPY names.
@@ -247,7 +244,6 @@ data CopyAddressReading = CopyAddressReading
   deriving (Eq, Show)
 
 -- | Decode one COPY address from the address section, given the cache, the current @here@ position in the superstring, and the address mode (families classified by 'classifyAddressMode').
--- Both caches update after the address is decoded, whatever mode it came through, the round-robin near write and modulo-slotted same write that keep decoder and encoder in step.
 -- The upstream half of a two-stage pipeline: the absolute @U@ offset decoded here is what 'Slap.VCDIFF.Apply.resolveCopyAddress' later resolves into a physical read.
 decodeCopyAddress
   :: AddressCache -> Offset -> Word8 -> ByteString -> Offset
@@ -255,7 +251,6 @@ decodeCopyAddress
 decodeCopyAddress cache here mode addrSection cursor =
   case classifyAddressMode (cacheConfig cache) mode of
     Nothing -> Left (UnknownAddressMode mode)
-    -- The raw varint means a different thing per mode, each given the right shape: SELF is the address, HERE a distance back from @here@, NEAR a distance forward from the slot's cached address.
     Just SelfAddress -> fromVarint Offset
     Just HereAddress -> fromVarint (\value -> displace here (Delta (negate value)))
     Just (NearAddress nearSlot) ->
@@ -295,7 +290,6 @@ data CopyAddressOperand
   deriving (Eq, Show)
 
 -- | The encoder's choice for one COPY: the mode byte to emit (matching a 'Slap.VCDIFF.CodeTable.CopyAddressMode' the active table can name), the operand that mode reads back to the address, and the cache after recording the address.
--- The same post-state 'decodeCopyAddress' produces, so the encoder and decoder caches stay one state. Named for 'CopyAddressReading', its decode mirror.
 data SelectedCopyAddress = SelectedCopyAddress
   { selectedAddressMode       :: !Word8
   , selectedAddressOperand    :: !CopyAddressOperand
@@ -316,7 +310,6 @@ data AddressCandidate = AddressCandidate
 -- Cheapest is by emitted address-section bytes, with SELF (the address verbatim, always available) as the baseline a cache mode must beat outright.
 -- SAME is a single byte, so it wins whenever the address already sits in its same-slot and SELF would spend more than one. NEAR is the smallest forward delta off a near slot, HERE the distance back from @here@; each is taken only when strictly shorter than SELF.
 -- A mode that merely ties SELF (an untouched near slot whose zero default equals the address, a same-slot holding an address SELF encodes just as short) leaves the plain offset in place, so a cache mode appears exactly where it shrinks the section and SELF is the default everywhere else.
--- An equal-cost tie goes to the earlier mode tried, SELF first, then same, near, here, so SELF holds every tie.
 selectCopyAddressMode :: AddressCache -> Offset -> Offset -> SelectedCopyAddress
 selectCopyAddressMode cache here address = recordInto chosen
   where

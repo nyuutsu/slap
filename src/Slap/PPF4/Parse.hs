@@ -45,7 +45,6 @@ data PPF4WireRecord
   = WireReplace !ActionIndex !PPF4Replace
   | WireAppend  !ActionIndex !PPF4Append
 
--- | Parse a PPF4 patch file from raw bytes.
 parsePPF4 :: EncodingName -> PatchFileContents -> Either SlapError (Parsed PPF4Patch)
 parsePPF4 metadataEncoding (PatchFileContents input)
   | ByteString.length input < unLength minPPF4Length =
@@ -83,7 +82,6 @@ parsePPF4 metadataEncoding (PatchFileContents input)
 minPPF4Length :: Length
 minPPF4Length = ppf4PreambleLength
 
--- | Wrap a ByteParser error into a SlapError, labeled PPF4.
 ppf4WrapError :: Either ByteParserError a -> Either SlapError a
 ppf4WrapError = either (Left . ParseError LabelPPF4) Right
 

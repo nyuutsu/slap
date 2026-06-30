@@ -30,7 +30,7 @@ data BSDiffInstruction = BSDiffInstruction
   , controlSeek :: !Delta   -- signed seek offset in source
   } deriving (Show)
 
--- | BSDiff magic bytes (@"BSDIFF40"@) per bsdiff 4.3 (Colin Percival).
+-- | Wire-format magic prefix, per bsdiff 4.3 (Colin Percival).
 bsdiffMagicBytes :: ByteString
 bsdiffMagicBytes = "BSDIFF40"
 

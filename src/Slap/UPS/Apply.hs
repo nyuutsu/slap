@@ -47,13 +47,6 @@ import System.IO.Unsafe (unsafePerformIO)
 -- to. The walker ('runUPSXorWalk') is direction-blind — it knows
 -- only its own 'outputSize', supplied by 'applyUPS' or 'undoUPS' —
 -- and classifies each block against it.
---
--- The two out-of-bounds arms — 'BlockPartiallyOvershoots' and
--- 'BlockEntirelyPhantom' — are direction-symmetric by algorithm.
--- Both are reachable from both directions; which arm fires depends
--- on the patch's shape (growth vs shrink, terminator placement),
--- not on whether the user invoked apply or undo. See each
--- constructor's docs for the practical case it covers.
 data BlockPlacement
   = BlockFitsWithinOutput
     -- ^ The block's declared span — skip, xor, terminator — lies
@@ -89,11 +82,8 @@ data BlockPlacement
     -- shrink patches put it on 'applyUPS' (writes the smaller target).
   deriving (Show, Eq)
 
--- | Classify a UPS block's placement against the active output
--- buffer. Pure function of three typed arguments: the block's start
--- position, its full declared span (@skipLength + xorDataLength + 1@),
--- and the size of the buffer being written. Performs no I/O and
--- reads no shared state.
+-- | Classify a UPS block's placement against the output buffer.
+-- Its full declared span is @skipLength + xorDataLength + 1@.
 classifyBlockPlacement :: Offset -> Length -> FileSize -> BlockPlacement
 classifyBlockPlacement blockStart totalBlockLength outputSize
   | fitsWithin blockStart totalBlockLength outputSize = BlockFitsWithinOutput
@@ -130,12 +120,9 @@ data SourceCopyPlacement
     -- source-read path is unreachable for this arm.
   deriving (Show, Eq)
 
--- | Classify a source-byte copy against the source buffer. Pure
--- function of three typed arguments: the output position at which
--- writing starts (and from which the source read would begin),
--- the requested copy length, and the source buffer's size.
--- The straddle arm's tail length is computed here (once) so neither
--- 'copySourceSlice' nor 'xorSourceSlice' has to subtract downstream.
+-- | Classify a source-byte copy against the source buffer.
+-- The output position where writing starts is also where the source read begins.
+-- The straddle arm's tail length is computed here once, so neither 'copySourceSlice' nor 'xorSourceSlice' has to subtract downstream.
 classifySourceCopy :: Offset -> Length -> FileSize -> SourceCopyPlacement
 classifySourceCopy outputPosition copyLength sourceSize
   | fitsWithin outputPosition copyLength sourceSize = SourceCopyEntirelyInSource
@@ -158,13 +145,9 @@ data BlockWrite = BlockWrite
 -- applyUPS / undoUPS
 ----------------------------------------------------------------------------
 
--- | Apply a parsed UPS patch to a source ByteString. Walks the
--- block stream against @source@ and writes the result into a
--- target-sized output buffer. The reverse-direction sibling is
--- 'undoUPS'; both go through the same internal walker
--- ('runUPSXorWalk') which is parameterised on the output buffer
--- size — the direction choice lives in these two thin wrappers,
--- not threaded through the walker.
+-- | Walks the block stream against @source@ and writes the result into a target-sized output buffer.
+-- The reverse-direction sibling is 'undoUPS'; both go through the same internal walker ('runUPSXorWalk'), parameterised on the output buffer size.
+-- The direction choice lives in these two thin wrappers, not threaded through the walker.
 --
 -- Returns 'Left' with a structured error if the declared target size is negative (unreachable — the size is read from a non-negative varint).
 -- Blocks whose span exceeds the output size are clipped to it;
@@ -253,14 +236,12 @@ runUPSXorWalk patch source outputSize
         -- ensuring the write fits within target bounds — this helper
         -- does not clip to target.
         --
-        -- The loops use the raw pinned source pointer (in-bounds phase) and a hoisted write base.
         xorSourceSlice :: Offset -> Length -> ByteString -> IO ()
         xorSourceSlice outputPosition xorDataLength xorData =
           let readBase  = sourcePointer `plusPtr` unOffset outputPosition
               writeBase = plusOffset outputPointer outputPosition
 
-              -- Phase 1: source is in bounds. Read source, XOR with
-              -- xorData, poke result.
+              -- Phase 1: source in bounds.
               xorWithSourceLoop !byteOffset !endByteOffset
                 | byteOffset >= endByteOffset = pure ()
                 | otherwise = do
@@ -325,17 +306,11 @@ runUPSXorWalk patch source outputSize
         advanceOutputByBlock stride =
           modify (\outputPosition -> advance outputPosition stride)
 
-        -- | Tail-recursive walk over the block vector. The output
-        -- cursor lives in 'UPSApply' state, so each step needs only
-        -- the running block index. End-of-stream issues the tail
-        -- copy that fills any output bytes the block stream didn't
-        -- name — no underfill check, because UPS's tail copy
-        -- structurally guarantees the buffer ends exactly filled.
-        -- The cursor may sit past 'outputSize' when phantom or
-        -- straddling blocks advanced it beyond the buffer; the
-        -- at-or-past arm short-circuits before asking
-        -- 'remainingFromOffset' a question whose only sensible
-        -- answer is "no bytes left."
+        -- | The output cursor lives in 'UPSApply' state, so each step needs only the running block index.
+        -- End-of-stream issues the tail copy that fills any output bytes the block stream didn't name.
+        -- No underfill check is needed: UPS's tail copy fills the buffer to exactly its end.
+        -- The cursor may sit past 'outputSize' when phantom or straddling blocks advanced it beyond the buffer;
+        -- the at-or-past arm short-circuits before asking 'remainingFromOffset' a question whose only sensible answer is "no bytes left."
         applyBlockStream :: ActionIndex -> UPSApply ()
         applyBlockStream !blockIndex
           | blockIndex >= blockStreamEnd = do
@@ -347,13 +322,9 @@ runUPSXorWalk patch source outputSize
               handleBlock blockIndex
                 (Vector.unsafeIndex blocks (unActionIndex blockIndex))
 
-        -- | Per-block dispatch. Classify the block's placement once,
-        -- run the placement-appropriate write (or nothing, for a
-        -- phantom block), then advance the cursor by the full
-        -- declared span and recurse. The three arms read top-to-
-        -- bottom in order of decreasing in-bounds payload: fits
-        -- writes all three sub-ops, straddles writes a clipped
-        -- prefix of them, phantom writes nothing.
+        -- | Per-block dispatch.
+        -- The three arms read top-to-bottom in order of decreasing in-bounds payload:
+        -- fits writes all three sub-ops, straddles writes a clipped prefix of them, phantom writes nothing.
         handleBlock :: ActionIndex -> UPSBlock -> UPSApply ()
         handleBlock blockIndex (UPSBlock skipLength xorData) = do
           outputPosition <- get
@@ -389,24 +360,19 @@ runUPSXorWalk patch source outputSize
 -- Cursor state
 ----------------------------------------------------------------------------
 
--- | Strict 'StateT' over 'IO'. The state slot carries the output
--- cursor — the apply's only threaded value, advanced by one block's
--- full declared span ('advanceOutputByBlock') after every block,
--- regardless of how that block was classified. Kept as a bare
--- 'Offset' rather than a one-field record because there is nothing
--- else to bundle with it; UPS's apply has a single piece of state.
--- Mirrors 'Slap.XDelta1.Apply.XDelta1Apply'.
+-- | The state slot carries the output cursor, the apply's only threaded value.
+-- It advances by one block's full declared span ('advanceOutputByBlock') after every block, regardless of how that block was classified.
+-- Kept as a bare 'Offset' rather than a one-field record because there is nothing else to bundle with it;
+-- UPS's apply has a single piece of state.
 type UPSApply = StateT Offset IO
 
 ----------------------------------------------------------------------------
 -- OOB block detection
 ----------------------------------------------------------------------------
 
--- | Per-block walk state for 'detectOOBBlocks'. Threaded through
--- 'Vector.ifoldl'' over the patch's blocks; each block either falls
--- entirely within the declared target (cursor advances; counts
--- unchanged) or extends past it (cursor still advances, counts
--- update). Module-internal; not exported.
+-- | Per-block walk state for 'detectOOBBlocks'.
+-- Threaded through 'Vector.ifoldl'' over the patch's blocks;
+-- each block either falls entirely within the declared target (cursor advances; counts unchanged) or extends past it (cursor still advances, counts update).
 data OOBWalkState = OOBWalkState
   { oobPosition   :: !Offset
   , oobCount      :: !OOBBlockCount
@@ -422,11 +388,6 @@ data OOBWalkState = OOBWalkState
 -- The direction parameter tags the advisory with which operation
 -- produced it ('Forward' for apply, 'Reverse' for undo), so the
 -- rendered text matches the operation the user invoked.
---
--- Called from 'applyUPS' and 'undoUPS' against their respective
--- output sizes; the resulting advisory is carried in the returned
--- 'Outcome' so the user always sees a summary measured against the
--- operation that actually ran.
 detectOOBBlocks :: UPSPatch -> ApplyDirection -> FileSize -> [SlapAdvisory]
 detectOOBBlocks patch direction outputSize = case oobFirstIndex finalState of
   Nothing       -> []

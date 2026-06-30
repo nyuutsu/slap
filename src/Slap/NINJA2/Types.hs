@@ -291,7 +291,7 @@ parsePackedByteString = do
   dataLength <- fromIntegral <$> parsePackedInteger
   getBytes (Length dataLength)
 
--- | NINJA2 magic bytes (@"NINJA2"@) at the start of every NINJA2 patch.
+-- | Wire-format magic prefix.
 ninja2MagicBytes :: ByteString
 ninja2MagicBytes = "NINJA2"
 
@@ -339,7 +339,6 @@ ninja2DateWidth        = Length 8
 ninja2WebsiteWidth     = Length 512
 ninja2DescriptionWidth = Length 1074
 
--- | VLV: 1-byte length prefix, then N bytes little-endian.
 encodeVariableLengthValue :: Int64 -> Builder
 encodeVariableLengthValue 0 = word8 1 <> word8 0
 encodeVariableLengthValue value =

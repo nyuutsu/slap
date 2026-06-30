@@ -43,8 +43,6 @@ totalPayloadBytes patch =
 -- Analyze
 ----------------------------------------------------------------------------
 
--- | Build a 'PatchAnalysis' for a PPF4 patch, suitable for detailed
--- rendering.
 analyzePPF4 :: PPF4Patch -> PatchAnalysis
 analyzePPF4 patch = PatchAnalysis
   { analysisSections =

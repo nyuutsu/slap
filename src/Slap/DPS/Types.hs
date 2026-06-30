@@ -159,9 +159,6 @@ narrowDPSRecord (DPSCopyFromROM outputOffset sourceOffset copyLength) = do
   pure (EncodedDPSCopyFromROM outputW sourceW lengthW)
 narrowDPSRecord (DPSEnclosedData outputOffset payload) = do
   outputW <- narrowDPSField FieldRecordOutputOffset (unOffset outputOffset)
-  -- The wire-format size field for the payload is 4 bytes LE; once
-  -- this narrow succeeds, the encoder's 'fromIntegral' on the same
-  -- bytestring's length cannot truncate.
   _       <- narrowDPSField FieldRecordLength (ByteString.length payload)
   pure (EncodedDPSEnclosedData outputW payload)
 
@@ -182,7 +179,6 @@ narrowDPSRecords = traverse narrowDPSRecord
 dpsFieldWidth :: Length
 dpsFieldWidth = Length 64
 
--- | Number of metadata fields in the header.
 dpsFieldCount :: Int
 dpsFieldCount = 3
 

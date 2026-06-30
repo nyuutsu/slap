@@ -35,7 +35,6 @@ applyAPSN64 (APSN64Patch _ records) (InputFileContents source) =
           copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputLength))
           when (outputLength > sourceLength) $
             fillBytes (targetPointer `plusPtr` sourceLength) (0 :: Word8) (outputLength - sourceLength)
-        -- | Overlay one record onto the seeded buffer.
         writeRecord = \case
           APSN64Normal writeOffset writePayload ->
             copyRegion targetPointer writeOffset writePayload (Offset 0) (byteLength writePayload)

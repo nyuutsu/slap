@@ -28,27 +28,14 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Apply
 ----------------------------------------------------------------------------
 
--- | Apply an xdelta1 patch by walking its instruction stream and
--- copying bytes from the resolved source for each instruction. The
--- per-instruction source dispatch is total in
--- 'XDelta1InstructionTarget': the parser
--- ('Slap.XDelta1.Parse.translateInstruction') guarantees that every
--- instruction targets one of the patch's two sources, so no runtime
--- bounds check is needed.
--- Per-instruction OOB on the resolved source — a length/offset
--- combination that would read past that source's end — is a
--- precondition violation enforced at the instruction boundary; the
--- apply loop returns 'ApplySourceReadOutOfBounds' rather than
--- producing partial output.
+-- | Walks the instruction stream, copying bytes from the resolved source for each instruction.
+-- Which source an instruction reads is a total two-arm dispatch on 'XDelta1InstructionTarget':
+-- 'Slap.XDelta1.Parse.translateInstruction' rejects any other index at parse time, so apply needs no runtime check there.
+-- The read within that source is bounds-checked per instruction: a length/offset past the source's end returns 'ApplySourceReadOutOfBounds' rather than partial output.
 --
--- Before any target-length interpretation, the patch's recorded
--- input pre-compression posture is checked: if either input was a
--- gzip stream at delta time ('FLAG_FROM_COMPRESSED' bit 1 or
--- 'FLAG_TO_COMPRESSED' bit 2 set in the wire header), apply refuses
--- with 'XDelta1InputPreCompressionUnsupported'. Slap doesn't
--- implement the apply-time gzip transparency that canonical
--- xdelta-1.x does; proceeding against the user's literal source
--- bytes would silently produce wrong output.
+-- The recorded input pre-compression posture is checked first:
+-- if either input was a gzip stream at delta time ('FLAG_FROM_COMPRESSED' or 'FLAG_TO_COMPRESSED' set), apply refuses with 'XDelta1InputPreCompressionUnsupported'.
+-- Slap doesn't implement the apply-time gzip transparency canonical xdelta-1.x does, so proceeding against the user's literal source bytes would silently produce wrong output.
 applyXDelta1 :: XDelta1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyXDelta1 patch sourceContents =
   case (xdelta1FromAtDeltaTime patch, xdelta1ToAtDeltaTime patch) of
@@ -73,10 +60,7 @@ applyXDelta1 patch sourceContents =
     sourceBytesFor _      FromDataSource = dataSegment
     sourceBytesFor source FromFileSource = source
 
-    -- | Per-instruction guards: the write must fit in the remaining
-    -- target buffer, and the read must fit in the per-instruction
-    -- resolved source (data segment or file, as 'sourceBytesFor'
-    -- resolves).
+    -- | The read is bounded by the per-instruction resolved source, the data segment or file, as 'sourceBytesFor' resolves.
     checkInstructionPreconditions :: ActionIndex -> Length
                                   -> WritePosition -> ReadOffset -> FileSize
                                   -> Either ApplyError ()
@@ -103,11 +87,8 @@ applyXDelta1 patch sourceContents =
             advanceOutputByInstruction stride =
               modify (\outputPosition -> advance outputPosition stride)
 
-            -- | Tail-recursive walk over the instruction list. The
-            -- output cursor lives in 'XDelta1Apply' state, so each
-            -- step needs only the remaining instructions and the
-            -- running action index. End-of-stream verifies the
-            -- walker filled the entire target buffer.
+            -- | The output cursor lives in 'XDelta1Apply' state, so each step needs only the remaining instructions and the running action index.
+            -- End-of-stream verifies the walker filled the entire target buffer.
             applyLoop :: [XDelta1Instruction] -> ActionIndex -> XDelta1Apply (Maybe ApplyError)
             applyLoop [] _actionIndex = do
               outputPosition <- get
@@ -136,7 +117,5 @@ applyXDelta1 patch sourceContents =
 -- Cursor state
 ----------------------------------------------------------------------------
 
--- | Strict 'StateT' over 'IO'. The state slot carries the output
--- cursor — the apply's only threaded value, advanced by one
--- instruction's length per step.
+-- | The state slot carries the output cursor, the apply's only threaded value, advanced by one instruction's length per step.
 type XDelta1Apply = StateT Offset IO

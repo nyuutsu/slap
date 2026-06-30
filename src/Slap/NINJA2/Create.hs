@@ -138,6 +138,6 @@ createNINJA2 (InputFileContents original) (OutputFileContents modified) metadata
 encodeXorRecord :: XorRecord -> Builder
 encodeXorRecord record =
     word8 0x02                                    -- XOR command
-    <> encodeVariableLengthValue (fromIntegral (unOffset (xorRecordOffset record)))   -- offset
-    <> encodeVariableLengthValue (fromIntegral (ByteString.length (xorRecordPayload record)))  -- length
-    <> byteString (xorRecordPayload record)       -- XOR data
+    <> encodeVariableLengthValue (fromIntegral (unOffset (xorRecordOffset record)))
+    <> encodeVariableLengthValue (fromIntegral (ByteString.length (xorRecordPayload record)))
+    <> byteString (xorRecordPayload record)

@@ -24,25 +24,14 @@ import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
-----------------------------------------------------------------------------
--- applyAPSGBA
-----------------------------------------------------------------------------
-
--- | Apply a parsed APS-GBA patch: XOR each record's
--- 'apsGbaBlockSize'-byte payload into the seeded output buffer at the
--- record's absolute offset.
+-- | XOR each record's 'apsGbaBlockSize'-byte payload into the seeded output buffer at the record's absolute offset.
 --
--- A record whose start lies past @max(sourceSize, targetSize)@ is
--- malformed and surfaces as 'ApplyAbsoluteWritePastTarget'. The bound
--- is @max@, not @targetSize@ alone, because a shrinking patch
--- legitimately emits records past the target end: a source block with
--- no target equivalent still XORs non-zero against the zero-padded
--- target. Those records write no bytes (the per-byte
--- 'positionWithinTarget' guard skips them) but belong in the stream.
---
--- A block whose start is in range but whose tail runs past the target
--- end is the non-aligned-last-block case; the same per-byte guard
--- skips the overhang without error.
+-- A record whose start lies at or past @max(sourceSize, targetSize)@ is malformed and surfaces as 'ApplyAbsoluteWritePastTarget'.
+-- The bound is @max@, not @targetSize@ alone, because a shrinking patch legitimately emits records past the target end:
+-- a source block with no target equivalent still XORs non-zero against the zero-padded target.
+-- 'executeXorBlock' then handles any record that reaches the boundary, with two different outcomes:
+-- a record starting past the target writes nothing at all,
+-- while one starting in range with an overrunning tail writes its in-range bytes and drops only the overhang.
 applyAPSGBA :: APSGBAPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
   | targetSize < 0 =
@@ -72,10 +61,8 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                   (0 :: Word8)
                   (targetSize - sourceLength)
 
-    -- | Flag a record whose write start sits at or past
-    -- 'naturalBlockReach'. An in-range start whose block tail runs
-    -- past the target end is fine — 'executeXorBlock' skips the
-    -- overhang.
+    -- | Flag a record whose write start sits at or past 'naturalBlockReach'.
+    -- Only the start is checked here; a tail that overruns the target is handled in 'executeXorBlock'.
     checkRecordStartsWithinReach :: ActionIndex -> Offset
                                  -> Either ApplyError ()
     checkRecordStartsWithinReach actionIndex blockOffset
@@ -86,9 +73,7 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                  targetFileSize)
       | otherwise = Right ()
 
-    -- | Materialise one block into the output buffer, skipping any
-    -- byte position at or past 'targetSize'. This is where the
-    -- past-target tail and the shrinking-patch overhang get dropped.
+    -- | Materialise one block into the output buffer, skipping any byte position at or past 'targetSize'.
     executeXorBlock :: Ptr Word8 -> Offset -> ByteString -> IO ()
     executeXorBlock targetPointer blockOffset xorPayload =
         writeRemainingBytes 0
@@ -105,9 +90,6 @@ applyAPSGBA (APSGBAPatch header records) (InputFileContents source)
                   (original `xor` ByteString.index xorPayload byteOffset)
               writeRemainingBytes (byteOffset + 1)
 
-    -- | Tail-recursive walk over the record list. End-of-stream
-    -- finishes apply with no error; a malformed-record start
-    -- returns immediately with the structured error.
     applyRecords :: Ptr Word8 -> ActionIndex -> [APSGBARecord]
                  -> IO (Maybe ApplyError)
     applyRecords _targetPointer _actionIndex [] = pure Nothing

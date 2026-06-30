@@ -19,13 +19,9 @@ import Foreign.Ptr (Ptr)
 import Data.Word (Word8)
 import System.IO.Unsafe (unsafePerformIO)
 
--- | Apply a PPF4 patch in memory.
---
--- PPF4 is a two-phase format. Replace records run first, each writing
--- at its declared offset within the source bounds (Replaces that
--- would write past source EOF fail with 'ApplyReplaceGrowsFile').
--- Append records run second, each writing sequentially starting at
--- the snapshot of @sourceFileSize@ taken before any Replace runs.
+-- | PPF4 is a two-phase format.
+-- Replace records run first, each writing at its declared offset within the source bounds (Replaces that would write past source EOF fail with 'ApplyReplaceGrowsFile').
+-- Append records run second, each writing sequentially starting at the snapshot of @sourceFileSize@ taken before any Replace runs.
 applyPPF4 :: PPF4Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyPPF4 patch (InputFileContents source)
   | unFileSize outputFileSize < 0 =

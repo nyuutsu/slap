@@ -62,10 +62,7 @@ instance Cursor TargetRelativeOffset where
 -- TargetCopy classification
 ----------------------------------------------------------------------------
 
--- | How to execute a 'TargetCopy' action, given its validated
--- source position, the current write position, and the copy length.
--- Classification is a pure function of three typed arguments and
--- can be property-tested in isolation.
+-- | How to execute a 'TargetCopy' action, given its validated source position, the current write position, and the copy length.
 data TargetCopyStrategy
   = TargetCopyNonOverlapping
     -- ^ The source range ends at or before the destination begins.
@@ -81,11 +78,9 @@ data TargetCopyStrategy
     -- the source for subsequent iterations.
   deriving (Show, Eq)
 
--- | Classify a TargetCopy execution strategy. Assumes the caller
--- has already validated that @readStart >= 0@ and
--- @readStart < writePosition@ — classification is only meaningful on
--- valid inputs. The strict apply path always validates before
--- classifying.
+-- | Classify a TargetCopy's execution strategy.
+-- Assumes the caller has already validated @readStart >= 0@ and @readStart < writePosition@;
+-- the strict apply path always validates before classifying.
 classifyTargetCopy :: ReadOffset -> WritePosition -> Length -> TargetCopyStrategy
 classifyTargetCopy readStart writePosition copyLength
   | readEnd <= outputOffset                                  = TargetCopyNonOverlapping
@@ -100,14 +95,10 @@ classifyTargetCopy readStart writePosition copyLength
 -- applyBPS
 ----------------------------------------------------------------------------
 
--- | Apply a parsed BPS patch to a source ByteString. Returns
--- 'Left' with a structured error if the patch's action stream is
--- semantically malformed (negative cursors, out-of-bounds reads,
--- forward reads in TargetCopy, actions that would write past target,
--- or stream exhaustion before the target is filled). The caller is
--- still responsible for validating CRCs before calling this; a
--- 'Left' return here means the action stream is semantically
--- invalid, not that the patch bytes were corrupted.
+-- | Returns 'Left' with a structured error if the patch's action stream is semantically malformed:
+-- negative cursors, out-of-bounds reads, forward reads in TargetCopy, writes past target, or stream exhaustion before the target is filled.
+-- The caller is still responsible for validating CRCs before calling;
+-- a 'Left' here means the action stream is invalid, not that the patch bytes were corrupted.
 applyBPS :: BPSPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyBPS patch (InputFileContents source)
   | unFileSize targetSize < 0 =
@@ -224,9 +215,7 @@ applyBPS patch (InputFileContents source)
                TargetCopyGeneralOverlap ->
                  generalOverlapLoop readStart writePosition copyLength
 
-        -- | Advance the write head by @stride@ bytes. The cursor
-        -- transition done by 'SourceRead' and 'TargetRead': those
-        -- actions move the write head only.
+        -- | The cursor transition done by 'SourceRead' and 'TargetRead': those actions move the write head only.
         advanceOutput :: Length -> BPSApply ()
         advanceOutput stride = modify $ \cursors ->
           cursors { outputPosition = advance (outputPosition cursors) stride }
@@ -251,14 +240,11 @@ applyBPS patch (InputFileContents source)
           , targetRelative = advance newTargetRelative stride
           }
 
-        -- | Tail-recursive walk over the action vector. The three
-        -- cursors live in 'BPSApply' state, so each step needs only
-        -- the current action index. End-of-stream verifies that the
-        -- walker filled the entire target buffer.
+        -- | The three cursors live in 'BPSApply' state, so each step needs only the current action index.
+        -- End-of-stream verifies that the walker filled the entire target buffer.
         applyActionStream :: ActionIndex -> BPSApply (Maybe ApplyError)
         applyActionStream !actionIndex
           | actionIndex >= actionStreamEnd = do
-              -- End of action stream: verify we wrote the full target.
               -- Over-fill needs no check here: every writing action rejects a past-target write per-action with 'ApplyWritesPastTarget', so outputPosition > targetSize is unreachable.
               writePosition <- gets outputPosition
               let outputOffset = unWritePosition writePosition
@@ -342,19 +328,13 @@ applyBPS patch (InputFileContents source)
 ----------------------------------------------------------------------------
 
 -- | The three cursors threaded through the BPS action-stream walk.
--- Bundled into a record so 'BPSApply' (a 'StateT' over 'IO') can
--- carry them implicitly. Each handler updates only the slots its
--- action class touches:
---
---   * 'SourceRead' and 'TargetRead' update 'outputPosition' only.
---   * 'SourceCopy' updates 'outputPosition' and 'sourceRelative'.
---   * 'TargetCopy' updates 'outputPosition' and 'targetRelative'.
+-- Bundled into a record so 'BPSApply' (a 'StateT' over 'IO') can carry them implicitly.
+-- Each handler updates only the slots its action class touches.
 data BPSCursors = BPSCursors
   { outputPosition :: !WritePosition
   , sourceRelative :: !SourceRelativeOffset
   , targetRelative :: !TargetRelativeOffset
   }
 
--- | Strict 'StateT' over 'IO'. Strict because the cursors update
--- on nearly every action and lazy thunk build-up would buy nothing.
+-- | Strict because the cursors update on nearly every action; a lazy thunk build-up would buy nothing.
 type BPSApply = StateT BPSCursors IO

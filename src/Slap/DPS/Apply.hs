@@ -19,17 +19,8 @@ import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 
-----------------------------------------------------------------------------
--- applyDPS
-----------------------------------------------------------------------------
-
--- | Apply a parsed DPS patch to a source ByteString. The output buffer
--- is zero-filled and sized to the furthest record write extent — bytes
--- not named by any record are zero, matching the reference
--- implementation (dpspatcher.exe). Returns 'Left' with a structured
--- error if a CopyFromROM record references bytes past the end of the
--- source or if a record's write region exceeds the computed output
--- extent.
+-- | The output buffer is zero-filled and sized to the furthest record write extent.
+-- Bytes not named by any record are zero, matching the reference implementation (dpspatcher.exe).
 applyDPS :: DPSPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyDPS patch (InputFileContents source)
   | unFileSize outputSize < 0 =

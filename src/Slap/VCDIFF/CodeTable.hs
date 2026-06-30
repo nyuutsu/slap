@@ -91,7 +91,6 @@ newtype CodeTable = CodeTable { codeTableEntries :: Vector CodeTableEntry }
 
 -- | An opcode: one byte of a window's instruction stream, indexing the code table to the one or two templates it expands to.
 -- The wrapper names the role in every signature it crosses and keeps it distinct from the other bytes encode and decode pass (a fill byte, a same-slot operand).
--- Its range is the whole 'Word8', exactly the 'codeTableEntryCount' entries a table holds, which is what makes 'codeTableEntry' total.
 newtype Opcode = Opcode { unOpcode :: Word8 }
   deriving (Eq, Ord, Show)
 
@@ -187,7 +186,6 @@ codeTableWithEntriesReplaced (CodeTable entries) replacements =
 -- The serialized 1536-byte image
 ----------------------------------------------------------------------------
 
--- | The number of entries in any VCDIFF code table.
 codeTableEntryCount :: Int
 codeTableEntryCount = 256
 

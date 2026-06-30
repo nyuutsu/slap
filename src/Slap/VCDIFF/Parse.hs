@@ -26,7 +26,6 @@ import Slap.VCDIFF.Types
   , XDelta3Header(..), XDelta3Window(..), RFCHeader(..), CustomCodeTable(..)
   , SourceSegment(..), SegmentOrigin(..), vcdiffMagicBytes )
 -- Qualified: 'InstructionTemplate' shares the constructor names Add / Run / Copy with 'VCDIFFInstruction'.
--- The template (code-table) side is qualified; the decoded-instruction side stays unqualified, so the two are visibly distinct at every use.
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.SecondaryCompression
   ( XDelta3SecondaryCompressor(..), secondaryCompressorCatalog
@@ -430,7 +429,6 @@ resolveActiveTable tablePolicy headerIndicator maybeTableData
         }
 
 -- | Build a patch's custom code table from its data section (RFC 3284 §7): peel the two cache-size bytes, decode the inner delta (itself a self-contained VCDIFF patch) against the serialized default table, read the 1536-byte result back into a table, and check the one thing the image alone could not (a COPY mode the declared caches do not reach).
--- Yields the 'ResolvedTable' the windows decode against: the built table paired with its cache config, the same table as the classifier's RFC signal, and any do-nothing-entry advisory.
 -- Everything from the inner decode onward (the inner-delta parse and apply, the read-back, the mode check) is wrapped with the custom-code-table context so its precision survives; only the cache-size peel, failing before any of that, keeps its own bare error.
 buildCustomTable :: Maybe ByteString -> Either SlapError ResolvedTable
 buildCustomTable maybeTableData = do

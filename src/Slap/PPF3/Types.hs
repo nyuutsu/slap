@@ -121,7 +121,7 @@ data PPF3Patch = PPF3Patch
   , ppf3FileId          :: !(Maybe PPF3FileId)
   } deriving (Show)
 
--- | Wire-format magic prefix: ASCII @"PPF3"@.
+-- | Wire-format magic prefix.
 ppf3MagicBytes :: ByteString
 ppf3MagicBytes = "PPF3"
 
@@ -130,7 +130,6 @@ ppf3MagicBytes = "PPF3"
 ppf3PreambleLength :: Length
 ppf3PreambleLength = Length 6
 
--- | Length of the description field: 50 bytes.
 ppf3DescriptionLength :: Length
 ppf3DescriptionLength = Length 50
 
@@ -162,12 +161,10 @@ ppf3ValidationOffset :: PPF3ImageType -> Offset
 ppf3ValidationOffset BIN = Offset 0x9320
 ppf3ValidationOffset GI  = Offset 0x80A0
 
--- | Size of the validation block, in bytes.
 ppf3ValidationSize :: Length
 ppf3ValidationSize = Length 1024
 
--- | Width of the FILE_ID.DIZ length field at the very end of the
--- patch: 2 bytes (LE) in PPF3.
+-- | Width of the FILE_ID.DIZ length field: 2 bytes, little-endian.
 ppf3FileIdLengthFieldWidth :: Length
 ppf3FileIdLengthFieldWidth = Length 2
 

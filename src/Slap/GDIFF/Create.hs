@@ -34,7 +34,7 @@ createGDIFF inputContents@(InputFileContents original) outputContents@(OutputFil
     Right (CreateResult (PatchFileContents patchBytes) [])
   where
     patchBytes = LazyByteString.toStrict $ toLazyByteString $
-      byteString gdiffMagicBytes       -- magic
+      byteString gdiffMagicBytes
       <> word8 4                       -- version
       <> buildCommands (Offset 0) (diffHunks inputContents outputContents)
       <> word8 0                       -- EOF command

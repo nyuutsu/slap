@@ -85,8 +85,6 @@ renderPrintableASCIIOrHex bytes
   | otherwise =
       "0x" <> hexByteString bytes
 
--- | True for the printable ASCII range (space through tilde
--- inclusive).
 isPrintableAscii :: Word8 -> Bool
 isPrintableAscii byte = byte >= 0x20 && byte <= 0x7E
 

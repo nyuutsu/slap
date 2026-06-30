@@ -41,12 +41,10 @@ enDash = '\8211'
 emDash :: Char
 emDash = '\8212'
 
--- | 'rightwardsArrow' flanked by single spaces; the recurring shape
--- in CLI status lines like @INPUT → OUTPUT@.
+-- | Joins the two sides of a CLI status line, as in @INPUT → OUTPUT@.
 spacePaddedRightwardsArrow :: Text
 spacePaddedRightwardsArrow = Text.pack [' ', rightwardsArrow, ' ']
 
--- | 'enDash' flanked by single spaces; the recurring shape in
--- Explain range output like @0x000000 – 0x00FFFF@.
+-- | Spans an Explain byte range, as in @0x000000 – 0x00FFFF@.
 spacePaddedEnDash :: Text
 spacePaddedEnDash = Text.pack [' ', enDash, ' ']

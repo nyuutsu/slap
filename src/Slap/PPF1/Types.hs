@@ -64,11 +64,10 @@ data PPF1Patch = PPF1Patch
 data PPF1Origin = PPF1OriginPC | PPF1OriginAmiga
   deriving (Show, Eq)
 
--- | Wire-format magic prefix: ASCII @"PPF1"@.
+-- | Wire-format magic prefix.
 ppf1MagicBytes :: ByteString
 ppf1MagicBytes = "PPF1"
 
--- | Length of the description field: 50 bytes.
 ppf1DescriptionLength :: Length
 ppf1DescriptionLength = Length 50
 

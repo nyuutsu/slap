@@ -1,13 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Apply (and undo) a PPF3 patch in memory. Forward apply walks
--- the record stream the same way PPF1/PPF2 do; undo walks the
--- record stream in input order writing the per-record undo
--- payload back. Undo is only meaningful when the patch carries
--- undo data — the parser sets 'ppf3RecordUndo'
--- to 'Just' on every record exactly when the patch's undo flag
--- is set, so 'undoPPF3' returns @Right input@ unchanged on a
--- non-undo patch.
+-- | Apply (and undo) a PPF3 patch.
+-- Forward apply walks the record stream the same way PPF1/PPF2 do;
+-- undo walks the record stream in input order, writing the per-record undo payload back.
+-- Undo is only meaningful when the patch carries undo data — the parser sets 'ppf3RecordUndo' to 'Just' on every record exactly when the patch's undo flag is set,
+-- so 'undoPPF3' returns @Right input@ unchanged on a non-undo patch.
 module Slap.PPF3.Apply (applyPPF3, undoPPF3) where
 
 import Slap.PPF3.Types (PPF3Patch(..), PPF3Record(..))

@@ -19,7 +19,7 @@ import Control.Monad (when)
 import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 
--- | Apply a PMSR patch in memory: copy source, then overwrite at offsets.
+-- | Copy source, then overwrite at offsets.
 applyPMSR :: PMSRPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyPMSR patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \targetPointer -> do
     copyRegion targetPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputSize))

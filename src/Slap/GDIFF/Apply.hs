@@ -16,20 +16,14 @@ import Slap.FileContents (InputFileContents(..), OutputFileContents(..))
 import qualified Data.ByteString as ByteString
 import Data.ByteString.Internal (unsafeCreate)
 
--- | Apply a GDIFF patch to a source. The command stream is walked
--- twice: once by 'validateCommands' to bounds-check every COPY's
--- source range and compute the total output size, and once by the
--- write loop below. The split makes the write loop infallible — by
--- the time we reach 'unsafeCreate', every COPY has been proven to
--- read inside @source@ and the buffer has been sized to fit every
--- DATA payload plus every COPY length.
+-- | The command stream is walked twice:
+-- once by 'validateCommands' to bounds-check every COPY's source range and compute the total output size, and once by the write loop below.
+-- The split makes the write loop infallible:
+-- by the time we reach 'unsafeCreate', every COPY has been proven to read inside @source@ and the buffer sized to fit every DATA payload plus every COPY length.
 --
--- GDIFF's command stream has no relative cursor and no target
--- self-reference, so a pre-flight pass is structurally sound: each
--- command's output size and source-read range are independent of
--- prior commands' effects. Formats with target self-reference
--- (BPS, IPS, DPS) cannot validate ahead of time and instead validate
--- inline during the write.
+-- A pre-flight pass is sound because GDIFF's command stream has no relative cursor and no target self-reference:
+-- each command's output size and source-read range are independent of prior commands' effects.
+-- Formats with target self-reference (BPS, IPS, DPS) can't validate ahead of time, so they validate inline during the write.
 applyGDIFF :: GDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
 applyGDIFF patch (InputFileContents source) =
   case validateCommands sourceSize commands of
@@ -54,13 +48,8 @@ applyGDIFF patch (InputFileContents source) =
             applyLoop (advance outputPosition copyLength) remainingCommands
       in applyLoop (Offset 0) commands
 
--- | Pre-flight bounds check on a GDIFF command stream. Walks the
--- list once; returns the total output size if every command is
--- sound, or the first 'ApplyError' encountered. The returned
--- 'FileSize' is exactly what 'applyGDIFF' allocates for the output
--- buffer, so the apply loop itself does not need bounds checks:
--- every COPY's source range was verified here, every DATA's payload
--- is its own length, and the buffer was sized to fit their sum.
+-- | Pre-flight bounds check on a GDIFF command stream.
+-- Walks it once, returning the total output size 'applyGDIFF' allocates, or the first 'ApplyError'.
 validateCommands :: FileSize -> [GDiffCommand] -> Either ApplyError FileSize
 validateCommands sourceSize = validateCommandStream firstAction (Length 0)
   where

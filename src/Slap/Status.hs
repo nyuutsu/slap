@@ -1248,7 +1248,6 @@ data CreateResult = CreateResult
 
 -- | The parse-side companion to 'CreateResult': a successfully
 -- parsed payload paired with any advisories the parser accumulated.
--- Two fields: the parsed value (parametric) and the advisory list.
 data Parsed value = Parsed !value ![SlapAdvisory]
   deriving (Show)
 
@@ -2825,15 +2824,6 @@ data ByteParserOperation
 -- over 'ByteParserOperation' rather than split into a constructor per
 -- primitive — the axes the consumer wants to dispatch on are the
 -- failure kind and the surfacing primitive, in that order.
---
--- 'ByteParserUnexpectedDoPatternFailure' is the 'MonadFail' fallback
--- and exists for one reason only: when a @do@-notation pattern bind
--- inside slap's parser code fails (e.g. a refutable pattern that
--- doesn't match), the desugaring needs somewhere to land that isn't
--- 'error'. Reaching that arm means slap has a bug, not that the
--- input was malformed; the renderer prefixes it as an internal
--- failure for that reason. Real failure shapes have typed
--- constructors above.
 data ByteParserError
 
   -- | A read could not be satisfied: 'RequestedLength' bytes were

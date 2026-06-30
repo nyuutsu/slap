@@ -16,7 +16,7 @@ import Foreign.Marshal.Utils (fillBytes)
 import Foreign.Ptr (plusPtr)
 import Data.Word (Word8)
 
--- | Apply a NINJA1 patch in memory: copy source, then overwrite at offsets.
+-- | Copy source, then overwrite at offsets.
 applyNINJA1 :: NINJA1Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyNINJA1 patch (InputFileContents source) = Right $ OutputFileContents $ unsafeCreate outputSize $ \outputPointer -> do
     copyRegion outputPointer (Offset 0) source (Offset 0) (Length (min sourceLength outputSize))

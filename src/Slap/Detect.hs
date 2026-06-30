@@ -84,10 +84,8 @@ probeMatches (PatchFileContents fileBytes) probe =
 -- Detection
 ----------------------------------------------------------------------------
 
--- | Detect patch format.  Most formats are identified by a magic byte
--- sequence at the start of the file, matched against the
--- 'magicProbes' table.  DPS is the lone exception: it has no magic
--- and is detected by a heuristic walk ('Slap.DPS.Parse.isDPS').
+-- | Most formats are identified by a magic byte sequence at the start of the file, matched against the 'magicProbes' table.
+-- DPS is the lone exception: it has no magic and is detected by a heuristic walk ('Slap.DPS.Parse.isDPS').
 detectFormat :: PatchFileContents -> Maybe PatchFormat
 detectFormat patchFile =
   case find (probeMatches patchFile) magicProbes of
@@ -104,7 +102,6 @@ detectFormat patchFile =
     -- @source_size == 0x30@ reads as @"APS10"@ for its first 5 bytes
     -- and the longer-wins probe rule routes it to APSN64. The APS-GBA
     -- record-shape test catches this and re-routes to 'FormatAPSGBA'.
-    -- Other probe results pass through unchanged.
     resolveAmbiguity :: PatchFormat -> PatchFormat
     resolveAmbiguity (PatchDirect FormatAPSN64)
       | APSGBA.isAPSGBAStructured fileBytes = PatchDifferential FormatAPSGBA

@@ -124,8 +124,6 @@ narrowToWord16 label field value
 -- | Narrow a 'SplitHunk' to an 'EncodedHunk' by checking its offset
 -- against the format's wire-format range: non-negative (a write
 -- position cannot be negative), and within the format's maximum.
--- A negative offset surfaces as 'NegativeOffset', an over-maximum one
--- as 'OffsetExceedsBound', each tagged with the limits' format label.
 narrowHunk :: EncodingLimits -> SplitHunk -> Either NarrowingFailure EncodedHunk
 narrowHunk limits hunk
   | unOffset offset < 0 =

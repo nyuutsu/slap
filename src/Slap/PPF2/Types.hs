@@ -109,7 +109,6 @@ narrowPPF2SourceSize size =
 ppf2SourceSizeFromParsed :: Word32 -> PPF2SourceSize
 ppf2SourceSizeFromParsed = PPF2SourceSize
 
--- | A fully parsed PPF2 patch.
 data PPF2Patch = PPF2Patch
   { ppf2Description     :: !EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
@@ -123,11 +122,10 @@ data PPF2Patch = PPF2Patch
   , ppf2FileId          :: !(Maybe PPF2FileId)
   } deriving (Show)
 
--- | Wire-format magic prefix: ASCII @"PPF2"@.
+-- | Wire-format magic prefix.
 ppf2MagicBytes :: ByteString
 ppf2MagicBytes = "PPF2"
 
--- | Length of the description field: 50 bytes.
 ppf2DescriptionLength :: Length
 ppf2DescriptionLength = Length 50
 
@@ -142,7 +140,6 @@ ppf2HeaderLength = Length 1084
 ppf2ValidationOffset :: Offset
 ppf2ValidationOffset = Offset 0x9320
 
--- | Size of the validation block, in bytes.
 ppf2ValidationSize :: Length
 ppf2ValidationSize = Length 1024
 

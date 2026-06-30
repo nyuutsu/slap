@@ -103,7 +103,6 @@ parsePPF3 metadataEncoding (PatchFileContents input)
 minimumPPF3ParseLength :: Length
 minimumPPF3ParseLength = ppf3PreambleLength
 
--- | Verify the encoding-method byte at offset 5 is @0x02@.
 checkEncodingByte :: ByteString -> Either SlapError ()
 checkEncodingByte input
   | actual == 0x02 = Right ()

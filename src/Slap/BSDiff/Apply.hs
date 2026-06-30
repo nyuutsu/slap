@@ -27,9 +27,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Apply-time cursors
 ----------------------------------------------------------------------------
 
--- | The four cursors threaded through 'applyLoop': one per stream
--- (diff, extra, source, output). Lifted into a record so each cursor
--- is identified by name, never by position.
+-- | The four cursors threaded through 'applyLoop': one per stream (diff, extra, source, output).
 data BSDiffCursors = BSDiffCursors
   { -- | Read cursor into the diff byte stream. Advances by
     -- @addLength@ per instruction.
@@ -46,12 +44,8 @@ data BSDiffCursors = BSDiffCursors
   , outputWrite     :: !Offset
   } deriving (Show)
 
--- | Strict 'StateT' over 'IO' carrying 'BSDiffCursors' (the four per-stream cursors).
 type BSDiffApply = StateT BSDiffCursors IO
 
--- | Cursor record at the start of an apply: every stream reads from
--- its own offset zero, and the output buffer's write head sits at
--- offset zero.
 initialCursors :: BSDiffCursors
 initialCursors = BSDiffCursors
   { diffStreamRead  = Offset 0
@@ -64,8 +58,7 @@ initialCursors = BSDiffCursors
 -- applyBSDiff
 ----------------------------------------------------------------------------
 
--- | Apply a parsed BSDiff patch to a source ByteString.
--- Each instruction in the patch's control stream describes one (ADD, COPY) pair plus a signed seek over the source;
+-- | Each instruction in the patch's control stream describes one (ADD, COPY) pair plus a signed seek over the source;
 -- the apply walks the stream and runs the per-instruction preconditions at the instruction boundary, returning 'Left' with a structured 'ApplyError' if any precondition fails.
 -- The source cursor is unbounded; 'sourceByteOrZero' handles out-of-range source reads.
 applyBSDiff :: BSDiffPatch -> InputFileContents -> Either SlapError OutputFileContents
@@ -84,9 +77,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     diffSize       = byteFileSize diffBytes
     extraSize      = byteFileSize extraBytes
 
-    -- | Per-instruction guards for an ADD region:
-    -- the control length must be non-negative, the write must fit in the remaining target buffer, and the diff read must fit in the remaining diff stream.
-    -- The source read is unguarded; see 'sourceByteOrZero'.
+    -- | The source read is unguarded; see 'sourceByteOrZero'.
     checkAddPreconditions :: ActionIndex -> Length -> Offset -> Offset
                           -> Either ApplyError ()
     checkAddPreconditions actionIndex addLength outputPosition diffReadOffset
@@ -101,8 +92,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
                  (advance diffReadOffset addLength) diffSize)
       | otherwise = Right ()
 
-    -- | Per-instruction guards for a COPY region:
-    -- the copy length must be non-negative, the write must fit in the remaining target buffer, and the extra read must fit in the remaining extra stream.
+    -- | Unlike the ADD guards, every read here is bounded; nothing falls through to 'sourceByteOrZero'.
     checkCopyPreconditions :: ActionIndex -> Length -> Offset -> Offset
                            -> Either ApplyError ()
     checkCopyPreconditions actionIndex copyLength outputAfterAdd extraReadOffset
@@ -120,8 +110,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
     runApply targetPointer =
       let
         -- | Cursor transition after an instruction's ADD region.
-        -- The diff and output cursors advance by @addLength@;
-        -- the source cursor advances by @addLength@ and then displaces by the signed seek delta, re-basing it for the next match.
+        -- The source cursor advances by @addLength@, then moves by the signed seek delta, re-basing it for the next match.
         advanceForAdd :: Length -> Delta -> BSDiffApply ()
         advanceForAdd addLength seekDelta = modify $ \cursors -> cursors
           { diffStreamRead = advance (diffStreamRead cursors) addLength
@@ -129,10 +118,8 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
           , outputWrite    = advance (outputWrite cursors) addLength
           }
 
-        -- | The cursor transition done after an instruction's COPY
-        -- region completes. The extra cursor advances by @copyLength@
-        -- (one extra byte was consumed per output byte). The output
-        -- cursor advances by @copyLength@.
+        -- | Cursor transition after an instruction's COPY region.
+        -- The extra cursor advances by @copyLength@ (one extra byte consumed per output byte).
         advanceForCopy :: Length -> BSDiffApply ()
         advanceForCopy copyLength = modify $ \cursors -> cursors
           { extraStreamRead = advance (extraStreamRead cursors) copyLength
@@ -160,8 +147,7 @@ applyBSDiff patch (InputFileContents source) = unsafePerformIO $ do
                   pokeByteOff writeBase byteOffset (sourceByte + diffByte :: Word8)
                   writeRemainingBytes (byteOffset + 1)
 
-        -- | Tail-recursive walk over the instruction list.
-        -- The four cursors live in 'BSDiffApply' state, so each step needs only the remaining instructions and the running action index.
+        -- | The four cursors live in 'BSDiffApply' state, so each step needs only the remaining instructions and the running action index.
         -- End-of-stream checks whether the target buffer was filled, raising 'ApplyTargetUnderfilled' otherwise.
         applyLoop :: [BSDiffInstruction] -> ActionIndex -> BSDiffApply (Maybe ApplyError)
         applyLoop [] _actionIndex = do

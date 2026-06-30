@@ -37,9 +37,6 @@ parseGDIFF (PatchFileContents input)
             dataLength <- lengthReader
             payload    <- getBytes (Length dataLength)
             parseCommands (GDiffCommandData { gdiffDataPayload = payload } : accumulated)
-      -- One line per opcode, reading as the W3C GDIFF command table:
-      -- the COPY opcodes pair an offset reader with a length reader,
-      -- the DATA opcodes carry a length reader alone.
       case opcode of
         0   -> pure (GDiffPatch (reverse accumulated))
         247 -> dataCommand (fromIntegral <$> word16BE)

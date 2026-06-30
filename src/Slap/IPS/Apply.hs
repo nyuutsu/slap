@@ -31,11 +31,7 @@ import System.IO.Unsafe (unsafePerformIO)
 -- Record placement classifier
 ----------------------------------------------------------------------------
 
--- | Where an IPS record's write span sits relative to the effective
--- output size. Used by 'handleHonored' (under 'MarkerHonored') to
--- decide between writing the record in full, writing only an
--- in-bounds prefix, or accounting the entire payload as overshoot
--- without writing.
+-- | Where an IPS record's write span sits relative to the effective output size, classified by 'handleHonored' (under 'MarkerHonored').
 data RecordPlacement
   = RecordFits
     -- ^ The record's write span ends at or before the effective
@@ -51,9 +47,7 @@ data RecordPlacement
     -- accounted as overshoot.
   deriving (Show, Eq)
 
--- | Classify an IPS record's write span against the effective output
--- size. Pure function of three typed arguments: the record's write
--- position, its payload length, and the effective output size.
+-- | Classify an IPS record's write span against the effective output size.
 classifyRecordPlacement :: Offset -> Length -> FileSize -> RecordPlacement
 classifyRecordPlacement writePosition writeLength effectiveSize
   | fitsWithin writePosition writeLength effectiveSize = RecordFits
@@ -65,67 +59,26 @@ classifyRecordPlacement writePosition writeLength effectiveSize
 -- applyIPS
 ----------------------------------------------------------------------------
 
--- | Apply a parsed IPS-family patch to a source ByteString. Returns
--- the resulting target bytes plus any apply-time warnings, wrapped
--- in 'Outcome'; or a structured error if the patch is semantically
--- malformed. The caller is responsible for CRC and file-size
--- verification before calling; a 'Left' return here means the
--- parsed patch is semantically malformed, not that the patch bytes
--- were corrupted.
+-- | A 'Left' means the parsed patch is semantically malformed, not that its bytes were corrupted.
+-- CRC and file-size verification is the caller's responsibility, done before calling; this function does not do it.
 --
--- The target size is DERIVED, not parsed: IPS carries no header
--- field for the final output length. Derivation runs in two steps.
--- First, the natural size is computed as @max sourceSize maxRecordEnd@.
--- Second, the marker disposition (see 'MarkerDisposition') decides
--- the effective size by comparing the natural size to any
--- truncation marker the patch carries:
+-- IPS has no output-length field, so the target size is derived.
+-- The natural size is @max sourceSize maxRecordEnd@; the marker disposition (see 'MarkerDisposition') then turns natural into effective.
 --
---   * 'MarkerAbsent': effective = natural.
---   * 'MarkerHonored' (declared < natural): effective = declared.
---     Records whose write regions extend past the effective size
---     are clipped and counted into 'IPSRecordsClippedByMarker'.
---   * 'MarkerNoOp' (declared == natural): effective = declared.
---     Silent.
---   * 'MarkerIgnored' (declared > natural): effective = natural.
---     The marker would grow the output; slap ignores it for sizing
---     and emits 'IPSTruncationMarkerIgnored'.
+-- The buffer is allocated to the effective size, seeded by 'initialFill', and the record walk overlays each named write on that baseline.
+-- Any byte no record names keeps its seeded value: the source byte at that offset, or zero past the source end.
 --
--- The buffer is allocated to the effective size and seeded by
--- 'initialFill': the leading @min sourceSize effectiveSize@ bytes
--- copy from source, the trailing zero-fills if effective exceeds
--- source. The record walk overlays named writes on the seeded
--- baseline. IPS records are additive overlays, so any byte not
--- named by a record equals either the source byte at that offset
--- or zero past source end.
+-- Under 'MarkerHonored', 'handleHonored' clips and counts records that cross the effective size;
+-- the other three dispositions go through 'handleStrict', a strict bounds check.
 --
--- For 'MarkerHonored', per-record writes are bounded by the
--- effective size and clip-and-count when records cross. For the
--- other three dispositions, per-record writes are guarded by a
--- strict bounds check that raises 'ApplyWritesPastTarget' on
--- overrun. The strict guard is structurally unreachable for those
--- dispositions (effective >= maxRecordEnd) but
--- stays as a defensive total guard.
+-- A defensive total guard returns 'NegativeTargetSize' on an effective size that cannot actually be negative:
+-- 'NaturalTargetSize' is non-negative, and 'DeclaredTargetSize' comes from a non-negative wire value.
 --
--- A defensive guard returns 'NegativeTargetSize' if the effective
--- size is somehow negative. Unreachable —
--- 'NaturalTargetSize' is non-negative and 'DeclaredTargetSize' is
--- parsed from a non-negative wire value — but kept for parity with
--- BPS and UPS.
+-- Apply does not re-check records against the variant's spec ceiling ('Slap.IPS.Types.ipsVariantMaxRecordEnd');
+-- 'Slap.IPS.Parse' owns that check and rejects an over-ceiling record before the patch can reach here.
 --
--- Apply does NOT re-validate each record against the variant's
--- spec ceiling ('Slap.IPS.Types.ipsVariantMaxRecordEnd'). That
--- axis is owned by 'Slap.IPS.Parse', which rejects any record
--- whose end exceeds the ceiling before an 'IPSPatch' can reach
--- this function.
---
--- The 'FormatLabel' attached to any returned error or warning is
--- derived from the patch's 'ipsVariant' ('LabelIPS' for
--- 'StandardIPS', 'LabelIPS32' for 'IPS32'), not the parse-level
--- label of whatever container the patch arrived in. An EBP-wrapped
--- patch, whose body is a 'StandardIPS' record stream, surfaces
--- apply errors and warnings as 'LabelIPS' rather than 'LabelEBP'
--- — the EBP wrapper has been peeled away by the time this function
--- runs.
+-- Error and warning labels come from the patch's 'ipsVariant', not the container it arrived in:
+-- an EBP-wrapped patch surfaces as 'LabelIPS' once the wrapper is peeled.
 applyIPS :: InputFileContents -> IPSPatch -> Either SlapError (Outcome OutputFileContents)
 applyIPS (InputFileContents source) patch
   | unFileSize effectiveSize < 0 =
@@ -151,11 +104,9 @@ applyIPS (InputFileContents source) patch
     disposition   = decideMarkerDisposition declaredSize naturalSize
     effectiveSize = effectiveTargetSize disposition
 
-    -- | Extend the running 'maxRecordEnd' upper bound to cover one
-    -- more record's write region. Used as the fold step over the
-    -- record vector. A record that writes nothing claims no end:
-    -- the zero-count RLE is accepted as the no-op it is
-    -- (docs/ips/questions.md), and a no-op cannot grow the output.
+    -- | Extend the running 'maxRecordEnd' upper bound to cover one more record's write region.
+    -- A record that writes nothing leaves the bound unchanged:
+    -- the zero-count RLE is the parse-accepted no-op (docs/ips/questions.md), and a no-op cannot grow the output.
     extendMaxWith :: FileSize -> IPSRecord -> FileSize
     extendMaxWith currentMax record
       | recordPayloadLength record == Length 0 = currentMax
@@ -165,8 +116,6 @@ applyIPS (InputFileContents source) patch
                                      (recordPayloadLength record)))
 
     -- | Apply-time warnings derived from the disposition alone.
-    -- 'MarkerAbsent' and 'MarkerNoOp' are silent; the other two
-    -- emit one warning each.
     dispositionWarnings :: [SlapAdvisory]
     dispositionWarnings = case disposition of
       MarkerAbsent  _natural          -> []
@@ -174,10 +123,7 @@ applyIPS (InputFileContents source) patch
       MarkerNoOp     _declared        -> []
       MarkerIgnored  declared natural -> [IPSTruncationMarkerIgnored  patchLabel declared natural]
 
-    -- | Apply-time warning derived from clip state. Empty list when
-    -- no clipping happened (the common case under all four
-    -- dispositions); a single 'IPSRecordsClippedByMarker' when
-    -- records were clipped under 'MarkerHonored'.
+    -- | Apply-time warning derived from clip state.
     clipWarnings :: Maybe ClipAccumulator -> [SlapAdvisory]
     clipWarnings Nothing = []
     clipWarnings (Just clip) =
@@ -192,13 +138,10 @@ applyIPS (InputFileContents source) patch
         recordClip recordIndex overshootLength =
           modify (<> Just (ClipAccumulator (ClippedRecordCount 1) recordIndex (MarkerOvershootBytes overshootLength)))
 
-        -- | Seed every byte of the output buffer before any record
-        -- runs. The leading @min sourceSize effectiveSize@ bytes are
-        -- a direct copy of the source ByteString; the trailing
-        -- @effectiveSize - sourceSize@ bytes (if any) are
-        -- zero-filled. After this call returns, every byte in the
-        -- buffer holds a well-defined value and subsequent record
-        -- writes overlay that value at their declared offsets.
+        -- | Seed every byte of the output buffer before any record runs.
+        -- The leading @min sourceSize effectiveSize@ bytes are a direct copy of the source ByteString;
+        -- the trailing @effectiveSize - sourceSize@ bytes (if any) are zero-filled.
+        -- After this call returns, every byte in the buffer holds a well-defined value, and subsequent record writes overlay that value at their declared offsets.
         initialFill :: IO ()
         initialFill = do
           let targetLength      = Length (unFileSize effectiveSize)
@@ -242,20 +185,14 @@ applyIPS (InputFileContents source) patch
                     fillByte
                     (unLength prefixLength)
 
-        -- | Tail-recursive walk over the record vector. The clip
-        -- accumulator lives in the surrounding 'IPSApply' state, so
-        -- each step needs only the current index. End-of-stream
-        -- returns no error; a failed bounds guard returns the
-        -- error and leaves whatever clip state had been built up
-        -- so far in place. The buffer is already fully populated
-        -- by 'initialFill' before the walk begins.
+        -- | The clip accumulator lives in the surrounding 'IPSApply' state, so each step needs only the current index.
+        -- End-of-stream returns no error;
+        -- a failed bounds guard returns the error, leaving whatever clip state had been built up so far in place.
+        -- The buffer is already fully populated by 'initialFill' before the walk begins.
         --
-        -- A record that writes nothing is the parse-accepted no-op
-        -- (docs/ips/questions.md) and takes no part in the walk —
-        -- no write, no bounds geometry, no clip accounting — exactly
-        -- as it took no part in the natural-size fold above. Its
-        -- offset may legally sit past the effective size, which the
-        -- handlers' geometry must never be asked about.
+        -- A record that writes nothing is the parse-accepted no-op (docs/ips/questions.md).
+        -- It takes no part in the walk — no write, no bounds geometry, no clip accounting — just as it took no part in the natural-size fold above.
+        -- Its offset may legally sit past the effective size, so the handlers never compute geometry for it.
         applyRecordStream :: ActionIndex -> IPSApply (Maybe ApplyError)
         applyRecordStream !recordIndex
           | recordIndex >= recordStreamEnd          = pure Nothing
@@ -265,14 +202,8 @@ applyIPS (InputFileContents source) patch
             record = Vector.unsafeIndex records (unActionIndex recordIndex)
 
         -- | The per-record handler, chosen once for the whole walk.
-        -- The disposition is loop-invariant, so the four-arm dispatch
-        -- runs when 'selectedRecordHandler' is first forced rather
-        -- than on every record. 'MarkerHonored' routes to
-        -- 'handleHonored' (clip-and-count); the other three route to
-        -- 'handleStrict' (defensive bounds check). The match is
-        -- explicit rather than a catch-all so a future fifth
-        -- disposition fires '-Wincomplete-patterns' here and the
-        -- author has to decide which class it belongs to.
+        -- The disposition is loop-invariant, so the four-arm dispatch runs when 'selectedRecordHandler' is first forced, not on every record.
+        -- The match is explicit rather than a catch-all, so a future fifth disposition fires '-Wincomplete-patterns' here and the author must decide which class it belongs to.
         selectedRecordHandler :: ActionIndex -> IPSRecord -> IPSApply (Maybe ApplyError)
         selectedRecordHandler = case disposition of
           MarkerHonored _declared _natural  -> handleHonored

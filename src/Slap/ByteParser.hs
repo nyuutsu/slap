@@ -84,11 +84,6 @@ import Data.Word (Word8, Word16, Word32)
 -- The ByteParser monad: a standard transformer stack
 ----------------------------------------------------------------------------
 
--- | The byte-parser monad. The wrapped stack is
--- @StateT Position (ReaderT ByteString (Either ByteParserError))@.
--- The newtype exists for the 'MonadFail' instance below — 'Either'
--- has no 'MonadFail' and we want @do@-notation desugaring to land
--- in 'ByteParserUnexpectedDoPatternFailure' rather than @error@.
 newtype ByteParser a
   = ByteParser (StateT Position (ReaderT ByteString (Either ByteParserError)) a)
   deriving newtype (Functor, Applicative, Monad)
@@ -390,7 +385,6 @@ vcdiffVarintReportingCanonicality = do
 edsioVarint :: ByteParser Int64
 edsioVarint = accumulate 0 0
   where
-    -- Fold 7-bit groups in, least-significant first, until a byte without the continuation flag closes the value.
     accumulate accumulated bitOffset
       | bitOffset >= 63 =
           throwByteParserError ByteParserVarintExceededWidth
@@ -401,9 +395,6 @@ edsioVarint = accumulate 0 0
             then accumulate value (bitOffset + 7)
             else closeValue value
 
-    -- The value the terminal byte completed: accepted when it fits
-    -- xdelta1's @guint32@ fields, refused — naming the value — when it
-    -- does not.
     closeValue value
       | value > edsioMaxValue =
           throwByteParserError (ByteParserEdsioVarintExceeds32Bits value)
@@ -412,7 +403,5 @@ edsioVarint = accumulate 0 0
     payloadBits    byte = fromIntegral (byte .&. 0x7F) :: Int64
     moreBytesFollow byte = testBit byte 7
 
--- | The largest value an xdelta1 EDSIO integer can hold: @0xFFFFFFFF@,
--- the ceiling of the @guint32@ every field of the format is stored as.
 edsioMaxValue :: Int64
 edsioMaxValue = 0xFFFFFFFF

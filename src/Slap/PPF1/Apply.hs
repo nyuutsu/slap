@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Apply a PPF1 patch in memory. PPF1 has no validation block and
--- no undo data, so apply is a straight write-records-into-output
--- walk: copy the source bytes, then overwrite each record's
--- payload at its offset.
+-- | Apply a PPF1 patch.
+-- PPF1 has no validation block and no undo data, so apply is a straight write-records-into-output walk.
 module Slap.PPF1.Apply (applyPPF1) where
 
 import Slap.PPF1.Types (PPF1Patch(..), PPF1Record(..))

@@ -131,10 +131,10 @@ parseCommands commandIndex patch = do
     case code of
       0x01 -> parseFileCommand patch >>= parseCommands (nextAction commandIndex)
       0x02 -> parseXorRecord patch >>= parseCommands (nextAction commandIndex)
-      0x00 -> pure patch  -- END marker
+      0x00 -> pure patch
       _    -> throwByteParserError (ByteParserUnknownCommandByte commandIndex code)
 
--- | Command 0x01: OPEN_NEW_FILE
+-- | The OPEN_NEW_FILE command.
 parseFileCommand :: NINJA2Patch -> ByteParser NINJA2Patch
 parseFileCommand patch = do
   _filename <- parsePackedByteString
@@ -163,7 +163,7 @@ parseFileCommand patch = do
              , ninja2OverflowType = overflowType
              }
 
--- | Command 0x02: XOR record
+-- | The XOR-record command.
 parseXorRecord :: NINJA2Patch -> ByteParser NINJA2Patch
 parseXorRecord patch = do
   recordOffset <- offsetFromParsed <$> parsePackedInteger

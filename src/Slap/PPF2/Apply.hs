@@ -1,10 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Apply a PPF2 patch in memory. Same record-stream walk as PPF1
--- (PPF2's records are wire-compatible) — the validation-block and
--- file-size fields parsed from the header don't enter into the
--- byte-walk itself; verifying source identity against them is the
--- caller's job, not this module's. Apply just produces output bytes.
+-- | Apply a PPF2 patch.
+-- Same record-stream walk as PPF1 (PPF2's records are wire-compatible).
+-- The validation-block and file-size fields parsed from the header don't enter into the byte-walk itself;
+-- verifying source identity against them is the caller's job, not this module's.
 module Slap.PPF2.Apply (applyPPF2) where
 
 import Slap.PPF2.Types (PPF2Patch(..), PPF2Record(..))

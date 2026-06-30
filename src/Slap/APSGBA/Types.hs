@@ -77,8 +77,7 @@ narrowAPSGBATargetSize size =
 -- Named constants
 ----------------------------------------------------------------------------
 
--- | APS-GBA magic bytes (@"APS1"@). Shared prefix with APS-N64
--- (@"APS10"@) — detection must check the longer probe first.
+-- | Shares its prefix with APS-N64's @"APS10"@, so detection must check the longer probe first.
 apsGbaMagicBytes :: ByteString
 apsGbaMagicBytes = "APS1"
 

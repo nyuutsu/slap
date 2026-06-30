@@ -47,15 +47,13 @@ data UPSPatch = UPSPatch
   , upsPatchCRC   :: !CRC32
   } deriving (Show)
 
--- | UPS magic bytes (@"UPS1"@) at the start of every patch.
+-- | Wire-format magic prefix.
 upsMagicBytes :: ByteString
 upsMagicBytes = "UPS1"
 
--- | Length of the UPS magic ("UPS1") at the start of every patch.
 upsMagicLength :: Length
 upsMagicLength = Length 4
 
--- | Length of one CRC32 field in a UPS patch.
 upsCRC32Length :: Length
 upsCRC32Length = Length 4
 
@@ -63,8 +61,7 @@ upsCRC32Length = Length 4
 upsFooterLength :: Length
 upsFooterLength = upsCRC32Length <> upsCRC32Length <> upsCRC32Length
 
--- | Total framing overhead of a UPS patch: magic plus footer. The body
--- bytes (sizes, block stream) occupy the remainder.
+-- | Everything past this overhead — the sizes and block stream — is the body.
 upsOverheadLength :: Length
 upsOverheadLength = upsMagicLength <> upsFooterLength
 
@@ -74,6 +71,6 @@ upsOverheadLength = upsMagicLength <> upsFooterLength
 upsTerminatorByteLength :: Length
 upsTerminatorByteLength = Length 1
 
--- | The block-terminator byte itself (always @0x00@); 'upsTerminatorByteLength' is its width.
+-- | The block-terminator byte; 'upsTerminatorByteLength' is its width.
 upsTerminatorByte :: Word8
 upsTerminatorByte = 0x00

@@ -151,7 +151,6 @@ data ConvertWithSource = ConvertWithSource
 
 -- | What the user wants done with the BPS embedded-metadata blob during a convert.
 -- 'CarryIfPresent' (the default) inherits from the source patch unless the user overrides, like every other metadata field.
--- 'EmbedFromFile' overrides with user-supplied bytes.
 -- 'DropEmbeddedBlob' discards the source's blob without substituting anything —
 -- the only way to produce a metadata-less BPS from a source BPS that carried metadata.
 data EmbeddedBlobIntent
@@ -672,7 +671,6 @@ requestedMetadataParser = do
     wrapUtf8 :: String -> EncodedText
     wrapUtf8 = EncodedText EncodingUtf8 . Text.pack
 
--- | Create-side metadata: the parsed fields, plus the optional @--metadata@ blob and @--diz@ FILE_ID.DIZ.
 createMetadataInputsParser :: Parser CreateMetadataInputs
 createMetadataInputsParser = CreateMetadataInputs
   <$> requestedMetadataParser

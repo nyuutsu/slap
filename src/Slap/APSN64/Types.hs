@@ -224,8 +224,7 @@ data APSN64Record
       }
   deriving (Show)
 
--- | APS-N64 magic bytes (@"APS10"@). One byte longer than
--- APS-GBA's @"APS1"@ — detection must check this probe first.
+-- | One byte longer than APS-GBA's @"APS1"@, so detection must check this probe first.
 apsN64MagicBytes :: ByteString
 apsN64MagicBytes = "APS10"
 

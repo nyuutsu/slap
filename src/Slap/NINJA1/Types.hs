@@ -152,9 +152,7 @@ data NINJA1Record = NINJA1Record
   , ninja1RecordData   :: !ByteString
   } deriving (Show)
 
--- | NINJA1 magic bytes (@"NINJA1"@) at the start of every NINJA1 patch.
--- The two bytes following the magic identify the subformat (binary,
--- binary-compressed, text, text-compressed).
+-- | Wire-format magic prefix.
 ninja1MagicBytes :: ByteString
 ninja1MagicBytes = "NINJA1"
 
@@ -168,17 +166,13 @@ ninja1MagicBytes = "NINJA1"
 ninja1SentinelOffset :: SentinelOffset
 ninja1SentinelOffset = SentinelOffset (Offset 0x454F46)
 
--- | The 3-byte trailer that closes a NINJA1 binary record stream
--- (@"EOF"@, bytes @0x45 0x4F 0x46@). Encoded on the wire as an
--- offset-width-3 record whose offset bytes spell @"EOF"@; see
--- 'ninja1SentinelOffset' for the collision case the encoder
--- works around.
+-- | The trailer that closes a NINJA1 binary record stream: @"EOF"@.
+-- See 'ninja1SentinelOffset' for the collision case the encoder works around.
 ninja1BinaryEOFMarkerBytes :: ByteString
 ninja1BinaryEOFMarkerBytes = "EOF"
 
 -- | Width of the 'ninja1BinaryEOFMarkerBytes' trailer, in bytes.
--- A 3-byte offset width followed by 'ninja1BinaryEOFMarkerBytes'
--- is the on-wire encoding of the binary-format footer.
+-- A 3-byte offset width followed by 'ninja1BinaryEOFMarkerBytes' is the on-wire encoding of the binary-format footer.
 ninja1BinaryEOFMarkerWidth :: Int
 ninja1BinaryEOFMarkerWidth = 3
 

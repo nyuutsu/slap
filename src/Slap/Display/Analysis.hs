@@ -75,7 +75,7 @@ data AnalysisRegion = AnalysisRegion
 data AnalysisPayload
   = PayloadWrite ByteString            -- literal data (renderer hex dumps)
   | PayloadFill !Word8 !Length         -- fill byte + repeat count
-  | PayloadCopy CopySource             -- copy operation
+  | PayloadCopy CopySource
   | PayloadXOR (Maybe ByteString)      -- XOR delta
   | PayloadMeta ![InfoLine]            -- key-value details (BSDiff ctrl)
 
@@ -414,8 +414,6 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
     emptyBuckets :: Array BucketIndex BucketTally
     emptyBuckets = accumArray (<>) mempty bucketBounds []
 
-    -- One tally per sparkline column: occupancy (which drives the bar and the run detection) folded together with the records and bytes each column carries.
-    -- The empty buckets when offsetRange is Nothing; accumulated from the regions otherwise.
     bucketTallies :: Array BucketIndex BucketTally
     bucketTallies = case offsetRange of
       Nothing -> emptyBuckets
@@ -429,7 +427,6 @@ renderAnalysisSummary info analysis mSource = Text.unlines $ joinSections
               , let column = regionStartColumn region, column >= 0, column < bucketCount ]
         in accumArray (<>) mempty bucketBounds (occupancyEntries <> startEntries)
 
-    -- Contiguous runs of occupied columns, each carrying the columns it spans.
     findRuns :: Array BucketIndex BucketTally -> [BucketRun]
     findRuns columnTallies =
       [ BucketRun columns

@@ -23,30 +23,17 @@ import Foreign.Ptr (Ptr, plusPtr)
 import Foreign.Storable (peekByteOff, pokeByteOff)
 import System.IO.Unsafe (unsafePerformIO)
 
-----------------------------------------------------------------------------
--- applyNINJA2
-----------------------------------------------------------------------------
-
--- | Apply a parsed NINJA2 patch to a source ByteString. Walks two
--- write streams: the XOR record list and (when present) the
--- append-mode overflow payload. Both carry absolute wire offsets, so
--- a malformed patch can name a write that extends past the declared
--- target end; every such write is bounds-checked at its boundary and
--- the apply returns 'Left' with 'ApplyAbsoluteWritePastTarget'
--- naming which write went out of bounds and by how much.
+-- | Walks two write streams: the XOR record list and (when present) the append-mode overflow payload.
+-- Both carry absolute wire offsets, so a malformed patch can name a write past the declared target end;
+-- every such write is bounds-checked at its boundary, and the apply returns 'Left' with 'ApplyAbsoluteWritePastTarget' naming which write went out of bounds and by how much.
 --
--- Truncate-mode overflow is silent: its payload is the discarded
--- source tail preserved for round-trip and is *not* applied — the
--- smaller output buffer already encodes the truncation. Only
--- append-mode overflow drives a write, so only append-mode overflow
--- needs a bounds check.
+-- Truncate-mode overflow is silent: its payload is the discarded source tail, preserved for round-trip and *not* applied.
+-- The smaller output buffer already encodes the truncation.
+-- Only append-mode overflow drives a write, so it alone needs a bounds check.
 --
--- The action-index space covers the XOR record stream
--- (@0 ..  length records - 1@); the overflow-append step, when
--- present, takes the index immediately after the last record
--- (@length records@), so an OOB on the append shows up at one index
--- past the last record and is unambiguous against an OOB on a
--- specific record.
+-- The action-index space covers the XOR record stream (@0 .. length records - 1@);
+-- the overflow-append step, when present, takes the index immediately after the last record (@length records@).
+-- So an OOB on the append shows up one index past the last record, unambiguous against an OOB on a specific record.
 applyNINJA2 :: NINJA2Patch -> InputFileContents -> Either SlapError OutputFileContents
 applyNINJA2 patch (InputFileContents source)
   | outputLength < 0 =
@@ -109,9 +96,6 @@ applyNINJA2 patch (InputFileContents source)
                 (original `xor` ByteString.index xorPayload byteOffset)
               writeRemainingBytes (byteOffset + 1)
 
-    -- | Tail-recursive walk over the record list. End-of-stream
-    -- hands control to 'applyOverflowAppend'; a per-record bounds
-    -- failure returns immediately with the structured error.
     applyRecords :: Ptr Word8 -> ActionIndex -> [NINJA2Record]
                  -> IO (Maybe ApplyError)
     applyRecords outputPointer _actionIndex [] =
@@ -124,12 +108,8 @@ applyNINJA2 patch (InputFileContents source)
           executeXorRecord outputPointer writePosition xorPayload
           applyRecords outputPointer (nextAction actionIndex) remainingRecords
 
-    -- | Append-mode overflow: the payload is XOR'd with @0xFF@ on
-    -- disk and is written at the source-size boundary (or at
-    -- 'sourceLength' if 'OPEN_NEW_FILE' is absent). Truncate-mode
-    -- overflow is a no-op here — see the function-level comment for
-    -- why. Bounds-checked with the same shape as the per-record
-    -- check; the synthetic action index is one past the last record.
+    -- | Append-mode overflow: the payload is XOR'd with @0xFF@ on disk and written at the source-size boundary (or at 'sourceLength' if 'OPEN_NEW_FILE' is absent).
+    -- Truncate-mode overflow is a no-op here; see the function-level comment for why.
     applyOverflowAppend :: Ptr Word8 -> IO (Maybe ApplyError)
     applyOverflowAppend outputPointer =
       case (ninja2OverflowType patch, ninja2Overflow patch) of

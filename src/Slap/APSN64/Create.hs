@@ -42,8 +42,6 @@ encodeAPSN64 records destinationSize description =
 -- 50-byte field, space-padded on the right with @0x20@ to match the
 -- format spec ("Space padded free text") and the original maker, which
 -- fills the field with spaces (n64caps.c's @memset(Description,' ',50)@).
--- Substitution and truncation notices both surface as 'SlapAdvisory'
--- values tagged 'LabelAPSN64' \/ 'FieldDescription'.
 padDescription :: EncodedText -> (ByteString, [SlapAdvisory])
 padDescription description =
   let (truncatedBytes, notices) =

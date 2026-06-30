@@ -118,7 +118,6 @@ compressorName SecondaryLZMA = "LZMA"
 compressorName SecondaryFGK  = "FGK"
 
 -- | How a patch's windows divide by where their copies draw from.
--- The @source@ line (windows whose segment is cut from the source file) always shows. The @produced target@ line (windows drawing on earlier output through VCD_TARGET) shows only when at least one window does, absent otherwise.
 -- A window in neither count is self-contained: pure ADD\/RUN and copies of its own output.
 originRollup :: [Window] -> [InfoLine]
 originRollup windows =
@@ -200,7 +199,6 @@ renderSourceSegment (Just (SourceSegment origin (Offset position) segmentLength)
     originLabel FromProducedTarget = "produced target"
 
 -- | One instruction as an 'AnalysisRegion' at its absolute output position, advancing the output cursor by what it writes.
--- The three instructions fall straight onto the shared payload vocabulary: ADD a literal write, RUN a fill, COPY a copy whose source (the source file or the produced target) is read off where its address lands relative to the window's segment.
 makeVCDIFFRegion
   :: Maybe SourceSegment -> Offset -> VCDIFFInstruction -> (Offset, AnalysisRegion)
 makeVCDIFFRegion maybeSegment outputPosition instruction = case instruction of

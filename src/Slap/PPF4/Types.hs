@@ -67,11 +67,11 @@ data PPF4Replace = PPF4Replace
 newtype PPF4Append = PPF4Append { appendData :: ByteString }
   deriving (Show)
 
--- | Wire-format magic prefix: ASCII @"PPF4"@.
+-- | Wire-format magic prefix.
 ppf4MagicBytes :: ByteString
 ppf4MagicBytes = "PPF4"
 
--- | PPF4 header length in bytes.
+-- | PPF4 header length: 6 preamble + 50 description + 4 post-description = 60.
 ppf4HeaderLength :: Length
 ppf4HeaderLength = Length 60
 
@@ -80,8 +80,7 @@ ppf4HeaderLength = Length 60
 ppf4PreambleLength :: Length
 ppf4PreambleLength = Length 6
 
--- | Length of the description field: 50 bytes (matches PPF1/PPF2/PPF3
--- coincidentally; the PPF4 spec ships the same width independently).
+-- | Matches PPF1/PPF2/PPF3's 50-byte description only coincidentally; the PPF4 spec ships the same width independently.
 ppf4DescriptionLength :: Length
 ppf4DescriptionLength = Length 50
 

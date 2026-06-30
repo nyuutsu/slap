@@ -1189,10 +1189,6 @@ createPatch (CreateDifferential format) maybeResolvedNames source target meta _s
       verificationChoice = fromMaybe IncludeVerification (requestedVerificationInclusion meta)
       compressionChoice  = fromMaybe CompressedPatch     (requestedPatchCompression     meta)
 
--- | Build PatchContents from source and target bytes for a direct format.
--- The optional source 'PatchContents' carries structural data (EBP JSON,
--- File_ID.diz, NINJA1 compression flag) from the original patch for
--- inheritance during @--with@ conversion.
 buildContents :: DirectCreate -> InputFileContents -> OutputFileContents
               -> RequestedPatchMetadata -> Maybe PatchContents -> PatchContents
 buildContents format inputFileContents@(InputFileContents source) outputFileContents@(OutputFileContents target) meta sourceContents = PatchContents

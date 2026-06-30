@@ -128,14 +128,10 @@ data BPSCopyKind = CopyFromSource | CopyFromTarget
 -- successfully decoded action in wire order along with any warnings
 -- the walk emitted.
 --
--- The walker is tail-recursive with two reversed accumulators:
--- actions, and per-action warning groups. Each action's warnings
--- enter as one group, so an action that emits several keeps them in
--- emission order through the final reverse-and-concat at the 'atEnd'
--- boundary. The per-action decoding is delegated to 'decodeOneAction'
--- so the four-arm command-code dispatch — and the @0x81@
--- negative-zero detection it carries on the two copy arms — has one
--- home.
+-- The walker is tail-recursive with two reversed accumulators: actions, and per-action warning groups.
+-- Each action's warnings enter as one group,
+-- so an action that emits several keeps them in emission order through the final reverse-and-concat at the 'atEnd' boundary.
+-- The per-action decoding is delegated to 'decodeOneAction' so the four-arm command-code dispatch has one home.
 parseActions :: ByteParser BPSParsedActionStream
 parseActions = walkActions [] []
   where
@@ -156,26 +152,23 @@ parseActions = walkActions [] []
 -- varint, dispatch on the two-bit command code, and consume each
 -- variant's body. Wire values for the two-bit command code:
 -- 0 = SourceRead, 1 = TargetRead, 2 = SourceCopy, 3 = TargetCopy.
--- The two copy variants additionally inspect the offset varint for
--- the non-canonical @0x81@ encoding of zero and emit
--- 'NegativeZeroInBPS' when seen.
 decodeOneAction :: ByteParser BPSDecodedAction
 decodeOneAction = do
   packedCommandAndLength <- byuuVarint
   let dataLength = Length (fromIntegral (shiftR packedCommandAndLength 2) + 1)
   case packedCommandAndLength .&. 3 of
-    0 -> pure BPSDecodedAction  -- SourceRead
+    0 -> pure BPSDecodedAction
            { bpsDecodedActionValue    = SourceRead dataLength
            , bpsDecodedActionWarnings = []
            }
-    1 -> do  -- TargetRead
+    1 -> do
       payload <- getBytes dataLength
       pure BPSDecodedAction
         { bpsDecodedActionValue    = TargetRead payload
         , bpsDecodedActionWarnings = []
         }
-    2 -> decodeCopyAction CopyFromSource dataLength  -- SourceCopy
-    _ -> decodeCopyAction CopyFromTarget dataLength  -- TargetCopy
+    2 -> decodeCopyAction CopyFromSource dataLength
+    _ -> decodeCopyAction CopyFromTarget dataLength
 
 -- | Shared decoder for 'SourceCopy' and 'TargetCopy', whose wire
 -- shapes differ only in their constructor: each consumes a

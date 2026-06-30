@@ -315,17 +315,13 @@ ipsEOFMarkerBytes = ByteString8.pack "EOF"
 ips32EEOFMarkerBytes :: ByteString
 ips32EEOFMarkerBytes = ByteString8.pack "EEOF"
 
--- | Length of the 'StandardIPS' magic (@"PATCH"@) at the start of
--- every 'StandardIPS' or EBP patch. The 'IPS32' magic happens to be
--- the same length but is distinct at the bytes level.
+-- | Both the 'StandardIPS'/EBP and 'IPS32' magics are this long, though distinct at the byte level.
 ipsMagicLength :: Length
 ipsMagicLength = Length 5
 
--- | Length of the 'StandardIPS' @"EOF"@ trailer.
 ipsEOFMarkerLength :: Length
 ipsEOFMarkerLength = Length 3
 
--- | Length of the 'IPS32' @"EEOF"@ trailer.
 ips32EEOFMarkerLength :: Length
 ips32EEOFMarkerLength = Length 4
 

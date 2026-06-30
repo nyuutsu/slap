@@ -38,8 +38,7 @@ ninja1ToPlatform RomGP32           = PlatformGP32
 ninja1ToPlatform (RomUnknown _)    = PlatformRaw
 ninja1ToPlatform (RomUnknownName _) = PlatformRaw
 
--- | Convert a shared platform to NINJA1.  Only FDS has no NINJA1
--- representation and falls back to Raw with an advisory.
+-- | Only FDS has no NINJA1 representation; it falls back to Raw with an advisory.
 platformToNINJA1 :: PlatformType -> (NINJA1RomType, [SlapAdvisory])
 platformToNINJA1 PlatformRaw            = (RomRAW, [])
 platformToNINJA1 PlatformNES            = (RomNES, [])
@@ -78,9 +77,7 @@ ninja2ToPlatform NINJA2PCEngine               = (PlatformPCEngine, [])
 ninja2ToPlatform NINJA2Lynx                   = (PlatformLynx, [])
 ninja2ToPlatform (NINJA2UnknownRomType _)     = (PlatformRaw, [])
 
--- | Convert a shared platform to NINJA2.  Platforms that NINJA2
--- doesn't enumerate (GBC, GBA, NGP, NGPC, WonderSwan,
--- WonderSwan Color, Jaguar, GP32) fall back to Raw with an advisory.
+-- | Platforms NINJA2 doesn't enumerate fall back to Raw with an advisory.
 -- Game Gear maps to NINJA2's combined SMS/Game Gear slot.
 platformToNINJA2 :: PlatformType -> (NINJA2RomType, [SlapAdvisory])
 platformToNINJA2 PlatformRaw            = (NINJA2Raw, [])

@@ -123,12 +123,9 @@ import Slap.Checksum (CRC32, CRC16, Adler32, MD5Hash(..), SHA1Hash(..))
 -- Types
 ----------------------------------------------------------------------------
 
--- | Strategy for applying a patch.
---
--- Every format takes source bytes in memory and returns target bytes.
--- Direct formats (IPS, PPF, etc.) overlay records onto a copy of the
--- source; differential formats (BPS, UPS, VCDIFF, etc.) compute the
--- target from source bytes and patch instructions.
+-- | Every format takes source bytes and returns target bytes.
+-- Direct formats (IPS, PPF, etc.) overlay records onto a copy of the source;
+-- differential formats (BPS, UPS, VCDIFF, etc.) compute the target from source bytes and patch instructions.
 newtype ApplyStrategy = ApplyStrategy
   { runApply :: InputFileContents -> IO (Either SlapError (Outcome OutputFileContents)) }
 
@@ -140,7 +137,6 @@ newtype ApplyStrategy = ApplyStrategy
 data SourcePreHash = HashWholeSource | HashNINJA1Sample
   deriving (Eq, Show)
 
--- | Apply a 'SourcePreHash' to source bytes before they are hashed.
 applySourcePreHash :: SourcePreHash -> ByteString -> ByteString
 applySourcePreHash HashWholeSource  = id
 applySourcePreHash HashNINJA1Sample = NINJA1.ninja1HashInput
@@ -195,7 +191,7 @@ data WindowCheck = WindowCheck !Offset !Length !Adler32
   deriving (Show)
 
 -- | Advisory byte-range comparison (APS-N64 cart ID, country, CRC).
--- Three fields in order: source-file offset, expected bytes, label.
+-- The trailing 'Text' field is the check's label.
 data ByteCheck = ByteCheck !Offset !AdvisoryExpectedBytes !Text
   deriving (Show)
 
@@ -236,11 +232,8 @@ noVerification = Verification
   , verifyN64ByteOrder = Nothing
   }
 
--- | Strategy for undoing a patch.
--- The undo function takes the modified file contents and returns the
--- original. Returns 'Left' on malformed undo data (bounds violations,
--- negative offsets). For self-inverse formats like UPS (XOR-based),
--- the apply function itself serves as the undo.
+-- | Takes the modified file and returns the original, or 'Left' on malformed undo data (bounds violations, negative offsets).
+-- For self-inverse formats like UPS (XOR-based), the apply function itself serves as the undo.
 newtype UndoStrategy = UndoStrategy
   { runUndo :: OutputFileContents -> Either SlapError (Outcome InputFileContents) }
 
@@ -332,9 +325,7 @@ presentField field
   | Text.null (encodedTextContent field) = Nothing
   | otherwise                            = Just field
 
--- | Build a 'SomePatch' from a parsed PPF1 patch. PPF1 carries no
--- validation block, no undo data, no file-size advisory, and no
--- FILE_ID.DIZ — the simplest of the four PPF dispatchers.
+-- | PPF1 carries no validation block, no undo data, no file-size advisory, and no FILE_ID.DIZ — the simplest of the four PPF dispatchers.
 parseSomePatchFromPPF1 :: Parsed PPF1.PPF1Patch -> Either SlapError SomePatch
 parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
   let records = PPF1.ppf1Records patch
@@ -367,10 +358,8 @@ parseSomePatchFromPPF1 (Parsed patch parseAdvisories) =
   where
     hunkOf ppf1Record = Hunk (PPF1.ppf1RecordOffset ppf1Record) (PPF1.ppf1RecordPayload ppf1Record)
 
--- | Build a 'SomePatch' from a parsed PPF2 patch. PPF2 adds the
--- declared source-file-size field and the 1024-byte validation
--- block (BIN-only at offset 0x9320), plus an optional FILE_ID.DIZ
--- trailer.
+-- | PPF2 adds the declared source-file-size field and the 1024-byte validation block (BIN-only at offset 0x9320).
+-- It also carries an optional FILE_ID.DIZ trailer.
 parseSomePatchFromPPF2 :: Parsed PPF2.PPF2Patch -> Either SlapError SomePatch
 parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
   let records = PPF2.ppf2Records patch
@@ -415,10 +404,7 @@ parseSomePatchFromPPF2 (Parsed patch parseAdvisories) =
   where
     hunkOf ppf2Record = Hunk (PPF2.ppf2RecordOffset ppf2Record) (PPF2.ppf2RecordPayload ppf2Record)
 
--- | Build a 'SomePatch' from a parsed PPF3 patch. PPF3 adds the
--- image-type byte (BIN/GI, choosing the validation offset),
--- per-record undo bytes, and a 2-byte-length FILE_ID.DIZ
--- trailer.
+-- | PPF3 adds the image-type byte (BIN/GI, choosing the validation offset), per-record undo bytes, and a 2-byte-length FILE_ID.DIZ trailer.
 parseSomePatchFromPPF3 :: Parsed PPF3.PPF3Patch -> Either SlapError SomePatch
 parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
   let records = PPF3.ppf3Records patch
@@ -476,13 +462,10 @@ parseSomePatchFromPPF3 (Parsed patch parseAdvisories) =
   where
     hunkOf ppf3Record = Hunk (PPF3.ppf3RecordOffset ppf3Record) (PPF3.ppf3RecordPayload ppf3Record)
 
--- | Build a 'SomePatch' from a parsed PPF4 patch. PPF4 is a two-phase
--- format (Replace records, then Append records) with no validation
--- block, no undo, no image type, and no File_ID.diz trailer — none of
--- the metadata PPF1/2/3 carry.
--- Source-less conversion is structurally possible only when the patch
--- has no Append records (Appends carry no meaningful offset, and so
--- can't be expressed as 'Hunk's).
+-- | PPF4 is a two-phase format: Replace records, then Append records.
+-- It carries none of PPF1/2/3's metadata — no validation block, no undo, no image type, no FILE_ID.DIZ trailer.
+-- Source-less conversion is structurally possible only when the patch has no Append records.
+-- Appends carry no meaningful offset, so they can't be expressed as 'Hunk's.
 parseSomePatchFromPPF4 :: EncodingName -> PatchFileContents -> Either SlapError SomePatch
 parseSomePatchFromPPF4 metadataEncoding patchContents = do
   Parsed patch parseAdvisories <- PPF4.parsePPF4 metadataEncoding patchContents
@@ -718,8 +701,7 @@ parseSomePatchFromUPS patchContents = do
     , patchExtractedMeta  = noMetadataRequested
     }
 
--- | Build a 'SomePatch' from a parsed VCDIFF patch.
--- The flavor surfaces through the format header's qualifier slot ('vcdiffFlavorQualifier'), so @slap info@ answers "which flavor" on its first line.
+-- | The flavor surfaces through the format header's qualifier slot ('vcdiffFlavorQualifier'), so @slap info@ answers "which flavor" on its first line.
 -- An xdelta3 patch's per-window Adler32 checksums are lifted into 'verifyWindowAdler32', the way the BPS seam lifts its CRCs;
 -- 'Slap.VCDIFF.Describe' gives the analytical and info carriers their voice.
 parseSomePatchFromVCDIFF :: EncodingName -> PatchFileContents -> Either SlapError SomePatch

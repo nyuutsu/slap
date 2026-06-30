@@ -104,7 +104,6 @@ data BPSRegionState = BPSRegionState
   , regionSourceRelative :: !SignedOffset
   } deriving (Show)
 
--- | Initial state for walking the BPS action stream in 'makeBPSRegion'.
 initialBPSRegionState :: BPSRegionState
 initialBPSRegionState = BPSRegionState (Offset 0) (SignedOffset 0)
 

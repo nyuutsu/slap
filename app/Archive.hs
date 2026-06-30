@@ -26,7 +26,6 @@ import System.FilePath (takeExtension, (</>), addTrailingPathSeparator)
 import System.IO (hClose, openBinaryTempFile)
 import System.Process (readProcessWithExitCode)
 
--- | Unwrap a single-entry archive → (content bytes, entry name).
 unwrapArchive :: ArchiveFormat -> FilePath -> IO (Either UnwrapError (ByteString, EntryName))
 unwrapArchive ArchiveZIP path = unwrapZip path
 unwrapArchive ArchiveRAR path = unwrapViaExternalTool ExternalRAR path
