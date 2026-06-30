@@ -14,6 +14,7 @@ import Slap.SomePatch
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
   , FileSizeCheck(..)
+  , ExpectedN64ByteOrder(..)
   , applySourcePreHash
   , parseSome
   )
@@ -576,6 +577,13 @@ verifySource verificationPolicy verification (InputFileContents sourceBytes) = d
       (Nothing, Nothing, Nothing) ->
         enforceMismatch verificationPolicy (UnrecognizedRomTypeWithoutChecksum label)
       _ -> pure ()
+  forM_ (verifyN64ByteOrder verification) $ \expected ->
+    let v64LeadingMagic = ByteString.pack [0x37, 0x80, 0x40, 0x12]  -- V64 (byteswapped) leads with this; Z64/native do not
+        sourceIsV64     = ByteString.take 4 sourceBytes == v64LeadingMagic
+        mismatched      = case expected of
+          SourceMustBeV64    -> not sourceIsV64
+          SourceMustNotBeV64 -> sourceIsV64
+    in when mismatched (enforceMismatch verificationPolicy APSN64ImageFormatMismatch)
 
 verifyTarget :: VerificationPolicy -> Verification -> OutputFileContents -> IO ()
 verifyTarget verificationPolicy verification (OutputFileContents targetBytes) = do

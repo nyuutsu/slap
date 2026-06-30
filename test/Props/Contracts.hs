@@ -80,6 +80,7 @@ fullContents = PatchContents
   , contentsEBPMetadata = Just emptyEBPMetadata
   , contentsRomType     = Just PlatformRaw
   , contentsImageType   = Nothing
+  , contentsAPSN64ImageFormat = Nothing
   , contentsFileIdDiz   = Nothing
   , contentsNINJA1Compression = Nothing
   , contentsMetadata = Nothing

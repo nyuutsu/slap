@@ -1180,6 +1180,12 @@ data SlapAdvisory
   -- fall back on: nothing confirms the patch belongs to the input. Gated by
   -- the apply's verification policy, so @--no-verify@ overrides it.
   | UnrecognizedRomTypeWithoutChecksum FormatLabel
+  -- | The source ROM's byte-order does not match the image format an APS-N64 Type-1 patch declares.
+  -- Gated by the verification policy, so @--no-verify@ overrides.
+  | APSN64ImageFormatMismatch
+  -- | Converting a source APS-N64 Type-1 patch:
+  -- slap writes only Type-0, so its Type-1 N64 header (image format, cart ID, country, CRC) is not carried into the converted patch.
+  | APSN64Type1HeaderDropped
 
   -- Apply: out-of-bounds block clipping
   | ApplyOOBBlocksSkipped FormatLabel ApplyDirection OOBBlockCount ActionIndex OOBOvershootBytes FileSize
@@ -1851,7 +1857,8 @@ renderSlapError (MalformedBSDiffHeader (BSDiffSectionsExceedPatch overrunBytes))
 
 renderSlapError (MalformedAPSN64Header malformation) =
   formatLabelName LabelAPSN64 <> ": " <> case malformation of
-    APSN64UnknownPatchType byte -> "unknown patch type: " <> renderAsText byte
+    APSN64UnknownPatchType byte    -> "unknown patch type: " <> renderAsText byte
+    APSN64UnsupportedEncoding byte -> "unsupported encoding method: " <> renderAsText byte
 
 renderSlapError (PPF4ReplaceAfterAppend recordIndex) =
   formatLabelName LabelPPF4 <> ": record "
@@ -2334,6 +2341,14 @@ renderSlapAdvisory (UnrecognizedRomTypeWithoutChecksum label) =
   formatLabelName label <> ": unrecognized ROM type and no source checksum,"
   <> " so slap cannot confirm this patch matches the input"
 
+renderSlapAdvisory APSN64ImageFormatMismatch =
+  formatLabelName LabelAPSN64 <> ": the source ROM's byte order does not match"
+  <> " the image format this patch was built for (V64 vs Z64)"
+
+renderSlapAdvisory APSN64Type1HeaderDropped =
+  formatLabelName LabelAPSN64 <> ": Type-1 N64 header (image format, cart ID,"
+  <> " country, CRC) is not carried into the converted patch"
+
 renderSlapAdvisory (ApplyOOBBlocksSkipped label direction (OOBBlockCount count) firstIndex (OOBOvershootBytes overshoot) declaredSize) =
   formatLabelName label <> " " <> directionVerb direction <> ": "
   <> renderAsText count <> plural count " block writes" " blocks write"
@@ -2743,15 +2758,11 @@ data BSDiffHeaderMalformation
   | BSDiffSectionsExceedPatch !Int64
   deriving (Eq, Show)
 
--- | The structural failures slap raises when validating an
--- APS-N64 header byte before invoking the main wire-level walk.
--- Today only the patch-type byte is pre-validated; future
--- additions (unrecognized image format, unrecognized record
--- encoding) will add sibling constructors here as those fields
--- migrate from "carried verbatim with an advisory" to "rejected
--- with an error".
+-- | A header byte slap validates before the main wire-level walk and cannot accept:
+-- a patch type other than simple or N64, or a record encoding other than 0, the only one slap can decode.
 data APSN64HeaderMalformation
   = APSN64UnknownPatchType !Word8
+  | APSN64UnsupportedEncoding !Word8
   deriving (Eq, Show)
 
 -- | The NINJA1-format-specific malformations a textual-patch parser
@@ -2991,4 +3002,6 @@ slapAdvisorySeverity advisory = case advisory of
   UnrecognizedRomType{}                -> SeverityWarning
   UnrecognizedRomTypeName{}            -> SeverityWarning
   UnrecognizedRomTypeWithoutChecksum{} -> SeverityWarning
+  APSN64ImageFormatMismatch            -> SeverityWarning
+  APSN64Type1HeaderDropped             -> SeverityWarning
   SubformatConverted{}                 -> SeverityNote

@@ -9,14 +9,11 @@ module Slap.APSN64.Types
   , N64ChecksumPair(..)
   , APSPatchType(..)
   , APSImageFormat(..)
-  , APSRecordEncoding(..)
   , APSN64Country(..)
   , toAPSPatchType
   , fromAPSPatchType
   , toAPSImageFormat
   , fromAPSImageFormat
-  , toAPSRecordEncoding
-  , fromAPSRecordEncoding
   , toAPSN64Country
   , fromAPSN64Country
   , apsN64CountryName
@@ -88,19 +85,6 @@ fromAPSImageFormat :: APSImageFormat -> Word8
 fromAPSImageFormat V64Format              = 0
 fromAPSImageFormat Z64Format              = 1
 fromAPSImageFormat (UnknownImageFormat byte) = byte
-
-data APSRecordEncoding
-  = APSDefaultRecordEncoding
-  | APSUnknownRecordEncoding !Word8
-  deriving (Show, Eq)
-
-toAPSRecordEncoding :: Word8 -> APSRecordEncoding
-toAPSRecordEncoding 0 = APSDefaultRecordEncoding
-toAPSRecordEncoding byte = APSUnknownRecordEncoding byte
-
-fromAPSRecordEncoding :: APSRecordEncoding -> Word8
-fromAPSRecordEncoding APSDefaultRecordEncoding        = 0
-fromAPSRecordEncoding (APSUnknownRecordEncoding byte) = byte
 
 -- | The N64 ROM country byte (ROM header offset 0x3E), copied into the
 -- APS-N64 type-1 header for source verification. The common codes are
@@ -217,7 +201,6 @@ data APSN64Patch = APSN64Patch APSN64Header !(Vector APSN64Record)
 
 data APSN64Header = APSN64Header
   { apsN64PatchType       :: APSPatchType
-  , apsN64Encoding        :: APSRecordEncoding
   , apsN64Description     :: EncodedText
     -- ^ 50-byte description field, decoded at parse time under the
     -- process locale. Same encoding model as PPF1\/PPF2\/PPF3\/PPF4;

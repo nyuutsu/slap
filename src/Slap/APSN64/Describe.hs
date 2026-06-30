@@ -21,8 +21,6 @@ import qualified Data.Vector as Vector
 apsN64Meta :: APSN64Patch -> [InfoLine]
 apsN64Meta (APSN64Patch header _) = concat
   [ [InfoLine "patch type" (patchTypeName (apsN64PatchType header))]
-  , [InfoLine "encoding" (renderAsText (fromAPSRecordEncoding (apsN64Encoding header)))
-    | apsN64Encoding header /= APSDefaultRecordEncoding]
   , descriptionField (apsN64Description header)
   , formatField (apsN64ImageFormat header)
   , cartField (apsN64CartId header)

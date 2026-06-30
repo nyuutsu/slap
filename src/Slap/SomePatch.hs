@@ -12,6 +12,7 @@ module Slap.SomePatch
   , ByteCheck(..)
   , AdvisoryExpectedBytes(..)
   , FileSizeCheck(..)
+  , ExpectedN64ByteOrder(..)
   , SourcePreHash(..)
   , applySourcePreHash
   , noVerification
@@ -169,7 +170,15 @@ data Verification = Verification
     -- 'Nothing' otherwise (set by the NINJA parsers). Drives the
     -- 'UnrecognizedRomTypeWithoutChecksum' refusal.
   , verifyRomTypeUnrecognized :: Maybe FormatLabel
+    -- | Set for an APS-N64 Type-1 source; gates its byte-order on apply, 'Nothing' otherwise.
+  , verifyN64ByteOrder :: Maybe ExpectedN64ByteOrder
   }
+
+-- | The N64 image byte-order an APS-N64 Type-1 patch was built against.
+-- Its record offsets assume one order, so applying to a source in the other would corrupt it;
+-- the format distinguishes only V64 (the byteswapped "Doctor" image) from everything else.
+data ExpectedN64ByteOrder = SourceMustBeV64 | SourceMustNotBeV64
+  deriving (Show, Eq)
 
 -- | Per-block CRC16 check (APS-GBA).
 data BlockCheck = BlockCheck !Offset !CRC16
@@ -224,6 +233,7 @@ noVerification = Verification
   , verifyWindowAdler32 = [], verifySourceBytes = []
   , verifySourcePreHash = HashWholeSource
   , verifyRomTypeUnrecognized = Nothing
+  , verifyN64ByteOrder = Nothing
   }
 
 -- | Strategy for undoing a patch.
@@ -793,6 +803,7 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
           -- ^ APSN64's description field is typed 'EncodedText';
           -- the parse-time decode (and any substitution advisories) lives inside 'parseAPSN64'.
           , contentsDestinationSize    = Just (APSN64.apsN64DestinationSizeAsFileSize (APSN64.apsN64DestinationSize header))
+          , contentsAPSN64ImageFormat = APSN64.apsN64ImageFormat header
           })
     , patchApply          = ApplyStrategy
           { runApply = \source -> pure (fmap noAdvisories (APSN64.applyAPSN64 patch source)) }
@@ -803,6 +814,10 @@ parseSomePatchFromAPSN64 metadataEncoding patchContents = do
               , maybe [] (\country -> [ByteCheck (Offset 0x3E) (AdvisoryExpectedBytes (ByteString.singleton (APSN64.fromAPSN64Country country))) "N64 country"]) (APSN64.apsN64Country header)
               , maybe [] (\crc -> [ByteCheck (Offset 0x10) (AdvisoryExpectedBytes (APSN64.unN64ChecksumPair crc)) "N64 CRC"]) (APSN64.apsN64Crc header)
               ]
+          , verifyN64ByteOrder = case APSN64.apsN64ImageFormat header of
+              Just APSN64.V64Format -> Just SourceMustBeV64
+              Just APSN64.Z64Format -> Just SourceMustNotBeV64
+              _                     -> Nothing
           }
     , patchAdvisories       = parseAdvisories
                             ++ [EmptyPatch LabelAPSN64 EmptyRecords | Vector.null records]

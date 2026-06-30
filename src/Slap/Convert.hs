@@ -164,6 +164,9 @@ data PatchContents = PatchContents
     -- (so the source's title/author/description/patcher carry into a convert-to-EBP), 'Nothing' otherwise.
   , contentsRomType     :: Maybe PlatformType
   , contentsImageType   :: Maybe PPF3ImageType
+    -- | The image format of a source APS-N64 Type-1 patch, if any —
+    -- the marker that drives the 'APSN64Type1HeaderDropped' convert warning.
+  , contentsAPSN64ImageFormat :: Maybe APSN64.APSImageFormat
   , contentsFileIdDiz   :: Maybe EncodedText
     -- ^ Typed FILE_ID.DIZ content (PPF2/PPF3).
     -- The encoding tag is preserved through the seam.
@@ -352,6 +355,7 @@ emptyContents records = PatchContents
   , contentsEBPMetadata = Nothing
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
+  , contentsAPSN64ImageFormat = Nothing
   , contentsFileIdDiz   = Nothing
   , contentsNINJA1Compression = Nothing
   , contentsMetadata = Nothing
@@ -776,7 +780,8 @@ conversionNotes contents target contract meta =
       droppedNotes = concatMap (fieldNote contents) (Set.toList dropped)
       defaultAdvisories = defaultAssumptionAdvisories target meta (contentsRomType contents) (contentsImageType contents)
       hashAdvisories = ninja1HashAdvisories contents target
-  in droppedNotes ++ defaultAdvisories ++ hashAdvisories
+      apsN64Type1Notes = [APSN64Type1HeaderDropped | isJust (contentsAPSN64ImageFormat contents)]
+  in droppedNotes ++ defaultAdvisories ++ hashAdvisories ++ apsN64Type1Notes
 
 -- | Warn when encodeDirect defaults romType or imageType because neither the
 -- CLI flags nor the source patch provided a value.
@@ -1225,6 +1230,7 @@ buildContents format inputFileContents@(InputFileContents source) outputFileCont
   , contentsEBPMetadata      = sourceContents >>= contentsEBPMetadata
   , contentsFileIdDiz        = sourceContents >>= contentsFileIdDiz
   , contentsNINJA1Compression = sourceContents >>= contentsNINJA1Compression
+  , contentsAPSN64ImageFormat = sourceContents >>= contentsAPSN64ImageFormat
   , contentsRomType     = Nothing
   , contentsImageType   = Nothing
   , contentsMetadata    = Nothing
