@@ -102,6 +102,7 @@ import Slap.Measure (Offset(..), Length(..), Position(..), FileSize(..),
                      RequestedLength(..), RemainingLength(..),
                      ActualSize(..), ExpectedSize(..),
                      MaxAddressableSize(..),
+                     SourceFileSize(..), TargetFileSize(..),
                      DeclaredTargetSize(..), NaturalTargetSize(..),
                      RequiredLength(..), ActualLength(..),
                      EncodedLength(..), MaxLength(..),
@@ -773,6 +774,16 @@ data SlapError
   -- The 'ActualSize' is the offending file;
   -- the 'MaxAddressableSize' is the host's 'maxBound :: Int'.
   | FileExceedsAddressableRange FormatLabel ActualSize MaxAddressableSize
+
+  -- | A VCDIFF create's (source, target) pair spans more bytes than slap can address at once.
+  -- Unlike the sparse formats' relative offsets, a VCDIFF COPY addresses the superstring @U = source ++ target@ absolutely,
+  -- so the quantity slap's 'Int' must carry is the pair's combined size (plus the matcher's two sentinels) —
+  -- and a pair whose sum exceeds 'maxBound' :: 'Int' would name positions the carrier cannot hold.
+  -- The pair-wise sibling of 'FileExceedsAddressableRange': each size fits an 'Int' on its own (a ByteString's length is one),
+  -- and it is only their sum that does not, so the sizes are carried separately
+  -- and the renderer adds them in 'Integer', the way 'ApplyOutputExceedsAddressableRange' does.
+  -- Raised by 'Slap.VCDIFF.Create.rejectUnaddressablePair'.
+  | VCDIFFPairExceedsAddressableRange SourceFileSize TargetFileSize MaxAddressableSize
 
   -- | A record's offset lands on the format's trailer sentinel and
   -- the encoder has no way to shift it back: either the source bytes
@@ -1901,6 +1912,15 @@ renderSlapError (FileExceedsAddressableRange label (ActualSize actualSize) (MaxA
   formatLabelName label <> ": input file is "
   <> renderAsText (unFileSize actualSize) <> " bytes, exceeding the host platform's "
   <> renderAsText (unFileSize maxSize) <> "-byte addressable range"
+
+renderSlapError (VCDIFFPairExceedsAddressableRange
+                   (SourceFileSize sourceSize) (TargetFileSize targetSize) (MaxAddressableSize maxSize)) =
+  formatLabelName LabelVCDIFF <> ": the matcher indexes input and output as one string, spanning "
+  <> renderAsText (unFileSize sourceSize) <> " + " <> renderAsText (unFileSize targetSize)
+  <> " bytes plus two sentinels, reaching "
+  <> renderAsText (toInteger (unFileSize sourceSize) + toInteger (unFileSize targetSize) + 2)
+  <> " — past the " <> renderAsText (unFileSize maxSize)
+  <> "-byte limit slap can address"
 
 renderSlapError (SentinelCollisionUnfixable label (SentinelOffset sentinel)) =
   formatLabelName label <> ": hunk offset 0x"

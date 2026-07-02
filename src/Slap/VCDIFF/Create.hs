@@ -32,6 +32,7 @@
 module Slap.VCDIFF.Create
   ( createRFCVCDIFF
   , createXDelta3
+  , rejectUnaddressablePair
     -- * Cover-driven emission (exported for testing)
   , createFromCover
   , createConsideringCustomTable
@@ -56,8 +57,10 @@ import Slap.Binary (putVcdiffVarint, viewBytesInRange)
 import Slap.Checksum (Adler32(..))
 import Slap.FFI (adler32)
 import Slap.MetadataInclusion (VerificationInclusion(..))
-import Slap.Status (SlapError, CreateResult(..))
-import Slap.Measure (Offset(..), Length(..), byteLength, Cursor(..), lengthToOffset)
+import Slap.Status (SlapError(..), CreateResult(..))
+import Slap.Measure (Offset(..), Length(..), FileSize(..), byteLength, byteFileSize,
+                     Cursor(..), lengthToOffset,
+                     SourceFileSize(..), TargetFileSize(..), MaxAddressableSize(..))
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
 
 import Data.Bits (bit, (.|.))
@@ -77,10 +80,12 @@ import Data.Word (Word8)
 -- the bytes are then weighed under the default table and a designed custom one, the smaller shipping ('createConsideringCustomTable').
 -- When the matcher finds nothing (an unrelated source, a target shorter than the minimum match)
 -- the cover is all-literal and the bytes are the bedrock floor's exactly.
--- The 'Either' is shape-symmetry with the other @create*@ entries, whose richer encoders can fail. No metadata, no advisories.
+-- The 'Either' carries one refusal of its own, a pair the matcher could not address ('rejectUnaddressablePair');
+-- no metadata, no advisories.
 createRFCVCDIFF :: InputFileContents -> OutputFileContents
                 -> Either SlapError CreateResult
-createRFCVCDIFF inputContents outputContents =
+createRFCVCDIFF inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+  rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (createConsideringCustomTable inputContents outputContents
            (vcdiffCover inputContents outputContents))
 
@@ -94,7 +99,8 @@ createRFCVCDIFF inputContents outputContents =
 -- parsing back as 'Slap.VCDIFF.Types.PatchCoreOnly' — readable as xdelta3, which is what was asked for.
 createXDelta3 :: VerificationInclusion -> InputFileContents -> OutputFileContents
               -> Either SlapError CreateResult
-createXDelta3 verificationChoice inputContents@(InputFileContents source) outputContents@(OutputFileContents target) =
+createXDelta3 verificationChoice inputContents@(InputFileContents source) outputContents@(OutputFileContents target) = do
+  rejectUnaddressablePair (SourceFileSize (byteFileSize source)) (TargetFileSize (byteFileSize target))
   Right (CreateResult (PatchFileContents patchBytes) [])
   where
     patchBytes = emitXDelta3Patch checksumEmission source target
@@ -102,6 +108,22 @@ createXDelta3 verificationChoice inputContents@(InputFileContents source) output
     checksumEmission = case verificationChoice of
       IncludeVerification -> CarryWindowAdler32
       OmitVerification    -> OmitWindowAdler32
+
+-- | Refuse a pair whose superstring slap could not address: a COPY names an absolute offset into
+-- @U = source ++ target@, so the pair's combined size (plus the matcher's two sentinels) must fit
+-- the 'Int' every offset rides — past 'maxBound' the cover would come back with positions the carrier cannot hold.
+-- Judged in 'Integer', where the very overflow being refused cannot corrupt the judgment,
+-- and on sizes alone, so tests can hold the boundary without allocating the files that would sit there.
+-- The pair-wise sibling of BPS's per-file 'Slap.BPS.Create.guardAddressable':
+-- BPS's wire offsets are relative to one file, so its per-file guard covers its carrier; VCDIFF's span both.
+rejectUnaddressablePair :: SourceFileSize -> TargetFileSize -> Either SlapError ()
+rejectUnaddressablePair sourceSize@(SourceFileSize source) targetSize@(TargetFileSize target)
+  | augmentedLength > toInteger (maxBound :: Int) =
+      Left (VCDIFFPairExceedsAddressableRange sourceSize targetSize
+              (MaxAddressableSize (FileSize maxBound)))
+  | otherwise = Right ()
+  where
+    augmentedLength = toInteger (unFileSize source) + toInteger (unFileSize target) + 2
 
 -- | Serialize a cover of @target@ against @source@ into a VCDIFF patch on the default code table, with no custom-table consideration: the core.
 -- Tests drive it with hand-built covers to pin the emitter, and the custom-table path reuses it for the inner delta.

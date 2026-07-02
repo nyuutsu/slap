@@ -16,6 +16,8 @@ module Slap.Measure
   , ActualSize(..)
   , ExpectedSize(..)
   , MaxAddressableSize(..)
+  , SourceFileSize(..)
+  , TargetFileSize(..)
   , DeclaredTargetSize(..)
   , NaturalTargetSize(..)
     -- * Parse/create-error role newtypes
@@ -172,6 +174,15 @@ newtype ExpectedSize = ExpectedSize { unExpectedSize :: FileSize }
 -- the host's 'maxBound' :: 'Int'.
 -- Carried by 'FileExceedsAddressableRange' when a create-path size guard rejects an oversized input.
 newtype MaxAddressableSize = MaxAddressableSize { unMaxAddressableSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | The byte size of a differ's source (input) file.
+-- Paired with 'TargetFileSize' where a refusal carries both and bare 'FileSize's would transpose silently.
+newtype SourceFileSize = SourceFileSize { unSourceFileSize :: FileSize }
+  deriving (Eq, Ord, Show)
+
+-- | The byte size of a differ's target (output) file; see 'SourceFileSize'.
+newtype TargetFileSize = TargetFileSize { unTargetFileSize :: FileSize }
   deriving (Eq, Ord, Show)
 
 -- | A target file size declared explicitly by something in the

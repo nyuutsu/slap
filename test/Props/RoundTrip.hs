@@ -51,7 +51,7 @@ import Slap.VCDIFF.Types (VCDIFFPatch(..), Window(..), VCDIFFInstruction(..),
                           xdelta3WindowAdler32)
 import Slap.VCDIFF.Create (createFromCover, createConsideringCustomTable,
                            coverToInstructions, resolveInstructionAddresses,
-                           designCandidateTable)
+                           designCandidateTable, rejectUnaddressablePair)
 import Slap.VCDIFF.CodeTable (serializeCodeTable, deserializeCodeTable)
 import qualified Slap.VCDIFF.CodeTable as Table
 import Slap.VCDIFF.Describe (vcdiffMeta)
@@ -99,6 +99,7 @@ import Slap.FormatLabel (FormatLabel(..))
 import Slap.Measure (Offset(..), Length(..), FileSize(..),
                      Hunk(..), SentinelOffset(..),
                      OriginalLength(..), TruncatedLength(..),
+                     SourceFileSize(..), TargetFileSize(..),
                      byteLength, splitHunks, splitPayload)
 import Slap.FFI (adler32, crc32)
 import Slap.FileContents (InputFileContents(..), OutputFileContents(..), PatchFileContents(..))
@@ -198,6 +199,7 @@ roundTripTests = testGroup "RoundTrip"
       , testProperty "xdelta3: round-trip carrying the window's Adler32" prop_xdelta3
       , testProperty "xdelta3: verification omitted emits the core shape" prop_xdelta3OmitVerificationIsCoreShaped
       , testCase     "xdelta3: exact wire bytes for a two-byte target" xdelta3ExactWireBytes
+      , testCase     "create: the matcher's addressable-range wall holds at its exact boundary" vcdiffUnaddressablePairRefused
       ]
   , testGroup "PPF1"
       [ testProperty "round-trip" prop_ppf1
@@ -397,6 +399,25 @@ xdelta3ExactWireBytes =
        Left createError -> assertFailureT ("create: " <> renderSlapError createError)
        Right (CreateResult (PatchFileContents patch) _) ->
          assertEqual "exact wire bytes" expected patch
+
+-- | The matcher's addressable-range wall, held at its exact boundary with no bytes allocated:
+-- 'rejectUnaddressablePair' judges sizes, so files at 'maxBound' fit in two 'Int's here.
+-- A pair whose augmented string is exactly 'maxBound' long passes; one byte more is refused;
+-- and two 'maxBound' files — whose sum would wrap if the check ran in 'Int' — are refused too,
+-- pinning that the judgment runs in 'Integer'.
+vcdiffUnaddressablePairRefused :: Assertion
+vcdiffUnaddressablePairRefused = do
+  let judge sourceBytes targetBytes =
+        rejectUnaddressablePair (SourceFileSize (FileSize sourceBytes))
+                                (TargetFileSize (FileSize targetBytes))
+  assertEqual "an augmented string of exactly maxBound bytes passes"
+    (Right ()) (judge (maxBound - 2) 0)
+  case judge (maxBound - 1) 0 of
+    Left (VCDIFFPairExceedsAddressableRange _ _ _) -> pure ()
+    other -> assertFailure ("expected the addressable-range refusal, got " ++ show other)
+  case judge maxBound maxBound of
+    Left (VCDIFFPairExceedsAddressableRange _ _ _) -> pure ()
+    other -> assertFailure ("expected the addressable-range refusal, got " ++ show other)
 
 -- prop_vcdiffIgnoresSource is gone as of 02b. In the floor it was a
 -- tripwire: source-independence held only because the encoder read
