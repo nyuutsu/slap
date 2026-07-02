@@ -59,13 +59,14 @@
 //!
 //! ## Storage
 //!
-//! `usize` throughout. The matcher is total — the cover contract has no
-//! error channel to report an overflow through, unlike
-//! `xdelta1_suffix_array`'s fallible `build` — so it does not narrow to
-//! `u32`.
-//! Construction is prefix doubling with counting sort (O(n log n)); the
-//! quadratic reference it replaces lives on as the differential oracle
-//! in `vcdiff_diff.rs`.
+//! Construction is this module's own SA-IS (Nong, Zhang, Chan 2009),
+//! over the augmented string as `u16` symbols. Everything built on it —
+//! the suffix array, ranks, LCPs, the two nearest-smaller scans, the
+//! retained answers — runs at the cell width the input's size selects:
+//! `u32` whenever the augmented string fits, `u64` beyond, so the
+//! matcher stays total without paying eight-byte cells on the passes
+//! that dominate memory bandwidth. The quadratic reference this engine
+//! replaced lives on as the differential oracle in `vcdiff_diff.rs`.
 
 // ── Public surface ───────────────────────────────────────────────────
 
@@ -84,70 +85,53 @@ pub struct Match {
 /// work up front and keeps only the per-position answers, so the
 /// retained footprint is two `target`-sized arrays.
 pub struct SuperstringMatcher {
-    /// `match_length[p]` is the length of the longest run beginning at
-    /// `target[p]` that recurs earlier in `U`; `0` means no recurrence
-    /// (the position begins a literal).
-    match_length: Vec<usize>,
+    answers: MatchAnswers,
+}
 
-    /// `match_u_offset[p]` is the absolute offset into `U` at which that
-    /// recurrence begins. Meaningful only where `match_length[p] > 0`.
-    match_u_offset: Vec<usize>,
+/// The retained per-position answers, at the width construction chose
+/// (see the module's Storage note). `match_length[p]` is the length of
+/// the longest run beginning at `target[p]` that recurs earlier in `U`,
+/// `0` meaning no recurrence (the position begins a literal);
+/// `match_u_offset[p]` is the absolute offset into `U` at which that
+/// recurrence begins, meaningful only where the length is positive.
+enum MatchAnswers {
+    Narrow {
+        match_length: Vec<u32>,
+        match_u_offset: Vec<u32>,
+    },
+    Wide {
+        match_length: Vec<u64>,
+        match_u_offset: Vec<u64>,
+    },
 }
 
 impl SuperstringMatcher {
     /// Build the matcher for a `(source, target)` pair. An empty target
     /// has no positions to query and skips the suffix array entirely.
     pub fn build(source: &[u8], target: &[u8]) -> Self {
-        let target_length = target.len();
-        if target_length == 0 {
-            return SuperstringMatcher { match_length: Vec::new(), match_u_offset: Vec::new() };
+        if target.is_empty() {
+            return SuperstringMatcher {
+                answers: MatchAnswers::Narrow {
+                    match_length: Vec::new(),
+                    match_u_offset: Vec::new(),
+                },
+            };
         }
-        let source_length = source.len();
         let augmented = build_augmented_string(source, target);
-
-        let sorted_positions  = build_suffix_array(&augmented);
-        let rank_of_position  = invert_to_rank_array(&sorted_positions);
-        let lcp_with_previous = build_lcp_with_previous(&augmented, &sorted_positions, &rank_of_position);
-
-        let previous_smaller =
-            nearest_smaller_with_carried_lcp(&sorted_positions, &lcp_with_previous, ScanDirection::Leftward);
-        let next_smaller =
-            nearest_smaller_with_carried_lcp(&sorted_positions, &lcp_with_previous, ScanDirection::Rightward);
-
-        // The augmented index where the target's bytes begin: past the
-        // source and its trailing separator.
-        let target_region_start = source_length + 1;
-
-        let mut match_length   = vec![0usize; target_length];
-        let mut match_u_offset = vec![0usize; target_length];
-        for rank in 0..sorted_positions.len() {
-            let text_position = sorted_positions[rank];
-            // Only target bytes are queried; skip source bytes, the
-            // separator, and the terminator.
-            if text_position < target_region_start
-                || text_position >= target_region_start + target_length
-            {
-                continue;
-            }
-            // The better earlier-starting candidate is whichever of the
-            // two suffix-array neighbours (previous-smaller / next-
-            // smaller text position) shares the longer prefix.
-            let (length, neighbour_position) =
-                if previous_smaller.lcp[rank] >= next_smaller.lcp[rank] {
-                    (previous_smaller.lcp[rank], previous_smaller.text_position[rank])
-                } else {
-                    (next_smaller.lcp[rank], next_smaller.text_position[rank])
-                };
-            if length == 0 {
-                continue;
-            }
-            let target_position = text_position - target_region_start;
-            match_length[target_position]   = length;
-            match_u_offset[target_position] =
-                superstring_offset_of(neighbour_position, source_length);
-        }
-
-        SuperstringMatcher { match_length, match_u_offset }
+        let answers = if augmented.len() <= U32_INTERNAL_THRESHOLD {
+            let sorted_positions =
+                suffix_sort_over_alphabet::<u32>(&augmented, AUGMENTED_ALPHABET_SIZE);
+            let (match_length, match_u_offset) =
+                build_match_answers(&augmented, &sorted_positions, source.len(), target.len());
+            MatchAnswers::Narrow { match_length, match_u_offset }
+        } else {
+            let sorted_positions =
+                suffix_sort_over_alphabet::<u64>(&augmented, AUGMENTED_ALPHABET_SIZE);
+            let (match_length, match_u_offset) =
+                build_match_answers(&augmented, &sorted_positions, source.len(), target.len());
+            MatchAnswers::Wide { match_length, match_u_offset }
+        };
+        SuperstringMatcher { answers }
     }
 
     /// The longest match of `target[position..]` recurring earlier in
@@ -156,13 +140,57 @@ impl SuperstringMatcher {
     /// longest regardless of length, the same contract the differential
     /// oracle holds.
     pub fn longest_match_at(&self, position: usize) -> Option<Match> {
-        let length = self.match_length[position];
+        let (length, superstring_offset) = match &self.answers {
+            MatchAnswers::Narrow { match_length, match_u_offset } => {
+                (match_length[position] as usize, match_u_offset[position] as usize)
+            }
+            MatchAnswers::Wide { match_length, match_u_offset } => {
+                (match_length[position] as usize, match_u_offset[position] as usize)
+            }
+        };
         if length == 0 {
             None
         } else {
-            Some(Match { superstring_offset: self.match_u_offset[position], length })
+            Some(Match { superstring_offset, length })
         }
     }
+}
+
+// ── The augmented string ─────────────────────────────────────────────
+
+/// The separator between the source and target regions. Its only job is
+/// to stop a source-anchored common prefix at the source's end.
+const SEPARATOR: u16 = 1;
+
+/// The terminator closing the augmented string: the unique smallest
+/// symbol, making every suffix distinct.
+const TERMINATOR: u16 = 0;
+
+/// Real bytes shift up by this much to sit above the two sentinels.
+const SYMBOL_SHIFT: u16 = 2;
+
+/// The augmented alphabet: 256 shifted byte values plus the two
+/// sentinels below them.
+const AUGMENTED_ALPHABET_SIZE: usize = 258;
+
+/// Map a `(source, target)` pair to the augmented symbol string the
+/// suffix array is built over. Real bytes become `2..=257`; the
+/// separator is `1` and the terminator `0`, both distinct from every
+/// byte and from each other.
+fn build_augmented_string(source: &[u8], target: &[u8]) -> Vec<u16> {
+    // Checked: a sum past usize must die loudly, never wrap into a tiny
+    // buffer. Slap's create path refuses such pairs before this.
+    let augmented_length = source
+        .len()
+        .checked_add(target.len())
+        .and_then(|combined| combined.checked_add(2))
+        .expect("vcdiff matcher: source + target + two sentinels overflows usize");
+    let mut augmented = Vec::with_capacity(augmented_length);
+    augmented.extend(source.iter().map(|&byte| byte as u16 + SYMBOL_SHIFT));
+    augmented.push(SEPARATOR);
+    augmented.extend(target.iter().map(|&byte| byte as u16 + SYMBOL_SHIFT));
+    augmented.push(TERMINATOR);
+    augmented
 }
 
 /// Translate an augmented-string text position into an offset into
@@ -179,135 +207,78 @@ fn superstring_offset_of(text_position: usize, source_length: usize) -> usize {
     }
 }
 
-/// Map a `(source, target)` pair to the augmented symbol string the
-/// suffix array is built over. Real bytes become `2..=257`; the
-/// separator is `1` and the terminator `0`, both distinct from every
-/// byte and from each other. The separator's only job is to stop a
-/// source-anchored common prefix at the source's end; the terminator,
-/// as the unique smallest symbol, makes every suffix distinct.
-fn build_augmented_string(source: &[u8], target: &[u8]) -> Vec<usize> {
-    const SEPARATOR: usize = 1;
-    const TERMINATOR: usize = 0;
-    let mut augmented = Vec::with_capacity(source.len() + target.len() + 2);
-    augmented.extend(source.iter().map(|&byte| byte as usize + 2));
-    augmented.push(SEPARATOR);
-    augmented.extend(target.iter().map(|&byte| byte as usize + 2));
-    augmented.push(TERMINATOR);
-    augmented
-}
+// ── Longest previous factor over the sorted suffixes ─────────────────
 
-// ── Suffix array by prefix doubling ──────────────────────────────────
+/// Build the per-target-position answers from the sorted suffix
+/// positions: invert to ranks, take Kasai's LCP, run the two
+/// nearest-smaller scans, and keep each target position's better side.
+fn build_match_answers<P: InternalPosition>(
+    augmented: &[u16],
+    sorted_positions: &[P],
+    source_length: usize,
+    target_length: usize,
+) -> (Vec<P>, Vec<P>) {
+    let rank_of_position = invert_to_rank_array(sorted_positions);
+    let lcp_with_previous =
+        build_lcp_with_previous(augmented, sorted_positions, &rank_of_position);
 
-/// Build the suffix array of a small-integer symbol string by prefix
-/// doubling with counting sort: each round sorts the suffixes by their
-/// first `2 * prefix_length` symbols, reusing the previous round's
-/// ranks as the two sort keys, until every suffix has a distinct rank.
-/// O(n log n).
-fn build_suffix_array(text: &[usize]) -> Vec<usize> {
-    let length = text.len();
-    if length == 0 {
-        return Vec::new();
-    }
+    let previous_smaller = nearest_smaller_with_carried_lcp(
+        sorted_positions,
+        &lcp_with_previous,
+        ScanDirection::Leftward,
+    );
+    let next_smaller = nearest_smaller_with_carried_lcp(
+        sorted_positions,
+        &lcp_with_previous,
+        ScanDirection::Rightward,
+    );
 
-    // Initial ranks: the symbols themselves, compressed to a dense
-    // range so the counting-sort key range stays bounded by `length`.
-    let mut rank = compress_to_dense_ranks(text);
-    let mut sorted_positions: Vec<usize> = (0..length).collect();
-    let mut next_rank = vec![0usize; length];
+    // The augmented index where the target's bytes begin: past the
+    // source and its trailing separator.
+    let target_region_start = source_length + 1;
 
-    let mut prefix_length = 1usize;
-    loop {
-        // The second sort key: the rank of the suffix half a prefix
-        // ahead, shifted up by one so that "ran off the end" can be the
-        // smallest key, `0`.
-        let trailing_rank: Vec<usize> = (0..length)
-            .map(|position| {
-                if position + prefix_length < length {
-                    rank[position + prefix_length] + 1
-                } else {
-                    0
-                }
-            })
-            .collect();
-
-        // Least-significant key first: sort by the trailing rank, then
-        // stably by the leading rank, leaving the order sorted by the
-        // pair.
-        let key_range = length + 1;
-        counting_sort_by_key(&mut sorted_positions, &trailing_rank, key_range);
-        counting_sort_by_key(&mut sorted_positions, &rank,         key_range);
-
-        // Re-rank: walk the freshly sorted order, advancing the class
-        // whenever the full `(leading, trailing)` key changes.
-        next_rank[sorted_positions[0]] = 0;
-        let mut distinct_classes = 1usize;
-        for adjacent in 1..length {
-            let earlier = sorted_positions[adjacent - 1];
-            let later   = sorted_positions[adjacent];
-            let key_changed =
-                rank[earlier] != rank[later] || trailing_rank[earlier] != trailing_rank[later];
-            if key_changed {
-                distinct_classes += 1;
-            }
-            next_rank[later] = distinct_classes - 1;
+    let mut match_length = vec![P::from_index(0); target_length];
+    let mut match_u_offset = vec![P::from_index(0); target_length];
+    for rank in 0..sorted_positions.len() {
+        let text_position = sorted_positions[rank].as_index();
+        // Only target bytes are queried; skip source bytes, the
+        // separator, and the terminator.
+        if text_position < target_region_start
+            || text_position >= target_region_start + target_length
+        {
+            continue;
         }
-        std::mem::swap(&mut rank, &mut next_rank);
-
-        if distinct_classes == length || prefix_length >= length {
-            break;
+        // The better earlier-starting candidate is whichever of the
+        // two suffix-array neighbours (previous-smaller / next-
+        // smaller text position) shares the longer prefix.
+        let (length, neighbour_position) =
+            if previous_smaller.lcp[rank] >= next_smaller.lcp[rank] {
+                (previous_smaller.lcp[rank].as_index(), previous_smaller.text_position[rank])
+            } else {
+                (next_smaller.lcp[rank].as_index(), next_smaller.text_position[rank])
+            };
+        if length == 0 {
+            continue;
         }
-        prefix_length <<= 1;
+        let target_position = text_position - target_region_start;
+        match_length[target_position] = P::from_index(length);
+        match_u_offset[target_position] = P::from_index(superstring_offset_of(
+            neighbour_position.as_index(),
+            source_length,
+        ));
     }
 
-    sorted_positions
-}
-
-/// Compress a symbol string to dense ranks in `[0, distinct_symbols)`,
-/// preserving order. Keeps the counting-sort key range bounded by the
-/// string length even when the raw alphabet (bytes plus the two
-/// sentinels) is sparse.
-fn compress_to_dense_ranks(text: &[usize]) -> Vec<usize> {
-    let mut distinct_symbols: Vec<usize> = text.to_vec();
-    distinct_symbols.sort_unstable();
-    distinct_symbols.dedup();
-    text.iter()
-        .map(|symbol| distinct_symbols.binary_search(symbol).expect("symbol present"))
-        .collect()
-}
-
-/// Stable counting sort of `order` by `key[element]`, with keys in
-/// `[0, key_range)`. Stable because elements are scanned in their
-/// current order and placed at ascending offsets within each key's
-/// bucket — the property prefix doubling relies on to keep the
-/// least-significant pass's order under the most-significant pass.
-fn counting_sort_by_key(order: &mut Vec<usize>, key: &[usize], key_range: usize) {
-    let mut bucket_offset = vec![0usize; key_range + 1];
-    for &element in order.iter() {
-        bucket_offset[key[element]] += 1;
-    }
-    let mut running_total = 0usize;
-    for slot in bucket_offset.iter_mut() {
-        let count = *slot;
-        *slot = running_total;
-        running_total += count;
-    }
-    let mut sorted = vec![0usize; order.len()];
-    for &element in order.iter() {
-        let bucket = key[element];
-        sorted[bucket_offset[bucket]] = element;
-        bucket_offset[bucket] += 1;
-    }
-    *order = sorted;
+    (match_length, match_u_offset)
 }
 
 // ── Kasai's LCP and the rank inverse ─────────────────────────────────
 
 /// Invert the suffix array: `rank_of_position[p]` is the suffix-array
 /// rank of the suffix beginning at text position `p`.
-fn invert_to_rank_array(sorted_positions: &[usize]) -> Vec<usize> {
-    let mut rank_of_position = vec![0usize; sorted_positions.len()];
-    for (rank, &position) in sorted_positions.iter().enumerate() {
-        rank_of_position[position] = rank;
+fn invert_to_rank_array<P: InternalPosition>(sorted_positions: &[P]) -> Vec<P> {
+    let mut rank_of_position = vec![P::from_index(0); sorted_positions.len()];
+    for (rank, position) in sorted_positions.iter().enumerate() {
+        rank_of_position[position.as_index()] = P::from_index(rank);
     }
     rank_of_position
 }
@@ -318,28 +289,28 @@ fn invert_to_rank_array(sorted_positions: &[usize]) -> Vec<usize> {
 /// position to the next, so the counter carries over with a single
 /// decrement per step. `lcp_with_previous[0]` is `0` (the first suffix
 /// has no predecessor).
-fn build_lcp_with_previous(
-    text:             &[usize],
-    sorted_positions: &[usize],
-    rank_of_position: &[usize],
-) -> Vec<usize> {
+fn build_lcp_with_previous<P: InternalPosition>(
+    text: &[u16],
+    sorted_positions: &[P],
+    rank_of_position: &[P],
+) -> Vec<P> {
     let length = text.len();
-    let mut lcp_with_previous = vec![0usize; length];
+    let mut lcp_with_previous = vec![P::from_index(0); length];
     let mut running_lcp = 0usize;
     for position in 0..length {
-        let rank = rank_of_position[position];
+        let rank = rank_of_position[position].as_index();
         if rank == 0 {
             running_lcp = 0;
             continue;
         }
-        let predecessor_position = sorted_positions[rank - 1];
+        let predecessor_position = sorted_positions[rank - 1].as_index();
         while position + running_lcp < length
             && predecessor_position + running_lcp < length
             && text[position + running_lcp] == text[predecessor_position + running_lcp]
         {
             running_lcp += 1;
         }
-        lcp_with_previous[rank] = running_lcp;
+        lcp_with_previous[rank] = P::from_index(running_lcp);
         if running_lcp > 0 {
             running_lcp -= 1;
         }
@@ -363,9 +334,9 @@ enum ScanDirection {
 /// at `rank` shares with its nearest smaller-text-position neighbour
 /// (`0` where none exists); `text_position[rank]` is that neighbour's
 /// text position, meaningful only where `lcp[rank]` is positive.
-struct NearestSmallerNeighbours {
-    lcp: Vec<usize>,
-    text_position: Vec<usize>,
+struct NearestSmallerNeighbours<P> {
+    lcp: Vec<P>,
+    text_position: Vec<P>,
 }
 
 /// One entry of the monotonic stack: a suffix-array rank still awaiting
@@ -399,15 +370,15 @@ struct StackFrame {
 /// length (`0` where no smaller-position neighbour exists) and that
 /// neighbour's text position (meaningful only where the length is
 /// positive).
-fn nearest_smaller_with_carried_lcp(
-    sorted_positions: &[usize],
-    lcp_with_previous: &[usize],
+fn nearest_smaller_with_carried_lcp<P: InternalPosition>(
+    sorted_positions: &[P],
+    lcp_with_previous: &[P],
     direction: ScanDirection,
-) -> NearestSmallerNeighbours {
+) -> NearestSmallerNeighbours<P> {
     let length = sorted_positions.len();
     let mut neighbours = NearestSmallerNeighbours {
-        lcp: vec![0usize; length],
-        text_position: vec![0usize; length],
+        lcp: vec![P::from_index(0); length],
+        text_position: vec![P::from_index(0); length],
     };
     let mut stack: Vec<StackFrame> = Vec::new();
 
@@ -422,12 +393,18 @@ fn nearest_smaller_with_carried_lcp(
         // `lcp_with_previous[rank]` (the gap rank-1 .. rank); rightward,
         // at `lcp_with_previous[rank + 1]` (the gap rank .. rank+1).
         let mut running_minimum = match direction {
-            ScanDirection::Leftward => lcp_with_previous[rank],
+            ScanDirection::Leftward => lcp_with_previous[rank].as_index(),
             ScanDirection::Rightward => {
-                if rank + 1 < length { lcp_with_previous[rank + 1] } else { 0 }
+                if rank + 1 < length {
+                    lcp_with_previous[rank + 1].as_index()
+                } else {
+                    0
+                }
             }
         };
-        while let Some(&StackFrame { rank: top_rank, carried_minimum_lcp: top_minimum }) = stack.last() {
+        while let Some(&StackFrame { rank: top_rank, carried_minimum_lcp: top_minimum }) =
+            stack.last()
+        {
             if sorted_positions[top_rank] > sorted_positions[rank] {
                 running_minimum = running_minimum.min(top_minimum);
                 stack.pop();
@@ -436,13 +413,479 @@ fn nearest_smaller_with_carried_lcp(
             }
         }
         if let Some(&StackFrame { rank: smaller_neighbour_rank, .. }) = stack.last() {
-            neighbours.lcp[rank] = running_minimum;
+            neighbours.lcp[rank] = P::from_index(running_minimum);
             neighbours.text_position[rank] = sorted_positions[smaller_neighbour_rank];
         }
         stack.push(StackFrame { rank, carried_minimum_lcp: running_minimum });
     }
 
     neighbours
+}
+
+// ── Suffix array by SA-IS ────────────────────────────────────────────
+
+/// Whether a suffix starting at a given position sorts smaller than the
+/// suffix at the next position.
+///
+/// In the SA-IS literature this is the L/S type classification; we use
+/// the comparative names because they're what the algorithm actually
+/// reasons about.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SuffixComparison {
+    /// The suffix here is larger than the suffix one position later.
+    /// (Literature: "L-type", short for "Larger".)
+    LargerThanSuccessor,
+    /// The suffix here is smaller than the suffix one position later.
+    /// (Literature: "S-type", short for "Smaller".)
+    SmallerThanSuccessor,
+}
+
+/// Bucket layout for one alphabet. Each symbol gets a contiguous range
+/// in the suffix array; the bucket for symbol c is `[starts[c], ends[c])`.
+/// Computed from symbol frequencies and used during induction passes to
+/// know where to place each suffix.
+struct BucketLayout {
+    /// Inclusive start position of each symbol's bucket in the SA.
+    starts: Vec<usize>,
+    /// Exclusive end position of each symbol's bucket in the SA.
+    ends: Vec<usize>,
+}
+
+/// A suffix that is locally-minimal: smaller than its predecessor and
+/// smaller-than-or-equal to its successor. In the SA-IS literature these
+/// are "LMS" (LeftMost Smaller) suffixes; their relative order determines
+/// the entire SA, so the algorithm's recursive step sorts them first and
+/// induces everything else.
+struct LeftmostSmallerPositions {
+    positions: Vec<usize>,
+}
+
+/// One symbol of an alphabet that suffix-sorting can run over. The
+/// augmented string uses `u16` (bytes plus two sentinels); the
+/// recursive call uses `u32` to fit up to n/2 distinct LMS-substring
+/// names.
+trait Symbol: Copy + Eq + Ord {
+    fn alphabet_index(self) -> usize;
+}
+
+impl Symbol for u16 {
+    fn alphabet_index(self) -> usize {
+        self as usize
+    }
+}
+
+impl Symbol for u32 {
+    fn alphabet_index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Largest input length that the `u32`-internal path can address. Equal
+/// to `u32::MAX`, leaving the all-ones value free as `UNPLACED_SLOT`.
+const U32_INTERNAL_THRESHOLD: usize = u32::MAX as usize;
+
+/// An integer wide enough to index the augmented string, during SA
+/// construction and in the tables built on it. Two impls live in this
+/// module: `u32` for inputs up to 4 GB, `u64` for larger; `build`
+/// chooses once, so the suffix array, ranks, LCPs, and answers never
+/// pay wider cells than the positions they hold. It also serves as
+/// construction-time discipline against mixing positions with byte
+/// counts and bucket indices, which are all structurally `usize`.
+trait InternalPosition: Copy + Eq + Ord {
+    /// Sentinel marking a not-yet-placed slot in the SA under construction.
+    /// Both impls use the type's `MAX`. The dispatcher caps each path's input length at its `MAX`,
+    /// so the largest real position is one below it and `MAX` stays free as the sentinel.
+    const UNPLACED_SLOT: Self;
+
+    fn from_index(index: usize) -> Self;
+    fn as_index(self) -> usize;
+    fn is_placed(self) -> bool;
+}
+
+impl InternalPosition for u32 {
+    const UNPLACED_SLOT: u32 = u32::MAX;
+
+    fn from_index(index: usize) -> Self {
+        debug_assert!(
+            index < u32::MAX as usize,
+            "u32 InternalPosition cannot represent index {index} \
+             (u32::MAX is the unplaced-slot sentinel); dispatch should have chosen u64"
+        );
+        index as u32
+    }
+
+    fn as_index(self) -> usize {
+        self as usize
+    }
+
+    fn is_placed(self) -> bool {
+        self != u32::MAX
+    }
+}
+
+impl InternalPosition for u64 {
+    const UNPLACED_SLOT: u64 = u64::MAX;
+
+    fn from_index(index: usize) -> Self {
+        debug_assert!(
+            index != usize::MAX,
+            "u64 InternalPosition cannot represent usize::MAX (reserved as the unplaced-slot sentinel)"
+        );
+        index as u64
+    }
+
+    fn as_index(self) -> usize {
+        self as usize
+    }
+
+    fn is_placed(self) -> bool {
+        self != u64::MAX
+    }
+}
+
+/// Recursive entry. Input is a slice of names assigned by the parent
+/// call's LMS-naming step; alphabet size is the number of distinct names.
+/// The internal-position type is inherited from the parent call: once
+/// the dispatcher has decided the input fits in `P`, the recursive
+/// input (always shorter) fits too.
+fn suffix_sort_name_alphabet<P: InternalPosition>(
+    names: &[u32],
+    alphabet_size: usize,
+) -> Vec<P> {
+    suffix_sort_over_alphabet_generic::<u32, P>(names, alphabet_size)
+}
+
+/// Level-0 entry over the augmented `u16` alphabet.
+fn suffix_sort_over_alphabet<P: InternalPosition>(
+    input: &[u16],
+    alphabet_size: usize,
+) -> Vec<P> {
+    suffix_sort_over_alphabet_generic::<u16, P>(input, alphabet_size)
+}
+
+/// SA-IS body, generic over the symbol type. The algorithm:
+///   1. Classify every position as Larger or Smaller.
+///   2. Find the leftmost-smaller positions.
+///   3. Approximately sort the LMS positions, then induce L then S to
+///      fill the rest of the SA approximately.
+///   4. Name LMS substrings from the approximate SA.
+///   5. If all names are distinct, invert directly; otherwise recurse on
+///      the named string.
+///   6. Re-place LMS positions in their exact order, induce L then S to
+///      fill the rest of the SA exactly.
+fn suffix_sort_over_alphabet_generic<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    alphabet_size: usize,
+) -> Vec<P> {
+    let n = input.len();
+    let comparisons = compute_suffix_comparisons(input);
+    let leftmost_smaller = find_leftmost_smaller_positions(&comparisons);
+    let buckets = compute_bucket_layout(input, alphabet_size);
+
+    // Approximate sort. Place LMS at bucket-ends in input order, then induce.
+    let mut suffix_array = vec![P::UNPLACED_SLOT; n];
+    place_leftmost_smaller_positions(
+        input,
+        &mut suffix_array,
+        &leftmost_smaller.positions,
+        &buckets,
+    );
+    place_left_induced_suffixes(input, &mut suffix_array, &comparisons, &buckets);
+    place_right_induced_suffixes(input, &mut suffix_array, &comparisons, &buckets);
+
+    // Name LMS substrings from the approximate-sorted SA.
+    let (names_in_lms_order, distinct_names) =
+        name_leftmost_smaller_substrings(input, &suffix_array, &comparisons, &leftmost_smaller);
+
+    // Sort LMS positions exactly: recurse if any names collide, else invert.
+    let leftmost_smaller_in_sorted_order = sort_leftmost_smaller_by_names::<P>(
+        &leftmost_smaller,
+        &names_in_lms_order,
+        distinct_names,
+    );
+
+    // Exact sort. Re-place LMS in correct order at bucket-ends, induce.
+    suffix_array.iter_mut().for_each(|slot| *slot = P::UNPLACED_SLOT);
+    place_leftmost_smaller_positions(
+        input,
+        &mut suffix_array,
+        &leftmost_smaller_in_sorted_order,
+        &buckets,
+    );
+    place_left_induced_suffixes(input, &mut suffix_array, &comparisons, &buckets);
+    place_right_induced_suffixes(input, &mut suffix_array, &comparisons, &buckets);
+
+    debug_assert!(
+        suffix_array.iter().all(|slot| slot.is_placed()),
+        "every SA slot must be filled at this point"
+    );
+    suffix_array
+}
+
+/// Walk the input right-to-left, classifying each position as Larger or
+/// Smaller relative to its successor. The implicit sentinel one past the
+/// end is smaller than any real symbol, so the last position always
+/// classifies as Larger.
+fn compute_suffix_comparisons<S: Symbol>(input: &[S]) -> Vec<SuffixComparison> {
+    let n = input.len();
+    let mut comparisons = vec![SuffixComparison::LargerThanSuccessor; n];
+    for position in (0..n.saturating_sub(1)).rev() {
+        comparisons[position] = if input[position] < input[position + 1] {
+            SuffixComparison::SmallerThanSuccessor
+        } else if input[position] > input[position + 1] {
+            SuffixComparison::LargerThanSuccessor
+        } else {
+            comparisons[position + 1]
+        };
+    }
+    comparisons
+}
+
+/// Filter for positions classified as Smaller whose predecessor is
+/// classified as Larger. Position 0 is excluded (no predecessor).
+fn find_leftmost_smaller_positions(
+    comparisons: &[SuffixComparison],
+) -> LeftmostSmallerPositions {
+    let mut positions = Vec::new();
+    for position in 1..comparisons.len() {
+        if is_leftmost_smaller(comparisons, position) {
+            positions.push(position);
+        }
+    }
+    LeftmostSmallerPositions { positions }
+}
+
+/// True iff position is Smaller and its predecessor is Larger.
+fn is_leftmost_smaller(comparisons: &[SuffixComparison], position: usize) -> bool {
+    position > 0
+        && comparisons[position] == SuffixComparison::SmallerThanSuccessor
+        && comparisons[position - 1] == SuffixComparison::LargerThanSuccessor
+}
+
+/// One frequency pass plus one prefix-sum pass to build the bucket
+/// boundaries for `input` over an alphabet of `alphabet_size` symbols.
+fn compute_bucket_layout<S: Symbol>(input: &[S], alphabet_size: usize) -> BucketLayout {
+    let mut frequencies = vec![0usize; alphabet_size];
+    for symbol in input {
+        frequencies[symbol.alphabet_index()] += 1;
+    }
+    let mut starts = Vec::with_capacity(alphabet_size);
+    let mut ends = Vec::with_capacity(alphabet_size);
+    let mut running_total = 0;
+    for &count in &frequencies {
+        starts.push(running_total);
+        running_total += count;
+        ends.push(running_total);
+    }
+    BucketLayout { starts, ends }
+}
+
+/// Place a list of LMS positions at the high end of their respective
+/// buckets, iterating in reverse so that earlier-listed positions land
+/// in lower SA slots within each bucket. Used both for the approximate
+/// pass (input order) and the exact pass (sorted order).
+fn place_leftmost_smaller_positions<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    sa: &mut [P],
+    positions_to_place: &[usize],
+    buckets: &BucketLayout,
+) {
+    let mut bucket_end_cursors = buckets.ends.clone();
+    for &position in positions_to_place.iter().rev() {
+        let symbol_index = input[position].alphabet_index();
+        bucket_end_cursors[symbol_index] -= 1;
+        sa[bucket_end_cursors[symbol_index]] = P::from_index(position);
+    }
+}
+
+/// L-type induction. Scans the SA left-to-right; for each placed
+/// position p with comparisons[p-1] = Larger, places p-1 at the next
+/// available slot from the start of its bucket. The implicit sentinel
+/// one past the end seeds the predecessor n-1 unconditionally — that
+/// position is always Larger, and without seeding, no real position
+/// could trigger its placement.
+fn place_left_induced_suffixes<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    sa: &mut [P],
+    comparisons: &[SuffixComparison],
+    buckets: &BucketLayout,
+) {
+    let n = input.len();
+    let mut bucket_start_cursors = buckets.starts.clone();
+
+    if n > 0 {
+        let last_position = n - 1;
+        let symbol_index = input[last_position].alphabet_index();
+        sa[bucket_start_cursors[symbol_index]] = P::from_index(last_position);
+        bucket_start_cursors[symbol_index] += 1;
+    }
+
+    for rank in 0..n {
+        let placed = sa[rank];
+        if !placed.is_placed() {
+            continue;
+        }
+        let position = placed.as_index();
+        if position == 0 {
+            continue;
+        }
+        let predecessor = position - 1;
+        if comparisons[predecessor] == SuffixComparison::LargerThanSuccessor {
+            let symbol_index = input[predecessor].alphabet_index();
+            sa[bucket_start_cursors[symbol_index]] = P::from_index(predecessor);
+            bucket_start_cursors[symbol_index] += 1;
+        }
+    }
+}
+
+/// S-type induction. Scans the SA right-to-left; for each placed
+/// position p with comparisons[p-1] = Smaller, places p-1 at the next
+/// available slot from the end of its bucket. By design this overwrites
+/// the approximate LMS placements — they served their purpose during
+/// L-induction and S-induction places each LMS at its final rank.
+fn place_right_induced_suffixes<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    sa: &mut [P],
+    comparisons: &[SuffixComparison],
+    buckets: &BucketLayout,
+) {
+    let n = input.len();
+    let mut bucket_end_cursors = buckets.ends.clone();
+
+    for rank in (0..n).rev() {
+        let placed = sa[rank];
+        if !placed.is_placed() {
+            continue;
+        }
+        let position = placed.as_index();
+        if position == 0 {
+            continue;
+        }
+        let predecessor = position - 1;
+        if comparisons[predecessor] == SuffixComparison::SmallerThanSuccessor {
+            let symbol_index = input[predecessor].alphabet_index();
+            bucket_end_cursors[symbol_index] -= 1;
+            sa[bucket_end_cursors[symbol_index]] = P::from_index(predecessor);
+        }
+    }
+}
+
+/// After induction, the LMS positions appear in the SA in the order of
+/// their LMS substrings. Walk the SA, identify LMS positions, compare
+/// each LMS substring against the previous one, and assign names.
+/// Substrings with identical characters AND identical type-classification
+/// receive the same name.
+///
+/// Returns the names in LMS-input-order (parallel to `lms.positions`)
+/// and the count of distinct names.
+fn name_leftmost_smaller_substrings<S: Symbol, P: InternalPosition>(
+    input: &[S],
+    sa: &[P],
+    comparisons: &[SuffixComparison],
+    lms: &LeftmostSmallerPositions,
+) -> (Vec<u32>, usize) {
+    let n = input.len();
+    let mut name_at_position = vec![0u32; n];
+    let mut current_name: u32 = 0;
+    let mut previous_lms_position: Option<usize> = None;
+
+    for slot in sa {
+        if !slot.is_placed() {
+            continue;
+        }
+        let position = slot.as_index();
+        if !is_leftmost_smaller(comparisons, position) {
+            continue;
+        }
+        let differs_from_previous = match previous_lms_position {
+            None => false,
+            Some(previous) => {
+                !leftmost_smaller_substrings_equal(input, comparisons, previous, position)
+            }
+        };
+        if differs_from_previous {
+            current_name += 1;
+        }
+        name_at_position[position] = current_name;
+        previous_lms_position = Some(position);
+    }
+
+    let distinct_names = if previous_lms_position.is_some() {
+        current_name as usize + 1
+    } else {
+        0
+    };
+
+    let names_in_lms_order: Vec<u32> = lms
+        .positions
+        .iter()
+        .map(|&position| name_at_position[position])
+        .collect();
+
+    (names_in_lms_order, distinct_names)
+}
+
+/// Two LMS substrings are equal iff they have identical symbols AND
+/// identical suffix-comparison classifications at each offset, and they
+/// terminate at the same offset (both reaching the next LMS position
+/// simultaneously). Reaching the implicit sentinel one past the end
+/// before the other reaches a real LMS boundary marks them as unequal.
+fn leftmost_smaller_substrings_equal<S: Symbol>(
+    input: &[S],
+    comparisons: &[SuffixComparison],
+    a: usize,
+    b: usize,
+) -> bool {
+    let n = input.len();
+    let mut offset = 0usize;
+    loop {
+        let a_position = a + offset;
+        let b_position = b + offset;
+        if a_position >= n || b_position >= n {
+            return false;
+        }
+        if input[a_position] != input[b_position]
+            || comparisons[a_position] != comparisons[b_position]
+        {
+            return false;
+        }
+        if offset > 0 {
+            let a_at_lms_boundary = is_leftmost_smaller(comparisons, a_position);
+            let b_at_lms_boundary = is_leftmost_smaller(comparisons, b_position);
+            match (a_at_lms_boundary, b_at_lms_boundary) {
+                (true, true) => return true,
+                (false, false) => {}
+                _ => return false,
+            }
+        }
+        offset += 1;
+    }
+}
+
+/// Produce the LMS positions in their final lexicographic order.
+/// If naming saw collisions, recurse on the named string; otherwise
+/// invert the names directly.
+fn sort_leftmost_smaller_by_names<P: InternalPosition>(
+    leftmost_smaller: &LeftmostSmallerPositions,
+    names_in_lms_order: &[u32],
+    distinct_names: usize,
+) -> Vec<usize> {
+    let lms_count = leftmost_smaller.positions.len();
+    if distinct_names < lms_count {
+        let recursive_suffix_array =
+            suffix_sort_name_alphabet::<P>(names_in_lms_order, distinct_names);
+        recursive_suffix_array
+            .iter()
+            .map(|&sorted_lms_rank| leftmost_smaller.positions[sorted_lms_rank.as_index()])
+            .collect()
+    } else {
+        let mut in_sorted_order = vec![0usize; lms_count];
+        for (lms_rank, &original_position) in leftmost_smaller.positions.iter().enumerate() {
+            let name = names_in_lms_order[lms_rank] as usize;
+            in_sorted_order[name] = original_position;
+        }
+        in_sorted_order
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -477,13 +920,22 @@ mod tests {
             .collect()
     }
 
-    fn naive_suffix_array(text: &[usize]) -> Vec<usize> {
+    fn naive_suffix_array(text: &[u16]) -> Vec<usize> {
         let mut positions: Vec<usize> = (0..text.len()).collect();
         positions.sort_by(|&left, &right| text[left..].cmp(&text[right..]));
         positions
     }
 
-    fn longest_common_prefix(left: &[usize], right: &[usize]) -> usize {
+    /// The SA-IS at narrow width, widened to the `usize` positions the
+    /// naive reference speaks.
+    fn sorted_positions_of(text: &[u16]) -> Vec<usize> {
+        suffix_sort_over_alphabet::<u32>(text, AUGMENTED_ALPHABET_SIZE)
+            .into_iter()
+            .map(|position| position as usize)
+            .collect()
+    }
+
+    fn longest_common_prefix(left: &[u16], right: &[u16]) -> usize {
         let bound = left.len().min(right.len());
         let mut shared = 0usize;
         while shared < bound && left[shared] == right[shared] {
@@ -522,8 +974,8 @@ mod tests {
     #[test]
     fn suffix_array_matches_naive_on_words() {
         for word in [b"banana".as_slice(), b"mississippi", b"abracadabra", b"aaaaaa", b"a"] {
-            let text: Vec<usize> = word.iter().map(|&b| b as usize + 2).collect();
-            assert_eq!(build_suffix_array(&text), naive_suffix_array(&text), "{word:?}");
+            let text: Vec<u16> = word.iter().map(|&b| b as u16 + SYMBOL_SHIFT).collect();
+            assert_eq!(sorted_positions_of(&text), naive_suffix_array(&text), "{word:?}");
         }
     }
 
@@ -534,7 +986,7 @@ mod tests {
             let target = pseudo_random_low_alphabet(0xb0b ^ length as u64, length + 7, 4);
             let augmented = build_augmented_string(&source, &target);
             assert_eq!(
-                build_suffix_array(&augmented),
+                sorted_positions_of(&augmented),
                 naive_suffix_array(&augmented),
                 "augmented SA mismatch at length {length}"
             );
@@ -546,13 +998,18 @@ mod tests {
         let source = pseudo_random_bytes(0xfeed, 300);
         let target = pseudo_random_bytes(0xf00d, 400);
         let augmented = build_augmented_string(&source, &target);
-        let sorted_positions = build_suffix_array(&augmented);
+        let sorted_positions =
+            suffix_sort_over_alphabet::<u32>(&augmented, AUGMENTED_ALPHABET_SIZE);
         let rank_of_position = invert_to_rank_array(&sorted_positions);
         let lcp = build_lcp_with_previous(&augmented, &sorted_positions, &rank_of_position);
         for rank in 1..sorted_positions.len() {
-            let previous = &augmented[sorted_positions[rank - 1]..];
-            let current  = &augmented[sorted_positions[rank]..];
-            assert_eq!(lcp[rank], longest_common_prefix(previous, current), "rank {rank}");
+            let previous = &augmented[sorted_positions[rank - 1] as usize..];
+            let current = &augmented[sorted_positions[rank] as usize..];
+            assert_eq!(
+                lcp[rank] as usize,
+                longest_common_prefix(previous, current),
+                "rank {rank}"
+            );
         }
     }
 
@@ -606,6 +1063,40 @@ mod tests {
     #[test]
     fn empty_target_has_no_matches() {
         let matcher = SuperstringMatcher::build(b"anything", b"");
-        assert!(matcher.match_length.is_empty());
+        assert!(matches!(
+            matcher.answers,
+            MatchAnswers::Narrow { ref match_length, .. } if match_length.is_empty()
+        ));
+    }
+
+    /// The wide path can't be reached through `build` without a 4 GB
+    /// pair, but the generic bodies it runs are directly callable: pin
+    /// that both widths produce the same suffix array and the same
+    /// answers, so the only thing the dispatch boundary changes is cell
+    /// width.
+    #[test]
+    fn wide_and_narrow_widths_agree() {
+        let source = pseudo_random_low_alphabet(0x717, 90, 4);
+        let target = pseudo_random_low_alphabet(0x818, 130, 4);
+        let augmented = build_augmented_string(&source, &target);
+
+        let narrow_positions =
+            suffix_sort_over_alphabet::<u32>(&augmented, AUGMENTED_ALPHABET_SIZE);
+        let wide_positions =
+            suffix_sort_over_alphabet::<u64>(&augmented, AUGMENTED_ALPHABET_SIZE);
+        let widened_positions: Vec<u64> =
+            narrow_positions.iter().map(|&position| position as u64).collect();
+        assert_eq!(widened_positions, wide_positions);
+
+        let (narrow_lengths, narrow_offsets) =
+            build_match_answers(&augmented, &narrow_positions, source.len(), target.len());
+        let (wide_lengths, wide_offsets) =
+            build_match_answers(&augmented, &wide_positions, source.len(), target.len());
+        let widened_lengths: Vec<u64> =
+            narrow_lengths.iter().map(|&length| length as u64).collect();
+        let widened_offsets: Vec<u64> =
+            narrow_offsets.iter().map(|&offset| offset as u64).collect();
+        assert_eq!(widened_lengths, wide_lengths);
+        assert_eq!(widened_offsets, wide_offsets);
     }
 }
